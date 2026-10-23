@@ -31,13 +31,49 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
         try await assertWebRTCCapture(unownedCleanup: false)
     }
 
+    func testLiveWebRTCMicrophoneStartsAfterCancelledNegotiation() async throws {
+        try requireHardwareProbeOptIn()
+        let granted = await AVAudioApplication.requestRecordPermission()
+        XCTAssertTrue(granted)
+        guard granted else { return }
+        let cancelled = LiveWebRTCMedia()
+        let prepared = expectation(description: "Real factory and input request prepared")
+        var resumeOffer: CheckedContinuation<Void, Never>?
+        cancelled.beforeOfferForTesting = {
+            await withCheckedContinuation { continuation in
+                resumeOffer = continuation
+                prepared.fulfill()
+            }
+        }
+        let offering = Task { try await cancelled.offer() }
+        await fulfillment(of: [prepared], timeout: 5)
+        let released = expectation(description: "Cancelled input initialization ownership released")
+        cancelled.onReleasedForTesting = { released.fulfill() }
+        cancelled.close()
+        let prematureReplacement = LiveWebRTCMedia()
+        do {
+            _ = try await prematureReplacement.offer()
+            XCTFail("A replacement must not acquire global input before old factory teardown")
+        } catch {
+            XCTAssertEqual((error as? RealtimeCallFailure)?.code, "session_busy")
+        }
+        prematureReplacement.close()
+        resumeOffer?.resume()
+        do {
+            _ = try await offering.value
+            XCTFail("A cancelled offer must not continue negotiating")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        await fulfillment(of: [released], timeout: 5)
+        try await assertWebRTCCapture(unownedCleanup: false)
+    }
+
     private func assertWebRTCCapture(unownedCleanup: Bool) async throws {
         try requireHardwareProbeOptIn()
         let granted = await AVAudioApplication.requestRecordPermission()
         XCTAssertTrue(granted, "Grant microphone access before this explicit hardware test")
         guard granted else { return }
         let media = LiveWebRTCMedia()
-        let remote = LiveWebRTCLoopback(silentAudioDevice: true)
+        let remote = LiveWebRTCLoopback()
         let session = RealtimeCallSession()
         session.isLive = true
         session.status = "Starting microphone…"
@@ -64,14 +100,21 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
             if previousDuration > 0, duration > previousDuration { frames.fulfill() }
             previousDuration = duration
         }
-        FileHandle.standardError.write(Data("Live microphone probe: offer\n".utf8))
-        let offer = try await media.offer()
-        FileHandle.standardError.write(Data("Live microphone probe: remote answer\n".utf8))
-        let answer = try await remote.answer(offer: offer)
-        FileHandle.standardError.write(Data("Live microphone probe: connect\n".utf8))
-        try await media.connect(answer: answer)
-        FileHandle.standardError.write(Data("Live microphone probe: enable input\n".utf8))
-        try await media.startMicrophone()
+        do {
+            FileHandle.standardError.write(Data("Live microphone probe: offer\n".utf8))
+            let offer = try await media.offer()
+            FileHandle.standardError.write(Data("Live microphone probe: remote answer\n".utf8))
+            let answer = try await remote.answer(offer: offer)
+            FileHandle.standardError.write(Data("Live microphone probe: connect\n".utf8))
+            try await media.connect(answer: answer)
+            FileHandle.standardError.write(Data("Live microphone probe: enable input\n".utf8))
+            try await media.startMicrophone()
+        } catch {
+            failure = failure ?? error
+            session.error = RealtimeCallFailure.local(error)
+            session.status = "Call interrupted"
+            frames.fulfill()
+        }
         await fulfillment(of: [frames], timeout: 10)
         XCTAssertNil(failure)
         XCTAssertGreaterThan(media.capturedDurationForTesting, 0, media.captureStatsSummaryForTesting)
@@ -95,6 +138,10 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
         session.connected = media.capturedDurationForTesting > 0 && failure == nil
         session.status = session.connected ? "Listening" : "Call interrupted"
         if !session.connected { session.error = RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true) }
+        let released = expectation(description: "Owned audio teardown completes before replacement capture")
+        media.onReleasedForTesting = { released.fulfill() }
+        media.close()
+        await fulfillment(of: [released], timeout: 5)
     }
     #endif
 

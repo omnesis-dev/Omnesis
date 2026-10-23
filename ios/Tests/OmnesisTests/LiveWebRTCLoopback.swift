@@ -16,12 +16,8 @@ final class LiveWebRTCLoopback: NSObject, RTCPeerConnectionDelegate, RTCDataChan
     private var deadline: Task<Void, Never>?
     private var sent = false
 
-    init(silentAudioDevice: Bool = false) {
-        if silentAudioDevice {
-            factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil, audioDevice: LiveWebRTCSilentAudioDevice())
-        } else {
-            factory = RTCPeerConnectionFactory()
-        }
+    override init() {
+        factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil, audioDevice: LiveWebRTCSilentAudioDevice())
         super.init()
     }
 

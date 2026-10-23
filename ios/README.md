@@ -46,6 +46,20 @@ targets. Intel simulator builds are unsupported. Physical-device architectures
 retain Xcode's defaults; the platform-independent SwiftPM logic tests do not
 link WebRTC and remain separate from this simulator requirement.
 
+## WebRTC microphone initialization
+
+The pinned WebRTC vendor deliberately disables microphone input until
+`RTCAudioSession.initializeInput` is requested for each connection. Configure
+`RTCAudioSessionConfiguration` with a microphone-capable category first, then
+queue input initialization before AudioUnit creation. Enabling a track or
+`isAudioEnabled` alone does not initialize microphone input in this build.
+
+Keep the manual audio gate closed during signaling. The input callback completes
+when the SDK initializes the unit after the gate opens; do not await it before
+negotiation. A call becomes ready only after that callback succeeds and captured
+sample duration advances. Teardown must discard pending initialization before a
+replacement connection acquires audio ownership.
+
 ## Running tests locally
 
 Tests cover pairing codec, Keychain-backed service, and HTTP client with a mock `URLSessionLike`:
