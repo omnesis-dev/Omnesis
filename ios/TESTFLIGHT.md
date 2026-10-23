@@ -89,9 +89,10 @@ Review the generated archive, including linked third-party libraries, against
 Apple distinguishes standard algorithms implemented outside its operating system
 and requires a French encryption declaration when distributing such an app on the
 App Store in France. Do not assume standard encryption is automatically exempt.
-The existing `ITSAppUsesNonExemptEncryption` value is not a substitute for that
-determination; confirm the applicable distribution and documentation requirements
-before publication and change declarations only to match that determination.
+The main app targets omit `ITSAppUsesNonExemptEncryption` so App Store Connect
+asks its current export-compliance questions for each uploaded build. Complete
+that determination for the intended distribution and obtain any requested
+documentation before making the build available to testers.
 
 ## TestFlight
 
