@@ -13,6 +13,8 @@ import type Database from "better-sqlite3";
  * that repeats the subject line of a document the page cites.
  */
 
+/** The one-time review request a page shaped as a log receives. */
+export const CHRONOLOGICAL_LOG_REVIEW = "chronological_log";
 /** A page with at least this many date-named sections, most of its sections, reads as a log. */
 export const CHRONOLOGICAL_LOG_MIN_DATED_SECTIONS = 4;
 /** Titles shorter than this many distinct words are names, whatever document shares them. */
@@ -91,6 +93,19 @@ export function wikiSectionShape(text: string): WikiSectionShape {
   return { headings, dated: headings.filter(headingNamesDate) };
 }
 
+/**
+ * Whether a page already reads as a log: at least
+ * {@link CHRONOLOGICAL_LOG_MIN_DATED_SECTIONS} date-named sections, making up
+ * most of its sections.
+ */
+export function isChronologicalLog(text: string): boolean {
+  const shape = wikiSectionShape(text);
+  return (
+    shape.dated.length >= CHRONOLOGICAL_LOG_MIN_DATED_SECTIONS &&
+    shape.dated.length * 2 > shape.headings.length
+  );
+}
+
 export interface ChronologicalLogGrowth {
   /** Date-named headings this save adds. */
   added: string[];
@@ -131,7 +146,7 @@ export function chronologicalLogRefusal(growth: ChronologicalLogGrowth): Knowled
     `Not saved: this save adds another section named by a date (${JSON.stringify(growth.added)}), after which ${growth.dated} of the page's ${growth.sections} sections are named by dates. ` +
       "A wiki states the current understanding of its subject, not a chronological log of batches of events: each event stays in its source and the time index, and the page's earlier states stay in its revisions. " +
       "Fold what the new evidence changes into the existing account instead: update the passage that states the subject's current or latest observed state in place (knowledge_edit replace_text or replace_section), keep a material exception or turning point as a dated sentence within the section about that aspect, name sections by aspect rather than by date, or leave the page unchanged when the new events change nothing about the subject. " +
-      "The page is queued for a whole-page review, which can consolidate its date-named sections.",
+      "The page has a whole-page review queued, which can consolidate its date-named sections.",
   );
 }
 

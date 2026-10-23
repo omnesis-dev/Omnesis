@@ -10,6 +10,7 @@ import { resolveBrainSettings } from "../config.js";
 import {
   findRelatedKnowledge,
   knowledgeMirrorSearch,
+  oneTimePageReview,
   pageReviewQueue,
   withRelatedPageHints,
   type KnowledgeMirrorSearch,
@@ -18,6 +19,7 @@ import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
 import { KnowledgeService } from "./service.js";
 import { createKnowledgeTables, getKnowledgeNode } from "./storage.js";
 import { buildKnowledgeTools } from "./tools.js";
+import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
 
@@ -392,6 +394,35 @@ it("brings a related page's review forward through the ordinary review schedule"
   await expect(
     pageReviewQueue(service, "related_knowledge_changed")("missing"),
   ).resolves.toBeUndefined();
+});
+
+it("queues a one-time review immediately, once per page and reason", async () => {
+  createKnowledgeWorkTables(db);
+  await savePage();
+  const reviews = () =>
+    db
+      .prepare(
+        "SELECT id,tier FROM knowledge_work WHERE subject_id='flat' AND reason='review' AND status='pending'",
+      )
+      .all();
+  const queue = oneTimePageReview(service, "chronological_log", () => "kw_once");
+  await expect(queue("flat")).resolves.toBe(true);
+  expect(getKnowledgeNode(db, "flat")!.metadata).toMatchObject({
+    nextReviewAt: 10,
+    reviewDecision: "now",
+    reviewReason: "chronological_log",
+    reviewRequests: { chronological_log: 10 },
+  });
+  expect(reviews()).toEqual([{ id: "kw_once", tier: "immediate" }]);
+  // Later passes over the same page do not queue it again, even after the review ran.
+  db.prepare("UPDATE knowledge_work SET status='completed' WHERE id='kw_once'").run();
+  await expect(queue("flat")).resolves.toBe(false);
+  expect(reviews()).toEqual([]);
+  // A different reason is its own request; a missing page queues nothing.
+  await expect(oneTimePageReview(service, "other_reason", () => "kw_other")("flat")).resolves.toBe(
+    true,
+  );
+  await expect(queue("missing")).resolves.toBe(false);
 });
 
 it("maps knowledge mirror hits to their nodes and searches only the mirrors", async () => {

@@ -1703,6 +1703,9 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("knowledge_organization_complete");
     expect(prompt).toContain("not the joint organization decision");
     expect(prompt).toContain("Never write a section about the cohort, its date range or its batch");
+    expect(prompt).toContain(
+      "Name an existing page as a target only when this source changes what the page should state",
+    );
     expect(prompt).toContain("update that page's statement of the current state in place");
   });
 
@@ -2909,6 +2912,9 @@ test("wiki guidance keeps status streams out of dated sections and names pages f
     "update the passage it changes in place rather than appending another source-shaped or date-named section",
   );
   expect(WIKI_AUTHORING_GUIDANCE).not.toContain("Treat dated episodes as sections");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "complete such a source without naming the page among its discovery targets",
+  );
   expect(WIKI_AUTHORING_GUIDANCE).toContain("Give node.title a short name for the page's subject");
   expect(WIKI_AUTHORING_GUIDANCE).toContain(
     "A document's subject line, an issue or ticket title, or a notification headline names that document, not the subject",

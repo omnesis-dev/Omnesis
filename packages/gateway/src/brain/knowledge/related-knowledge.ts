@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import { ClaimMarkupError, parseClaimMarkup } from "./claims.js";
 import { isHistoricalKnowledgeOwner } from "./owner-maintenance.js";
 import { KNOWLEDGE_DOCUMENT_TYPE, KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
@@ -511,6 +512,44 @@ export function pageReviewQueue(
       // A page changed meanwhile was just maintained; its review cadence stands.
       if (!(error instanceof KnowledgeStorageError && error.code === "revision_conflict"))
         throw error;
+    }
+  };
+}
+
+/**
+ * Queues one immediate whole-page review of a page for a reason that holds
+ * until the page itself is reconsidered, such as a page shaped as a log. The
+ * request is recorded on the page (`reviewRequests[reason]`), so later passes
+ * over the same page do not queue it again. Resolves to whether it queued.
+ */
+export function oneTimePageReview(
+  service: KnowledgeService,
+  reason: string,
+  workId: () => string = () => `kw_${randomUUID()}`,
+): (pageId: string) => Promise<boolean> {
+  return async (pageId) => {
+    const page = getKnowledgeNode(service.deps.db, pageId);
+    if (!page || page.metadata.reviewRequests?.[reason] != null) return false;
+    const now = service.deps.clock();
+    try {
+      await service.deps.writeGate["knowledge.scheduleReview"](
+        {
+          id: page.id,
+          expectedRevision: page.revision,
+          nextReviewAt: now,
+          decision: "now",
+          workId: workId(),
+          reason,
+          request: reason,
+        },
+        now,
+      );
+      return true;
+    } catch (error) {
+      // A page that changed meanwhile is requested again on its next pass.
+      if (!(error instanceof KnowledgeStorageError && error.code === "revision_conflict"))
+        throw error;
+      return false;
     }
   };
 }

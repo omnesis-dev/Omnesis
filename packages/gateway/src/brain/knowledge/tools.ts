@@ -44,7 +44,7 @@ import { ClaimMarkupError, parseClaimMarkup } from "./claims.js";
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { knowledgePageRefForDocument } from "./document-context.js";
 import {
-  pageReviewQueue,
+  oneTimePageReview,
   RelatedKnowledgeCheck,
   type KnowledgeMirrorSearch,
 } from "./related-knowledge.js";
@@ -52,6 +52,8 @@ import {
   assertSubjectTitle,
   chronologicalLogGrowth,
   chronologicalLogRefusal,
+  CHRONOLOGICAL_LOG_REVIEW,
+  isChronologicalLog,
 } from "./wiki-page-shape.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { ToolResult } from "@omnesis/core";
@@ -402,7 +404,12 @@ export function buildKnowledgeTools(
   );
   const publicationReads = new WikiPublicationReads(service.deps.db);
   const wikiValue = new WikiValueCheck(service, context.checkRecord);
-  const queueLogReview = pageReviewQueue(service, "chronological_log");
+  const queueLogReview = oneTimePageReview(service, CHRONOLOGICAL_LOG_REVIEW);
+  /** Request the one consolidation review a log-shaped page gets, logging when it is queued. */
+  const requestLogReview = async (pageId: string, detail: string) => {
+    if (await queueLogReview(pageId))
+      wikiWrites.info(`Wiki ${pageId} queued for review: ${detail}`);
+  };
   const relatedKnowledge = new RelatedKnowledgeCheck(
     service.deps.db,
     context.relatedKnowledge,
@@ -535,13 +542,15 @@ export function buildKnowledgeTools(
       if (node.kind === "wiki") {
         const previous =
           node.expectedRevision > 0 ? getKnowledgeNode(service.deps.db, node.id) : null;
+        // A page already shaped as a log needs whole-page curation, whatever this save does.
+        if (previous && isChronologicalLog(previous.plainText))
+          await requestLogReview(node.id, "most of its sections are named by dates");
         assertSubjectTitle(service.deps.db, node, parsed, previous?.title ?? null);
         const growth = chronologicalLogGrowth(previous?.plainText ?? null, parsed.text);
         if (growth) {
-          // A page this shape needs whole-page curation whatever this save does next.
-          await queueLogReview(node.id);
-          wikiWrites.info(
-            `Wiki ${node.id} queued for review: ${growth.dated} of its ${growth.sections} sections would be named by dates`,
+          await requestLogReview(
+            node.id,
+            `${growth.dated} of its ${growth.sections} sections would be named by dates`,
           );
           throw chronologicalLogRefusal(growth);
         }

@@ -9,6 +9,7 @@ import {
   chronologicalLogGrowth,
   chronologicalLogRefusal,
   headingNamesDate,
+  isChronologicalLog,
   wikiSectionShape,
 } from "./wiki-page-shape.js";
 import { KnowledgeStorageError } from "./types.js";
@@ -119,7 +120,19 @@ describe("chronologicalLogGrowth", () => {
     expect(error.message).toContain('["6 March recovery"]');
     expect(error.message).toContain("4 of the page's 4 sections");
     expect(error.message).toContain("in place");
-    expect(error.message).toContain("queued for a whole-page review");
+    expect(error.message).toContain("whole-page review queued");
+  });
+});
+
+describe("isChronologicalLog", () => {
+  it("recognizes a page whose sections are mostly date-named, from four of them", () => {
+    const dated = ["2 May parcel scans", "3 May parcel scans", "4 May delivery", "5 May return"];
+    expect(isChronologicalLog(page("Overview.", dated))).toBe(true);
+    expect(isChronologicalLog(page("Overview.", [...dated, "Carrier", "Address"]))).toBe(true);
+    expect(isChronologicalLog(page("Overview.", dated.slice(0, 3)))).toBe(false);
+    expect(
+      isChronologicalLog(page("Overview.", [...dated, "Carrier", "Address", "Returns", "Fees"])),
+    ).toBe(false);
   });
 });
 

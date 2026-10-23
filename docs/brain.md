@@ -229,17 +229,28 @@ source discovery that names an existing page as its target and for a joint
 organization pass, whose cohort is a window of evidence interpreted around the
 same time, not a subject: no section is named for a date, a batch or a cohort.
 
+Most of such a stream never reaches a page. The discovery worth gate (the
+`decision` role's `discovery` question) scores a machine-generated status
+notification that only reports another routine outcome of its kind (another
+failed or passing run, another delivery scan, another ordinary charge) at its
+lowest level, even when it names the owner's project, account, order or card.
+Such a source is gated before any agent turn: its coverage is `gated`, no run
+interprets it, and no page is offered for maintenance because of it. Its
+judgement is still recorded in the decision ledger. A notification that changes
+the state of something the owner tracks or depends on (a first or new kind of
+failure, a changed cause, a recovery after a sustained problem, a lost or held
+parcel, an unusual or disputed transaction, an access or security change) is
+interpreted as before. A run that does interpret a source names an existing
+page as a discovery target only when the source changes what the page should
+state, because a target makes the whole page due for maintenance.
+
 Two save-time checks hold this deterministically, before any paid check, on
 both `knowledge_save` and `knowledge_edit`:
 
 - A save that adds a date-named section to an existing page is refused when the
   page would then have at least four date-named sections making up most of its
   sections. A save that keeps or lowers that number (an in-place update, a
-  consolidation) always passes, as does a new page. The refusal brings the
-  page's next review forward, as a related-knowledge change does, and logs one
-  content-free line, `Wiki <id> queued for review: N of its M sections would be
-named by dates`; that whole-page review can consolidate the dated sections or
-  retire the page with `knowledge_retire`.
+  consolidation) always passes, as does a new page.
 - A new or changed title of four or more words that repeats the title of a
   document the page cites (by word-set similarity of at least 0.8) is refused.
   A page is named for its subject (a person, place, organization, system,
@@ -249,8 +260,13 @@ named by dates`; that whole-page review can consolidate the dated sections or
   re-checked.
 
 No existing page is rewritten or retired from code. A page that already reads
-as a log is consolidated by the Brain's own review the next time new evidence
-tries to extend it.
+as a log (at least four date-named sections, most of its sections), or that a
+refused save would have turned into one, gets one immediate whole-page review,
+the first time a maintenance pass or a save touches it. The request is recorded
+on the page (`metadata.reviewRequests.chronological_log`), so no later pass
+queues it again, and logs one content-free line, `Wiki <id> queued for review:
+…`. That review can consolidate the dated sections into the subject's current
+state, or retire the page with `knowledge_retire`.
 
 ## Excluded sources
 
