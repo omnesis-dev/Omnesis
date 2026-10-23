@@ -83,3 +83,59 @@ test.each([
   if (fault === "other conflict") steps[1]!.result!.message = "Owner changed";
   expect([...verifiedFrontierRetries(steps)]).toEqual([]);
 });
+
+function continuation(): ExecutedTool {
+  return {
+    tool: "knowledge_next_frontier",
+    args: {},
+    result: {
+      kind: "structured",
+      data: { batchId: "batch", done: false, items: [], continuation: true },
+    },
+  };
+}
+
+test.each([1, 3])("classifies recovery across %i empty engine continuations", (count) => {
+  const steps = recovered();
+  steps.splice(2, 0, ...Array.from({ length: count }, continuation));
+  expect([...verifiedFrontierRetries(steps)]).toEqual([0]);
+});
+
+test.each([
+  "wrong batch",
+  "missing continuation",
+  "nonempty unrelated items",
+  "intervening mutation",
+  "mutation before continuation",
+  "no fresh save",
+  "interrupted continuation",
+  "interrupted fresh offer",
+  "interrupted completion",
+])("keeps %s across continuations malformed", (fault) => {
+  const steps = recovered();
+  const empty = continuation();
+  steps.splice(2, 0, empty);
+  if (fault === "wrong batch") empty.result!.data!.batchId = "other";
+  if (fault === "missing continuation") delete empty.result!.data!.continuation;
+  if (fault === "nonempty unrelated items")
+    empty.result!.data!.items = [
+      { id: "other", inputFingerprint: "other", inputVersions: {}, node: { revision: 1 } },
+    ];
+  if (fault === "intervening mutation" || fault === "mutation before continuation")
+    steps.splice(fault === "intervening mutation" ? 3 : 2, 0, {
+      tool: "open_loop_update",
+      args: { id: "other", state: "done" },
+      result: { kind: "structured", data: {} },
+    });
+  if (fault === "no fresh save") steps.splice(4, 1);
+  if (fault === "interrupted continuation") empty.result!.data!.interrupted = true;
+  if (fault === "interrupted fresh offer") steps[3]!.result!.data!.interrupted = true;
+  if (fault === "interrupted completion") steps.at(-1)!.result!.data!.interrupted = true;
+  expect([...verifiedFrontierRetries(steps)]).toEqual([]);
+});
+
+test("an abandoned batch does not prove recovery even after a matching save", () => {
+  const steps = recovered();
+  steps.at(-1)!.result!.data!.interrupted = true;
+  expect([...verifiedFrontierRetries(steps)]).toEqual([]);
+});
