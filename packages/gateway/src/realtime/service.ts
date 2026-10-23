@@ -689,8 +689,15 @@ export class RealtimeService {
     });
     // Install the shared completion before shutdown callbacks can reenter.
     const liveDrain = this.live.dispose();
-    for (const close of this.active) close();
     void liveDrain.then(resolve, reject);
+    for (const close of [...this.active]) {
+      try {
+        close();
+      } catch {
+        this.active.delete(close);
+        this.log.warn("Could not completely close a legacy voice call during shutdown");
+      }
+    }
     return this.disposal;
   }
 }

@@ -993,6 +993,38 @@ describe("direct realtime Omnesis runtime", () => {
     expect(f.peer.close).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(f.logger.warn.mock.calls)).not.toContain("PRIVATE_SENTINEL");
   });
+  it("settles shutdown and attempts every legacy close even when a peer close throws", async () => {
+    const f = await fixture();
+    const connect = vi.fn(() => new Socket() as unknown as WebSocket);
+    const service = new RealtimeService({
+      getConfig: () => config(),
+      getApiKey: () => "fixture-key",
+      getAgent: () => f.agent,
+      isAuthorized: () => true,
+      connect,
+      logger: f.logger,
+    });
+    const throwing = {
+      ...f.peer,
+      close: vi.fn(() => {
+        throw new Error("PRIVATE_SENTINEL");
+      }),
+    };
+    service.open(throwing, "token:fixture", { token: "fixture-token" });
+    service.open(f.peer, "token:fixture", { token: "fixture-token" });
+    const shutdown = service.dispose();
+    await shutdown;
+    expect(service.dispose()).toBe(shutdown);
+    expect(throwing.close).toHaveBeenCalledOnce();
+    expect(f.peer.close).toHaveBeenCalledOnce();
+    expect(f.logger.warn).toHaveBeenCalledWith(
+      "Could not completely close a legacy voice call during shutdown",
+    );
+    expect(JSON.stringify(f.logger.warn.mock.calls)).not.toContain("PRIVATE_SENTINEL");
+    expect(() => service.open(f.peer, "token:fixture", { token: "fixture-token" })).toThrow(
+      "shutting down",
+    );
+  });
   it("closes legacy and Live admission synchronously while a shared shutdown drain is pending", async () => {
     const f = await fixture();
     let release!: () => void;
