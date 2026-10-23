@@ -20,6 +20,10 @@ import { createDatabase } from "../../packages/gateway/src/db.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
 import {
+  createLiveVoiceUsageTable,
+  recordLiveVoiceUsage,
+} from "../../packages/gateway/src/realtime/live-voice-usage.js";
+import {
   SEEDED_STATE_MANIFEST,
   SEEDED_STATE_MARKER,
   createSeededStateArtifact,
@@ -200,6 +204,35 @@ describe("seeded-state artifacts", () => {
         .get(),
     ).toEqual({ text: "Quorvex", document_count: 1, benefit: 3 });
     output.close();
+  });
+
+  it("preserves voice accounting schema without copying installation call records", () => {
+    const paths = fixture();
+    const source = new Database(paths.sourcePath);
+    createLiveVoiceUsageTable(source);
+    recordLiveVoiceUsage(source, {
+      callId: "00000000-0000-4000-8000-000000000001",
+      model: "gpt-live-1",
+      seconds: 42,
+      confirmed: true,
+      day: "2026-01-01",
+    });
+    const schema = source.prepare("PRAGMA table_info(live_voice_usage)").all();
+    source.close();
+    createSeededStateArtifact(
+      {
+        ...spec(paths, ["documents", "live_voice_usage"]),
+        expected: { rowCounts: { "omnesis.db": { documents: 1, live_voice_usage: 0 } } },
+      },
+      paths.artifact,
+    );
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    expect(output.prepare("SELECT COUNT(*) FROM live_voice_usage").pluck().get()).toBe(0);
+    expect(output.prepare("PRAGMA table_info(live_voice_usage)").all()).toEqual(schema);
+    output.close();
+    const original = new Database(paths.sourcePath, { readonly: true });
+    expect(original.prepare("SELECT seconds FROM live_voice_usage").pluck().get()).toBe(42);
+    original.close();
   });
 
   it("classifies every table in the current gateway and index schemas", () => {
