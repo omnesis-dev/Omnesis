@@ -76,8 +76,9 @@ export const googleCredentialsSpec: ProviderCredentialsSpec = {
         body:
           "Pick **External**, then **Create**. Fill in the app name (e.g. `Omnesis`) " +
           "and your email. You don't need a logo.\n\n" +
-          "If Google asks for an app home page and a privacy policy (the **Branding** " +
-          "page's **App domain** section), you don't need a website of your own: Google " +
+          "Google won't publish the app until it has a home page and a privacy policy " +
+          "(the **Branding** page's **App domain** section), but you don't need a website " +
+          "of your own: Google " +
           "reviews these links only when an app is submitted for verification, which " +
           "Omnesis doesn't need. Enter `https://omnesis.dev` as the home page, " +
           "`https://omnesis.dev/privacy` as the privacy policy, and add `omnesis.dev` " +
