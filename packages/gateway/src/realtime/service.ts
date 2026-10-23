@@ -118,6 +118,8 @@ export function realtimeBackend(
 export class RealtimeService {
   readonly live: LiveVoiceService;
   private readonly active = new Set<() => void>();
+  private disposing = false;
+  private disposal?: Promise<void>;
   private readonly log: Pick<ReturnType<typeof createLogger>, "info" | "warn">;
   constructor(private readonly deps: RealtimeDeps) {
     this.log = deps.logger ?? createLogger("gateway:realtime");
@@ -154,6 +156,7 @@ export class RealtimeService {
   }
 
   private backend(): string | undefined {
+    if (this.disposing) return undefined;
     return realtimeBackend(this.deps.getConfig(), (name) => this.deps.getApiKey(name));
   }
 
@@ -168,6 +171,7 @@ export class RealtimeService {
       recoverableErrors?: boolean;
     },
   ): RealtimeConnection {
+    if (this.disposing) throw new RealtimeAdmissionError(callError("server_shutdown"));
     const backend = this.backend();
     const agent = this.deps.getAgent();
     const key = backend ? this.deps.getApiKey(backend) : undefined;
@@ -674,8 +678,19 @@ export class RealtimeService {
     };
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
+    this.disposing = true;
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    this.disposal = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    // Install the shared completion before shutdown callbacks can reenter.
+    const liveDrain = this.live.dispose();
     for (const close of this.active) close();
-    await this.live.dispose();
+    void liveDrain.then(resolve, reject);
+    return this.disposal;
   }
 }

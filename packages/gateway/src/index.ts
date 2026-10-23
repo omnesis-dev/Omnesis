@@ -3520,8 +3520,8 @@ const doShutdown = async (): Promise<void> => {
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
   wsServer.stop();
-  await realtimeService.dispose();
-  const httpDrained = await httpShutdown.close(server, 5_000);
+  const httpDrain = httpShutdown.close(server, 5_000);
+  const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   // A warm still scanning competes with the sidecar persist below for I/O and
   // the shutdown budget; its thread is throwaway, so stop it first — after the

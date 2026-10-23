@@ -35,15 +35,17 @@ function rejection(c: Context<AppEnv>, error: unknown) {
   const failure: RealtimeCallError =
     error instanceof RealtimeAdmissionError ? error.detail : callError("connection_error");
   const status =
-    failure.code === "pairing_rejected"
-      ? 403
-      : failure.code === "session_not_found" || failure.code === "unavailable"
-        ? 404
-        : failure.code === "session_busy"
-          ? 409
-          : failure.code === "protocol_error"
-            ? 400
-            : 502;
+    failure.code === "server_shutdown"
+      ? 503
+      : failure.code === "pairing_rejected"
+        ? 403
+        : failure.code === "session_not_found" || failure.code === "unavailable"
+          ? 404
+          : failure.code === "session_busy"
+            ? 409
+            : failure.code === "protocol_error"
+              ? 400
+              : 502;
   return c.json({ error: failure.message, failure }, status);
 }
 

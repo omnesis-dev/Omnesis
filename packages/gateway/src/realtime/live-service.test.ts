@@ -338,6 +338,21 @@ describe("Live signaling authority", () => {
     expect(allowed.provider.create).not.toHaveBeenCalled();
   });
 
+  it("reports shutdown as safe service-unavailable signaling before provider allocation", async () => {
+    const h = appFixture();
+    await h.service.dispose();
+    const response = await h.app.request("/agent/realtime/sessions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(offer),
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      failure: { code: "server_shutdown", retryable: true, fatal: true },
+    });
+    expect(h.openVoiceSession).not.toHaveBeenCalled();
+    expect(h.provider.create).not.toHaveBeenCalled();
+  });
   it("provides current lifecycle snapshots on the authenticated SSE control plane", async () => {
     const h = appFixture();
     const answer = await h.service.create(owner, token, offer);

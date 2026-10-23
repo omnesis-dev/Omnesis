@@ -33,6 +33,7 @@ export class LiveVoiceService {
   private readonly calls = new Map<string, Entry>();
   private readonly requests = new Map<string, Entry>();
   private closing = false;
+  private disposal?: Promise<void>;
 
   constructor(private readonly deps: LiveServiceDeps) {}
 
@@ -64,6 +65,7 @@ export class LiveVoiceService {
     offer: LiveOffer,
     signal?: AbortSignal,
   ): Promise<LiveAnswer> {
+    if (this.closing) throw new RealtimeAdmissionError(callError("server_shutdown"));
     this.authorize(owner, token);
     const request = `${owner}:${offer.clientSessionId}`;
     const fingerprint = createHash("sha256")
@@ -161,13 +163,26 @@ export class LiveVoiceService {
     return entry;
   }
 
-  async dispose(): Promise<void> {
-    if (this.closing) return;
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     this.closing = true;
-    await Promise.allSettled([...this.calls.values()].map((entry) => entry.call.end()));
-    for (const entry of this.calls.values()) clearTimeout(entry.expiry);
-    this.calls.clear();
-    this.requests.clear();
-    // Submitted writes remain owned by WriteGate's normal shutdown drain.
+    let resolve!: () => void;
+    this.disposal = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const drains = [...this.calls.values()].map((entry) => {
+      const phase = entry.call.status().status;
+      if (phase === "connecting" || phase === "connected")
+        entry.call.fail(callError("server_shutdown"));
+      return entry.call.end();
+    });
+    void Promise.allSettled(drains).then(() => {
+      for (const entry of this.calls.values()) clearTimeout(entry.expiry);
+      this.calls.clear();
+      this.requests.clear();
+      // Submitted writes remain owned by WriteGate's normal shutdown drain.
+      resolve();
+    });
+    return this.disposal;
   }
 }

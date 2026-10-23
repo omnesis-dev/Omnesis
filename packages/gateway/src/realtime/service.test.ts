@@ -993,6 +993,74 @@ describe("direct realtime Omnesis runtime", () => {
     expect(f.peer.close).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(f.logger.warn.mock.calls)).not.toContain("PRIVATE_SENTINEL");
   });
+  it("closes legacy and Live admission synchronously while a shared shutdown drain is pending", async () => {
+    const f = await fixture();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const providerClose = vi.fn(async () => {
+      await pending;
+      return { usageConfirmed: true };
+    });
+    const create = vi.fn(async () => ({
+      id: "fixture-provider",
+      sdp: "v=0\r\nanswer",
+      send: vi.fn(),
+      close: providerClose,
+    }));
+    const connect = vi.fn(() => new Socket() as unknown as WebSocket);
+    const service = new RealtimeService({
+      getConfig: () => config(),
+      getApiKey: () => "fixture-key",
+      getAgent: () => f.agent,
+      isAuthorized: () => true,
+      connect,
+      liveProvider: () => ({ create }),
+      logger: f.logger,
+    });
+    const offer = { sdp: "v=0\r\n", clientSessionId: "00000000-0000-4000-8000-000000000091" };
+    const answer = await service.live.create("token:fixture", "fixture-token", offer);
+    const states: Array<{ failure?: { code: string } }> = [];
+    service.live.subscribe("token:fixture", "fixture-token", answer.id, (state) =>
+      states.push(state),
+    );
+    service.open(f.peer, "token:fixture", { token: "fixture-token" });
+    const drain = service.dispose();
+    try {
+      expect(service.dispose()).toBe(drain);
+      expect(service.live.dispose()).toBe(service.live.dispose());
+      expect(service.capability()).toMatchObject({ available: false });
+      expect(service.live.capability()).toBeUndefined();
+      expect(() => service.open(f.peer, "token:fixture", { token: "fixture-token" })).toThrow(
+        "shutting down",
+      );
+      expect(() => service.live.create("token:fixture", "fixture-token", offer)).toThrow(
+        "shutting down",
+      );
+      expect(() =>
+        service.live.create("token:fixture", "fixture-token", {
+          ...offer,
+          clientSessionId: "new-fixture-call",
+        }),
+      ).toThrow("shutting down");
+      expect(connect).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(providerClose).toHaveBeenCalledOnce());
+      expect(states.some((state) => state.failure?.code === "server_shutdown")).toBe(true);
+      let settled = false;
+      void drain.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await drain;
+    }
+    expect(service.live.activeCount).toBe(0);
+    expect(service.dispose()).toBe(drain);
+  });
   it("keeps intentional client hangup normal and reports service shutdown", async () => {
     const f = await fixture();
     const connection = await ready(f);
