@@ -95,6 +95,9 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && groupadd --gid 10001 omnesis \
     && useradd --uid 10001 --gid omnesis --create-home --shell /usr/sbin/nologin omnesis \
     && install -d -m 0700 -o omnesis -g omnesis /var/lib/omnesis
+# Config mounts retain their host path, including /root/.config/omnesis for
+# root installs. Only this image's root home needs traversal by the daemon.
+RUN chmod 0711 /root
 WORKDIR /app
 # The CLI entry point every image carries. `docker compose exec <service>
 # omnesis …` is the supported way to drive an install, so the binary has to be
