@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { scope } from "../http/scope.js";
 import { RealtimeAdmissionError, transportCallError } from "./call-error.js";
+import { mountLiveVoiceRoutes } from "./live-route.js";
 import type { RouteApp } from "../http/routes/types.js";
 import type { NodeWebSocket } from "@hono/node-ws";
 import type { RealtimeConnection, RealtimeService } from "./service.js";
@@ -21,6 +22,7 @@ export function mountRealtimeRoutes(
   service: RealtimeService,
   upgrade: NodeWebSocket["upgradeWebSocket"],
 ): void {
+  mountLiveVoiceRoutes(app, service.live);
   app.get("/agent/realtime", scope.admin(), (c) => c.json(service.capability()));
   app.get(
     "/agent/realtime/ws",

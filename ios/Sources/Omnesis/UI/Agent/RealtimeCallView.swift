@@ -56,13 +56,27 @@ struct RealtimeCallView: View {
                             : min(164, max(64, (viewport.size.height - 140) * 0.55)))
                     } content: {
                         VStack(spacing: 24) {
-                            Text(conversationCaption)
-                                .font(.body)
-                                .foregroundStyle(session.transcript.isEmpty ? Theme.textSecondary : Theme.textPrimary)
-                                .multilineTextAlignment(session.transcript.isEmpty ? .center : .leading)
-                                .lineSpacing(5)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            toolActivity
+                            if session.isLive { toolActivity }
+                            if session.isLive, !session.liveCaptions.isEmpty {
+                                ForEach(session.liveCaptions) { caption in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(caption.speaker == .user ? "You" : "Omnesis")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(Theme.textSecondary)
+                                        Text(caption.text).font(.body).lineSpacing(5)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityElement(children: .combine)
+                                }
+                            } else {
+                                Text(conversationCaption)
+                                    .font(.body)
+                                    .foregroundStyle(session.transcript.isEmpty ? Theme.textSecondary : Theme.textPrimary)
+                                    .multilineTextAlignment(session.transcript.isEmpty ? .center : .leading)
+                                    .lineSpacing(5)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if !session.isLive { toolActivity }
                             if let failure = session.replyFailure {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Label(failure.title, systemImage: "exclamationmark.triangle")
@@ -105,8 +119,8 @@ struct RealtimeCallView: View {
                 .disabled(session.ending)
                 .accessibilityLabel("End voice conversation")
             }
-            Text(dynamicTypeSize.isAccessibilitySize ? "Audio to OpenAI." : "Audio is sent through your gateway to OpenAI.")
-                .accessibilityLabel("Audio is sent through your gateway to OpenAI.")
+            Text(dynamicTypeSize.isAccessibilitySize ? "Audio to OpenAI." : audioPrivacyNotice)
+                .accessibilityLabel(audioPrivacyNotice)
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -158,6 +172,10 @@ struct RealtimeCallView: View {
             )
         }
         .accessibilitySortPriority(1)
+    }
+
+    private var audioPrivacyNotice: String {
+        session.isLive ? "Audio is sent to OpenAI." : "Audio is sent through your gateway to OpenAI."
     }
 
     private var voiceActivity: RealtimeVoiceActivity {
@@ -346,6 +364,11 @@ struct RealtimeScrollDemoSurface: View {
 #Preview("Voice · Error") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
         .environment(AppStore.preview())
+}
+
+#Preview("Live voice · Overlapping captions") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.liveOverlappingSpeech)
+        .environment(PreviewMocks.realtimeToolsStore)
 }
 
 #Preview("Voice · OpenAI credit needed") {

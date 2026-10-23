@@ -55,14 +55,20 @@ enum RealtimeProtocol {
 /// Capability reads are read-only and use the same pinned gateway transport as chat.
 enum RealtimeCapability {
     static func available(pairing: Pairing, session: URLSessionLike = OmnesisURLSession.shared) async throws -> Bool {
+        try await connectionKind(pairing: pairing, session: session) != nil
+    }
+
+    static func connectionKind(pairing: Pairing, session: URLSessionLike = OmnesisURLSession.shared) async throws -> VoiceConnectionKind? {
         var request = URLRequest(url: pairing.url.appendingPathComponent("agent/realtime"))
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        if let discovery = try? JSONDecoder().decode(LiveCapabilityDiscovery.self, from: data),
+           let live = discovery.live, live.supportsVersionOne { return .live }
         guard let capability = try? JSONDecoder().decode(RealtimeCapabilityPayload.self, from: data),
               let range = capability.protocolRange,
-              RealtimeProtocol.negotiatedVersion(minimum: range.min, maximum: range.max) != nil else { return false }
-        return capability.available && capability.directAgentTools == true && capability.canonicalAgentEvents == true
+              RealtimeProtocol.negotiatedVersion(minimum: range.min, maximum: range.max) != nil else { return nil }
+        return capability.available && capability.directAgentTools == true && capability.canonicalAgentEvents == true ? .realtime : nil
     }
 }
 
@@ -80,5 +86,32 @@ private struct RealtimeCapabilityPayload: Decodable {
     enum CodingKeys: String, CodingKey {
         case available, directAgentTools, canonicalAgentEvents
         case protocolRange = "protocol"
+    }
+}
+
+private struct LiveCapabilityDiscovery: Decodable {
+    let live: LiveCapabilityPayload?
+}
+
+private struct LiveCapabilityPayload: Decodable {
+    let version: Int?
+    let transport: String
+    let model: String
+    let configuredAgent: Bool
+    let protocolRange: RealtimeProtocolRange?
+
+    enum CodingKeys: String, CodingKey {
+        case version, transport, model, configuredAgent
+        case protocolRange = "protocol"
+    }
+
+    var supportsVersionOne: Bool {
+        guard transport == "webrtc", configuredAgent,
+              !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if let range = protocolRange {
+            return range.min > 0 && range.min <= 1 && range.max >= 1 && range.max >= range.min
+        }
+        // Initial Live gateways advertised only their single version.
+        return version == 1
     }
 }

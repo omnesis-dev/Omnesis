@@ -18,6 +18,10 @@ final class RealtimeCallSession {
     var connected = false
     var ending = false
     var conversationID: String?
+    var liveCaptions: [LiveVoiceCaption] = []
+    var isLive = false
+    @ObservationIgnored private var liveSession: LiveVoiceSession?
+    @ObservationIgnored private var starting = false
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var receiver: Task<Void, Never>?
     @ObservationIgnored private var engine: AVAudioEngine?
@@ -48,7 +52,9 @@ final class RealtimeCallSession {
         conversationID: String? = nil,
         onReady: (@MainActor (String) async throws -> Void)? = nil
     ) async {
-        guard receiver == nil, !ending else { return }
+        guard receiver == nil, liveSession == nil, !ending, !starting else { return }
+        starting = true
+        defer { starting = false }
         generation = UUID()
         let callGeneration = generation
         captureDiagnostics = RealtimeCaptureDiagnostics()
@@ -59,6 +65,20 @@ final class RealtimeCallSession {
         status = "Connecting…"
         error = nil
         replyFailure = nil
+        liveCaptions = []
+        isLive = false
+        do {
+            let kind = try await RealtimeCapability.connectionKind(pairing: pairing)
+            guard isCurrentCall(callGeneration) else { return }
+            guard let kind else { throw RealtimeCallFailure(code: "unavailable", fatal: true, retryable: false) }
+            if kind == .live {
+                await startLive(pairing: pairing, conversationID: conversationID, onReady: onReady, generation: callGeneration)
+                return
+            }
+        } catch {
+            if isCurrentCall(callGeneration) { fail(error) }
+            return
+        }
         let granted = await AVAudioApplication.requestRecordPermission()
         guard acceptMicrophonePermission(granted, callGeneration: callGeneration) else { return }
         do {
@@ -74,29 +94,7 @@ final class RealtimeCallSession {
                 fail(URLError(.timedOut))
             }
             installAudioObservers(callGeneration: callGeneration)
-            receiver = Task { [weak self] in
-                do {
-                    while !Task.isCancelled {
-                        let message = try await socket.receive()
-                        let data: Data
-                        switch message {
-                        case .data(let value): data = value
-                        case .string(let value): data = Data(value.utf8)
-                        @unknown default: continue
-                        }
-                        guard let event = RealtimeProtocol.event(data) else {
-                            throw RealtimeCallFailure(code: "protocol_error", fatal: true, retryable: true)
-                        }
-                        guard self?.isCurrentCall(callGeneration) == true else { return }
-                        try await self?.prepareConversation(event, onReady: onReady)
-                        guard self?.isCurrentCall(callGeneration) == true else { return }
-                        try self?.receive(event)
-                    }
-                } catch {
-                    guard self?.isCurrentCall(callGeneration) == true else { return }
-                    self?.fail(error)
-                }
-            }
+            receiver = receiveMessages(socket: socket, callGeneration: callGeneration, onReady: onReady)
         } catch { fail(error) }
     }
 
@@ -237,6 +235,9 @@ final class RealtimeCallSession {
 
     func toggleMute() {
         muted.toggle()
+        if let liveSession { liveSession.mute(muted)
+            return
+        }
         if muted { send(["type": "input_audio_buffer.clear"]) }
     }
 
@@ -336,6 +337,9 @@ final class RealtimeCallSession {
     #endif
 
     func end() async {
+        if let liveSession { await liveSession.end()
+            return
+        }
         guard socket != nil else { stop()
             return
         }
@@ -359,6 +363,9 @@ final class RealtimeCallSession {
     }
 
     func stop() {
+        let hadLive = liveSession != nil
+        liveSession?.stop()
+        liveSession = nil
         endHandshake.cancel(generation: generation)
         generation = UUID()
         playbackGeneration = UUID()
@@ -378,7 +385,7 @@ final class RealtimeCallSession {
         receiver = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
-        stopAudio()
+        if !hadLive { stopAudio() }
     }
 
     private func stopAudio() {
@@ -395,6 +402,71 @@ final class RealtimeCallSession {
         clientAudioDiagnostics = false
         configurationRestartAttempts = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}
+
+extension RealtimeCallSession {
+    private func startLive(
+        pairing: Pairing, conversationID: String?, onReady: (@MainActor (String) async throws -> Void)?, generation epoch: UUID
+    ) async {
+        #if canImport(WebRTC)
+        isLive = true
+        let session = LiveVoiceSession(
+            api: LiveVoiceAPI(pairing: pairing),
+            media: LiveWebRTCMedia(),
+            permission: { await AVAudioApplication.requestRecordPermission() },
+            publish: { [weak self] state in
+                guard let self, self.generation == epoch else { return }
+                connected = state.connected
+                ending = state.ending
+                error = state.error
+                replyFailure = state.replyFailure
+                status = state.outputLevel > 0.01 ? "Speaking" : state.status
+                userSpeechActive = !muted && state.inputLevel > 0.01
+                liveCaptions = state.captions.displayRuns
+                self.conversationID = state.conversationID ?? self.conversationID
+                if state.error != nil {
+                    self.liveSession?.stop()
+                    self.liveSession = nil
+                }
+            }
+        )
+        liveSession = session
+        await session.start(conversationID: conversationID, onReady: onReady)
+        #else
+        fail(RealtimeCallFailure(code: "unavailable", fatal: true, retryable: false))
+        #endif
+    }
+
+    private func receiveMessages(
+        socket: URLSessionWebSocketTask,
+        callGeneration: UUID,
+        onReady: (@MainActor (String) async throws -> Void)?
+    )
+        -> Task<Void, Never> {
+        Task { [weak self] in
+            do {
+                while !Task.isCancelled {
+                    let message = try await socket.receive()
+                    let data: Data
+                    switch message {
+                    case .data(let value): data = value
+                    case .string(let value): data = Data(value.utf8)
+                    @unknown default: continue
+                    }
+                    guard let event = RealtimeProtocol.event(data) else {
+                        throw RealtimeCallFailure(code: "protocol_error", fatal: true, retryable: true)
+                    }
+                    guard self?.isCurrentCall(callGeneration) == true else { return }
+                    try await self?.prepareConversation(event, onReady: onReady)
+                    guard self?.isCurrentCall(callGeneration) == true else { return }
+                    try self?.receive(event)
+                }
+            } catch {
+                guard self?.isCurrentCall(callGeneration) == true else { return }
+                self?.fail(error)
+            }
+        }
     }
 }
 

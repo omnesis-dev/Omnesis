@@ -972,6 +972,11 @@
       "reason": "reviewed existing fixture"
     },
     {
+      "value": "kma@google.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
       "value": "legal@employer.com",
       "paths": ["packages/collector/src/attachments/helpers.test.ts"],
       "reason": "reviewed existing fixture"
@@ -1308,6 +1313,11 @@
       "reason": "reviewed existing fixture"
     },
     {
+      "value": "olesen@me.QueensU.CA",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
       "value": "other-real-person@gmail.com",
       "paths": ["packages/gateway/src/people.test.ts"],
       "reason": "reviewed existing fixture"
@@ -1346,6 +1356,16 @@
       "value": "phone@icloud.com",
       "paths": ["packages/providers/apple/src/contacts.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "pommier@modartt.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
+      "value": "provos@citi.umich.edu",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "random@spam.com",
@@ -1469,6 +1489,11 @@
       "value": "spam@vendor.com",
       "paths": ["packages/gateway/src/people.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "steveu@coppice.org",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "team.jamesbond@x.com",
@@ -1677,6 +1702,11 @@
       "value": "walk@test.com",
       "paths": ["packages/collector/src/e2e/graph-walk.e2e.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "Wilco.Dijkstra@ntlworld.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "work@co.com",

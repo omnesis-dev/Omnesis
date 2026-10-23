@@ -21,6 +21,13 @@
  * unit-testable without the server.
  */
 
+import {
+  createVoiceSession,
+  voiceTranscriptModelNote,
+  type VoiceAgentSession,
+  type ConversationTurnReceipt,
+} from "./voice-session.js";
+export type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import { createHash } from "node:crypto";
 
 import {
@@ -97,6 +104,8 @@ import {
   restoreConversationControls,
   type ConversationControlState,
   type SubmissionInput,
+  type ConversationSubmission,
+  submissionInputSchema,
 } from "./conversation-controls.js";
 import {
   clipTitle,
@@ -971,6 +980,8 @@ export class AgentService {
   /** Per-caller event listeners (SSE clients). Outer key = callerId. */
   private readonly listeners = new Map<CallerId, Set<AgentEventListener>>();
   private readonly realtimeOwners = new Map<string, symbol>();
+  private readonly voiceOwners = new Map<string, symbol>();
+  private readonly sessionObservers = new Map<string, Set<(event: AgentEvent) => void>>();
   /** Destructive or metadata mutations that must exclude resumes and in-flight turns. */
   private readonly answerDeleteLocks = new Set<string>();
   /** Sessions running the out-of-band Deep Research orchestration loop. */
@@ -1072,19 +1083,8 @@ export class AgentService {
       cancel: (id) => {
         this.cancelSession(this.requireSession(id).callerId, id);
       },
-      start: async (id, submission, submissionIds) => {
-        const entry = this.requireSession(id);
-        this.sendMessage(submission.callerId ?? entry.callerId, id, submission.text, {
-          deepResearch: submission.deepResearch,
-          acceptedSubmission: true,
-          submissionIds,
-        });
-        const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
-        const research = this.deepResearchRuns.get(id);
-        if (research) completions.push(research.completion);
-        await Promise.all(completions);
-        if (entry.meta.lastTurnFailure) throw new Error("The submitted turn failed.");
-      },
+      start: (id, submission, submissionIds) =>
+        this.runSubmittedTurn(id, submission, submissionIds),
     });
     this.backendFactory = deps.backendFactory;
     this.planStore = new PlanStore();
@@ -1284,7 +1284,7 @@ export class AgentService {
       }
       const live = this.sessions.get(opts.resumeFromId);
       if (live) {
-        if (this.realtimeOwners.has(opts.resumeFromId)) {
+        if (this.realtimeOwners.has(opts.resumeFromId) || this.voiceOwners.has(opts.resumeFromId)) {
           if (opts.profile !== undefined && opts.profile !== live.promptProfile)
             throw new AgentError("session_busy", "conversation is in a voice call");
           return this.liveSessionSnapshot(opts.resumeFromId, live);
@@ -1357,6 +1357,7 @@ export class AgentService {
         entry.session.busy ||
         this.deepResearchActive.has(id) ||
         this.realtimeOwners.has(id) ||
+        this.voiceOwners.has(id) ||
         this.controls.active(id)
       )
         continue;
@@ -1660,6 +1661,20 @@ export class AgentService {
    * AgentSession object — both at session create and when a profile swap
    * replaces the underlying session.
    */
+  /** Internal canonical observers follow the conversation across idle profile swaps. */
+  private observeSession(sessionId: string, listener: (event: AgentEvent) => void): () => void {
+    let observers = this.sessionObservers.get(sessionId);
+    if (!observers) {
+      observers = new Set();
+      this.sessionObservers.set(sessionId, observers);
+    }
+    observers.add(listener);
+    return () => {
+      observers.delete(listener);
+      if (observers.size === 0) this.sessionObservers.delete(sessionId);
+    };
+  }
+
   private attachSessionEvents(sessionId: string, session: AgentSession): void {
     session.subscribe((event) => {
       // Replay fixtures emit tool results without invoking the live tool handle.
@@ -1719,6 +1734,13 @@ export class AgentService {
       // and an iOS app on the same conversation couldn't both see the
       // turn — only the most recent resumer did.
       this.emit(wsEvent);
+      for (const observer of this.sessionObservers.get(sessionId) ?? []) {
+        try {
+          observer(event);
+        } catch {
+          log.warn("canonical session observer failed");
+        }
+      }
       // Optional broad WS fan-out for hello-authenticated clients (iOS
       // uses SSE today, but the legacy WS-broadcast hook stays in place
       // for any future device transport that wants it).
@@ -1878,7 +1900,7 @@ export class AgentService {
 
   /** Permanently remove a stored conversation. The Morning brief conversation is permanent. */
   async deleteConversation(id: string): Promise<boolean> {
-    if (this.realtimeOwners.has(id))
+    if (this.realtimeOwners.has(id) || this.voiceOwners.has(id))
       throw new AgentError("session_busy", "conversation is in a voice call");
     if (!this.store) return false;
     if (
@@ -2474,10 +2496,14 @@ export class AgentService {
       deepResearch?: boolean;
       notifyAfterMs?: number;
       acceptedSubmission?: boolean;
+      spokenContext?: string;
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string } {
-    if (this.realtimeOwners.has(sessionId))
+    if (
+      this.realtimeOwners.has(sessionId) ||
+      (this.voiceOwners.has(sessionId) && !opts.acceptedSubmission)
+    )
       throw new AgentError("session_busy", "conversation is in a voice call");
     if (!opts.acceptedSubmission && this.controls.active(sessionId)) {
       throw new AgentError("session_busy", "a queued message is being accepted or started");
@@ -2545,6 +2571,7 @@ export class AgentService {
     }
     const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text, {
       submissionIds: opts.submissionIds,
+      ...(opts.spokenContext ? { modelNote: voiceTranscriptModelNote(opts.spokenContext) } : {}),
     });
     // The streaming command returns immediately; event subscribers receive the
     // terminal error while this catch prevents an unhandled rejection.
@@ -2983,6 +3010,7 @@ export class AgentService {
       signal?: AbortSignal;
       /** Spend bucket for this turn; defaults to ordinary interactive chat. */
       spendMechanism?: string;
+      modelNote?: string;
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
@@ -2997,6 +3025,7 @@ export class AgentService {
       recordSpend?: boolean;
       signal?: AbortSignal;
       spendMechanism?: string;
+      modelNote?: string;
       backend?: ChatBackend;
       owner?: symbol;
       submissionIds?: string[];
@@ -3057,9 +3086,10 @@ export class AgentService {
     let started: ReturnType<AgentSession["send"]>;
     try {
       // A hint only: a failure to name pages must never fail the user's send.
-      let modelNote = "";
+      let modelNote = opts.modelNote ?? "";
       try {
-        modelNote = this.namedPagesNote?.(text) ?? "";
+        const namedNote = this.namedPagesNote?.(text) ?? "";
+        if (namedNote) modelNote = [modelNote, namedNote].filter(Boolean).join("\n\n");
       } catch (err) {
         log.warn(
           `named pages note failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -3498,6 +3528,120 @@ export class AgentService {
     }
   }
 
+  /** Lease configured-agent conversation work; media detach never cancels accepted submissions. */
+  async openVoiceSession(
+    callerId: CallerId,
+    options: { conversationId?: string; timeZone?: string; authorized?: () => boolean } = {},
+  ): Promise<VoiceAgentSession> {
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+    const { sessionId, entry, owner } = await this.withResumeGate(
+      options.conversationId ?? "__voice_create__",
+      async () => {
+        if (options.authorized?.() === false)
+          throw new AgentError("forbidden", "voice authority was revoked");
+        const created = await this.createSessionUnlocked(callerId, {
+          profile: "interactive",
+          caller: { kind: "operator" },
+          timeZone: options.timeZone,
+          ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
+        });
+        const sessionId = created.sessionId;
+        const entry = this.requireSession(sessionId);
+        if (options.authorized?.() === false)
+          throw new AgentError("forbidden", "voice authority was revoked");
+        if (
+          this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId) ||
+          this.answerDeleteLocks.has(sessionId)
+        )
+          throw new AgentError("session_busy", "conversation is already in a voice call");
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const owner = Symbol("configured-voice");
+        this.voiceOwners.set(sessionId, owner);
+        this.touch(sessionId);
+        return { sessionId, entry, owner };
+      },
+    );
+    const attached = () => !this.disposing && this.voiceOwners.get(sessionId) === owner;
+    const active = () => attached() && options.authorized?.() !== false;
+    return createVoiceSession({
+      sessionId,
+      model: entry.session.model,
+      backend: entry.session.backendName,
+      history: () => entry.session.historySnapshot(),
+      visibleHistory: () =>
+        paginateVisibleConversationMessages(
+          entry.session.historySnapshot(),
+          entry.meta.origin,
+          Number.MAX_SAFE_INTEGER,
+        ).messages,
+      active,
+      attached,
+      closedError: () => new AgentError("session_busy", "voice call ended"),
+      subscribe: (listener) => this.observeSession(sessionId, listener),
+      accept: async (input, admit, accepted) => {
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const submission = submissionInputSchema.parse({ ...input, mode: "queue" });
+        await this.controls.submit(sessionId, submission, callerId, {
+          admit,
+          accepted,
+          answerPendingClarification: true,
+        });
+        this.touch(sessionId);
+      },
+      wait: (id) => this.controls.waitForResult(sessionId, id),
+      cancel: (ids) => this.controls.cancelSubmitted(sessionId, ids),
+      release: () => {
+        if (this.voiceOwners.get(sessionId) !== owner) return;
+        this.voiceOwners.delete(sessionId);
+        this.controls.kick(sessionId);
+      },
+    });
+  }
+
+  private async runSubmittedTurn(
+    id: string,
+    submission: ConversationSubmission,
+    submissionIds: string[],
+  ): Promise<ConversationTurnReceipt | void> {
+    const entry = this.requireSession(id);
+    const historyStart = entry.session.historySnapshot().length;
+    let messageId: string | undefined;
+    let terminal: AgentMessageEndEvent | undefined;
+    const unsubscribe = this.observeSession(id, (event) => {
+      if (event.type === "agent.message.end" && event.payload.messageId === messageId)
+        terminal = event.payload;
+    });
+    try {
+      const started = this.sendMessage(submission.callerId ?? entry.callerId, id, submission.text, {
+        deepResearch: submission.deepResearch,
+        spokenContext: submission.spokenContext,
+        acceptedSubmission: true,
+        submissionIds,
+      });
+      messageId = started.messageId;
+      const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
+      const research = this.deepResearchRuns.get(id);
+      if (research) completions.push(research.completion);
+      await Promise.all(completions);
+      if (!terminal) {
+        if (entry.meta.lastTurnFailure) throw new Error("The submitted turn failed.");
+        return;
+      }
+      return {
+        messageId,
+        historyStart,
+        historyEnd: entry.session.historySnapshot().length,
+        stopReason: terminal.stopReason,
+        ...(terminal.failure ? { failure: terminal.failure } : {}),
+      };
+    } finally {
+      unsubscribe();
+    }
+  }
+
   /** Lease the ordinary interactive session for a transport-owned model backend. */
   async openRealtimeSession(
     callerId: CallerId,
@@ -3534,6 +3678,7 @@ export class AgentService {
           entry.session.busy ||
           this.deepResearchActive.has(sessionId) ||
           this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId) ||
           this.controls.active(sessionId) ||
           this.activeTurnCompletions.has(sessionId) ||
           entry.meta.controls?.submissions.some((submission) => submission.status === "queued")
@@ -4021,6 +4166,7 @@ export class AgentService {
       entry.session.busy ||
       this.deepResearchActive.has(sessionId) ||
       this.realtimeOwners.has(sessionId) ||
+      this.voiceOwners.has(sessionId) ||
       this.controls.active(sessionId)
     ) {
       // The caller may be the original idle-timer firing (in which case
@@ -4059,6 +4205,7 @@ export class AgentService {
    */
   async dispose(): Promise<void> {
     this.disposing = true;
+    this.voiceOwners.clear();
     // Cancel every live child sub-agent first so a long child turn
     // doesn't keep the loop alive past SIGTERM.
     for (const [, set] of this.childSessions) {
@@ -4108,7 +4255,9 @@ export class AgentService {
       ]);
     }
     if (this.controls.hasWork) await this.controls.settle();
+    this.controls.rejectWaitingResults();
     this.sessions.clear();
+    this.sessionObservers.clear();
     this.deepResearchRuns.clear();
     this.deepResearchAborts.clear();
     this.deepResearchActive.clear();
