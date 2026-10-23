@@ -9,12 +9,21 @@ import Foundation
 /// disabled: this fixture sends only scripted data-channel events, no inference.
 @MainActor
 final class LiveWebRTCLoopback: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
-    private let factory = RTCPeerConnectionFactory()
+    private let factory: RTCPeerConnectionFactory
     private var peer: RTCPeerConnection?
     private var channel: RTCDataChannel?
     private var gathering: CheckedContinuation<String, Error>?
     private var deadline: Task<Void, Never>?
     private var sent = false
+
+    init(silentAudioDevice: Bool = false) {
+        if silentAudioDevice {
+            factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil, audioDevice: LiveWebRTCSilentAudioDevice())
+        } else {
+            factory = RTCPeerConnectionFactory()
+        }
+        super.init()
+    }
 
     func answer(offer: String) async throws -> String {
         let configuration = RTCConfiguration()
@@ -105,5 +114,63 @@ final class LiveWebRTCLoopback: NSObject, RTCPeerConnectionDelegate, RTCDataChan
     }
 
     nonisolated func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {}
+}
+
+/// The remote test peer consumes signaling without opening a second hardware
+/// audio unit. The production peer alone owns the real microphone under test.
+private final class LiveWebRTCSilentAudioDevice: NSObject, RTCAudioDevice {
+    var deviceInputSampleRate = 48000.0
+    var deviceOutputSampleRate = 48000.0
+    var inputIOBufferDuration = 0.01
+    var outputIOBufferDuration = 0.01
+    var inputNumberOfChannels = 1
+    var outputNumberOfChannels = 1
+    var inputLatency = 0.0
+    var outputLatency = 0.0
+    var isInitialized = false
+    var isPlayoutInitialized = false
+    var isRecordingInitialized = false
+    var isPlaying = false
+    var isRecording = false
+
+    func initialize(with delegate: RTCAudioDeviceDelegate) -> Bool {
+        isInitialized = true
+        return true
+    }
+
+    func terminateDevice() -> Bool {
+        isInitialized = false
+        return true
+    }
+
+    func initializePlayout() -> Bool {
+        isPlayoutInitialized = true
+        return true
+    }
+
+    func initializeRecording() -> Bool {
+        isRecordingInitialized = true
+        return true
+    }
+
+    func startPlayout() -> Bool {
+        isPlaying = true
+        return true
+    }
+
+    func stopPlayout() -> Bool {
+        isPlaying = false
+        return true
+    }
+
+    func startRecording() -> Bool {
+        isRecording = true
+        return true
+    }
+
+    func stopRecording() -> Bool {
+        isRecording = false
+        return true
+    }
 }
 #endif

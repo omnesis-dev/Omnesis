@@ -54,6 +54,24 @@ private final class LiveMediaFixture: LiveVoiceMedia {
     var enabled: [Bool] = []
     var closed = false
     var microphoneFailure: Error?
+    var holdCapture = false
+    var onCaptureRequested: (() -> Void)?
+    private var capture: CheckedContinuation<Void, Error>?
+
+    func startMicrophone() async throws {
+        enableMicrophone(true)
+        onCaptureRequested?()
+        if holdCapture {
+            try await withCheckedThrowingContinuation { capture = $0 }
+        }
+    }
+
+    func completeCapture(_ result: Result<Void, Error> = .success(())) {
+        let continuation = capture
+        capture = nil
+        continuation?.resume(with: result)
+    }
+
     func offer() async throws -> String {
         "offer"
     }
@@ -70,6 +88,7 @@ private final class LiveMediaFixture: LiveVoiceMedia {
 
     func close() {
         closed = true
+        completeCapture(.failure(CancellationError()))
     }
 
     func event(_ event: [String: Any]) {
@@ -428,5 +447,82 @@ final class LiveVoiceTests: XCTestCase {
         )
         XCTAssertEqual(call.model, "configured-model")
         XCTAssertEqual(call.backend, "configured-backend")
+    }
+}
+
+extension LiveVoiceTests {
+    func testListeningWaitsForCapturedAudioRatherThanEnableRequest() async {
+        let http = LiveVoiceHTTPFixture()
+        let media = LiveMediaFixture()
+        media.holdCapture = true
+        let requested = expectation(description: "microphone activation requested")
+        media.onCaptureRequested = { requested.fulfill() }
+        var state = LiveVoiceSession.State()
+        let session = LiveVoiceSession(
+            api: LiveVoiceAPI(pairing: pairing, session: http, statusStream: { _ in
+                AsyncThrowingStream { $0.yield(LiveVoiceStatus(status: "connected", failure: nil)) }
+            }),
+            media: media,
+            permission: { true },
+            publish: { state = $0 }
+        )
+        let task = Task { await session.start(conversationID: nil, onReady: nil) }
+        await fulfillment(of: [requested], timeout: 2)
+        XCTAssertEqual(state.status, "Starting microphone…")
+        XCTAssertFalse(state.connected)
+        XCTAssertNil(state.error)
+        let requests = await http.requests
+        XCTAssertTrue(requests.contains { $0.url?.path.hasSuffix("/ready") == true })
+        media.completeCapture()
+        await task.value
+        XCTAssertTrue(state.connected)
+        XCTAssertEqual(state.status, "Listening")
+        session.stop()
+    }
+
+    func testPendingCaptureFailureOrCancellationNeverPublishesListening() async {
+        for cancel in [true, false] {
+            let http = LiveVoiceHTTPFixture()
+            let media = LiveMediaFixture()
+            media.holdCapture = true
+            let requested = expectation(description: "capture confirmation pending")
+            media.onCaptureRequested = { requested.fulfill() }
+            var states: [LiveVoiceSession.State] = []
+            let session = LiveVoiceSession(
+                api: LiveVoiceAPI(pairing: pairing, session: http, statusStream: { _ in
+                    AsyncThrowingStream { $0.yield(LiveVoiceStatus(status: "connected", failure: nil)) }
+                }),
+                media: media,
+                permission: { true },
+                publish: { states.append($0) }
+            )
+            let task = Task { await session.start(conversationID: nil, onReady: nil) }
+            await fulfillment(of: [requested], timeout: 2)
+            if cancel {
+                session.stop()
+            } else {
+                media.completeCapture(.failure(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true)))
+            }
+            await task.value
+            XCTAssertFalse(states.contains { $0.connected || $0.status == "Listening" })
+            XCTAssertTrue(media.closed)
+            if !cancel { XCTAssertEqual(states.last?.error?.code, "microphone_failed") }
+            media.completeCapture()
+            XCTAssertFalse(states.contains { $0.connected })
+        }
+    }
+
+    func testCaptureReadinessAcceptsSilenceButRequiresActualFiniteProgress() {
+        var progress = LiveMicrophoneProgress()
+        XCTAssertFalse(progress.observe(duration: 0))
+        XCTAssertFalse(progress.observe(duration: 0))
+        XCTAssertFalse(progress.observe(duration: .nan))
+        XCTAssertFalse(progress.observe(duration: .infinity))
+        XCTAssertFalse(progress.observe(duration: -1))
+        XCTAssertTrue(progress.observe(duration: 0.01))
+        XCTAssertFalse(progress.observe(duration: 0.01))
+        XCTAssertTrue(progress.observe(duration: 0.02))
+        var freshCall = LiveMicrophoneProgress()
+        XCTAssertFalse(freshCall.observe(duration: 0.02))
     }
 }

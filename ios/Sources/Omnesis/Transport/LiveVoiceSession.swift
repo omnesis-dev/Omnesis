@@ -88,7 +88,10 @@ final class LiveVoiceSession {
             try check(epoch)
             try await api.ready(id: created.id)
             try check(epoch)
-            media.enableMicrophone(true)
+            state.status = "Starting microphone…"
+            publish(state)
+            try await media.startMicrophone()
+            try check(epoch)
             guard failureTask == nil else {
                 await failureTask?.value
                 return

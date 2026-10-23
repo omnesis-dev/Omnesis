@@ -29,6 +29,7 @@ final class RealtimeCallSession {
     @ObservationIgnored private var captureMixer: AVAudioMixerNode?
     @ObservationIgnored private var captureTapInstalled = false
     @ObservationIgnored private var captureReadiness = RealtimeCaptureReadiness()
+    @ObservationIgnored private var audioSessionLease = AudioSessionLease()
     @ObservationIgnored private let log = AppLog.make(category: "agent.realtime")
     @ObservationIgnored private var timeout: Task<Void, Never>?
     @ObservationIgnored private var assistantTranscriptStarted = false
@@ -401,7 +402,9 @@ final class RealtimeCallSession {
         captureInputFormat = nil
         clientAudioDiagnostics = false
         configurationRestartAttempts = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if audioSessionLease.release() {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }
 
@@ -484,6 +487,7 @@ extension RealtimeCallSession {
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         logSetupStage("activating audio session")
         try session.setActive(true)
+        audioSessionLease.begin()
         logSetupStage("creating audio engine")
         let engine = AVAudioEngine()
         self.engine = engine
