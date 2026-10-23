@@ -152,35 +152,41 @@ final class LiveVoiceTests: XCTestCase {
     }
 
     func testGatewayFailureStopsHealthyPeerAndPreservesActionableCause() async {
-        let http = LiveVoiceHTTPFixture()
-        let media = LiveMediaFixture()
-        let stream = AsyncThrowingStream<LiveVoiceStatus, Error>.makeStream()
-        let failed = expectation(description: "gateway lifecycle failure delivered")
-        var state = LiveVoiceSession.State()
-        let session = LiveVoiceSession(
-            api: LiveVoiceAPI(pairing: pairing, session: http, statusStream: { _ in stream.stream }),
-            media: media,
-            permission: { true },
-            publish: {
-                state = $0
-                if $0.error != nil { failed.fulfill() }
+        for statusFailure in [true, false] {
+            let http = LiveVoiceHTTPFixture()
+            let media = LiveMediaFixture()
+            let stream = AsyncThrowingStream<LiveVoiceStatus, Error>.makeStream()
+            let failed = expectation(description: "gateway lifecycle failure delivered")
+            var state = LiveVoiceSession.State()
+            let session = LiveVoiceSession(
+                api: LiveVoiceAPI(pairing: pairing, session: http, statusStream: { _ in stream.stream }),
+                media: media,
+                permission: { true },
+                publish: {
+                    state = $0
+                    if $0.error != nil { failed.fulfill() }
+                }
+            )
+            stream.continuation.yield(LiveVoiceStatus(status: "connected", failure: nil))
+            await session.start(conversationID: nil, onReady: nil)
+            XCTAssertTrue(state.connected)
+            if statusFailure {
+                stream.continuation.yield(LiveVoiceStatus(
+                    status: "failed",
+                    failure: LiveVoiceFailure(code: "pairing_rejected", retryable: false)
+                ))
+            } else {
+                stream.continuation.finish(throwing: RealtimeCallFailure(code: "pairing_rejected", fatal: true, retryable: false))
             }
-        )
-        stream.continuation.yield(LiveVoiceStatus(status: "connected", failure: nil))
-        await session.start(conversationID: nil, onReady: nil)
-        XCTAssertTrue(state.connected)
-        stream.continuation.yield(LiveVoiceStatus(
-            status: "failed",
-            failure: LiveVoiceFailure(code: "pairing_rejected", retryable: false)
-        ))
-        await fulfillment(of: [failed], timeout: 2)
-        XCTAssertFalse(state.connected)
-        XCTAssertEqual(state.error?.code, "pairing_rejected")
-        let requests = await http.requests
-        XCTAssertFalse(requests.contains { $0.httpMethod == "GET" })
-        XCTAssertTrue(media.closed)
-        session.stop()
-        stream.continuation.finish()
+            await fulfillment(of: [failed], timeout: 2)
+            XCTAssertFalse(state.connected)
+            XCTAssertEqual(state.error?.code, "pairing_rejected")
+            let requests = await http.requests
+            XCTAssertFalse(requests.contains { $0.httpMethod == "GET" })
+            XCTAssertTrue(media.closed)
+            session.stop()
+            stream.continuation.finish()
+        }
     }
 
     func testNonfatalGatewayReplyFailureKeepsCallAndClearsOnNextStatus() async throws {

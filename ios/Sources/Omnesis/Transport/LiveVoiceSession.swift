@@ -130,6 +130,10 @@ final class LiveVoiceSession {
                     throw URLError(.networkConnectionLost)
                 } catch {
                     guard generation == epoch, !Task.isCancelled else { return }
+                    if let failure = error as? RealtimeCallFailure {
+                        terminate(failure)
+                        return
+                    }
                     // A fresh snapshot closes the race between a stream drop and
                     // gateway revocation; no repeated status polling is used.
                     if let current = try? await api.status(id: id) {
@@ -142,7 +146,7 @@ final class LiveVoiceSession {
                             return
                         }
                     }
-                    if error is RealtimeCallFailure || attempt == 2 {
+                    if attempt == 2 {
                         terminate(RealtimeCallFailure.local(error))
                         return
                     }
