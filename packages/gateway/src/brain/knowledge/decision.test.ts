@@ -66,6 +66,9 @@ describe("knowledge decision scores", () => {
         );
         expect(question.instructions).toContain("an unusual, declined or disputed transaction");
         expect(question.instructions).toContain(
+          "a charge whose amount, payee or frequency differs",
+        );
+        expect(question.instructions).toContain(
           "Apart from such routine status notifications, where evidence supplies a concrete personal",
         );
         if (question.type !== "score") throw new Error("discovery is a score question");
