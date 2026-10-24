@@ -587,7 +587,11 @@ the configured chronological order within each source. A prolific source can use
 capacity left by exhausted sources. Admitted history is due immediately at routine
 priority on both fresh and upgraded databases; the routine edit-coalescing delay
 does not postpone an explicitly authorized first pass. A bounded historical slot
-keeps continuous live arrivals from starving authorized backfill.
+keeps continuous live arrivals from starving authorized backfill. A source whose
+historical or recent-inventory scan finds nothing left to admit rests for thirty
+minutes before that lane scans it again, so an idle engine does not reread every
+covered document on each tick; a later page of the source's initial inventory, or
+a changed horizon, recent window or exclusion list, ends the rest at once.
 
 Initial collector enumerations carry a durable inventory identity through the
 generic cursor-page protocol. Partial pages and collector restarts keep that
