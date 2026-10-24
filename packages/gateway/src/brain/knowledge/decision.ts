@@ -58,6 +58,28 @@ const questions: Record<KnowledgeDecisionPurpose, Extract<DecisionQuestion, { ty
     ],
   },
 };
+/** The rubric version a new verdict for this purpose is recorded under. */
+export function knowledgeRubricVersion(purpose: KnowledgeDecisionPurpose): string {
+  return RUBRIC_VERSIONS[purpose];
+}
+/** Verdicts below this normalized score settle a source without interpreting or organizing it. */
+export const DISCOVERY_WORTH_THRESHOLD = 0.25;
+/** The discovery question's complete state for one source. */
+export function discoveryDecisionState(source: {
+  title: string;
+  content: string;
+  sourceCreatedAt: unknown;
+  sourceUpdatedAt: unknown;
+}): Record<string, unknown> {
+  return {
+    source: {
+      title: source.title,
+      content: source.content,
+      sourceCreatedAt: source.sourceCreatedAt,
+      sourceUpdatedAt: source.sourceUpdatedAt,
+    },
+  };
+}
 /** Application payload budget, not an advertised provider context capacity. */
 export const DISCOVERY_INPUT_MAX_BYTES = 128 * 1024;
 export interface KnowledgeDecisionBypass {

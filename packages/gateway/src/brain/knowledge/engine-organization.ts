@@ -15,6 +15,7 @@ import {
   MaintenancePlanLimitError,
   type MaintenanceArc,
 } from "./planner.js";
+import { lowWorthOrganizationSources, type OrganizationWorthSource } from "./organization-worth.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeFrontierInput } from "./work.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
@@ -25,6 +26,7 @@ interface OrganizationContext {
   frontier: (id: string, depth: number) => KnowledgeFrontierInput | null;
   arcs: (id: string) => MaintenanceArc[];
   roots: () => Set<string>;
+  source: (id: string) => OrganizationWorthSource | null;
 }
 /** Why a selected cohort did not start. */
 export type OrganizationDropReason =
@@ -97,7 +99,9 @@ export class KnowledgeOrganization {
     });
     if (tally.evaluated && !selection?.subjectLoopId) this.reportSubjects(tally, now, cfg);
     if (!selection) return 0;
-    const fitted = this.fit(selection, now, cfg);
+    const screened = await this.screenWorth(selection, now);
+    if (!screened) return "dropped";
+    const fitted = this.fit(screened, now, cfg);
     if (typeof fitted === "string") return this.drop(selection, fitted, now, cfg);
     const chosen = fitted.selection;
     try {
@@ -126,6 +130,36 @@ export class KnowledgeOrganization {
       `Organization cohort started: ${describe(chosen)}, ${count} source(s)${fitted.shed ? `, ${fitted.shed} shed` : ""}`,
     );
     return 1;
+  }
+
+  /**
+   * Withdraws members whose current discovery worth is low from organization
+   * (their organization coverage becomes `gated`), so evidence admitted under
+   * an older rubric cannot feed a page that the current rubric would never
+   * have woken. Returns the narrowed selection, or null when fewer than two
+   * members remain; the gated members are not selected again, so the next
+   * attempt selects afresh. A publication retry re-publishes an earlier
+   * outcome and is not screened.
+   */
+  private async screenWorth(
+    selection: OrganizationCohortSelection,
+    now: number,
+  ): Promise<OrganizationCohortSelection | null> {
+    if (selection.publicationRetry) return selection;
+    const { deps } = this.context;
+    const low = await lowWorthOrganizationSources(
+      deps,
+      selection.sourceVersions,
+      this.context.source,
+    );
+    const withdrawn = Object.keys(low).length;
+    if (!withdrawn) return selection;
+    await deps.writeGate["knowledge.gateOrganizationSources"]({ sourceVersions: low }, now);
+    const kept = Object.keys(selection.sourceVersions).filter((id) => !(id in low));
+    deps.log.info(
+      `Organization cohort screened: ${describe(selection)}, ${withdrawn} of ${withdrawn + kept.length} source(s) withdrawn as low worth`,
+    );
+    return kept.length >= 2 ? narrowOrganizationSelection(selection, kept) : null;
   }
 
   /**

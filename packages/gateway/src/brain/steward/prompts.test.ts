@@ -15,7 +15,7 @@ import { createObservation } from "../storage/observations.js";
 import { replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { resolveBrainSettings } from "../config.js";
 import { cognitionSpendDay } from "../storage/spend.js";
-import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
+import { WIKI_AUTHORING_GUIDANCE, WIKI_LOG_CURATION_TASK } from "../knowledge/wiki-authoring.js";
 import {
   insertTemporalAnnotation,
   markTemporalAnnotationsRefilePresented,
@@ -1706,6 +1706,9 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain(
       "Name an existing page as a target only when this source changes what the page should state",
     );
+    expect(prompt).toContain(
+      "Members that only repeat routine outcomes an existing page already records settle as no_page or already_organized",
+    );
     expect(prompt).toContain("update that page's statement of the current state in place");
   });
 
@@ -2918,5 +2921,17 @@ test("wiki guidance keeps status streams out of dated sections and names pages f
   expect(WIKI_AUTHORING_GUIDANCE).toContain("Give node.title a short name for the page's subject");
   expect(WIKI_AUTHORING_GUIDANCE).toContain(
     "A document's subject line, an issue or ticket title, or a notification headline names that document, not the subject",
+  );
+});
+
+test("a log-shaped page's review steers a notification record to retirement", () => {
+  expect(WIKI_LOG_CURATION_TASK).toContain("retire it with knowledge_retire and a reason");
+  expect(WIKI_LOG_CURATION_TASK).toContain("One save may remove at most half of the page's claims");
+  expect(WIKI_LOG_CURATION_TASK).toContain("queues the next review");
+  expect(WIKI_LOG_CURATION_TASK).toContain(
+    "does not expand the offered claim or mutation authority",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "retire it with knowledge_retire when it only records routine notifications",
   );
 });

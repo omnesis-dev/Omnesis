@@ -884,3 +884,26 @@ export function readOrganizationCohortSummary(db: Database.Database): Array<{
     )
     .all();
 }
+
+/**
+ * Withdraw already-interpreted sources from organization once their current
+ * worth verdict is low. Only their organization coverage changes, to `gated`,
+ * so no chronological or subject cohort selects them again at this revision;
+ * their interpretation and anything already built on them stay as they are.
+ */
+export function gateOrganizationSources(
+  db: Database.Database,
+  input: { sourceVersions: Record<string, string> },
+  now: number,
+): number {
+  const update = db.prepare(
+    `UPDATE knowledge_discovery_coverage SET status='gated',reviewed_at=?
+    WHERE subject_id=? AND input_revision=? AND phase='organization' AND policy_version=? AND status='considered'`,
+  );
+  return db.transaction(() => {
+    let changed = 0;
+    for (const [id, revision] of Object.entries(input.sourceVersions))
+      changed += update.run(now, id, revision, KNOWLEDGE_DISCOVERY_POLICY).changes;
+    return changed;
+  })();
+}

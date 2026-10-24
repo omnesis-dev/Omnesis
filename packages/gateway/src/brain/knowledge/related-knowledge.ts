@@ -520,16 +520,17 @@ export function pageReviewQueue(
  * Queues one immediate whole-page review of a page for a reason that holds
  * until the page itself is reconsidered, such as a page shaped as a log. The
  * request is recorded on the page (`reviewRequests[reason]`), so later passes
- * over the same page do not queue it again. Resolves to whether it queued.
+ * over the same page do not queue it again. `again` queues it even so, for
+ * a caller that tracks progress itself. Resolves to whether it queued.
  */
 export function oneTimePageReview(
   service: KnowledgeService,
   reason: string,
   workId: () => string = () => `kw_${randomUUID()}`,
-): (pageId: string) => Promise<boolean> {
-  return async (pageId) => {
+): (pageId: string, options?: { again?: boolean }) => Promise<boolean> {
+  return async (pageId, options) => {
     const page = getKnowledgeNode(service.deps.db, pageId);
-    if (!page || page.metadata.reviewRequests?.[reason] != null) return false;
+    if (!page || (!options?.again && page.metadata.reviewRequests?.[reason] != null)) return false;
     const now = service.deps.clock();
     try {
       await service.deps.writeGate["knowledge.scheduleReview"](

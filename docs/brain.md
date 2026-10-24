@@ -244,6 +244,21 @@ interpreted as before. A run that does interpret a source names an existing
 page as a discovery target only when the source changes what the page should
 state, because a target makes the whole page due for maintenance.
 
+Organization cohorts regroup evidence that was interpreted earlier, often
+under an older version of that rubric. Before a chronological or subject cohort
+starts, each member without a `discovery` verdict under the current rubric (for
+its current content) is judged once through the same gate, and the verdict is
+recorded in the decision ledger like any other; a recorded current verdict is
+reused. A member judged low is withdrawn from organization: its organization
+coverage turns `gated`, so no cohort selects it again at that revision, while
+its interpretation and anything built on it stay as they are. The pass logs one
+content-free line, `Organization cohort screened: <kind>, N of M source(s)
+withdrawn as low worth`, and starts the cohort with the remaining members, or
+none when fewer than two remain. Without a decision model, or once the budget is
+spent, members are kept. A publication retry is not screened. The organization
+guidance settles members that only repeat what a page already records without
+naming that page as a target, since saving it unchanged still spends a revision.
+
 Two save-time checks hold this deterministically, before any paid check, on
 both `knowledge_save` and `knowledge_edit`:
 
@@ -266,7 +281,14 @@ the first time a maintenance pass or a save touches it. The request is recorded
 on the page (`metadata.reviewRequests.chronological_log`), so no later pass
 queues it again, and logs one content-free line, `Wiki <id> queued for review:
 …`. That review can consolidate the dated sections into the subject's current
-state, or retire the page with `knowledge_retire`.
+state, or retire the page with `knowledge_retire`. Its curation task for such a
+page steers a record of routine notifications with no durable state beyond them
+to retirement with a reason. Otherwise it asks for a short account of the
+subject's current state built over several saves, since one save may remove at
+most half of a page's claims: a review save that leaves the page a log with
+fewer date-named sections queues the next review, so consolidation continues
+until the page no longer reads as a log, and ends because that number falls
+each time.
 
 ## Excluded sources
 

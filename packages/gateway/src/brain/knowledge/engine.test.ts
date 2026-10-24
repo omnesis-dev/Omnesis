@@ -81,6 +81,7 @@ beforeEach(() => {
   createTemporalAnnotationTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
+  createKnowledgeDecisionTable(db);
   now = Date.parse("2027-01-11T08:00:00Z");
   serial = 0;
   score = 0.9;

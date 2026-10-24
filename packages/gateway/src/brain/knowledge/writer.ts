@@ -17,6 +17,7 @@ import {
   abandonOrganizationBatch,
 } from "./organization-writer.js";
 import { admitKnowledgeOrganization } from "./organization.js";
+import { gateOrganizationSources } from "./organization-cohorts.js";
 import {
   refreshKnowledgeWork,
   recordKnowledgeDiscoveryTargets,
@@ -105,6 +106,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.startOrganization": startOrganizationBatch,
   "knowledge.completeOrganization": completeOrganizationBatch,
   "knowledge.admitOrganization": admitKnowledgeOrganization,
+  "knowledge.gateOrganizationSources": gateOrganizationSources,
   "knowledge.queueProjectionCleanup": queueKnowledgeProjectionCleanup,
   "knowledge.ackProjectionCleanup": ackKnowledgeProjectionCleanup,
   "knowledge.refreshWork": refreshKnowledgeWork,
@@ -160,6 +162,8 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.startOrganization": (...args) => call("knowledge.startOrganization", args),
     "knowledge.completeOrganization": (...args) => call("knowledge.completeOrganization", args),
     "knowledge.admitOrganization": (...args) => call("knowledge.admitOrganization", args),
+    "knowledge.gateOrganizationSources": (...args) =>
+      call("knowledge.gateOrganizationSources", args),
     "knowledge.queueProjectionCleanup": (...args) => call("knowledge.queueProjectionCleanup", args),
     "knowledge.ackProjectionCleanup": (...args) => call("knowledge.ackProjectionCleanup", args),
     "knowledge.refreshWork": (...args) => call("knowledge.refreshWork", args),
@@ -209,6 +213,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.startOrganization": async (...args) => startOrganizationBatch(db, ...args),
     "knowledge.completeOrganization": async (...args) => completeOrganizationBatch(db, ...args),
     "knowledge.admitOrganization": async (...args) => admitKnowledgeOrganization(db, ...args),
+    "knowledge.gateOrganizationSources": async (...args) => gateOrganizationSources(db, ...args),
     "knowledge.queueProjectionCleanup": async (...args) =>
       queueKnowledgeProjectionCleanup(db, ...args),
     "knowledge.ackProjectionCleanup": async (...args) => ackKnowledgeProjectionCleanup(db, ...args),

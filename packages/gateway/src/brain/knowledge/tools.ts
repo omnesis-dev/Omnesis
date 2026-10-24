@@ -54,6 +54,7 @@ import {
   chronologicalLogRefusal,
   CHRONOLOGICAL_LOG_REVIEW,
   isChronologicalLog,
+  wikiSectionShape,
 } from "./wiki-page-shape.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { ToolResult } from "@omnesis/core";
@@ -406,8 +407,8 @@ export function buildKnowledgeTools(
   const wikiValue = new WikiValueCheck(service, context.checkRecord);
   const queueLogReview = oneTimePageReview(service, CHRONOLOGICAL_LOG_REVIEW);
   /** Request the one consolidation review a log-shaped page gets, logging when it is queued. */
-  const requestLogReview = async (pageId: string, detail: string) => {
-    if (await queueLogReview(pageId))
+  const requestLogReview = async (pageId: string, detail: string, again = false) => {
+    if (await queueLogReview(pageId, { again }))
       wikiWrites.info(`Wiki ${pageId} queued for review: ${detail}`);
   };
   const relatedKnowledge = new RelatedKnowledgeCheck(
@@ -530,6 +531,8 @@ export function buildKnowledgeTools(
         inputFingerprint ?? "",
       );
     assertKnowledgeSavePreflight(service.deps.db, node, fence);
+    /** Date-named sections of the page this save replaces, when that page reads as a log. */
+    let replacedLogSections: number | null = null;
     // Claim removals and page-shape refusals come before any paid check, not after it.
     if (node.kind === "wiki" || node.kind === "root") {
       const parsed = parseClaimMarkup(node.markdown);
@@ -543,8 +546,10 @@ export function buildKnowledgeTools(
         const previous =
           node.expectedRevision > 0 ? getKnowledgeNode(service.deps.db, node.id) : null;
         // A page already shaped as a log needs whole-page curation, whatever this save does.
-        if (previous && isChronologicalLog(previous.plainText))
+        if (previous && isChronologicalLog(previous.plainText)) {
+          replacedLogSections = wikiSectionShape(previous.plainText).dated.length;
           await requestLogReview(node.id, "most of its sections are named by dates");
+        }
         assertSubjectTitle(service.deps.db, node, parsed, previous?.title ?? null);
         const growth = chronologicalLogGrowth(previous?.plainText ?? null, parsed.text);
         if (growth) {
@@ -633,6 +638,18 @@ export function buildKnowledgeTools(
             outcomeFence,
           );
     if (node.kind === "wiki") relatedKnowledge.noteSaved(result.node.id);
+    // Removing claims is bounded per save, so consolidating a long log takes
+    // several reviews. A save that shortened the log but left it one queues
+    // the next; the number of date-named sections falls each time, so this ends.
+    if (replacedLogSections !== null && isChronologicalLog(result.node.plainText)) {
+      const remaining = wikiSectionShape(result.node.plainText).dated.length;
+      if (remaining < replacedLogSections)
+        await requestLogReview(
+          result.node.id,
+          `consolidation continues, ${remaining} date-named sections remain`,
+          true,
+        );
+    }
     const accepted =
       reconciliation && fence && node.kind === "wiki"
         ? reconciliation.acceptNode(reconciliation.accept(result, fence))

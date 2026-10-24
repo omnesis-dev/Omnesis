@@ -74,6 +74,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.retireBeyondHorizon", priority: "background" },
   { name: "knowledge.retireExcludedSources", priority: "background" },
   { name: "knowledge.admitOrganization", priority: "background" },
+  { name: "knowledge.gateOrganizationSources", priority: "background" },
   { name: "knowledge.reconsiderRetrieval", priority: "background" },
   { name: "knowledge.adoptWork", priority: "background" },
   { name: "knowledge.promoteBlockingBatches", priority: "background" },
