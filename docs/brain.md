@@ -278,7 +278,7 @@ No existing page is rewritten or retired from code. A page that already reads
 as a log (at least four date-named sections, most of its sections), or that a
 refused save would have turned into one, gets one immediate whole-page review,
 the first time a maintenance pass or a save touches it. The request is recorded
-on the page (`metadata.reviewRequests.chronological_log`), so no later pass
+on the page (`metadata.reviewRequests.log_curation`), so no later pass
 queues it again, and logs one content-free line, `Wiki <id> queued for review:
 …`. That review can consolidate the dated sections into the subject's current
 state, or retire the page with `knowledge_retire`. Its curation task for such a

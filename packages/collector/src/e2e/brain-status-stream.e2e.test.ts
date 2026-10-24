@@ -245,7 +245,7 @@ it("queues one consolidation review for a log-shaped page and keeps a routine st
   const requested = JSON.parse(pageRow()!.metadata_json) as {
     reviewRequests?: Record<string, number>;
   };
-  expect(requested.reviewRequests?.chronological_log).toEqual(expect.any(Number));
+  expect(requested.reviewRequests?.log_curation).toEqual(expect.any(Number));
   const reviewRuns = bench.sql
     .prepare(
       "SELECT 1 FROM knowledge_work WHERE subject_kind='node' AND subject_id=? AND reason='review' AND tier='immediate'",

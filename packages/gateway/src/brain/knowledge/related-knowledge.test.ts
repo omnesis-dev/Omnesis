@@ -406,15 +406,15 @@ it("queues a one-time review immediately, once per page and reason", async () =>
       )
       .all();
   let serial = 0;
-  const queue = oneTimePageReview(service, "chronological_log", () =>
+  const queue = oneTimePageReview(service, "log_curation", () =>
     serial++ ? `kw_once_${serial}` : "kw_once",
   );
   await expect(queue("flat")).resolves.toBe(true);
   expect(getKnowledgeNode(db, "flat")!.metadata).toMatchObject({
     nextReviewAt: 10,
     reviewDecision: "now",
-    reviewReason: "chronological_log",
-    reviewRequests: { chronological_log: 10 },
+    reviewReason: "log_curation",
+    reviewRequests: { log_curation: 10 },
   });
   expect(reviews()).toEqual([{ id: "kw_once", tier: "immediate" }]);
   // Later passes over the same page do not queue it again, even after the review ran.

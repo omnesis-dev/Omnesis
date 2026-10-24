@@ -14,7 +14,7 @@ import type Database from "better-sqlite3";
  */
 
 /** The one-time review request a page shaped as a log receives. */
-export const CHRONOLOGICAL_LOG_REVIEW = "chronological_log";
+export const CHRONOLOGICAL_LOG_REVIEW = "log_curation";
 /** A page with at least this many date-named sections, most of its sections, reads as a log. */
 export const CHRONOLOGICAL_LOG_MIN_DATED_SECTIONS = 4;
 /** Titles shorter than this many distinct words are names, whatever document shares them. */
