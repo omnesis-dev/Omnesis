@@ -137,22 +137,16 @@ xcodebuild test \
   -destination "$DEST" \
   "${PACKAGE_FLAGS[@]}" \
   -resultBundlePath "$RESULT_DIR/live.xcresult" \
-  -only-testing:OmnesisTests/GatewayLiveE2ETests
+  -only-testing:OmnesisTests/GatewayLiveE2ETests \
+  -only-testing:OmnesisTests/RealtimeAudioCaptureDeviceTests
 
-# A missing config file makes every test throw XCTSkip, which xcodebuild
-# reports as TEST SUCCEEDED. The lane passes only when every test in the class
-# ran against the gateway.
-xcrun xcresulttool get test-results summary --path "$RESULT_DIR/live.xcresult" \
-  >"$RESULT_DIR/summary.json"
-python3 - "$RESULT_DIR/summary.json" Tests/OmnesisTests/GatewayLiveE2ETests.swift <<'PY'
-import json, re, sys
-summary_path, source = sys.argv[1:3]
-expected = len(re.findall(r"^\s*func test\w*\(", open(source).read(), re.M))
-summary = json.load(open(summary_path))
-total, passed = summary["totalTestCount"], summary["passedTests"]
-skipped, failed = summary["skippedTests"], summary["failedTests"]
-print(f"GatewayLiveE2ETests: {total} run, {passed} passed, {skipped} skipped, {failed} failed; the class declares {expected}")
-if expected == 0 or total != expected or passed != expected:
-    sys.exit("✗ iOS live-gateway E2E did not run every test against the gateway.")
-PY
+# Gateway coverage must never silently skip. Hardware probes must pass when
+# their explicit local fixture is enabled, and otherwise remain skipped.
+xcrun xcresulttool get test-results tests --path "$RESULT_DIR/live.xcresult" \
+  >"$RESULT_DIR/tests.json"
+node "$ROOT/scripts/ci/verify-ios-e2e-results.mjs" \
+  "$RESULT_DIR/tests.json" \
+  Tests/OmnesisTests/GatewayLiveE2ETests.swift \
+  Tests/OmnesisTests/RealtimeAudioCaptureDeviceTests.swift \
+  /tmp/omnesis-ios-audio-capture-test.json
 echo "✓ iOS live-gateway E2E complete."

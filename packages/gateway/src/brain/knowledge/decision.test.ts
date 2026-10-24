@@ -52,6 +52,29 @@ describe("knowledge decision scores", () => {
         expect(question.instructions).toContain(
           "concrete personal, account, transaction, relationship, or project signal",
         );
+        // Routine machine-generated status notifications are low-information,
+        // named only by category, and exempt from the middle-level floor.
+        for (const stream of [
+          "a build, test or deployment result",
+          "an uptime or monitoring alert",
+          "a parcel tracking or delivery update",
+          "a card or bank transaction alert",
+        ])
+          expect(question.instructions).toContain(stream);
+        expect(question.instructions).toContain(
+          "When it only reports another routine outcome of that kind",
+        );
+        expect(question.instructions).toContain("an unusual, declined or disputed transaction");
+        expect(question.instructions).toContain(
+          "a charge whose amount, payee or frequency differs",
+        );
+        expect(question.instructions).toContain(
+          "Apart from such routine status notifications, where evidence supplies a concrete personal",
+        );
+        if (question.type !== "score") throw new Error("discovery is a score question");
+        expect(question.criteria[0]).toContain(
+          "a routine machine-generated status notification that changes the state of nothing the owner tracks",
+        );
         expect(question.instructions).toContain("recipient's existing ownership or account");
         expect(question.instructions).toContain("a benefit already earned or assigned");
         expect(question.instructions).toContain("their saved search criteria");
@@ -87,7 +110,7 @@ describe("knowledge decision scores", () => {
     ).toBe(0.5);
     expect(record).toHaveBeenCalledWith(
       expect.objectContaining({
-        rubricVersion: "knowledge-discovery-value-v7",
+        rubricVersion: "knowledge-discovery-value-v8",
         runId: "run_sample",
         batchId: "batch_sample",
         nodeId: "source:doc_sample",

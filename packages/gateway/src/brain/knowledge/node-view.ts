@@ -103,9 +103,14 @@ const ECHO_HINTS: Record<"claim" | "metadata" | "node", Record<string, string>> 
     ),
   ),
   metadata: Object.fromEntries(
-    ["lastVerifiedAt", "lastReviewedAt", "reviewDecision", "reviewReason", "reviewDecidedAt"].map(
-      (key) => [key, REVIEW_ECHO],
-    ),
+    [
+      "lastVerifiedAt",
+      "lastReviewedAt",
+      "reviewDecision",
+      "reviewReason",
+      "reviewDecidedAt",
+      "reviewRequests",
+    ].map((key) => [key, REVIEW_ECHO]),
   ),
   node: {
     reviewedClaimIds: "belongs at the top level beside node, not inside it",

@@ -48,6 +48,7 @@ import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import { KnowledgeService } from "./service.js";
 import { buildKnowledgeTools } from "./tools.js";
 import { KnowledgeEngine, type KnowledgeEngineDeps } from "./engine.js";
+import { EXHAUSTED_SOURCE_REST_MS } from "./engine-intake.js";
 import { fitKnowledgeFrontierItem, knowledgeFrontierPreflight } from "./engine-frontier.js";
 import {
   KNOWLEDGE_DISCOVERY_POLICY,
@@ -81,6 +82,7 @@ beforeEach(() => {
   createTemporalAnnotationTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
+  createKnowledgeDecisionTable(db);
   now = Date.parse("2027-01-11T08:00:00Z");
   serial = 0;
   score = 0.9;
@@ -565,6 +567,57 @@ describe("knowledge coordinator", () => {
       { subject_id: "within-30" },
       { subject_id: "within-89" },
     ]);
+  });
+
+  it("leaves a source with no history left to admit unscanned until its rest ends", async () => {
+    settings = resolveBrainSettings({
+      bootstrap: {
+        enabled: true,
+        batchSize: 10,
+        maxRuns: 50,
+        maxRunsPerDay: 50,
+        backlogTarget: 20,
+      },
+      knowledge: { bootstrapBatchSize: 10 },
+    });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    source("reviewed", "v1", "Archived workshop record.", now - 10 * 86400000);
+    db.exec("DELETE FROM knowledge_changes");
+    // Coverage that expires soon is the slow path by which history becomes eligible again.
+    recordKnowledgeCoverage(
+      db,
+      {
+        subjectId: "reviewed",
+        inputRevision: "v1",
+        phase: "organization",
+        policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+        status: "considered",
+        reconsiderAt: now + 60_000,
+      },
+      now,
+    );
+    const prepare = vi.spyOn(db, "prepare");
+    const scans = () =>
+      prepare.mock.calls.filter(([sql]) =>
+        String(sql).includes("FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id"),
+      ).length;
+    const admitted = () =>
+      db.prepare("SELECT subject_id FROM knowledge_work WHERE reason='discovery'").all();
+    await engine.tick();
+    expect(scans()).toBe(1);
+    expect(admitted()).toEqual([]);
+    // Idle ticks within the rest neither rescan the source nor see the expired coverage.
+    now += 120_000;
+    await engine.tick();
+    await engine.tick();
+    expect(scans()).toBe(1);
+    expect(admitted()).toEqual([]);
+    now += EXHAUSTED_SOURCE_REST_MS;
+    await engine.tick();
+    expect(scans()).toBeGreaterThan(1);
+    expect(admitted()).toEqual([{ subject_id: "reviewed" }]);
   });
 
   it("retires pending historical work the horizon excludes, even while admission is paused", async () => {
@@ -2697,6 +2750,23 @@ describe("explicit initial inventory admission", () => {
     expect(
       db.prepare("SELECT SUM(count) AS count FROM knowledge_historical_admissions").get(),
     ).toEqual({ count: 1 });
+  });
+  it("rescans a source with nothing left to admit as soon as its inventory records a later page", async () => {
+    createSourceInventoryTables(db);
+    inventorySource("first-page", now - 86_400_000);
+    await engine.tick();
+    // The only inventory document is queued, so this pass finds nothing and rests the source.
+    await engine.tick();
+    now += 1000;
+    inventorySource("second-page", now - 2 * 86_400_000);
+    await engine.tick();
+    expect(
+      db
+        .prepare(
+          "SELECT subject_id FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+        )
+        .all(),
+    ).toEqual([{ subject_id: "first-page" }, { subject_id: "second-page" }]);
   });
   it("does not admit recent inventory dated before the history horizon", async () => {
     createSourceInventoryTables(db);

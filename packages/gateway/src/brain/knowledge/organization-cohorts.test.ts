@@ -25,6 +25,7 @@ import {
   narrowOrganizationSelection,
   newSubjectCohortTally,
   readOrganizationCohortSummary,
+  gateOrganizationSources,
 } from "./organization-cohorts.js";
 
 let db: Database.Database;
@@ -87,6 +88,38 @@ function finish(now = 110) {
     db.prepare("UPDATE knowledge_batches SET status='completed' WHERE id=?").run(cohort.batchId);
   return completed;
 }
+describe("withdrawing low-worth evidence from organization", () => {
+  it("gates only the organization coverage of the named revisions, so no cohort selects them", () => {
+    for (const id of ["a", "b", "c"]) evidence(id);
+    recordKnowledgeCoverage(
+      db,
+      {
+        subjectId: "a",
+        inputRevision: "v1",
+        phase: "interpretation",
+        policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+        status: "considered",
+      },
+      1,
+    );
+    expect(gateOrganizationSources(db, { sourceVersions: { a: "v1", b: "older" } }, 50)).toBe(1);
+    const coverage = db
+      .prepare(
+        "SELECT subject_id AS id,phase,status FROM knowledge_discovery_coverage ORDER BY subject_id,phase",
+      )
+      .all();
+    expect(coverage).toEqual([
+      { id: "a", phase: "interpretation", status: "considered" },
+      { id: "a", phase: "organization", status: "gated" },
+      { id: "b", phase: "organization", status: "considered" },
+      { id: "c", phase: "organization", status: "considered" },
+    ]);
+    expect(Object.keys(select()!.sourceVersions).sort()).toEqual(["b", "c"]);
+    // Gating again changes nothing.
+    expect(gateOrganizationSources(db, { sourceVersions: { a: "v1" } }, 60)).toBe(0);
+  });
+});
+
 describe("bounded joint organization cohorts", () => {
   it("requires two current previously considered readable inputs and caps membership", () => {
     evidence("only");

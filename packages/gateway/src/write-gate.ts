@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "./realtime/live-voice-usage.js";
 import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "./brain/storage/morning-brief-items.js";
 import {
@@ -1698,6 +1699,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): Promise<void>;
+  /** Record a duration snapshot without fabricating token usage or a dollar cost. */
+  recordLiveVoiceUsage(input: LiveVoiceUsageSample): Promise<void>;
   /** Append one decision-model answer to the decision ledger (idempotent on id). */
   recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
   // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
@@ -2678,6 +2681,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     cancelScheduledRunsForLoop: (loopId) => call("cognition.cancelScheduledForLoop", [loopId]),
     setCognitionEngineState: (key, value) => call("cognition.engineStateSet", [key, value]),
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
+    recordLiveVoiceUsage: (input) => call("live.recordVoiceUsage", [input]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
       call("cognition.recordCognitionSpend", [day, mechanism, modelId, usage, opts]),
     recordCognitionDecision: (record) => call("cognition.recordDecision", [record]),
@@ -3342,6 +3346,7 @@ export function directWriteGate(db: Db): WriteGate {
     addToCognitionEngineCounter: async (key, delta) => {
       addToCognitionEngineCounter(db, key, delta);
     },
+    recordLiveVoiceUsage: (input) => Promise.resolve().then(() => recordLiveVoiceUsage(db, input)),
     recordCognitionSpend: async (day, mechanism, modelId, usage, opts) => {
       recordCognitionSpend(db, day, mechanism, modelId, usage, opts);
     },

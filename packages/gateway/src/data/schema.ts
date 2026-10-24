@@ -15,6 +15,7 @@ import {
   createConsumptionEdgesTables,
   createBootstrapMarkerIndexes,
 } from "../brain/index.js";
+import { createLiveVoiceUsageTable } from "../realtime/live-voice-usage.js";
 import { createConversationReadStateTables } from "../agent/conversation-read-state.js";
 import { createDevAnnotationsTables } from "../dev-annotations/store.js";
 import { createExtractedDatesTables } from "../enrichment/dates/storage.js";
@@ -1494,6 +1495,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // agent-conversations: the append-only ledger of turns a
   // harness plugin pushes, projected into per-day conversation documents.
   createAgentMessagesTables(db);
+  createLiveVoiceUsageTable(db);
   installMutableListRevisions(db);
   installCollectorRosterRevision(db);
 

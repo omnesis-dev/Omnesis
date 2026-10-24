@@ -40,6 +40,37 @@ Source providers expose a `defineSource<Cursor>({...})` factory call rather than
 
 - Helper: `packages/source-sdk/src/define-source.ts`
 
+### Voice is a media lease on the canonical agent
+
+The speech frontend delegates substantive work to `AgentService.openVoiceSession`.
+That facade submits through the ordinary durable conversation controls, using the
+configured backend, prompt, tools, permissions, citations and token accounting.
+Tool and citation UI consumes the existing agent event stream; speech captions are
+an independent presentation, not another stored assistant answer. Only the normal
+visible-history projection seeds the speech frontend. Ending media releases its
+lease without canceling accepted work; explicit Stop and authority revocation
+cancel only submissions owned by that lease.
+
+Before a voice-origin turn starts a mutating tool, admission shares the
+conversation controls' acceptance lock. Newer queued input stops the superseded
+turn at that boundary; an operation already admitted retains its normal
+cancellation semantics. Read-only work continues without a second execution
+queue. Transcript deltas append only to an unstarted submission owned by the
+voice lease; fragment IDs share that canonical receipt without consuming another
+ordinary queue slot. Each append advances the admission revision checked before
+mutations. Citation tools decorate the canonical answer, so speech preserves answer
+text around citations while discarding preambles before further research.
+
+Live media uses WebRTC to the provider, with gateway-owned authenticated signaling
+and sideband control. A separate versioned optional capability preserves the legacy
+Realtime transport. The lifecycle stream carries safe call status and errors, not
+a second conversation protocol. Provider duration accounting stays separate from
+the configured agent's token accounting.
+
+- Canonical agent facade: `packages/gateway/src/agent/voice-session.ts`
+- Media lifecycle: `packages/gateway/src/realtime/live-service.ts`
+- Delegation adapter: `packages/gateway/src/realtime/live-conversation.ts`
+
 ### Fresh local-source access evidence
 
 Local source instances implement `probeReadAccess({ signal })` for collector health

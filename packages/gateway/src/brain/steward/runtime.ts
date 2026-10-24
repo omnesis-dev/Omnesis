@@ -43,7 +43,7 @@ import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.j
 import { withKnowledgeSourceReadReceipts } from "../knowledge/source-read-receipts.js";
 import {
   knowledgeMirrorSearch,
-  relatedPageReviewQueue,
+  pageReviewQueue,
   withRelatedPageHints,
 } from "../knowledge/related-knowledge.js";
 import { isParallelKnowledgeRun } from "../storage/run-queue.js";
@@ -857,7 +857,7 @@ export async function createCognitionRuntime(
             deps.db,
             {
               search: relatedKnowledge,
-              queueReview: relatedPageReviewQueue(deps.knowledge.service),
+              queueReview: pageReviewQueue(deps.knowledge.service, "related_knowledge_changed"),
               discoveryTargets: maintenance,
               log: deps.log.child("related-knowledge"),
             },

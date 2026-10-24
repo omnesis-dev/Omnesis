@@ -440,15 +440,9 @@ struct TrailTimelineDateHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            ZStack(alignment: .top) {
-                TrailSpineSegment(
-                    accent: accent,
-                    nextAccent: nextAccent,
-                    isFirstRow: isFirstRow,
-                    isLastRow: isLastRow
-                )
-            }
-            .frame(width: TrailTimelineLayout.spineColumnWidth)
+            Color.clear
+                .frame(width: TrailTimelineLayout.spineColumnWidth)
+
             Text(TrailTimelineFormat.dateHeaderLabel(date))
                 .font(.system(size: 10, weight: .semibold))
                 .textCase(.uppercase)
@@ -468,6 +462,17 @@ struct TrailTimelineDateHeader: View {
                         : TrailTimelineLayout.dateHeaderTopPadding
                 )
                 .padding(.bottom, TrailTimelineLayout.dateHeaderBottomPadding)
+        }
+        .background {
+            GeometryReader { geometry in
+                TrailSpineSegment(
+                    accent: accent,
+                    nextAccent: nextAccent,
+                    isFirstRow: isFirstRow,
+                    isLastRow: isLastRow
+                )
+                .frame(width: TrailTimelineLayout.spineColumnWidth, height: geometry.size.height)
+            }
         }
     }
 }
@@ -527,16 +532,21 @@ struct TrailTimelineRow: View {
             )
             .padding(.bottom, TrailTimelineLayout.rowGap)
         }
+        .background {
+            GeometryReader { geometry in
+                TrailSpineSegment(
+                    accent: accent,
+                    nextAccent: nextAccent,
+                    isFirstRow: isFirstRow,
+                    isLastRow: isLastRow
+                )
+                .frame(width: TrailTimelineLayout.spineColumnWidth, height: geometry.size.height)
+            }
+        }
     }
 
     private var spineColumn: some View {
         ZStack(alignment: .top) {
-            TrailSpineSegment(
-                accent: accent,
-                nextAccent: nextAccent,
-                isFirstRow: isFirstRow,
-                isLastRow: isLastRow
-            )
             // Background-coloured disk sits on top of the spine to
             // visually "cut" the line where the source icon mounts.
             // Slightly larger than the icon so the spine is fully

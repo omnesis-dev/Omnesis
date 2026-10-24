@@ -74,6 +74,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.retireBeyondHorizon", priority: "background" },
   { name: "knowledge.retireExcludedSources", priority: "background" },
   { name: "knowledge.admitOrganization", priority: "background" },
+  { name: "knowledge.gateOrganizationSources", priority: "background" },
   { name: "knowledge.reconsiderRetrieval", priority: "background" },
   { name: "knowledge.adoptWork", priority: "background" },
   { name: "knowledge.promoteBlockingBatches", priority: "background" },
@@ -451,6 +452,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.retractUnclaimed", priority: "background" },
   { name: "cognition.cancelScheduledForLoop", priority: "background" },
   { name: "cognition.engineStateSet", priority: "background" },
+  { name: "live.recordVoiceUsage", priority: "background" },
   { name: "cognition.recordCognitionSpend", priority: "background" },
   { name: "cognition.recordDecision", priority: "background" },
   // Loop/observation/notes mutations issued by the Cognition Steward's tools mid-run —

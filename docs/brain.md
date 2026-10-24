@@ -212,6 +212,84 @@ repair, like any other source.
 Newly arriving historical evidence is considered without treating its events
 as new commitments or allowing an old proposal to overwrite an accepted plan.
 
+## Pages state a subject, not a log
+
+A wiki page states the current understanding of one subject: what it is, how it
+stands now, its recurring patterns and its material exceptions. Individual
+events stay in their sources and the time index, and a page's earlier states
+stay in its revisions, so a page is never a chronological log of either.
+
+Automated status streams (build and deployment results, monitoring and uptime
+alerts, shipping updates, account, billing and transaction alerts) record
+events about a subject. Most of their notifications change nothing durable and
+leave every page unchanged. One that does change the understanding of its
+subject updates the page's current-state passage in place, with the change kept
+as a dated sentence in the section about that aspect. The same holds for a
+source discovery that names an existing page as its target and for a joint
+organization pass, whose cohort is a window of evidence interpreted around the
+same time, not a subject: no section is named for a date, a batch or a cohort.
+
+Most of such a stream never reaches a page. The discovery worth gate (the
+`decision` role's `discovery` question) scores a machine-generated status
+notification that only reports another routine outcome of its kind (another
+failed or passing run, another delivery scan, another ordinary charge) at its
+lowest level, even when it names the owner's project, account, order or card.
+Such a source is gated before any agent turn: its coverage is `gated`, no run
+interprets it, and no page is offered for maintenance because of it. Its
+judgement is still recorded in the decision ledger. A notification that changes
+the state of something the owner tracks or depends on (a first or new kind of
+failure, a changed cause, a recovery after a sustained problem, a lost or held
+parcel, an unusual or disputed transaction, an access or security change) is
+interpreted as before. A run that does interpret a source names an existing
+page as a discovery target only when the source changes what the page should
+state, because a target makes the whole page due for maintenance.
+
+Organization cohorts regroup evidence that was interpreted earlier, often
+under an older version of that rubric. Before a chronological or subject cohort
+starts, each member without a `discovery` verdict under the current rubric (for
+its current content) is judged once through the same gate, and the verdict is
+recorded in the decision ledger like any other; a recorded current verdict is
+reused. A member judged low is withdrawn from organization: its organization
+coverage turns `gated`, so no cohort selects it again at that revision, while
+its interpretation and anything built on it stay as they are. The pass logs one
+content-free line, `Organization cohort screened: <kind>, N of M source(s)
+withdrawn as low worth`, and starts the cohort with the remaining members, or
+none when fewer than two remain. Without a decision model, or once the budget is
+spent, members are kept. A publication retry is not screened. The organization
+guidance settles members that only repeat what a page already records without
+naming that page as a target, since saving it unchanged still spends a revision.
+
+Two save-time checks hold this deterministically, before any paid check, on
+both `knowledge_save` and `knowledge_edit`:
+
+- A save that adds a date-named section to an existing page is refused when the
+  page would then have at least four date-named sections making up most of its
+  sections. A save that keeps or lowers that number (an in-place update, a
+  consolidation) always passes, as does a new page.
+- A new or changed title of four or more words that repeats the title of a
+  document the page cites (by word-set similarity of at least 0.8) is refused.
+  A page is named for its subject (a person, place, organization, system,
+  account, project, arrangement or event), not for a message's subject line, an
+  issue or ticket title or a notification headline. Shorter titles are names in
+  their own right and are never compared, and an unchanged title is never
+  re-checked.
+
+No existing page is rewritten or retired from code. A page that already reads
+as a log (at least four date-named sections, most of its sections), or that a
+refused save would have turned into one, gets one immediate whole-page review,
+the first time a maintenance pass or a save touches it. The request is recorded
+on the page (`metadata.reviewRequests.log_curation`), so no later pass
+queues it again, and logs one content-free line, `Wiki <id> queued for review:
+…`. That review can consolidate the dated sections into the subject's current
+state, or retire the page with `knowledge_retire`. Its curation task for such a
+page steers a record of routine notifications with no durable state beyond them
+to retirement with a reason. Otherwise it asks for a short account of the
+subject's current state built over several saves, since one save may remove at
+most half of a page's claims: a review save that leaves the page a log with
+fewer date-named sections queues the next review, so consolidation continues
+until the page no longer reads as a log, and ends because that number falls
+each time.
+
 ## Excluded sources
 
 `brain.excludedSources` names sources the Brain never processes. An entry is a
@@ -531,7 +609,11 @@ the configured chronological order within each source. A prolific source can use
 capacity left by exhausted sources. Admitted history is due immediately at routine
 priority on both fresh and upgraded databases; the routine edit-coalescing delay
 does not postpone an explicitly authorized first pass. A bounded historical slot
-keeps continuous live arrivals from starving authorized backfill.
+keeps continuous live arrivals from starving authorized backfill. A source whose
+historical or recent-inventory scan finds nothing left to admit rests for thirty
+minutes before that lane scans it again, so an idle engine does not reread every
+covered document on each tick; a later page of the source's initial inventory, or
+a changed horizon, recent window or exclusion list, ends the rest at once.
 
 Initial collector enumerations carry a durable inventory identity through the
 generic cursor-page protocol. Partial pages and collector restarts keep that

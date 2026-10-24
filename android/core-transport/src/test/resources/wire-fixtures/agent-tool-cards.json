@@ -125,17 +125,17 @@
     "icon": "task"
   },
   "task_create": {
-    "presentation": "persistent",
+    "presentation": "ephemeral",
     "label": "Add a task",
     "icon": "task"
   },
   "task_update": {
-    "presentation": "persistent",
+    "presentation": "ephemeral",
     "label": "Update a task",
     "icon": "task"
   },
   "task_undo": {
-    "presentation": "persistent",
+    "presentation": "ephemeral",
     "label": "Undo a task change",
     "icon": "task"
   },

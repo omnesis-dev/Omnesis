@@ -221,19 +221,28 @@
           the call.
         </p>
         <p>
-          The gateway relays call audio to OpenAI's Realtime API; the OpenAI API key stays on the
-          gateway. The realtime model uses the same core instructions, complete tool definitions,
-          permissions and gateway tool implementations as a typed Omnesis conversation. Tool calls
-          and citations appear in the same conversation, and you can switch between typing and
+          The iOS app sends call audio directly to OpenAI's GPT-Live over WebRTC. The gateway
+          creates and controls the call; the OpenAI API key stays on the gateway. GPT-Live handles
+          listening and speaking. The configured Omnesis agent handles reasoning and tools, with the
+          same instructions, model, permissions and conversation history as typed messages. Tool
+          calls and citations appear in the same conversation, and you can switch between typing and
           speaking without starting another thread. Text queued during a call waits until the call
-          ends. Audio and conversation context are sent to OpenAI during the call; realtime audio
-          and transcription incur OpenAI charges. This control is available only on iOS.
+          ends. Audio and relevant conversation context are sent to OpenAI during the call.
+          Voice-session duration is billed separately from the configured agent's model usage;
+          muting the microphone does not end the voice session. This control is available only on
+          iOS.
         </p>
         <p>
-          Temporary provider rate limits are retried within a bounded wait, keeping completed tool
-          actions. If the provider's API credit or quota is exhausted, the conversation shows an
-          error instead of retrying. Restore the configured backend's API access before trying
-          again.
+          The configured agent keeps its ordinary backend retry behavior. Provider credit or quota
+          failures show a recovery action instead of repeatedly restarting work. Restore the
+          affected provider's API access before trying again.
+        </p>
+        <p>
+          The call screen reports provider, connection and audio failures with a recovery action. A
+          failed reply can leave the call connected so you can continue speaking; an error that ends
+          the call remains visible until you dismiss it or start another call. Gateway and provider
+          diagnostics are reduced to safe error categories rather than exposing raw provider
+          messages.
         </p>
 
         <h2 id="browser-extension">Browser extension notes and Find</h2>

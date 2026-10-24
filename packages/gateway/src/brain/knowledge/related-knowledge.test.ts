@@ -10,7 +10,8 @@ import { resolveBrainSettings } from "../config.js";
 import {
   findRelatedKnowledge,
   knowledgeMirrorSearch,
-  relatedPageReviewQueue,
+  oneTimePageReview,
+  pageReviewQueue,
   withRelatedPageHints,
   type KnowledgeMirrorSearch,
 } from "./related-knowledge.js";
@@ -18,6 +19,7 @@ import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
 import { KnowledgeService } from "./service.js";
 import { createKnowledgeTables, getKnowledgeNode } from "./storage.js";
 import { buildKnowledgeTools } from "./tools.js";
+import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
 
@@ -383,13 +385,51 @@ it("returns the write unchanged when the related-page lookup fails", async () =>
 
 it("brings a related page's review forward through the ordinary review schedule", async () => {
   await savePage();
-  await relatedPageReviewQueue(service)("flat");
+  await pageReviewQueue(service, "related_knowledge_changed")("flat");
   expect(getKnowledgeNode(db, "flat")!.metadata).toMatchObject({
     nextReviewAt: 10,
     reviewDecision: "defer",
     reviewReason: "related_knowledge_changed",
   });
-  await expect(relatedPageReviewQueue(service)("missing")).resolves.toBeUndefined();
+  await expect(
+    pageReviewQueue(service, "related_knowledge_changed")("missing"),
+  ).resolves.toBeUndefined();
+});
+
+it("queues a one-time review immediately, once per page and reason", async () => {
+  createKnowledgeWorkTables(db);
+  await savePage();
+  const reviews = () =>
+    db
+      .prepare(
+        "SELECT id,tier FROM knowledge_work WHERE subject_id='flat' AND reason='review' AND status='pending'",
+      )
+      .all();
+  let serial = 0;
+  const queue = oneTimePageReview(service, "log_curation", () =>
+    serial++ ? `kw_once_${serial}` : "kw_once",
+  );
+  await expect(queue("flat")).resolves.toBe(true);
+  expect(getKnowledgeNode(db, "flat")!.metadata).toMatchObject({
+    nextReviewAt: 10,
+    reviewDecision: "now",
+    reviewReason: "log_curation",
+    reviewRequests: { log_curation: 10 },
+  });
+  expect(reviews()).toEqual([{ id: "kw_once", tier: "immediate" }]);
+  // Later passes over the same page do not queue it again, even after the review ran.
+  db.prepare("UPDATE knowledge_work SET status='completed' WHERE id='kw_once'").run();
+  await expect(queue("flat")).resolves.toBe(false);
+  expect(reviews()).toEqual([]);
+  // A caller tracking its own progress may queue it again.
+  await expect(queue("flat", { again: true })).resolves.toBe(true);
+  expect(reviews()).toEqual([{ id: "kw_once_2", tier: "immediate" }]);
+  db.prepare("UPDATE knowledge_work SET status='completed' WHERE id='kw_once_2'").run();
+  // A different reason is its own request; a missing page queues nothing.
+  await expect(oneTimePageReview(service, "other_reason", () => "kw_other")("flat")).resolves.toBe(
+    true,
+  );
+  await expect(queue("missing")).resolves.toBe(false);
 });
 
 it("maps knowledge mirror hits to their nodes and searches only the mirrors", async () => {

@@ -11,7 +11,8 @@ import { KNOWLEDGE_DISCOVERY_POLICY, recordKnowledgeCoverage } from "./discovery
 import { directKnowledgeGate } from "./writer.js";
 import { KnowledgeOrganization } from "./engine-organization.js";
 import { narrowOrganizationSelection } from "./organization-cohorts.js";
-import type { Logger } from "@omnesis/core";
+import { createKnowledgeDecisionTable, recordKnowledgeDecision } from "./decision-storage.js";
+import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
 const DAY = 86_400_000;
@@ -26,6 +27,8 @@ let info: ReturnType<typeof vi.fn>;
 /** Dependents of each source, standing in for its maintenance region. */
 let dependents: Map<string, string[]>;
 let organization: KnowledgeOrganization;
+/** Discovery worth levels (0–2) the scripted decision model gives by source title; 2 otherwise. */
+let worth: Map<string, number>;
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -37,17 +40,36 @@ beforeEach(() => {
   createBriefsStorageTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
+  createKnowledgeDecisionTable(db);
+  worth = new Map();
   now = 200 * DAY;
   serial = 0;
   dependents = new Map();
   info = vi.fn();
   const log = { info, warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as unknown as Logger;
+  const decision = {
+    modelId: "scripted",
+    dispose() {},
+    decide: async (request: { state: { source: { title: string } } }) => ({
+      model: "scripted",
+      answers: {
+        discovery: { type: "score", score: worth.get(request.state.source.title) ?? 2 },
+      },
+    }),
+  } as unknown as DecisionCapability;
   const deps = {
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => settings,
     clock: () => now,
     log,
+    decisions: {
+      getDecision: () => decision,
+      log,
+      recordSpend: async () => {},
+      record: async (entry: Parameters<typeof recordKnowledgeDecision>[1]) =>
+        recordKnowledgeDecision(db, { ...entry, id: `kd_${++serial}` }, now),
+    },
   } as unknown as KnowledgeEngineDeps;
   organization = new KnowledgeOrganization({
     deps,
@@ -60,6 +82,13 @@ beforeEach(() => {
     }),
     arcs: (id) => (dependents.get(id) ?? []).map((dependent) => ({ input: id, dependent })),
     roots: () => new Set(),
+    source: (id) => ({
+      title: id,
+      content: `Body of ${id}.`,
+      sourceRevision: "v1",
+      sourceCreatedAt: null,
+      sourceUpdatedAt: null,
+    }),
   });
 });
 afterEach(() => db.close());
@@ -198,5 +227,74 @@ describe("starting subject organization cohorts", () => {
       { subject: null, members: docs },
       { subject: "matter", members: ["matter-a", "matter-b"] },
     ]);
+  });
+});
+
+describe("screening organization cohorts by current discovery worth", () => {
+  function evidence(ids: string[]) {
+    for (const id of ids) {
+      db.prepare("INSERT INTO documents VALUES(?,?,?,'{}')").run(id, `source-${id}`, "v1");
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: id,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        1,
+      );
+    }
+  }
+  const coverage = () =>
+    Object.fromEntries(
+      db
+        .prepare<[], { id: string; status: string }>(
+          "SELECT subject_id AS id,status FROM knowledge_discovery_coverage WHERE phase='organization'",
+        )
+        .all()
+        .map((row) => [row.id, row.status]),
+    );
+
+  it("withdraws low-worth members and starts the cohort with the rest, judging each once", async () => {
+    // Invented routine status notifications across streams, and two sources worth organizing.
+    const routine = ["parcel-scan", "uptime-recovered", "card-purchase"];
+    evidence([...routine, "lease-signed", "lease-terms"]);
+    for (const id of routine) worth.set(id, 0);
+    expect(await organization.plan()).toBe(1);
+    expect(cohorts()).toEqual([{ subject: null, members: ["lease-signed", "lease-terms"] }]);
+    expect(coverage()).toMatchObject({
+      "parcel-scan": "gated",
+      "uptime-recovered": "gated",
+      "card-purchase": "gated",
+    });
+    expect(logged()).toContainEqual(
+      "Organization cohort screened: chronological, 3 of 5 source(s) withdrawn as low worth",
+    );
+    // Each judgement is in the ledger, once per member.
+    expect(
+      db
+        .prepare(
+          "SELECT node_id AS id,score FROM knowledge_decisions WHERE purpose='discovery' ORDER BY node_id",
+        )
+        .all(),
+    ).toEqual(
+      ["card-purchase", "lease-signed", "lease-terms", "parcel-scan", "uptime-recovered"].map(
+        (id) => ({ id: `source:${id}`, score: routine.includes(id) ? 0 : 1 }),
+      ),
+    );
+  });
+
+  it("starts nothing when every selected member is low worth, and never selects them again", async () => {
+    const routine = ["build-101", "build-102", "build-103"];
+    evidence(routine);
+    for (const id of routine) worth.set(id, 0);
+    expect(await organization.plan()).toBe(0);
+    expect(cohorts()).toEqual([]);
+    expect(Object.values(coverage())).toEqual(["gated", "gated", "gated"]);
+    now += DAY;
+    expect(await organization.plan()).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_decisions").get()).toEqual({ n: 3 });
   });
 });

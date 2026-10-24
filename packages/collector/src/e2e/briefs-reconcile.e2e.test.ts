@@ -565,6 +565,29 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
       return done.length >= 1 ? true : null;
     });
 
+    // Initial interpretation can hand work to another run before it commits.
+    // Count successful writes across every source run and attempt, rather than
+    // model emissions that may have received a control-flow refusal.
+    const obs = new BrainObs(harness);
+    const committedConfirmationNotes = async () =>
+      (await Promise.all(runsForDoc(db, fulfilmentDocId).map((run) => obs.executedTools(run.id))))
+        .flat()
+        .filter(
+          (step) =>
+            step.tool === "observation_note" &&
+            step.result?.kind === "structured" &&
+            step.result.resultType === "observation.noted",
+        );
+    const notesBeforeReview = await committedConfirmationNotes();
+    expect(notesBeforeReview).toHaveLength(1);
+    expect(notesBeforeReview[0]!.result?.data?.id).toEqual(expect.any(String));
+    const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
+    if (fulfilmentAction.kind !== "resolve") {
+      throw new Error("request arc fulfilment step must be a resolution");
+    }
+    expect(notesBeforeReview[0]!.args.summary).toBe(fulfilmentAction.confirmObservation);
+    expect(notesBeforeReview[0]!.args.citations).toContain(fulfilmentDocId);
+
     // Reoffer the already interpreted source explicitly. A repeated frontier
     // must adopt the current confirmation, without another observation write.
     let reviewId: string;
@@ -616,14 +639,8 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     expect(completedSourceRuns(fulfilmentDocId).map((run) => run.id)).toContain(
       completedReview.runId,
     );
-    expect(
-      server.calls.filter(
-        (call) =>
-          call.docId === fulfilmentDocId &&
-          call.emitted.kind === "tool" &&
-          call.emitted.name === "observation_note",
-      ),
-    ).toHaveLength(1);
+    // A review must retain the exact same single committed confirmation.
+    expect(await committedConfirmationNotes()).toEqual(notesBeforeReview);
 
     const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
       observations: Array<{ state: string; summary: string; closeReason: string | null }>;
@@ -632,10 +649,6 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     const active = detail.observations.filter((o) => o.state === "live" || o.state === "held");
     expect(active).toHaveLength(1);
     expect(detail.observations.filter((o) => o.closeReason === "superseded")).toHaveLength(1);
-    const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
-    if (fulfilmentAction.kind !== "resolve") {
-      throw new Error("request arc fulfilment step must be a resolution");
-    }
     expect(active[0]!.summary).toBe(fulfilmentAction.confirmObservation);
 
     // Still exactly one loop, still open — ambiguity never closes silently.

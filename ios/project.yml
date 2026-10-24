@@ -29,8 +29,12 @@ settings:
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
     MARKETING_VERSION: "0.6.0"
-    CURRENT_PROJECT_VERSION: "328"
+    CURRENT_PROJECT_VERSION: "331"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
+    # The pinned WebRTC binary has an arm64 simulator slice. Apply this
+    # consistently to apps, hosted tests and their embedded iOS targets;
+    # physical-device and watchOS architectures retain Xcode's defaults.
+    "ARCHS[sdk=iphonesimulator*]": arm64
     SWIFT_STRICT_CONCURRENCY: targeted
     # Point at our custom Info.plist + entitlements (instead of letting
     # XcodeGen regenerate defaults).
@@ -53,6 +57,8 @@ configFiles:
   Release: Config.xcconfig
 
 packages:
+  WebRTC:
+    path: Vendor/WebRTC
   SwiftDraw:
     url: https://github.com/swhitty/SwiftDraw.git
     exactVersion: 0.29.0
@@ -157,6 +163,8 @@ targets:
       - path: Resources/Assets.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Resources/Fonts
+      - path: Resources/ThirdParty
+        buildPhase: resources
       - path: Resources/AppPrivacy/PrivacyInfo.xcprivacy
     dependencies:
       # Widget extension (iOS 18 Control Center / Lock Screen control) —
@@ -177,6 +185,7 @@ targets:
       - target: OmnesisNotificationService
         embed: true
       - package: SwiftDraw
+      - package: WebRTC
     settings:
       configs:
         Release:
@@ -219,6 +228,8 @@ targets:
       - path: Resources/Assets.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Resources/Fonts
+      - path: Resources/ThirdParty
+        buildPhase: resources
       - path: Resources/AppPrivacy/PrivacyInfo.xcprivacy
     dependencies:
       # Its own watch app and complications, paired with this app rather
@@ -226,6 +237,7 @@ targets:
       - target: OmnesisDemoWatch
         embed: true
       - package: SwiftDraw
+      - package: WebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).demo
@@ -367,6 +379,7 @@ targets:
       - path: Tests/OmnesisTests
     dependencies:
       - target: Omnesis
+      - package: WebRTC
     settings:
       base:
         # Unit tests don't need an Info.plist — XcodeGen's default

@@ -39,6 +39,7 @@ export default defineConfig({
       "scripts/demo-host/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
       "scripts/docker/**/*.test.mjs",
+      "scripts/ci/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",
       "scripts/pii-scan.test.mjs",

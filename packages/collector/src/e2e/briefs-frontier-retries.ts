@@ -14,6 +14,8 @@ const itemSchema = z.object({
 const frontierSchema = z.object({
   batchId: z.string(),
   done: z.boolean(),
+  continuation: z.boolean().optional(),
+  interrupted: z.boolean().optional(),
   items: z.array(itemSchema),
 });
 const saveSchema = z.object({
@@ -70,14 +72,43 @@ export function verifiedFrontierRetries(steps: readonly ExecutedTool[]): Set<num
     const before = frontier(
       steps.slice(0, index).findLast((entry) => entry.tool === "knowledge_next_frontier"),
     );
-    if (!before.success) continue;
+    if (!before.success || before.data.done || before.data.interrupted) continue;
     const offered = before.data.items.find((item) => matches(step.args, item));
     if (!offered) continue;
-    const retryIndex = steps.findIndex(
+    let retryIndex = steps.findIndex(
       (entry, i) => i > index && entry.tool === "knowledge_next_frontier",
     );
-    const retry = frontier(steps[retryIndex]);
-    if (!retry.success || retry.data.batchId !== before.data.batchId) continue;
+    let retry = frontier(steps[retryIndex]);
+    let continued = false;
+    // A bounded engine pass may only replace a stale offer, returning an empty
+    // continuation before the next pass offers its refreshed version.
+    while (
+      retry.success &&
+      retry.data.batchId === before.data.batchId &&
+      !retry.data.done &&
+      !retry.data.interrupted &&
+      retry.data.continuation === true &&
+      retry.data.items.length === 0
+    ) {
+      continued = true;
+      retryIndex = steps.findIndex(
+        (entry, i) => i > retryIndex && entry.tool === "knowledge_next_frontier",
+      );
+      retry = frontier(steps[retryIndex]);
+    }
+    if (
+      !retry.success ||
+      retry.data.batchId !== before.data.batchId ||
+      retry.data.done ||
+      retry.data.interrupted ||
+      // Only consecutive frontier requests prove this continuation protocol;
+      // an intervening write must not gain an exemption from the empty reads.
+      (continued &&
+        steps
+          .slice(index + 1, retryIndex)
+          .some((entry) => entry.tool !== "knowledge_next_frontier"))
+    )
+      continue;
     const fresh = retry.data.items.find(
       (item) => item.id === offered.id && item.inputFingerprint !== offered.inputFingerprint,
     );
@@ -94,7 +125,12 @@ export function verifiedFrontierRetries(steps: readonly ExecutedTool[]): Set<num
       );
     const complete = steps.slice(nextFrontier).some((entry) => {
       const parsed = frontier(entry);
-      return parsed.success && parsed.data.batchId === before.data.batchId && parsed.data.done;
+      return (
+        parsed.success &&
+        parsed.data.batchId === before.data.batchId &&
+        parsed.data.done &&
+        !parsed.data.interrupted
+      );
     });
     if (saved && complete) verified.add(current);
   }

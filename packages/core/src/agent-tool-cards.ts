@@ -22,7 +22,7 @@
  *   then dismisses itself — the default for anything the agent does on its way
  *   to an answer.
  * - `persistent`: a card that stays in the transcript, for a change the user
- *   should be able to see after the answer (their tasks, their watches).
+ *   should be able to see after the answer (their watches).
  * - `citation`: nothing inline once settled; the Timeline and citation panel
  *   own the result, and a pending call shows a "Citing…" pill.
  * - `subagent`: replaced by the researcher row when the worker starts.
@@ -107,11 +107,11 @@ export const AGENT_TOOL_CARDS: Readonly<Record<string, AgentToolCard>> = Object.
   watch_update: { presentation: "persistent", icon: "watch" },
   watch_delete: persistent("Delete watch", "watch"),
 
-  // Tasks: a change to the user's journal stays visible; reading them does not.
+  // Tasks: the journal itself shows the change, so the cards pass like any lookup.
   task_list: ephemeral("Check tasks", "task"),
-  task_create: persistent("Add a task", "task"),
-  task_update: persistent("Update a task", "task"),
-  task_undo: persistent("Undo a task change", "task"),
+  task_create: ephemeral("Add a task", "task"),
+  task_update: ephemeral("Update a task", "task"),
+  task_undo: ephemeral("Undo a task change", "task"),
 
   // Memory.
   conversation_memory_evidence: ephemeral("Prepare memory", "memory"),

@@ -11,7 +11,9 @@ import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { unreadablePendingClaimIds } from "./unreadable-support.js";
 import { knowledgeNodeView, type KnowledgeNodeView } from "./node-view.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
-import { WIKI_CURATION_TASK } from "./wiki-authoring.js";
+import { WIKI_CURATION_TASK, WIKI_LOG_CURATION_TASK } from "./wiki-authoring.js";
+import { CHRONOLOGICAL_LOG_REVIEW, isChronologicalLog } from "./wiki-page-shape.js";
+import { oneTimePageReview } from "./related-knowledge.js";
 import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { isHistoricalKnowledgeOwner } from "./owner-maintenance.js";
 import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
@@ -29,7 +31,7 @@ import {
 } from "./work.js";
 import { planMaintenanceGroups } from "./planner.js";
 import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
-import { judgeKnowledge, type KnowledgeDecisionDeps } from "./decision.js";
+import { discoveryDecisionState, judgeKnowledge, type KnowledgeDecisionDeps } from "./decision.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import { KnowledgeGraph } from "./engine-graph.js";
@@ -141,7 +143,9 @@ export class KnowledgeEngine {
   private readonly planner: KnowledgeBatchPlanner;
   private readonly intake: KnowledgeIntake;
   private readonly organization: KnowledgeOrganization;
+  private readonly logReview: (pageId: string) => Promise<boolean>;
   constructor(readonly deps: KnowledgeEngineDeps) {
+    this.logReview = oneTimePageReview(deps.service, CHRONOLOGICAL_LOG_REVIEW, () => this.id("kw"));
     this.graph = new KnowledgeGraph(deps.db, () => deps.getSettings().knowledge.maxVisitedPerSeed);
     this.upkeep = new KnowledgeUpkeep(
       deps,
@@ -158,6 +162,7 @@ export class KnowledgeEngine {
     this.organization = new KnowledgeOrganization({
       deps,
       id: (prefix) => this.id(prefix),
+      source: (id) => this.source(id),
       frontier: (id, depth) => this.frontier(id, depth),
       arcs: (id) => this.graph.arcs(id),
       roots: () => this.roots(),
@@ -520,6 +525,22 @@ export class KnowledgeEngine {
           progressed = true;
           continue;
         }
+        // A page already shaped as a log gets one whole-page consolidation
+        // review, whatever brought it into this pass. A review is that pass.
+        if (
+          currentNode?.kind === "wiki" &&
+          item.status !== "offered" &&
+          isChronologicalLog(currentNode.plainText) &&
+          !this.deps.db
+            .prepare(
+              "SELECT 1 FROM knowledge_work WHERE batch_id=? AND subject_id=? AND reason='review'",
+            )
+            .get(batchId, currentNode.id) &&
+          (await this.logReview(currentNode.id))
+        )
+          this.deps.log.info(
+            `Wiki ${currentNode.id} queued for review: most of its sections are named by dates`,
+          );
         if (item.nodeId.startsWith("source:")) {
           const seed = this.deps.db
             .prepare<
@@ -604,14 +625,7 @@ export class KnowledgeEngine {
                   this.deps.decisions,
                   source ? "discovery" : "impact",
                   source
-                    ? {
-                        source: {
-                          title: source.title,
-                          content: source.content,
-                          sourceCreatedAt: source.sourceCreatedAt,
-                          sourceUpdatedAt: source.sourceUpdatedAt,
-                        },
-                      }
+                    ? discoveryDecisionState(source)
                     : {
                         inputVersions: item.inputVersions,
                         node,
@@ -726,7 +740,9 @@ export class KnowledgeEngine {
         };
         if (candidate.node?.kind === "wiki" && candidate.review) {
           candidate.maintenanceGoal = "wiki_curation";
-          candidate.maintenanceTask = WIKI_CURATION_TASK;
+          candidate.maintenanceTask = isChronologicalLog(candidate.node.markdown)
+            ? WIKI_LOG_CURATION_TASK
+            : WIKI_CURATION_TASK;
         }
         if (candidate.maintenanceGoal === "root_orientation") {
           candidate.recoverableNavigation = recoverRootNavigation(
