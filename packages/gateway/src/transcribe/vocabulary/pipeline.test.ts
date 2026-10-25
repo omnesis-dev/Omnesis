@@ -68,6 +68,7 @@ let notes: OmnesisNotesRuntime | undefined;
 let enabled: boolean | undefined;
 let readWriteToken: string;
 let writeOnlyToken: string;
+let bulkReadToken: string;
 let priorExperimental: string | undefined;
 let lookupFails: boolean;
 let vocabularyReads: number;
@@ -148,6 +149,7 @@ beforeEach(() => {
   const device = createDevice(db, { name: "fictional test collector", kind: "collector" });
   readWriteToken = createToken(db, device.id, [SCOPE_READ, SCOPE_WRITE_ALL]).token;
   writeOnlyToken = createToken(db, device.id, [SCOPE_WRITE_ALL]).token;
+  bulkReadToken = createToken(db, device.id, [SCOPE_READ_BULK]).token;
   app = createServer(db, path, {
     transcribeService: transcriber,
     transcriptionVocabularyService: vocabulary,
@@ -284,11 +286,9 @@ describe("gateway vocabulary to Whisper pipeline", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ available: true });
-    const device = db.prepare<[], { id: string }>("SELECT id FROM devices LIMIT 1").get()!;
-    const bulkToken = createToken(db, device.id, [SCOPE_READ_BULK]).token;
     const direct = await app.request("/inference/transcription-vocabulary", {
       method: "POST",
-      headers: { authorization: `Bearer ${bulkToken}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${bulkReadToken}`, "content-type": "application/json" },
       body: JSON.stringify(extended),
     });
     expect(direct.status).toBe(200);
