@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { useState, useRef, useEffect } from "preact/hooks";
+import { ReplayTool, ToolReplayContext } from "./replay.js";
+import { useState, useRef, useEffect, useContext } from "preact/hooks";
 import {
   RollingSlot,
   EphemeralCard,
@@ -411,11 +412,15 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
         : null;
 
     // Stage 1: SQL rotation. Starts the moment args arrive.
-    const [sqlIndex, setSqlIndex] = useState(null);
-    const [sqlDone, setSqlDone] = useState(false);
+    const replay = useContext(ToolReplayContext);
+    const [liveSqlIndex, setSqlIndex] = useState(null);
+    const [liveSqlDone, setSqlDone] = useState(false);
+    const elapsed = replay == null ? 0 : Math.max(0, replay.timeMs - replay.startAtMs);
+    const sqlIndex = replay == null ? liveSqlIndex : Math.min(sqlLines.length - 1, elapsed / EPHEMERAL_REVEAL_MS - 1);
+    const sqlDone = replay == null ? liveSqlDone : elapsed >= sqlLines.length * EPHEMERAL_REVEAL_MS;
     const sqlStartedRef = useRef(false);
     useEffect(() => {
-      if (!argsKnown || sqlStartedRef.current) return;
+      if (replay != null || !argsKnown || sqlStartedRef.current) return;
       sqlStartedRef.current = true;
       if (sqlLines.length === 0) {
         setSqlDone(true);
@@ -437,6 +442,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     // dismiss lifecycle and flushes the reducer's causality gate.
     const rowsReady = resultArrived && sqlDone;
     const { currentIndex: rowIndex, phase } = useRollingRotation(rowsReady, allRows.length, {
+      replayResultAtMs: replay == null ? undefined : Math.max(replay.resultAtMs ?? Infinity, replay.startAtMs + sqlLines.length * EPHEMERAL_REVEAL_MS),
       expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
       postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
@@ -655,7 +661,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
         search_loops: EphemeralLoopSearchCard,
         fetch_loop: EphemeralLoopFetchCard,
       }[part.tool] ?? EphemeralActionCard;
-    return html`<${Component} key=${key} call=${part} dispatch=${dispatch} />`;
+    return html`<${ReplayTool} key=${key} id=${part.toolCallId}><${Component} call=${part} dispatch=${dispatch} /></${ReplayTool}>`;
   }
   return { renderToolPart, deriveBatchChildren };
 }

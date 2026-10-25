@@ -346,7 +346,8 @@ describe("renderPart — subagent controls", () => {
   it("renders spawn_subagent through the ephemeral action control", () => {
     const vnode = renderPart(toolPart("spawn_subagent"), 0, [], () => {}, null, false, true, false);
     expect(vnode).not.toBeNull();
-    expect(vnode.type.name).toBe("EphemeralActionCard");
+    expect(vnode.type.name).toBe("ReplayTool");
+    expect(vnode.props.children.type.name).toBe("EphemeralActionCard");
   });
 
   it("never renders join_subagents plumbing", () => {
@@ -368,7 +369,8 @@ describe("renderPart — subagent controls", () => {
   ])("renders %s through the ephemeral action control", (tool) => {
     const vnode = renderPart(toolPart(tool), 0, [], () => {}, null, false, true, false);
     expect(vnode).not.toBeNull();
-    expect(vnode.type.name).toBe("EphemeralActionCard");
+    expect(vnode.type.name).toBe("ReplayTool");
+    expect(vnode.props.children.type.name).toBe("EphemeralActionCard");
   });
 
   it("renders an ephemeral tool in a static transcript", () => {

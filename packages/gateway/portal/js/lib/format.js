@@ -129,6 +129,23 @@ function isPortalSafeIcon(icon) {
     || /^\/(?![\\/])/.test(icon);
 }
 
+/** Install host-supplied source metadata for an offline presentation. */
+export function setSourceMeta(entries) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    throw new Error("Source metadata must be an object");
+  }
+  const safe = Object.create(null);
+  for (const [id, entry] of Object.entries(entries)) {
+    if (typeof entry === "string") {
+      if (isPortalSafeIcon(entry)) safe[id] = entry;
+    } else if (entry && typeof entry === "object") {
+      safe[id] = { ...entry };
+      if (!isPortalSafeIcon(safe[id].icon)) delete safe[id].icon;
+    }
+  }
+  _metaCache = safe;
+}
+
 /** Prefetch source metadata from gateway. Call once on app startup. */
 export async function loadSourceMeta() {
   // `/portal/source-meta.json` is the sync_state-backed map: it only carries
