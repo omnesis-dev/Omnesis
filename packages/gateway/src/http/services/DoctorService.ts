@@ -19,7 +19,7 @@
  */
 
 import { statSync } from "node:fs";
-import { createLogger, deviceTlsTrustMode } from "@omnesis/core";
+import { createLogger, deviceTlsFollowsPublicRenewal, deviceTlsTrustMode } from "@omnesis/core";
 import {
   collectSecurityDataInWorker,
   evaluateDoctor,
@@ -145,6 +145,7 @@ export class DoctorService {
         updateDetail: d.updateDetail,
         harness: d.capabilities?.agentIntegration?.harness ?? null,
         tlsMode: deviceTlsTrustMode(d.capabilities),
+        tlsFollowsPublicRenewal: deviceTlsFollowsPublicRenewal(d.capabilities),
       })),
       sources: sourceService.listSourcesForAdmin().map((s) => ({
         id: s.id,

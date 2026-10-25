@@ -684,7 +684,11 @@ Certificate  expiring
             <code
               >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
               sha256:&lt;served&gt;</code
-            >.
+            >. A plugin from a release that does not report how it verifies the gateway pins the
+            certificate even on a Tailscale name. The gateway names it ahead of each renewal, and
+            updating it before then (<strong>Update now</strong> in its warning on the Devices page,
+            or <code>omnesis update --fleet</code>) lets it follow a Tailscale renewal while the
+            certificate it trusts is still served.
           </li>
           <li>
             <strong>A collector or CLI on another machine</strong> saved the certificate on first
@@ -700,9 +704,10 @@ Certificate  expiring
         </ul>
         <p>
           Phones and agents report how they verify the gateway. <code>omnesis doctor</code>,
-          <code>omnesis devices list</code> and the portal's Devices page name a device that pins a
-          certificate the gateway will renew, with how to make it verify by name instead, and a
-          device that has not connected since a renewal, with the command that brings it back.
+          <code>omnesis devices list</code> and the portal's Devices page name a device that will
+          lose its connection when the gateway renews its certificate, with the date and how to make
+          it verify by name instead or the update that lets it follow, and a device that has not
+          connected since a renewal, with the command that brings it back.
         </p>
 
         <nav class="docs-pager" aria-label="Pages">

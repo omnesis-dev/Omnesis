@@ -65,9 +65,12 @@ does not offer.
 - A 0.6.0 app shows the agent tools added in 0.7.0 as generic tool cards.
 - A 0.6.0 plugin trusts the gateway's exact certificate, so after the gateway
   renews it the plugin must be reconnected with
-  `omnesis connect <harness> --refresh`; the portal's device list flags it. A
-  0.7.0 plugin follows renewals. A plugin that has followed a renewal cannot be
-  downgraded to 0.6.0 without reconnecting.
+  `omnesis connect <harness> --refresh`. The portal's device list and
+  `omnesis doctor` now name it before the renewal, with the date it will lose
+  its connection, and on a Tailscale certificate the warning offers the fleet
+  update: a 0.7.0 plugin that reaches the gateway by its Tailscale name follows
+  renewals. A plugin that has followed a renewal cannot be downgraded to 0.6.0
+  without reconnecting.
 - With a `background-agent` model assigned, the note agent reads Tell Omnesis
   notes captured on any app version.
 - A 0.6.0 configuration still boots: a `brain.workerConcurrency` above 32 runs

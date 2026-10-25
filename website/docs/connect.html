@@ -1242,11 +1242,13 @@
         <p>
           A refresh keeps the paired device, repairs the sign-in when needed, and uses no pairing
           code. It also re-establishes TLS trust. An agent that verifies a Tailscale or domain
-          certificate by name follows its renewals without one; an agent that pinned a self-signed
-          certificate needs a refresh after it changes, not a new pairing, and
-          <code>omnesis doctor</code> prints the command with the new fingerprint so it runs
-          unattended. When a refresh does need a new approval, the approval screen suggests
-          replacing the integration's existing connection, which keeps its name and access level.
+          certificate by name follows its renewals without one; an agent that pinned the certificate
+          (by address, or against a certificate no public authority issued) needs a refresh after it
+          changes, not a new pairing. The portal's Devices page and <code>omnesis doctor</code>
+          name such an agent before the gateway renews its certificate, and afterwards the doctor
+          prints the command with the new fingerprint so it runs unattended. When a refresh does
+          need a new approval, the approval screen suggests replacing the integration's existing
+          connection, which keeps its name and access level.
         </p>
         <p>
           A refresh asks for a new approval only as a last resort. It first collects an approval you

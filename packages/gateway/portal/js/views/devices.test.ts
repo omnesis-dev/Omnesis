@@ -1771,13 +1771,65 @@ describe("expanded device cards", () => {
       );
     });
     expect(host.textContent).toContain("Pinned certificate");
-    expect(host.textContent).toContain("which it renews on Dec 10, 2026");
+    expect(host.textContent).toContain(
+      "loses its connection when the gateway renews it on Dec 10, 2026",
+    );
+    // Only an integration that an update lets follow the renewal is offered one.
+    expect(host.textContent).not.toContain("Update now");
 
     await act(async () => {
       render(h(DeviceCard, { ...props, device: { ...device, tlsTrust: undefined } }), host);
     });
     expect(host.textContent).not.toContain("Certificate changed");
     expect(host.textContent).not.toContain("Pinned certificate");
+  });
+
+  test("offers the fleet update in the warning for an integration an update lets follow the renewal", async () => {
+    const onUpdateDevice = vi.fn();
+    const device = {
+      id: "device_agent",
+      name: "Fictional agent",
+      kind: "agent",
+      pairedAt: 1,
+      lastSeenAt: 2,
+      online: true,
+      capabilities: { agentIntegration: { harness: "openclaw" } },
+      tlsTrust: {
+        status: "pinned-renews",
+        renewsAt: "2026-12-10T12:00:00.000Z",
+        updateFollows: true,
+        remedy:
+          "Update it before then (Update device on its card, or `omnesis update --fleet`): an updated integration that reaches the gateway by its Tailscale name follows the renewal. Otherwise, after the renewal, on the machine running it: `omnesis connect openclaw --refresh`.",
+      },
+    };
+    const props = {
+      isThis: false,
+      tokens: [],
+      expanded: true,
+      onToggle: vi.fn(),
+      onRevokeDevice: vi.fn(),
+      onForgetDevice: vi.fn(),
+      onRevokeToken: vi.fn(),
+    };
+
+    await act(async () => {
+      render(h(DeviceCard, { ...props, device, onUpdateDevice }), host);
+    });
+    const button = [...host.querySelectorAll(".devices-card-repair button")].find(
+      (b) => b.textContent === "Update now",
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeDefined();
+    await act(async () => {
+      button!.click();
+    });
+    expect(onUpdateDevice).toHaveBeenCalledWith(device);
+
+    // The gateway's disposition decides: with no update to offer, no button.
+    await act(async () => {
+      render(h(DeviceCard, { ...props, device, onUpdateDevice: null }), host);
+    });
+    expect(host.textContent).toContain("Pinned certificate");
+    expect(host.textContent).not.toContain("Update now");
   });
 
   test("shows a phone's transport and lets the operator withdraw relay consent", async () => {

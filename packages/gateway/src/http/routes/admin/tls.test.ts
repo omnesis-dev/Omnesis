@@ -206,4 +206,70 @@ describe("certificate pins on the device list and in the doctor", () => {
     expect(report).toContain("pinned-phone");
     expect(report).not.toMatch(/fleet\.tls-pin-renewal[^}]*named-phone/u);
   });
+
+  test("agents that a Tailscale renewal will disconnect are named ahead of it; one that follows it is not", async () => {
+    const renewsAt = "2026-12-10T00:00:00.000Z";
+    const renewing: TlsLifecyclePort = {
+      ...tlsLifecycle,
+      snapshot: () => ({
+        ...snapshot,
+        ownership: "tailscale",
+        served: { ...snapshot.served, selfSigned: false },
+        renewsAt,
+      }),
+    };
+    const agentIntegration = (harness: "openclaw" | "hermes") => ({
+      harness,
+      deliveryProtocolMin: 1,
+      deliveryProtocolMax: 1,
+      maxConcurrentRuns: 1,
+    });
+    // An integration from before devices reported how they verify the gateway.
+    createDevice(db, {
+      name: "older-agent",
+      kind: "agent",
+      capabilities: { agentIntegration: agentIntegration("openclaw") },
+    });
+    createDevice(db, {
+      name: "ca-agent",
+      kind: "agent",
+      capabilities: { agentIntegration: agentIntegration("hermes"), tls: { mode: "pinned-ca" } },
+    });
+    createDevice(db, {
+      name: "following-agent",
+      kind: "agent",
+      capabilities: {
+        agentIntegration: agentIntegration("hermes"),
+        tls: { mode: "pinned-leaf", followsPublicRenewal: true },
+      },
+    });
+    const pinApp = createServer(db, dbPath, { tlsLifecycle: renewing });
+    const admin = { headers: { Authorization: `Bearer ${token([SCOPE_ADMIN])}` } };
+
+    const res = await pinApp.request("/admin/devices", admin);
+    expect(res.status).toBe(200);
+    const { items } = (await res.json()) as {
+      items: Array<{ name: string; tlsFollowsPublicRenewal: boolean; tlsTrust?: unknown }>;
+    };
+    expect(items.find((d) => d.name === "older-agent")?.tlsTrust).toEqual({
+      status: "pinned-renews",
+      renewsAt,
+      updateFollows: true,
+      remedy: expect.stringContaining("`omnesis connect openclaw --refresh`"),
+    });
+    expect(items.find((d) => d.name === "ca-agent")?.tlsTrust).toEqual({
+      status: "pinned-renews",
+      renewsAt,
+      remedy: expect.stringContaining("`omnesis connect hermes --refresh`"),
+    });
+    const following = items.find((d) => d.name === "following-agent");
+    expect(following?.tlsFollowsPublicRenewal).toBe(true);
+    expect(following).not.toHaveProperty("tlsTrust");
+
+    const doctor = await pinApp.request("/admin/doctor", admin);
+    expect(doctor.status).toBe(200);
+    const report = JSON.stringify(await doctor.json());
+    expect(report).toMatch(/fleet\.tls-pin-renewal[^}]*older-agent, ca-agent/u);
+    expect(report).not.toMatch(/fleet\.tls-pin-renewal[^}]*following-agent/u);
+  });
 });

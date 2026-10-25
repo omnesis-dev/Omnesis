@@ -192,10 +192,18 @@ export class GatewayTrust {
     }
   }
 
-  /** What the device reports in its hello, so the gateway can say who is pinned. */
-  helloCapability(): { mode: TlsTrustMode } | undefined {
+  /**
+   * What the device reports in its hello, so the gateway can say who is
+   * pinned. A pin that gives way to public trust says so: the gateway then
+   * knows a renewal of a publicly trusted certificate leaves it connected.
+   */
+  helloCapability(): { mode: TlsTrustMode; followsPublicRenewal?: true } | undefined {
     const mode = this.mode();
-    return mode ? { mode } : undefined;
+    if (!mode) return undefined;
+    const state = this.state();
+    return state.kind === "pinned" && !state.strict
+      ? { mode, followsPublicRenewal: true }
+      : { mode };
   }
 
   /**

@@ -930,7 +930,9 @@ export function DeviceCard({
   const needsReauthorization =
     !revoked && d.agentAuthorization?.status === "needs-reauthorization";
   // A device that pins the gateway's exact certificate cannot follow its
-  // renewal; the gateway names it before the renewal and after it.
+  // renewal; the gateway names it before the renewal and after it. An
+  // integration that an update lets follow the renewal is offered that update
+  // here, while the certificate it trusts is still served.
   const tlsTrust = revoked ? null : (d.tlsTrust ?? null);
 
   return html`
@@ -985,8 +987,13 @@ export function DeviceCard({
             <div class="devices-card-repair">
               ${tlsTrust.status === "stranded"
                 ? `Paired before the gateway replaced its certificate on ${calendarDate(tlsTrust.rotatedAt)} and silent since, so it may still trust the old one. `
-                : `Trusts only the certificate the gateway serves now, which it renews on ${calendarDate(tlsTrust.renewsAt)}. `}
+                : `Trusts only the certificate the gateway serves now, so it loses its connection when the gateway renews it on ${calendarDate(tlsTrust.renewsAt)}. `}
               ${withInlineCode(tlsTrust.remedy)}
+              ${tlsTrust.status === "pinned-renews" && tlsTrust.updateFollows && onUpdateDevice && html`
+                <div class="devices-card-repair-action">
+                  <button class="btn-tiny" onClick=${() => onUpdateDevice(d)}>Update now</button>
+                </div>
+              `}
             </div>
           `}
           <${DeviceHealth}

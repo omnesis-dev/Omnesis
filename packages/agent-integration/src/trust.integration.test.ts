@@ -278,7 +278,9 @@ describe("GatewayTrust over real TLS", () => {
     await handshake(trust, port);
     expect(onUpgraded).not.toHaveBeenCalled();
     expect(trust.mode()).toBe("pinned-leaf");
-    expect(trust.helloCapability()).toEqual({ mode: "pinned-leaf" });
+    // A pin on a public name gives way to public trust at a renewal, and
+    // says so, so the gateway does not warn about the renewal it follows.
+    expect(trust.helloCapability()).toEqual({ mode: "pinned-leaf", followsPublicRenewal: true });
   });
 
   test("follows a renewal from a public root once, and moves to system trust", async () => {
@@ -303,6 +305,7 @@ describe("GatewayTrust over real TLS", () => {
     await expect(handshake(trust, port, "127.0.0.1")).rejects.toBeInstanceOf(GatewayTlsError);
     expect(onUpgraded).not.toHaveBeenCalled();
     expect(trust.mode()).toBe("pinned-leaf");
+    expect(trust.helloCapability()).toEqual({ mode: "pinned-leaf" });
   });
 
   test("refuses a certificate signed by the pinned leaf rather than a CA", async () => {
@@ -379,6 +382,7 @@ describe("GatewayTrust over real TLS", () => {
     await expect(handshake(trust, port)).rejects.toBeInstanceOf(GatewayTlsError);
     expect(onUpgraded).not.toHaveBeenCalled();
     expect(trust.mode()).toBe("pinned-ca");
+    expect(trust.helloCapability()).toEqual({ mode: "pinned-ca" });
   });
 });
 

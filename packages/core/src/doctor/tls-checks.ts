@@ -208,7 +208,7 @@ export function checkGatewayTls(
     ck.warn(
       FLEET,
       "fleet.tls-pin-renewal",
-      `${renewing.length} device${one ? " pins" : "s pin"} the served certificate, which the gateway replaces on ${renewsAt}: ${renewingNames.join(", ")}`,
+      `${renewing.length} device${one ? " pins" : "s pin"} the served certificate and will lose ${one ? "its" : "their"} connection when the gateway renews it on ${renewsAt}: ${renewingNames.join(", ")}`,
       `Before then: ${renewing.join(" ")}`,
     );
   }

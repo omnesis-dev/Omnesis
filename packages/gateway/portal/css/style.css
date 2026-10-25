@@ -5198,6 +5198,9 @@ p.devices-pair-expiry {
   display: inline-block;
   margin-left: 4px;
 }
+.devices-card-repair-action {
+  margin-top: 6px;
+}
 /* A revoked device is dimmed as retired — except one still holding sources,
    which is the most actionable card in the list. */
 .devices-card.revoked {

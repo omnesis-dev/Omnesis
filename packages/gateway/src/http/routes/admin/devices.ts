@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { deviceTlsTrust, deviceTlsTrustMode, normalizeEmail, normalizePhone } from "@omnesis/core";
+import {
+  deviceTlsFollowsPublicRenewal,
+  deviceTlsTrust,
+  deviceTlsTrustMode,
+  normalizeEmail,
+  normalizePhone,
+} from "@omnesis/core";
 import { pushPlanRequestSchema, pushRegistrationSchema } from "@omnesis/core/push";
 import {
   buildPage,
@@ -177,8 +183,12 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const devices = statusCache.listDevices.map((d) => {
       const authorization = agentAuthorizations.get(d.id);
       const tlsMode = deviceTlsTrustMode(d.capabilities);
+      const tlsFollowsPublicRenewal = deviceTlsFollowsPublicRenewal(d.capabilities);
       const harness = d.capabilities?.agentIntegration?.harness ?? null;
-      const tlsTrust = deviceTlsTrust({ ...d, harness, tlsMode }, tlsSnapshot);
+      const tlsTrust = deviceTlsTrust(
+        { ...d, harness, tlsMode, tlsFollowsPublicRenewal },
+        tlsSnapshot,
+      );
       const revocationImpact = revocationImpacts.get(d.id);
       const pushPlan =
         (d.kind === "ios" || d.kind === "android") && d.capabilities.pushAppId
@@ -196,6 +206,7 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         pushPlan,
         harness,
         tlsMode,
+        tlsFollowsPublicRenewal,
         ...(tlsTrust ? { tlsTrust } : {}),
         ...(authorization ? { agentAuthorization: authorization } : {}),
         ...(d.kind === "agent"

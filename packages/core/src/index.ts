@@ -699,6 +699,7 @@ export {
   type TlsRenewalMode,
 } from "./tls-material.js";
 export {
+  deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
   deviceTlsTrustMode,
   type DeviceTlsTrust,

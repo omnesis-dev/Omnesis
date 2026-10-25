@@ -348,7 +348,7 @@ describe("checkGatewayTls", () => {
     expect(ck.out.find((c) => c.id === "fleet.tls-pin-renewal")).toMatchObject({
       status: "warn",
       section: "Fleet",
-      message: `1 device pins the served certificate, which the gateway replaces on ${renewsAt}: pinned-phone`,
+      message: `1 device pins the served certificate and will lose its connection when the gateway renews it on ${renewsAt}: pinned-phone`,
       hint: expect.stringMatching(
         /^Before then: pinned-phone: .*omnesis devices repair pinned-phone/u,
       ),
@@ -361,5 +361,38 @@ describe("checkGatewayTls", () => {
       notRenewed,
     );
     expect(notRenewed.out.map((c) => c.id)).toEqual(["gateway.tls"]);
+  });
+
+  test("an older integration and an agent's pinned-ca are warned before the renewal too", () => {
+    const renewsAt = "2026-12-10T00:00:00.000Z";
+    const ck = sink();
+    checkGatewayTls(
+      snapshot({ ownership: "tailscale", served: served({ selfSigned: false }), renewsAt }),
+      [
+        // Reports its harness but not how it verifies the gateway.
+        { name: "older-agent", kind: "agent", harness: "openclaw", pairedAt: 1 },
+        { name: "ca-agent", kind: "agent", harness: "hermes", tlsMode: "pinned-ca", pairedAt: 1 },
+        {
+          name: "following-agent",
+          kind: "agent",
+          harness: "hermes",
+          tlsMode: "pinned-leaf",
+          tlsFollowsPublicRenewal: true,
+          pairedAt: 1,
+        },
+      ],
+      ck,
+    );
+    const warning = ck.out.find((c) => c.id === "fleet.tls-pin-renewal");
+    expect(warning).toMatchObject({
+      status: "warn",
+      message: `2 devices pin the served certificate and will lose their connection when the gateway renews it on ${renewsAt}: older-agent, ca-agent`,
+    });
+    expect(warning?.hint).toContain(
+      "older-agent: Update it before then (Update device on its card, or `omnesis update --fleet`)",
+    );
+    expect(warning?.hint).toContain(
+      "ca-agent: Connect it by the gateway's Tailscale or domain name to follow renewals; otherwise, after the renewal, on the machine running it: `omnesis connect hermes --refresh`.",
+    );
   });
 });
