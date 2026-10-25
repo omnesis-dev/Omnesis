@@ -54,6 +54,8 @@ PREVIOUS="$RELEASE_ROOT/previous"
 ADMIN_LINK=/usr/local/sbin/omnesis-gateway-admin
 
 STATE_DIR=/var/lib/omnesis-gateway
+# StateDirectory= keeps a DynamicUser's state here and links it from STATE_DIR.
+STATE_PRIVATE_DIR=/var/lib/private/omnesis-gateway
 UNIT_NAME=omnesis-gateway.service
 UNIT_PATH="/etc/systemd/system/$UNIT_NAME"
 
@@ -100,6 +102,7 @@ Commands:
   status     Show the running release, the previous one and the service state
   cli ARGS   Run the release's omnesis CLI against the dedicated gateway
   uninstall  Remove the service and the releases; keep the gateway's state
+             (--purge also deletes the state and the passphrase)
 
 Options for install and update:
   --version X.Y.Z                Release to install (default: the newest stable release)
@@ -131,6 +134,7 @@ OPT_REPO_URL=""
 OPT_FROM_CHECKOUT=""
 OPT_NO_BACKUP=0
 OPT_FORCE=0
+OPT_PURGE=0
 
 need_value() {
   [ $# -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value."
@@ -148,6 +152,7 @@ parse_options() {
       --from-checkout) need_value "$@"; OPT_FROM_CHECKOUT="$2"; shift 2 ;;
       --no-backup) OPT_NO_BACKUP=1; shift ;;
       --force) OPT_FORCE=1; shift ;;
+      --purge) OPT_PURGE=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1. See 'omnesis-gateway-admin help'." ;;
     esac
@@ -156,6 +161,9 @@ parse_options() {
 }
 
 validate_options() {
+  if [ "$OPT_PURGE" = 1 ] && [ "${main_command:-}" != uninstall ]; then
+    fail "--purge belongs to uninstall."
+  fi
   if [ -n "$OPT_VERSION" ] && [ -n "$OPT_REF" ]; then
     fail "--version and --ref both name what to install; pass one."
   fi
@@ -993,9 +1001,15 @@ cmd_uninstall() {
   rm -f "$UNIT_PATH"
   systemctl daemon-reload
   rm -f "$ADMIN_LINK" "$INSTALL_ENV"
-  rm -rf "$RELEASE_ROOT" "$BUILD_DIR"
+  rm -rf "$RELEASE_ROOT" "$BUILD_DIR" "$BUILD_CACHE"
+  rm -f "$BUILD_VIEW" "$BUILD_CACHE_VIEW"
   info "Removed the service, $RELEASE_ROOT and $ADMIN_LINK."
-  info "Kept $STATE_DIR, the gateway's corpus, and $PASS_FILE, the passphrase that opens it. Remove both yourself if you no longer need them."
+  if [ "$OPT_PURGE" = 1 ]; then
+    rm -rf "$STATE_DIR" "$STATE_PRIVATE_DIR" "$ETC_DIR"
+    info "Deleted $STATE_DIR, the gateway's corpus, and $ETC_DIR, with the passphrase that opened it."
+  else
+    info "Kept $STATE_DIR, the gateway's corpus, and $PASS_FILE, the passphrase that opens it. Delete both with 'omnesis-gateway-admin uninstall --purge', or yourself, once you no longer need them."
+  fi
 }
 
 main() {

@@ -435,5 +435,27 @@ docker compose -f "$TLS_COMPOSE_FILE" --profile update config --images | while r
   echo "  $image $(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || echo '(id unavailable)')"
 done
 
+step "omnesis uninstall --purge removes the second install from this host"
+# The first install shares these images; take its containers down first so
+# the second install's `--rmi all` is not refused an image still in use.
+docker compose -f "$COMPOSE_FILE" --profile update down >/dev/null 2>&1 || true
+TLS_IMAGES="$(docker compose -f "$TLS_COMPOSE_FILE" --profile update config --images)"
+TLS_PROJECT="$(docker compose -f "$TLS_COMPOSE_FILE" config --format json | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).name)')"
+"${omnesis_env[@]}" "$OMNESIS" uninstall --dry-run >/dev/null || die "omnesis uninstall --dry-run failed"
+[[ -f "$TLS_COMPOSE_FILE" && -x "$OMNESIS" ]] || die "the dry run changed something"
+"${omnesis_env[@]}" "$OMNESIS" uninstall --yes --purge || die "omnesis uninstall --purge failed"
+[[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$TLS_PROJECT")" ]] \
+  || die "containers of $TLS_PROJECT are still there after the uninstall"
+while read -r image; do
+  [[ -z "$image" ]] && continue
+  docker image inspect "$image" >/dev/null 2>&1 && die "$image is still on this host after the uninstall"
+done <<<"$TLS_IMAGES"
+[[ ! -e "$TLS_CONFIG_DIR" ]] || die "$TLS_CONFIG_DIR is still there after --purge"
+[[ ! -e "$OMNESIS" ]] || die "the launcher $OMNESIS is still there"
+if [[ -f "$HOME_DIR/.bashrc" ]] && grep -qxF "# Added by the Omnesis installer" "$HOME_DIR/.bashrc"; then
+  die "the installer's PATH line is still in $HOME_DIR/.bashrc"
+fi
+ok "the containers, images, config directory, launcher and PATH line are gone"
+
 echo
 echo "docker-install-smoke: passed"

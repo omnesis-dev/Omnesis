@@ -574,8 +574,11 @@ installing it takes one command as root:
           <code>sudo omnesis-gateway-admin rollback</code> switches back to the previous release,
           and <code>sudo omnesis-gateway-admin status</code> shows both.
           <code>sudo omnesis-gateway-admin uninstall</code> removes the service and the releases but
-          keeps the state directory and the passphrase that opens it. Running the install command on
-          a dedicated gateway whose unit runs code from a login account moves it onto a root-owned
+          keeps the state directory and the passphrase that opens it; <code>--purge</code> deletes
+          them too.
+          <a href="/docs/install#uninstall"><code>omnesis uninstall gateway</code></a> runs the same
+          removal from a login account, through <code>sudo</code>. Running the install command on a
+          dedicated gateway whose unit runs code from a login account moves it onto a root-owned
           release, keeping its port, state and passphrase.
         </p>
 

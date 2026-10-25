@@ -5730,6 +5730,105 @@ EOF
   cat >> "$OMNESIS_BIN" <<'WRAPPER_EOF' || fail "Could not write $OMNESIS_BIN. Check that $BIN_DIR is writable and re-run."
 set -eu
 
+# `uninstall` removes this install from the host — the containers and images,
+# the compose project, this launcher and the installer's PATH line — which no
+# container can do to the host it runs on, so it runs here, in the launcher.
+# The data in the config directory stays unless --purge.
+if [ "${1:-}" = uninstall ]; then
+  shift
+  UNINSTALL_YES=0
+  UNINSTALL_PURGE=0
+  UNINSTALL_DRY_RUN=0
+  for ARG in "$@"; do
+    case "$ARG" in
+      -y|--yes) UNINSTALL_YES=1 ;;
+      --purge) UNINSTALL_PURGE=1 ;;
+      --dry-run) UNINSTALL_DRY_RUN=1 ;;
+      all) ;;
+      -h|--help)
+        printf '%s\n' "Usage: omnesis uninstall [--purge] [--yes] [--dry-run]" \
+          "Removes this Docker install: its containers and images, the compose project and this launcher." \
+          "--purge also deletes the config directory: the data, tokens and keys."
+        exit 0 ;;
+      *)
+        printf 'omnesis uninstall: a Docker install is removed as a whole; %s is not something it can remove on its own.\n' "$ARG" >&2
+        exit 2 ;;
+    esac
+  done
+  UNINSTALL_DIR="$(dirname "$COMPOSE_FILE")"
+  UNINSTALL_BIN="$HOME/.local/bin"
+  UNINSTALL_LAUNCHER="$UNINSTALL_BIN/omnesis"
+  printf '%s\n' "Omnesis uninstall — this Docker install:"
+  printf '  - %s\n' "Stop and remove the containers and images of $COMPOSE_FILE"
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    printf '  - %s\n' "Delete the data, tokens and keys in $UNINSTALL_DIR"
+  else
+    printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
+  fi
+  printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
+  if [ "$UNINSTALL_DRY_RUN" = 1 ]; then
+    printf '%s\n' "Dry run: nothing was changed."
+    exit 0
+  fi
+  if [ "$UNINSTALL_YES" != 1 ]; then
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+      printf '%s' "Remove these? [y/N] "
+      IFS= read -r UNINSTALL_REPLY </dev/tty || UNINSTALL_REPLY=""
+      case "$UNINSTALL_REPLY" in
+        y|Y|yes|YES) ;;
+        *) printf '%s\n' "Cancelled."; exit 130 ;;
+      esac
+    else
+      printf '%s\n' "Refusing to uninstall without confirmation. Re-run with --yes, or --dry-run to see the plan." >&2
+      exit 2
+    fi
+  fi
+  if [ -f "$COMPOSE_FILE" ]; then
+    docker compose -f "$COMPOSE_FILE" --profile update down --rmi all --remove-orphans || {
+      printf '%s\n' "omnesis uninstall: docker compose down failed; nothing else was removed. Fix the error above and re-run." >&2
+      exit 1
+    }
+  fi
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    case "$UNINSTALL_DIR" in
+      /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
+    esac
+    rm -rf "$UNINSTALL_DIR"
+  else
+    rm -f "$COMPOSE_FILE" "$UNINSTALL_DIR/install-method"
+  fi
+  rm -f "$UNINSTALL_LAUNCHER"
+  # The installer's PATH line goes too, unless other programs share the directory.
+  if [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null)" ]; then
+    for UNINSTALL_PROFILE in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+      [ -f "$UNINSTALL_PROFILE" ] && grep -qxF '# Added by the Omnesis installer' "$UNINSTALL_PROFILE" || continue
+      awk -v marker='# Added by the Omnesis installer' \
+        -v sh_line="export PATH=\"$UNINSTALL_BIN:\$PATH\"" -v fish_line="fish_add_path $UNINSTALL_BIN" '
+        { line[NR] = $0 }
+        END {
+          n = 0
+          for (i = 1; i <= NR; i++) {
+            if (line[i] == marker && i < NR && (line[i + 1] == sh_line || line[i + 1] == fish_line)) {
+              if (n > 0 && out[n] == "") n--
+              i++
+              continue
+            }
+            out[++n] = line[i]
+          }
+          for (i = 1; i <= n; i++) print out[i]
+        }' "$UNINSTALL_PROFILE" > "$UNINSTALL_PROFILE.omnesis-uninstall" &&
+        cat "$UNINSTALL_PROFILE.omnesis-uninstall" > "$UNINSTALL_PROFILE"
+      rm -f "$UNINSTALL_PROFILE.omnesis-uninstall"
+    done
+  fi
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    printf '%s\n' "Removed the Docker install and its data."
+  else
+    printf '%s\n' "Removed the Docker install. Your data stays in $UNINSTALL_DIR; delete it with: rm -rf '$UNINSTALL_DIR'"
+  fi
+  exit 0
+fi
+
 [ -f "$COMPOSE_FILE" ] || {
   printf 'omnesis: %s is gone — this host no longer has a Docker install.\n' "$COMPOSE_FILE" >&2
   exit 1

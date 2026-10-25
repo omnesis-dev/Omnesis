@@ -203,4 +203,21 @@ assert "it serves lane-b" serving_release lane-b
 assert "the collector paired before is still known" \
   bash -c "'$ADMIN' cli devices list 2>/dev/null | grep -qi collector"
 
+echo "== omnesis uninstall --purge, run by maya, removes the gateway and its state through sudo =="
+# The release's own CLI, the one a login account on this host runs. It deletes
+# the release it runs from on the way, as an operator's would.
+RELEASE_CLI="$(readlink -f /opt/omnesis-gateway/current)/scripts/hardened-gateway-exec.sh"
+assert "omnesis uninstall gateway --purge succeeds" \
+  as_maya "cd ~ && '$RELEASE_CLI' uninstall gateway --yes --purge"
+assert_not "the unit is gone" test -f "$UNIT_FILE"
+assert_not "the unit is no longer known to systemd" \
+  bash -c "systemctl list-unit-files '$UNIT' --no-legend | grep -q ."
+assert_not "the releases are gone" test -d /opt/omnesis-gateway
+assert_not "the admin command is gone" test -e "$ADMIN"
+assert_not "the state is gone" test -e "$STATE"
+assert_not "the state link is gone" test -e /var/lib/omnesis-gateway
+assert_not "the passphrase and receipt are gone" test -e /etc/omnesis-gateway
+assert_not "the build cache is gone" test -e /var/cache/private/omnesis-gateway-build
+assert_not "the gateway no longer answers" healthy
+
 echo "== hardened systemd scenario PASSED =="

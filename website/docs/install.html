@@ -1251,76 +1251,152 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
 
         <h2 id="uninstall">Uninstall</h2>
         <p>
-          Removing Omnesis reverses the install you made. Your data stays in the config directory
-          until you delete it, so take a <a href="/docs/updating#backup">backup</a> first if you may
-          want it back.
+          <code>omnesis uninstall</code> removes Omnesis from the machine it runs on: everything it
+          finds, or only the parts you name. Your data stays in the config directory unless you add
+          <code>--purge</code>, so take a <a href="/docs/updating#backup">backup</a> first if you
+          may want it back.
         </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># see what would go, then remove it</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall --dry-run</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall</span>
+            </p>
+            <p class="t-dim"># only the OpenClaw integration</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall openclaw</span>
+            </p>
+            <p class="t-dim"># everything, with the data and keys</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall --purge</span>
+            </p>
+          </div>
+        </div>
         <p>
-          <strong>1. On a second machine, remove its device from the gateway first.</strong> For a
-          collector, move or detach the sources it hosts (see
-          <a href="/docs/sources#managing-sources">Managing sources</a>), then on the gateway host
-          run <code>omnesis devices revoke &lt;device&gt; --forget</code>, which deletes the device
-          and is refused while it still hosts sources. Revoking a harness machine's device also
-          signs its agent out of its connection.
+          Without a component it lists what it found, lets you pick, and asks before it changes
+          anything. Name components to remove only those:
         </p>
-        <p><strong>2. Stop and remove the services and the software</strong>, by install shape:</p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Install</th>
-                <th>Remove it with</th>
+                <th>Component</th>
+                <th>What it removes</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Source (default)</td>
+                <td><code>gateway</code></td>
                 <td>
-                  <code>omnesis service uninstall</code>, then
-                  <code>rm -rf ~/omnesis ~/.local/lib/omnesis</code> and
-                  <code>rm -f ~/.local/bin/omnesis</code> (use your <code>--source-dir</code> if you
-                  set one).
+                  The gateway service: the systemd user unit or LaunchAgent, a
+                  <a href="/docs/security#hardened-gateway">hardened gateway</a> (its service,
+                  releases and admin command, through <code>sudo</code>), or a Docker install.
                 </td>
               </tr>
               <tr>
-                <td>Docker</td>
+                <td><code>collector</code></td>
+                <td>The collector service.</td>
+              </tr>
+              <tr>
+                <td><code>openclaw</code>, <code>hermes</code></td>
                 <td>
-                  <code
-                    >docker compose -f ~/.config/omnesis/docker-compose.yml --profile update down
-                    --rmi all</code
-                  >, then <code>rm -f ~/.local/bin/omnesis</code>.
+                  The agent integration <code>omnesis connect</code> installed: the plugin
+                  (unregistered through OpenClaw's own command), the skill, the integration's state
+                  and credentials, and the Omnesis entries in the harness's config and
+                  <code>.env</code>. Everything else in those files stays as it was.
                 </td>
               </tr>
               <tr>
-                <td>Hardened gateway</td>
+                <td><code>claude-code</code>, <code>codex</code></td>
                 <td>
-                  <code>sudo omnesis-gateway-admin uninstall</code>, which removes the service and
-                  the releases but keeps <code>/var/lib/omnesis-gateway</code> and the passphrase in
-                  <code>/etc/omnesis-gateway</code>. Delete both yourself when you no longer need
-                  the data. Remove your own collector and CLI as for a source install.
+                  The Omnesis plugin, its marketplace and the <code>omnesis</code> MCP server,
+                  through each tool's own <code>plugin</code> and <code>mcp</code> commands.
                 </td>
               </tr>
               <tr>
-                <td>Client only</td>
-                <td>As for a source install; there are no services.</td>
+                <td><code>cli</code></td>
+                <td>
+                  The <code>omnesis</code> command: the installer's source checkout, the global
+                  package, <code>~/.local/bin/omnesis</code>, <code>~/.local/lib/omnesis</code>, and
+                  the installer's PATH line (marked <code># Added by the Omnesis installer</code>)
+                  when nothing else lives in <code>~/.local/bin</code>.
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p>Flags:</p>
+        <ul>
+          <li>
+            <code>--purge</code> also deletes the config directory (data, tokens, credentials and
+            keys), the service logs and the <code>dev.omnesis</code> entries in the macOS Keychain
+            or Linux Secret Service, and a hardened gateway's
+            <code>/var/lib/omnesis-gateway</code> and <code>/etc/omnesis-gateway</code>. It is
+            refused while anything that uses the config directory would stay. The keyring's root key
+            is shared by every Omnesis config directory of your account, so it stays while another
+            one remains, such as a named instance's.
+          </li>
+          <li><code>--dry-run</code> prints the plan and changes nothing.</li>
+          <li>
+            <code>--yes</code> skips the confirmation; without a terminal it is required.
+            <code>--json</code> reports every step and its outcome.
+          </li>
+          <li>
+            <code>--instance &lt;name&gt;</code> removes a named parallel instance instead of the
+            default one; <code>--dir &lt;path&gt;</code> names a harness home outside its default,
+            with <code>openclaw</code> or <code>hermes</code>.
+          </li>
+          <li>
+            <code>--discard-local-changes</code> removes the installer's source checkout even when
+            it has local changes. A checkout the installer did not clone, a git worktree, and a
+            launcher or PATH line of your own are never removed.
+          </li>
+        </ul>
         <p>
-          The installer may also have added a PATH line to your shell profile, under the comment
-          <code># Added by the Omnesis installer</code>; delete both lines. On a harness machine,
-          remove the Omnesis plugin from OpenClaw or Hermes the way that harness removes plugins.
+          Every step is independent and safe to repeat: a step that fails is reported with what is
+          left and how to finish it, the others still run, and running the command again picks up
+          where it stopped. It waits for nothing on the network and works with the gateway gone. If
+          the installed <code>omnesis</code> no longer starts, <code>npx omnesis uninstall</code>
+          finds the install from what is on disk and removes it the same way.
         </p>
         <p>
-          <strong>3. Delete the data and keys, if you want them gone.</strong>
-          <code>rm -rf ~/.config/omnesis</code> removes the data, tokens, credentials and, with a
-          passphrase file, the key that opens them. With an OS keyring, the root key is stored there
-          under the service name <code>dev.omnesis</code>: on macOS, run
-          <code>security delete-generic-password -s dev.omnesis</code> until it reports that nothing
-          was found; on Linux, run <code>secret-tool clear service dev.omnesis</code>. On a Mac,
-          also remove the collector from <strong>Full Disk Access</strong> in System Settings.
+          <strong>Docker.</strong> On a Docker host, <code>omnesis uninstall</code> runs in the
+          launcher on the host, not in a container: it takes the containers and images down (<code
+            >docker compose … down --rmi all</code
+          >), removes the compose file and the launcher, and with <code>--purge</code> the config
+          directory. An install is removed as a whole.
         </p>
+        <p>
+          <strong>What only you can do.</strong> The command says which of these apply when it
+          finishes:
+        </p>
+        <ul>
+          <li>
+            On a second machine, remove its device from the gateway as well. For a collector, first
+            move or detach the sources it hosts (see
+            <a href="/docs/sources#managing-sources">Managing sources</a>); then, on the gateway
+            host, run <code>omnesis devices revoke &lt;device&gt; --forget</code>. Revoking a
+            harness machine's device also signs its agent out of its connection.
+          </li>
+          <li>Restart OpenClaw or Hermes so the running harness stops loading the plugin.</li>
+          <li>
+            On a Mac, remove the collector from <strong>Full Disk Access</strong> in System
+            Settings.
+          </li>
+          <li>
+            The prerequisites the installer may have added (Node, git, build tools) and the
+            <code>mkcert</code> certificate authority stay; <code>mkcert -uninstall</code> removes
+            the authority if nothing else uses it.
+          </li>
+        </ul>
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/"
             ><span class="pager-label">Previous</span><span class="pager-title">Overview</span></a

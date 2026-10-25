@@ -73,17 +73,18 @@ const sharedInputs =
 const any = (files, pattern) => files.some((file) => pattern.test(file));
 
 // The packaging and install surface every deployment lane exercises: the image
-// build, the installer and updater, release staging and dependency patches.
+// build, the installer, updater and uninstaller, release staging and dependency
+// patches.
 const deployment =
-  /^(?:Dockerfile$|\.dockerignore$|patches\/|scripts\/release\/|scripts\/install\.sh$|website\/install\.sh$|scripts\/hardened-gateway[^/]*\.sh$|packages\/cli\/src\/(?:service|update)\/)/;
+  /^(?:Dockerfile$|\.dockerignore$|patches\/|scripts\/release\/|scripts\/install\.sh$|website\/install\.sh$|scripts\/hardened-gateway[^/]*\.sh$|packages\/cli\/src\/(?:service|update|uninstall)\/|packages\/cli\/src\/commands\/uninstall\.ts$)/;
 const appleOnly =
   /^(?:ios\/|\.swiftlint|\.swiftformat|scripts\/run-ios-e2e\.sh$|scripts\/ios-|scripts\/synth-gateway\.sh$|evals\/universes\/e2e-minimal\/)/;
 const nodeMacOS =
-  /^(?:scripts\/install\.sh$|website\/install\.sh$|packages\/cli\/src\/(?:service|update)\/|packages\/providers\/apple-[^/]+\/)/;
+  /^(?:scripts\/install\.sh$|website\/install\.sh$|packages\/cli\/src\/(?:service|update|uninstall)\/|packages\/cli\/src\/commands\/uninstall\.ts$|packages\/providers\/apple-[^/]+\/)/;
 const securitySensitive =
   /^packages\/(?:cli|gateway|collector)\/src\/.*(?:keyring|secret|encrypt|backup|restore|recovery|passphrase)/i;
 const harnessPaths =
-  /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
+  /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/cli\/src\/uninstall\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
 const sourceCode = /\.(?:[cm]?[jt]sx?)$/;
 
 /** Split the selected E2E files round-robin across as few shards as keep each short. */

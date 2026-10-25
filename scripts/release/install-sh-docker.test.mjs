@@ -1995,3 +1995,107 @@ describe.skipIf(!HAS_PTY)("install.sh --docker: the questions it asks", () => {
     expect(run.envFile()).toContain("OMNESIS_SECRET_STORE=passphrase");
   });
 });
+
+describe("the wrapper's uninstall, on the host", () => {
+  /** Run the installed wrapper with the fake docker, as the operator would. */
+  function runWrapper(run, args, extraEnv = {}) {
+    return spawnSync(run.wrapper, args, {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        OMNESIS_TEST_DOCKER: dockerLog(run.home),
+        ...extraEnv,
+      },
+      input: "",
+      encoding: "utf8",
+    });
+  }
+
+  function profileWithPathLine(run) {
+    const profile = join(run.home, ".zshrc");
+    writeFileSync(
+      profile,
+      `export EDITOR=vim\n\n# Added by the Omnesis installer\nexport PATH="${run.home}/.local/bin:$PATH"\n`,
+    );
+    return profile;
+  }
+
+  test("takes the containers and images down and removes the launcher, keeping the data", () => {
+    const run = runInstaller("uninstall-keep", QUIET);
+    expect(run.status).toBe(0);
+    const profile = profileWithPathLine(run);
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const composeFile = join(run.configDir, "docker-compose.yml");
+
+    const proc = runWrapper(run, ["uninstall", "--yes"]);
+
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(readDockerCalls(run.home)).toContain(
+      `docker compose -f ${composeFile} --profile update down --rmi all --remove-orphans`,
+    );
+    expect(existsSync(composeFile)).toBe(false);
+    expect(existsSync(join(run.configDir, "install-method"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+    expect(readFileSync(join(run.configDir, "omnesis.db"), "utf8")).toBe("fictional corpus");
+    expect(readFileSync(profile, "utf8")).toBe("export EDITOR=vim\n");
+    expect(proc.stdout).toContain("Your data stays in");
+  });
+
+  test("--purge deletes the config directory too", () => {
+    const run = runInstaller("uninstall-purge", QUIET);
+    const proc = runWrapper(run, ["uninstall", "--yes", "--purge"]);
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(existsSync(run.configDir)).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("--dry-run and a refused confirmation change nothing", () => {
+    const run = runInstaller("uninstall-dry", QUIET);
+    const before = readDockerCalls(run.home).length;
+    const dry = runWrapper(run, ["uninstall", "--dry-run", "--purge"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain("Dry run: nothing was changed.");
+    const unconfirmed = runWrapper(run, ["uninstall"]);
+    expect(unconfirmed.status).toBe(2);
+    expect(unconfirmed.stderr).toContain("--yes");
+    expect(readDockerCalls(run.home)).toHaveLength(before);
+    expect(existsSync(run.wrapper)).toBe(true);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(true);
+  });
+
+  test("refuses to remove one part of the stack", () => {
+    const run = runInstaller("uninstall-part", QUIET);
+    const proc = runWrapper(run, ["uninstall", "collector", "--yes"]);
+    expect(proc.status).toBe(2);
+    expect(proc.stderr).toContain("removed as a whole");
+    expect(existsSync(run.wrapper)).toBe(true);
+  });
+
+  test("a failed compose down removes nothing else", () => {
+    const run = runInstaller("uninstall-fail", QUIET);
+    writeExecutable(
+      fixturePath("fake-bin", "docker"),
+      "#!/bin/sh\necho 'daemon unreachable' >&2\nexit 1\n",
+    );
+    const proc = runWrapper(run, ["uninstall", "--yes"]);
+    expect(proc.status).toBe(1);
+    expect(existsSync(run.wrapper)).toBe(true);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(true);
+  });
+
+  test("the PATH line stays when other programs share ~/.local/bin", () => {
+    const run = runInstaller("uninstall-shared-bin", QUIET);
+    const profile = profileWithPathLine(run);
+    writeExecutable(join(run.home, ".local", "bin", "uv"), "#!/bin/sh\n");
+    expect(runWrapper(run, ["uninstall", "--yes"]).status).toBe(0);
+    expect(readFileSync(profile, "utf8")).toContain("# Added by the Omnesis installer");
+  });
+
+  test("uninstalls after the compose file is already gone", () => {
+    const run = runInstaller("uninstall-orphan", QUIET);
+    rmSync(join(run.configDir, "docker-compose.yml"));
+    const proc = runWrapper(run, ["uninstall", "--yes"]);
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+});

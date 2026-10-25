@@ -6,8 +6,9 @@ run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workfl
 # Installs, updates and rolls back Omnesis on real GitHub-hosted machines,
 # under each OS's real service supervisor. See docs/install-e2e.md.
 #
-# Single-host lanes (S1 Linux, S2 macOS) run on pull requests and on pushes to
-# main that touch the installer, the updater or the service definitions. They
+# Single-host lanes (S1 Linux, S2 macOS) and the uninstall lanes (X1 Linux,
+# X2 macOS) run on pull requests and on pushes to main that touch the
+# installer, the updater, the uninstaller or the service definitions. They
 # need no secrets, so they also run for fork pull requests.
 #
 # Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet, T3 Docker + native Mac) join a dedicated CI
@@ -26,6 +27,8 @@ on:
       - packages/cli/src/update/**
       - packages/cli/src/commands/update.ts
       - packages/cli/src/service/**
+      - packages/cli/src/uninstall/**
+      - packages/cli/src/commands/uninstall.ts
       - scripts/install-e2e/**
       - .github/workflows/install-e2e.yml
   push:
@@ -38,6 +41,8 @@ on:
       - packages/cli/src/update/**
       - packages/cli/src/commands/update.ts
       - packages/cli/src/service/**
+      - packages/cli/src/uninstall/**
+      - packages/cli/src/commands/uninstall.ts
       - scripts/install-e2e/**
       - .github/workflows/install-e2e.yml
   schedule:
@@ -144,6 +149,38 @@ jobs:
     with:
       target_sha: ${{ github.sha }}
       extended: true
+
+  # Install, uninstall keeping the data, reinstall over it, then uninstall
+  # with --purge: every piece the installer put down comes off again, under
+  # the same real supervisors.
+  uninstall:
+    name: ${{ matrix.lane }} uninstall (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes == 'all' || inputs.lanes == 'single-host'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: X1
+            os: ubuntu-22.04
+          - lane: X2
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Install, uninstall, reinstall over the kept data, uninstall --purge
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/uninstall.sh
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
 
   # The update away from the newest release runs that release's own `npm ci`
   # over its own node_modules, so a lockfile npm cannot reconcile in place

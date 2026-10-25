@@ -23,7 +23,7 @@ packages/config/       config schema (omnesisConfigSchema, zod validators, defau
 packages/gateway-client/ shared HTTP + WS GatewayClient implementation (HttpGatewayClient, GatewayWsClient) — extracted from collector
 packages/gateway/      HTTP server, SQLite store, indexer, scheduler, search, analytics-db
 packages/collector/    sync engine, source manager, auth subprocess
-packages/cli/          unified `omnesis` CLI — read commands hit /search, /documents, /analytics, /status, /whoami; admin commands hit /admin/*; also hosts the daemons (`gateway serve` / `collector run`) and the `service`/`update` lifecycle commands
+packages/cli/          unified `omnesis` CLI — read commands hit /search, /documents, /analytics, /status, /whoami; admin commands hit /admin/*; also hosts the daemons (`gateway serve` / `collector run`) and the `service`/`update`/`uninstall` lifecycle commands (`uninstall` discovers an install from disk in `src/uninstall/`)
 packages/providers/*   one package per provider (google, apple, notion, whatsapp, …)
 packages/watch/     the Watch V2 DSL, validator, runtime and compiler — standalone by contract, imports nothing from the gateway; the gateway hosts it through `packages/gateway/src/watch/`
 packages/agent-integration/ shared off-host integration runtime for OpenClaw and Hermes — transcript ingestion, subscription delivery, and scoped management tools

@@ -76,7 +76,7 @@ Omnesis runs on **macOS** and **Linux**. Windows is not supported. Install it on
 curl -fsSL https://omnesis.dev/install.sh | sh
 ```
 
-The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements, every flag, and uninstalling.
+The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements and every flag. `omnesis uninstall` removes it again, all of it or the parts you name, and keeps your data unless you add `--purge`.
 
 For Docker on a Linux server or NAS, add `--docker --combined` to run the gateway and collector in one container. `--docker --gateway-only` runs a gateway for collectors on other machines. See the [Docker and Unraid guide](https://omnesis.dev/docs/install#docker) for persistent storage, encryption, networking, and the included Compose configuration.
 
