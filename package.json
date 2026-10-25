@@ -74,7 +74,7 @@
     "test:e2e:portal": "node scripts/run-check.mjs portal",
     "briefs:backtest": "tsx evals/briefs/src/backtest/run.ts",
     "preinstall": "node scripts/native-runtime-preflight.mjs",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package && node scripts/native-vector-compat.mjs --package-dir packages/gateway",
     "test:unit:raw": "npm run test:unit:vitest && npm run test:unit:smoke && npm run test:openclaw && npm run test:hermes",
     "checks:status": "node scripts/run-check.mjs status",
     "checks:cancel": "node scripts/run-check.mjs cancel",

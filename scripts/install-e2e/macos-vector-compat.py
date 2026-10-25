@@ -168,7 +168,7 @@ def matrix(work):
                     raise ValueError('installed version mismatch')
                 if build:
                     env['npm_config_build_from_source'] = 'true'
-                    rows.append(run('source-build', [npm, 'rebuild', 'usearch', '--build-from-source'], project, env, 480, retire))
+                    rows.append(run('source-build', [npm, 'rebuild', 'usearch'], project, env, 480, retire))
                 if success(rows[-1]):
                     rows.extend(run(stage, argv, project, env, 20, retire) for stage, argv in commands(node, build))
             result['cases'].append({'case': case, 'version': version, 'node': node_version,

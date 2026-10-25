@@ -109,8 +109,11 @@ export function transformManifest(pkg, version, opts = {}) {
   delete out.devDependencies;
   delete out.scripts;
   if (pkg.name === "@omnesis/gateway") {
-    out.scripts = { preinstall: "node native-runtime-preflight.mjs" };
-    out.files = [...(out.files ?? []), "native-runtime-preflight.mjs"];
+    out.scripts = {
+      preinstall: "node native-runtime-preflight.mjs",
+      postinstall: "node native-vector-compat.mjs --package-dir .",
+    };
+    out.files = [...(out.files ?? []), "native-runtime-preflight.mjs", "native-vector-compat.mjs"];
   }
 
   // Single source of truth for the publish-only metadata. Matches the repo

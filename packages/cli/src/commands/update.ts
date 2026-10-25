@@ -3239,6 +3239,18 @@ export async function continueOffer(run: ContinuationRun): Promise<void> {
             signalExitCode(early.signal),
           );
         }
+        // The offering build prepared its own launcher before checkout. Refresh
+        // it with this target build's renderer while the inherited lock is held,
+        // before accepting the offer or restarting any service.
+        if (offer.subject.method === "source") {
+          await deps.prepareSourceLauncher?.(offer.subject.rootDir);
+          if (early.signal) {
+            throw new CliError(
+              `${c.yellow}Stopped by ${early.signal} before taking over the update.${c.reset}`,
+              signalExitCode(early.signal),
+            );
+          }
+        }
         releaseEarly?.();
         releaseEarly = null;
         try {

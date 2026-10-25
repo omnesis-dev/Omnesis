@@ -24,7 +24,8 @@ export function sourceLauncherTargetsRoot(content: string, rootDir: string): boo
   return (
     content.startsWith("#!/bin/sh\n") &&
     ownsRoot &&
-    content.includes("node_modules/.bin/tsx") &&
+    (content.includes("node_modules/.bin/tsx") ||
+      content.includes("node_modules/tsx/dist/loader.mjs")) &&
     content.includes("packages/cli/src/index.ts")
   );
 }
@@ -191,9 +192,9 @@ if update_unfinished; then
     printf '%s\\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
     exit 1
   }
-elif [ ! -x "$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
+elif [ ! -f "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]; then
   if [ "$UPDATE_LOCK_ACQUIRED" != "1" ]; then acquire_update_lock; fi
-  if [ ! -x "$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
+  if [ ! -f "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]; then
     printf '%s\\n' "Source recovery: restoring missing CLI dependencies before continuing..." >&2
     install_source_dependencies || {
       printf '%s\\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
@@ -201,8 +202,11 @@ elif [ ! -x "$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
     }
   fi
 fi
+# Import the loader in the daemon itself: the tsx CLI parent force-kills a
+# slow signal handler before the daemon's graceful shutdown can complete.
+SOURCE_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs")" || exit 1
 if [ "$UPDATE_LOCK_HANDOFF" = "1" ]; then
-  "$SOURCE_ROOT/node_modules/.bin/tsx" "$SOURCE_ROOT/packages/cli/src/index.ts" "$@"
+  node --import "$SOURCE_LOADER_URL" "$SOURCE_ROOT/packages/cli/src/index.ts" "$@"
   UPDATE_STATUS=$?
   finish_update_lock "$UPDATE_STATUS"
 fi
@@ -214,7 +218,7 @@ if [ "$UPDATE_LOCK_ACQUIRED" = "1" ]; then
   fi
   trap - EXIT HUP INT TERM
 fi
-exec "$SOURCE_ROOT/node_modules/.bin/tsx" "$SOURCE_ROOT/packages/cli/src/index.ts" "$@"
+exec node --import "$SOURCE_LOADER_URL" "$SOURCE_ROOT/packages/cli/src/index.ts" "$@"
 `;
 }
 

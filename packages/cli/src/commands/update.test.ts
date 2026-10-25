@@ -14,6 +14,11 @@ import {
   UpdateLockBusyError,
 } from "@omnesis/core";
 import { assertSourceNodeVersion } from "../update/source-node.js";
+import {
+  prepareSourceRecoveryLauncher,
+  sourceRecoveryLauncher,
+} from "../update/source-launcher.js";
+import { captureOwnedSourceLauncher } from "../update/package-migration-files.js";
 import { CliError, EXIT_CANCELLED, EXIT_FAILURE, EXIT_USER_ERROR } from "../utils.js";
 import {
   activeSourceApplyState,
@@ -5072,6 +5077,8 @@ describe("hand-over paths a single run never had", () => {
         ownVersion?: string;
         prepare?: (lock: unknown) => Promise<void> | void;
         interruptions?: UpdateInterruptionRouter;
+        deps?: Partial<UpdateFlowDeps>;
+        detection?: Parameters<typeof continueOffer>[0]["detection"];
       } = {},
     ) {
       const interruptions =
@@ -5083,6 +5090,7 @@ describe("hand-over paths a single run never had", () => {
         async (_install: unknown, _offer: UpdateContinuation, lock: unknown) => {
           await overrides.prepare?.(lock);
           return makeDeps(fakeRunner([]), {
+            ...overrides.deps,
             currentVersion: "0.4.10",
             interruptions,
             updateLock: lock as UpdateFlowDeps["updateLock"],
@@ -5094,7 +5102,7 @@ describe("hand-over paths a single run never had", () => {
         id: OFFER_ID,
         env: { OMNESIS_UPDATE_LOCK_ID: offering.id },
         ownVersion: overrides.ownVersion ?? "0.5.0",
-        detection: { method: "source", rootDir },
+        detection: overrides.detection ?? { method: "source", rootDir },
         interruptions,
         prepare,
       });
@@ -5115,11 +5123,131 @@ describe("hand-over paths a single run never had", () => {
       expect(() => acquireUpdateLock(configDir, { owner: "second" })).toThrow(/fanning out/);
     });
 
+    test.each(["legacy", "canonical", "current"])(
+      "refreshes the %s source front door before accepting and restarting",
+      async (format) => {
+        const homeDir = join(configDir, "home");
+        const launcher = join(homeDir, ".local/bin/omnesis");
+        const helper = join(homeDir, ".local/lib/omnesis/update-lock.cjs");
+        const expected = sourceRecoveryLauncher(rootDir, configDir, helper);
+        // Reconstruct the previous complete installer-owned format, retaining
+        // its recovery and lock functions rather than just a similar header.
+        const previousCanonical = expected
+          .replace(/# Import the loader in the daemon itself:[\s\S]*?SOURCE_LOADER_URL=.*\n/u, "")
+          .replaceAll('node --import "$SOURCE_LOADER_URL"', '"$SOURCE_ROOT/node_modules/.bin/tsx"')
+          .replaceAll(
+            '[ ! -f "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]',
+            '[ ! -x "$SOURCE_ROOT/node_modules/.bin/tsx" ]',
+          );
+        const previous =
+          format === "legacy"
+            ? `#!/bin/sh\nexec "${rootDir}/node_modules/.bin/tsx" "${rootDir}/packages/cli/src/index.ts" "$@"\n`
+            : format === "canonical"
+              ? previousCanonical
+              : expected;
+        mkdirSync(dirname(launcher), { recursive: true });
+        writeFileSync(launcher, previous, { mode: 0o755 });
+        writeContinuation(configDir, doc());
+        const events: string[] = [];
+        const refresh = vi.fn((candidate: string) => {
+          expect(readContinuation(configDir)?.state).toBe("offered");
+          expect(() => acquireUpdateLock(configDir, { owner: "concurrent update" })).toThrow(
+            UpdateLockBusyError,
+          );
+          expect(readFileSync(launcher, "utf8")).toBe(previous);
+          prepareSourceRecoveryLauncher(candidate, configDir, homeDir);
+          events.push("refresh");
+        });
+        const restart = vi.fn((component: ServiceComponent) => {
+          expect(readContinuation(configDir)?.state).toBe("accepted");
+          expect(readFileSync(launcher, "utf8")).toBe(expected);
+          events.push(`restart ${component}`);
+          return Promise.resolve();
+        });
+        const { run, prepare } = take({
+          deps: {
+            prepareSourceLauncher: refresh,
+            roles: hostRoles({ gateway: supervised, collector: supervised }),
+            restartService: restart,
+            awaitHealth: vi.fn(() => {
+              events.push("health");
+              return Promise.resolve();
+            }),
+          },
+        });
+        await run;
+        expect(refresh).toHaveBeenCalledExactlyOnceWith(rootDir);
+        expect(events).toEqual(["refresh", "restart gateway", "health", "restart collector"]);
+        expect(captureOwnedSourceLauncher(launcher, rootDir, configDir, homeDir).content).toBe(
+          expected,
+        );
+        expect((await prepare.mock.results[0]!.value).confirm).not.toHaveBeenCalled();
+        offering.setStep("finished source continuation");
+      },
+    );
+
+    test("a failed target launcher refresh refuses acceptance and restarts while returning the lock", async () => {
+      writeContinuation(configDir, doc());
+      const failure = new Error("owned launcher could not be refreshed");
+      const restartService = vi.fn();
+      const refresh = vi.fn(() => {
+        throw failure;
+      });
+      const { run } = take({ deps: { prepareSourceLauncher: refresh, restartService } });
+      await expect(run).rejects.toBe(failure);
+      expect(readContinuation(configDir)?.state).toBe("offered");
+      expect(refresh).toHaveBeenCalledExactlyOnceWith(rootDir);
+      expect(restartService).not.toHaveBeenCalled();
+      offering.setStep("refused target refresh");
+    });
+
+    test("a package continuation never refreshes the source launcher", async () => {
+      writeContinuation(
+        configDir,
+        doc({ subject: { method: "npm-global", target: "0.5.0", previous: "0.4.10" } }),
+      );
+      const refresh = vi.fn();
+      const { run } = take({
+        detection: { method: "npm-global" },
+        deps: { prepareSourceLauncher: refresh },
+      });
+      await run;
+      expect(refresh).not.toHaveBeenCalled();
+      expect(readContinuation(configDir)?.state).toBe("accepted");
+      offering.setStep("finished package continuation");
+    });
+
+    test("a signal during launcher refresh refuses acceptance without restarting", async () => {
+      writeContinuation(configDir, doc());
+      const interruptions = new UpdateInterruptionRouter(() => {
+        throw new Error("unexpected signal exit");
+      });
+      const restartService = vi.fn();
+      const { run } = take({
+        interruptions,
+        deps: {
+          prepareSourceLauncher: () => {
+            interruptions.dispatch("SIGTERM");
+          },
+          restartService,
+        },
+      });
+      await expect(run).rejects.toMatchObject({ exitCode: 143 });
+      expect(readContinuation(configDir)?.state).toBe("offered");
+      expect(restartService).not.toHaveBeenCalled();
+      offering.setStep("refused interrupted refresh");
+    });
+
     test("a refusal leaves the offer open and the lock with the offering process", async () => {
       writeContinuation(configDir, doc());
-      const { run, prepare } = take({ ownVersion: "0.4.10" });
+      const refresh = vi.fn();
+      const { run, prepare } = take({
+        ownVersion: "0.4.10",
+        deps: { prepareSourceLauncher: refresh },
+      });
       await expect(run).rejects.toMatchObject({ exitCode: EXIT_FAILURE });
       expect(prepare).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
       expect(readContinuation(configDir)?.state).toBe("offered");
       offering.setStep("finishing here");
     });

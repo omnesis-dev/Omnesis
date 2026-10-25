@@ -12,6 +12,7 @@
  * `.github/workflows/install-smoke.yml`; this file covers the decision.
  */
 
+import { sourceLoaderFixture } from "./source-loader-fixture.mjs";
 import {
   accessSync,
   chmodSync,
@@ -132,6 +133,7 @@ EOF
     mkdir -p node_modules/.bin
     printf '#!/bin/sh\\necho source-version\\n' > node_modules/.bin/tsx
     chmod +x node_modules/.bin/tsx
+    ${sourceLoaderFixture}
     exit 0 ;;
 esac
 exit 0

@@ -45,11 +45,18 @@ describe("release package runtime assets", () => {
       expect(existsSync(join(staged, "models-dev", "LICENSE"))).toBe(true);
       expect(existsSync(join(staged, "native-runtime-preflight.mjs"))).toBe(true);
       const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
-      expect(manifest.scripts).toEqual({ preinstall: "node native-runtime-preflight.mjs" });
+      expect(manifest.scripts).toEqual({
+        preinstall: "node native-runtime-preflight.mjs",
+        postinstall: "node native-vector-compat.mjs --package-dir .",
+      });
       const pack = parsePackReport(
         execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: staged, encoding: "utf8" }),
       );
       expect(pack.files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
+      expect(pack.files.map(({ path }) => path)).toContain("native-vector-compat.mjs");
+      expect(readFileSync(join(staged, "native-vector-compat.mjs"), "utf8")).toBe(
+        readFileSync(join(repoRoot, "scripts/native-vector-compat.mjs"), "utf8"),
+      );
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }

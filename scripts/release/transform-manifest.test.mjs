@@ -99,8 +99,11 @@ describe("transformManifest", () => {
   test("keeps the native runtime preflight only on the published gateway", () => {
     const gateway = transformManifest({ name: "@omnesis/gateway", version: VERSION }, VERSION);
     const cli = transformManifest({ name: "omnesis", version: VERSION }, VERSION);
-    expect(gateway.scripts).toEqual({ preinstall: "node native-runtime-preflight.mjs" });
-    expect(gateway.files).toEqual(["native-runtime-preflight.mjs"]);
+    expect(gateway.scripts).toEqual({
+      preinstall: "node native-runtime-preflight.mjs",
+      postinstall: "node native-vector-compat.mjs --package-dir .",
+    });
+    expect(gateway.files).toEqual(["native-runtime-preflight.mjs", "native-vector-compat.mjs"]);
     expect(cli.scripts).toBeUndefined();
   });
 

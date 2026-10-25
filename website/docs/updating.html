@@ -416,6 +416,12 @@
           reinstalling the previous release. If removing that tree fails, recovery stops and reports
           the failed step.
         </p>
+        <p>
+          On Intel macOS, dependency installation also verifies the native vector engine and builds
+          it locally when the bundled binary is incompatible. This applies to fresh installations,
+          updates and rollback reinstalls. Keep Xcode Command Line Tools installed; see
+          <a href="/docs/install#requirements">Requirements</a>.
+        </p>
 
         <h3 id="update-flags">Options</h3>
         <div class="table-wrap">

@@ -177,7 +177,9 @@
               <tr>
                 <td>Source</td>
                 <td><em>(default)</em></td>
-                <td>Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux</td>
+                <td>
+                  Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux and Intel macOS
+                </td>
                 <td>You want the default: a checkout of the release, built on the machine.</td>
               </tr>
               <tr>
@@ -197,7 +199,9 @@
         <ul>
           <li>
             <strong>macOS</strong>, Apple silicon or Intel. Every source is available, and local
-            embeddings use Metal acceleration on Apple silicon.
+            embeddings use Metal acceleration on Apple silicon. Intel Macs also need Xcode Command
+            Line Tools (<code>xcode-select --install</code>): installation checks the native vector
+            engine and builds it locally when its bundled binary is incompatible.
           </li>
           <li>
             <strong>Linux</strong>, amd64 or arm64. Source installs need glibc 2.35 or newer; Docker

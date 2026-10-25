@@ -8,7 +8,7 @@
  * a local git remote carrying release tags (reached through `OMNESIS_REPO_URL`),
  * an `npm` that plants a recording CLI shim instead of installing anything,
  * and a `curl` whose exit code the test decides. The seam is the shim: a source
- * install always runs the CLI through `<checkout>/node_modules/.bin/tsx`, so a
+ * install always runs the CLI through the exact checkout’s `tsx/dist/loader.mjs` preload, so a
  * recorder written there sees every command the installer issues, with its
  * arguments.
  *
@@ -21,6 +21,7 @@
  * `afterEach`, then plants whatever else it needs under `fixturePath()`.
  */
 
+import { sourceLoaderFixture } from "./source-loader-fixture.mjs";
 import {
   accessSync,
   chmodSync,
@@ -181,6 +182,7 @@ if [ "$1" = ci ]; then
   mkdir -p node_modules/.bin
   cp "${join(fixture, "cli-shim.sh")}" node_modules/.bin/tsx
   chmod +x node_modules/.bin/tsx
+  ${sourceLoaderFixture}
 fi
 if [ "$1" = run ] && [ "$2" = build ]; then
   printf 'build NODE_OPTIONS=%s\\n' "\${NODE_OPTIONS:-}" >> "$OMNESIS_TEST_CALLS"

@@ -24,7 +24,7 @@ test("refuses a persistent host before any filesystem mutation", () => {
   expect(
     python(`
 with tempfile.TemporaryDirectory() as directory:
- target=pathlib.Path(directory)/'must-not-exist'
+ base=pathlib.Path(directory).resolve();target=base/'must-not-exist'
  os.environ.update(GITHUB_ACTIONS='true',RUNNER_ENVIRONMENT='github-hosted',RUNNER_OS='macOS',HOME=directory,ImageOS='macos15')
  try:m.matrix(target)
  except RuntimeError:pass
@@ -179,9 +179,9 @@ test("non-Intel hosted architecture is refused before creating scratch", () => {
     python(`
 from types import SimpleNamespace
 with tempfile.TemporaryDirectory() as directory:
- target=pathlib.Path(directory)/'must-not-exist'
+ base=pathlib.Path(directory).resolve();target=base/'must-not-exist'
  original=m.sibling
- m.sibling=lambda name: SimpleNamespace(hosted_guard=lambda:pathlib.Path(directory)) if name=='macos-variants-tools' else original(name)
+ m.sibling=lambda name: SimpleNamespace(hosted_guard=lambda:base) if name=='macos-variants-tools' else original(name)
  m.platform=SimpleNamespace(machine=lambda:'arm64')
  try:m.matrix(target)
  except ValueError:pass
@@ -197,9 +197,9 @@ test("mismatched Node architecture is refused before package installation or scr
     python(`
 from types import SimpleNamespace
 with tempfile.TemporaryDirectory() as directory:
- target=pathlib.Path(directory)/'must-not-exist'
+ base=pathlib.Path(directory).resolve();target=base/'must-not-exist'
  original=m.sibling
- m.sibling=lambda name:SimpleNamespace(hosted_guard=lambda:pathlib.Path(directory)) if name=='macos-variants-tools' else original(name)
+ m.sibling=lambda name:SimpleNamespace(hosted_guard=lambda:base) if name=='macos-variants-tools' else original(name)
  m.platform=SimpleNamespace(machine=lambda:'x86_64')
  m.shutil=SimpleNamespace(which=lambda name:'/fixture/'+name)
  calls=[]

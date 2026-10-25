@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sourceLoaderFixture } from "./source-loader-fixture.mjs";
 import {
   chmodSync,
   mkdtempSync,
@@ -149,7 +150,9 @@ beforeEach(() => {
   const npm = join(fakeBin, "npm");
   writeFileSync(
     npm,
-    '#!/bin/sh\nif [ "$1" = ci ]; then rm -rf node_modules; [ "${FAIL_NPM_CI:-0}" != 1 ] || exit 42; mkdir -p node_modules/.bin; printf \'#!/bin/sh\\necho test-version\\n\' > node_modules/.bin/tsx; chmod +x node_modules/.bin/tsx; fi\n',
+    '#!/bin/sh\nif [ "$1" = ci ]; then rm -rf node_modules; [ "${FAIL_NPM_CI:-0}" != 1 ] || exit 42; mkdir -p node_modules/.bin; printf \'#!/bin/sh\\necho test-version\\n\' > node_modules/.bin/tsx; chmod +x node_modules/.bin/tsx;\n' +
+      sourceLoaderFixture +
+      "fi\n",
   );
   chmodSync(npm, 0o755);
 });
@@ -440,6 +443,9 @@ describe("install.sh source releases", () => {
         encoding: "utf8",
       }).trim(),
     ).toBe("test-version");
+    expect(
+      readFileSync(join(source, "node_modules", "tsx", "dist", "loader.mjs"), "utf8"),
+    ).toContain("process.argv.slice(1)");
     expect(readFileSync(join(source, "node_modules", ".bin", "tsx"), "utf8")).toContain(
       "test-version",
     );

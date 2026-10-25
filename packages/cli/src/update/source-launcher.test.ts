@@ -11,19 +11,42 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { once } from "node:events";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { acquireUpdateLock, adoptUpdateLock, UpdateLockBusyError } from "@omnesis/core";
 import {
-  prepareSourceRecoveryLauncher,
+  prepareSourceRecoveryLauncher as prepareRealSourceRecoveryLauncher,
   sourceRecoveryLauncher,
   sourceUpdateLockHelper,
 } from "./source-launcher.js";
+
+const { sourceLoaderFixture } = createRequire(import.meta.url)(
+  "../../../../scripts/release/source-loader-fixture.mjs",
+) as { sourceLoaderFixture: string };
+const fixtureLoader =
+  sourceLoaderFixture.split("<<'OMNESIS_TEST_LOADER'\n")[1].split("\nOMNESIS_TEST_LOADER")[0] +
+  "\n";
+
+function prepareSourceRecoveryLauncher(
+  rootDir: string,
+  configDir: string,
+  homeDir: string,
+): string {
+  // Lifecycle tests substitute the CLI body behind a fixture Node preload.
+  if (existsSync(join(rootDir, "node_modules/.bin/tsx"))) {
+    mkdirSync(join(rootDir, "node_modules/tsx/dist"), { recursive: true });
+    writeFileSync(join(rootDir, "node_modules/tsx/dist/loader.mjs"), fixtureLoader);
+  }
+  return prepareRealSourceRecoveryLauncher(rootDir, configDir, homeDir);
+}
 
 const scratch: string[] = [];
 
@@ -32,6 +55,87 @@ afterEach(() => {
 });
 
 describe("source recovery launcher", () => {
+  test("rendered source front door preserves a delayed graceful shutdown without a tsx supervisor", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-signal-"));
+    scratch.push(dir);
+    const rootDir = join(dir, "owner's source #with?url");
+    mkdirSync(join(rootDir, "node_modules"), { recursive: true });
+    mkdirSync(join(rootDir, "packages/cli/src"), { recursive: true });
+    writeFileSync(join(rootDir, "packages/cli/package.json"), JSON.stringify({ type: "module" }));
+    symlinkSync(join(process.cwd(), "node_modules/tsx"), join(rootDir, "node_modules/tsx"), "dir");
+    const ready = join(dir, "ready");
+    const completed = join(dir, "completed");
+    writeFileSync(
+      join(rootDir, "packages/cli/src/index.ts"),
+      `import {writeFileSync} from 'node:fs';
+process.on('SIGTERM',()=>{const end=Date.now()+250;while(Date.now()<end){};writeFileSync(${JSON.stringify(completed)},'drained');process.exit(0)});
+writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);
+`,
+    );
+    const installer = readFileSync(join(process.cwd(), "scripts/install.sh"), "utf8");
+    const start = installer.indexOf("render_source_wrapper() {");
+    const quoteStart = installer.indexOf("shell_single_quote() {");
+    const render = join(dir, "render.sh");
+    writeFileSync(
+      render,
+      `${installer.slice(quoteStart, installer.indexOf("\n}\n", quoteStart) + 3)}\n${installer.slice(start, installer.indexOf("\nEOF\n}", start) + 6)}\nCONFIG_DIR="$1"\nUPDATE_LOCK_HELPER="$2"\nrender_source_wrapper "$3"\n`,
+    );
+    const launcher = join(dir, "omnesis");
+    writeFileSync(
+      launcher,
+      execFileSync("sh", [render, join(dir, "config"), join(dir, "lock.cjs"), rootDir]),
+      { mode: 0o755 },
+    );
+    const child = spawn(launcher, ["gateway", "serve"], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, OMNESIS_CONFIG_DIR: join(dir, "config"), OMNESIS_UPDATE_LOCK_ID: "" },
+    });
+    const closed = once(child, "close");
+    const groupRunning = (): boolean =>
+      spawnSync("ps", ["-axo", "pgid=,stat="], { encoding: "utf8" })
+        .stdout.split("\n")
+        .some((line) => {
+          const [group, state] = line.trim().split(/\s+/u);
+          return Number(group) === child.pid && state !== undefined && !state.startsWith("Z");
+        });
+    const failures: unknown[] = [];
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!existsSync(ready) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(existsSync(ready)).toBe(true);
+      // The wrapper must exec the daemon: there is no parent with tsx's 60ms
+      // signal-forwarding deadline between the service manager and this PID.
+      expect(Number(readFileSync(ready, "utf8"))).toBe(child.pid);
+      process.kill(-child.pid!, "SIGTERM");
+      const [code, signal] = await closed;
+      expect({ code, signal }).toEqual({ code: 0, signal: null });
+      expect(readFileSync(completed, "utf8")).toBe("drained");
+      const deadlineGone = Date.now() + 2000;
+      while (groupRunning() && Date.now() < deadlineGone)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(groupRunning()).toBe(false);
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      try {
+        if (child.pid && groupRunning()) {
+          process.kill(-child.pid, "SIGKILL");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") failures.push(error);
+      }
+      try {
+        await closed;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, "Source launcher proof or cleanup failed");
+  }, 20_000);
+
   test("stays byte-identical to the toolchain-free installer's renderer", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
     scratch.push(dir);
@@ -103,9 +207,13 @@ describe("source recovery launcher", () => {
       mkdirSync(kegBin, { recursive: true });
       mkdirSync(bin);
       writeFileSync(tsx, "#!/usr/bin/env node\n", { mode: 0o755 });
-      writeFileSync(join(kegBin, "node"), '#!/bin/sh\nprintf "keg node:%s\\n" "$*"\n', {
-        mode: 0o755,
-      });
+      writeFileSync(
+        join(kegBin, "node"),
+        `#!/bin/sh\n[ "$1" != -e ] || exec ${JSON.stringify(process.execPath)} "$@"\nprintf "keg node:%s\\n" "$*"\n`,
+        {
+          mode: 0o755,
+        },
+      );
       const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, join(dir, "home"));
       const env = { PATH: bin, HOMEBREW_PREFIX: brewPrefix, OMNESIS_CONFIG_DIR: configDir };
       return { launcher, env, tsx, bin };
@@ -115,7 +223,7 @@ describe("source recovery launcher", () => {
       const { launcher, env, tsx } = kegFixture();
       const output = execFileSync(launcher, ["status"], { encoding: "utf8", env });
       expect(output).toBe(
-        `keg node:${tsx} ${join(dirname(dirname(dirname(tsx))), "packages/cli/src/index.ts")} status\n`,
+        `keg node:--import ${pathToFileURL(join(dirname(dirname(tsx)), "tsx/dist/loader.mjs")).href} ${join(dirname(dirname(dirname(tsx))), "packages/cli/src/index.ts")} status\n`,
       );
     });
 
@@ -129,7 +237,11 @@ describe("source recovery launcher", () => {
         },
       );
       const output = execFileSync(launcher, ["status"], { encoding: "utf8", env });
-      expect(output.startsWith(`keg node:${tsx} `)).toBe(true);
+      expect(
+        output.startsWith(
+          `keg node:--import ${pathToFileURL(join(dirname(dirname(tsx)), "tsx/dist/loader.mjs")).href} `,
+        ),
+      ).toBe(true);
     });
 
     test("but keeps a Node 24 or newer that is already on PATH", () => {
@@ -182,7 +294,7 @@ describe("source recovery launcher", () => {
     );
     writeFileSync(
       join(fakeBin, "npm"),
-      '#!/bin/sh\nmkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n',
+      `#!/bin/sh\n${sourceLoaderFixture}mkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
       { mode: 0o755 },
     );
     const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
@@ -196,6 +308,71 @@ describe("source recovery launcher", () => {
         OMNESIS_UPDATE_LOCK_ID: "",
       },
     });
+    expect(existsSync(join(configDir, "update.lock"))).toBe(false);
+  });
+
+  test("a loader URL encoding failure releases the dependency-recovery lock without running the CLI", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
+    scratch.push(dir);
+    const rootDir = join(dir, "source");
+    const configDir = join(dir, "config");
+    const bin = join(dir, "bin");
+    const ran = join(dir, "cli-ran");
+    mkdirSync(rootDir);
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "node"),
+      `#!/bin/sh\ncase "\${2:-}" in *pathToFileURL*) exit 37 ;; esac\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/bin/sh\n${sourceLoaderFixture}mkdir -p node_modules/.bin\nprintf '#!/bin/sh\\ntouch %s\\n' ${JSON.stringify(JSON.stringify(ran))} > node_modules/.bin/tsx\n`,
+      { mode: 0o755 },
+    );
+    const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, join(dir, "home"));
+    const result = spawnSync(launcher, ["update"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OMNESIS_CONFIG_DIR: configDir,
+        OMNESIS_UPDATE_LOCK_ID: "",
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(existsSync(ran)).toBe(false);
+    expect(existsSync(join(configDir, "update.lock"))).toBe(false);
+  });
+
+  test("repairs a missing loader even when the old tsx executable remains", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
+    scratch.push(dir);
+    const rootDir = join(dir, "source");
+    const configDir = join(dir, "config");
+    const bin = join(dir, "bin");
+    const installed = join(dir, "installed");
+    mkdirSync(join(rootDir, "node_modules/.bin"), { recursive: true });
+    mkdirSync(bin);
+    writeFileSync(join(rootDir, "node_modules/.bin/tsx"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/bin/sh\n${sourceLoaderFixture}printf '#!/bin/sh\\nexit 0\\n' > node_modules/.bin/tsx\ntouch ${JSON.stringify(installed)}\n`,
+      { mode: 0o755 },
+    );
+    const launcher = prepareRealSourceRecoveryLauncher(rootDir, configDir, join(dir, "home"));
+    const result = spawnSync(launcher, ["status"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OMNESIS_CONFIG_DIR: configDir,
+        OMNESIS_UPDATE_LOCK_ID: "",
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(installed)).toBe(true);
+    expect(existsSync(join(rootDir, "node_modules/tsx/dist/loader.mjs"))).toBe(true);
     expect(existsSync(join(configDir, "update.lock"))).toBe(false);
   });
 
@@ -213,7 +390,7 @@ describe("source recovery launcher", () => {
     // node_modules installs the CLI's runner.
     writeFileSync(
       join(fakeBin, "npm"),
-      `#!/bin/sh\n[ -d node_modules/left-behind ] && exit 1\nmkdir -p node_modules/.bin\nprintf '#!/bin/sh\\ntouch %s\\n' ${JSON.stringify(JSON.stringify(ran))} > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
+      `#!/bin/sh\n[ -d node_modules/left-behind ] && exit 1\n${sourceLoaderFixture}mkdir -p node_modules/.bin\nprintf '#!/bin/sh\\ntouch %s\\n' ${JSON.stringify(JSON.stringify(ran))} > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
       { mode: 0o755 },
     );
     const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
@@ -254,7 +431,7 @@ describe("source recovery launcher", () => {
     writeFileSync(join(headers, "include", "node", "common.gypi"), "");
     writeFileSync(
       join(fakeBin, "npm"),
-      `#!/bin/sh\n[ "$1" = ci ] || exit 0\nif [ -e ${JSON.stringify(headers)} ]; then echo present >> ${JSON.stringify(seen)}; else echo absent >> ${JSON.stringify(seen)}; fi\nmkdir -p node_modules/.bin\nprintf '#!/bin/sh\\n' > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
+      `#!/bin/sh\n[ "$1" = ci ] || exit 0\nif [ -e ${JSON.stringify(headers)} ]; then echo present >> ${JSON.stringify(seen)}; else echo absent >> ${JSON.stringify(seen)}; fi\n${sourceLoaderFixture}mkdir -p node_modules/.bin\nprintf '#!/bin/sh\\n' > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
       { mode: 0o755 },
     );
     const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
@@ -295,7 +472,7 @@ describe("source recovery launcher", () => {
     );
     writeFileSync(
       join(fakeBin, "npm"),
-      '#!/bin/sh\nmkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n',
+      `#!/bin/sh\n${sourceLoaderFixture}mkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
       { mode: 0o755 },
     );
     const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
@@ -351,7 +528,7 @@ describe("source recovery launcher", () => {
     );
     writeFileSync(
       join(fakeBin, "npm"),
-      '#!/bin/sh\nmkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n',
+      `#!/bin/sh\n${sourceLoaderFixture}mkdir -p node_modules/.bin\ncp "$FAKE_TSX" node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
       { mode: 0o755 },
     );
     const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
@@ -870,6 +1047,8 @@ describe("source recovery launcher", () => {
       '#!/bin/sh\n: > "$READY_FILE"\nwhile [ ! -f "$PROCEED_FILE" ]; do sleep 0.01; done\n',
       { mode: 0o755 },
     );
+    mkdirSync(join(rootDir, "node_modules/tsx/dist"), { recursive: true });
+    writeFileSync(join(rootDir, "node_modules/tsx/dist/loader.mjs"), fixtureLoader);
     execFileSync("git", ["init", "-q", rootDir]);
     execFileSync("git", ["-C", rootDir, "config", "user.name", "fixture"]);
     execFileSync("git", ["-C", rootDir, "config", "user.email", "fixture@example.com"]);
