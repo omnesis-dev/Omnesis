@@ -6,6 +6,7 @@ import {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_PUSH_RELAY_URL,
   validateConfig,
+  isTranscriptionVocabularyEnabled,
   applyMergePatch,
   changedPathsFromPatch,
   toJsonPointer,
@@ -69,6 +70,17 @@ describe("validateConfig — brain.excludedSources", () => {
 });
 
 describe("validateConfig — transcriptionVocabulary", () => {
+  test.each([
+    [{}, true],
+    [{ inference: { transcriptionVocabulary: { maxTerms: 32 } } }, true],
+    [{ inference: { transcriptionVocabulary: { enabled: true } } }, true],
+    [{ inference: { transcriptionVocabulary: { enabled: false } } }, false],
+  ])("is on unless explicitly disabled: %j", (input, expected) => {
+    const result = validateConfig(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(isTranscriptionVocabularyEnabled(result.config)).toBe(expected);
+  });
+
   test("accepts disabling hints independently of the transcriber assignment", () => {
     const result = validateConfig({
       inference: {

@@ -1,7 +1,7 @@
 # Contextual transcription vocabulary
 
-Vocabulary is opt-in through `inference.transcriptionVocabulary.enabled`; its
-default is off. Selection runs in bounded background work. Transcription reads
+Vocabulary is on by default. Set `inference.transcriptionVocabulary.enabled` to
+`false` to turn it off. Selection runs in bounded background work. Transcription reads
 indexed summaries and never searches source documents or invokes another model
 to build a hint list.
 

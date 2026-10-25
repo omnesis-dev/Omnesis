@@ -3362,7 +3362,7 @@ const transcriptionVocabularySettings = z
     enabled: z
       .boolean()
       .describe(
-        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Disabled by default; requires enabled: true.",
+        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Enabled by default; set enabled: false to turn it off.",
       )
       .optional(),
     authoredWeight: z
@@ -3887,6 +3887,15 @@ function isPlainObject(x: unknown): x is Record<string, unknown> {
 export function sourceSettingKeys(sourceId: string): string[] {
   const type = sourceTypeOf(sourceId);
   return type === sourceId ? [sourceId] : [type, sourceId];
+}
+
+/**
+ * Whether personal transcription vocabulary is on. It is on unless the
+ * operator sets `inference.transcriptionVocabulary.enabled: false`; the
+ * gateway and collector both gate on this so they never disagree.
+ */
+export function isTranscriptionVocabularyEnabled(config: OmnesisConfig): boolean {
+  return config.inference?.transcriptionVocabulary?.enabled !== false;
 }
 
 /**

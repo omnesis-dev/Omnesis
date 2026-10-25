@@ -42,6 +42,7 @@ import {
   requireGatewaySourceContract,
 } from "@omnesis/gateway-client";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
+import { isTranscriptionVocabularyEnabled, type OmnesisConfig } from "@omnesis/config";
 import { SyncEngine } from "./sync-engine.js";
 import {
   createConfigRefreshQueue,
@@ -74,7 +75,6 @@ import { toSyncStatusPayload } from "./sync-status-payload.js";
 import { startEventLoopWatchdog } from "./event-loop-watchdog.js";
 import type { ConfigStatusResult } from "@omnesis/core/doctor";
 import type { TriggerSyncResult } from "./sync-dispatcher.js";
-import type { OmnesisConfig } from "@omnesis/config";
 
 const log = createLogger("collector");
 applyPrivateUmask();
@@ -593,8 +593,7 @@ export async function main() {
   };
   const unifiedConfig = await fetchConfigWithBackoff(configFetchContext);
   let ocrEnabled = ocrEnabledFromConfig(unifiedConfig);
-  let transcriptionVocabularyEnabled =
-    unifiedConfig.inference?.transcriptionVocabulary?.enabled === true;
+  let transcriptionVocabularyEnabled = isTranscriptionVocabularyEnabled(unifiedConfig);
   gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
@@ -717,7 +716,7 @@ export async function main() {
 
   const refreshConfig = createConfigRefreshQueue(configFetchContext, async (next) => {
     ocrEnabled = ocrEnabledFromConfig(next);
-    transcriptionVocabularyEnabled = next.inference?.transcriptionVocabulary?.enabled === true;
+    transcriptionVocabularyEnabled = isTranscriptionVocabularyEnabled(next);
     gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(next));
     await manager.handleConfigChange(toLegacyConfig(next));
   });
