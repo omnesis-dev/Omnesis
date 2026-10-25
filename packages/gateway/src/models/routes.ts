@@ -144,9 +144,12 @@ const codexRuntimeUpdateBodySchema = z.strictObject({
   dryRun: z.boolean().optional(),
 });
 
-const agentSetupBodySchema = z.strictObject({
-  model: z.string().trim().min(1).max(200),
-});
+// A newer CLI may send more than the model; unknown keys are dropped.
+const agentSetupBodySchema = z
+  .object({
+    model: z.string().trim().min(1).max(200),
+  })
+  .strip();
 
 const behaviorValuesSchema = z.strictObject({
   reasoningEnabled: z.boolean().optional(),

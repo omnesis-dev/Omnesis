@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ConversationControls,
   restoreConversationControls,
+  sendQueuedInputSchema,
+  submissionInputSchema,
   type ConversationControlState,
 } from "./conversation-controls.js";
 
@@ -350,4 +352,20 @@ it("retains the ordinary 32-receipt queue cap without trusted stream ownership",
     await h.controls.submit("s", input(`message-${index}`, "Invented request"));
   await expect(h.controls.submit("s", input("overflow"))).rejects.toThrow("queue is full");
   expect(h.durable().submissions).toHaveLength(32);
+});
+
+describe("submission bodies from a newer app", () => {
+  it("ignore fields this gateway does not know", () => {
+    const submission = submissionInputSchema.safeParse({
+      clientMessageId: "m-1",
+      text: "Remind me tomorrow",
+      mode: "queue",
+      attachments: [],
+    });
+    expect(submission.success).toBe(true);
+    expect(submission.data).not.toHaveProperty("attachments");
+    expect(sendQueuedInputSchema.safeParse({ submissionIds: ["m-1"], reason: "tap" }).success).toBe(
+      true,
+    );
+  });
 });

@@ -101,6 +101,16 @@ describe("/tasks", () => {
     expect((await action(task.id, { action: "fly" })).status).toBe(400);
   });
 
+  test("fields a newer app adds are ignored, not refused", async () => {
+    const { task } = await addTask("Call the plumber", {
+      priority: "high",
+      deadline: { type: "by", date: TODAY, reminder: true },
+    });
+    expect((await action(task.id, { action: "complete", note: "Done", photo: null })).status).toBe(
+      200,
+    );
+  });
+
   test("today shows carried tasks first, then today's, then what was resolved today", async () => {
     const carried = await addTask("Return the library books", { scheduledFor: "2026-03-08" });
     const planned = await addTask("Call the garage", { scheduledFor: TODAY });

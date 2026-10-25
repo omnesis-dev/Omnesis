@@ -100,6 +100,8 @@ export function taskEventDto(entry: OpenLoopLedgerEntry) {
   };
 }
 
+// Request bodies drop keys they don't know rather than refuse them, so a newer
+// app that adds an optional field still works against this gateway.
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const schedule = z
   .string()
@@ -111,7 +113,7 @@ const deadline = z
     date: z.string().regex(DAY_RE).optional(),
     note: z.string().max(200).optional(),
   })
-  .strict()
+  .strip()
   .nullable();
 
 const createBody = z
@@ -121,17 +123,17 @@ const createBody = z
     scheduledFor: schedule.optional(),
     deadline: deadline.optional(),
   })
-  .strict();
+  .strip();
 
 const actionBody = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("complete"), note: z.string().max(500).optional() }).strict(),
+  z.object({ action: z.literal("complete"), note: z.string().max(500).optional() }).strip(),
   z
     .object({
       action: z.literal("migrate"),
       to: z.string().refine(isTaskSchedule, "must be YYYY-MM-DD, YYYY-MM or someday"),
     })
-    .strict(),
-  z.object({ action: z.literal("strike"), reason: z.string().max(500).optional() }).strict(),
+    .strip(),
+  z.object({ action: z.literal("strike"), reason: z.string().max(500).optional() }).strip(),
   z
     .object({
       action: z.literal("edit"),
@@ -140,7 +142,7 @@ const actionBody = z.discriminatedUnion("action", [
       scheduledFor: schedule.optional(),
       deadline: deadline.optional(),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       action: z.literal("accept"),
@@ -154,17 +156,17 @@ const actionBody = z.discriminatedUnion("action", [
         .optional(),
       noteId: z.string().uuid().optional(),
     })
-    .strict(),
-  z.object({ action: z.literal("ignore"), reason: z.string().max(500).optional() }).strict(),
+    .strip(),
+  z.object({ action: z.literal("ignore"), reason: z.string().max(500).optional() }).strip(),
   // The name older app builds send for ignoring a suggestion.
-  z.object({ action: z.literal("refuse"), reason: z.string().max(500).optional() }).strict(),
-  z.object({ action: z.literal("confirm") }).strict(),
-  z.object({ action: z.literal("keep") }).strict(),
-  z.object({ action: z.literal("reopen") }).strict(),
-  z.object({ action: z.literal("delete") }).strict(),
+  z.object({ action: z.literal("refuse"), reason: z.string().max(500).optional() }).strip(),
+  z.object({ action: z.literal("confirm") }).strip(),
+  z.object({ action: z.literal("keep") }).strip(),
+  z.object({ action: z.literal("reopen") }).strip(),
+  z.object({ action: z.literal("delete") }).strip(),
 ]);
 
-const undoBody = z.object({ seq: z.number().int().positive() }).strict();
+const undoBody = z.object({ seq: z.number().int().positive() }).strip();
 
 export interface MountTaskRoutesOpts {
   db: Database.Database;

@@ -20,13 +20,15 @@ export const submissionInputSchema = z
     spokenContext: z.string().max(8192).optional(),
     clarificationId: z.string().min(1).max(128).optional(),
   })
-  .strict();
+  // Unknown keys are dropped rather than refused, so a newer app that adds an
+  // optional field can still submit to this gateway.
+  .strip();
 export type SubmissionInput = z.infer<typeof submissionInputSchema>;
 export const sendQueuedInputSchema = z
   .object({
     submissionIds: z.array(submissionInputSchema.shape.clientMessageId).min(1).max(32),
   })
-  .strict();
+  .strip();
 const questionSchema = z
   .object({
     question: z.string().trim().min(1).max(1000),

@@ -43,4 +43,5 @@ export const browserFindSuggestBody = z
     text: z.string().trim().min(1).max(1024),
     limit: z.number().int().min(1).max(8).default(5),
   })
-  .strict();
+  // Unknown keys are dropped, as on the notes bodies; `version` is the contract.
+  .strip();

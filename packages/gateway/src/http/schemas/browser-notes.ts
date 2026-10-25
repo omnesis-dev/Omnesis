@@ -4,7 +4,12 @@
 import { z } from "zod";
 import { createNoteBody } from "./notes.js";
 
-export const authorizationBody = z.object({ id: z.string().uuid() }).strict();
+// Bodies drop keys they don't know rather than refuse them, so a newer
+// extension can add an optional field without breaking against this gateway.
+// `version` stays the contract: a change in meaning raises it, and this
+// gateway refuses a version it doesn't speak.
+
+export const authorizationBody = z.object({ id: z.string().uuid() }).strip();
 const pageContext = z
   .object({
     url: z
@@ -15,7 +20,7 @@ const pageContext = z
     title: z.string().max(512).optional(),
     selection: z.string().max(8192).optional(),
   })
-  .strict();
+  .strip();
 // Reuse the note boundary's timezone/date pair checks without widening the existing /notes contract.
 export const browserNoteBody = z
   .object({
@@ -31,7 +36,7 @@ export const browserNoteBody = z
     capturedUtcOffsetSeconds: z.number().optional(),
     page: pageContext,
   })
-  .strict()
+  .strip()
   .transform((body, ctx) => {
     const { version: _version, page: _page, ...note } = body;
     const result = createNoteBody.safeParse(note);
@@ -43,7 +48,7 @@ export const browserNoteBody = z
     return { ...result.data, id: body.id, version: body.version, page: body.page };
   });
 
-export const browserNotesPageQuery = z.object({ url: pageContext.shape.url }).strict();
+export const browserNotesPageQuery = z.object({ url: pageContext.shape.url }).strip();
 export const browserNoteEditBody = z
   .object({
     version: z.number().int().min(1).max(1),
@@ -55,4 +60,4 @@ export const browserNoteEditBody = z
       .refine((text) => text.trim().length > 0),
     revision: z.string().regex(/^[a-f0-9]{64}$/),
   })
-  .strict();
+  .strip();
