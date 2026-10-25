@@ -17,6 +17,7 @@ import {
   type CodexLoginFlow,
   type CodexRuntimeUpdateSnapshot,
   type Manifest,
+  type ModelsOverview,
 } from "@omnesis/core";
 
 import { ConfigStore } from "../config-store.js";
@@ -238,6 +239,29 @@ describe("POST /admin/models/activate", () => {
       body: JSON.stringify({ model: "not-listed" }),
     });
     expect(unknown.status).toBe(400);
+  });
+
+  test("shows a Claude Code assignment to the 0.6.0 CLI in the HTTP shape it renders", async () => {
+    const patched = await configStore.patch({
+      inference: { assignments: { agent: "claude-code/sonnet" } },
+    });
+    if (!patched.ok) throw new Error("test config should be valid");
+    const agentFor = async (userAgent: string) => {
+      const res = await app.request("/admin/models", { headers: { "User-Agent": userAgent } });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as ModelsOverview).inference.assignments.agent;
+    };
+
+    expect(await agentFor("omnesis/0.7.0")).toMatchObject({
+      kind: "claude-code",
+      model: "sonnet",
+    });
+    expect(await agentFor("omnesis")).toMatchObject({
+      role: "agent",
+      kind: "http",
+      backendKey: "claude-code",
+      model: "claude-code/sonnet",
+    });
   });
 
   test("atomically opts into remote inference and assigns an available Codex model", async () => {
