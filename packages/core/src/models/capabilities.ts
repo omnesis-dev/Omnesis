@@ -387,7 +387,7 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
       "Listens and speaks during live calls. Uses OpenAI Live; the separately configured agent handles research and tools. Audio is sent to OpenAI.",
     icon: "mic",
     experimental: true,
-    section: "cognition",
+    section: "core",
     backendFamily: "speech-to-speech",
   },
   // Typed, cheap judgements about a document: whether an email is worth
