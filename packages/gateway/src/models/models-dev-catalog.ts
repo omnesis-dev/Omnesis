@@ -394,7 +394,7 @@ export class ModelsDevCatalog {
     const modelId = slash > 0 ? assignment.slice(slash + 1) : "";
     if (backend === "codex" && inference.codex)
       return this.controlsForCodex(modelId, inference.codex);
-    if (backend === "claude-code" && inference.claudeCode)
+    if (backend === "claude-code" && inference.claudeCode && !inference.backends[backend])
       return this.controlsForClaudeCode(modelId, inference.claudeCode);
     const status = inference.backends[backend];
     const facts = this.controlsForBackend(backend, modelId, status?.url, status?.protocol);

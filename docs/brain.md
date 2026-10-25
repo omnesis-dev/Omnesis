@@ -700,7 +700,7 @@ retry comes due: minutes for a write race, hours to a week for an input refusal.
 reason, and each sweep pass that converts or sets aside an owner logs one line.
 
 The run queue uses four maintenance workers by default (`brain.workerConcurrency`,
-maximum 32). Only maintenance tied to a live batch with reserved regions can
+maximum 32; a larger configured value runs as 32). Only maintenance tied to a live batch with reserved regions can
 execute in parallel; root aggregation and legacy runs, including daily reviews
 and the morning brief run, execute exclusively. Freed slots refill while siblings run. Each
 drain renews admission rounds of four times the worker count, yielding to the

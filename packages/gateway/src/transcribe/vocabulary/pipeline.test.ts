@@ -83,7 +83,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-vocabulary-pipeline-"));
   const path = join(directory, "gateway.db");
   db = createDatabase(path);
-  enabled = true;
+  enabled = undefined;
   lookupFails = false;
   vocabularyReads = 0;
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
@@ -214,9 +214,9 @@ async function capture(token: string, id: string): Promise<void> {
 }
 
 describe("gateway vocabulary to Whisper pipeline", () => {
-  test("omitted opt-in keeps source audio and Tell Omnesis working without vocabulary reads", async () => {
+  test("disabled vocabulary keeps source audio and Tell Omnesis working without vocabulary reads", async () => {
     // Already materialized vocabulary must not activate hints on its own.
-    enabled = undefined;
+    enabled = false;
     expect((await sourceAudio()).status).toBe(200);
     await capture(readWriteToken, randomUUID());
     expect(worker.requests).toHaveLength(2);

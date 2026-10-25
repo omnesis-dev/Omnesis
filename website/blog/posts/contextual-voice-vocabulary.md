@@ -45,7 +45,7 @@ I took the opportunity to carry these improvements beyond transcription of voice
 
 ![A shared personal vocabulary connects voice notes, a phone and a watch.](/blog/images/contextual-voice-vocabulary/voice-devices.png)
 
-Note that the new feature is off by default and needs to be enabled by setting `inference.transcriptionVocabulary.enabled` to `true` in your Omnesis configuration.
+The feature is on by default from Omnesis 0.7.0. If it gets in your way, you can turn it off by setting `inference.transcriptionVocabulary.enabled` to `false` in your Omnesis configuration.
 
 ## Does it work?
 

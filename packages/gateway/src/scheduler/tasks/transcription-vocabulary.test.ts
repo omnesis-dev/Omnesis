@@ -54,9 +54,11 @@ async function run(task: ReturnType<typeof createTranscriptionVocabularyTask>) {
   return task.run(undefined, undefined as never);
 }
 describe("bounded vocabulary scheduler", () => {
-  test("omitted opt-in performs no precomputation and live enable resumes the same task", async () => {
+  test("disabled vocabulary performs no precomputation and live enable resumes the same task", async () => {
     const d = deps();
-    let config = omnesisConfigSchema.parse({});
+    let config = omnesisConfigSchema.parse({
+      inference: { transcriptionVocabulary: { enabled: false } },
+    });
     d.getSettings = () => resolveVocabularySettings(config);
     const task = createTranscriptionVocabularyTask(d);
     expect(await run(task)).toEqual({ kind: "done", value: { idle: true } });
@@ -64,9 +66,7 @@ describe("bounded vocabulary scheduler", () => {
     expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
     expect(d.cpuGate.extractTranscriptionVocabulary).not.toHaveBeenCalled();
     expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
-    config = omnesisConfigSchema.parse({
-      inference: { transcriptionVocabulary: { enabled: true } },
-    });
+    config = omnesisConfigSchema.parse({});
     expect(await run(task)).toEqual({ kind: "done", value: { idle: false } });
     expect(d.ioGate.fetchTranscriptionVocabularyBatch).toHaveBeenCalledTimes(1);
     expect(d.cpuGate.extractTranscriptionVocabulary).toHaveBeenCalledTimes(1);

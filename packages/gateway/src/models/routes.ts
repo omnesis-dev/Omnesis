@@ -171,6 +171,35 @@ function sameBehaviorValues(
   );
 }
 
+/**
+ * The 0.6.0 CLI sends this bare User-Agent (later CLIs add their version) and
+ * switches exhaustively on assignment kinds, so `omnesis model list` threw on
+ * the `claude-code` kind added since. It is shown those assignments in the HTTP
+ * shape it already renders.
+ */
+const PRE_CLAUDE_CODE_CLI_USER_AGENT = "omnesis";
+
+export function inferenceForPreClaudeCodeCli(inference: InferenceOverview): InferenceOverview {
+  const assignments = Object.fromEntries(
+    Object.entries(inference.assignments).map(([role, resolved]) => [
+      role,
+      resolved.kind === "claude-code"
+        ? {
+            role: resolved.role,
+            kind: "http" as const,
+            backendKey: "claude-code",
+            url: "",
+            model: `claude-code/${resolved.model}`,
+            allowRemoteInference: resolved.allowRemoteInference,
+            available: resolved.available,
+            ...(resolved.reason ? { reason: resolved.reason } : {}),
+          }
+        : resolved,
+    ]),
+  ) as InferenceOverview["assignments"];
+  return { ...inference, assignments };
+}
+
 export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void {
   const { modelManager, configStore, getSystemInfo: sysInfo, getInferenceOverview } = opts;
   const modelInferenceOverview = (): InferenceOverview => {
@@ -190,6 +219,9 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     const recentModels = getRecentModels
       ? Object.fromEntries(CAPABILITY_ROLES.map((role) => [role, getRecentModels(role).entries]))
       : {};
+    if (c.req.header("User-Agent") === PRE_CLAUDE_CODE_CLI_USER_AGENT) {
+      overview.inference = inferenceForPreClaudeCodeCli(overview.inference);
+    }
     return c.json({ ...overview, ...behavior, recentModels });
   });
 

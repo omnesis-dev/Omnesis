@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { OmnesisConfig } from "@omnesis/config";
+import { isTranscriptionVocabularyEnabled, type OmnesisConfig } from "@omnesis/config";
 import type { VocabularySettings } from "./types.js";
 
 /** Live configuration gates both background materialization and inference hints. */
 export function resolveVocabularySettings(config: OmnesisConfig): VocabularySettings {
   const settings = config.inference?.transcriptionVocabulary;
   return {
-    enabled: settings?.enabled === true,
+    enabled: isTranscriptionVocabularyEnabled(config),
     authoredWeight: settings?.authoredWeight ?? 4,
     machineEvidenceWeight: settings?.machineEvidenceWeight ?? 0.15,
     contextPriorDocuments: settings?.contextPriorDocuments ?? 10,
