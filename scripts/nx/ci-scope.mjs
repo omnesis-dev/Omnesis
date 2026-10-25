@@ -40,6 +40,7 @@ export const LANES = [
   "docker_image",
   "docker_smoke",
   "install_smoke",
+  "installer_coverage",
   "topology",
   "docker_security",
   "harness",
@@ -135,6 +136,10 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
         /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
       ),
     install_smoke: deploys,
+    installer_coverage:
+      deploys ||
+      any(files, /^scripts\/install-e2e\//) ||
+      any(files, /^packages\/cli\/src\/commands\/(?:update|service)\./),
     topology: deploys || any(files, /^scripts\/docker-topology\//),
     docker_security:
       deploys || any(files, /^scripts\/docker-e2e\//) || any(files, securitySensitive),

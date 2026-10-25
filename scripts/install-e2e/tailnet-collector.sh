@@ -20,6 +20,10 @@ E2E_WORK="${E2E_WORK:?set E2E_WORK}"
 MODE="${E2E_MODE:?set E2E_MODE to fresh or upgrade}"
 FIXTURE_DIR="${E2E_FIXTURE_DIR:?set E2E_FIXTURE_DIR}"
 GATEWAY_HOST="${E2E_GATEWAY_HOST:?set E2E_GATEWAY_HOST}"
+if [ "$MODE" = docker ]; then
+  E2E_T3_ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
+  node "$E2E_T3_ROOT/scripts/install-e2e/docker-tailnet-host.mjs" guard mac "$E2E_WORK" "$E2E_T3_ROOT"
+fi
 # shellcheck source=scripts/install-e2e/lib.sh
 . "$(dirname "$0")/lib.sh"
 # shellcheck source=scripts/install-e2e/tailnet.sh
@@ -31,7 +35,7 @@ REMOTE="$FIXTURE_DIR/omnesis.git"
 # Bounded well inside the job's timeout; see tailnet-gateway.sh.
 WAIT_PEER_SECONDS="${E2E_WAIT_PEER_SECONDS:-1800}"
 case "$MODE" in
-  fresh) INSTALL_SH="$E2E_ROOT/scripts/install.sh" ;;
+  fresh|docker) INSTALL_SH="$E2E_ROOT/scripts/install.sh" ;;
   upgrade) INSTALL_SH="$FIXTURE_DIR/release-install.sh" ;;
   *) die "unknown E2E_MODE $MODE" ;;
 esac
@@ -53,6 +57,14 @@ wait_for() {
   mailbox wait --url "$MAILBOX" --key "$1" --timeout "${2:-$WAIT_PEER_SECONDS}" --gone-after 300
 }
 
+if [ "$MODE" = docker ]; then
+  [ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_OS:-}" = macOS ] || die "Docker/native profile requires a disposable hosted Mac"
+  . "$E2E_DIR/docker-tailnet-collector.sh"
+  T3_COLLECTOR_OWNED=0
+  trap docker_native_cleanup EXIT
+  trap 'exit 130' INT TERM
+fi
+
 group "Offer a vault and ask for a pairing code"
 # Outside the folders macOS guards with privacy prompts, which a daemon
 # without Full Disk Access could not read.
@@ -60,8 +72,11 @@ VAULT="$HOME/omnesis-e2e-vault"
 make_vault "$VAULT"
 # The gateway's node is up before its mailbox is: wait for the mailbox to
 # answer (its first marker) before writing to it.
-wait_for phase 300 >/dev/null || die "the gateway's mailbox is not reachable over MagicDNS"
+wait_for phase "$([ "$MODE" = docker ] && echo 1800 || echo 300)" >/dev/null || die "the gateway's mailbox is not reachable over MagicDNS"
 mailbox put --url "$MAILBOX" --key vault-path --value "$VAULT"
+if [ "$MODE" = docker ]; then
+  node "$E2E_DIR/docker-tailnet-probe.mjs" negative --url "https://$GATEWAY_FQDN:7600"
+fi
 mailbox put --url "$MAILBOX" --key collector-up --value 1
 CODE="$(wait_for code)" || die "no pairing code arrived from the gateway"
 secret "$CODE"
@@ -74,14 +89,18 @@ START_VERSION="$(mailbox get --url "$MAILBOX" --key expect-version)" || die "the
 expect_shape "the gateway's version" "$VERSION_SHAPE" "$START_VERSION"
 endgroup
 
+if [ "$MODE" = docker ]; then docker_native_preflight "$FINGERPRINT" "$JOIN_URL"; fi
+
 group "Run the printed --collector line (v$START_VERSION)"
 # The install fetches its dependencies from npm; check the way out first.
 ts_check_internet
 set -- --collector --gateway-url "$JOIN_URL" --code "$CODE" \
   --source-dir "$HOME/omnesis" --no-prompt --no-modify-path
 [ -z "$FINGERPRINT" ] || set -- "$@" --trust-fingerprint "$FINGERPRINT"
-[ "$MODE" = fresh ] || set -- "$@" --version "$START_VERSION"
+if [ "$MODE" = docker ]; then set -- "$@" --no-model; fi
+[ "$MODE" != upgrade ] || set -- "$@" --version "$START_VERSION"
 # Streamed (redacted) as it runs, and kept for the lines parsed below.
+[ "$MODE" != docker ] || T3_COLLECTOR_OWNED=1
 set +e
 OMNESIS_REPO_URL="file://$REMOTE" sh "$INSTALL_SH" "$@" 2>&1 | tee "$E2E_WORK/install.log" | redact
 status=${PIPESTATUS[0]}
@@ -137,6 +156,8 @@ if [ "$MODE" = upgrade ]; then
   [ "$verdict" = ok ] || die "$verdict"
   endgroup
 fi
+
+if [ "$MODE" = docker ]; then docker_native_negatives; docker_native_restart; fi
 
 wait_for finished 1800 >/dev/null || die "the gateway did not finish"
 mailbox put --url "$MAILBOX" --key collector-done --value ok || true

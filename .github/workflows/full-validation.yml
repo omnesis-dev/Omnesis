@@ -63,6 +63,7 @@ jobs:
       docker_image: ${{ steps.scope.outputs.docker_image }}
       docker_smoke: ${{ steps.scope.outputs.docker_smoke }}
       install_smoke: ${{ steps.scope.outputs.install_smoke }}
+      installer_coverage: ${{ steps.scope.outputs.installer_coverage }}
       topology: ${{ steps.scope.outputs.topology }}
       docker_security: ${{ steps.scope.outputs.docker_security }}
       harness: ${{ steps.scope.outputs.harness }}
@@ -156,6 +157,13 @@ jobs:
     with:
       target_sha: ${{ github.sha }}
 
+  installer-coverage:
+    needs: scope
+    if: ${{ needs.scope.outputs.installer_coverage == 'true' }}
+    uses: ./.github/workflows/installer-coverage.yml
+    with:
+      target_sha: ${{ github.sha }}
+
   harness:
     needs: scope
     if: ${{ needs.scope.outputs.harness == 'true' }}
@@ -198,6 +206,7 @@ jobs:
       - android
       - docker-smoke
       - install-smoke
+      - installer-coverage
       - topology
       - harness
       - docker-security
@@ -221,6 +230,7 @@ jobs:
               android: "android",
               "docker-smoke": "docker_smoke",
               "install-smoke": "install_smoke",
+              "installer-coverage": "installer_coverage",
               topology: "topology",
               harness: "harness",
               "docker-security": "docker_security",

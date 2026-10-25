@@ -1,0 +1,113 @@
+name: Installer coverage
+
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact source revision to validate
+        required: true
+        type: string
+      extended:
+        description: Include dependency absence, architecture matrix and interrupted updates
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      macos: ${{ steps.matrix.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - id: matrix
+        env:
+          EXTENDED: ${{ inputs.extended }}
+        run: node scripts/install-e2e/coverage-matrix.mjs
+
+  macos:
+    needs: plan
+    name: Mac installer (${{ matrix.os }}, ${{ matrix.scenario }})
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.macos) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Verify source and actual platform
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+          EXPECT_MAJOR: ${{ matrix.major }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(uname -m)" = "$EXPECT_ARCH"
+          test "$(sw_vers -productVersion | cut -d. -f1)" = "$EXPECT_MAJOR"
+      - name: Exercise actual installer journey
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          NODE_OPTIONS: --max-old-space-size=3072
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
+          MAKEFLAGS: -j2
+        run: E2E_WORK="$RUNNER_TEMP/installer-coverage" bash scripts/install-e2e/macos-variants.sh "$SCENARIO"
+      - name: Retain content-free result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: installer-${{ matrix.os }}-${{ matrix.scenario }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/installer-coverage/result.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  update-interruption:
+    if: ${{ inputs.extended }}
+    name: Interrupted updater recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Exercise real process, network and disk faults
+        run: E2E_WORK="$RUNNER_TEMP/installer-coverage" bash scripts/install-e2e/update-interruption.sh
+      - name: Retain content-free result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: installer-update-interruption-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/installer-coverage/result.json
+          if-no-files-found: warn
+          retention-days: 7

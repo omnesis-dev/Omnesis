@@ -117,6 +117,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
         "docker_security",
         "docker_smoke",
         "install_smoke",
+        "installer_coverage",
         "node_macos",
         "topology",
       ],
@@ -138,6 +139,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
       "docker_image",
       "docker_smoke",
       "install_smoke",
+      "installer_coverage",
       "topology",
       "docker_security",
       "harness",
@@ -153,6 +155,22 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     expect(e2eMatrix([])).toEqual([]);
     const many = Array.from({ length: 500 }, (_, i) => `f${i}`);
     expect(e2eMatrix(many)).toHaveLength(E2E_SHARDS);
+  });
+
+  test.each([
+    "scripts/install.sh",
+    "scripts/install-e2e/macos-variants.sh",
+    "scripts/install-e2e/update-interruption.sh",
+    "packages/cli/src/update/host.ts",
+    "packages/cli/src/commands/update.ts",
+  ])("%s requires the real installer coverage lane", (file) => {
+    expect(scopeOf([file]).installer_coverage).toBe("true");
+  });
+
+  test("unrelated source and docs changes do not reserve an installer Mac", () => {
+    for (const file of ["website/docs/search.html", "packages/gateway/src/search/hybrid.ts"]) {
+      expect(scopeOf([file]).installer_coverage).toBe("false");
+    }
   });
 
   test("formats every present changed file and lints only source files", () => {
