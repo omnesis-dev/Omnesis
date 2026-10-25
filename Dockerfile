@@ -27,7 +27,7 @@ FROM base AS workspace-install
 COPY package.json package-lock.json tsconfig*.json LICENSE ./
 COPY packages/ packages/
 COPY patches/ patches/
-COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
+COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/
 # npm builds several native modules at once; without a node directory each
 # fetches Node's headers into the same node-gyp cache, and one can read a
 # common.gypi another is still writing. The CI wrapper builds against the
@@ -50,7 +50,7 @@ FROM base AS runtime-dependencies
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY patches/ patches/
-COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
+COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/release/ scripts/release/
