@@ -14,6 +14,7 @@
     "scripts/ios-push-spike.sh",
     "scripts/shot-portal.sh",
     "scripts/synth-gateway.sh",
-    "scripts/record-demos.sh"
+    "scripts/record-demos.sh",
+    "scripts/install-e2e/macos-variants-runtime.py"
   ]
 }

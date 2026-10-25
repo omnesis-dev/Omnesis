@@ -58,6 +58,7 @@ nested >"$SESSION/client.private.log" 2>&1
           env: {
             ...process.env,
             SESSION: directory,
+            PYTHON: "python3",
             REDACTOR: resolve("scripts/install-e2e/redact.mjs"),
             CANARY: secret,
             INSTALL_E2E_SECRETS_FILE: secretFile,
@@ -74,6 +75,175 @@ nested >"$SESSION/client.private.log" 2>&1
       expect(readFileSync(join(directory, "client.private.log"), "utf8")).not.toContain(
         "installer tail",
       );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("only first-cycle pre-source gateway failure permits a bounded redacted daemon tail", () => {
+    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+    const diagnostics = source.match(
+      /(^installer_failure_diagnostics\(\) \{\n[\s\S]*?\n\})\ncleanup\(\) \{/m,
+    )[1];
+    const directory = mkdtempSync(join(tmpdir(), "macos-startup-diagnostic-"));
+    const secret = "fictional-startup-credential";
+    const secretFile = join(directory, "secrets");
+    const marker = join(directory, "startup-failure.json");
+    const gateway = join(directory, "gateway.private.log");
+    writeFileSync(secretFile, secret + "\n");
+    writeFileSync(
+      gateway,
+      `Bearer ${secret}\n${"x".repeat(10000)}\n${"omn_fixture_abcdefghijklmnopqrstuvwxyz012345"}\n`,
+    );
+    writeFileSync(join(directory, "collector.private.log"), "COLLECTOR-PRIVATE-CANARY");
+    function execute() {
+      return spawnSync(
+        "bash",
+        [
+          "-c",
+          `set -uo pipefail
+redact() { node "$REDACTOR"; }
+${diagnostics}
+installer_failure_diagnostics 1
+exit 23
+`,
+        ],
+        {
+          env: {
+            ...process.env,
+            SESSION: directory,
+            PYTHON: "python3",
+            REDACTOR: resolve("scripts/install-e2e/redact.mjs"),
+            INSTALL_E2E_SECRETS_FILE: secretFile,
+          },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+    }
+    try {
+      for (const body of [
+        null,
+        { phase: "gateway-health", cycle: 2, before_sources: true },
+        { phase: "collector-online", cycle: 1, before_sources: true },
+        { phase: "gateway-health", cycle: 1, before_sources: false },
+      ]) {
+        if (body) writeFileSync(marker, JSON.stringify(body));
+        const result = execute();
+        expect(result.status).toBe(23);
+        expect(result.stdout + result.stderr).toBe("");
+      }
+      writeFileSync(
+        marker,
+        JSON.stringify({ phase: "gateway-health", cycle: 1, before_sources: true }),
+      );
+      const allowed = execute();
+      expect(allowed.status).toBe(23);
+      expect(allowed.stdout).toBe("");
+      expect(allowed.stderr).toContain("redacted gateway pre-readiness tail");
+      for (const canary of [secret, "omn_fixture_", "COLLECTOR-PRIVATE-CANARY"])
+        expect(allowed.stderr).not.toContain(canary);
+      expect(Buffer.byteLength(allowed.stderr)).toBeLessThanOrEqual(
+        8192 + Buffer.byteLength("[install-e2e] redacted gateway pre-readiness tail\n"),
+      );
+      rmSync(gateway);
+      symlinkSync(join(directory, "collector.private.log"), gateway);
+      expect(execute().stderr).toBe("");
+      rmSync(marker);
+      writeFileSync(
+        gateway + ".marker",
+        JSON.stringify({ phase: "gateway-health", cycle: 1, before_sources: true }),
+      );
+      symlinkSync(gateway + ".marker", marker);
+      expect(execute().stderr).toBe("");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("artifact summary accepts only fixed native probe stages and numeric statuses", () => {
+    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+    const writer = source.match(
+      /(^write_result\(\) \{\n[\s\S]*?\n\})\ninstaller_failure_diagnostics/m,
+    )[1];
+    const directory = mkdtempSync(join(tmpdir(), "macos-probe-summary-"));
+    const stages = [
+      "sqlite-import",
+      "duckdb-import",
+      "usearch-import",
+      "sqlite-encrypted",
+      "usearch-empty",
+      "duckdb-memory",
+      "duckdb-encrypted",
+    ];
+    const rows = stages.map((stage) => ({ stage, exit: 0, signal: null, timeout: false }));
+    try {
+      for (const [candidate, valid] of [
+        [rows, true],
+        [[{ ...rows[0], stage: "private-canary" }, ...rows.slice(1)], false],
+        [[{ ...rows[0], exit: "private-canary" }, ...rows.slice(1)], false],
+        [[{ ...rows[0], raw: "private-canary" }, ...rows.slice(1)], false],
+      ]) {
+        writeFileSync(join(directory, "native-startup-probes.json"), JSON.stringify(candidate));
+        const result = spawnSync("bash", ["-c", `${writer}\nwrite_result 1`], {
+          env: {
+            ...process.env,
+            PYTHON: "python3",
+            E2E_WORK: directory,
+            SESSION: directory,
+            HERE: resolve("scripts/install-e2e"),
+            MODE: "isolation",
+            PHASE: "foreground-restart-and-raw-data",
+            COMMIT: "0".repeat(40),
+          },
+          encoding: "utf8",
+          timeout: 10000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        const summary = readFileSync(join(directory, "result.json"), "utf8");
+        expect(summary).not.toContain("private-canary");
+        expect(Object.hasOwn(JSON.parse(summary), "native_startup_probes")).toBe(valid);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("actual scrubbed child environment restricts cascading Brew upgrades and drops ambient credentials", () => {
+    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+    const command = source.match(/(^child_command\(\) \{\n[\s\S]*?\n\})\ninstall_client/m)[1];
+    const directory = mkdtempSync(join(tmpdir(), "macos-scrubbed-child-"));
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", `${command}\nchild_command "$SESSION" /usr/bin/env`],
+        {
+          env: {
+            ...process.env,
+            PYTHON: "python3",
+            SESSION: directory,
+            HERE: resolve("scripts/install-e2e"),
+            ORIGINAL_PATH: process.env.PATH,
+            PORT: "19999",
+            ANTHROPIC_API_KEY: "fictional-ambient-canary",
+            OPENAI_API_KEY: "fictional-ambient-canary",
+            OMNESIS_TOKEN: "fictional-ambient-canary",
+          },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const lines = result.stdout.split("\n");
+      expect(lines).toContain("HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1");
+      expect(lines).toContain("HOMEBREW_NO_AUTO_UPDATE=1");
+      expect(lines).toContain("HOMEBREW_NO_INSTALL_CLEANUP=1");
+      expect(lines).toContain("OMNESIS_SECRET_STORE=file");
+      expect(result.stdout + result.stderr).not.toContain("fictional-ambient-canary");
+      expect(
+        lines.some((line) => /^(ANTHROPIC_API_KEY|OPENAI_API_KEY|OMNESIS_TOKEN)=/.test(line)),
+      ).toBe(false);
+      expect(lines.some((line) => line.startsWith("HOMEBREW_NO_INSTALL_UPGRADE="))).toBe(false);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -117,6 +287,7 @@ exit "$status"
           env: {
             ...process.env,
             SESSION: directory,
+            PYTHON: "python3",
             REDACTOR: resolve("scripts/install-e2e/redact.mjs"),
             RESTORED: restored,
             INSTALL_E2E_SECRETS_FILE: secretFile,
@@ -413,6 +584,49 @@ assert output.returncode!=0 or output.stdout.strip().startswith('Z'),'grandchild
     }
   });
 
+  test("native crash diagnostics run only before first-cycle sources and cannot replace failure", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import tempfile
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+with tempfile.TemporaryDirectory() as temporary:
+ work=m.Path(temporary);calls=[]
+ def probe(source,directory):calls.append((source,directory));return []
+ for code,cycle in [(0,1),(1,1),(143,1),(139,2),(-11,2),(None,1)]:runtime.record_native_startup_probes(work,work/'source',code,cycle,probe)
+ assert calls==[] and not (work/'native-startup-probes.json').exists()
+ for code in (139,-11):runtime.record_native_startup_probes(work,work/'source',code,1,probe)
+ assert calls==[(work/'source',work)]*2
+ def broken(*_):raise ValueError('private-exception-text')
+ try:
+  try:raise RuntimeError('original readiness failure')
+  except RuntimeError:
+   runtime.record_native_startup_probes(work,work/'source',139,1,broken)
+   raise
+ except RuntimeError as error:assert str(error)=='original readiness failure'
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  test("gateway health uses the declared finite positive shared boot budget", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import json,unittest.mock
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+path=m.Path(${JSON.stringify(resolve("scripts/lib/gateway-boot-budget.json"))})
+assert runtime.gateway_boot_budget()==json.loads(path.read_text())['seconds']
+for invalid in (0,-1,True,None,'90',float('inf'),float('nan')):
+ with unittest.mock.patch.object(runtime.Path,'read_text',return_value=json.dumps({'seconds':invalid})):
+  try:runtime.gateway_boot_budget()
+  except RuntimeError:pass
+  else:raise AssertionError('invalid shared budget accepted')
+import ast
+calls=[node for node in ast.walk(ast.parse(m.Path(${JSON.stringify(runtime)}).read_text())) if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='wait_for' and any(keyword.arg=='phase' and isinstance(keyword.value,ast.Constant) and keyword.value.value=='gateway-health' for keyword in node.keywords)]
+assert len(calls)==1
+assert any(keyword.arg=='seconds' and isinstance(keyword.value,ast.Call) and keyword.value.func.id=='gateway_boot_budget' for keyword in calls[0].keywords)
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   test("readiness reports owned exit and sanitized probe classification", () => {
     const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
     const result = python(`
@@ -426,6 +640,63 @@ def refused():raise urllib.error.HTTPError('https://example.invalid/private-secr
 try:runtime.wait_for(refused,seconds=0,phase='gateway-health')
 except RuntimeError as error:assert str(error)=='isolated gateway-health did not become ready: HTTPError, status=503',str(error)
 else:raise AssertionError('failed readiness passed')
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  test("TERM-shaped collector exit requires a new exact graceful marker in its owned log", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import sys,tempfile,time,os
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+marker='2026-01-01T00:00:00.000Z INFO  [collector] Collector stopped\\n'
+with tempfile.TemporaryDirectory() as temporary:
+ directory=m.Path(temporary)
+ for index,(code,after,before,expected) in enumerate([(143,True,False,True),(-15,True,False,True),(143,False,False,False),(143,False,True,False),(7,True,False,False)]):
+  log=directory/('log-'+str(index));ready=directory/('ready-'+str(index));log.write_text(marker if before else '')
+  action="os.kill(os.getpid(),signal.SIGTERM)" if code<0 else 'raise SystemExit('+str(code)+')'
+  program="import os,signal,time;from pathlib import Path\\n"+"def stop(*_):\\n signal.signal(signal.SIGTERM,signal.SIG_DFL)\\n "+("Path("+repr(str(log))+").open('a').write("+repr(marker)+")\\n " if after else '')+action+"\\nsignal.signal(signal.SIGTERM,stop)\\nPath("+repr(str(ready))+").write_text('ready')\\nwhile True:time.sleep(.01)\\n"
+  child=runtime.subprocess.Popen([sys.executable,'-c',program],start_new_session=True);child.owned_role='collector';child.owned_log=log
+  observed=log.stat();child.owned_log_identity=(observed.st_dev,observed.st_ino)
+  try:
+   deadline=time.monotonic()+5
+   while not ready.exists():
+    assert child.poll() is None,'fixture exited before readiness'
+    assert time.monotonic()<deadline,'fixture not ready'
+    time.sleep(.01)
+   try:runtime.retire_children([child],grace_seconds=1,force_seconds=1,require_success=True)
+   except RuntimeError:assert not expected,'valid graceful marker refused'
+   else:assert expected,'missing/new marker or unknown exit accepted'
+   assert not runtime.group_running(child.pid)
+  finally:runtime.retire_children([child],grace_seconds=.1,force_seconds=1)
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  test("TERM-shaped gateway exit requires fresh shutdown marker and removal of its observed owned lock", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import sys,tempfile,time
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+marker='2026-01-01T00:00:00.000Z INFO  [gateway] Shutting down...\\n'
+with tempfile.TemporaryDirectory() as temporary:
+ directory=m.Path(temporary)
+ for index,(code,after,before,initial,remove,expected) in enumerate([(143,True,False,True,True,True),(143,True,False,True,False,False),(143,False,True,True,True,False),(143,True,False,False,False,False),(7,True,False,True,True,False)]):
+  log=directory/('log-'+str(index));ready=directory/('ready-'+str(index));lock=directory/('lock-'+str(index));log.write_text(marker if before else '')
+  program="import os,signal,time,json;from pathlib import Path\\n"+"def stop(*_):\\n "+("Path("+repr(str(log))+").open('a').write("+repr(marker)+")\\n " if after else '')+("Path("+repr(str(lock))+").unlink()\\n " if remove else '')+"raise SystemExit("+str(code)+")\\n"+("Path("+repr(str(lock))+").write_text(json.dumps({'pid':os.getpid()}))\\n" if initial else '')+"signal.signal(signal.SIGTERM,stop)\\nPath("+repr(str(ready))+").write_text('ready')\\nwhile True:time.sleep(.01)\\n"
+  child=runtime.subprocess.Popen([sys.executable,'-c',program],start_new_session=True);child.owned_role='gateway';child.owned_log=log;child.owned_lock=lock
+  observed=log.stat();child.owned_log_identity=(observed.st_dev,observed.st_ino)
+  try:
+   deadline=time.monotonic()+5
+   while not ready.exists():
+    assert child.poll() is None,'fixture exited before readiness'
+    assert time.monotonic()<deadline,'fixture not ready'
+    time.sleep(.01)
+   try:runtime.retire_children([child],grace_seconds=1,force_seconds=1,require_success=True)
+   except RuntimeError:assert not expected,'complete gateway shutdown refused'
+   else:assert expected,'incomplete/unobserved gateway shutdown accepted'
+   assert not runtime.group_running(child.pid)
+  finally:runtime.retire_children([child],grace_seconds=.1,force_seconds=1)
 `);
     expect(result.status, result.stderr).toBe(0);
   });

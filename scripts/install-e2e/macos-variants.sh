@@ -29,7 +29,7 @@ QUARANTINE="$SESSION/quarantine"
 BASELINE="$SESSION/services-before"
 /bin/launchctl list | awk '$3 ~ /^dev\.omnesis\.(gateway|collector)$/ {print}' | sort >"$BASELINE"
 write_result() {
-  "$PYTHON" - "$E2E_WORK/result.json" "$MODE" "$1" "$PHASE" "$SESSION" "$COMMIT" <<'PY'
+  "$PYTHON" - "$E2E_WORK/result.json" "$MODE" "$1" "$PHASE" "$SESSION" "$COMMIT" "$HERE/macos-native-probes.py" <<'PY'
 import json,sys
 from pathlib import Path
 result={'mode':sys.argv[2],'passed':sys.argv[3]=='0','last_phase':sys.argv[4],'source_commit':sys.argv[6],
@@ -37,6 +37,23 @@ result={'mode':sys.argv[2],'passed':sys.argv[3]=='0','last_phase':sys.argv[4],'s
  'model_inference':'excluded','secret_store':'file'}
 runtime=Path(sys.argv[5])/'runtime-result.json'
 if runtime.exists():result['runtime']=json.loads(runtime.read_text())
+probes=Path(sys.argv[5])/'native-startup-probes.json'
+if probes.is_file() and not probes.is_symlink():
+    # Only fixed stage names and bounded numeric status cross the artifact seam.
+    try:
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('native_probe_summary',sys.argv[7])
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        rows=json.loads(probes.read_text())
+        valid=isinstance(rows,list) and len(rows)==len(module.STAGES)
+        for row,stage in zip(rows,module.STAGES):
+            valid=valid and isinstance(row,dict) and set(row)=={'stage','exit','signal','timeout'}
+            valid=valid and row.get('stage')==stage and type(row.get('timeout')) is bool
+            valid=valid and (row.get('exit') is None or (type(row.get('exit')) is int and 0<=row['exit']<=255))
+            valid=valid and (row.get('signal') is None or (type(row.get('signal')) is int and 1<=row['signal']<=64))
+        if valid:result['native_startup_probes']=rows
+    except Exception:
+        pass
 Path(sys.argv[1]).write_text(json.dumps(result,indent=2)+'\n')
 PY
 }
@@ -48,7 +65,7 @@ installer_failure_diagnostics() {
   fi
   local label
   # Redact complete lines before byte truncation, which must never expose a
-  # token fragment stripped of its field name. Daemon logs stay private.
+  # token fragment stripped of its field name. Post-setup daemon logs stay private.
   for label in client absence no-service; do
     if [ -s "$SESSION/$label.private.log" ] && [ ! -L "$SESSION/$label.private.log" ]; then
       printf '[install-e2e] redacted %s installer tail\n' "$label" >&2
@@ -57,6 +74,25 @@ installer_failure_diagnostics() {
       fi
     fi
   done
+  # Only the first gateway health failure can opt in to daemon diagnostics:
+  # no collector has started and no source has been added at this boundary.
+  if [ ! -L "$SESSION/startup-failure.json" ] && "$PYTHON" - "$SESSION/startup-failure.json" <<'PYDIAG'
+import json,sys
+from pathlib import Path
+try:
+    body=json.loads(Path(sys.argv[1]).read_text())
+except (OSError,ValueError):
+    raise SystemExit(1)
+raise SystemExit(0 if body=={'phase':'gateway-health','cycle':1,'before_sources':True} else 1)
+PYDIAG
+  then
+    if [ -f "$SESSION/gateway.private.log" ] && [ ! -L "$SESSION/gateway.private.log" ]; then
+      printf '[install-e2e] redacted gateway pre-readiness tail\n' >&2
+      if ! tail -n 50 "$SESSION/gateway.private.log" | redact | tail -c 8192 >&2; then
+        printf '[install-e2e] startup diagnostic filtering unavailable\n' >&2
+      fi
+    fi
+  fi
 }
 cleanup() {
   local status=$? restored=1
@@ -111,7 +147,7 @@ child_command() {
     OMNESIS_GATEWAY_PORT="$PORT" OMNESIS_BIND=127.0.0.1 OMNESIS_NO_PROMPT=1 \
     OMNESIS_EXPERIMENTAL=0 OMNESIS_DEV_MODE=0 NODE_OPTIONS=--max-old-space-size=3072 \
     npm_config_cache="$SESSION/npm-cache" npm_config_jobs=2 CMAKE_BUILD_PARALLEL_LEVEL=2 MAKEFLAGS=-j2 \
-    HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 "$@" &
+    HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 "$@" &
   CHILD_PID=$!
   local status=0
   wait "$CHILD_PID" || status=$?

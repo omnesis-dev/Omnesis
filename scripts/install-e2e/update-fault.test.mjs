@@ -413,7 +413,7 @@ process.on('SIGTERM',()=>{setTimeout(()=>{child.kill('SIGTERM');child.once('exit
       const terminal = once(helper, "exit");
       const deadline = Date.now() + 3000;
       while (!existsSync(join(directory, "entered/pid"))) {
-        if (Date.now() > deadline) throw new Error("gate did not start");
+        if (Date.now() > deadline) throw new Error("owned npm fault gate was not reached");
         await new Promise((r) => setTimeout(r, 10));
       }
       helper.kill("SIGTERM");

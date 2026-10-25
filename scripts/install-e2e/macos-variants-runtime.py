@@ -3,17 +3,28 @@
 # Copyright (c) 2026 Adrien Conrath
 """Foreground daemon proof using only an isolated CI installation and invented notes."""
 import hashlib
+import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
 import signal
 import ssl
+import stat
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
+
+
+def gateway_boot_budget():
+    path = Path(__file__).resolve().parents[1] / 'lib/gateway-boot-budget.json'
+    seconds = json.loads(path.read_text()).get('seconds')
+    if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
+        raise RuntimeError('shared gateway boot budget is invalid')
+    return seconds
 
 
 def wait_for(probe, seconds=180, phase='readiness', children=()):
@@ -93,15 +104,66 @@ def group_running(group):
                for line in output.splitlines() if len(parts := line.split()) == 2)
 
 
+def graceful_stop_marker(child, offset):
+    role = getattr(child, 'owned_role', None)
+    if offset is None or role not in ('collector', 'gateway'):
+        return False
+    descriptor = None
+    try:
+        descriptor = os.open(child.owned_log, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        observed = os.fstat(descriptor)
+        if not stat.S_ISREG(observed.st_mode) or (observed.st_dev, observed.st_ino) != child.owned_log_identity:
+            return False
+        # Read a bounded suffix strictly after this stop's observation point.
+        os.lseek(descriptor, max(offset, observed.st_size - 65536), os.SEEK_SET)
+        tail = os.read(descriptor, 65536)
+        message = rb'\[collector\] Collector stopped' if role == 'collector' else rb'\[gateway\] Shutting down\.\.\.'
+        return re.search(rb'(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z INFO  ' + message + rb'\r?$', tail) is not None
+    except (OSError, AttributeError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def owned_gateway_lock(child):
+    descriptor = None
+    try:
+        descriptor = os.open(child.owned_lock, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        observed = os.fstat(descriptor)
+        if not stat.S_ISREG(observed.st_mode):
+            return False
+        holder = json.loads(os.read(descriptor, 4096))
+        pid = holder.get('pid')
+        return isinstance(pid, int) and pid > 0 and os.getpgid(pid) == child.pid
+    except (OSError, ValueError, AttributeError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def retire_children(children, grace_seconds=30, force_seconds=15, require_success=False):
     errors = []
     for child in reversed(children):
         role = getattr(child, 'owned_role', 'daemon')
         try:
             forced = False
+            sent_term = False
+            initiated = child.poll() is None
+            stop_offset = None
+            lock_observed = initiated and role == 'gateway' and owned_gateway_lock(child)
+            if initiated and role in ('collector', 'gateway'):
+                try:
+                    observed = os.lstat(child.owned_log)
+                    if stat.S_ISREG(observed.st_mode) and (observed.st_dev, observed.st_ino) == child.owned_log_identity:
+                        stop_offset = observed.st_size
+                except (OSError, AttributeError):
+                    pass
             if group_running(child.pid):
                 try:
                     os.killpg(child.pid, signal.SIGTERM)
+                    sent_term = initiated
                 except ProcessLookupError:
                     pass
                 deadline = time.monotonic() + grace_seconds
@@ -122,12 +184,36 @@ def retire_children(children, grace_seconds=30, force_seconds=15, require_succes
                         raise RuntimeError('owned group survived forced shutdown')
                     time.sleep(0.05)
             child.wait(timeout=force_seconds)
-            if require_success and (forced or child.returncode != 0):
+            # tsx's Darwin front door may retain its TERM-shaped exit even
+            # after the daemon completes shutdown. Gateway lock removal occurs
+            # only after doShutdown closes every store; its start marker alone
+            # cannot establish completion.
+            term_completed = (sent_term and not forced and child.returncode in (143, -signal.SIGTERM)
+                              and graceful_stop_marker(child, stop_offset)
+                              and (role == 'collector' or (lock_observed and not os.path.lexists(child.owned_lock))))
+            if require_success and (forced or (child.returncode != 0 and not term_completed)):
                 errors.append(f'{role}: exit={child.returncode}, forced={forced}')
         except Exception as error:
             errors.append(f'{role}: {type(error).__name__}')
     if errors:
         raise RuntimeError('owned daemon retirement failed: ' + ', '.join(errors))
+
+
+def record_native_startup_probes(work, source, exit_code, cycle, probe=None):
+    if cycle != 1 or exit_code not in (139, -signal.SIGSEGV):
+        return
+    try:
+        if probe is None:
+            path = Path(__file__).with_name('macos-native-probes.py')
+            spec = importlib.util.spec_from_file_location('native_startup_probes', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            probe = module.native_startup_probes
+        records = probe(source, work)
+        (work / 'native-startup-probes.json').write_text(json.dumps(records) + '\n')
+    except Exception:
+        # Diagnostics must never replace the original gateway startup failure.
+        pass
 
 
 def run(work, cli):
@@ -143,6 +229,10 @@ def run(work, cli):
                                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                  start_new_session=True, env=dict(os.environ, NODE_OPTIONS='--max-old-space-size=' + ('1024' if role == 'collector' else '1536')))
         child.owned_role = role
+        child.owned_log = work / (role + '.private.log')
+        child.owned_lock = config / 'gateway.lock'
+        observed = os.fstat(log.fileno())
+        child.owned_log_identity = (observed.st_dev, observed.st_ino)
         children.append(child)
     def stop():
         retire_children(children, grace_seconds=90, require_success=True)
@@ -177,7 +267,13 @@ def run(work, cli):
         for cycle in (1, 2):
             no_models(config)
             start('gateway')
-            wait_for(lambda: api('/health', False).get('status') == 'ok', phase='gateway-health', children=children)
+            try:
+                wait_for(lambda: api('/health', False).get('status') == 'ok', seconds=gateway_boot_budget(), phase='gateway-health', children=children)
+            except RuntimeError:
+                if cycle == 1:
+                    (work / 'startup-failure.json').write_text(json.dumps({'phase': 'gateway-health', 'cycle': 1, 'before_sources': True}) + '\n')
+                    record_native_startup_probes(work, work / 'source', children[-1].poll(), cycle)
+                raise
             os.environ['NODE_EXTRA_CA_CERTS'] = str(config / 'tls/cert.pem')
             start('collector')
             device = wait_for(online, phase='collector-online', children=children)

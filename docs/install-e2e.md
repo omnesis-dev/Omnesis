@@ -160,3 +160,7 @@ directory. Values it learns at run time — the tailnet's DNS suffix and
 addresses, pairing codes, the probe token — are registered with
 `::add-mask::`, and every diagnostic passes through
 `scripts/install-e2e/redact.mjs` before it is printed.
+
+Mac installer failures may print bounded, redacted installer tails after exact tool restoration. A first-cycle gateway health failure may also print up to 50 lines and 8192 bytes of its redacted startup log, before any collector or source starts. Collector logs and gateway logs after source setup stay private; uploaded artifacts remain sanitized result summaries only.
+If that gateway exits with a segmentation-fault status, isolated native dependency probes may add fixed stage names and numeric exit/signal/timeout results to the sanitized summary. The probes load no model and discard process output.
+The hosted Mac prerequisite tests set `HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1` to avoid cascading upgrades of unrelated image software. An absent `node@24` and its required dependencies still install through the real installer and Homebrew; original tool restoration remains mandatory.

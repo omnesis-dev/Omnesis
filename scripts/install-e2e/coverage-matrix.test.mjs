@@ -44,13 +44,14 @@ describe("installer coverage selection", () => {
   test("the workflow's real CLI emits its matrix and refuses ambiguous environment values", () => {
     const directory = mkdtempSync(join(tmpdir(), "installer-matrix-"));
     try {
-      for (const [mode, expected] of [
+      for (const [index, [mode, expected]] of [
         ["false", 1],
         ["true", 5],
         ["TRUE", null],
         ["", null],
-      ]) {
-        const output = join(directory, `output-${mode || "empty"}`);
+      ].entries()) {
+        // APFS commonly treats true/TRUE as the same filename.
+        const output = join(directory, `output-${index}`);
         const result = spawnSync(
           process.execPath,
           [fileURLToPath(new URL("./coverage-matrix.mjs", import.meta.url))],
