@@ -210,16 +210,20 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         }
     }
 
-    private suspend fun refreshControls(sid: String) {
-        val c = client ?: return
+    /** Refreshes the queue controls; false when the gateway answered 404 (it predates them). */
+    private suspend fun refreshControls(sid: String): Boolean {
+        val c = client ?: return true
         val controls = try {
             c.controls(sid)
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
-            if (e is GatewayException.NotFound && client === c && _state.value.sessionId == sid) {
-                _state.update { it.copy(controlsAvailable = false, controls = dev.omnesis.android.transport.client.ConversationControls()) }
+            if (e is GatewayException.NotFound) {
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(controlsAvailable = false, controls = dev.omnesis.android.transport.client.ConversationControls()) }
+                }
+                return false
             }
-            return
+            return true
         }
         if (client === c && _state.value.sessionId == sid) {
             val record = composerStore.read(composerAccount, sid)
@@ -228,14 +232,16 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
             if (reconciled != record) composerStore.write(composerAccount, sid, reconciled)
             _state.update { it.copy(controls = controls, controlsAvailable = true, composer = reconciled) }
         }
+        return true
     }
 
     private fun startControlsPolling(id: String) {
         controlsJob?.cancel()
         controlsJob = scope.launch {
             while (isActive && visibleConversationId == id && appForeground) {
-                refreshControls(id)
-                delay(2_000)
+                // A gateway older than queue controls answers every poll with 404; keep checking
+                // (it may be upgraded) but not every two seconds for as long as the chat is open.
+                delay(if (refreshControls(id)) CONTROLS_POLL_MS else CONTROLS_UNSUPPORTED_POLL_MS)
             }
         }
     }
@@ -1989,6 +1995,9 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
 
     internal companion object {
         const val TAG = "Omnesis:agent"
+        const val CONTROLS_POLL_MS = 2_000L
+        // A 0.6.x gateway has no queue-controls route; re-check rarely in case it is upgraded.
+        const val CONTROLS_UNSUPPORTED_POLL_MS = 60_000L
         // How many events a snapshot handoff buffers before it gives up on buffering and falls
         // back to a rewound stream replay (see SnapshotHandoff.overflowed).
         const val SNAPSHOT_HANDOFF_CAPACITY = 256
