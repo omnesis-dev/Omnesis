@@ -35,6 +35,7 @@ async function fixture() {
       deepseek: { type: "http", status: "ok", models: ["deepseek-example", "unknown-model"] },
     },
     assignments: {
+      "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
       agent: {
         role: "agent",
         kind: "http",

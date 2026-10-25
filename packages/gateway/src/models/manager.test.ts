@@ -76,6 +76,7 @@ describe("ModelManager", () => {
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: { role: "agent", kind: "disabled" },
       },
@@ -109,7 +110,7 @@ describe("ModelManager", () => {
     const origSynthetic = process.env.OMNESIS_SYNTHETIC;
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
-      assignments: {},
+      assignments: { "speech-to-speech": { role: "speech-to-speech", kind: "disabled" } },
     };
 
     beforeEach(() => {
@@ -275,6 +276,7 @@ describe("ModelManager", () => {
         anthropic: { type: "anthropic", status: "ok" },
       },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: {
           role: "agent",
@@ -310,6 +312,7 @@ describe("ModelManager", () => {
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: { role: "agent", kind: "disabled" },
       },

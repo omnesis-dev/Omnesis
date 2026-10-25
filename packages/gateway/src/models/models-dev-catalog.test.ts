@@ -94,6 +94,7 @@ const inference = {
     },
   },
   assignments: {
+    "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
     agent: {
       role: "agent",
       kind: "http",
@@ -130,6 +131,7 @@ describe("Models.dev gateway catalog", () => {
         ],
       },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         agent: {
           role: "agent",
           kind: "codex",
