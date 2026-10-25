@@ -350,6 +350,48 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(ownership).not.toMatch(/(^|\s)-[a-zA-Z]*[Rr]/);
   });
 
+  test("a root re-install keeps an existing root project's daemons on root", () => {
+    // Earlier root installs ran every service as 0:0, so their databases,
+    // token and keys are root's, and the installer never re-owns them.
+    writeExecutable(
+      fixturePath("fake-bin", "id"),
+      '#!/bin/sh\ncase "$1" in -u|-g) echo 0 ;; *) echo root ;; esac\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "chown"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$OMNESIS_TEST_CHOWN"\n',
+    );
+    const ownershipLog = fixturePath("ownership.log");
+    const home = prepareHome("root-reinstall");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "docker-compose.yml"),
+      'services:\n  gateway:\n    user: "0:0"\n  collector:\n    user: "0:0"\n  updater:\n    user: "0:0"\n',
+    );
+    const run = runInstaller("root-reinstall", QUIET, {
+      OMNESIS_TEST_CHOWN: ownershipLog,
+      OMNESIS_TEST_OLD_SERVICES: "gateway\ncollector\nupdater",
+    });
+    expect(run.status).toBe(0);
+    const compose = parseYaml(composeAt(run));
+    expect(compose.services.gateway.user).toBe("0:0");
+    expect(compose.services.collector.user).toBe("0:0");
+    expect(readFileSync(ownershipLog, "utf8")).not.toContain("10001");
+
+    // A project already on the unprivileged account, beside its root updater, stays there.
+    writeFileSync(
+      join(configDir, "docker-compose.yml"),
+      'services:\n  gateway:\n    user: "10001:10001"\n  collector:\n    user: "10001:10001"\n  updater:\n    user: "0:0"\n',
+    );
+    const again = runInstaller("root-reinstall", QUIET, {
+      OMNESIS_TEST_CHOWN: ownershipLog,
+      OMNESIS_TEST_OLD_SERVICES: "gateway\ncollector\nupdater",
+    });
+    expect(again.status).toBe(0);
+    expect(parseYaml(composeAt(again)).services.gateway.user).toBe("10001:10001");
+  });
+
   test("combined topology runs both daemons in the gateway service", () => {
     const run = runInstaller("combined", [...QUIET, "--combined", "--build"]);
     expect(run.status).toBe(0);

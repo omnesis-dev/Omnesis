@@ -13,6 +13,7 @@ import { toolInputJsonSchema, type ChatBackend, type ToolContext } from "@omnesi
 import { AgentError, AgentService } from "../agent/service.js";
 import { FsConversationStore } from "../agent/conversation-store.js";
 import { RealtimeService, realtimeBackend } from "./service.js";
+import { RealtimeAdmissionError } from "./call-error.js";
 import type WebSocket from "ws";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { AgentEvent } from "@omnesis/core";
@@ -42,6 +43,7 @@ const config = (url = "https://api.openai.com"): OmnesisConfig => ({
     allowRemoteInference: true,
     entailment: { promptStyle: "judge" },
     backends: { cloud: { type: "http", url } },
+    assignments: { "speech-to-speech": "cloud/gpt-live-1" },
   },
 });
 async function fixture() {
@@ -113,9 +115,11 @@ async function fixture() {
   const authorized = vi.fn(() => true);
   const logger = { info: vi.fn(), warn: vi.fn() };
   const usage = vi.fn();
+  let currentConfig = config();
+  let apiKey: string | undefined = "fixture-key";
   const service = new RealtimeService({
-    getConfig: () => config(),
-    getApiKey: () => "fixture-key",
+    getConfig: () => currentConfig,
+    getApiKey: () => apiKey,
     getAgent: () => agent,
     isAuthorized: authorized,
     connect: () => socket as unknown as WebSocket,
@@ -148,6 +152,12 @@ async function fixture() {
     logger,
     usage,
     service,
+    setConfig: (value: OmnesisConfig) => {
+      currentConfig = value;
+    },
+    setApiKey: (value: string | undefined) => {
+      apiKey = value;
+    },
     open: (conversationId?: string, version?: 1 | 2, recoverableErrors = false) => {
       connection = service.open(peer, "token:fixture", {
         token: "fixture-token",
@@ -217,7 +227,7 @@ async function settle(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("direct realtime Omnesis runtime", () => {
-  it("requires strict experimental mode, remote consent, real OpenAI origin and a key", () => {
+  it("requires explicit assignment, strict experimental mode, remote consent, real OpenAI origin and a key", () => {
     expect(realtimeBackend(config(), () => "key")).toBe("cloud");
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
     vi.stubEnv("OMNESIS_SYNTHETIC", "1");
@@ -234,6 +244,59 @@ describe("direct realtime Omnesis runtime", () => {
       ),
     ).toBeUndefined();
   });
+  it.each([undefined, null, "missing/gpt-live-1", "cloud/chat-model", "codex/gpt-live-1"])(
+    "never enables speech from a configured OpenAI backend without a supported assignment: %s",
+    (assignment) => {
+      const value = config();
+      value.inference!.assignments = { "speech-to-speech": assignment };
+      expect(realtimeBackend(value, () => "key")).toBeUndefined();
+    },
+  );
+  it("uses only the explicitly assigned backend, never another OpenAI backend's key", () => {
+    const value = config();
+    value.inference!.backends!.other = { type: "http", url: "https://api.openai.com" };
+    value.inference!.assignments = { "speech-to-speech": "other/gpt-live-1" };
+    expect(
+      realtimeBackend(value, (name) => (name === "cloud" ? "key" : undefined)),
+    ).toBeUndefined();
+    expect(realtimeBackend(value, (name) => (name === "other" ? "key" : undefined))).toBe("other");
+  });
+  it("keeps discovery backward compatible while hiding voice when the assignment is cleared", async () => {
+    const f = await fixture();
+    expect(f.service.capability()).toMatchObject({
+      available: true,
+      protocol: { min: 1, max: 2 },
+      live: { configuredAgent: true, transport: "webrtc", model: "gpt-live-1" },
+    });
+    const value = config();
+    value.inference!.assignments = {};
+    f.setConfig(value);
+    expect(f.service.capability()).toMatchObject({
+      available: false,
+      protocol: { min: 1, max: 2 },
+    });
+    expect(f.service.capability()).not.toHaveProperty("live");
+    expect(() => f.open()).toThrow(RealtimeAdmissionError);
+  });
+  it.each(["unassign", "reassign", "rotate-key"])(
+    "ends an existing legacy call when its speech assignment authority changes: %s",
+    async (change) => {
+      const f = await fixture();
+      await ready(f);
+      if (change === "rotate-key") f.setApiKey("replacement-key");
+      else {
+        const value = config();
+        value.inference!.backends!.other = { type: "http", url: "https://api.openai.com" };
+        value.inference!.assignments = {
+          "speech-to-speech": change === "unassign" ? null : "other/gpt-live-1",
+        };
+        f.setConfig(value);
+      }
+      f.socket.event({ type: "input_audio_buffer.committed", item_id: "after-change" });
+      expect(f.peer.close).toHaveBeenCalled();
+      expect(JSON.stringify(f.events)).toContain("unavailable");
+    },
+  );
   it("accepts the echoed full session manifest above the client frame limit", async () => {
     const f = await fixture();
     f.open();

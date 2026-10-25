@@ -94,6 +94,7 @@ const inference = {
     },
   },
   assignments: {
+    "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
     agent: {
       role: "agent",
       kind: "http",
@@ -130,6 +131,7 @@ describe("Models.dev gateway catalog", () => {
         ],
       },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         agent: {
           role: "agent",
           kind: "codex",
@@ -485,4 +487,34 @@ describe("Models.dev gateway catalog", () => {
     await expect(service.logo("openai")).resolves.toEqual(Buffer.from(svg));
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+});
+
+it("does not advertise chat reasoning controls or saved settings for speech media", () => {
+  const service = new ModelsDevCatalog({
+    configDir: dir(),
+    bundled: BUNDLED,
+    bundledFetchedAt: Date.now(),
+  });
+  const speech: InferenceOverview = {
+    ...inference,
+    assignments: {
+      ...inference.assignments,
+      "speech-to-speech": {
+        role: "speech-to-speech",
+        kind: "http",
+        backendKey: "cloud",
+        url: "https://api.openai.com",
+        model: "gpt-live-1",
+        allowRemoteInference: true,
+        available: true,
+      },
+    },
+  };
+  const view = service.overview(speech, {
+    inference: {
+      entailment: { promptStyle: "judge" },
+      assignments: { "speech-to-speech": "cloud/gpt-live-1" },
+    },
+  });
+  expect(view.modelSettings["speech-to-speech"]).toBeUndefined();
 });

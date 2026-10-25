@@ -19,6 +19,7 @@ Page notes and Find are experimental and hidden unless the paired gateway runs w
 - `sidePanel`: hosts the note composer alongside the current page.
 - `tabs`: lets Find compare source links against the URLs of open tabs across the profile automatically. Matching happens locally; the tab list is not sent to the gateway. Chrome requests this permission at installation or upgrade.
 - `favicon`: displays site icons through Chrome’s local favicon service automatically. Chrome grants this permission at installation or upgrade; Find does not request another permission while searching. Missing icons use a fallback.
+- `search`: when the paired gateway does not offer Find, text submitted after the `om` keyword goes to the browser's default search engine, as the address bar says before Enter, instead of being discarded. A query typed while Find is available is never sent there.
 - Optional `https://*/*` host access: reads rendered HTTPS pages after an explicit Chrome permission prompt. It is optional at installation, requested during pairing, and removed on unpair. Incognito is disabled.
 
 Why the capture script is registered dynamically rather than declared in a static `content_scripts` block: a static block matching `https://*/*` would force Chrome to grant host access at installation time. Registering it through `chrome.scripting` only after the user grants the optional permission keeps host access opt-in, and the registration is removed again on unpair.

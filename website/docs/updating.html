@@ -722,7 +722,11 @@
           uses the container registry rather than npm, so a release does not need npm packages.
           Independently versioned sidecars do not participate in release discovery. The combined
           image is updated through its <code>gateway</code> service, preserving the mounted config
-          directory and paired collector identity.
+          directory and paired collector identity. An updater image from before registry discovery
+          looks the release up on npm instead and stops with
+          <code>Could not resolve omnesis@latest</code>; name the release once with
+          <code>omnesis update --target-version X.Y.Z</code>, and later updates find it on their
+          own.
         </p>
         <p>
           Registry tag discovery is anonymous. For a private registry, authenticate Docker on the
@@ -869,9 +873,10 @@
         <p>
           What the gateway does refuse is a device speaking a different connection protocol: both
           sides exchange a protocol number when they connect. The browser extension checks the
-          gateway's version before pairing and refuses a gateway on an older minor release than its
-          own. Within a minor release, what the gateway accepts only grows, which is why the gateway
-          is always updated first.
+          gateway's version before pairing and refuses only a gateway older than the oldest one its
+          page capture works with; a newer extension on an older gateway keeps capturing pages and
+          simply does not offer what that gateway lacks. Within a minor release, what the gateway
+          accepts only grows, which is why the gateway is always updated first.
         </p>
         <p>
           <code>GET /health</code> needs no token and returns the gateway's version and a

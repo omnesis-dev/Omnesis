@@ -102,6 +102,7 @@ describe("Chrome Web Store release contract", () => {
       "sidePanel",
       "tabs",
       "favicon",
+      "search",
     ]);
     expect(manifest.incognito).toBe("not_allowed");
     expect(manifest.omnibox).toEqual({ keyword: "om" });

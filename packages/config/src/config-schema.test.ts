@@ -1375,3 +1375,22 @@ describe("validateConfig — inference backend names", () => {
     }
   });
 });
+
+test("speech is an optional independent assignment and has no chat behavior settings", () => {
+  const parsed = validateConfig({
+    inference: { assignments: { agent: "replay", "speech-to-speech": "cloud/gpt-live-1" } },
+  });
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok)
+    expect(parsed.config.inference?.assignments).toEqual({
+      agent: "replay",
+      "speech-to-speech": "cloud/gpt-live-1",
+    });
+  expect(
+    validateConfig({
+      inference: {
+        modelSettings: { "speech-to-speech": { assignment: "cloud/gpt-live-1", values: {} } },
+      },
+    }).ok,
+  ).toBe(false);
+});

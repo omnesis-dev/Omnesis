@@ -1280,3 +1280,5 @@ export { browserUrlIdentity } from "./url-normalize.js";
 export type { BrowserUrlIdentitySpec } from "./url-normalize.js";
 
 export { oauthCallbackHost } from "./oauth-callback-host.js";
+
+export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";

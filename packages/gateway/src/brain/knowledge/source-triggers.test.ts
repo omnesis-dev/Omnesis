@@ -54,10 +54,20 @@ describe("durable source intake", () => {
       { content_hash: "v1" },
     ]);
     db.prepare("UPDATE documents SET content_hash='v2' WHERE id='evidence'").run();
+    // Intake reads the source as it stands, so the newer write supersedes the
+    // unread entry: the journal stays one entry per source on installs where
+    // nothing drains it.
     expect(db.prepare("SELECT revision FROM knowledge_changes ORDER BY seq").all()).toEqual([
-      { revision: "v1" },
       { revision: "v2:knowledge:1" },
     ]);
+    expect(
+      db
+        .prepare<[], { detail: string }>(
+          "EXPLAIN QUERY PLAN DELETE FROM knowledge_changes WHERE entity_id='evidence'",
+        )
+        .all()
+        .map((row) => row.detail),
+    ).toEqual([expect.stringContaining("knowledge_changes_entity")]);
   });
   it("accepts a restored source version through UPSERT before maintenance drains", () => {
     const db = setup();
@@ -70,8 +80,6 @@ describe("durable source intake", () => {
     upsert.run("v2", "Revised plan");
     expect(() => upsert.run("v1", "Original plan")).not.toThrow();
     expect(db.prepare("SELECT revision FROM knowledge_changes ORDER BY seq").all()).toEqual([
-      { revision: "v1" },
-      { revision: "v2:knowledge:1" },
       { revision: "v1:knowledge:2" },
     ]);
     expect(db.prepare("SELECT content_hash FROM knowledge_source_revisions").get()).toEqual({

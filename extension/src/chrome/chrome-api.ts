@@ -197,6 +197,14 @@ declare global {
       const onInputCancelled: { addListener(callback: () => void): void };
     }
 
+    namespace search {
+      function query(options: {
+        text: string;
+        disposition?: "CURRENT_TAB" | "NEW_TAB" | "NEW_WINDOW";
+        tabId?: number;
+      }): Promise<void>;
+    }
+
     namespace commands {
       function getAll(): Promise<Array<{ name?: string; shortcut?: string }>>;
       const onCommand: { addListener(callback: (command: string, tab?: tabs.Tab) => void): void };

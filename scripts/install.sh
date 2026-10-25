@@ -5101,6 +5101,15 @@ docker_runtime_identity() {
   DOCKER_DAEMON_UID="$HOST_UID"
   DOCKER_DAEMON_GID="$HOST_GID"
   if [ "$HOST_UID" = 0 ]; then
+    # Earlier root installs ran the daemons as root, so their databases,
+    # token and keys belong to root. Only the paths this installer manages
+    # change owner, so such a project keeps running its daemons as root
+    # rather than lose access to its own state.
+    if [ -f "$CONFIG_DIR/docker-compose.yml" ] &&
+      grep -Eq '^[[:space:]]+user: "0:0"' "$CONFIG_DIR/docker-compose.yml" &&
+      ! grep -Eq '^[[:space:]]+user: "10001:10001"' "$CONFIG_DIR/docker-compose.yml"; then
+      return 0
+    fi
     DOCKER_DAEMON_UID=10001
     DOCKER_DAEMON_GID=10001
   fi

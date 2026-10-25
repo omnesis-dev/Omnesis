@@ -130,6 +130,7 @@ import {
 import { pruneOrphanSourceStats } from "./prune-orphan-source-stats.js";
 import { pruneInvalidEmailAliases } from "./prune-invalid-email-aliases.js";
 import { runSchemaSetup } from "./schema.js";
+import { compactKnowledgeJournal } from "./migration-205-knowledge-journal.js";
 import {
   createLegacyBriefClaimsTables,
   createLegacyBriefTables,
@@ -4894,6 +4895,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 204,
     description: "interest ledger: the owner's reactions as examples, and thumbs on brief items",
     up: createInterestTables,
+  },
+  {
+    version: 205,
+    description: "keep one knowledge journal entry per source, found by index",
+    up: compactKnowledgeJournal,
   },
 ];
 

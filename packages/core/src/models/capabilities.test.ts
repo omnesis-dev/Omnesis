@@ -49,14 +49,29 @@ describe("CAPABILITY_METADATA", () => {
       "entailment-verifier",
       "watch-judge",
     ]);
-    expect(bySection("core")).toEqual(["embedder", "ocr", "privacy-reviewer", "transcriber"]);
+    expect(bySection("core")).toEqual([
+      "embedder",
+      "ocr",
+      "privacy-reviewer",
+      "speech-to-speech",
+      "transcriber",
+    ]);
   });
 
   it("names the backend family only for roles an ordinary model cannot serve", () => {
     const special = CAPABILITY_ROLES.filter(
       (r) => CAPABILITY_METADATA[r].backendFamily !== undefined,
     );
-    expect(special).toEqual(["decision"]);
+    expect(special).toEqual(["decision", "speech-to-speech"]);
     expect(CAPABILITY_METADATA.decision.backendFamily).toBe("typed-decision");
+  });
+
+  it("keeps speech an experimental media capability independent from agent reasoning", () => {
+    expect(CAPABILITY_METADATA["speech-to-speech"]).toMatchObject({
+      role: "speech-to-speech",
+      section: "core",
+      experimental: true,
+      backendFamily: "speech-to-speech",
+    });
   });
 });

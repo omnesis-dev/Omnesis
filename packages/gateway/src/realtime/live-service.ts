@@ -93,7 +93,8 @@ export class LiveVoiceService {
     if (!this.deps.hasCapacity() || this.calls.size >= 256)
       throw new RealtimeAdmissionError(callError("session_busy"));
     const authorized = () =>
-      !!this.deps.backend() &&
+      this.deps.backend() === backend &&
+      this.deps.getApiKey(backend) === key &&
       this.deps.getAgent() === agent &&
       this.deps.isAuthorized(token, owner);
     const id = randomUUID();

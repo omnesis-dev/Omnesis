@@ -63,12 +63,12 @@
  *     control instead of under a later assertion. `backfill.peopleBatch`
  *     re-kicks auto-detect whenever it drains, which is why every later
  *     assertion is written to survive an eval tick landing beside it.
- *   - `backfill.mergeCandidatesDetect` is frozen the same way but cannot be
- *     consumed (it is not in the run-now allowlist), so its 90s start delay
- *     lands somewhere in this file. What keeps it inert is the cast: the fuzzy
- *     scorer only pairs people sharing a name token, and the first test pins
- *     that no two fixture identities share one — under the smart-split and
- *     substring-shadow expansions the scorer applies, not just literally.
+ *   - `backfill.mergeCandidatesDetect` is frozen the same way but left
+ *     unconsumed, so its 90s start delay lands somewhere in this file. What
+ *     keeps it inert is the cast: the fuzzy scorer only pairs people sharing
+ *     a name token, and the first test pins that no two fixture identities
+ *     share one — under the smart-split and substring-shadow expansions the
+ *     scorer applies, not just literally.
  *
  * `backfill.people.idleDelay` is dropped to 500ms so a per-document drain
  * costs about a second rather than the 30s default backoff.
@@ -338,8 +338,8 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
     // the corpus, and it folds a token of six characters or more into every
     // token of ten or more that contains it. Pinning all three here is what
     // lets the rest of the file treat `backfill.mergeCandidatesDetect` — whose
-    // 90s start delay lands somewhere in this run and cannot be consumed
-    // through the run-now route — as structurally inert rather than as a race.
+    // 90s start delay lands somewhere in this run — as structurally inert
+    // rather than as a race.
     const bags = CAST.map((member) => ({
       who: member.who,
       tokens: new Set([

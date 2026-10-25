@@ -44,6 +44,7 @@ class ConversationSubmissionTest {
     private var requireQueueMode = false
     private var reject = true
     private var oldGateway = false
+    private val controlsRequests = java.util.concurrent.atomic.AtomicInteger()
     private var controlsBody = """{"busy":true,"queuedMessages":[],"future":true}"""
 
     @Before fun setup() {
@@ -52,8 +53,11 @@ class ConversationSubmissionTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
                 request.path?.endsWith("/queue/send-now") == true -> sendNowReply?.invoke() ?: MockResponse().setResponseCode(503)
-                request.path?.endsWith("/controls") == true -> if (oldGateway) MockResponse().setResponseCode(404).setBody("""{"error":"NOT_FOUND","message":"Not found"}""")
+                request.path?.endsWith("/controls") == true -> {
+                    controlsRequests.incrementAndGet()
+                    if (oldGateway) MockResponse().setResponseCode(404).setBody("""{"error":"NOT_FOUND","message":"Not found"}""")
                     else MockResponse().setBody(controlsBody)
+                }
                 request.path?.endsWith("/submissions") == true -> {
                     val payload = request.body.readUtf8()
                     submissions += payload
@@ -383,6 +387,15 @@ class ConversationSubmissionTest {
         coord.send("Keep this draft")
         assertEquals("Keep this draft", coord.state.value.sendRejectedText)
         assertTrue(submissions.isEmpty())
+    }
+
+    @Test fun oldGatewayIsNotPolledForControlsEveryTwoSeconds() {
+        oldGateway = true
+        val coord = coordinator(supported = true)
+        coord.conversationSurfaceVisible("session-one", true)
+        await { !coord.state.value.controlsAvailable }
+        Thread.sleep(AgentCoordinator.CONTROLS_POLL_MS * 2 + 500)
+        assertEquals(1, controlsRequests.get())
     }
 
     @Test fun editingPreservesOriginalDraftAcrossCancelAndSend() {

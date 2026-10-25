@@ -76,7 +76,7 @@ import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 
 /** Assignment kinds whose reasoning/behavior controls the portal can edit. */
 const BEHAVIOR_KINDS = ["http", "codex", "claude-code"];
-const NO_BEHAVIOR_ROLES = ["embedder", "transcriber", "ocr"];
+const NO_BEHAVIOR_ROLES = ["embedder", "transcriber", "ocr", "speech-to-speech"];
 
 function hasBehaviorControls(role, assignment) {
   return BEHAVIOR_KINDS.includes(assignment?.kind) && !NO_BEHAVIOR_ROLES.includes(role);

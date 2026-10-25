@@ -233,20 +233,33 @@ public final class AgentCoordinator {
         conversationControls.map(queueHandoff.presenting)
     }
 
-    func refreshConversationControls() async {
-        guard let client, let id = sessionId else { return }
+    /// How often the visible conversation re-reads its queue controls.
+    static let conversationControlsPollInterval: Duration = .seconds(2)
+    /// A 0.6.x gateway has no queue-controls route and answers every read with
+    /// 404; re-check rarely in case it is upgraded while the chat stays open.
+    static let unsupportedConversationControlsPollInterval: Duration = .seconds(60)
+
+    /// Re-reads the queue controls. Returns false when the gateway answered 404.
+    @discardableResult
+    func refreshConversationControls() async -> Bool {
+        guard let client, let id = sessionId else { return true }
         let choice = sessionChoiceCount
         do {
             let controls = try await client.conversationControls(sessionId: id)
-            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return true }
             conversationControls = controls
             conversationControlsSupported = true
+            return true
         } catch {
-            if case GatewayClient.Error.notFound = error, sessionChoiceCount == choice, sessionId == id, self.client === client {
+            guard case GatewayClient.Error.notFound = error else {
+                // Keep the last confirmed state while the event stream reconnects.
+                return true
+            }
+            if sessionChoiceCount == choice, sessionId == id, self.client === client {
                 conversationControlsSupported = false
                 conversationControls = nil
             }
-            // Keep the last confirmed state while the event stream reconnects.
+            return false
         }
     }
 

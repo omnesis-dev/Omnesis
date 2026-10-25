@@ -210,15 +210,17 @@
 
         <h2 id="realtime-voice">Realtime voice on iOS</h2>
         <p>
-          <code>OMNESIS_EXPERIMENTAL=1</code>, a configured OpenAI backend and
-          <code>inference.allowRemoteInference=true</code> enable an unstable speech-to-speech
-          prototype in the iOS app. Open an agent conversation and tap the voice-call button to the
-          right of the microphone. Allow microphone access, then speak naturally and hear the reply.
-          The call screen shows the agent's tool activity while it works. The activity disk stays
-          fixed above the scrolling transcript, with different halos for your speech and the agent's
-          playback. Scrolling back pauses automatic following; use Latest speech to resume it.
-          Reduce Motion keeps the halos static. Use mute to pause your microphone and hang up to end
-          the call.
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, assign the
+          <strong>Speech-to-speech</strong> capability in Models to an OpenAI backend and
+          <code>gpt-live-1</code> to enable this unstable iOS prototype. The backend needs an API
+          key and <code>inference.allowRemoteInference=true</code>. The capability is off when
+          unassigned; adding an OpenAI backend alone does not enable it. Open an agent conversation
+          and tap the voice-call button to the right of the microphone. Allow microphone access,
+          then speak naturally and hear the reply. The call screen shows the agent's tool activity
+          while it works. The activity disk stays fixed above the scrolling transcript, with
+          different halos for your speech and the agent's playback. Scrolling back pauses automatic
+          following; use Latest speech to resume it. Reduce Motion keeps the halos static. Use mute
+          to pause your microphone and hang up to end the call.
         </p>
         <p>
           The iOS app sends call audio directly to OpenAI's GPT-Live over WebRTC. The gateway

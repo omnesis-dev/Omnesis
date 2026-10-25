@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { CLAUDE_CODE_SUPPORTED_ROLES, CODEX_SUPPORTED_ROLES } from "@omnesis/core";
 import {
   createLogger,
+  speechToSpeechAssignment,
+  SPEECH_TO_SPEECH_MODEL,
+  experimentalEnabled,
   getCatalogEntry as getBundledCatalogEntry,
   getCatalogEntryByFilename,
   defaultForRole,
@@ -143,6 +146,7 @@ const ROLE_TO_CATALOG_ROLE = {
   "watch-judge": undefined,
   "entailment-verifier": undefined,
   decision: undefined,
+  "speech-to-speech": undefined,
 } as const;
 
 /** TypeSafe's public System One endpoint, used unless `inference.typesafe.url` overrides it. */
@@ -384,6 +388,35 @@ export class InferenceRegistry {
       const def = defaultForRole(catalogRole);
       if (!def) return { role, kind: "disabled" };
       return this.resolveLocalModel(role, def.id);
+    }
+
+    if (role === "speech-to-speech") {
+      const backends = Object.fromEntries(
+        [...this.httpBackends].map(([key, entry]) => [key, entry.config]),
+      );
+      const selected = speechToSpeechAssignment(value, backends);
+      if (!selected)
+        return {
+          role,
+          kind: "unresolved",
+          reason: "Speech to speech requires an explicitly assigned OpenAI backend and gpt-live-1.",
+        };
+      const entry = this.httpBackends.get(selected.backendKey)!;
+      if (!experimentalEnabled())
+        return { role, kind: "unresolved", reason: "Speech to speech requires experimental mode." };
+      if (!this.allowRemoteInference)
+        return { role, kind: "unresolved", reason: CLOUD_EGRESS_DISABLED_REASON };
+      if (!entry.config.apiKey)
+        return { role, kind: "unresolved", reason: "Speech to speech requires an OpenAI API key." };
+      return {
+        role,
+        kind: "http",
+        backendKey: selected.backendKey,
+        url: entry.config.url,
+        model: selected.model,
+        allowRemoteInference: true,
+        available: true,
+      };
     }
 
     const slashIndex = value.indexOf("/");
@@ -881,6 +914,12 @@ export class InferenceRegistry {
     entry: { config: ResolvedHttpBackendConfig; status: BackendStatus },
   ): Record<string, CapabilityRole[]> {
     const roles = classifyModels([...(entry.status.models ?? [])]);
+    if (
+      speechToSpeechAssignment(`${backendKey}/${SPEECH_TO_SPEECH_MODEL}`, {
+        [backendKey]: entry.config,
+      })
+    )
+      roles[SPEECH_TO_SPEECH_MODEL] = ["speech-to-speech"];
     if (!this.getModelControls) return roles;
     for (const [model, suggestions] of Object.entries(roles)) {
       const facts = this.getModelControls(
@@ -893,6 +932,7 @@ export class InferenceRegistry {
       const input = new Set(facts.modalities.input);
       const output = new Set(facts.modalities.output);
       roles[model] = suggestions.filter((role) => {
+        if (role === "speech-to-speech") return true;
         if (role === "transcriber") return input.has("audio") && output.has("text");
         if (role === "ocr") return (input.has("image") || input.has("pdf")) && output.has("text");
         if (role === "embedder") return input.has("text") && output.has("text");

@@ -14,7 +14,8 @@
     "contextMenus",
     "sidePanel",
     "tabs",
-    "favicon"
+    "favicon",
+    "search"
   ],
   "optional_host_permissions": ["https://*/*"],
   "background": {

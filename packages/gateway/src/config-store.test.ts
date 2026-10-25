@@ -280,3 +280,34 @@ describe("ConfigStore — listeners + file watcher", () => {
     expect(store.get().indexer?.cycleInterval).toBe("60m");
   });
 });
+
+describe("speech-to-speech assignment mutations", () => {
+  test("accepts only a declared actual OpenAI Live assignment without changing the agent", async () => {
+    await store.load();
+    expect(
+      (
+        await store.patch({
+          inference: {
+            backends: {
+              cloud: { type: "http", url: "https://api.openai.com", apiKey: "fixture-key" },
+            },
+            assignments: { agent: "replay", "speech-to-speech": "cloud/gpt-live-1" },
+          },
+        })
+      ).ok,
+    ).toBe(true);
+    expect(store.get().inference?.assignments?.agent).toBe("replay");
+    expect(
+      (await store.patch({ inference: { assignments: { "speech-to-speech": "cloud/gpt-4.1" } } }))
+        .ok,
+    ).toBe(false);
+    expect(
+      (await store.patch({ inference: { backends: { cloud: { url: "https://example.org" } } } }))
+        .ok,
+    ).toBe(false);
+    expect(store.get().inference?.backends?.cloud?.url).toBe("https://api.openai.com");
+    expect(
+      (await store.patch({ inference: { assignments: { "speech-to-speech": null } } })).ok,
+    ).toBe(true);
+  });
+});

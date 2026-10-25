@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { SourceId, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
+import { SourceId, SCOPE_READ, SCOPE_READ_BULK, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { omnesisConfigSchema } from "@omnesis/config";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
@@ -68,6 +68,7 @@ let notes: OmnesisNotesRuntime | undefined;
 let enabled: boolean | undefined;
 let readWriteToken: string;
 let writeOnlyToken: string;
+let bulkReadToken: string;
 let priorExperimental: string | undefined;
 let lookupFails: boolean;
 let vocabularyReads: number;
@@ -148,6 +149,7 @@ beforeEach(() => {
   const device = createDevice(db, { name: "fictional test collector", kind: "collector" });
   readWriteToken = createToken(db, device.id, [SCOPE_READ, SCOPE_WRITE_ALL]).token;
   writeOnlyToken = createToken(db, device.id, [SCOPE_WRITE_ALL]).token;
+  bulkReadToken = createToken(db, device.id, [SCOPE_READ_BULK]).token;
   app = createServer(db, path, {
     transcribeService: transcriber,
     transcriptionVocabularyService: vocabulary,
@@ -269,5 +271,26 @@ describe("gateway vocabulary to Whisper pipeline", () => {
       ).status,
     ).toBe(400);
     expect(worker.requests).toHaveLength(0);
+  });
+
+  test("context fields a newer client adds are ignored, not refused", async () => {
+    const extended = {
+      ...context,
+      futureHint: { kind: "meeting" },
+      conversation: { ...context.conversation!, futureField: true },
+      participants: [{ isSelf: true, futureField: "yes" }],
+    };
+    const response = await sourceAudio(
+      readWriteToken,
+      encodeURIComponent(JSON.stringify(extended)),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ available: true });
+    const direct = await app.request("/inference/transcription-vocabulary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bulkReadToken}`, "content-type": "application/json" },
+      body: JSON.stringify(extended),
+    });
+    expect(direct.status).toBe(200);
   });
 });

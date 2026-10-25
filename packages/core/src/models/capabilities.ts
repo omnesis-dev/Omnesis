@@ -213,7 +213,8 @@ export type CapabilityRole =
   | "background-agent"
   | "watch-judge"
   | "entailment-verifier"
-  | "decision";
+  | "decision"
+  | "speech-to-speech";
 
 export const CAPABILITY_ROLES = [
   "embedder",
@@ -225,6 +226,7 @@ export const CAPABILITY_ROLES = [
   "watch-judge",
   "entailment-verifier",
   "decision",
+  "speech-to-speech",
 ] as const;
 
 /** Roles served by Codex turns. Embedding vectors and audio need other protocols. */
@@ -292,7 +294,7 @@ export interface CapabilityMetadata {
    * typed-decision backends such as TypeSafe. Absent for every role an
    * ordinary model serves.
    */
-  readonly backendFamily?: "typed-decision";
+  readonly backendFamily?: "typed-decision" | "speech-to-speech";
 }
 
 /**
@@ -377,6 +379,16 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     icon: "shield-check",
     experimental: true,
     section: "cognition",
+  },
+  "speech-to-speech": {
+    role: "speech-to-speech",
+    title: "Speech to speech",
+    description:
+      "Listens and speaks during live calls. Uses OpenAI Live; the separately configured agent handles research and tools. Audio is sent to OpenAI.",
+    icon: "mic",
+    experimental: true,
+    section: "core",
+    backendFamily: "speech-to-speech",
   },
   // Typed, cheap judgements about a document: whether an email is worth
   // recording, asked by the mention worth gate (time queries) and by the

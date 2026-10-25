@@ -16,14 +16,19 @@ const person = z
             kind: z.enum(PERSON_IDENTIFIER_KINDS),
             value: z.string().min(1).max(256),
           })
-          .strict(),
+          .strip(),
       )
       .max(4)
       .optional(),
   })
-  .strict();
+  .strip();
 
-/** Bounds are shared by direct dictionary calls and source audio context. */
+/**
+ * Bounds are shared by direct dictionary calls and source audio context.
+ * Unknown keys are dropped rather than refused: the context is an optional hint
+ * that newer collectors and apps extend, and a refused one costs the recording
+ * its transcript (the collector reads any 4xx as "no transcript").
+ */
 export const transcriptionContextSchema = z
   .object({
     purpose: z.enum(["source-audio", "dictation", "agent"]),
@@ -44,7 +49,7 @@ export const transcriptionContextSchema = z
           }),
         threadId: z.string().min(1).max(1024),
       })
-      .strict()
+      .strip()
       .optional(),
     participants: z.array(person).max(32).optional(),
     languageHints: z
@@ -58,4 +63,4 @@ export const transcriptionContextSchema = z
       .optional(),
     recordedAt: z.string().datetime({ offset: true }).optional(),
   })
-  .strict() satisfies z.ZodType<TranscriptionContext>;
+  .strip() satisfies z.ZodType<TranscriptionContext>;

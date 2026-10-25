@@ -132,7 +132,7 @@ const VERIFIABLE_ROLES = new Set<CapabilityRole>([
   "entailment-verifier",
 ]);
 
-const REASONING_ROLES = new Set<CapabilityRole>([
+const reasoningRoleSchema = z.enum([
   "agent",
   "privacy-reviewer",
   "background-agent",
@@ -214,13 +214,15 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
   });
 
   app.patch("/admin/models/behavior/:role", scope.admin(), async (c) => {
-    const role = c.req.param("role") as CapabilityRole;
-    if (!(CAPABILITY_ROLES as readonly string[]).includes(role)) {
+    const requestedRole = c.req.param("role");
+    if (!(CAPABILITY_ROLES as readonly string[]).includes(requestedRole)) {
       throw new BadRequestError(`unsupported capability: ${c.req.param("role")}`);
     }
-    if (!REASONING_ROLES.has(role)) {
-      throw new BadRequestError(`reasoning controls are unavailable for ${role}`);
+    const parsedRole = reasoningRoleSchema.safeParse(requestedRole);
+    if (!parsedRole.success) {
+      throw new BadRequestError(`reasoning controls are unavailable for ${requestedRole}`);
     }
+    const role = parsedRole.data;
     if (!opts.modelsDevCatalog) throw new BadRequestError("Model controls unavailable");
     const parsed = behaviorBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) throw new BadRequestError("assignment and valid values required");

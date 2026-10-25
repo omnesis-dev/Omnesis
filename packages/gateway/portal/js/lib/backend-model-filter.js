@@ -16,8 +16,8 @@
  *   2. `others`     — every other model the backend serves (chat models on the
  *                     Embedder tab, etc.). Hidden behind a toggle / surfaced
  *                     only when the user searches for them.
- *   3. free text    — the picker always keeps a free-text box so any id can be
- *                     typed by hand; this module only governs what's *listed*.
+ *   3. free text    — ordinary model pickers keep a free-text box so any id can be
+ *                     typed by hand. Speech is restricted to supported models.
  *
  * `filterBackendModels` is a pure function: given the candidate id → roles map,
  * the active role, a search query, and a render cap, it returns the curated,
@@ -72,7 +72,7 @@ export function filterBackendModels(modelRoles, role, opts = {}) {
   // the user explicitly asks (toggle) OR is actively searching — a search must
   // be able to reach a mis-classified model, so a non-empty query always spans
   // the full set regardless of the toggle.
-  const showOthers = includeOthers || q !== "";
+  const showOthers = role !== "speech-to-speech" && (includeOthers || q !== "");
   const othersAll = showOthers
     ? ids.filter((id) => !hasRole(id) && matchesQuery(id)).sort(byId)
     : [];
@@ -84,7 +84,7 @@ export function filterBackendModels(modelRoles, role, opts = {}) {
     othersCount: othersAll.length,
     suggestedTruncated: suggestedAll.length > cap,
     othersTruncated: othersAll.length > cap,
-    totalCandidates: ids.length,
+    totalCandidates: role === "speech-to-speech" ? suggestedAll.length : ids.length,
   };
 }
 

@@ -3,6 +3,7 @@
 
 import Ws from "ws";
 import { z } from "zod";
+import { SPEECH_TO_SPEECH_MODEL } from "@omnesis/core";
 import {
   callError,
   providerCallError,
@@ -11,7 +12,7 @@ import {
 } from "./call-error.js";
 import { readHandshakeError } from "./handshake-error.js";
 
-export const LIVE_MODEL = "gpt-live-1";
+export const LIVE_MODEL = SPEECH_TO_SPEECH_MODEL;
 const API = "https://api.openai.com/v1/live/sessions";
 const MAX_SDP = 64 * 1024;
 const MAX_BODY = 128 * 1024;

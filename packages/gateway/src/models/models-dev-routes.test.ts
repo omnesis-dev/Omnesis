@@ -35,6 +35,7 @@ async function fixture() {
       deepseek: { type: "http", status: "ok", models: ["deepseek-example", "unknown-model"] },
     },
     assignments: {
+      "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
       agent: {
         role: "agent",
         kind: "http",
@@ -240,6 +241,10 @@ describe("Models.dev model routes", () => {
         body,
       });
     expect((await request("embedder")).status).toBe(400);
+    expect((await request("speech-to-speech")).status).toBe(400);
+    expect(
+      Object.hasOwn(configStore.get().inference?.modelSettings ?? {}, "speech-to-speech"),
+    ).toBe(false);
     inference.assignments.agent = {
       role: "agent",
       kind: "anthropic",

@@ -223,7 +223,7 @@ function renderOption(opt, mode, onSelect) {
     case "preset":
       return html`<${BackendOptionCard}
         key=${`preset-${opt.id}`}
-        providerId=${opt.id}
+        providerId=${opt.providerId ?? opt.id}
         title=${opt.preset.name}
         subtitle=${mode === "configure"
           ? opt.configured
@@ -390,7 +390,7 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
   // The backend answered but didn't return a model list (e.g. its /v1/models
   // endpoint 500s). There's nothing to suggest beyond preset hints — point the
   // user at the free-text box so they can name the model directly.
-  const noModelList = status?.status === "reachable";
+  const noModelList = role !== "speech-to-speech" && status?.status === "reachable";
 
   return html`
     <div class="picker-pane">
@@ -412,7 +412,7 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
           ? html`<div class="picker-note">Showing ${curated.suggested.length} of ${curated.suggestedCount} matching models — refine the search to narrow.</div>`
           : null}
         ${!probing && curated.suggested.length === 0
-          ? html`<div class="picker-note">${q ? "No matching models." : "No suggested models for this capability — search, reveal other models, or type an id below."}</div>`
+          ? html`<div class="picker-note">${q ? "No matching models." : role === "speech-to-speech" ? "No supported speech models are available." : "No suggested models for this capability — search, reveal other models, or type an id below."}</div>`
           : null}
 
         ${curated.others.length > 0
@@ -432,10 +432,10 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
           ? html`<button class="picker-link" onClick=${() => setShowOthers(true)}>Show ${curated.totalCandidates - curated.suggestedCount} other model${curated.totalCandidates - curated.suggestedCount !== 1 ? "s" : ""}</button>`
           : null}
 
-        <div class="picker-custom">
+        ${role === "speech-to-speech" ? null : html`<div class="picker-custom">
           <input class="picker-custom-input" type="text" placeholder=${`Or type a model id served by ${backendKey}…`} value=${custom} onInput=${(e) => setCustom(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter" && custom.trim()) onPick(backendKey, custom.trim()); }} />
           <button class="btn-tiny" disabled=${!custom.trim()} onClick=${() => onPick(backendKey, custom.trim())}>Use</button>
-        </div>
+        </div>`}
       </div>
     </div>
   `;
