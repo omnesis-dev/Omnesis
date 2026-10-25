@@ -362,9 +362,18 @@ describe("T3 workflow and owned lifecycle contracts", () => {
       'if [ "$MODE" = docker ]; then docker_native_negatives; docker_native_restart; fi',
     );
     const lifecycle = text("scripts/install-e2e/docker-tailnet-collector.sh");
-    expect(lifecycle.indexOf('prior="$(json_get')).toBeLessThan(
+    expect(lifecycle.indexOf('--after-pairing "$E2E_WORK/pairing-restarted.json"')).toBeLessThan(
       lifecycle.indexOf("--key collector-restarted"),
     );
+    const gateway = text("scripts/install-e2e/docker-tailnet-gateway.sh");
+    const proof = gateway.indexOf(
+      'compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/gateway-restarted.json"',
+    );
+    const verified = gateway.indexOf("--key gateway-reconnected");
+    expect(proof).toBeGreaterThan(gateway.indexOf("capture gateway-restarted"));
+    expect(proof).toBeLessThan(verified);
+    expect(lifecycle).not.toContain("j.lastAuthenticatedAt > Number(a)");
+    expect(lifecycle).toContain("wait_for gateway-reconnected 600");
     expect(lifecycle).toContain('"$OMNESIS" service restart collector');
     expect(lifecycle).toContain("timeout:20000");
     expect(lifecycle).not.toContain("--first-use");

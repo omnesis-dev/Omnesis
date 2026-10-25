@@ -166,10 +166,12 @@ probe health --url "$GATEWAY_URL" --expect-version "$version" --timeout 180 >/de
 node "$E2E_DIR/docker-tailnet-probe.mjs" peer --url "$GATEWAY_URL" --fingerprint "$pin"
 identity >"$E2E_WORK/identity-after"
 cmp "$E2E_WORK/identity-before" "$E2E_WORK/identity-after" || die "encrypted gateway identity changed"
-mailbox put --url "$MAILBOX" --key gateway-restarted --value ok
-[ "$(wait_for collector-reconnected 300)" = ok ] || die "native collector did not reconnect"
 capture gateway-restarted
+# online is backed by this fresh gateway process's authenticated WS registry,
+# not a persisted last-seen timestamp. Require the same device and corpus.
 node "$E2E_DIR/docker-tailnet-probe.mjs" compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/gateway-restarted.json"
+mailbox put --url "$MAILBOX" --key gateway-reconnected --value ok
+[ "$(wait_for collector-identity-retained 300)" = ok ] || die "native collector identity changed after gateway reconnection"
 endgroup
 mailbox put --url "$MAILBOX" --key finished --value ok
 [ "$(wait_for collector-done 300)" = ok ] || die "native collector did not finish"

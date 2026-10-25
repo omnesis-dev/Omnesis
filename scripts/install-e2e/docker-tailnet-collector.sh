@@ -35,19 +35,16 @@ docker_native_restart() {
     [ "$(date +%s)" -lt "$deadline" ] || die "native restart did not retain its credential and replace its service PID"
     sleep 3
   done
-  local prior
-  prior="$(json_get "$PAIRING_STATE" 'j.lastAuthenticatedAt')"
   mailbox put --url "$MAILBOX" --key collector-restarted --value ok
-  wait_for gateway-restarted 600 >/dev/null || die "the Docker gateway never restarted"
-  # Wait for a fresh real authentication after the gateway restart, not just a
-  # stale paired marker left by the previous connection.
-  deadline=$(($(date +%s) + 180))
-  until [ "$(json_get "$PAIRING_STATE" 'j.state')" = paired ] && \
-    [ "$(json_get "$PAIRING_STATE" 'j.lastAuthenticatedAt > Number(a)' "$prior")" = true ]; do
-    [ "$(date +%s)" -lt "$deadline" ] || die "native collector did not authenticate again after Docker restart"
-    sleep 3
-  done
-  mailbox put --url "$MAILBOX" --key collector-reconnected --value ok
+  # The restarted gateway's current WebSocket registry proves reconnection.
+  # Persisted lastAuthenticatedAt records startup credential validation only.
+  [ "$(wait_for gateway-reconnected 600)" = ok ] || die "the Docker gateway never verified the native reconnection"
+  "$OMNESIS" service status --json >"$E2E_WORK/services-reconnected.json"
+  cp "$PAIRING_STATE" "$E2E_WORK/pairing-reconnected.json"
+  node "$E2E_DIR/docker-tailnet-probe.mjs" reconnect \
+    --before-services "$E2E_WORK/services-restarted.json" --after-services "$E2E_WORK/services-reconnected.json" \
+    --before-pairing "$E2E_WORK/pairing-restarted.json" --after-pairing "$E2E_WORK/pairing-reconnected.json"
+  mailbox put --url "$MAILBOX" --key collector-identity-retained --value ok
 }
 
 # Stop only the collector installed by this explicit T3 invocation. Hosted

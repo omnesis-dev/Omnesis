@@ -42,16 +42,16 @@ export function comparePersistence(before, after) {
   assert.deepEqual(after, before, "native device and stored document identities survive restart");
 }
 
-export function compareNativeRestart(beforeServices, afterServices, beforePairing, afterPairing) {
-  const service = (body) => {
-    assert(Array.isArray(body?.items), "typed native service status");
-    const rows = body.items.filter((row) => row.component === "collector");
-    assert.equal(rows.length, 1, "one collector service");
-    assert.equal(rows[0].state, "running", "collector service running");
-    assert(Number.isInteger(rows[0].pid) && rows[0].pid > 0, "positive collector PID");
-    return rows[0].pid;
-  };
-  assert.notEqual(service(beforeServices), service(afterServices), "native service PID changes");
+function nativeServicePid(body) {
+  assert(Array.isArray(body?.items), "typed native service status");
+  const rows = body.items.filter((row) => row.component === "collector");
+  assert.equal(rows.length, 1, "one collector service");
+  assert.equal(rows[0].state, "running", "collector service running");
+  assert(Number.isInteger(rows[0].pid) && rows[0].pid > 0, "positive collector PID");
+  return rows[0].pid;
+}
+
+function comparePairingIdentity(beforePairing, afterPairing) {
   for (const state of [beforePairing, afterPairing]) {
     assert.equal(state?.state, "paired", "native pairing state");
     assert(nonempty(state.deviceName) && nonempty(state.gatewayUrl), "native pairing identity");
@@ -64,12 +64,36 @@ export function compareNativeRestart(beforeServices, afterServices, beforePairin
       "actual authentication",
     );
   }
+  for (const key of ["deviceName", "gatewayUrl", "tokenFingerprint"])
+    assert.equal(afterPairing[key], beforePairing[key], `native ${key} survives restart`);
+}
+
+export function compareNativeRestart(beforeServices, afterServices, beforePairing, afterPairing) {
+  assert.notEqual(
+    nativeServicePid(beforeServices),
+    nativeServicePid(afterServices),
+    "native service PID changes",
+  );
+  comparePairingIdentity(beforePairing, afterPairing);
   assert(
     afterPairing.lastAuthenticatedAt > beforePairing.lastAuthenticatedAt,
     "fresh authentication after native restart",
   );
-  for (const key of ["deviceName", "gatewayUrl", "tokenFingerprint"])
-    assert.equal(afterPairing[key], beforePairing[key], `native ${key} survives restart`);
+}
+
+/** The gateway independently proves its current authenticated socket first. */
+export function compareNativeReconnect(beforeServices, afterServices, beforePairing, afterPairing) {
+  assert.equal(
+    nativeServicePid(beforeServices),
+    nativeServicePid(afterServices),
+    "native service PID survives gateway restart",
+  );
+  comparePairingIdentity(beforePairing, afterPairing);
+  // This is an ever-authenticated credential record, not a WebSocket clock.
+  assert(
+    afterPairing.lastAuthenticatedAt >= beforePairing.lastAuthenticatedAt,
+    "native authentication history retained",
+  );
 }
 
 /** CA+hostname verification remains enabled, then require the additional pin. */
@@ -182,6 +206,10 @@ async function main() {
       values: ["before-services", "after-services", "before-pairing", "after-pairing"],
       required: ["before-services", "after-services", "before-pairing", "after-pairing"],
     },
+    reconnect: {
+      values: ["before-services", "after-services", "before-pairing", "after-pairing"],
+      required: ["before-services", "after-services", "before-pairing", "after-pairing"],
+    },
     negative: { values: ["url"], required: ["url"] },
     "reject-pin": { values: ["url", "fingerprint"], required: ["url", "fingerprint"] },
     peer: { values: ["url", "fingerprint"], required: ["url", "fingerprint"] },
@@ -214,8 +242,8 @@ async function main() {
   }
   if (command === "peer") return verifyPeer(flags.url, flags.fingerprint);
   if (command === "compare") return comparePersistence(json("before"), json("after"));
-  if (command === "native")
-    return compareNativeRestart(
+  if (command === "native" || command === "reconnect")
+    return (command === "native" ? compareNativeRestart : compareNativeReconnect)(
       json("before-services"),
       json("after-services"),
       json("before-pairing"),
