@@ -30,7 +30,7 @@ def wait_for(probe, seconds=180):
         time.sleep(2)
 
 
-def gateway_token(config, core, node_arguments=()):
+def gateway_token(config, core, node_arguments=(), cwd=None):
     """Unwrap through the installed product seam, retaining the token only in memory."""
     if os.environ.get('OMNESIS_SECRET_STORE') != 'file':
         raise RuntimeError('isolated runtime requires the file secret backend')
@@ -41,7 +41,7 @@ def gateway_token(config, core, node_arguments=()):
               'process.stdout.write(token);')
     try:
         result = subprocess.run(['node', *node_arguments, '--input-type=module', '-e', script, str(config)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=30, cwd=cwd)
         token = result.stdout.strip()
         if result.returncode or not token or '\n' in token or '\r' in token:
             raise RuntimeError('credential reader refused')
@@ -49,6 +49,17 @@ def gateway_token(config, core, node_arguments=()):
     except (OSError, subprocess.SubprocessError, RuntimeError):
         # Neither partial stdout nor the decoder's exception may reveal a bearer.
         raise RuntimeError('isolated gateway credential could not be read') from None
+
+
+def source_gateway_token(config, source):
+    # Source package exports still name TypeScript even after `npm run build`.
+    # Use the same installed tsx loader as the source CLI front door, not bare
+    # Node against dist/index.js and its source-pointing workspace dependencies.
+    core = source / 'packages/core/src/index.ts'
+    loader = source / 'node_modules/tsx/dist/loader.mjs'
+    if not core.is_file() or not loader.is_file():
+        raise RuntimeError('installed source credential reader is unavailable')
+    return gateway_token(config, core.as_uri(), ['--import', loader.as_uri()], cwd=source)
 
 
 def no_models(config):
@@ -109,7 +120,7 @@ def run(work, cli):
     def api(path, auth=True):
         nonlocal credential
         if auth and credential is None:
-            credential = gateway_token(config, (work / 'source/packages/core/dist/index.js').as_uri())
+            credential = source_gateway_token(config, work / 'source')
         context = ssl.create_default_context(cafile=str(config / 'tls/cert.pem'))
         headers = {'Authorization': 'Bearer ' + credential} if auth else {}
         with urllib.request.urlopen(urllib.request.Request(url + path, headers=headers), context=context, timeout=5) as response:

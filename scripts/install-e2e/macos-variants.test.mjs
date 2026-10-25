@@ -5,7 +5,6 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { pathToFileURL } from "node:url";
 import { ensureInstallRootKey, writeSecretTextFile } from "@omnesis/core";
 
 const tools = resolve("scripts/install-e2e/macos-variants-tools.py");
@@ -291,12 +290,12 @@ with tempfile.TemporaryDirectory() as temporary:
         "omnesis.secret-file",
       );
       const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
-      const core = pathToFileURL(resolve("packages/core/src/index.ts")).href;
+      const installSource = resolve(".");
       const result = python(`
 import os
 s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
 os.environ['OMNESIS_SECRET_STORE']='file'
-value=runtime.gateway_token(m.Path(${JSON.stringify(directory)}),${JSON.stringify(core)},['--import','tsx'])
+value=runtime.source_gateway_token(m.Path(${JSON.stringify(directory)}),m.Path(${JSON.stringify(installSource)}))
 assert value==${JSON.stringify(token)}
 print('decoded privately')
 `);

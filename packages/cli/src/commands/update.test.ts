@@ -3064,11 +3064,12 @@ describe("rolling back a failed update", () => {
   });
 
   test.each([
-    ["SIGINT", 130, "SIGTERM"],
-    ["SIGTERM", 143, "SIGINT"],
+    ["SIGINT", 130, "SIGTERM", 1],
+    ["SIGTERM", 143, "SIGINT", 1],
+    ["SIGTERM", 143, "SIGINT", 0],
   ] as const)(
-    "%s during npm ci waits for the child, then rolls back exactly once",
-    async (signal, exitCode, repeatedSignal) => {
+    "%s during npm ci waits for the child and rolls back (update exit %i, repeated %s, dependency exit %i)",
+    async (signal, exitCode, repeatedSignal, ciExitCode) => {
       const calls: RecordedCall[] = [];
       const exit = vi.fn();
       const router = new UpdateInterruptionRouter(exit);
@@ -3113,14 +3114,15 @@ describe("rolling back a failed update", () => {
 
       await vi.waitFor(() => expect(ciSignal?.aborted).toBe(true));
       expect(executed(runner)).not.toContain(`git checkout --detach ${previousRef}`);
-      finishCi({ code: 1, stdout: "" });
+      finishCi({ code: ciExitCode, stdout: "" });
       await rejection;
 
       expect(
         executed(runner).filter((line) => line === `git checkout --detach ${previousRef}`),
       ).toHaveLength(1);
-      expect(executed(runner).slice(-3)).toEqual([
+      expect(executed(runner).slice(-4)).toEqual([
         `git checkout --detach ${previousRef}`,
+        "rm -rf node_modules",
         "npm ci",
         "npm run build",
       ]);
@@ -3134,6 +3136,42 @@ describe("rolling back a failed update", () => {
       expect(exit).toHaveBeenCalledExactlyOnceWith(143);
     },
   );
+
+  test("an interrupted dependency tree whose reset fails stops rollback before reinstall or build", async () => {
+    const calls: RecordedCall[] = [];
+    const router = new UpdateInterruptionRouter(vi.fn());
+    const state = fakeApplyState();
+    let ciCalls = 0;
+    const run: CommandRunner = (spec, mode) => {
+      calls.push({ spec, mode });
+      const [operation] = spec.args;
+      if (mode === "capture") {
+        if (operation === "config") return Promise.resolve(managed);
+        if (operation === "status" || operation === "merge-base") return Promise.resolve(clean);
+        if (operation === "ls-remote") return Promise.resolve(tags);
+        if (operation === "show") return Promise.resolve(manifest);
+        if (operation === "rev-parse") return Promise.resolve(head);
+        if (operation === "rev-list") return Promise.resolve(targetSha);
+      }
+      if (spec.command === "npm" && operation === "ci") {
+        ciCalls++;
+        router.dispatch("SIGTERM");
+        return Promise.resolve({ code: 1, stdout: "interrupted" });
+      }
+      if (spec.command === "rm") return Promise.resolve({ code: 1, stdout: "reset refused" });
+      return Promise.resolve(clean);
+    };
+    const runner = { run, calls };
+    await expect(
+      source(makeDeps(runner, { interruptions: router, applyState: state.store })),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("rollback also failed at `rm -rf node_modules`"),
+    });
+    expect(ciCalls).toBe(1);
+    expect(executed(runner)).not.toContain("npm run build");
+    expect(calls.find(({ spec }) => spec.command === "rm")?.spec.cwd).toBe(rootDir);
+    expect(state.writes.map((value) => value.phase)).toEqual(["applying", "rolling-back"]);
+  });
 
   test("a signal during the source health wait rolls the checkout back", async () => {
     const exit = vi.fn();

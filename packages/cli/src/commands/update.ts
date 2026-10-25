@@ -684,8 +684,10 @@ class StoppedForBuild {
   }
 }
 
-/** What a rollback knows about the memory the build it undoes had. */
+/** What a rollback knows about the incomplete build and the memory it had. */
 interface RollbackMemory {
+  /** An interrupted dependency install can leave root workspace packages partly written. */
+  resetDependencies?: boolean;
   /** Daemons stopped for a build: stopped for the rebuild too, and brought back. */
   daemons?: StoppedForBuild;
   /** The apply's install or build was killed, most likely for want of memory. */
@@ -789,7 +791,12 @@ async function rollBackAndFail(
       for (const component of stopping) await daemons.stop(component);
     }
   }
-  for (const spec of applyPlan.rollback) {
+  const rollback = applyPlan.rollback.flatMap((spec) =>
+    memory.resetDependencies && isDependencyInstall(spec) && spec.retry
+      ? [spec.retry.reset, spec]
+      : [spec],
+  );
+  for (const spec of rollback) {
     console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
     // The transaction signal is already aborted; rollback is the recovery
     // work that must still run after the interrupted process tree is gone.
@@ -1104,13 +1111,19 @@ async function executeHostPlan(
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
   const pausedForBuild = steps.some((step) => step.kind === "pause-collector");
+  let dependencyInstallInterrupted = false;
   const rollBack = (
     reason: string,
     booted = false,
     exitCode: number = EXIT_FAILURE,
     killed = false,
   ): Promise<never> =>
-    rollBackAndFail(applyPlan, deps, reason, booted, exitCode, { daemons, killed, pausedForBuild });
+    rollBackAndFail(applyPlan, deps, reason, booted, exitCode, {
+      daemons,
+      killed,
+      pausedForBuild,
+      resetDependencies: dependencyInstallInterrupted,
+    });
 
   // The transaction: from the first thing that moves the host to the point
   // of no return, which is the gateway serving the target — the health wait
@@ -1273,6 +1286,7 @@ async function executeHostPlan(
               signal: controller.signal,
               onProcessGroup: (pid) => deps.updateLock?.setProcessGroup(pid),
             });
+            if (isDependencyInstall(spec)) dependencyInstallInterrupted = controller.signal.aborted;
             await rollBackIfInterrupted(false);
             if (result.code !== 0) {
               await rollBack(
