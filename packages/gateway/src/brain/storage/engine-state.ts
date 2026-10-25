@@ -151,7 +151,7 @@ export function addToCognitionEngineCounter(db: Db, key: string, delta: number):
 
 /**
  * Bump the decay dirty-mark. Called from every open-loop mutation path
- * (create / update / ledger append / delete / privacy cascade) so the
+ * (create / update / ledger append / delete) so the
  * decay sweep knows loop state changed since it last ran.
  */
 export function bumpCognitionDecayDirty(db: Db): void {

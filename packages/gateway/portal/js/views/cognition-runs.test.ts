@@ -4,7 +4,7 @@
 /**
  * Pure-logic coverage for the Cognition view's run-queue presentation:
  * the pending→(running|retrying|scheduled|queued) fan-out, the per-state
- * lead timestamp, the brief filter buckets, the legacy-subtab alias, and
+ * lead timestamp, the legacy-subtab alias, and
  * the two-unit relative-time formatter. Plain
  * function calls in the node env — same harness as cognition.test.ts.
  */
@@ -75,71 +75,16 @@ describe("runTimeLabel", () => {
   });
 });
 
-describe("briefMatchesFilter", () => {
-  test("buckets the eight stored states into the five filters", () => {
-    const b = (state: string) => ({ state });
-    expect(cognition.briefMatchesFilter(b("unread"), "unread")).toBe(true);
-    expect(cognition.briefMatchesFilter(b("read"), "read")).toBe(true);
-    expect(cognition.briefMatchesFilter(b("dismissed_snoozed"), "snoozed")).toBe(true);
-    // "dismissed" = the four terminal dismissals, NOT snoozed.
-    for (const s of [
-      "dismissed_already_handled",
-      "dismissed_acknowledged",
-      "dismissed_not_relevant",
-      "dismissed_wrong",
-    ]) {
-      expect(cognition.briefMatchesFilter(b(s), "dismissed")).toBe(true);
-    }
-    expect(cognition.briefMatchesFilter(b("dismissed_snoozed"), "dismissed")).toBe(false);
-    expect(cognition.briefMatchesFilter(b("unread"), "all")).toBe(true);
-  });
-});
-
 describe("resolveSection", () => {
-  test("aliases the legacy scheduled tab to runs; junk falls back to overview", () => {
+  test("aliases the legacy scheduled tab to runs; junk falls back to runs", () => {
     expect(cognition.resolveSection("scheduled")).toBe("runs");
     expect(cognition.resolveSection("runs")).toBe("runs");
-    expect(cognition.resolveSection("memory")).toBe("memory");
+    expect(cognition.resolveSection("memory")).toBe("notes");
+    expect(cognition.resolveSection("observations")).toBe("observations");
     // The Calendar is a Debug tab of its own, not a Cognition section.
-    expect(cognition.resolveSection("calendar")).toBe("overview");
-    expect(cognition.resolveSection(undefined)).toBe("overview");
-    expect(cognition.resolveSection("bogus")).toBe("overview");
-  });
-});
-
-describe("cognitionRailBadge", () => {
-  test("uses exact collection totals while preserving the live run signal", () => {
-    const pulse = {
-      ready: true,
-      running: [{ id: "run_live" }],
-      totalRunCount: 127,
-      totalLoopCount: 19,
-      briefsTotal: 31,
-      queuedCount: 4,
-      upcomingCount: 8,
-      openLoopCount: 3,
-      unreadBriefCount: 5,
-    };
-
-    expect(cognition.cognitionRailBadge(pulse, "runs")).toEqual({
-      badge: 127,
-      live: true,
-    });
-    expect(cognition.cognitionRailBadge(pulse, "loops")).toEqual({
-      badge: 19,
-      live: false,
-    });
-    expect(cognition.cognitionRailBadge(pulse, "briefs")).toEqual({
-      badge: 31,
-      live: false,
-    });
-  });
-
-  test("suppresses badges until the pulse has loaded", () => {
-    expect(cognition.cognitionRailBadge({ ready: false }, "runs")).toEqual({
-      badge: null,
-      live: false,
-    });
+    expect(cognition.resolveSection("calendar")).toBe("runs");
+    expect(cognition.resolveSection(undefined)).toBe("runs");
+    expect(cognition.resolveSection("bogus")).toBe("runs");
   });
 });
 
@@ -218,5 +163,28 @@ describe("fmtRel", () => {
     expect(cognition.fmtRel(iso(3 * 24 * 3600_000 + 4 * 3600_000), NOW)).toBe("in 3d 4h");
     expect(cognition.fmtRel(iso(45 * 60_000), NOW)).toBe("in 45m");
     expect(cognition.fmtRel(null, NOW)).toBe("—");
+  });
+});
+
+
+describe("live running filter", () => {
+  test("places a live count immediately after All and updates it with the active snapshot", () => {
+    expect(cognition.runViewFilterOptions(3)).toEqual([
+      { value: "all", label: "All" },
+      { value: "running", label: "Running (3)" },
+      { value: "upcoming", label: "Upcoming" },
+      { value: "completed", label: "Completed" },
+      { value: "failed", label: "Failed" },
+    ]);
+    expect(cognition.runViewFilterOptions(0)[1].label).toBe("Running (0)");
+  });
+  test("uses the complete active set and applies the same kind filter to rows and count", () => {
+    const active = [run({ id: "active-a", kind: "synthesis", running: true }), run({ id: "active-b", kind: "sweep", running: true })];
+    expect(cognition.runningRunsForKind(active, "all")).toEqual(active);
+    const selected = cognition.runningRunsForKind(active, "sweep");
+    expect(selected.map((entry: { id: string }) => entry.id)).toEqual(["active-b"]);
+    expect(cognition.runViewFilterOptions(selected.length)[1].label).toBe("Running (1)");
+    expect(cognition.runningRunsForKind([], "sweep")).toEqual([]);
+    expect(cognition.runFilterChangePath("active-a", "all", "running")).toBe("/portal/debug/cognition/runs");
   });
 });

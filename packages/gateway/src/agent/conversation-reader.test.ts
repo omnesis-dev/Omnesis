@@ -61,9 +61,10 @@ describe("StoredConversationReader", () => {
       title: "Visible question",
       pinned: false,
       origin: {
-        kind: "brief",
-        briefId: "brief-example",
-        runId: "run-example",
+        kind: "watch_firing",
+        firingId: "firing-example",
+        runId: "firing-example",
+        watchId: "watch-example",
         seedMessageCount: 2,
       },
       messages: [

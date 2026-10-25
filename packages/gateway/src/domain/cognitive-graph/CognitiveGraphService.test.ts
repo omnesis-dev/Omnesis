@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { createOpenLoop } from "../../brain/storage/open-loops.js";
-import { createBrief } from "../../brain/storage/briefs.js";
+import { createObservation } from "../../brain/storage/observations.js";
 import { createPersonAnnotation } from "../../brain/storage/person-annotations.js";
 import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/storage.js";
 import { reapEntityContext } from "./CognitiveGraphService.js";
@@ -60,7 +60,7 @@ describe("reapEntityContext", () => {
       },
       NOW,
     );
-    // loop_b: grouped with loop_a on a live brief -> related-to
+    // loop_b: grouped with loop_a on a live observation -> related-to
     createOpenLoop(
       db,
       {
@@ -72,15 +72,12 @@ describe("reapEntityContext", () => {
       },
       NOW - 1000,
     );
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_1",
+        id: "obs_1",
         createdByRun: "r",
-        kind: "loop",
-        title: "grouped",
-        confidence: 0.8,
-        urgency: 0.4,
+        summary: "grouped",
         relatedLoopIds: ["loop_a", "loop_b"],
       },
       NOW,

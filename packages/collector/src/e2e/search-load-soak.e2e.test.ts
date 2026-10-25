@@ -38,14 +38,28 @@
  */
 
 import "./synth-env.js";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ensureInstallRootKey, createLogger, readStorageKey } from "@omnesis/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureInstallRootKey } from "@omnesis/core";
+import { openReadOnlyDatabase } from "../../../gateway/src/db.js";
+import {
+  openIndexDb,
+  getVectorWriteSeq,
+  getUsearchSavedSeq,
+} from "../../../gateway/src/indexer/db.js";
+import { UsearchReadHandle } from "../../../gateway/src/indexer/usearch-index.js";
+import { fakeEmbed, FAKE_EMBEDDER_DIM } from "./fake-embedder.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 interface SearchResult {
   documentId: string;
   title: string;
   score: number;
+  scoreBreakdown?: Record<string, number | undefined>;
+  chunkRowid?: number;
 }
 interface SearchResponse {
   results?: SearchResult[];
@@ -110,6 +124,140 @@ describe("search read-isolation soak (encrypted gateway under concurrent load)",
   let harness: SyntheticE2EHarness;
   let priorSecretStore: string | undefined;
   let golden: string[];
+  let baselineResponse: SearchResponse;
+  let baselineSourceRevisions: Map<string, string>;
+  let baselineIndexDiagnostic: Awaited<ReturnType<typeof readIndexDiagnostic>> | null;
+
+  async function readIndexDiagnostic() {
+    const configDir = harness.getConfigDir();
+    const key = await readStorageKey("index-db", { configDir });
+    if (!key) throw new Error("Missing synthetic index key");
+    const db = openIndexDb(join(configDir, "index.db"), {
+      encryptionKey: key,
+      readonly: true,
+      cacheSizeBytes: 2 * 1024 * 1024,
+    });
+    try {
+      const snapshot = db.transaction(() => ({
+        writeSeq: getVectorWriteSeq(db),
+        savedSeq: getUsearchSavedSeq(db),
+        rows: db
+          .prepare<
+            [],
+            {
+              rowid: number;
+              document_id: string;
+              source_id: string;
+              embedding: Buffer | null;
+              metadata: string;
+            }
+          >(
+            `SELECT rowid, document_id, source_id, embedding,
+           json_object('title',title,'date',source_created_at,'author',author,'tags',tags,'relevance',relevance_score) AS metadata
+           FROM chunks ORDER BY rowid LIMIT 512`,
+          )
+          .all(),
+      }))();
+      const query = new Float32Array(fakeEmbed(QUERY));
+      const indexed = snapshot.rows.map((row) => {
+        const vector = row.embedding
+          ? Array.from({ length: row.embedding.length / 4 }, (_, i) =>
+              row.embedding!.readFloatLE(i * 4),
+            )
+          : [];
+        const dot = vector.reduce((sum, value, i) => sum + value * (query[i] ?? 0), 0);
+        const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+        const qnorm = Math.sqrt(query.reduce((sum, value) => sum + value * value, 0));
+        return {
+          rowid: row.rowid,
+          documentId: row.document_id,
+          readSource: row.source_id === READ_SOURCE,
+          embeddingHash: row.embedding
+            ? createHash("sha256").update(row.embedding).digest("hex")
+            : null,
+          metadataHash: createHash("sha256").update(row.metadata).digest("hex"),
+          exactDistance: norm && qnorm ? 1 - dot / (norm * qnorm) : null,
+        };
+      });
+      // This fixture never swaps embedding generations. The published file is
+      // sampled separately from SQLite; neither is atomic with HTTP responses.
+      const path = join(configDir, "index.usearch");
+      let published: { size: number; candidates: Array<{ key: string; distance: number }> } | null =
+        null;
+      if (existsSync(path)) {
+        const graph = UsearchReadHandle.open(path, FAKE_EMBEDDER_DIM);
+        try {
+          published = {
+            size: graph.size(),
+            candidates: graph
+              .search(query, 500)
+              .map(({ key, distance }) => ({ key: String(key), distance })),
+          };
+        } finally {
+          graph.close();
+        }
+      }
+      return {
+        capturedAt: new Date().toISOString(),
+        writeSeq: snapshot.writeSeq,
+        savedSeq: snapshot.savedSeq,
+        indexed,
+        published,
+        publishedStatus: published
+          ? "sampled_plaintext_graph"
+          : existsSync(`${path}.enc`)
+            ? "unavailable_encrypted_sidecar_is_not_the_live_reader"
+            : "unavailable_no_plaintext_graph",
+        scope:
+          "Separate SQLite and published ANN snapshots; diagnostic raw query embedding, not a captured HTTP candidate pool",
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  async function readSourceRevisions(): Promise<Map<string, string>> {
+    const key = await readStorageKey("main-db", { configDir: harness.getConfigDir() });
+    if (!key) throw new Error("Missing synthetic storage key");
+    const db = openReadOnlyDatabase(harness.getDbPath(), { encryptionKey: key });
+    try {
+      const rows = db
+        .prepare<
+          [string],
+          {
+            id: string;
+            content_hash: string;
+            title: string;
+            source_created_at: string;
+            source_updated_at: string;
+            updated_at: string;
+            metadata: string;
+          }
+        >(
+          "SELECT id,content_hash,title,source_created_at,source_updated_at,updated_at,metadata FROM documents WHERE source_id=? ORDER BY id",
+        )
+        .all(READ_SOURCE);
+      return new Map(
+        rows.map((row) => [row.id, createHash("sha256").update(JSON.stringify(row)).digest("hex")]),
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  function compactResponse(response: SearchResponse) {
+    return {
+      stages: response.stages,
+      results: (response.results ?? [])
+        .slice(0, 10)
+        .map(({ documentId, score, scoreBreakdown, chunkRowid }) => ({
+          documentId,
+          score,
+          scoreBreakdown,
+          chunkRowid,
+        })),
+    };
+  }
 
   async function search(text = QUERY): Promise<SearchResponse> {
     return harness.gatewayJson<SearchResponse>("/search", {
@@ -185,7 +333,10 @@ describe("search read-isolation soak (encrypted gateway under concurrent load)",
       noiseDocs(WRITE_DOCS).map((doc) => ({ ...doc, sourceId: WRITE_SOURCE })),
     );
     const baseline = await settledRanking();
+    baselineIndexDiagnostic = await readIndexDiagnostic().catch(() => null);
+    baselineResponse = baseline;
     golden = rank(baseline);
+    baselineSourceRevisions = await readSourceRevisions();
     // The baseline must actually answer the query, or matching it proves little.
     const titles = (baseline.results ?? []).map((r) => r.title);
     for (const g of GOLD)
@@ -222,8 +373,7 @@ describe("search read-isolation soak (encrypted gateway under concurrent load)",
     // A request that throws is a failure under load, kept apart from a request
     // that answered with the wrong ranking.
     const latencies: number[] = [];
-    const mismatches: Array<{ wave: number; ranking: string[]; stages: SearchResponse["stages"] }> =
-      [];
+    const mismatches: Array<{ wave: number; response: SearchResponse }> = [];
     const failures: Array<{ wave: number; error: string }> = [];
     const soakDeadline = Date.now() + SOAK_CAP_MS;
     let waves = 0;
@@ -243,7 +393,7 @@ describe("search read-isolation soak (encrypted gateway under concurrent load)",
               const res = await search();
               latencies.push(Date.now() - t0);
               const ranking = rank(res);
-              if (!same(ranking, golden)) mismatches.push({ wave, ranking, stages: res.stages });
+              if (!same(ranking, golden)) mismatches.push({ wave, response: res });
             } catch (err) {
               failures.push({ wave, error: err instanceof Error ? err.message : String(err) });
             }
@@ -258,9 +408,115 @@ describe("search read-isolation soak (encrypted gateway under concurrent load)",
     // The searched corpus must be exactly where the baseline left it: a quiet
     // search after the churn still returns the baseline. If it does not, the
     // write load changed a source it never touched.
-    expect(rank(await search()), "the quiet ranking after the soak left the baseline").toEqual(
-      golden,
-    );
+    const afterSoak = await search();
+    if (!same(rank(afterSoak), golden) || mismatches.length || failures.length) {
+      // Hosted runners discard /tmp after the job. Emit only bounded synthetic
+      // ranking evidence, never the copied config, storage keys or source text.
+      let indexDiagnostic: unknown;
+      try {
+        indexDiagnostic = { baseline: baselineIndexDiagnostic, after: await readIndexDiagnostic() };
+      } catch {
+        indexDiagnostic = { unavailable: true };
+      }
+      let revisionSummary: unknown;
+      try {
+        const current = await readSourceRevisions();
+        const ids = new Set([...baselineSourceRevisions.keys(), ...current.keys()]);
+        const changed = [...ids].filter(
+          (id) => baselineSourceRevisions.get(id) !== current.get(id),
+        );
+        revisionSummary = {
+          beforeCount: baselineSourceRevisions.size,
+          afterCount: current.size,
+          changedCount: changed.length,
+          changed: changed.slice(0, 30).map((documentId) => ({
+            documentId,
+            before: baselineSourceRevisions.get(documentId) ?? null,
+            after: current.get(documentId) ?? null,
+          })),
+          truncated: changed.length > 30,
+        };
+      } catch {
+        revisionSummary = { unavailable: true };
+      }
+      createLogger("collector:search-soak").warn(
+        `Synthetic ranking drift summary ${JSON.stringify({
+          baseline: compactResponse(baselineResponse),
+          after: compactResponse(afterSoak),
+          mismatchCount: mismatches.length,
+          firstMismatches: mismatches
+            .slice(0, 3)
+            .map(({ wave, response }) => ({ wave, ...compactResponse(response) })),
+          failureCount: failures.length,
+          waves,
+          writeRounds,
+          readSourceRevisions: revisionSummary,
+          indexDiagnostic,
+          snapshotScope:
+            "source revision digests are separate snapshots, not atomic with search responses; result IDs are returned candidates, not the entire ANN pool",
+        })}`,
+      );
+      // Preserve synthetic evidence before teardown. Each SQLite backup is a
+      // coherent database snapshot, not an atomic snapshot across both stores
+      // and the independently published graph; capture times make that explicit.
+      const diagnostics = mkdtempSync(join(tmpdir(), "omnesis-search-soak-"));
+      const startedAt = new Date().toISOString();
+      // Primary request evidence lands first; an optional backup failure must
+      // neither erase it nor replace the original correctness assertion.
+      writeFileSync(
+        join(diagnostics, "observations.json"),
+        JSON.stringify(
+          {
+            startedAt,
+            baseline: baselineResponse,
+            afterSoak,
+            mismatches,
+            failures,
+            waves,
+            writeRounds,
+            latencies,
+          },
+          null,
+          2,
+        ),
+      );
+      try {
+        writeFileSync(
+          join(diagnostics, "index-stats.json"),
+          JSON.stringify(await harness.gatewayJson<IndexStats>("/index/stats"), null, 2),
+        );
+        const configDir = harness.getConfigDir();
+        cpSync(configDir, join(diagnostics, "config"), { recursive: true });
+        const mainKey = await readStorageKey("main-db", { configDir });
+        const indexKey = await readStorageKey("index-db", { configDir });
+        if (!mainKey || !indexKey) throw new Error("Missing synthetic storage keys");
+        const main = openReadOnlyDatabase(harness.getDbPath(), { encryptionKey: mainKey });
+        try {
+          await main.backup(join(diagnostics, "main-snapshot.db"));
+        } finally {
+          main.close();
+        }
+        const index = openIndexDb(join(configDir, "index.db"), {
+          encryptionKey: indexKey,
+          readonly: true,
+          cacheSizeBytes: 2 * 1024 * 1024,
+        });
+        try {
+          await index.backup(join(diagnostics, "index-snapshot.db"));
+        } finally {
+          index.close();
+        }
+        cpSync(harness.getGatewayLogPath(), join(diagnostics, "gateway.log"));
+        writeFileSync(join(diagnostics, "captured-at.txt"), new Date().toISOString());
+      } catch (error) {
+        writeFileSync(
+          join(diagnostics, "backup-error.txt"),
+          error instanceof Error ? (error.stack ?? error.message) : String(error),
+        );
+      }
+      createLogger("collector:search-soak").warn(`Failure diagnostics retained at ${diagnostics}`);
+    }
+    expect(rank(afterSoak), "the quiet ranking after the soak left the baseline").toEqual(golden);
 
     // (1) CORRECTNESS: every concurrent search answered, and every answer
     // matched the quiet baseline ranking despite the write churn.

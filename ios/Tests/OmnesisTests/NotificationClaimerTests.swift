@@ -202,12 +202,6 @@ final class NotificationClaimerTests: XCTestCase {
                 ["kind": "conversation", "targetId": "conv-update"]
             ),
             (
-                "brief",
-                #"{"kind":"brief","briefId":"brief-fictional"}"#,
-                .brief(briefId: "brief-fictional"),
-                ["kind": "brief", "targetId": "brief-fictional"]
-            ),
-            (
                 "watch",
                 #"{"kind":"watch","watchId":"watch-fictional","firingKey":"watch-fictional:17"}"#,
                 .watch(
@@ -263,14 +257,14 @@ final class NotificationClaimerTests: XCTestCase {
 
     func testFutureTypedRouteUsesTheFlatFallback() throws {
         let json = """
-        {"id":"00000000-0000-4000-8000-000000000001","kind":"brief","targetId":"brief-fallback","title":"Fictional","body":"Invented body","collapseId":"fictional","remaining":1,"route":{"kind":"future-kind","futureId":"future"}}
+        {"id":"00000000-0000-4000-8000-000000000001","kind":"watch","targetId":"watch-fallback","title":"Fictional","body":"Invented body","collapseId":"fictional","remaining":1,"route":{"kind":"future-kind","futureId":"future"}}
         """
         let claimed = try JSONDecoder().decode(ClaimedNotification.self, from: Data(json.utf8))
 
         XCTAssertEqual(claimed.route, .unknown)
         XCTAssertEqual(
             claimed.userInfo["omnesis"] as? [String: String],
-            ["kind": "brief", "targetId": "brief-fallback"]
+            ["kind": "watch", "targetId": "watch-fallback"]
         )
     }
 
@@ -630,13 +624,13 @@ final class NotificationClaimerTests: XCTestCase {
     private func claimedNotification(_ suffix: Int) -> ClaimedNotification {
         ClaimedNotification(
             id: "00000000-0000-4000-8000-\(String(format: "%012d", suffix))",
-            kind: "brief",
-            targetId: "brief-\(suffix)",
+            kind: "conversation",
+            targetId: "conversation-\(suffix)",
             title: "Fictional notification \(suffix)",
             body: "Invented notification body.",
-            collapseId: "brief:brief-\(suffix)",
+            collapseId: "conversation:conversation-\(suffix)",
             remaining: suffix,
-            route: .brief(briefId: "brief-\(suffix)")
+            route: .conversation(conversationId: "conversation-\(suffix)")
         )
     }
 }

@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { buildPage } from "@omnesis/types";
-import { NotFoundError, StalePageCursorError } from "../http/errors.js";
+import { NotFoundError } from "../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../http/pagination-cursor.js";
 import { scope } from "../http/scope.js";
 import {
-  briefSummaryDto,
+  observationFullDto,
   enumParam,
   limitParam,
   listPageInfo,
@@ -38,14 +38,16 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
     const state = enumParam(c.req.query("state"), "state", OPEN_LOOP_STATE_FILTERS);
     const limit = limitParam(c.req.query("limit"), "limit", 100, 500);
     const filters = { state: state ?? null };
-    const revision = query.paginationRevision("product-loops");
-    const cursor = timedCursor(c.req.query("cursor"), "cognition-loops", filters, revision);
-    const probe = query.listLoops({
-      ...(state ? { states: statesForFilter(state) } : {}),
-      ...(cursor ? { beforeLastUpdate: { lastUpdate: cursor.at, id: cursor.id } } : {}),
-      limit: limit + 1,
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("product-loops");
+      const cursor = timedCursor(c.req.query("cursor"), "cognition-loops", filters, revision);
+      const probe = query.listLoops({
+        ...(state ? { states: statesForFilter(state) } : {}),
+        ...(cursor ? { beforeLastUpdate: { lastUpdate: cursor.at, id: cursor.id } } : {}),
+        limit: limit + 1,
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("product-loops") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const loops = hasMore ? probe.slice(0, limit) : probe;
     const last = loops.at(-1);
@@ -75,7 +77,9 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
           note: entry.note,
         }))
       : undefined;
-    const briefs = includeChildren ? query.listLoopBriefs(id).map(briefSummaryDto) : undefined;
+    const observations = includeChildren
+      ? query.listLoopObservations(id).map((observation) => observationFullDto(observation))
+      : undefined;
     const scheduledRuns = includeChildren
       ? query
           .listRuns({
@@ -95,7 +99,7 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
         actors: query.personRefs(loop.actors),
         involved: query.personRefs(loop.involved),
       },
-      ...(includeChildren ? { ledger, briefs, scheduledRuns } : {}),
+      ...(includeChildren ? { ledger, observations, scheduledRuns } : {}),
       provenance: query.provenance(loop.createdByRun),
     });
   });
@@ -140,26 +144,31 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
     );
   });
 
-  app.get("/admin/brain/loops/:id/briefs", scope.admin(), (c) => {
+  app.get("/admin/brain/loops/:id/observations", scope.admin(), (c) => {
     requireVisible();
     const id = c.req.param("id");
     if (!query.getLoop(id)) throw new NotFoundError("Open loop not found");
     const limit = limitParam(c.req.query("limit"), "limit", 50, 200);
     const filters = { loopId: id };
-    const cursor = timedCursor(c.req.query("cursor"), "cognition-loop-briefs", filters);
-    const probe = query.listLoopBriefs(id, {
+    const cursor = timedCursor(c.req.query("cursor"), "cognition-loop-observations", filters);
+    const probe = query.listLoopObservations(id, {
       limit: limit + 1,
       ...(cursor ? { beforeCreated: { createdAt: cursor.at, id: cursor.id } } : {}),
     });
     const hasMore = probe.length > limit;
-    const briefs = hasMore ? probe.slice(0, limit) : probe;
-    const last = briefs.at(-1);
+    const observations = hasMore ? probe.slice(0, limit) : probe;
+    const last = observations.at(-1);
     const nextCursor = timedNextCursor(
-      "cognition-loop-briefs",
+      "cognition-loop-observations",
       hasMore && last ? { at: last.createdAt, id: last.id } : undefined,
       filters,
     );
-    return c.json(buildPage(briefs.map(briefSummaryDto), { hasMore, limit, nextCursor }));
+    return c.json(
+      buildPage(
+        observations.map((observation) => observationFullDto(observation)),
+        { hasMore, limit, nextCursor },
+      ),
+    );
   });
 
   app.get("/admin/brain/loops/:id/scheduled", scope.admin(), (c) => {
@@ -168,23 +177,25 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
     if (!query.getLoop(id)) throw new NotFoundError("Open loop not found");
     const limit = limitParam(c.req.query("limit"), "limit", 25, 100);
     const filters = { loopId: id };
-    const revision = query.paginationRevision("cognition-runs");
-    const cursor = timedCursor(
-      c.req.query("cursor"),
-      "cognition-loop-scheduled",
-      filters,
-      revision,
-    );
-    const probe = query.listRuns({
-      kinds: ["time_based"],
-      statuses: ["pending"],
-      loopId: id,
-      order: "asc",
-      orderBy: "nextAttemptAt",
-      limit: limit + 1,
-      ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("cognition-runs");
+      const cursor = timedCursor(
+        c.req.query("cursor"),
+        "cognition-loop-scheduled",
+        filters,
+        revision,
+      );
+      const probe = query.listRuns({
+        kinds: ["time_based"],
+        statuses: ["pending"],
+        loopId: id,
+        order: "asc",
+        orderBy: "nextAttemptAt",
+        limit: limit + 1,
+        ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("cognition-runs") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const runs = hasMore ? probe.slice(0, limit) : probe;
     const last = runs.at(-1);

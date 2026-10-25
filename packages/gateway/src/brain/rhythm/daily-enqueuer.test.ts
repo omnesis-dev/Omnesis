@@ -181,6 +181,24 @@ describe("daily enqueuer", () => {
     expect(pendingRuns()).toHaveLength(1);
   });
 
+  test("a source excluded from the Brain gets no daily batch, by type or by id", async () => {
+    const inRange = local(2026, 3, 9, 12);
+    seedDoc("bank:main", "transaction", inRange);
+    seedDoc("bank:savings", "transaction", inRange);
+    seedDoc("fitness-tracker:wrist", "activity", inRange);
+    clockNow = local(2026, 3, 10, 5, 0);
+    const result = await runDailyEnqueuePass({
+      db,
+      writeGate: writeOps(),
+      clock: () => clockNow,
+      getDailyRunHour: () => 5,
+      getExcludedSources: () => ["bank:savings", "fitness-tracker"],
+      log,
+      idGen: () => randomUUID(),
+    });
+    expect(result.sourceIds).toEqual(["bank:main"]);
+  });
+
   test("one daily batch per source with sample-typed data in range; other data never batches", async () => {
     const inRange = local(2026, 3, 9, 12);
     seedDoc("bank-main", "transaction", inRange);

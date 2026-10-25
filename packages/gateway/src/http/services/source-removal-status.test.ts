@@ -65,7 +65,7 @@ function removal(
   return new SourceDataRemovalService({
     db,
     writeGate,
-    purgeAnnotationsFor: async () => {},
+    cascadeCognitionFor: async () => {},
     ...stores,
   });
 }

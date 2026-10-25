@@ -35,9 +35,8 @@ export const MUTATING_TOOLS = [
   "open_loop_update",
   "open_loop_ledger_append",
   "open_loop_delete",
-  "brief_create",
-  "brief_update",
-  "brief_delete",
+  "observation_note",
+  "observation_withdraw",
   "notes_append",
   "notes_rewrite",
   "notes_edit",
@@ -54,6 +53,7 @@ export const MUTATING_TOOLS = [
   "temporal_annotation_update",
   "temporal_annotation_delete",
   "merge_adjudicate",
+  "morning_brief_send",
 ];
 
 /** A gateway-minted id: a short lowercase prefix, an underscore, then an opaque tail. */

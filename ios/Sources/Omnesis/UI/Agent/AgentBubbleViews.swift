@@ -33,6 +33,7 @@ func userMessageWithLinks(_ text: String) -> AttributedString {
 @available(iOS 17.0, *)
 struct AgentTurnBubble: View {
     let turn: AgentTurn
+    @Environment(\.conversationPresentation) private var presentation
 
     var body: some View {
         switch turn {
@@ -51,12 +52,18 @@ struct AgentTurnBubble: View {
                     .padding(.vertical, 10)
                     .background(Theme.accent.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .textSelection(.enabled)
             }
         case .assistant(let assistant):
             VStack(alignment: .leading, spacing: 10) {
-                let pillRuns = computeCitationPillRuns(parts: assistant.parts)
-                ForEach(Array(assistant.parts.enumerated()), id: \.offset) { idx, part in
+                let parts = conversationPresentedParts(
+                    assistant.parts,
+                    controls: presentation.controls,
+                    activityDismissed: presentation.dismissedMessageIds.contains(assistant.id),
+                    dismissedToolCallIds: presentation.dismissedToolCallIds
+                )
+                let pillRuns = computeCitationPillRuns(parts: parts)
+                let lastAnswerTextIndex = agentLastAnswerTextIndex(in: parts)
+                ForEach(Array(parts.enumerated()), id: \.offset) { idx, part in
                     // A thinking part is "live" only while it is the trailing
                     // part of an in-flight turn (no stopReason yet). The moment
                     // anything follows it — or the turn ends — it stops being
@@ -64,36 +71,14 @@ struct AgentTurnBubble: View {
                     AgentPartView(
                         part: part,
                         pillRun: pillRuns[idx],
-                        thinkingActive: !assistant.isComplete && idx == assistant.parts.count - 1,
+                        thinkingActive: !assistant.isComplete && idx == parts.count - 1,
+                        freeze: presentation.dismissedMessageIds.contains(assistant.id),
                         turnDone: assistant.isComplete
                     )
+                    .environment(\.agentAnswerTextFollows, idx < (lastAnswerTextIndex ?? -1))
                 }
                 if let failure = assistant.failure {
-                    // Two registers, deliberately: the sentence says what went
-                    // wrong in the reader's language, the line beneath carries
-                    // the code and the provider's own disposition for whoever
-                    // has to go and fix the model assignment.
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(Theme.danger)
-                            Text(failure.message)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.danger)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let detail = failure.detailLine {
-                            Text(detail)
-                                .font(Theme.monospace(size: 10))
-                                .foregroundStyle(Theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Theme.danger.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    AgentTurnFailureView(failure: failure)
                 }
                 if let stopped = assistant.stopped {
                     // A stop is not an error: no icon, no tinted chip — one
@@ -534,7 +519,8 @@ struct AgentPartView: View {
                 bodyFont: assistantBodyFont(size: 15),
                 copyValues: turnDone,
                 plainValueFences: true,
-                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15)
+                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15),
+                allowsTextSelection: false
             )
         case .thinking(let raw):
             AgentThinkingBlock(text: raw, active: thinkingActive)
@@ -573,9 +559,7 @@ struct AgentPartView: View {
                     AgentCitingPill(count: agentAnnotateManyPillCount(call))
                 }
             } else if call.tool == "cite_record"
-                || call.tool == "plan"
-                || call.tool == "watches_list"
-                || call.tool == "watch_get"
+                || AgentToolCards.silentTools.contains(call.tool)
                 || call.tool == "triggers_list"
                 || call.tool == "trigger_get"
                 || call.tool == "trigger_firings" {
@@ -591,6 +575,8 @@ struct AgentPartView: View {
                 // Automation writes surface a lightning card so the
                 // user immediately sees the change.
                 AgentWatchCard(call: call)
+            } else if freeze, case .error = call.result {
+                AgentToolCallView(call: call)
             } else if agentEphemeralCardHandles(call) {
                 // Search / Open Document / Run SQL / Find people render
                 // as ephemeral glance cards that stream their content in
@@ -603,7 +589,7 @@ struct AgentPartView: View {
                 switch call.tool {
                 case "search_documents":
                     AgentEphemeralSearchCard(call: call, freeze: freeze)
-                case "fetch_document":
+                case "fetch_document", "knowledge_fetch":
                     AgentEphemeralDocumentCard(call: call, freeze: freeze)
                 case "search_many", "fetch_many":
                     // A batch retrieval tool: project one live per-child
@@ -770,29 +756,11 @@ struct AgentToolCallView: View {
 }
 
 private func prettyToolName(_ tool: String) -> String {
-    switch tool {
-    case "search_documents": "Search"
-    case "fetch_document": "Open document"
-    case "trace_connections": "Trace connections"
-    case "run_sql": "Run SQL"
-    case "search_loops": "Search loops"
-    case "fetch_loop": "Open loop"
-    case "list_loops": "List loops"
-    case "entity_context": "Gather context"
-    default: tool
-    }
+    AgentToolCards.label(for: tool)
 }
 
 private func toolSymbol(_ tool: String) -> String {
-    switch tool {
-    case "search_documents": "magnifyingglass"
-    case "fetch_document": "doc.text"
-    case "trace_connections": "point.3.connected.trianglepath.dotted"
-    case "run_sql": "tablecells"
-    case "search_loops", "fetch_loop", "list_loops": "arrow.triangle.2.circlepath"
-    case "entity_context": "point.3.connected.trianglepath.dotted"
-    default: "wrench.and.screwdriver"
-    }
+    AgentToolCards.symbol(for: tool)
 }
 
 // MARK: - Previews

@@ -54,7 +54,7 @@ describe("brainGateFromStatus — the Brain-inactive gate", () => {
   async function gateOf(data: unknown) {
     // @ts-expect-error — portal JS module, no .d.ts ships alongside.
     const { brainGateFromStatus } = await import("./cognition.js");
-    return brainGateFromStatus(data) as { briefsGate: unknown; brainBlocked: boolean };
+    return brainGateFromStatus(data) as { brainGate: unknown; brainBlocked: boolean };
   }
 
   it("an active brain never blocks", async () => {
@@ -65,7 +65,7 @@ describe("brainGateFromStatus — the Brain-inactive gate", () => {
   });
 
   it("experimental on but no model blocks (the reported case)", async () => {
-    const { briefsGate, brainBlocked } = await gateOf({
+    const { brainGate, brainBlocked } = await gateOf({
       brain: {
         visible: true,
         enabled: true,
@@ -75,14 +75,7 @@ describe("brainGateFromStatus — the Brain-inactive gate", () => {
       },
     });
     expect(brainBlocked).toBe(true);
-    expect(briefsGate).toMatchObject({ active: false });
-  });
-
-  it("reads the legacy `briefs` field when `brain` is absent", async () => {
-    const { brainBlocked } = await gateOf({
-      briefs: { visible: true, enabled: true, modelAssigned: false, active: false },
-    });
-    expect(brainBlocked).toBe(true);
+    expect(brainGate).toMatchObject({ active: false });
   });
 
   it("unknown status (still loading, or predates the field) never blocks", async () => {
@@ -94,11 +87,11 @@ describe("brainGateFromStatus — the Brain-inactive gate", () => {
   it("blocked without a reason still counts as blocked (the banner carries a fallback)", async () => {
     // A model assigned while the feature switch is off yields active:false
     // with no reason — history still shows, so the banner must too.
-    const { briefsGate, brainBlocked } = await gateOf({
+    const { brainGate, brainBlocked } = await gateOf({
       brain: { visible: true, enabled: false, modelAssigned: true, active: false },
     });
     expect(brainBlocked).toBe(true);
-    expect(briefsGate).toMatchObject({ active: false });
+    expect(brainGate).toMatchObject({ active: false });
   });
 });
 

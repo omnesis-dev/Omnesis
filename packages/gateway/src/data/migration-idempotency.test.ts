@@ -21,8 +21,8 @@ import { LATEST_SCHEMA_VERSION } from "./migrations.js";
 import {
   buildSeedDatabase,
   SEEDED_SCHEMA_VERSION,
-  SEED_READ_BRIEF_ID,
-  SEED_UNREAD_BRIEF_ID,
+  SEED_DONE_LOOP_ID,
+  SEED_OPEN_LOOP_ID,
 } from "./migration-idempotency-seed.js";
 import type { Db } from "./types.js";
 
@@ -97,11 +97,29 @@ describe("migration-idempotency standing fixture", () => {
           .map((row) => row.name),
       ).not.toContain("thread_conversation_id");
 
-      const briefColumns = db
-        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('briefs')")
-        .all()
-        .map((row) => row.name);
-      expect(briefColumns).toContain("read_at");
+      expect(
+        db
+          .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
+          .all()
+          .map((row) => row.name),
+      ).toEqual(
+        expect.arrayContaining([
+          "origin",
+          "accepted",
+          "scheduled_for",
+          "proposed_change_json",
+          "completion_note",
+          "resolved_at",
+        ]),
+      );
+      expect(
+        db
+          .prepare<
+            [],
+            { name: string }
+          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('briefs', 'brief_citations', 'brief_related_loops', 'brief_claims')")
+          .all(),
+      ).toEqual([]);
 
       expect(
         db
@@ -126,21 +144,21 @@ describe("migration-idempotency standing fixture", () => {
           .map((row) => row.name),
       ).toEqual(["notification_deliveries", "notifications"]);
 
-      const briefs = db
+      const loops = db
         .prepare<
           [],
-          { id: string; state: string; read_at: number | null }
-        >("SELECT id, state, read_at FROM briefs ORDER BY id")
+          { id: string; state: string; origin: string; accepted: number }
+        >("SELECT id, state, origin, accepted FROM open_loops ORDER BY id")
         .all();
-      expect(briefs).toEqual([
-        { id: SEED_READ_BRIEF_ID, state: "read", read_at: null },
-        { id: SEED_UNREAD_BRIEF_ID, state: "unread", read_at: null },
+      expect(loops).toEqual([
+        { id: SEED_DONE_LOOP_ID, state: "done", origin: "brain", accepted: 0 },
+        { id: SEED_OPEN_LOOP_ID, state: "open", origin: "brain", accepted: 0 },
       ]);
 
       const indexes = indexNames(db);
       expect(indexes).toContain("idx_cognition_runs_retention");
       expect(indexes).toContain("idx_merge_candidates_history");
-      expect(indexes).toContain("idx_briefs_read_snapshot");
+      expect(indexes).toContain("idx_open_loops_suggested");
       expect(
         db
           .prepare<
@@ -223,14 +241,14 @@ describe("migration-idempotency standing fixture", () => {
     materialiseSeed();
 
     const first = createDatabase(dbPath) as unknown as Db;
-    let firstBriefs: Array<Record<string, unknown>>;
+    let firstLoops: Array<Record<string, unknown>>;
     let firstMigrationCount: number;
     try {
-      firstBriefs = first
+      firstLoops = first
         .prepare<
           [],
           Record<string, unknown>
-        >("SELECT id, state, read_at, created_at, updated_at FROM briefs ORDER BY id")
+        >("SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id")
         .all();
       firstMigrationCount = first
         .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")
@@ -252,9 +270,9 @@ describe("migration-idempotency standing fixture", () => {
           .prepare<
             [],
             Record<string, unknown>
-          >("SELECT id, state, read_at, created_at, updated_at FROM briefs ORDER BY id")
+          >("SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id")
           .all(),
-      ).toEqual(firstBriefs);
+      ).toEqual(firstLoops);
     } finally {
       second.close();
     }
@@ -268,10 +286,11 @@ describe("migration-idempotency standing fixture", () => {
     try {
       expect(userVersion(raw)).toBe(SEEDED_SCHEMA_VERSION);
       const columns = raw
-        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('briefs')")
+        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
         .all()
         .map((row) => row.name);
-      expect(columns).toContain("read_at");
+      expect(columns).toContain("decay_check_count");
+      expect(columns).not.toContain("origin");
     } finally {
       raw.close();
     }

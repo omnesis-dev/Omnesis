@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listPublishablePackages, stagePackage } from "../release/stage-packages.mjs";
@@ -101,6 +101,22 @@ export function stageRuntime(outDir, entries = localRuntimeClosure(DEFAULT_RUNTI
     // paths are rejected above and are never recursively removed.
     rmSync(outDir, { recursive: true, force: true });
     throw error;
+  }
+}
+
+/** Preserve npm's unhoisted production dependencies beside their workspace. */
+export function stageWorkspaceDependencies(outDir, sourceRoot = repoRoot) {
+  mkdirSync(join(outDir, "packages"), { recursive: true });
+  const lock = JSON.parse(readFileSync(join(sourceRoot, "package-lock.json"), "utf8"));
+  for (const [directory, entry] of Object.entries(lock.packages)) {
+    if (!directory.startsWith("packages/") || directory.includes("/node_modules/") || entry.link) {
+      continue;
+    }
+    const source = join(sourceRoot, directory, "node_modules");
+    if (!existsSync(source)) continue;
+    const destination = join(outDir, directory, "node_modules");
+    mkdirSync(dirname(destination), { recursive: true });
+    cpSync(source, destination, { recursive: true });
   }
 }
 

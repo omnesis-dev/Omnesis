@@ -97,7 +97,7 @@ function harness(
   );
   const pendingAbsenceCascades = vi.fn(() => Promise.resolve(opts.pendingCascades ?? []));
   const deleteChunksByDocuments = vi.fn(() => Promise.resolve(0));
-  const purgeAnnotationsFor = vi.fn(() => Promise.resolve());
+  const cascadeCognitionFor = vi.fn(() => Promise.resolve());
   const analyticsDueAbsences = vi.fn(() => Promise.resolve(opts.analyticsDue ?? []));
   const planAnalyticsSweep = vi.fn(
     (candidates: Array<{ sourceId: string; tableName: string; keyValue: string }>) =>
@@ -140,7 +140,7 @@ function harness(
         opts.analyticsDue === undefined
           ? undefined
           : { dueAbsences: analyticsDueAbsences, deleteAbsentRecords },
-      purgeAnnotationsFor,
+      cascadeCognitionFor,
       getMinObservations: () => 3,
       getMinAgeMs: () => DAY,
       log: createLogger("test:absence"),
@@ -161,7 +161,7 @@ function harness(
     acknowledgeAbsenceCascade,
     pendingAbsenceCascades,
     deleteChunksByDocuments,
-    purgeAnnotationsFor,
+    cascadeCognitionFor,
     analyticsDueAbsences,
     deleteAbsentRecords,
     planAnalyticsSweep,
@@ -191,7 +191,7 @@ describe("absence sweep", () => {
 
     expect(h.sweepArgs[0]!.documentIds).toEqual(["doc-note-2", "doc-note-3"]);
     expect(h.deleteChunksByDocuments).toHaveBeenCalledWith(["doc-note-2", "doc-note-3"]);
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-2", "doc-note-3"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-2", "doc-note-3"]);
   });
 
   test("hands the writer the deadline to re-decide, rather than deciding for it", async () => {
@@ -216,7 +216,7 @@ describe("absence sweep", () => {
     await h.task.run(undefined, context);
 
     expect(h.deleteChunksByDocuments).toHaveBeenCalledWith(["doc-note-3"]);
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-3"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-3"]);
   });
 
   test("nothing is cascaded when the writer deletes nothing", async () => {
@@ -224,7 +224,7 @@ describe("absence sweep", () => {
     await h.task.run(undefined, context);
 
     expect(h.deleteChunksByDocuments).not.toHaveBeenCalled();
-    expect(h.purgeAnnotationsFor).not.toHaveBeenCalled();
+    expect(h.cascadeCognitionFor).not.toHaveBeenCalled();
   });
 
   test("addresses candidates by document id, never by their source key", async () => {
@@ -295,7 +295,7 @@ describe("absence sweep", () => {
 
     expect(h.dueAbsences).not.toHaveBeenCalled();
     expect(h.deleteChunksByDocuments).toHaveBeenCalledWith(["doc-note-2"]);
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-2"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-2"]);
     expect(h.acknowledgeAbsenceCascade.mock.calls).toEqual([
       [42, "index"],
       [42, "cognition"],
@@ -319,7 +319,7 @@ describe("absence sweep", () => {
     await h.task.run(undefined, context);
 
     expect(h.deleteChunksByDocuments).toHaveBeenCalledWith(["doc-note-2"]);
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-2"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-2"]);
     expect(h.dueAbsences).not.toHaveBeenCalled();
   });
 
@@ -345,7 +345,7 @@ describe("absence sweep", () => {
     await h.task.run(undefined, context);
 
     expect(h.deleteChunksByDocuments).not.toHaveBeenCalled();
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-2"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-2"]);
     expect(h.acknowledgeAbsenceCascade.mock.calls).toEqual([
       [42, "index"],
       [42, "cognition"],
@@ -367,7 +367,7 @@ describe("absence sweep", () => {
       value: { idle: false },
     });
     expect(h.acknowledgeAbsenceCascade).toHaveBeenCalledWith(42, "cognition");
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledWith(["doc-note-2"]);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledWith(["doc-note-2"]);
   });
 
   test("a failed durable cascade retries and converges on the next tick", async () => {
@@ -388,7 +388,7 @@ describe("absence sweep", () => {
     await h.task.run(undefined, context);
 
     expect(h.deleteChunksByDocuments).toHaveBeenCalledTimes(2);
-    expect(h.purgeAnnotationsFor).toHaveBeenCalledTimes(1);
+    expect(h.cascadeCognitionFor).toHaveBeenCalledTimes(1);
     expect(h.acknowledgeAbsenceCascade.mock.calls).toEqual([
       [42, "cognition"],
       [42, "index"],

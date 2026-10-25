@@ -25,12 +25,16 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -265,15 +269,15 @@ class AssistantActionViewModelTest {
             writtenAtMs = NOW.toEpochMilli(),
         )
 
-    private fun awaitFinished(vm: AssistantActionViewModel) {
-        val deadline = System.currentTimeMillis() + 5_000
-        while (vm.state.value !is AssistantActionUiState.Finished && System.currentTimeMillis() < deadline) {
-            Thread.sleep(10)
-        }
+    private suspend fun awaitFinished(vm: AssistantActionViewModel) {
+        // Persistence uses real IO; suspend so the shared test scheduler can resume
+        // the capture coroutine before checking the saved note.
+        val finished = vm.state.filterIsInstance<AssistantActionUiState.Finished>().first()
+        assertTrue("Capture failed: $finished", finished.successful)
     }
 
     @Test
-    fun a_dictated_capture_is_saved_with_its_recording() {
+    fun a_dictated_capture_is_saved_with_its_recording() = runTest {
         val transcriber = FakeTranscriber(context)
         val recording = session()
         val store = PendingNotesStore(context)
@@ -296,15 +300,16 @@ class AssistantActionViewModelTest {
         assertEquals("", (vm.state.value as AssistantActionUiState.Listening).partialText)
         transcriber.listeners.last().onFinal("Buy a birthday card")
         transcriber.listeners.last().onEnded(SpeechTranscriber.EndReason.NORMAL)
+        assertTrue("Capture must finish its recording before persistence", recording.finished)
         awaitFinished(vm)
 
-        val queued = kotlinx.coroutines.runBlocking { store.readAll() }.single()
+        val queued = store.readAll().single()
         assertEquals("Buy a birthday card", queued.text)
         assertEquals(true, queued.audio!!.file.exists())
     }
 
     @Test
-    fun a_capture_the_recognizer_cannot_hear_ends_on_silence_and_saves_the_recording() {
+    fun a_capture_the_recognizer_cannot_hear_ends_on_silence_and_saves_the_recording() = runTest {
         val transcriber = FakeTranscriber(context)
         val recording = session()
         val store = PendingNotesStore(context)
@@ -321,9 +326,10 @@ class AssistantActionViewModelTest {
         var t = 0L
         repeat(5) { recording.listener!!.onPeak(9_000, t.also { t += 100 }) }
         repeat(30) { recording.listener!!.onPeak(100, t.also { t += 100 }) }
+        assertTrue("Capture must finish its recording before persistence", recording.finished)
         awaitFinished(vm)
 
-        val queued = kotlinx.coroutines.runBlocking { store.readAll() }.single()
+        val queued = store.readAll().single()
         assertEquals("", queued.text)
         assertEquals(true, queued.audio!!.file.exists())
     }

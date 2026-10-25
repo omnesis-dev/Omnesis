@@ -6,8 +6,9 @@
  * Steward.
  *
  * A bench test boots a real gateway with the whole cognition engine live,
- * drives deterministic stimuli (document events, clock advances, user
- * actions on briefs), substitutes only the model at its production seam,
+ * drives deterministic stimuli (document events, clock advances, notes,
+ * conversation replies, task commands), substitutes only the model at its
+ * production seam,
  * and asserts on what the brain left behind through the same admin surface
  * the portal and CLI read.
  *
@@ -41,10 +42,16 @@ export type {
   LoopDto,
   ProductLoopDto,
   LedgerEntry,
-  BriefDto,
-  BriefClaim,
   AdminDocRef,
-  FeedDocRef,
+  ObservationDto,
+  ObservationScoresDto,
+  MorningBriefDto,
+  BriefDetailDto,
+  TaskDto,
+  TaskEventDto,
+  TaskReceiptDto,
+  ListedNoteDto,
+  ConversationDto,
   AnnotationDto,
   AdminTemporalAnnotation,
   ExecutedTool,
@@ -88,8 +95,22 @@ export type {
   VerdictCall,
   EntailmentPolicy,
   EntailmentLabel,
-  JudgePolicy,
 } from "./verdict-servers.js";
+
+export {
+  startConversationPuppet,
+  decideConversationTurn,
+  readConversationContext,
+} from "./conversation-puppet.js";
+export type {
+  ConversationBehavior,
+  ConversationContext,
+  ConversationPuppetCall,
+  ConversationPuppetServer,
+} from "./conversation-puppet.js";
+
+export { salienceDecisionPolicy, isSalienceRequest, salienceSubject } from "./salience-policy.js";
+export type { SalienceScript } from "./salience-policy.js";
 
 export { startDecisionServer, DECISION_SERVER_MODEL_ID } from "./decision-server.js";
 export type {
@@ -107,3 +128,13 @@ export { snapshotBrainState } from "./snapshot.js";
 export type { BrainSnapshot } from "./snapshot.js";
 
 export * from "./docs.js";
+
+export {
+  sourceInterpretations,
+  preserveCurrentOwner,
+  keepReviewedOwner,
+  refreshCurrentOwner,
+} from "./source-interpretations.js";
+export type { SourceInterpretation } from "./source-interpretations.js";
+
+export { seedHistory, historicalAdmissions } from "./history.js";

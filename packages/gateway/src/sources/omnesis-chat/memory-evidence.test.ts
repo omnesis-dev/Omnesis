@@ -63,8 +63,8 @@ function fixture() {
   let record: ConversationRecord | null = makeRecord();
   const loadConversation = vi.fn(async () => record);
   const writeGate = {
-    upsertDocuments: vi.fn(async (docs: ReturnType<typeof buildDocumentInput>[]) => {
-      for (const doc of docs) {
+    upsertConversationDocument: vi.fn(async (doc: ReturnType<typeof buildDocumentInput>) => {
+      {
         readDb
           .prepare("INSERT OR REPLACE INTO documents VALUES (?, ?, ?, ?, ?)")
           .run("doc-conversation", doc.providerId, doc.sourceId, doc.externalId, doc.content);
@@ -74,8 +74,6 @@ function fixture() {
   };
   const upserter = new ConversationUpserter({
     writeGate: writeGate as unknown as WriteGate,
-    lookupDocId: () =>
-      readDb.prepare<[], { id: string }>("SELECT id FROM documents").get()?.id ?? null,
   });
   upserters.push(upserter);
   return {
@@ -185,7 +183,9 @@ describe("conversation memory evidence", () => {
       parts: [{ kind: "text", text: "I also prefer short meetings." }],
     });
     deps.setRecord(next);
-    deps.writeGate.upsertDocuments.mockRejectedValueOnce(new Error("fixture write failure"));
+    deps.writeGate.upsertConversationDocument.mockRejectedValueOnce(
+      new Error("fixture write failure"),
+    );
     await expect(ensureConversationMemoryEvidence(deps, next.id)).resolves.toBeNull();
   });
 

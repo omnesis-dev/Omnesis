@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Briefs feature gate — the single answer to "is Omnesis Briefs on?".
+ * The Brain feature gate — the single answer to "is the Brain on?".
  *
  * The feature has no per-source enable/disable and no config switch of its
  * own; it is governed by exactly two levers:
@@ -42,15 +42,24 @@ import {
 import { fetchSelfPersonId } from "../domain/InteractionScoreService.js";
 import { chatRoleReadiness } from "../models/chat-role-readiness.js";
 import { DERIVATION_STAGES, type DerivationStage } from "../domain/DocumentDerivation.js";
+import { knowledgeFrontierPreflight } from "./knowledge/engine-frontier.js";
 import { cognitionBudgetVerdict } from "./cognition/budget.js";
+import { parseCognitionSynthesisRunPayload } from "./run-payloads.js";
 import { seedOpenLoopSourceMeta } from "./open-loop-source/source-meta.js";
 import { WorthGate, WORTH_GATE_SPEND_MECHANISM } from "./worth-gate/gate.js";
 import { RecordCheck } from "./record-check/check.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "./record-check/rubric.js";
 import { recordDecisionSpend } from "./decision-call.js";
+import {
+  TaskChecks,
+  TASK_CHECK_SPEND_MECHANISM,
+  taskCheckPayloadCapture,
+} from "./tasks/task-checks.js";
+import { TaskProposeGate, TASK_PROPOSE_SPEND_MECHANISM } from "./tasks/task-propose.js";
+import { captureOwnerDecisionPayload } from "./decision-payload.js";
+import { settleTaskProposals } from "./tasks/settle-proposals.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
-import type { BriefJudge } from "./steward/brief-judge.js";
 import type { ChatBackend, ToolHandle } from "@omnesis/agent";
 import type Database from "better-sqlite3";
 import type { BackgroundJob } from "../background-jobs/types.js";
@@ -62,9 +71,14 @@ import type { SearchPipeline } from "../search/pipeline.js";
 import type { SyncStatusRegistry } from "../sync-status.js";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type { ResolvedBrainSettings } from "./config.js";
+import type { InterestLookup } from "./interest/engine.js";
 import type { SweepService } from "./sweeps/service.js";
 import type { CognitionRunActivity } from "./run-activity.js";
-import type { CognitionPromptBuilder, CognitionRunExecutionContext } from "./run-driver.js";
+import type {
+  CognitionContextBudget,
+  CognitionPromptBuilder,
+  CognitionRunExecutionContext,
+} from "./run-driver.js";
 import type { ClaimedCognitionRun, Clock } from "./storage/types.js";
 
 /** The capability role the Cognition Steward runs on. */
@@ -158,6 +172,12 @@ export interface BriefsRunQueueBootDeps {
    * its agent turn; null (or omitted) leaves every claimed run to execute.
    */
   getDecision?: () => DecisionCapability | null;
+  /**
+   * The interest ledger's lookup: the owner's past reactions that resemble an
+   * item, shown to the gates that rank observations, judge a new suggestion
+   * and schedule new evidence. Omitted, those gates decide without it.
+   */
+  interest?: InterestLookup;
   /** The operator's `OMNESIS.md`, re-read per run. Absent without a config dir. */
   getOperatorInstructions?: () => string;
   /** Directory run transcripts persist under (created on demand). */
@@ -223,21 +243,15 @@ export interface BriefsRunQueueBootDeps {
      * absent (or resolving to null) leaves the gate off and annotation
      * writes unchanged.
      */
-    getEntailmentVerifier?: () => Promise<EntailCapability | null>;
+    getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
     validateAnnotationEvidence?: import("./steward/tools.js").AnnotationToolDeps["validateAnnotationEvidence"];
-    /**
-     * Brief judge (push bar) resolver for `brief_create`. Optional — absent
-     * (or resolving to null when the judge is disabled) leaves briefs
-     * unjudged, exactly as before the judge existed.
-     */
-    getBriefJudge?: () => BriefJudge | null;
     /** Live privacy policy used by the mandatory subscription precision barrier. */
     policyStore?: { get(): Promise<{ revision: string }> };
   };
   /** Seam overrides for tests; production uses `cognition` instead. */
   promptBuilder?: CognitionPromptBuilder;
   buildTools?: (run: ClaimedCognitionRun) => ToolHandle[];
-  systemPrompt?: () => string;
+  systemPrompt?: (run?: ClaimedCognitionRun) => string;
 }
 
 /**
@@ -245,10 +259,9 @@ export interface BriefsRunQueueBootDeps {
  * runtime exactly once, even before a background model is assigned. Every
  * execution task reads the live `active` verdict, so a hot assignment starts
  * draining without a restart and removal immediately parks future work.
- * With experimental mode off, boot remains fully inert.
- * The waker and decay engine will start from here behind the same
- * verdict once they exist; this stays the feature's single boot
- * touchpoint.
+ * With experimental mode off, only durable evidence/privacy cleanup runs.
+ * The waker, maintenance and proactive producers share this boot touchpoint
+ * and the same live verdict.
  *
  * The one-time preparation avoids duplicate scheduler registrations across
  * model changes; model assignment is never itself a registration event.
@@ -261,28 +274,25 @@ export async function bootBriefs(deps: {
   log: Logger;
   runQueue?: BriefsRunQueueBootDeps;
   /**
-   * Talk-back wiring ("reply to a brief"). When present and the feature is
-   * active, bootBriefs installs the anchored-thread session profile on the
-   * agent lifecycle and exposes the thread-open port the /briefs routes
-   * call. Both callbacks are safe to invoke before the HTTP server exists.
+   * Where the morning brief is sent: the agent service's standing Morning
+   * brief conversation, resolved per send because the service starts after
+   * the Brain boots.
    */
-  talkback?: {
-    setProfile(profile: import("../agent/service.js").AnchoredThreadProfile): void;
-    expose(port: import("./talkback/talkback-service.js").BriefTalkbackPort): void;
-    getAgentService(): import("../agent/service.js").AgentService | null;
+  morningBrief?: {
+    getConversationPort():
+      | import("./observations/morning-brief.js").MorningBriefConversationPort
+      | null;
   };
   /**
    * Top-level interactive-session write access (experimental). When present and
    * the feature is active, bootBriefs installs the interactive-write profile on
    * the agent lifecycle so a top-level chat can write into the substrate
-   * (loops/briefs/temporal annotations/other annotations) with an interactive-origin run id.
+   * (loops/observations/temporal annotations/other annotations) with an interactive-origin run id.
    * Absent ⇒ interactive stays read-only.
    */
   interactiveWrite?: {
     setProfile(profile: import("../agent/service.js").InteractiveWriteProfile): void;
   };
-  /** Carrier-agnostic notification publisher for the digest push tier. */
-  push?: import("../push/broadcast.js").NotificationPublisher;
   /**
    * The deprecated `brain.sweeps` config record, read once at boot and
    * converted to sweep files. Omit once the key is gone from the schema.
@@ -290,6 +300,33 @@ export async function bootBriefs(deps: {
   getLegacySweepOverrides?: () => Record<string, import("./sweeps/service.js").LegacySweepOverride>;
 }): Promise<BriefsFeatureStatus> {
   const status = briefsFeatureStatus(deps.registry, deps.readiness);
+  if (deps.runQueue) {
+    const { knowledgeCascadeTask } = await import("./knowledge/tasks.js");
+    const { createKnowledgeMirror } = await import("./knowledge/mirror.js");
+    const indexDb = deps.runQueue.cognition?.indexDb;
+    const indexGate = indexDb
+      ? (await import("../indexer/index-write-gate.js")).directIndexWriteGate(indexDb)
+      : null;
+    const mirror = createKnowledgeMirror({
+      clock: deps.runQueue.clock ?? Date.now,
+      db: deps.runQueue.db,
+      writeGate: deps.writeGate,
+      ...(indexGate
+        ? { deleteIndexChunks: (ids: string[]) => indexGate.deleteChunksByDocuments(ids) }
+        : {}),
+    });
+    const cleanup = knowledgeCascadeTask({
+      writeGate: deps.writeGate,
+      scheduler: deps.runQueue.scheduler,
+      clock: deps.runQueue.clock ?? Date.now,
+      removeMirrors: (ids) => mirror.remove(ids),
+      drainMirrors: () => mirror.drainCleanup(),
+    });
+    deps.runQueue.scheduler.schedule(cleanup.task);
+    deps.runQueue.backgroundJobs.registerAll([cleanup.job]);
+    const { seedKnowledgeSourceMeta } = await import("./knowledge/source-identity.js");
+    await seedKnowledgeSourceMeta(deps.writeGate);
+  }
   if (!experimentalEnabled()) return status;
   await seedOpenLoopSourceMeta(deps.writeGate);
   deps.log.info(`Briefs runtime prepared — open-loops system source seeded`);
@@ -326,14 +363,142 @@ export async function bootBriefs(deps: {
         run: ClaimedCognitionRun,
         context?: CognitionRunExecutionContext,
       ) => ToolHandle[];
+      preflight?: (run: ClaimedCognitionRun) => Promise<"complete" | "continue" | "defer">;
       promptBuilder?: CognitionPromptBuilder;
-      systemPrompt?: () => string;
+      systemPrompt?: (run?: ClaimedCognitionRun) => string;
       buildOwnTools?: (runId: string) => ToolHandle[];
-      validateRun?: (run: ClaimedCognitionRun) => string | null;
+      validateRun?: (run: ClaimedCognitionRun) => string | null | Promise<string | null>;
     } = {};
+    let knowledge:
+      | {
+          service: import("./knowledge/service.js").KnowledgeService;
+          engine: import("./knowledge/engine.js").KnowledgeEngine;
+        }
+      | undefined;
     if (rq.cognition && !rq.buildTools && !rq.promptBuilder && !rq.systemPrompt) {
+      const [
+        { KnowledgeService },
+        { KnowledgeEngine },
+        { createKnowledgeMirror },
+        { knowledgeMaintenanceTask },
+      ] = await Promise.all([
+        import("./knowledge/service.js"),
+        import("./knowledge/engine.js"),
+        import("./knowledge/mirror.js"),
+        import("./knowledge/tasks.js"),
+      ]);
+      const indexGate = rq.cognition.indexDb
+        ? (await import("../indexer/index-write-gate.js")).directIndexWriteGate(
+            rq.cognition.indexDb,
+          )
+        : null;
+      const mirror = createKnowledgeMirror({
+        clock: rq.clock ?? Date.now,
+        db: rq.db,
+        writeGate: deps.writeGate,
+        ...(indexGate
+          ? { deleteIndexChunks: (ids: string[]) => indexGate.deleteChunksByDocuments(ids) }
+          : {}),
+      });
+      const service = new KnowledgeService({
+        db: rq.db,
+        writeGate: deps.writeGate,
+        getSettings: rq.getSettings,
+        getEntailmentVerifier: rq.cognition.getEntailmentVerifier,
+        clock: rq.clock ?? Date.now,
+        log: log.child("knowledge"),
+        mirror,
+      });
+      const engine = new KnowledgeEngine({
+        publishedRetrievalBoundary: () =>
+          rq.cognition?.searchPipeline.retrievalCoverage?.().publishedThrough ?? null,
+        db: rq.db,
+        writeGate: deps.writeGate,
+        service,
+        getSettings: rq.getSettings,
+        ...(rq.contentPending ? { contentPending: rq.contentPending } : {}),
+        activeDerivationStages: rq.activeDerivationStages ?? (() => DERIVATION_STAGES),
+        clock: rq.clock ?? Date.now,
+        log: log.child("knowledge"),
+        ...(rq.interest ? { interest: rq.interest } : {}),
+        decisions: {
+          getDecision: rq.getDecision,
+          log: log.child("knowledge-decision"),
+          record: (entry) =>
+            deps.writeGate["knowledge.decision"](
+              { id: `kd_${crypto.randomUUID()}`, ...entry },
+              (rq.clock ?? Date.now)(),
+            ),
+          recordSpend: (modelId, tokens) =>
+            recordDecisionSpend(
+              deps.writeGate,
+              cognitionSpendDay((rq.clock ?? Date.now)()),
+              "knowledge-decision",
+              modelId,
+              tokens,
+            ),
+        },
+      });
+      knowledge = { service, engine };
+      const maintenance = knowledgeMaintenanceTask({
+        engine,
+        scheduler: rq.scheduler,
+        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+        intervalMs: rq.wakerIntervalMs,
+        idleMs: rq.wakerIdleMs,
+        startDelayMs: rq.wakerStartDelayMs,
+      });
+      rq.scheduler.schedule(maintenance.task);
+      rq.backgroundJobs.registerAll([maintenance.job]);
       const { createCognitionRuntime } = await import("./steward/runtime.js");
+      const taskChecks = rq.getDecision
+        ? new TaskChecks({
+            getDecision: rq.getDecision,
+            recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+            capturePayload: (input) => taskCheckPayloadCapture(rq.db, input),
+            recordSpend: (modelId, inputTokens) =>
+              recordDecisionSpend(
+                deps.writeGate,
+                cognitionSpendDay((rq.clock ?? Date.now)()),
+                TASK_CHECK_SPEND_MECHANISM,
+                modelId,
+                inputTokens,
+              ),
+            clock: rq.clock ?? Date.now,
+            idGen: () => crypto.randomUUID(),
+            log: log.child("task-check"),
+            ...(rq.interest ? { interest: rq.interest } : {}),
+          })
+        : undefined;
+      const taskPropose =
+        rq.getDecision && rq.interest
+          ? new TaskProposeGate({
+              getDecision: rq.getDecision,
+              getMode: () => rq.getSettings().tasks.proposeGate,
+              interest: rq.interest,
+              recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+              // The loop's node does not exist yet, so the subjects are its documents.
+              capturePayload: (input) =>
+                captureOwnerDecisionPayload(
+                  rq.db,
+                  { kind: "loop", id: input.loopId },
+                  input.documentId === null ? [] : [input.documentId],
+                ) ?? undefined,
+              recordSpend: (modelId, inputTokens) =>
+                recordDecisionSpend(
+                  deps.writeGate,
+                  cognitionSpendDay((rq.clock ?? Date.now)()),
+                  TASK_PROPOSE_SPEND_MECHANISM,
+                  modelId,
+                  inputTokens,
+                ),
+              clock: rq.clock ?? Date.now,
+              idGen: () => crypto.randomUUID(),
+              log: log.child("task-propose"),
+            })
+          : undefined;
       runtimeSeams = await createCognitionRuntime({
+        knowledge,
         db: rq.db,
         writeGate: deps.writeGate,
         searchPipeline: rq.cognition.searchPipeline,
@@ -349,7 +514,7 @@ export async function bootBriefs(deps: {
         ...(rq.cognition.getEntailmentVerifier
           ? { getEntailmentVerifier: rq.cognition.getEntailmentVerifier }
           : {}),
-        ...(rq.cognition.getBriefJudge ? { getBriefJudge: rq.cognition.getBriefJudge } : {}),
+        observations: await observationRuntimeDeps(rq, deps, log),
         ...(rq.getDecision
           ? {
               recordCheck: new RecordCheck({
@@ -370,6 +535,9 @@ export async function bootBriefs(deps: {
               }),
             }
           : {}),
+        ...(taskChecks ? { taskChecks } : {}),
+        ...(taskPropose ? { taskPropose } : {}),
+        ...(rq.interest ? { interest: rq.interest } : {}),
         ...(rq.cognition.policyStore ? { policyStore: rq.cognition.policyStore } : {}),
         getSettings: rq.getSettings,
         ...(rq.getOperatorInstructions
@@ -379,65 +547,43 @@ export async function bootBriefs(deps: {
         ...(rq.clock ? { clock: rq.clock } : {}),
         log,
       });
+      // A proposal waiting on a task was judged when it was made; settle the
+      // ones the current policy would apply, or that no longer change anything.
+      void settleTaskProposals({
+        db: rq.db,
+        writeGate: deps.writeGate,
+        autoApply: rq.getSettings().tasks.autoApply,
+        ...(taskChecks ? { taskChecks } : {}),
+        clock: rq.clock ?? Date.now,
+        log: log.child("tasks"),
+      }).catch((err: unknown) =>
+        log.warn(
+          `Settling waiting task proposals failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
     const buildTools = rq.buildTools ?? runtimeSeams.buildTools;
     const promptBuilder = rq.promptBuilder ?? runtimeSeams.promptBuilder;
     const systemPrompt = rq.systemPrompt ?? runtimeSeams.systemPrompt;
     const buildOwnTools = runtimeSeams.buildOwnTools;
-    const validateRun = runtimeSeams.validateRun;
+    const validateRun = knowledge
+      ? (run: ClaimedCognitionRun): string | null | Promise<string | null> => {
+          if (run.kind !== "synthesis") return runtimeSeams.validateRun?.(run) ?? null;
+          const payload = run.payload as { focus?: unknown; batchId?: unknown };
+          if (payload.focus !== "knowledge-maintenance" || typeof payload.batchId !== "string")
+            return runtimeSeams.validateRun?.(run) ?? null;
+          const batch = rq.db
+            .prepare<
+              [string, string],
+              { status: string }
+            >("SELECT status FROM knowledge_batches WHERE id=? AND run_id=?")
+            .get(payload.batchId, run.id);
+          return batch?.status === "completed" || batch?.status === "abandoned"
+            ? null
+            : "Knowledge batch still has unresolved input versions; continue the durable frontier on retry";
+        }
+      : runtimeSeams.validateRun;
 
-    if (deps.talkback && buildTools) {
-      const [
-        { createBriefTalkback },
-        { buildTalkbackSystemPrompt },
-        { readCognitionNotes },
-        { resolveSelfMemory },
-      ] = await Promise.all([
-        import("./talkback/talkback-service.js"),
-        import("./talkback/talkback-prompt.js"),
-        import("./storage/notes.js"),
-        import("./self-memory.js"),
-      ]);
-      const clock = rq.clock ?? (() => Date.now());
-      deps.talkback.setProfile({
-        // The thread runs on the Cognition Steward's own toolset; mutations stamp
-        // a thread-scoped run id so the audit trail says where they came
-        // from (`talkback_<briefId>`). The
-        // payload carries the anchor id purely as reference.
-        buildTools: (origin) => {
-          const anchor = {
-            id: `talkback_${origin.briefId}`,
-            payload: { briefId: origin.briefId },
-          };
-          return buildTools({
-            id: anchor.id,
-            kind: "feedback",
-            payload: anchor.payload,
-            payloadJson: JSON.stringify(anchor.payload),
-            attempts: 1,
-          });
-        },
-        systemPrompt: () =>
-          buildTalkbackSystemPrompt({
-            notes: readCognitionNotes(rq.db),
-            selfMemory: resolveSelfMemory(rq.db, rq.getSettings().annotations.enabled).selfMemory,
-            operatorInstructions: rq.getOperatorInstructions?.() ?? "",
-            now: new Date(clock()),
-          }),
-        resolveBackend: rq.resolveBackend,
-      });
-      deps.talkback.expose(
-        createBriefTalkback({
-          db: rq.db,
-          writeGate: deps.writeGate,
-          transcripts,
-          getAgentService: deps.talkback.getAgentService,
-          clock,
-          log: log.child("talkback"),
-        }),
-      );
-      log.info("brief talk-back wired (thread profile + open port)");
-    }
     // Top-level interactive-session substrate write access: hand the agent
     // lifecycle a builder for the Cognition Steward's own mutating tools, stamped with
     // an interactive-origin run id. Only wired on the production path (where
@@ -447,14 +593,56 @@ export async function bootBriefs(deps: {
       deps.interactiveWrite.setProfile({ buildOwnTools });
       log.info("interactive-agent substrate write access wired");
     }
+    const maintenanceEngine = knowledge?.engine;
     const driver = new CognitionRunDriver({
       resolveBackend: rq.resolveBackend,
       transcripts,
       log,
+      ...(maintenanceEngine || runtimeSeams.preflight
+        ? {
+            preflight: async (run: ClaimedCognitionRun) => {
+              const runtimeVerdict = await runtimeSeams.preflight?.(run);
+              if (runtimeVerdict && runtimeVerdict !== "continue") return runtimeVerdict;
+              const payload =
+                run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
+              if (
+                !maintenanceEngine ||
+                payload?.focus !== "knowledge-maintenance" ||
+                !payload.batchId
+              )
+                return "continue" as const;
+              const frontier = await maintenanceEngine.next(payload.batchId, run.id);
+              return knowledgeFrontierPreflight(frontier);
+            },
+          }
+        : {}),
       ...(buildTools ? { buildTools } : {}),
       ...(promptBuilder ? { promptBuilder } : {}),
       ...(systemPrompt ? { systemPrompt } : {}),
+      ...(knowledge
+        ? {
+            isRunHandedOff: (run: ClaimedCognitionRun): boolean => {
+              if (run.kind !== "synthesis") return false;
+              const payload = run.payload as { focus?: unknown; batchId?: unknown };
+              return (
+                payload.focus === "knowledge-maintenance" &&
+                typeof payload.batchId === "string" &&
+                !!rq.db
+                  .prepare(
+                    "SELECT 1 FROM knowledge_batches WHERE id=? AND run_id=? AND status='abandoned'",
+                  )
+                  .get(payload.batchId, run.id)
+              );
+            },
+          }
+        : {}),
       ...(validateRun ? { validateRun } : {}),
+      ...(knowledge
+        ? {
+            contextBudget: (run: ClaimedCognitionRun) =>
+              maintenanceContextBudget(run, rq.getSettings().knowledge),
+          }
+        : {}),
       ...(rq.clock ? { clock: rq.clock } : {}),
     });
     const bundle = createCognitionDrainerTasks(
@@ -469,6 +657,7 @@ export async function bootBriefs(deps: {
         isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
         ...(rq.activity ? { activity: rq.activity } : {}),
         getWorkerConcurrency: () => rq.getSettings().workerConcurrency,
+        getMaxStalledHandoffs: () => rq.getSettings().knowledge.maxStalledHandoffs,
         ...(rq.getDecision
           ? {
               worthGate: new WorthGate({
@@ -494,24 +683,6 @@ export async function bootBriefs(deps: {
         // by hot conversation threads; a rare document resurrect simply waits
         // the longer window). The ceiling, not this, bounds worst-case spend.
         getResurrectDebounceMs: () => rq.getSettings().conversationDebounceMs,
-        ...(deps.push
-          ? {
-              digestPush: {
-                getEnabled: () => rq.getSettings().digest.enabled && rq.getSettings().digest.push,
-                send: async (brief, day) => {
-                  const { sendDigestPush } = await import("./digest-push.js");
-                  await sendDigestPush(
-                    {
-                      publisher: deps.push!,
-                    },
-                    brief,
-                    day,
-                    log,
-                  );
-                },
-              },
-            }
-          : {}),
         ...(rq.clock ? { clock: rq.clock } : {}),
         ...(rq.drainIntervalMs !== undefined ? { drainIntervalMs: rq.drainIntervalMs } : {}),
         ...(rq.drainIdleMs !== undefined ? { drainIdleMs: rq.drainIdleMs } : {}),
@@ -560,6 +731,7 @@ export async function bootBriefs(deps: {
           log: log.child("rhythm"),
           isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
           getDailyRunHour: () => rq.getSettings().dailyRunHour,
+          getExcludedSources: () => rq.getSettings().excludedSources,
           getDecayBackoff: () => {
             const s = rq.getSettings();
             return {
@@ -586,15 +758,21 @@ export async function bootBriefs(deps: {
           getDigestEnabled: () => rq.getSettings().digest.enabled,
           getDigestHour: () => rq.getSettings().digest.hour,
           getDigestGraceMinutes: () => rq.getSettings().digest.graceMinutes,
+          getObservationRetentionDays: () => rq.getSettings().observations.retentionDays,
           ...(rq.activity ? { getActiveRunCount: () => rq.activity!.count } : {}),
+          isBudgetExhausted: () =>
+            cognitionBudgetVerdict(rq.db, rq.getSettings().budget, (rq.clock ?? Date.now)())
+              .exhausted,
           getSweepsEnabled: () => rq.getSettings().sweepsEnabled && rq.sweeps !== undefined,
           getSweeps: () => rq.sweeps?.list() ?? [],
           getMergeAdjudicationEnabled: () => rq.getSettings().mergeAdjudication.enabled,
           getBootstrapSettings: () => ({
             ...rq.getSettings().bootstrap,
+            ...(knowledge ? { enabled: false } : {}),
             // One boundary for both lanes: the waker's window decides what is
             // live, and bootstrap takes everything on the other side of it.
             recencyWindowMs: rq.getSettings().recencyWindowMs,
+            knowledgeRecentWindowMs: rq.getSettings().knowledge.recentWindowMs,
           }),
           // The re-verification sweep re-grounds ANNOTATIONS, so its
           // effective gate is reverification.enabled AND annotations.enabled:
@@ -643,13 +821,11 @@ export async function bootBriefs(deps: {
         { briefsWakerDrainTask },
         { registerPriorContentInterest },
         { subscribeTemporalAnnotationInvalidator },
-        { subscribeBriefClaimInvalidator },
       ] = await Promise.all([
         import("./waker/event-handler.js"),
         import("./waker/drain-task.js"),
         import("../data/document-prior-content.js"),
         import("./temporal-annotation-invalidator.js"),
-        import("./brief-claim-invalidator.js"),
       ]);
       // Declare interest in pre-update bodies so `document.upserted`
       // carries `beforeContent` — what the diff engine feeds on.
@@ -667,6 +843,7 @@ export async function bootBriefs(deps: {
             documentUpdateDebounceMs: s.documentUpdateDebounceMs,
             conversationMaxDeferMs: s.conversationMaxDeferMs,
             documentMaxDeferMs: s.documentMaxDeferMs,
+            excludedSources: s.excludedSources,
           };
         },
         clock: rq.clock ?? (() => Date.now()),
@@ -683,26 +860,13 @@ export async function bootBriefs(deps: {
         clock: rq.clock ?? (() => Date.now()),
         log: log.child("temporal-annotations"),
       });
-      // brief-claim invalidation: a claim is a user-facing assertion resting
-      // on a verbatim evidence quote — when the quote no longer appears in
-      // the changed document, the claim is soft-dropped from the brief's
-      // served set. Always on while the feature is active (claims exist
-      // whenever briefs do; no per-subfeature knob).
-      subscribeBriefClaimInvalidator({
-        db: rq.db,
-        eventBus: rq.eventBus,
-        invalidate: (docId, now) => deps.writeGate.invalidateBriefClaimsForDoc(docId, now),
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
-        clock: rq.clock ?? (() => Date.now()),
-        log: log.child("brief-claims"),
-      });
       const wakerBundle = briefsWakerDrainTask(
         {
           db: rq.db,
           writeGate: deps.writeGate,
           buffer,
           log: wakerLog,
-          isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+          isEnabled: () => !knowledge && briefsFeatureStatus(deps.registry, deps.readiness).active,
           derivationBarrierMs: () => rq.getSettings().derivationBarrierMs,
           ...(rq.contentPending
             ? {
@@ -725,4 +889,93 @@ export async function bootBriefs(deps: {
     }
   }
   return status;
+}
+
+/**
+ * The observation pipeline's seams: the decision model for salience (at note
+ * time and at the morning recheck), the entailment verifier for the
+ * recheck's claim check, and the morning brief sender.
+ */
+async function observationRuntimeDeps(
+  rq: BriefsRunQueueBootDeps,
+  deps: {
+    writeGate: WriteGate;
+    morningBrief?: {
+      getConversationPort():
+        | import("./observations/morning-brief.js").MorningBriefConversationPort
+        | null;
+    };
+  },
+  log: Logger,
+): Promise<NonNullable<import("./steward/runtime.js").CognitionRuntimeDeps["observations"]>> {
+  const [
+    { createObservationScorer },
+    { OBSERVATION_SALIENCE_SPEND_MECHANISM },
+    { nextMorningBriefAt },
+  ] = await Promise.all([
+    import("./observations/noting.js"),
+    import("./observations/salience.js"),
+    import("./observations/schedule.js"),
+  ]);
+  const clock = rq.clock ?? Date.now;
+  const getDecision = rq.getDecision ?? (() => null);
+  const recordSpend = (modelId: string, inputTokens: number) =>
+    recordDecisionSpend(
+      deps.writeGate,
+      cognitionSpendDay(clock()),
+      OBSERVATION_SALIENCE_SPEND_MECHANISM,
+      modelId,
+      inputTokens,
+    );
+  const thresholds = () => rq.getSettings().observations;
+  return {
+    recheck: {
+      writes: deps.writeGate,
+      getDecision,
+      recordSpend,
+      ...(rq.cognition?.getEntailmentVerifier
+        ? { getEntailmentVerifier: rq.cognition.getEntailmentVerifier }
+        : {}),
+      thresholds,
+      ...(rq.interest ? { interest: rq.interest } : {}),
+    },
+    createScorer: (runId) =>
+      createObservationScorer(
+        {
+          db: rq.db,
+          getDecision,
+          recordSpend,
+          recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+          thresholds,
+          nextBriefAt: (now) => nextMorningBriefAt(now, rq.getSettings().digest.hour),
+          log: log.child("observations"),
+          ...(rq.interest ? { interest: rq.interest } : {}),
+        },
+        runId,
+      ),
+    sender: {
+      getPort: () => deps.morningBrief?.getConversationPort() ?? null,
+      markSent: (input, now) => deps.writeGate.markMorningBriefSent(input, now),
+      suppressObservation: (id, now) =>
+        deps.writeGate.transitionObservation(id, { state: "dropped", reason: "suppressed" }, now),
+      getPushEnabled: () => rq.getSettings().digest.push,
+    },
+  };
+}
+
+/**
+ * The context budget of one run. Only knowledge maintenance can resume from a
+ * fresh context — its frontier is durable, so a successor continues where the
+ * run stopped — so every other run is left to its backend's own limits.
+ */
+export function maintenanceContextBudget(
+  run: Pick<ClaimedCognitionRun, "kind" | "payload">,
+  settings: Pick<
+    ResolvedBrainSettings["knowledge"],
+    "contextHandoffRatio" | "contextHandoffTokens"
+  >,
+): CognitionContextBudget | null {
+  const payload = run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
+  if (payload?.focus !== "knowledge-maintenance" || !payload.batchId) return null;
+  return { ratio: settings.contextHandoffRatio, fallbackTokens: settings.contextHandoffTokens };
 }

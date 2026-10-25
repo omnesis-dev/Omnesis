@@ -484,6 +484,17 @@ describe("HttpGatewayClient.transcribe", () => {
       shortOcrDeadline.transcribe(enc("TRIGGER_SLOW"), "audio/ogg"),
     ).resolves.toMatchObject({ text: "TRIGGER_SLOW" });
   });
+
+  test("gives a transcript up as transient once its own deadline passes", async () => {
+    const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
+      transcribeRequestTimeoutMs: 20,
+    });
+    await expect(shortDeadline.transcribe(enc("TRIGGER_SLOW"), "audio/ogg")).rejects.toMatchObject({
+      name: "SyncError",
+      kind: "transient",
+      message: expect.stringMatching(/no answer within/),
+    });
+  });
 });
 
 describe("HttpGatewayClient.ocr", () => {

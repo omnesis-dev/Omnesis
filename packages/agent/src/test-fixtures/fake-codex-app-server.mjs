@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -10,6 +10,8 @@ const version = process.env.OMNESIS_FAKE_CODEX_VERSION ?? "0.142.4";
 const cliArgs = process.argv.slice(2);
 
 if (process.argv.includes("--version")) {
+  if (process.env.OMNESIS_FAKE_CODEX_SCENARIO === "missing-cwd")
+    rmSync(process.env.OMNESIS_FAKE_CODEX_WORKSPACE, { recursive: true, force: true });
   process.stdout.write(`codex-cli ${version}\n`);
   process.exit(0);
 }
@@ -78,6 +80,7 @@ let dynamicTools = [];
 const pendingServerRequests = new Map();
 
 log("startup", {
+  pid: process.pid,
   argv: process.argv.slice(2),
   cwd: process.cwd(),
   codexHome: process.env.CODEX_HOME ?? null,
@@ -169,7 +172,10 @@ rl.on("line", (line) => {
     send({ id: msg.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
     if (firstTurn && (scenario === "early-events" || scenario === "stale-native-output")) {
       runScenario();
-    } else if (firstTurn && !oneChunk) {
+    } else if (
+      (firstTurn || scenario.startsWith("recovery") || scenario.startsWith("structured")) &&
+      !oneChunk
+    ) {
       setTimeout(runScenario, 0);
     }
     if (oneChunk) process.nextTick(() => process.stdout.uncork());
@@ -187,6 +193,84 @@ rl.on("line", (line) => {
 });
 
 function runScenario() {
+  if (scenario === "watchdog-recovery") {
+    const marker = `${logPath}.silent`;
+    if (!existsSync(marker)) {
+      writeFileSync(marker, "silent");
+      // Delay exit to prove the next lease waits for actual process cleanup.
+      process.on("SIGTERM", () => setTimeout(() => process.exit(0), 120));
+    } else complete("completed");
+    return;
+  }
+  if (scenario === "watchdog-progress") {
+    let count = 0;
+    const timer = setInterval(() => {
+      notify("item/reasoning/textDelta", {
+        threadId,
+        turnId,
+        delta: "Synthetic reasoning progress.",
+      });
+      if (++count === 8) {
+        clearInterval(timer);
+        complete("completed");
+      }
+    }, 50);
+    return;
+  }
+  if (scenario === "watchdog-heartbeats") {
+    setInterval(() => {
+      notify("item/agentMessage/delta", {
+        threadId: "foreign-thread",
+        turnId: "foreign-turn",
+        delta: "Foreign output",
+      });
+      notify("account/rateLimits/updated", {});
+      notifyUsage();
+      notify("item/started", { threadId, turnId, item: { id: "same", type: "reasoning" } });
+      notify("error", { threadId, turnId, error: { message: "retrying" }, willRetry: true });
+    }, 30);
+    return;
+  }
+  if (scenario.startsWith("recovery")) {
+    const marker = `${logPath}.exited`;
+    if (scenario === "recovery-active-exit" && !existsSync(marker)) {
+      writeFileSync(marker, "exited");
+      process.exit(7);
+    }
+    complete("completed");
+    return;
+  }
+  if (scenario.startsWith("structured")) {
+    const category = scenario.slice("structured-".length);
+    const info = {
+      quota: "usageLimitExceeded",
+      auth: "unauthorized",
+      context: "contextWindowExceeded",
+      internal: "internalServerError",
+      stream: { responseStreamDisconnected: { httpStatusCode: null } },
+      httpauth: { httpConnectionFailed: { httpStatusCode: 401 } },
+      httpquota: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+      unknown: "private-unknown-category",
+      retry: "serverOverloaded",
+    }[category];
+    const error = {
+      message:
+        category === "permissiontext"
+          ? "EACCES private-provider-detail"
+          : "private-provider-detail",
+      ...(category === "permissiontext" ? { code: "EACCES" } : {}),
+      codexErrorInfo: info,
+      additionalDetails: "private-extra",
+    };
+    if (category === "retry") {
+      notify("error", { threadId, turnId, error, willRetry: true });
+      complete("completed");
+    } else {
+      notify("turn/completed", { threadId, turn: { id: turnId, status: "failed", error } });
+    }
+    return;
+  }
+
   if (
     scenario === "completion-phases" ||
     scenario === "completion-unphased" ||
@@ -379,10 +463,14 @@ function runScenario() {
     },
     (response) => {
       log("tool_call_response", response);
+      if (scenario === "watchdog-after-tool") return;
       notify("item/agentMessage/delta", {
         threadId,
         turnId,
-        delta: "Synthetic tool response received.",
+        delta:
+          scenario === "unicode-tool"
+            ? response.result.contentItems[0].text
+            : "Synthetic tool response received.",
       });
       notifyUsage();
       complete("completed");
@@ -429,6 +517,7 @@ function notifyUsage() {
     tokenUsage: {
       total: { inputTokens: 30, outputTokens: 11, cachedInputTokens: 20 },
       last: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 2 },
+      modelContextWindow: 258_400,
     },
   });
 }
@@ -446,7 +535,13 @@ function complete(status, message) {
 
 function send(message) {
   log("server_message", message);
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const encoded = Buffer.from(`${JSON.stringify(message)}\n`);
+  if (scenario === "unicode-tool") {
+    // Literal separators and byte-sized writes exercise the receiving transport.
+    for (const byte of encoded) process.stdout.write(Buffer.from([byte]));
+  } else {
+    process.stdout.write(encoded);
+  }
 }
 
 function log(event, payload) {

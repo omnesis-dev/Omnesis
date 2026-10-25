@@ -55,6 +55,8 @@ export {
   fetchWithInferenceUrlPolicy,
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
+  RateLimitRetryBudget,
+  abortableRateLimitSleep,
   retryRateLimitedRequest,
 } from "../models/index.js";
 

@@ -39,6 +39,27 @@ Instead, this package declares a plain **library** target that compiles on macOS
 
 Use the generated `Omnesis.xcodeproj` to build the iOS app. Opening the Swift package alone builds the library and tests, not the signed app and its embedded targets.
 
+Running the app in the iOS Simulator requires an Apple Silicon Mac. The pinned WebRTC framework
+contains arm64 slices for iOS devices and the iOS Simulator, so the XcodeGen spec
+selects arm64 consistently for iOS simulator apps, hosted tests and embedded iOS
+targets. Intel simulator builds are unsupported. Physical-device architectures
+retain Xcode's defaults; the platform-independent SwiftPM logic tests do not
+link WebRTC and remain separate from this simulator requirement.
+
+## WebRTC microphone initialization
+
+The pinned WebRTC vendor deliberately disables microphone input until
+`RTCAudioSession.initializeInput` is requested for each connection. Configure
+`RTCAudioSessionConfiguration` with a microphone-capable category first, then
+queue input initialization before AudioUnit creation. Enabling a track or
+`isAudioEnabled` alone does not initialize microphone input in this build.
+
+Keep the manual audio gate closed during signaling. The input callback completes
+when the SDK initializes the unit after the gate opens; do not await it before
+negotiation. A call becomes ready only after that callback succeeds and captured
+sample duration advances. Teardown must discard pending initialization before a
+replacement connection acquires audio ownership.
+
 ## Running tests locally
 
 Tests cover pairing codec, Keychain-backed service, and HTTP client with a mock `URLSessionLike`:

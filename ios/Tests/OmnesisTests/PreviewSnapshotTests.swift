@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import AVFoundation
+import Observation
 @testable import Omnesis
 import SwiftUI
 import UIKit
 import XCTest
+#if canImport(WebRTC)
+import WebRTC
+#endif
 
 // This catalogue holds one test per screen state, and the app has hundreds of
 // them: its length is the point, and every view added to the app lengthens it.
@@ -24,6 +29,789 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testPeopleReadClientReadiness() throws {
+        let coordinator = AdminCoordinator()
+        let arrived = expectation(description: "The read client becoming available invalidates the view")
+        let initialIdentity = withObservationTracking {
+            coordinator.search.map { ObjectIdentifier($0) }
+        } onChange: {
+            arrived.fulfill()
+        }
+        XCTAssertNil(initialIdentity)
+        let client = try SearchClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test-token")
+        coordinator.injectSearchClientForTesting(client)
+        wait(for: [arrived], timeout: 1)
+        let readyIdentity = coordinator.search.map { ObjectIdentifier($0) }
+        XCTAssertEqual(readyIdentity, ObjectIdentifier(client))
+        coordinator.injectSearchClientForTesting(client)
+        XCTAssertEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let rotated = expectation(description: "A replacement read client invalidates the view")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            rotated.fulfill()
+        }
+        let replacement = SearchClient(baseURL: client.baseURL, token: "replacement-token")
+        coordinator.injectSearchClientForTesting(replacement)
+        wait(for: [rotated], timeout: 1)
+        XCTAssertNotEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let removed = expectation(description: "Pairing loss invalidates the read client")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            removed.fulfill()
+        }
+        coordinator.stopAdmin()
+        wait(for: [removed], timeout: 1)
+        XCTAssertNil(coordinator.search)
+        snapshot(
+            PeopleView(menuOpen: .constant(false)).environment(AppStore.preview()),
+            name: "people-awaiting-read-client"
+        )
+    }
+
+    func testRealtimeComposer() {
+        snapshot(RealtimeComposerSnapshot(), name: "realtime-composer", size: CGSize(width: 393, height: 130))
+    }
+
+    func testRealtimeCallMicrophoneStarting() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting).environment(AppStore.preview()),
+            name: "realtime-microphone-starting",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallListening() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening).environment(AppStore.preview()),
+            name: "realtime-listening",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallUserSpeaking() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeUserSpeaking)
+                    .environment(AppStore.preview()),
+                name: "realtime-user-speaking-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallAgentSpeaking() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeAgentSpeaking)
+                    .environment(AppStore.preview()),
+                name: "realtime-agent-speaking-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallLongCaption() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                    .environment(AppStore.preview()),
+                name: "realtime-long-caption-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallLongCaptionSmallPhone() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-long-caption-small",
+            size: CGSize(width: 320, height: 568)
+        )
+    }
+
+    func testRealtimeCallLongCaptionAccessible() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-long-caption-accessible"
+        )
+    }
+
+    func testRealtimeCallReducedMotion() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeUserSpeaking)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-user-reduced-motion"
+        )
+    }
+
+    func testRealtimeCallShortAccessible() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-short-accessible",
+            size: CGSize(width: 320, height: 568)
+        )
+    }
+
+    func testRealtimeCallMutedDuringPlayback() {
+        let session = PreviewMocks.realtimeAgentSpeaking
+        session.muted = true
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-muted-playback"
+        )
+    }
+
+    func testRealtimeStreamingFollowsAndPreservesManualReading() async throws {
+        let session = PreviewMocks.realtimeLongSpeech
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView:
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .preferredColorScheme(.light)
+        )
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let appeared = await eventually { self.voiceScrollView(in: host.view) != nil }
+        XCTAssertTrue(appeared)
+        let scroll = try XCTUnwrap(voiceScrollView(in: host.view))
+        let loaded = await eventually { scroll.contentSize.height > scroll.bounds.height * 2 }
+        XCTAssertTrue(loaded)
+        let followed = await eventually { self.voiceDistanceToBottom(scroll) < 6 }
+        XCTAssertTrue(followed, "The initial long caption did not reveal its latest words")
+        let before = try voiceHeaderPixels(captureVoiceHost(host))
+        let initialHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let grew = await eventually {
+            scroll.contentSize.height > initialHeight && self.voiceDistanceToBottom(scroll) < 6
+        }
+        XCTAssertTrue(grew, "Streaming text stopped following the latest speech")
+        let followingImage = captureVoiceHost(host)
+        XCTAssertEqual(before, try voiceHeaderPixels(followingImage), "The voice disk moved with the caption")
+        try writeSnapshotPNG(followingImage, to: Self.outputDir.appendingPathComponent("realtime-stream-following.png"))
+        let readingOffset = scroll.contentOffset.y - 180
+        scroll.setContentOffset(CGPoint(x: 0, y: readingOffset), animated: false)
+        try await Task.sleep(for: .milliseconds(100))
+        let readingHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let appended = await eventually { scroll.contentSize.height > readingHeight }
+        XCTAssertTrue(appended)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(scroll.contentOffset.y, readingOffset, accuracy: 2, "Streaming took the reader away from older speech")
+        let readingImage = captureVoiceHost(host)
+        XCTAssertEqual(before, try voiceHeaderPixels(readingImage), "Scrolling older speech moved the voice disk")
+        try writeSnapshotPNG(readingImage, to: Self.outputDir.appendingPathComponent("realtime-stream-reading.png"))
+        // The real button tap and simultaneous drag/stream race are exercised
+        // in AgentScrollUITests, where XCTest materializes SwiftUI accessibility.
+        scroll.setContentOffset(CGPoint(
+            x: 0,
+            y: scroll.contentSize.height - scroll.bounds.height
+                + scroll.adjustedContentInset.bottom
+        ), animated: false)
+        let resumed = await eventually { self.voiceDistanceToBottom(scroll) < 6 }
+        XCTAssertTrue(resumed, "Returning to latest speech did not resume following")
+        let resumedHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let keptFollowing = await eventually {
+            scroll.contentSize.height > resumedHeight && self.voiceDistanceToBottom(scroll) < 6
+        }
+        XCTAssertTrue(keptFollowing)
+        let coalescedOffset = scroll.contentOffset.y - 180
+        let coalescedHeight = scroll.contentSize.height
+        scroll.setContentOffset(CGPoint(x: 0, y: coalescedOffset), animated: false)
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let coalesced = await eventually { scroll.contentSize.height > coalescedHeight }
+        XCTAssertTrue(coalesced)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(
+            scroll.contentOffset.y,
+            coalescedOffset,
+            accuracy: 2,
+            "Speech arriving in the same layout pass took away manual reading"
+        )
+    }
+
+    func testRealtimeScrollPreservesHostedStateEnvironmentAndLifecycle() async throws {
+        let model = VoiceScrollEnvironmentModel()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView: VoiceScrollEnvironmentRoot(model: model))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let loaded = await eventually { self.voiceScrollView(in: host.view) != nil && model.sawExpectedStore }
+        XCTAssertTrue(loaded, "The hosted content lost its AppStore environment")
+        let scroll = try XCTUnwrap(voiceScrollView(in: host.view))
+        model.button.sendActions(for: .touchUpInside)
+        let expanded = await eventually { scroll.contentSize.height > scroll.bounds.height * 2 }
+        XCTAssertTrue(expanded, "Internal SwiftUI state did not resize the hosted content")
+        let expandedHeight = scroll.contentSize.height
+        model.caption = "An incoming workshop update."
+        let updated = await eventually { model.seenCaption == model.caption }
+        XCTAssertTrue(updated)
+        XCTAssertGreaterThan(
+            scroll.contentSize.height,
+            expandedHeight * 0.9,
+            "A parent update reset private child state"
+        )
+        let readingOffset = scroll.contentOffset.y - 180
+        scroll.setContentOffset(CGPoint(x: 0, y: readingOffset), animated: false)
+        model.type = .accessibility3
+        let resizedText = await eventually {
+            model.seenType == .accessibility3 && scroll.contentSize.height > expandedHeight
+        }
+        XCTAssertTrue(resizedText, "Updated Dynamic Type did not cross the hosting boundary")
+        XCTAssertEqual(scroll.contentOffset.y, readingOffset, accuracy: 2)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 700)
+        window.layoutIfNeeded()
+        let resizedViewport = await eventually { scroll.bounds.width < 350 }
+        XCTAssertTrue(resizedViewport)
+        XCTAssertGreaterThan(voiceDistanceToBottom(scroll), 180, "Resizing stole paused reading")
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+        let beforePresentation = scroll.contentSize.height
+        let modal = UIViewController()
+        modal.modalPresentationStyle = .fullScreen
+        host.present(modal, animated: false)
+        let presented = await eventually { modal.view.window != nil }
+        XCTAssertTrue(presented)
+        model.caption += "\n\n" + PreviewMocks.realtimeLongCaption
+        await withCheckedContinuation { continuation in
+            host.dismiss(animated: false) { continuation.resume() }
+        }
+        let returned = await eventually {
+            scroll.contentSize.height > beforePresentation && self.voiceDistanceToBottom(scroll) < 6
+        }
+        let metrics = "height=\(scroll.contentSize.height), prior=\(beforePresentation), distance=\(voiceDistanceToBottom(scroll))"
+        XCTAssertTrue(returned, "Returning from a sheet did not restore following: \(metrics)")
+        try writeSnapshotPNG(
+            captureVoiceHost(host),
+            to: Self.outputDir.appendingPathComponent("realtime-hosted-state-environment.png")
+        )
+        model.caption = "A short restored caption."
+        let restored = await eventually { model.seenCaption == model.caption }
+        XCTAssertTrue(restored)
+        model.button.sendActions(for: .touchUpInside)
+        let collapsed = await eventually { scroll.contentSize.height < scroll.bounds.height }
+        XCTAssertTrue(collapsed, "Private expansion state was lost during updates or presentation")
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 2)
+    }
+
+    private func voiceSnapshot(_ view: some View, name: String, size: CGSize? = nil) {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(view, name: "\(name)-\(scheme)", scheme: scheme, size: size)
+        }
+    }
+
+    private func voiceScrollView(in view: UIView) -> UIScrollView? {
+        if let scroll = view as? UIScrollView, scroll.bounds.height > 100 { return scroll }
+        return view.subviews.lazy.compactMap { self.voiceScrollView(in: $0) }.first
+    }
+
+    private func voiceDistanceToBottom(_ scroll: UIScrollView) -> CGFloat {
+        max(0, scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height - scroll.contentOffset.y)
+    }
+
+    private func captureVoiceHost(_ host: UIViewController) -> UIImage {
+        host.view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: host.view.bounds.size, format: format).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    private func voiceHeaderPixels(_ image: UIImage) throws -> Data {
+        let crop = try XCTUnwrap(image.cgImage?.cropping(to: CGRect(x: 120, y: 88, width: 150, height: 156)))
+        var bytes = Data(count: crop.width * crop.height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(
+                data: raw.baseAddress,
+                width: crop.width,
+                height: crop.height,
+                bitsPerComponent: 8,
+                bytesPerRow: crop.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ) else { return false }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+            return true
+        }
+        XCTAssertTrue(drawn)
+        XCTAssertGreaterThan(Set(bytes).count, 20, "The fixed voice header rendered blank")
+        return bytes
+    }
+
+    func testRealtimeCallWorking() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+                .environment(PreviewMocks.realtimeWorkingStore),
+            name: "realtime-working",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallTurnFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-turn-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallClosedAfterFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-closed-after-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallEndingAfterFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-ending-after-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimePlaybackOverflowPreservesCall() async throws {
+        let session = RealtimeCallSession()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.play()
+        session.configurePlaybackForTesting(engine: engine, player: player)
+        defer { session.stop() }
+        session.configurePlaybackForTesting(maximumBytes: 512 * 1024)
+        var sent: [[String: Any]] = []
+        session.outgoingMessageForTesting = { message in
+            if let event = RealtimeProtocol.event(Data(message.utf8)) { sent.append(event) }
+        }
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "long-reply"]])
+        let audio = Data(repeating: 0, count: 80000).base64EncodedString()
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "long-answer", "delta": audio])
+        XCTAssertTrue(session.connected)
+        XCTAssertNil(session.error)
+        XCTAssertNotNil(session.playbackNotice)
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 1)
+        XCTAssertEqual(sent.first?["type"] as? String, "conversation.item.truncate")
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "long-answer", "delta": audio])
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 1)
+        // An aborted provider response may never be forwarded as response.done.
+        // A new response must still be audible, while stale old deltas stay dropped.
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "next-reply"]])
+        try session.receiveForTesting([
+            "type": "response.output_audio.delta", "item_id": "next-answer",
+            "delta": Data(repeating: 0x40, count: 4800).base64EncodedString(),
+        ])
+        XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 2400)
+        let resumedPeak = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(resumedPeak, 0.4)
+        XCTAssertTrue(session.playbackIsEmptyForTesting)
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        XCTAssertNil(session.playbackNotice)
+        XCTAssertTrue(session.userSpeechActive)
+        XCTAssertTrue(session.connected)
+        // Render only after media assertions: the real call view tears down
+        // its session on disappearance when the snapshot host is released.
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "second-overflow"]])
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "second-overflow", "delta": audio])
+        XCTAssertTrue(session.connected)
+        XCTAssertNotNil(session.playbackNotice)
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 2)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-reply-interrupted",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimePlaybackRendersBurstAndResetsItsPlayerEpoch() async throws {
+        let session = RealtimeCallSession()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.play()
+        session.configurePlaybackForTesting(engine: engine, player: player)
+        session.outgoingMessageForTesting = { _ in }
+        defer { session.stop() }
+        func audio(seconds: Int, value: UInt8) throws {
+            try session.receiveForTesting([
+                "type": "response.output_audio.delta", "item_id": "scripted-answer-\(value)",
+                "delta": Data(repeating: value, count: seconds * 24000 * 2).base64EncodedString(),
+            ])
+        }
+        // The previous implementation ended the call on this valid burst.
+        try audio(seconds: 31, value: 0x20)
+        XCTAssertTrue(session.connected)
+        XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 48000)
+        let first = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(first, 0.2)
+        XCTAssertTrue(session.playbackIsEmptyForTesting)
+        // Tool execution can leave the player running with no scheduled audio.
+        // Its real node clock must advance across that gap before the final answer.
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        for _ in 0 ..< 12 {
+            XCTAssertEqual(try engine.renderOffline(4096, to: silence), .success)
+            if let channel = silence.floatChannelData?[0] {
+                XCTAssertTrue((0 ..< Int(silence.frameLength)).allSatisfy { abs(channel[$0]) < 0.001 })
+            }
+            await Task.yield()
+        }
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "after-tool-gap"]])
+        try audio(seconds: 1, value: 0x40)
+        let finalAnswer = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(finalAnswer, 0.4)
+        XCTAssertTrue(session.connected)
+        // Leave an old queued reply behind, then interrupt and start a new one.
+        try audio(seconds: 3, value: 0x20)
+        engine.stop()
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        try engine.start()
+        player.play()
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_stopped"])
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "after-interruption"]])
+        try audio(seconds: 1, value: 0x40)
+        let second = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(second, 0.4)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(session.connected)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-rendered-playback",
+            ignoresSafeArea: true
+        )
+    }
+
+    private func renderVoicePlayback(
+        _ session: RealtimeCallSession, engine: AVAudioEngine, format: AVAudioFormat
+    ) async throws
+        -> Float {
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        var peak: Float = 0
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !session.playbackIsEmptyForTesting, clock.now < deadline {
+            XCTAssertLessThanOrEqual(session.scheduledPlaybackFramesForTesting, 48000)
+            let result = try engine.renderOffline(4096, to: output)
+            XCTAssertEqual(result, .success)
+            if let channel = output.floatChannelData?[0] {
+                for index in 0 ..< Int(output.frameLength) {
+                    peak = max(peak, abs(channel[index]))
+                }
+            }
+            await Task.yield()
+        }
+        XCTAssertTrue(session.playbackIsEmptyForTesting, "Production playback did not drain its rendered buffers")
+        return peak
+    }
+
+    func testRealtimeCallEnding() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding).environment(AppStore.preview()),
+            name: "realtime-ending",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallTools() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .preferredColorScheme(.dark),
+            name: "realtime-tools",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallSmallPhone() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore),
+            name: "realtime-small-phone",
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallAccessible() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-accessible",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallSQL() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeSQLStore),
+            name: "realtime-sql",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallBatch() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeBatchStore),
+            name: "realtime-batch",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallCitations() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations-small-phone",
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore).dynamicTypeSize(.accessibility3),
+            name: "realtime-citations-accessible",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure).environment(AppStore.preview()),
+            name: "realtime-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testLiveVoiceOverlappingCaptionsAndCanonicalTools() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.liveOverlappingSpeech)
+                .environment(PreviewMocks.realtimeToolsStore),
+            name: "live-voice-overlapping-captions",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.liveOverlappingSpeech)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .dynamicTypeSize(.accessibility3),
+            name: "live-voice-overlapping-accessible",
+            size: CGSize(width: 320, height: 568),
+            ignoresSafeArea: true
+        )
+    }
+
+    #if canImport(WebRTC)
+    func testLiveVoiceActualPeerSignalingAndDataChannel() async throws {
+        for name in ["WebRTC-LICENSE.md", "WebRTC-Build-LICENSE.txt", "WebRTC-Build-NOTICE.md"] {
+            XCTAssertNotNil(Bundle.main.url(forResource: name, withExtension: nil), "Missing bundled dependency notice: \(name)")
+        }
+        let media = LiveWebRTCMedia()
+        let remote = LiveWebRTCLoopback()
+        defer { media.close()
+            remote.close()
+        }
+        let receivedCaption = expectation(description: "actual RTC data-channel caption")
+        var captions = LiveVoiceCaptions()
+        var receivedStarted = false
+        var failure: Error?
+        media.onFailure = { failure = $0 }
+        media.onEvent = { data in
+            guard let event = RealtimeProtocol.event(data) else { return }
+            if event["type"] as? String == "session.started" { receivedStarted = true }
+            captions.receive(event)
+            if !captions.fragments.isEmpty { receivedCaption.fulfill() }
+        }
+        let offer = try await media.offer()
+        XCTAssertTrue(offer.contains("m=audio"))
+        XCTAssertTrue(offer.contains("m=application"))
+        let answer = try await remote.answer(offer: offer)
+        try await media.connect(answer: answer)
+        await fulfillment(of: [receivedCaption], timeout: 10)
+        XCTAssertTrue(receivedStarted)
+        XCTAssertNil(failure)
+        XCTAssertFalse(RTCAudioSession.sharedInstance().isAudioEnabled)
+        XCTAssertEqual(captions.fragments.map(\.text), ["The workshop notes are ready."])
+        let session = PreviewMocks.realtimeListening
+        session.isLive = true
+        session.liveCaptions = captions.displayRuns
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "live-voice-actual-data-channel",
+            ignoresSafeArea: true
+        )
+    }
+    #endif
+
+    func testCitationSpineContinuesThroughEventGap() throws {
+        let store = PreviewMocks.realtimeCitationsStore
+        let events = AgentTimelineBuilder.buildUnifiedTimeline(
+            byDoc: store.agent.trailAnnotations.byDoc,
+            records: store.agent.recordCitations
+        )
+        let event = try XCTUnwrap(events.first)
+        let row = TrailTimelineRow(
+            event: event,
+            annotations: store.agent.trailAnnotations,
+            accent: .blue,
+            nextAccent: .blue,
+            isFirstRow: false,
+            isLastRow: false
+        )
+        .environment(store)
+        .frame(width: 300)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color.white)
+        let renderer = ImageRenderer(content: row)
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.uiImage)
+        let cg = try XCTUnwrap(image.cgImage)
+        var bytes = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &bytes,
+            width: cg.width,
+            height: cg.height,
+            bitsPerComponent: 8,
+            bytesPerRow: cg.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        // The source dot intentionally masks the first 24pt. Every pixel
+        // below it, including the event's bottom gap, must retain blue ink.
+        for y in 26 ..< max(26, cg.height - 2) {
+            let offset = (y * cg.width + 14) * 4
+            XCTAssertLessThan(Int(bytes[offset]), Int(bytes[offset + 2]), "Spine broke at row pixel \(y)")
+        }
+        snapshot(row, name: "citation-continuous-spine", size: CGSize(width: 300, height: image.size.height))
+        snapshot(
+            CitationsDrawer(
+                trailAnnotations: store.agent.trailAnnotations,
+                recordCitations: store.agent.recordCitations,
+                isOpen: .constant(true)
+            )
+            .environment(store),
+            name: "citation-shared-panel",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallImmediateCreditFailureSurvivesClose() throws {
+        let session = RealtimeCallSession()
+        do {
+            try session.receiveForTesting(["type": "error", "error": ["code": "quota_exhausted", "fatal": true, "retryable": false]])
+            XCTFail("Fatal provider error must stop the receive loop")
+        } catch { session.failForTesting(error) }
+        session.failForTesting(URLError(.networkConnectionLost))
+        XCTAssertFalse(session.connected)
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "quota_exhausted")
+        XCTAssertEqual(GatewayErrorView.classify(session.error).title, "OpenAI credit or quota limit")
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-credit-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallRecoverableFailureKeepsCallAlive() throws {
+        let session = PreviewMocks.realtimeLongSpeech
+        try session.receiveForTesting(["type": "error", "error": ["code": "rate_limited", "fatal": false]])
+        XCTAssertTrue(session.connected)
+        XCTAssertNil(session.error)
+        XCTAssertEqual(session.replyFailure?.code, "rate_limited")
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-recoverable-failure",
+            ignoresSafeArea: true
+        )
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        XCTAssertNil(session.replyFailure)
+        XCTAssertTrue(session.connected)
+    }
+
+    func testRealtimeCallFailureWhileEndingIsNotDiscarded() throws {
+        let session = PreviewMocks.realtimeEnding
+        try session.receiveForTesting(["type": "error", "error": ["code": "session_end_failed", "fatal": true]])
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "session_end_failed")
+        session.stop()
+        XCTAssertNotNil(session.error)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-end-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeProjectSpendLimitFailure() {
+        let session = PreviewMocks.realtimeCreditFailure
+        let failure = RealtimeCallFailure(code: "project_spend_limit_exceeded", fatal: true, retryable: false)
+        session.error = failure
+        session.status = failure.title
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-project-limit-failure",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-project-limit-accessible",
+            size: CGSize(width: 320, height: 568),
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeMalformedAudioSurfacesProtocolFailure() throws {
+        let session = PreviewMocks.realtimeListening
+        try session.receiveForTesting(["type": "response.output_audio.delta", "delta": "not base64"])
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "protocol_error")
+        XCTAssertFalse(session.connected)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-malformed-audio-failure",
+            ignoresSafeArea: true
+        )
+    }
+
     private static let outputDir = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
     private static let canvasSize = CGSize(width: 393, height: 852)
 
@@ -194,10 +982,11 @@ final class PreviewSnapshotTests: XCTestCase {
         name: String,
         scheme: ColorScheme = .dark,
         capturePresentedChrome: Bool = false,
-        settle: TimeInterval = 0.6
+        settle: TimeInterval = 0.6,
+        size: CGSize? = nil
     ) {
         let isDark = scheme == .dark
-        let screen = UIScreen.main.bounds
+        let screen = CGRect(origin: .zero, size: size ?? UIScreen.main.bounds.size)
         let window = UIWindow(frame: screen)
         let host = UIHostingController(rootView:
             view
@@ -2174,6 +2963,32 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Phone setup
 
+    func testPhoneSetupPollingKeepsItsPredicateOnTheMainActor() async {
+        let host = FakePhoneSetupHost()
+        host.holdsPhotosEnable = true
+        let coordinator = PhoneSetupCoordinator(progressStore: PhoneSetupProgressStore(defaults: DictionaryDefaults()))
+        coordinator.install(host: host, steps: PhoneSetupRegistry.ios(host: host))
+        coordinator.presentFromSettings(deviceId: "11111111-1111-4111-8111-111111111111")
+        coordinator.toggle(PhotosSetupStep.sourceId)
+        coordinator.startSelectedSteps()
+        let running = Task { await coordinator.runCurrentStep() }
+        var polls = 0
+        let waiting = await eventually {
+            MainActor.assertIsolated()
+            polls += 1
+            // Exercise the predicate again after the helper actually suspends.
+            return polls > 1 && host.isHoldingEnable
+        }
+        XCTAssertTrue(waiting)
+        XCTAssertGreaterThan(polls, 1)
+        phoneSetupSnapshot(coordinator, name: "phone-setup-polling-main-actor", promptVisible: true)
+        coordinator.back()
+        host.releaseHeldEnable()
+        await running.value
+        XCTAssertTrue(host.enableSawCancellation)
+        XCTAssertNil(coordinator.busyStepId)
+    }
+
     private func phoneSetupSnapshot(
         _ coordinator: PhoneSetupCoordinator,
         name: String,
@@ -2990,280 +3805,6 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(RootView().environment(store), name: "61-rootview-onboarding")
     }
 
-    // MARK: - Briefs feed
-
-    /// The Briefs list: every card glanceable at once — unread dot +
-    /// semibold title on fresh briefs, plain-text one-line descriptions,
-    /// relative times. The first row is marked viewed so both row states
-    /// render side by side.
-    func testBriefsListPopulated() {
-        var feed = BriefsFeedState(briefs: PreviewMocks.briefs)
-        _ = feed.markViewed(id: PreviewMocks.briefs.first?.id ?? "")
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: feed,
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {},
-                paging: CursorPagingState(nextCursor: "preview-next")
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "113-briefs-list-populated")
-    }
-
-    /// A parked background agent does not cover or replace historical briefs.
-    /// The amber banner stays above the populated feed and links to setup.
-    func testBriefsListNeedsBackgroundAgent() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: PreviewMocks.briefs),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {},
-                showsModelWarning: true
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "130-briefs-list-needs-background-agent")
-    }
-
-    /// A never-configured install can have no historical cards; the warning
-    /// still leaves the empty-state message centered in the remaining space.
-    func testBriefsListEmptyNeedsBackgroundAgent() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: []),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {},
-                showsModelWarning: true
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "131-briefs-list-empty-needs-background-agent")
-    }
-
-    /// Detail sheet while the talk-back thread is opening: spinner in
-    /// the talk button's circle.
-    func testBriefDetailOpeningThread() {
-        let view = BriefDetailSheet(
-            brief: PreviewMocks.briefLoop,
-            store: AppStore.preview(sources: PreviewMocks.sources),
-            openingThread: true
-        )
-        .environment(AppStore.preview(sources: PreviewMocks.sources))
-        snapshot(view, name: "125-brief-detail-opening-thread")
-    }
-
-    /// Detail sheet mid-dictation: the mic is the accent-filled pulsing
-    /// circle and the live transcript renders under the action row.
-    func testBriefDetailDictating() {
-        let view = BriefDetailSheet(
-            brief: PreviewMocks.briefInfo,
-            store: AppStore.preview(sources: PreviewMocks.sources),
-            speech: SpeechRecognizer.preview(
-                state: .listening,
-                transcript: "Push the reminder to Friday and tell Maya I confirmed"
-            )
-        )
-        .environment(AppStore.preview(sources: PreviewMocks.sources))
-        snapshot(view, name: "132-brief-detail-dictating")
-    }
-
-    /// The stacked detail sheet's content: title, markdown description,
-    /// glass action row, divider, long-form body + citations.
-    func testBriefDetailSheet() {
-        let view = BriefDetailSheet(
-            brief: PreviewMocks.briefLoop,
-            store: AppStore.preview(sources: PreviewMocks.sources)
-        )
-        .environment(AppStore.preview(sources: PreviewMocks.sources))
-        snapshot(view, name: "114-brief-detail-sheet")
-    }
-
-    /// The health-trends brief, opened. Also the still the website's Brain
-    /// page shows — `scripts/shot-website-brief.sh` renders this one case and
-    /// copies the PNG into `website/media/`, so the site never carries a
-    /// hand-drawn mock of a screen the app does not produce.
-    func testBriefDetailHealthTrend() {
-        let view = BriefDetailSheet(
-            brief: PreviewMocks.briefHealthRecovery,
-            store: AppStore.preview(sources: PreviewMocks.sources)
-        )
-        .environment(AppStore.preview(sources: PreviewMocks.sources))
-        // A shorter canvas than the default 393x852: this brief's content ends
-        // around 640pt, and the website places the render inside a phone beside
-        // three paragraphs — a full-length screen towers over them.
-        snapshot(view, name: "140-brief-detail-health-trend", size: CGSize(width: 393, height: 760))
-    }
-
-    /// A row transformed into the recording strip (swipe-mic dictation):
-    /// accent mic circle, live transcript, send affordance.
-    func testBriefsListRowDictating() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: PreviewMocks.briefs),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onDictate: { _ in },
-                onMoreOptions: { _ in },
-                speech: SpeechRecognizer.preview(
-                    state: .listening,
-                    transcript: "Push the reminder to Friday and tell Maya I confirmed"
-                ),
-                dictatingBriefId: PreviewMocks.briefs.first?.id,
-                onRetry: {},
-                onRefresh: {}
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "133-briefs-list-row-dictating")
-    }
-
-    func testBriefsListEmpty() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: []),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {}
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "115-briefs-feed-empty")
-    }
-
-    func testBriefsListEmptyPageLoading() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: []),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {},
-                paging: CursorPagingState(
-                    nextCursor: "preview-next",
-                    isLoadingMore: true
-                )
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "115a-briefs-feed-empty-page-loading")
-    }
-
-    func testBriefsListError() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: []),
-                loading: false,
-                loadError: URLError(.cannotConnectToHost),
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {}
-            )
-            .environment(AppStore.preview())
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "116-briefs-feed-error")
-    }
-
-    /// The brief card pinned above a talk-back thread's messages —
-    /// description-only variant (no long-form body, so no details fold).
-    func testBriefContextCardDescriptionOnly() {
-        let view = ScrollView {
-            BriefContextCard(
-                snapshot: BriefOriginSnapshot(
-                    title: "Return the borrowed projector",
-                    description: "You told **Maya** you'd bring the projector back to Studio Northstar this week.",
-                    body: nil
-                )
-            )
-            .padding()
-        }
-        .background(Theme.bgPrimary)
-        snapshot(view, name: "126-brief-context-card-description-only")
-    }
-
-    /// Long-form body present but collapsed behind "Show details" — the
-    /// default state the thread opens in.
-    func testBriefContextCardCollapsedBody() {
-        let view = ScrollView {
-            BriefContextCard(
-                snapshot: BriefOriginSnapshot(
-                    title: "Marathon entry closes Friday 17 Oct",
-                    description: "The **marathon** early-bird entry closes on Friday — you said you wanted in this year.",
-                    body: PreviewMocks.briefLongBody
-                )
-            )
-            .padding()
-        }
-        .background(Theme.bgPrimary)
-        snapshot(view, name: "127-brief-context-card-collapsed")
-    }
-
-    /// A long title wrapping across lines, dark mode, with a markdown
-    /// body — the extremes of the card's text layout.
-    func testBriefContextCardLongTitleDark() {
-        let view = ScrollView {
-            BriefContextCard(
-                snapshot: BriefOriginSnapshot(
-                    title: "Confirm the Q4 budget review agenda with Jamie Lopez before Thursday's planning meeting",
-                    description: "Jamie asked for the agenda by **Thursday 09:00** and the shared doc still has last quarter's items.",
-                    body: "The draft agenda lives in the shared planning doc."
-                )
-            )
-            .padding()
-        }
-        .background(Theme.bgPrimary)
-        .environment(\.colorScheme, .dark)
-        snapshot(view, name: "128-brief-context-card-long-title-dark")
-    }
-
     /// Interactive-memory action with its outcome row frozen visible.
     func testEphemeralActionCardDone() {
         let view = ScrollView {
@@ -3425,125 +3966,6 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    /// The below-the-fold half of a card: long-form body ending in
-    /// tappable citations (source icon + title each). In the feed this
-    /// region only exists past the scroll fold, so it gets its own
-    /// direct render.
-    func testBriefsDetailsSection() {
-        let view = ScrollView {
-            BriefDetailsSection(
-                brief: PreviewMocks.briefLoop,
-                store: AppStore.preview(sources: PreviewMocks.sources),
-                onOpenCitation: { _ in }
-            )
-            .padding(.top, Theme.Spacing.lg)
-        }
-        .background(Theme.bgPrimary)
-        snapshot(view, name: "120-briefs-details-section")
-    }
-
-    /// A row whose Loop-Agent-authored description carries markdown:
-    /// `**bold**` must render as plain text in the row (markers
-    /// stripped), while the detail sheet renders real emphasis — both
-    /// covered here via the row list.
-    func testBriefsListMarkdownRow() {
-        let view = NavigationStack {
-            BriefsListContent(
-                feed: BriefsFeedState(briefs: [PreviewMocks.briefMarkdown, PreviewMocks.briefReminder]),
-                loading: false,
-                loadError: nil,
-                onOpen: { _ in },
-                onQuickClear: { _ in },
-                onAsk: { _ in },
-                onMoreOptions: { _ in },
-                onRetry: {},
-                onRefresh: {}
-            )
-            .navigationTitle("Briefs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-        }
-        snapshot(view, name: "121-briefs-list-markdown-row")
-    }
-
-    /// The below-the-fold body rendered from markdown: the bullet list,
-    /// inline emphasis, and the link must render as formatted content
-    /// rather than raw `-`/`**`/`[]()` syntax.
-    func testBriefsDetailsSectionMarkdown() {
-        let view = ScrollView {
-            BriefDetailsSection(
-                brief: PreviewMocks.briefMarkdown,
-                store: AppStore.preview(sources: PreviewMocks.sources),
-                onOpenCitation: { _ in }
-            )
-            .padding(.top, Theme.Spacing.lg)
-        }
-        .background(Theme.bgPrimary)
-        snapshot(view, name: "122-briefs-details-section-markdown")
-    }
-
-    /// Loop-kind dismiss modal with the snooze section open: reasons
-    /// read "Already handled" (never "Acknowledged") + the four
-    /// re-surface choices.
-    func testBriefsDismissSheetLoopSnooze() {
-        let view = BriefDismissSheet(
-            brief: PreviewMocks.briefLoop,
-            initialReason: .snoozed
-        ) { _, _, _ in }
-        snapshot(view, name: "117-briefs-dismiss-loop-snooze")
-    }
-
-    /// Info-kind dismiss modal: reasons read "Acknowledged" (never
-    /// "Already handled"), nothing selected yet, Dismiss disabled.
-    func testBriefsDismissSheetInfo() {
-        let view = BriefDismissSheet(brief: PreviewMocks.briefInfo) { _, _, _ in }
-        snapshot(view, name: "118-briefs-dismiss-info")
-    }
-
-    /// Briefs-active gateway: the Briefs row appears directly under
-    /// Search. The other drawer
-    /// snapshots (76–79) omit it entirely.
-    func testMainMenuDrawerBriefs() {
-        let store = AppStore.preview(
-            statusSnapshot: PreviewMocks.statusSnapshotBriefsActive,
-            agentPreview: PreviewMocks.agentConversationsRich
-        )
-        let view = ZStack(alignment: .leading) {
-            Theme.bgDrawer.ignoresSafeArea()
-            MainMenuDrawer(
-                isOpen: .constant(true),
-                selection: .constant(.agent),
-                onOpenSettings: {}
-            )
-            .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
-        }
-        snapshot(view.environment(store), name: "119-main-menu-drawer-briefs")
-    }
-
-    /// Briefs switched on but its background-agent model cannot run: the row
-    /// stays, carrying the drawer's amber attention triangle. Queued notes are
-    /// installed too, so the drawer's other warning row renders at the same
-    /// time — the one state where the two shapes of the shared affordance (a
-    /// marker inside the row, and Tell Omnesis's separately-tappable triangle)
-    /// can be compared for alignment.
-    func testMainMenuDrawerBriefsNeedsAttention() {
-        let store = AppStore.preview(
-            statusSnapshot: PreviewMocks.statusSnapshotBriefsNeedsAttention,
-            agentPreview: PreviewMocks.agentConversationsRich
-        )
-        store.notes.installPreviewState(pending: PreviewMocks.pendingNotes)
-        let view = ZStack(alignment: .leading) {
-            Theme.bgDrawer.ignoresSafeArea()
-            MainMenuDrawer(
-                isOpen: .constant(true),
-                selection: .constant(.agent),
-                onOpenSettings: {}
-            )
-            .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
-        }
-        snapshot(view.environment(store), name: "191-main-menu-drawer-briefs-needs-attention")
-    }
-
     // MARK: - Theme + components
 
     func testThemePalette() {
@@ -3690,6 +4112,232 @@ final class PreviewSnapshotTests: XCTestCase {
         )
         XCTAssertTrue(store.agent.busy)
         XCTAssertEqual(store.agent.turns.count, 1)
+    }
+
+    func testConversationEmptyControls() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationControlsPanel(controls: nil, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant(""),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72f-conversation-empty-controls",
+            size: CGSize(
+                width: 393,
+                height: 140
+            )
+        )
+    }
+
+    func testConversationEditDraft() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationDraftEditBanner(onCancel: {})
+                AgentComposer(
+                    text: .constant(PreviewMocks.conversationFollowupDraft),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72e-conversation-edit-draft",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationQueueHandoff() {
+        queueHandoffSnapshot(automatic: false)
+    }
+
+    func testConversationAutomaticQueueHandoff() {
+        queueHandoffSnapshot(automatic: true)
+    }
+
+    private func queueHandoffSnapshot(automatic: Bool) {
+        let controls = PreviewMocks.conversationControls
+        var handoff = ConversationQueueHandoff()
+        if automatic {
+            handoff.delivered(ids: controls.queued.map(\.id))
+        } else {
+            _ = handoff.begin(ids: controls.queued.map(\.id))
+        }
+        let presented = handoff.presenting(controls)
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .user(id: "wire-message", text: controls.queuedText))
+                if !presented.queued.isEmpty {
+                    ConversationQueuedBubble(controls: presented, disabled: false, onSendNow: {})
+                }
+                AgentComposer(
+                    text: .constant(""),
+                    busy: true,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16).background(Theme.bgPrimary),
+            name: automatic ? "72k-conversation-automatic-queue-handoff" : "72h-conversation-queue-handoff",
+            size: CGSize(width: 393, height: 300)
+        )
+    }
+
+    func testConversationBusyFollowupComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: true,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onRealtime: {},
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72b-conversation-busy-followup",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationRestoredDraftComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: false,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72c-conversation-restored-draft",
+            size: CGSize(
+                width: 393,
+                height: 180
+            )
+        )
+    }
+
+    func testConversationSubmissionFailure() {
+        snapshot(
+            ConversationControlsPanel(
+                controls: nil,
+                error: "Message not confirmed. Retry to check delivery.",
+                disabled: false,
+                onChoice: { _ in }
+            ),
+            name: "72d-conversation-submission-failure",
+            size: CGSize(
+                width: 393,
+                height: 150
+            )
+        )
+    }
+
+    func testConversationClarificationTranscript() {
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: PreviewMocks.conversationClarificationTurn)
+                    .environment(\.conversationPresentation, ConversationTranscriptPresentation(
+                        controls: PreviewMocks.conversationControls
+                    ))
+                ConversationQueuedBubble(controls: PreviewMocks.conversationControls, disabled: false, onSendNow: {})
+                ConversationControlsPanel(controls: PreviewMocks.conversationControls, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16),
+            name: "72f-conversation-clarification-transcript",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
+    func testConversationInterruptedActivity() {
+        var aborted = PreviewMocks.agentToolCallSearchManyRunning
+        aborted.result = .error(code: "turn_aborted", message: "Interrupted")
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .assistant(AgentAssistantTurn(
+                    id: "prior-turn", parts: [
+                        .text("The earlier answer remains available."),
+                        .thinking("Checking more documents"),
+                        .tool(aborted),
+                        .subagent(AgentSubagentCard(
+                            subagentId: "worker",
+                            specialist: "generic",
+                            title: "Comparing totals",
+                            task: "Compare totals",
+                            parentToolCallId: "spawn"
+                        )),
+                    ]
+                )))
+                .environment(\.conversationPresentation, ConversationTranscriptPresentation(dismissedMessageIds: ["prior-turn"]))
+                AgentTurnBubble(turn: .user(id: "followup", text: "Include a short summary."))
+                ConversationControlsPanel(
+                    controls: nil, error: "Couldn’t send yet. Your queued message is saved.", disabled: false, onChoice: { _ in }
+                )
+            }.padding(16),
+            name: "72g-conversation-interrupted-activity",
+            size: CGSize(width: 393, height: 400)
+        )
+    }
+
+    func testConversationChoicesAndQueue() {
+        snapshot(
+            VStack(spacing: 24) {
+                AgentTurnBubble(turn: .user(id: "original", text: "Compare this month's activity."))
+                ConversationQueuedBubble(
+                    controls: PreviewMocks.conversationControls,
+                    disabled: false,
+                    onSendNow: {}
+                )
+                ConversationControlsPanel(
+                    controls: PreviewMocks.conversationControls,
+                    error: nil,
+                    disabled: false,
+                    onChoice: { _ in }
+                )
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(.horizontal, 16),
+            name: "72a-conversation-choices-queue",
+            size: CGSize(width: 393, height: 650)
+        )
     }
 
     func testAgentBusyStreaming() {
@@ -4033,28 +4681,6 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "82-menu-reveal-closed")
     }
 
-    /// Open over a different section, with the experimental rows present —
-    /// the most navigation rows the menu ever carries.
-    func testMenuRevealOpenOverBriefs() {
-        let store = AppStore.preview(
-            statusSnapshot: PreviewMocks.statusSnapshotExperimental,
-            agentPreview: PreviewMocks.agentConversationsRich
-        )
-        let view = MenuRevealContainer(isOpen: .constant(true)) {
-            MainMenuDrawer(
-                isOpen: .constant(true),
-                selection: .constant(.briefs),
-                onOpenSettings: {}
-            )
-        } content: {
-            BriefsView(menuOpen: .constant(true))
-        }
-        snapshot(
-            view.environment(store).environment(store.notificationRouter),
-            name: "83-menu-reveal-briefs"
-        )
-    }
-
     /// A history long enough to overflow the menu, so the action bar actually
     /// has content passing behind it: this is what proves the fade reads and
     /// that the bar's inset keeps the last row reachable rather than stranding
@@ -4250,6 +4876,24 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         .environment(store)
         snapshot(view, name: "78-agent-ephemeral-document-slot")
+    }
+
+    func testAgentEphemeralWikiRead() {
+        let store = AppStore.preview(agentPreview: .init())
+        for (call, index, name) in [
+            (PreviewMocks.agentToolCallWikiReadRunning, nil as Int?, "78c-agent-ephemeral-wiki-running"),
+            (PreviewMocks.agentToolCallWikiReadComplete, 1, "78d-agent-ephemeral-wiki-slot"),
+        ] {
+            let view = NavigationStack {
+                ScrollView {
+                    AgentEphemeralDocumentCard(call: call, initialIndex: index, freeze: true)
+                        .padding()
+                }
+                .background(Theme.bgPrimary)
+            }
+            .environment(store)
+            snapshot(view, name: name)
+        }
     }
 
     func testAgentEphemeralPeopleSlot() {
@@ -6654,27 +7298,6 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Main menu drawer
 
-    /// The Briefs drawer row carries an unread-count badge when the feature
-    /// is enabled and the count is non-zero (in-app only, no OS badge). This
-    /// parked state also checks the warning and badge share the trailing row.
-    func testMainMenuDrawerBriefsBadge() {
-        let store = AppStore.preview(
-            statusSnapshot: PreviewMocks.statusSnapshotBriefsNeedsAttention,
-            briefsUnreadCount: 3,
-            agentPreview: PreviewMocks.agentConversationsRich
-        )
-        let view = ZStack(alignment: .leading) {
-            Theme.bgDrawer.ignoresSafeArea()
-            MainMenuDrawer(
-                isOpen: .constant(true),
-                selection: .constant(.agent),
-                onOpenSettings: {}
-            )
-            .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
-        }
-        snapshot(view.environment(store), name: "99-main-menu-drawer-briefs-badge")
-    }
-
     /// Privacy is an ungated row, and carries the count of decisions waiting
     /// on the owner so a held answer is not found only by going looking.
     func testMainMenuDrawerPrivacyBadge() {
@@ -6896,6 +7519,78 @@ final class PreviewSnapshotTests: XCTestCase {
         .background(Theme.bgPrimary)
         .environment(NotificationRouter())
         snapshot(view, name: "181-watch-firing-context-card-legacy")
+    }
+
+    /// The task card pinned above a chat started from that task's fan: what
+    /// the chat is about, its state, due day and documents, and the way back
+    /// to the task.
+    func testTaskContextCard() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshot,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181a-task-context-card", size: CGSize(width: 393, height: 320))
+    }
+
+    /// A title that wraps over several lines, a due day already past (the
+    /// flag turns red) and a two-digit source count.
+    func testTaskContextCardLongOverdue() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshotLong,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181b-task-context-card-long-overdue", size: CGSize(width: 393, height: 360))
+    }
+
+    /// A task done since the chat started, with no due day and no
+    /// documents: the facts line holds the state alone.
+    func testTaskContextCardDoneNoSources() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshotDone,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181c-task-context-card-done", size: CGSize(width: 393, height: 300))
+    }
+
+    /// A chat just started from a task: the card at the top instead of the
+    /// landing screen, nothing said yet, the composer ready.
+    func testAgentTaskChatStarted() {
+        let store = AppStore.preview(agentPreview: PreviewMocks.taskConversationSeed)
+        snapshot(
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(store.notificationRouter),
+            name: "71c-agent-task-chat-started"
+        )
+    }
+
+    /// The same chat after a first exchange: the card stays above the turns.
+    func testAgentTaskChatAnswered() {
+        let store = AppStore.preview(agentPreview: PreviewMocks.taskConversationAnsweredSeed)
+        snapshot(
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(store.notificationRouter),
+            name: "71d-agent-task-chat-answered"
+        )
     }
 
     /// The custom `omnesis.mic` symbol (Omnesis mark + microphone) the
@@ -7897,6 +8592,557 @@ final class PreviewSnapshotTests: XCTestCase {
         .environment(AppStore.preview())
         snapshot(view, name: "112u-privacy-exchange-traces", size: CGSize(width: 393, height: 2200))
     }
+
+    // MARK: - Tasks
+
+    /// Today's page: chips carrying each view's open count, the date
+    /// heading, a carried task first, today's tasks, and what was done or
+    /// struck today, struck through, and the bar's Tell Omnesis button (a
+    /// microphone with a plus badge) at the top right. A stable gateway has
+    /// no Suggested segment, shows no proposal and no review banner.
+    func testTasksToday() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(
+                tasks: PreviewMocks.tasksToday,
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "310-tasks-today", size: CGSize(width: 393, height: 1500))
+    }
+
+    /// Today on an experimental gateway: the Suggested segment with its
+    /// count, one task carrying the Brain's "thinks this is done" proposal
+    /// with Confirm / Keep, and the review banner at the foot of the page.
+    func testTasksTodayExperimental() {
+        let view = NavigationStack {
+            TasksContent(
+                model: .fixture(
+                    tasks: PreviewMocks.tasksToday,
+                    counts: PreviewMocks.tasksTodayCounts,
+                    now: PreviewMocks.tasksNow
+                ),
+                experimental: true
+            )
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "310a-tasks-today-experimental", size: CGSize(width: 393, height: 1500))
+    }
+
+    /// The Undo toast of the last change pinned at the bottom of Today.
+    func testTasksTodayUndoToast() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(
+                tasks: PreviewMocks.tasksToday,
+                counts: PreviewMocks.tasksTodayCounts,
+                toast: TaskToast(
+                    id: 1,
+                    text: "Done: Book the Q4 budget review room",
+                    undoSeq: 12,
+                    isError: false
+                ),
+                now: PreviewMocks.tasksNow
+            ))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "311-tasks-today-undo-toast", size: CGSize(width: 393, height: 1100))
+    }
+
+    /// One suggestion waiting: the review banner speaks in the singular, at
+    /// the top of the page above the day's tasks.
+    func testTasksTodayOneSuggestion() {
+        let view = NavigationStack {
+            TasksContent(
+                model: .fixture(
+                    tasks: PreviewMocks.tasksToday,
+                    counts: PreviewMocks.tasksOneSuggestionCounts,
+                    now: PreviewMocks.tasksNow
+                ),
+                experimental: true
+            )
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "310b-tasks-today-one-suggestion", size: CGSize(width: 393, height: 1500))
+    }
+
+    /// A phone-sized window with a task's action fan open, as `fan` asks.
+    private func renderFan(
+        _ name: String,
+        selected: TaskViewKind = .today,
+        tasks: [TaskRecord] = PreviewMocks.tasksToday,
+        fan: TaskFanPreview,
+        experimental: Bool = false,
+        offersChat: Bool = false,
+        dynamicType: DynamicTypeSize = .large
+    ) {
+        let view = NavigationStack {
+            TasksContent(
+                model: .fixture(
+                    selected: selected,
+                    tasks: tasks,
+                    counts: PreviewMocks.tasksTodayCounts,
+                    now: PreviewMocks.tasksNow
+                ),
+                experimental: experimental,
+                onChat: offersChat ? { _ in } : nil,
+                initialFan: fan
+            )
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        }
+        .environment(AppStore.preview())
+        .environment(\.dynamicTypeSize, dynamicType)
+        renderInWindow(view, name: name, settle: 1.2)
+        renderInWindow(view, name: "\(name)-light", scheme: .light, settle: 1.2)
+    }
+
+    /// A long press on a title towards the right, slid onto Tomorrow: the
+    /// list dims around the lit row, the column rises up and to the left of
+    /// the thumb in its fixed order with Done nearest, and the dashed ring
+    /// marks where the finger pressed.
+    func testTasksFanMain() {
+        renderFan(
+            "320-tasks-fan-main",
+            fan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, pressedAt: 0.72, highlight: .tomorrow)
+        )
+    }
+
+    /// A gateway that can start a chat about a task: the fan ends with Chat
+    /// about this, farthest from the thumb, here under the finger.
+    func testTasksFanChat() {
+        renderFan(
+            "320c-tasks-fan-chat",
+            fan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, pressedAt: 0.72, highlight: .chat),
+            offersChat: true
+        )
+    }
+
+    /// The month fan after resting on Other month…: Back nearest the
+    /// thumb, months with their year, Later at the far end.
+    func testTasksFanMonths() {
+        renderFan(
+            "321-tasks-fan-months",
+            selected: .month,
+            tasks: PreviewMocks.tasksMonth,
+            fan: TaskFanPreview(
+                taskId: PreviewMocks.tasksMonth[6].id,
+                mode: .months(page: 0),
+                highlight: .month("2027-02")
+            )
+        )
+    }
+
+    /// The lowest visible row of a long Month page: the fan rises from near
+    /// the bottom edge and stays on screen.
+    func testTasksFanNearBottom() {
+        renderFan(
+            "322-tasks-fan-near-bottom",
+            selected: .month,
+            tasks: PreviewMocks.tasksMonth,
+            fan: TaskFanPreview(taskId: PreviewMocks.tasksMonth[8].id, highlight: .done)
+        )
+    }
+
+    /// A row near the top at a larger text size, the finger still on the
+    /// press point: the column flips downwards (same order, mirrored), still
+    /// to the left of the thumb, nothing highlighted.
+    func testTasksFanNearTopLargeText() {
+        renderFan(
+            "323-tasks-fan-near-top-large-text",
+            fan: TaskFanPreview(taskId: PreviewMocks.taskCarried.id),
+            dynamicType: .xxxLarge
+        )
+    }
+
+    /// The Brain's suggestions on an experimental gateway: the same rows as
+    /// the person's own tasks, each with a dashed circle that marks it already
+    /// done; the Suggested chip carries the waiting count.
+    func testTasksSuggested() {
+        let view = NavigationStack {
+            TasksContent(
+                model: .fixture(
+                    selected: .suggested,
+                    tasks: PreviewMocks.tasksSuggested,
+                    counts: PreviewMocks.tasksTodayCounts,
+                    now: PreviewMocks.tasksNow
+                ),
+                experimental: true
+            )
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "312-tasks-suggested")
+    }
+
+    /// A page of the pager on its own — Month, as a swipe from Today draws
+    /// it in — and a page whose read-ahead has not landed yet, which shows a
+    /// spinner rather than claiming the view is empty.
+    func testTasksJournalPages() {
+        let month = TaskJournalPage(
+            model: .fixture(
+                selected: .month,
+                tasks: PreviewMocks.tasksMonth,
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ),
+            view: .month
+        )
+        .environment(AppStore.preview())
+        snapshot(month, name: "313a-tasks-page-month", size: CGSize(width: 393, height: 1100))
+        let unread = TaskJournalPage(
+            model: .fixture(tasks: PreviewMocks.tasksToday, counts: PreviewMocks.tasksTodayCounts, now: PreviewMocks.tasksNow),
+            view: .future
+        )
+        .environment(AppStore.preview())
+        snapshot(unread, name: "313b-tasks-page-not-yet-read", size: CGSize(width: 393, height: 600))
+    }
+
+    /// An empty Today: heading, the empty state's guidance, and the Tell
+    /// Omnesis line.
+    func testTasksEmpty() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(tasks: [], now: PreviewMocks.tasksNow))
+                .navigationTitle("Tasks")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+                .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "313-tasks-empty")
+    }
+
+    /// The largest accessibility text size: rows and chips wrap rather than
+    /// clip.
+    func testTasksTodayAccessibilityText() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(
+                tasks: Array(PreviewMocks.tasksToday.prefix(3)),
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        .environment(\.dynamicTypeSize, .accessibility3)
+        snapshot(view, name: "314-tasks-today-accessibility-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    /// One task's history: its facts, then each change with where it came
+    /// from — the conversation one is a link back into that conversation.
+    func testTaskHistory() {
+        let view = NavigationStack {
+            TaskHistoryContent(
+                detail: TaskDetail(task: PreviewMocks.taskCarried, history: PreviewMocks.taskHistory, undoSeq: 41),
+                today: "2026-10-14",
+                onOpenConversation: { _ in }
+            )
+            .navigationTitle("History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        }
+        .background(Theme.bgPrimary)
+        .environment(AppStore.preview())
+        snapshot(view, name: "315-task-history")
+    }
+
+    /// The details sheet a tap on a task's text opens: flat on the page
+    /// background, its fields prefilled from a task with a plan and a
+    /// deadline, each document under its source's icon, and History.
+    func testTaskEditor() {
+        let view = TaskEditorSheet(
+            task: PreviewMocks.taskProposal,
+            today: "2026-10-14",
+            model: .fixture(tasks: [PreviewMocks.taskProposal])
+        ) { _ in true }
+            .environment(AppStore.preview(sourceIconByType: ["gmail": PreviewMocks.agentSourceLayoutIcon]))
+        snapshot(view, name: "316-task-editor", size: CGSize(width: 393, height: 1100))
+    }
+
+    /// "Done + note" is the Tell Omnesis screen completing a task: it opens
+    /// listening, the transcript landing in the same field.
+    func testTaskNoteComposerListening() {
+        let view = CaptureView(
+            completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
+            speech: .preview(state: .listening, transcript: "Went through it together, she signs on Friday"),
+            previewText: "Went through it together, she signs on Friday"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "324-task-note-composer-listening")
+    }
+
+    /// "Done + note" after the person stopped dictation to type: the same
+    /// typing state Tell Omnesis has.
+    func testTaskNoteComposerTyping() {
+        let view = CaptureView(
+            completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
+            speech: .preview(state: .idle),
+            previewText: "Signed and scanned, copy sent to the club"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "324a-task-note-composer-typing")
+    }
+
+    /// "Accept with note" on a suggestion is the same Tell Omnesis screen,
+    /// worded for accepting it.
+    func testTaskNoteComposerAccepting() {
+        let view = CaptureView(
+            completion: .accepting(PreviewMocks.tasksSuggested[0].title) { _ in true },
+            speech: .preview(state: .idle),
+            previewText: "Jamie needs it by Friday, pay from the joint account"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "324b-task-note-composer-accepting")
+    }
+
+    /// A long press on a suggestion: its fan offers Accept nearest the
+    /// thumb, then Accept with note, Accept for…, Mark as done and Ignore.
+    func testTasksSuggestionFan() {
+        renderFan(
+            "325-tasks-suggestion-fan",
+            selected: .suggested,
+            tasks: PreviewMocks.tasksSuggestedLong,
+            fan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[4].id, highlight: .acceptWithNote),
+            experimental: true
+        )
+    }
+
+    /// Resting on Accept for…: Back nearest, then the times to accept the
+    /// suggestion for, soonest first.
+    func testTasksSuggestionFanWhen() {
+        renderFan(
+            "325a-tasks-suggestion-fan-when",
+            selected: .suggested,
+            tasks: PreviewMocks.tasksSuggestedLong,
+            fan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[5].id, mode: .when, highlight: .tomorrow),
+            experimental: true
+        )
+    }
+
+    /// A gateway that serves Tasks: the Tasks row sits under Search and reads
+    /// "Tasks (4)" for today's open tasks, and the Morning brief
+    /// conversation heads the list, marked by its sunrise glyph.
+    func testMainMenuDrawerTasksAndMorningBrief() {
+        let store = AppStore.preview(
+            statusSnapshot: PreviewMocks.statusSnapshotTasks,
+            tasksTodayCount: 4,
+            agentPreview: PreviewMocks.agentConversationsWithMorningBrief
+        )
+        let view = ZStack(alignment: .leading) {
+            Theme.bgDrawer.ignoresSafeArea()
+            MainMenuDrawer(
+                isOpen: .constant(true),
+                selection: .constant(.tasks),
+                onOpenSettings: {}
+            )
+            .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
+        }
+        snapshot(view.environment(store), name: "317-main-menu-drawer-tasks-morning-brief")
+    }
+
+    /// The conversation list with the Morning brief row. Its long-press menu
+    /// offers no Delete (covered by `ConversationSummaryOriginTests`; a
+    /// context menu does not render in a still).
+    func testAgentConversationsMorningBrief() {
+        let store = AppStore.preview(agentPreview: PreviewMocks.agentConversationsWithMorningBrief)
+        let view = NavigationStack { AgentConversationsListView() }
+        snapshot(view.environment(store), name: "318-agent-conversations-morning-brief")
+    }
+
+    // MARK: - Morning brief conversation
+
+    private static let dailyBriefCanvas = CGSize(width: 393, height: 1400)
+
+    /// Today open under its header with what it was based on listed — the
+    /// sources and tasks — and the two earlier days folded to one line each.
+    func testDailyBriefTodayOpen() {
+        snapshot(
+            DailyBriefTranscriptPreview(model: DailyBriefTranscriptPreview.model()),
+            name: "330-daily-brief-today-open",
+            size: Self.dailyBriefCanvas
+        )
+    }
+
+    /// The reader folded today's "Based on" list.
+    func testDailyBriefTodayListFolded() {
+        let model = DailyBriefTranscriptPreview.model { $0.toggleFooter(PreviewMocks.dailyBriefOrigin.briefs[2]) }
+        snapshot(
+            DailyBriefTranscriptPreview(model: model),
+            name: "331-daily-brief-today-list-folded",
+            size: Self.dailyBriefCanvas
+        )
+    }
+
+    /// Yesterday opened from its folded line: its brief and replies, its list
+    /// closed; Monday still folded, now counting its items.
+    func testDailyBriefYesterdayOpened() {
+        let model = DailyBriefTranscriptPreview.model(pages: PreviewMocks.dailyBriefPages) {
+            $0.toggleDay(PreviewMocks.dailyBriefOrigin.briefs[1])
+        }
+        snapshot(
+            DailyBriefTranscriptPreview(model: model),
+            name: "332-daily-brief-yesterday-opened",
+            size: CGSize(width: 393, height: 1800)
+        )
+    }
+
+    /// Today's items could not be read: a quiet Retry line, the brief intact.
+    func testDailyBriefItemsFailed() {
+        let model = DailyBriefTranscriptPreview.model(pages: []) { $0.showForPreview(.failed, day: "2026-10-14") }
+        snapshot(
+            DailyBriefTranscriptPreview(model: model),
+            name: "333-daily-brief-items-failed",
+            size: Self.dailyBriefCanvas
+        )
+    }
+
+    /// Today's items on their way.
+    func testDailyBriefItemsLoading() {
+        let model = DailyBriefTranscriptPreview.model(pages: []) { $0.showForPreview(.loading, day: "2026-10-14") }
+        snapshot(
+            DailyBriefTranscriptPreview(model: model),
+            name: "333b-daily-brief-items-loading",
+            size: Self.dailyBriefCanvas
+        )
+    }
+
+    /// The thumbs under an item, one PNG per state: untouched, useful, not
+    /// interested with the words given, a factual error with its correction,
+    /// and a reaction the gateway refused — put back, with the reason.
+    func testDailyBriefReactionStates() {
+        for state in PreviewMocks.dailyBriefReactionStates {
+            let view = VStack(alignment: .leading, spacing: 0) {
+                DailyBriefReactionBar(item: state.item, failure: state.failure) { _, _, _ in true }
+                Spacer()
+            }
+            .padding(Theme.Spacing.lg)
+            .background(Theme.bgSecondary)
+            snapshot(view, name: "333c-daily-brief-reaction-\(state.name)", size: CGSize(width: 393, height: 120))
+        }
+    }
+
+    /// "Why not?" after "Not interested": the item's sentence under the
+    /// heading, the words optional.
+    func testDailyBriefWhyNotCapture() {
+        let view = CaptureView(
+            completion: .explainingDisinterest(PreviewMocks.dailyBriefToday.items[2].summary) { _ in true },
+            speech: .preview(state: .idle)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "333d-daily-brief-why-not-capture")
+    }
+
+    /// "What's wrong?" after "Factual error", with a correction typed.
+    func testDailyBriefCorrectionCapture() {
+        let view = CaptureView(
+            completion: .correcting(PreviewMocks.dailyBriefToday.items[0].summary) { _ in true },
+            speech: .preview(state: .idle),
+            previewText: "The reply is due next Wednesday, not Friday"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "333e-daily-brief-correction-capture")
+    }
+
+    /// The largest accessibility text size: separators, header, list and
+    /// chips wrap rather than clip.
+    func testDailyBriefAccessibilityText() {
+        snapshot(
+            DailyBriefTranscriptPreview(model: DailyBriefTranscriptPreview.model())
+                .environment(\.dynamicTypeSize, .accessibility3),
+            name: "334-daily-brief-accessibility-text",
+            size: CGSize(width: 393, height: 2600)
+        )
+    }
+
+    /// The whole surface as it opens: the transcript at its latest brief, the
+    /// list showing, and the composer inviting a reply about today.
+    func testDailyBriefConversation() {
+        let view = AgentView(menuOpen: .constant(false))
+            .environment(AppStore.preview(agentPreview: PreviewMocks.dailyBriefSeed))
+            .environment(\.dailyBriefContext, PreviewMocks.dailyBriefContext)
+        renderInWindow(view, name: "335-daily-brief-conversation", settle: 1.2)
+        renderInWindow(view, name: "335-daily-brief-conversation-light", scheme: .light, settle: 1.2)
+    }
+
+    /// The parts on their own: separators folded and fixed, the folded line,
+    /// the header, and the footer loading, failed and open.
+    func testDailyBriefParts() {
+        let view = VStack(alignment: .leading, spacing: 14) {
+            DailyBriefDaySeparator(day: "2026-10-12", label: "Mon 12 Oct", spokenLabel: "Monday 12 October", isOpen: false)
+            DailyBriefFoldedRow(day: "2026-10-12", summary: "Morning brief · 2 things · 1 reply", onOpen: {})
+            DailyBriefDaySeparator(day: "2026-10-13", label: "Yesterday", spokenLabel: "Yesterday", isOpen: true)
+            DailyBriefDaySeparator(day: "2026-10-14", label: "Today", spokenLabel: "Today", isOpen: nil)
+            DailyBriefHeader(time: "07:02")
+            DailyBriefHeader(time: nil)
+            DailyBriefFooter(day: "2026-10-14", state: .loading, isOpen: true, onToggle: {}, onRetry: {})
+            DailyBriefFooter(day: "2026-10-14", state: .failed, isOpen: true, onToggle: {}, onRetry: {})
+            DailyBriefFooter(
+                day: "2026-10-14",
+                state: .loaded(PreviewMocks.dailyBriefYesterday),
+                isOpen: false,
+                onToggle: {},
+                onRetry: {}
+            )
+            Spacer()
+        }
+        .padding(Theme.Spacing.lg)
+        .background(Theme.bgPrimary)
+        snapshot(NavigationStack { view }.environment(AppStore.preview()), name: "336-daily-brief-parts")
+    }
+
+    /// Open over the Tasks section, with the experimental rows present — the
+    /// most navigation rows the menu ever carries.
+    func testMenuRevealOpenOverTasks() {
+        let store = AppStore.preview(
+            statusSnapshot: PreviewMocks.statusSnapshotExperimentalWithTasks,
+            tasksTodayCount: 4,
+            agentPreview: PreviewMocks.agentConversationsRich
+        )
+        let view = MenuRevealContainer(isOpen: .constant(true)) {
+            MainMenuDrawer(
+                isOpen: .constant(true),
+                selection: .constant(.tasks),
+                onOpenSettings: {}
+            )
+        } content: {
+            TasksScreen(
+                model: .fixture(
+                    tasks: PreviewMocks.tasksToday,
+                    counts: PreviewMocks.tasksTodayCounts,
+                    now: PreviewMocks.tasksNow
+                ),
+                experimental: true,
+                menuOpen: .constant(true)
+            )
+        }
+        snapshot(
+            view.environment(store).environment(store.notificationRouter),
+            name: "83-menu-reveal-tasks"
+        )
+    }
 }
 
 /// Integrity guard for the snapshot suite's write path: a write
@@ -7941,5 +9187,111 @@ private struct PhoneSetupInPlaceOutcomeProbe: View {
                 try? await Task.sleep(for: .milliseconds(300))
                 coordinator.installPreview(flow: changed)
             }
+    }
+}
+
+private struct RealtimeComposerSnapshot: View {
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    var body: some View {
+        AgentComposer(
+            text: $text,
+            busy: false,
+            disabled: false,
+            speech: SpeechRecognizer.preview(state: .idle),
+            onRealtime: {},
+            onSend: { _, _ in },
+            onCancel: {},
+            focused: $focused
+        )
+    }
+}
+
+@MainActor
+@Observable
+private final class VoiceScrollEnvironmentModel {
+    let store = AppStore.preview()
+    let button = UIButton(type: .system)
+    var caption = "A short workshop caption."
+    var type = DynamicTypeSize.large
+    var seenCaption = ""
+    var seenType: DynamicTypeSize?
+    var sawExpectedStore = false
+
+    init() {
+        button.setTitle("Expand local content", for: .normal)
+    }
+}
+
+private struct VoiceScrollEnvironmentRoot: View {
+    let model: VoiceScrollEnvironmentModel
+
+    var body: some View {
+        RealtimeTranscriptScrollView {
+            Text("Voice scroll fixture")
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Theme.bgPrimary)
+        } content: {
+            VoiceScrollStatefulContent(model: model, caption: model.caption)
+        }
+        .environment(model.store)
+        .dynamicTypeSize(model.type)
+    }
+}
+
+private struct VoiceScrollStatefulContent: View {
+    let model: VoiceScrollEnvironmentModel
+    let caption: String
+    @State private var expanded = false
+    @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var type
+
+    var body: some View {
+        VStack(spacing: 16) {
+            VoiceScrollExpansionButton(button: model.button) { expanded.toggle() }.frame(height: 44)
+            if expanded { Text(PreviewMocks.realtimeLongCaption).font(.body) }
+            Text(caption)
+        }
+        .onAppear {
+            model.sawExpectedStore = store === model.store
+            model.seenCaption = caption
+            model.seenType = type
+        }
+        .onChange(of: caption) { _, value in model.seenCaption = value }
+        .onChange(of: type) { _, value in model.seenType = value }
+    }
+}
+
+private struct VoiceScrollExpansionButton: UIViewRepresentable {
+    let button: UIButton
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        button.addTarget(context.coordinator, action: #selector(Coordinator.activate), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_: UIButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    static func dismantleUIView(_ view: UIButton, coordinator: Coordinator) {
+        view.removeTarget(coordinator, action: #selector(Coordinator.activate), for: .touchUpInside)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func activate() {
+            action()
+        }
     }
 }

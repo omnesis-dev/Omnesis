@@ -294,7 +294,7 @@ export function GraphView({
   return html`
     <div class="graph-debug-view">
       <header class="graph-debug-header">
-        <h1>Graph debugger</h1>
+        <h1>Document graph</h1>
         <p class="graph-debug-subtitle">
           Walk every inbound + outbound edge — document_links, near-duplicates, and
           document_people — around one document. Click a vertex to open it.
@@ -412,7 +412,7 @@ export function GraphView({
             xmlns="http://www.w3.org/2000/svg"
           ></svg>
           ${!visibleGraph && !loading && !error
-            ? html`<div class="graph-debug-empty">Enter a document ID above and click <em>Walk graph</em>.</div>`
+            ? html`<div class="graph-debug-empty"><span>Enter a document ID above and choose Walk graph.</span></div>`
             : null}
           ${popover
             ? html`<${MergedPopover}

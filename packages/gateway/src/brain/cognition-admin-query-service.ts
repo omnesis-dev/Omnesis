@@ -11,11 +11,22 @@
 
 import { parseSourceKey, type CognitionDocumentRef } from "@omnesis/core";
 import { getDocumentTitlesAndSources } from "../db.js";
-import { mutableListRevision, type MutableListRevisionScope } from "../data/list-revisions.js";
+import { NotFoundError } from "../http/errors.js";
+import {
+  mutableListRevision,
+  readListPage,
+  type MutableListRevisionScope,
+} from "../data/list-revisions.js";
 import {
   listTemporalAnnotations,
   temporalAnnotationStats,
 } from "../enrichment/temporal-annotations/storage.js";
+import { readDecisionPayload } from "./decision-payload.js";
+import { areDecisionSourcesReadable, readRetainedDecisionInput } from "./decision-read-privacy.js";
+import { listKnowledgeDecisionsForRun } from "./knowledge/decision-query.js";
+import { readKnowledgeBootstrapStatus } from "./knowledge/bootstrap-status.js";
+import { historyHorizonFloor } from "./knowledge/history-horizon.js";
+import { summarizeCognitionTranscript } from "./decision-view.js";
 import { artifactProvenance } from "./artifact-provenance.js";
 import { displayPersonRefs } from "./person-refs.js";
 import { countBootstrapProcessed } from "./storage/bootstrap.js";
@@ -24,14 +35,25 @@ import {
   readBootstrapBacklog,
   readBootstrapTimeline,
 } from "./bootstrap-status.js";
-import { listLiveBriefClaims } from "./storage/brief-claims.js";
-import { getBrief, listBriefs, listBriefsForLoop } from "./storage/briefs.js";
+import {
+  getObservation,
+  listObservationOutcomes,
+  listObservations,
+  listObservationsForLoop,
+  listWouldPushLog,
+} from "./storage/observations.js";
+import {
+  latestSentMorningBrief,
+  listMorningBriefItems,
+  getSentMorningBrief,
+} from "./storage/morning-brief-items.js";
 import { listCognitionCoverage } from "./storage/coverage.js";
 import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "./storage/open-loops.js";
 import { readCognitionNotes } from "./storage/notes.js";
 import { listRetiredLoops } from "./storage/retired-loops.js";
 import {
   decisionVerdictsForRuns,
+  listDecisionsForRecord,
   listDecisionsForRun,
   type CognitionDecisionRecord,
   type DecisionVerdict,
@@ -162,6 +184,11 @@ export class CognitionAdminQueryService {
     return mutableListRevision(this.db, scope);
   }
 
+  /** Run a page's revision read and row reads against one snapshot. */
+  readListPage<T>(read: () => T): T {
+    return readListPage(this.db, read);
+  }
+
   pulse(now: number) {
     const counts = this.db
       .prepare<
@@ -173,8 +200,8 @@ export class CognitionAdminQueryService {
           openLoops: number;
           snoozedLoops: number;
           totalLoops: number;
-          unreadBriefs: number;
-          totalBriefs: number;
+          openObservations: number;
+          totalObservations: number;
           failedRuns24h: number;
         }
       >(
@@ -187,8 +214,8 @@ export class CognitionAdminQueryService {
            (SELECT COUNT(*) FROM open_loops WHERE state = 'open') AS openLoops,
            (SELECT COUNT(*) FROM open_loops WHERE state = 'snoozed') AS snoozedLoops,
            (SELECT COUNT(*) FROM open_loops) AS totalLoops,
-           (SELECT COUNT(*) FROM briefs WHERE state = 'unread') AS unreadBriefs,
-           (SELECT COUNT(*) FROM briefs) AS totalBriefs,
+           (SELECT COUNT(*) FROM observations WHERE state IN ('live','held')) AS openObservations,
+           (SELECT COUNT(*) FROM observations) AS totalObservations,
            (SELECT COUNT(*) FROM cognition_runs
              WHERE status = 'failed' AND completed_at >= ?) AS failedRuns24h`,
       )
@@ -221,8 +248,8 @@ export class CognitionAdminQueryService {
     return listOpenLoopLedger(this.db, id, options);
   }
 
-  listLoopBriefs(id: string, options?: Parameters<typeof listBriefsForLoop>[2]) {
-    return listBriefsForLoop(this.db, id, options);
+  listLoopObservations(id: string, options?: Parameters<typeof listObservationsForLoop>[2]) {
+    return listObservationsForLoop(this.db, id, options);
   }
 
   listRuns(options: Parameters<typeof listCognitionRuns>[1]) {
@@ -233,12 +260,35 @@ export class CognitionAdminQueryService {
     return getCognitionRun(this.db, id);
   }
 
-  listBriefs(options: Parameters<typeof listBriefs>[1]) {
-    return listBriefs(this.db, options);
+  listObservations(options: Parameters<typeof listObservations>[1]) {
+    return listObservations(this.db, options);
   }
 
-  getBrief(id: string) {
-    return getBrief(this.db, id);
+  getObservation(id: string) {
+    return getObservation(this.db, id);
+  }
+
+  wouldPushLog(limit?: number) {
+    return listWouldPushLog(this.db, limit);
+  }
+
+  observationOutcomes(limit?: number) {
+    return listObservationOutcomes(this.db, limit);
+  }
+
+  /** One sent morning brief (or the latest) with its ranked items. */
+  morningBrief(day?: string) {
+    const sent = day ? getSentMorningBrief(this.db, day) : latestSentMorningBrief(this.db);
+    const itemDay = sent?.day ?? day;
+    return {
+      sent,
+      items: itemDay
+        ? listMorningBriefItems(this.db, itemDay).map((item) => ({
+            ...item,
+            observation: getObservation(this.db, item.observationId),
+          }))
+        : [],
+    };
   }
 
   listRetiredLoops(options: Parameters<typeof listRetiredLoops>[1]) {
@@ -294,6 +344,14 @@ export class CognitionAdminQueryService {
    * The retrospective lane's live state. `startedAt` is this process's start,
    * which is what the lane's boot hold is measured against.
    */
+  knowledgeBootstrapStatus(
+    settings: BootstrapSettingsView,
+    now: number,
+    budget?: CognitionBudgetSettings,
+  ) {
+    return readKnowledgeBootstrapStatus(this.db, settings, now, budget);
+  }
+
   bootstrapStatus(settings: BootstrapSettingsView, now: number): BootstrapStatus {
     return readBootstrapStatus(this.db, settings, { now, startedAt: this.startedAt });
   }
@@ -308,6 +366,19 @@ export class CognitionAdminQueryService {
     opts: { now: () => number; recencyWindowMs: number },
   ): Promise<BootstrapBacklog> {
     return readBootstrapBacklog(io, opts);
+  }
+
+  async knowledgeDiscoveryTimeline(
+    io: BootstrapTimelineReader,
+    opts: { now: () => number; horizonMs: number; excludedSources: readonly string[] },
+  ): Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline> {
+    if (!io.knowledgeDiscoveryByMonth) throw new Error("Discovery timeline IO unavailable");
+    const now = opts.now;
+    const months = await io.knowledgeDiscoveryByMonth(
+      historyHorizonFloor(now(), opts.horizonMs),
+      opts.excludedSources,
+    );
+    return { mode: "knowledge", months, computedAt: now() };
   }
 
   /** The corpus month by month, off the main loop. See `bootstrapBacklog`. */
@@ -337,7 +408,53 @@ export class CognitionAdminQueryService {
 
   /** Every decision-model judgement made for one run, oldest first. */
   decisionsForRun(runId: string): CognitionDecisionRecord[] {
-    return listDecisionsForRun(this.db, runId);
+    return this.db.transaction(() =>
+      listDecisionsForRun(this.db, runId).map((decision) =>
+        areDecisionSourcesReadable(this.db, decision)
+          ? decision
+          : { ...decision, requestJson: null, responseJson: null, error: null },
+      ),
+    )();
+  }
+
+  decisionInput(id: string) {
+    return this.db.transaction(() => {
+      const decision = this.db
+        .prepare<
+          [string],
+          { documentId: string | null; subjectDocumentId: string | null }
+        >("SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?")
+        .get(id);
+      if (!decision) throw new NotFoundError("Decision not found");
+      const readable = areDecisionSourcesReadable(this.db, decision);
+      const input = readable
+        ? readDecisionPayload(this.db, id)
+        : { availability: "unavailable" as const, request: null, response: null, error: null };
+      return {
+        input,
+        ...(readable && input.availability === "unavailable"
+          ? { retained: readRetainedDecisionInput(this.db, id) }
+          : {}),
+      };
+    })();
+  }
+
+  decisionSubjectRefs(decisions: readonly CognitionDecisionRecord[]): CognitionAdminDocumentRef[] {
+    return this.db.transaction(() =>
+      this.documentRefs([
+        ...new Set(
+          decisions
+            .filter((decision) => areDecisionSourcesReadable(this.db, decision))
+            .flatMap((decision) =>
+              decision.subjectDocumentId === null ? [] : [decision.subjectDocumentId],
+            ),
+        ),
+      ]),
+    )();
+  }
+
+  knowledgeDecisionsForRun(runId: string) {
+    return listKnowledgeDecisionsForRun(this.db, runId);
   }
 
   documentRefs(docIds: readonly string[]): CognitionAdminDocumentRef[] {
@@ -362,10 +479,15 @@ export class CognitionAdminQueryService {
     return artifactProvenance(this.db, runId);
   }
 
-  briefClaims(briefId: string) {
-    const claims = listLiveBriefClaims(this.db, briefId);
-    const evidence = this.documentRefs(claims.map((claim) => claim.evidenceDocId));
-    return claims.map((claim, index) => ({ claim, evidenceDoc: evidence[index]! }));
+  /** The decision model's salience judgements of one observation, newest first. */
+  observationDecisions(observationId: string): CognitionDecisionRecord[] {
+    return this.db.transaction(() =>
+      listDecisionsForRecord(this.db, "observation-salience", observationId, 20).map((decision) =>
+        areDecisionSourcesReadable(this.db, decision)
+          ? decision
+          : { ...decision, requestJson: null, responseJson: null, error: null },
+      ),
+    )();
   }
 
   activityReader(): RunActivityReader | undefined {
@@ -388,6 +510,25 @@ export class CognitionAdminQueryService {
       this.transcripts?.listForRunWithStatus(runId) ??
       Promise.resolve({ items: [], indexComplete: true })
     );
+  }
+
+  transcriptDecision(transcript: CognitionRunTranscript) {
+    const decision = summarizeCognitionTranscript(transcript);
+    if (
+      decision.kind !== "synthesis" ||
+      !this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE name='knowledge_batches' AND type='table'")
+        .get()
+    )
+      return decision;
+    const docs = this.db
+      .prepare<[string], { id: string }>(
+        `SELECT DISTINCT w.subject_id AS id FROM knowledge_batches b
+      JOIN knowledge_work w ON w.batch_id=b.id JOIN documents d ON d.id=w.subject_id
+      WHERE b.run_id=? AND w.subject_kind='source' ORDER BY w.subject_id`,
+      )
+      .all(decision.runId);
+    return { ...decision, docIds: docs.map((doc) => doc.id) };
   }
 
   loadTranscript(fileName: string): Promise<CognitionRunTranscript> {

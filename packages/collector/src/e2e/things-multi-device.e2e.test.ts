@@ -18,6 +18,20 @@ import type { CollectorInternalConfig } from "../internal-config.js";
 const SOURCE_ID = "things:local";
 const SOURCE_TYPE = "things";
 
+// Replica synchronization must not depend on an external icon CDN. Keep the
+// real provider and its descriptor contract, with a transparent fixture pixel.
+const thingsFixtureIcon = thingsDefinition.icon;
+if (!thingsFixtureIcon) throw new Error("Things replica fixture requires the provider icon");
+const thingsFixtureDefinition = {
+  ...thingsDefinition,
+  icon: {
+    ...thingsFixtureIcon,
+    url: undefined,
+    imageDataUri:
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
+  },
+};
+
 interface RealCollector {
   deviceId: string;
   token: string;
@@ -289,8 +303,8 @@ describe("Things replicas across real collectors", () => {
       gateway,
       { sources: {}, defaultSyncInterval: "999999s" } satisfies CollectorInternalConfig,
       {
-        definitions: [thingsDefinition],
-        descriptors: extractDescriptors(thingsDefinition),
+        definitions: [thingsFixtureDefinition],
+        descriptors: extractDescriptors(thingsFixtureDefinition),
         configDir: join(tempRoot, `${name}-config`),
       },
     );

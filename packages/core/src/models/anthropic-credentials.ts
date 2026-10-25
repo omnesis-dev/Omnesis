@@ -30,7 +30,7 @@ export const ANTHROPIC_CREDENTIALS_SPEC: ProviderCredentialsSpec = {
   wizard: {
     intro:
       "Configure an Anthropic API key so the gateway can assign Claude models to its reasoning capabilities.",
-    why: "A key unlocks the Claude models in the Agent capability — the model that answers questions over your corpus and runs Deep Research — and in every capability that offers the same model choices: the privacy reviewer, the background agent, the entailment verifier and the brief judge. A local GGUF or your own OpenAI-compatible server is the alternative if you'd rather keep everything offline.",
+    why: "A key unlocks the Claude models in the Agent capability — the model that answers questions over your corpus and runs Deep Research — and in every capability that offers the same model choices: the privacy reviewer, the background agent and the entailment verifier. A local GGUF or your own OpenAI-compatible server is the alternative if you'd rather keep everything offline.",
     estMinutes: 1,
     steps: [
       {

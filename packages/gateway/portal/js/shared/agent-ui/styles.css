@@ -211,12 +211,12 @@
   max-height: 200px;
   overflow: hidden;
   transition:
-    opacity 300ms ease-out,
-    max-height 300ms ease-out,
-    padding-top 300ms ease-out,
-    padding-bottom 300ms ease-out,
-    margin-top 300ms ease-out,
-    margin-bottom 300ms ease-out;
+    opacity var(--agent-ephemeral-fade-ms, 300ms) ease-out,
+    max-height var(--agent-ephemeral-fade-ms, 300ms) ease-out,
+    padding-top var(--agent-ephemeral-fade-ms, 300ms) ease-out,
+    padding-bottom var(--agent-ephemeral-fade-ms, 300ms) ease-out,
+    margin-top var(--agent-ephemeral-fade-ms, 300ms) ease-out,
+    margin-bottom var(--agent-ephemeral-fade-ms, 300ms) ease-out;
 }
 .agent-ephemeral.is-dismissed {
   opacity: 0;

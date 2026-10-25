@@ -125,17 +125,25 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
 
 function service(
   scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
+  canonicalOverrides: readonly ToolHandle[] = [],
 ): DirectMcpService {
   return new DirectMcpService(
-    DIRECT_MCP_TOOL_NAMES.map((name) => ({
-      name,
-      description: `Canonical ${name}`,
-      schema:
-        name === "fetch_many"
-          ? z.object({ documents: z.array(z.object({ documentId: z.string() })) }).strict()
-          : z.object({ value: z.string().optional() }).strict(),
-      invoke: async () => ({ kind: "structured", resultType: "test.result", data: { ok: true } }),
-    })),
+    DIRECT_MCP_TOOL_NAMES.map(
+      (name) =>
+        canonicalOverrides.find((handle) => handle.name === name) ?? {
+          name,
+          description: `Canonical ${name}`,
+          schema:
+            name === "fetch_many"
+              ? z.object({ documents: z.array(z.object({ documentId: z.string() })) }).strict()
+              : z.object({ value: z.string().optional() }).strict(),
+          invoke: async () => ({
+            kind: "structured",
+            resultType: "test.result",
+            data: { ok: true },
+          }),
+        },
+    ),
     () => Promise.resolve({}),
     scopedHandles,
   );
@@ -808,6 +816,69 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     await expect(connect(app, mixedCompletionToken)).rejects.toThrow();
   });
 
+  it("refuses excessive nested tool inputs within the HTTP byte limit before invocation", async () => {
+    const invoke = vi.fn(
+      async (): Promise<ToolResult> => ({
+        kind: "structured",
+        resultType: "test.result",
+        data: { ok: true },
+      }),
+    );
+    const direct = service(undefined, [
+      {
+        name: "search_many",
+        description: "Search fictional numeric values",
+        schema: z.object({ values: z.array(z.number()) }).strict(),
+        invoke,
+      },
+    ]);
+    const { app, runtime } = appFixture(direct);
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, directToken);
+    closeables.push(client, transport);
+    const oversized = { values: Array.from({ length: 10_001 }, () => 0) };
+    expect(JSON.stringify(oversized).length).toBeLessThan(64 * 1024);
+    const refused = await client.callTool({ name: "search_many", arguments: oversized });
+    expect(refused.isError).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
+    const accepted = await client.callTool({ name: "search_many", arguments: { values: [1] } });
+    expect(accepted.isError).not.toBe(true);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["2025-11-25", "2026-07-28"] as const)(
+    "isolates concurrent repeated requests from different principals over MCP %s",
+    async (protocolVersion) => {
+      const { app, runtime } = appFixture();
+      closeables.push(runtime);
+      const [all, restricted] = await Promise.all([
+        connect(app, directToken, protocolVersion),
+        connect(app, restrictedDirectToken, protocolVersion),
+      ]);
+      closeables.push(all.client, all.transport, restricted.client, restricted.transport);
+      for (let round = 0; round < 2; round++) {
+        const [allTools, restrictedTools] = await Promise.all([
+          all.client.listTools(),
+          restricted.client.listTools(),
+        ]);
+        expect(allTools.tools.map((tool) => tool.name)).toEqual(DIRECT_MCP_TOOL_NAMES);
+        expect(restrictedTools.tools.map((tool) => tool.name)).toEqual([
+          "search_many",
+          "fetch_many",
+          "lookup_document_by_url",
+          "run_sql",
+          "list_tables",
+        ]);
+        expect(all.client.getInstructions()).not.toContain(
+          "restricted to selected source instances",
+        );
+        expect(restricted.client.getInstructions()).toContain(
+          "restricted to selected source instances",
+        );
+      }
+    },
+  );
+
   it("serves Direct with experimental mode disabled", async () => {
     const { app, runtime, recordMcpToolInvocation } = appFixture();
     closeables.push(runtime);
@@ -862,7 +933,8 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
         documentByUrl: { lookup: async (url) => ({ url, durationMs: 0 }) },
       },
     });
-    const { app, runtime } = appFixture(service(() => scoped));
+    // The canonical surface is complete; only the authorized scoped search is substituted.
+    const { app, runtime } = appFixture(service(() => scoped, scoped));
     closeables.push(runtime);
     const { client, transport } = await connect(app, restrictedDirectToken);
     closeables.push(client, transport);

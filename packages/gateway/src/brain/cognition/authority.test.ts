@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { COGNITION_MUTATING_TOOL_NAMES } from "../steward/tools.js";
+import { KNOWLEDGE_MUTATING_TOOLS } from "../knowledge/tools.js";
 import {
   COGNITIVE_ARTIFACTS,
   allGrantableMutatingTools,
@@ -18,7 +19,7 @@ describe("the artifact → tool map", () => {
     // A verb missing here would be granted to nobody and silently disappear
     // from every workflow's toolset.
     const grantable = new Set(allGrantableMutatingTools());
-    for (const name of COGNITION_MUTATING_TOOL_NAMES) {
+    for (const name of [...COGNITION_MUTATING_TOOL_NAMES, ...KNOWLEDGE_MUTATING_TOOLS]) {
       expect(grantable.has(name), name).toBe(true);
     }
   });
@@ -43,7 +44,7 @@ describe("per-workflow authority", () => {
   it("gives an unnarrowed workflow everything except a merge verdict", () => {
     const intake = mutatingToolsFor("datum-intake");
     expect(intake.has("open_loop_create")).toBe(true);
-    expect(intake.has("brief_create")).toBe(true);
+    expect(intake.has("observation_note")).toBe(true);
     expect(intake.has("annotate_durable")).toBe(true);
     // Only identity adjudication settles a person merge.
     expect(intake.has("merge_adjudicate")).toBe(false);
@@ -57,25 +58,24 @@ describe("per-workflow authority", () => {
     expect([...tools]).toEqual(["merge_adjudicate"]);
   });
 
-  it("limits the morning digest to the one card it composes", () => {
-    // An editorial pass over state other workflows gathered — it revises its
-    // own card and creates nothing beneath it.
+  it("limits the morning digest to sending the one morning brief it composes", () => {
+    // An editorial pass over observations other workflows noted — it sends the
+    // day's brief and writes nothing else.
     const tools = mutatingToolsFor("morning-digest");
-    expect(tools.has("brief_create")).toBe(true);
-    expect(tools.has("brief_update")).toBe(true);
+    expect([...tools]).toEqual(["morning_brief_send"]);
+    expect(tools.has("observation_note")).toBe(false);
     expect(tools.has("open_loop_create")).toBe(false);
     expect(tools.has("annotate_durable")).toBe(false);
     expect(tools.has("merge_adjudicate")).toBe(false);
   });
 
   it("stops memory re-grounding from turning a re-check into an interruption", () => {
-    // The prompt builder already withholds the brief-claim hop from this lane
-    // on the grounds that it "must not create briefs". Now it cannot.
+    // A re-check revises memory; it must not note observations or open loops.
     const tools = mutatingToolsFor("memory-regrounding");
     expect(tools.has("annotation_revise")).toBe(true);
     expect(tools.has("annotation_retract")).toBe(true);
     expect(tools.has("person_annotation_supersede")).toBe(true);
-    expect(tools.has("brief_create")).toBe(false);
+    expect(tools.has("observation_note")).toBe(false);
     expect(tools.has("open_loop_create")).toBe(false);
   });
 

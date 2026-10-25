@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { OcrAbortedError, OcrService, OcrTimeoutError } from "./ocr-service.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
@@ -390,7 +390,9 @@ describe("OcrService", () => {
     });
     const caller = new AbortController();
     const pending = svc.recognize(png("img"), "image/png", { signal: caller.signal });
-    await new Promise((r) => setTimeout(r, 10));
+    // Abort only once the backend call is in flight: loading the backend on a
+    // cold service can outlast any fixed sleep.
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
     caller.abort();
     await expect(pending).rejects.toBeInstanceOf(OcrAbortedError);
     expect(seen[0].aborted).toBe(true);
@@ -413,7 +415,7 @@ describe("OcrService", () => {
       },
     });
     const first = svc.recognize(png("1"), "image/png");
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
     const caller = new AbortController();
     const queued = svc.recognize(png("2"), "image/png", { signal: caller.signal });
     caller.abort();
@@ -424,7 +426,7 @@ describe("OcrService", () => {
     expect(seen).toHaveLength(1);
     // The slot it would have taken is free for the next request.
     const next = svc.recognize(png("3"), "image/png");
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
     release();
     expect((await next)?.text).toBe("first");
   });

@@ -37,6 +37,24 @@ export interface RenderedConversation {
    * metadata.
    */
   citations: RenderedCitation[];
+  /** Exact source-owned speaker ranges; Markdown labels never establish roles. */
+  utterances: ConversationUtterance[];
+}
+
+export interface ConversationUtterance {
+  role: "user" | "assistant";
+  start: number;
+  end: number;
+}
+
+/** Canonical seed eligibility shared by rendering and interactive memory. */
+export function conversationEvidenceStart(record: ConversationRecord): number | null {
+  if (record.originUnrecognized) return null;
+  // Only a watch-firing thread opens on a hidden seed; in the Morning brief
+  // conversation and a conversation about a task every message is real.
+  if (record.origin?.kind !== "watch_firing") return 0;
+  const start = record.origin.seedMessageCount ?? 0;
+  return !Number.isSafeInteger(start) || start <= 0 ? null : start;
 }
 
 /** A harvested document citation (the `annotate` tool). */
@@ -70,31 +88,35 @@ const USER_LABEL = "You";
 const ASSISTANT_LABEL = "Omnesis";
 
 export function renderConversation(record: ConversationRecord): RenderedConversation {
-  const body = renderDialogue(record);
+  const { body, utterances } = renderDialogue(record);
   const citations = harvestCitations(record.messages);
-  return { body, citations };
+  return { body, citations, utterances };
 }
 
-function renderDialogue(record: ConversationRecord): string {
+function renderDialogue(
+  record: ConversationRecord,
+): Pick<RenderedConversation, "body" | "utterances"> {
   const title = record.title || "(untitled)";
-  const parts: string[] = [`# ${title}`];
+  let body = `# ${title}`;
+  const utterances: ConversationUtterance[] = [];
+  const evidenceStart = conversationEvidenceStart(record);
   let firstUserStampApplied = false;
-
-  for (const msg of record.messages) {
+  for (const [index, msg] of record.messages.entries()) {
+    const text = msg.role === "user" ? joinUserTextParts(msg) : joinAssistantTextParts(msg);
+    if (!text.length) continue;
+    let label: string;
     if (msg.role === "user") {
-      const text = joinUserTextParts(msg);
-      if (text.length === 0) continue;
       const stamp = firstUserStampApplied ? "" : ` (${formatStamp(record.createdAt)})`;
       firstUserStampApplied = true;
-      parts.push(`**${USER_LABEL}**${stamp}:\n${text}`);
-    } else {
-      const text = joinAssistantTextParts(msg);
-      if (text.length === 0) continue;
-      parts.push(`**${ASSISTANT_LABEL}**:\n${text}`);
-    }
+      label = `**${USER_LABEL}**${stamp}:`;
+    } else label = `**${ASSISTANT_LABEL}**:`;
+    body += `\n\n${label}\n`;
+    const start = body.length;
+    body += text;
+    if (evidenceStart !== null && index >= evidenceStart)
+      utterances.push({ role: msg.role, start, end: body.length });
   }
-
-  return parts.join("\n\n");
+  return { body, utterances };
 }
 
 function joinUserTextParts(msg: Extract<ChatMessage, { role: "user" }>): string {

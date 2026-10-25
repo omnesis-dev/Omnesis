@@ -474,7 +474,6 @@ describe("InferenceRegistry.resolve", () => {
     "background-agent",
     "watch-judge",
     "entailment-verifier",
-    "brief-judge",
     "ocr",
   ] as const)("supports Codex for %s and preserves remote-inference policy", (role) => {
     const reg = makeRegistry();
@@ -1069,7 +1068,6 @@ describe("InferenceRegistry.getOverview", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
-        "brief-judge",
       ]);
       expect(roles["gpt-4o"]).toEqual([
         "agent",
@@ -1077,7 +1075,6 @@ describe("InferenceRegistry.getOverview", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
-        "brief-judge",
       ]);
       // Anything not served by the live probe is absent.
       expect(roles["text-embedding-3-small"]).toBeUndefined();
@@ -1167,7 +1164,6 @@ describe("InferenceRegistry.probeBackends", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
-        "brief-judge",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -1209,7 +1205,7 @@ describe("InferenceRegistry.probeBackends", () => {
       const roles = reg.getOverview().backends.example.modelRoles ?? {};
       expect(roles["picture-maker"]).toEqual([]);
       expect(roles["text-only-judge"]).not.toContain("agent");
-      expect(roles["text-only-judge"]).toContain("brief-judge");
+      expect(roles["text-only-judge"]).toContain("entailment-verifier");
       expect(roles["unknown-model"]).toContain("agent");
     } finally {
       globalThis.fetch = originalFetch;

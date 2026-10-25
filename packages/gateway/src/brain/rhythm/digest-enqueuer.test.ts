@@ -136,6 +136,22 @@ describe("runDigestEnqueuePass", () => {
     expect(await runDigestEnqueuePass(deps())).toEqual({ fired: true });
   });
 
+  test("a spent daily budget does not hold the digest to its grace deadline", async () => {
+    // A spent budget parks every run but the brief, so the queue cannot settle.
+    markDailiesEnqueued();
+    await directWriteGate(db).enqueueCognitionRun(
+      { id: "run_parked", kind: "data", payload: { docId: "d" } },
+      now - 1000,
+    );
+    expect(await runDigestEnqueuePass(deps({ isBudgetExhausted: () => false }))).toEqual({
+      fired: false,
+      reason: "waiting",
+    });
+    expect(await runDigestEnqueuePass(deps({ isBudgetExhausted: () => true }))).toEqual({
+      fired: true,
+    });
+  });
+
   test("a debounced future run does not hold the digest hostage", async () => {
     markDailiesEnqueued();
     await directWriteGate(db).enqueueCognitionRun(

@@ -39,11 +39,11 @@ import dev.omnesis.android.transport.dto.AgentTrailEventRelated
 import dev.omnesis.android.transport.dto.AgentTrailRecord
 import dev.omnesis.android.transport.dto.AgentTrailRecordKeyField
 import dev.omnesis.android.transport.dto.AgentUsage
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.DeepResearchPlanItem
 import dev.omnesis.android.transport.dto.DeepResearchVerification
+import dev.omnesis.android.transport.dto.TaskOriginSnapshot
 import dev.omnesis.android.transport.dto.WatchFiringOriginSnapshot
 import dev.omnesis.android.ui.agent.AgentBatchEphemeralCards
 import dev.omnesis.android.ui.agent.AgentChatState
@@ -83,6 +83,7 @@ import dev.omnesis.android.ui.agent.AgentUnknownPartNotice
 import dev.omnesis.android.ui.agent.AgentWatchCard
 import dev.omnesis.android.ui.agent.AssistantTurn
 import dev.omnesis.android.ui.agent.CitationsDrawer
+import dev.omnesis.android.ui.agent.ConversationOriginCard
 import dev.omnesis.android.ui.agent.ReportArtifact
 import dev.omnesis.android.ui.agent.ResearchWorkspace
 import dev.omnesis.android.ui.agent.SlashCommand
@@ -96,6 +97,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.time.LocalDate
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -215,23 +217,8 @@ class AgentParityScreenshotTest {
     }
 
     // --- Anchored threads ---
-    // Nothing has been said in either of these yet, so the card is the whole screen: the
-    // gateway hid the folded run transcript that seeded the thread, leaving no visible turns.
-
-    private fun briefOriginState() = AgentCoordinator.UiState(
-        sessionId = "s_brief",
-        hasClient = true,
-        conversationOrigin = ConversationOrigin(
-            kind = "brief",
-            brief = BriefOriginSnapshot(
-                title = "Two invoices quote the same reference",
-                description = "Studio Northstar billed reference **NS-8841** twice, nine days apart.",
-                body = "The first landed on 12 March for GBP 1,240 and the second on 21 March " +
-                    "for the same amount. Neither mentions the other.",
-            ),
-            seedMessageCount = 2,
-        ),
-    )
+    // Nothing has been said in this one yet, so the card is the whole screen: the gateway hid
+    // the folded run transcript that seeded the thread, leaving no visible turns.
 
     private fun watchFiringOriginState() = AgentCoordinator.UiState(
         sessionId = "s_watch",
@@ -249,16 +236,6 @@ class AgentParityScreenshotTest {
     )
 
     @Test
-    fun agent_brief_origin_dark() = capture("agent_parity_brief_origin_dark", dark = true) {
-        agentContent(briefOriginState())()
-    }
-
-    @Test
-    fun agent_brief_origin_light() = capture("agent_parity_brief_origin_light", dark = false) {
-        agentContent(briefOriginState())()
-    }
-
-    @Test
     fun agent_watch_firing_origin_dark() = capture("agent_parity_watch_firing_origin_dark", dark = true) {
         agentContent(watchFiringOriginState())()
     }
@@ -266,6 +243,87 @@ class AgentParityScreenshotTest {
     @Test
     fun agent_watch_firing_origin_light() = capture("agent_parity_watch_firing_origin_light", dark = false) {
         agentContent(watchFiringOriginState())()
+    }
+
+    // A conversation "Chat about this" opened: no seed and nothing said yet, so the task's card
+    // heads an empty thread and the composer waits for the first message. The snapshot has no
+    // due day, so the render does not depend on the day it is captured.
+    private fun taskOriginState() = AgentCoordinator.UiState(
+        sessionId = "s_task",
+        title = "Renew the studio lease",
+        hasClient = true,
+        conversationOrigin = ConversationOrigin(
+            kind = ConversationOrigin.TASK_KIND,
+            runId = "task_example",
+            taskId = "task_example",
+            task = TaskOriginSnapshot(title = "Renew the studio lease", state = "open", sourceCount = 3),
+            seedMessageCount = 0,
+        ),
+    )
+
+    @Test
+    fun agent_task_origin_dark() = capture("agent_parity_task_origin_dark", dark = true) {
+        agentContent(taskOriginState())()
+    }
+
+    @Test
+    fun agent_task_origin_light() = capture("agent_parity_task_origin_light", dark = false) {
+        agentContent(taskOriginState())()
+    }
+
+    /** The task card alone, with a due day placed against a fixed today and a long title that wraps. */
+    @Composable
+    private fun TaskCardAlone() {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(OmTheme.colors.bgPrimary)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            ConversationOriginCard(
+                origin = taskOriginState().conversationOrigin!!.let {
+                    it.copy(task = it.task!!.copy(due = "2026-10-22"))
+                },
+                onOpenTask = {},
+                today = LocalDate.of(2026, 10, 21),
+            )
+            ConversationOriginCard(
+                origin = ConversationOrigin(
+                    kind = ConversationOrigin.TASK_KIND,
+                    runId = "task_other",
+                    taskId = "task_other",
+                    task = TaskOriginSnapshot(
+                        title = "Confirm the Q4 budget review agenda with Jamie Lopez before Thursday's planning meeting",
+                        state = "done",
+                        due = "2026-11-06",
+                        sourceCount = 1,
+                    ),
+                    seedMessageCount = 0,
+                ),
+                onOpenTask = {},
+                today = LocalDate.of(2026, 10, 21),
+            )
+            // A task conversation whose task id is missing: the card says what it is about but opens nothing.
+            ConversationOriginCard(
+                origin = ConversationOrigin(
+                    kind = ConversationOrigin.TASK_KIND,
+                    task = TaskOriginSnapshot(title = "Water the plants", state = "dismissed"),
+                ),
+                onOpenTask = {},
+                today = LocalDate.of(2026, 10, 21),
+            )
+        }
+    }
+
+    @Test
+    fun agent_task_origin_cards_dark() = capture("agent_parity_task_origin_cards_dark", dark = true) {
+        TaskCardAlone()
+    }
+
+    @Test
+    fun agent_task_origin_cards_light() = capture("agent_parity_task_origin_cards_light", dark = false) {
+        TaskCardAlone()
     }
 
     @Test
@@ -1598,6 +1656,51 @@ class AgentParityScreenshotTest {
             )
         }()
     }
+
+    // --- a wiki read: the shared document card, titled while pending ---
+
+    @Composable
+    private fun wikiReadCard(settled: Boolean) {
+        slotHost {
+            AgentEphemeralDocumentCard(
+                call = AgentToolCall(
+                    toolCallId = "w1", tool = "knowledge_fetch",
+                    args = args("id" to "candidate_pottery"),
+                    argsSummary = "Pottery workshop",
+                    argsKnown = true,
+                    result = if (!settled) null else AgentToolResult.DocumentBatch(
+                        listOf(
+                            AgentToolResult.DocumentResult(
+                                ref = AgentDocRef(
+                                    documentId = "wiki-pottery",
+                                    sourceType = "brain-knowledge",
+                                    sourceId = "brain-knowledge",
+                                    title = "Pottery workshop",
+                                ),
+                                document = AgentToolResult.DocumentResult.DocBody(
+                                    content = "## Overview\nThe pottery workshop runs on Friday evenings at the community studio.\nBring clay and an apron.",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                catalog = catalog, onFlushEphemeral = {},
+                initialIndex = if (settled) 1 else null, freeze = true,
+            )
+        }()
+    }
+
+    @Test
+    fun agent_ephemeral_wiki_running_dark() =
+        capture("agent_parity_ephemeral_wiki_running_dark", dark = true) { wikiReadCard(settled = false) }
+
+    @Test
+    fun agent_ephemeral_wiki_slot_dark() =
+        capture("agent_parity_ephemeral_wiki_slot_dark", dark = true) { wikiReadCard(settled = true) }
+
+    @Test
+    fun agent_ephemeral_wiki_slot_light() =
+        capture("agent_parity_ephemeral_wiki_slot_light", dark = false) { wikiReadCard(settled = true) }
 
     // --- batch retrieval (search_many / fetch_many): one per-child card each ---
 

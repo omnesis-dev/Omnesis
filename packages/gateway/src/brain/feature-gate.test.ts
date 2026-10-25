@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The engine is fully inert when experimental mode is off. With experimental
- * mode on, its runtime is prepared once and every task reads model assignment
+ * Autonomous cognition is inert when experimental mode is off; durable privacy
+ * cleanup stays active. With experimental mode on, its runtime is prepared
+ * once and every task reads model assignment
  * live, allowing hot assignment/removal without duplicate registrations.
  */
 
@@ -21,7 +22,12 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { priorContentRequested } from "../data/document-prior-content.js";
-import { briefsFeatureStatus, bootBriefs, BACKGROUND_AGENT_ROLE } from "./feature-gate.js";
+import {
+  briefsFeatureStatus,
+  bootBriefs,
+  BACKGROUND_AGENT_ROLE,
+  maintenanceContextBudget,
+} from "./feature-gate.js";
 import { resolveBrainSettings, type ResolvedBrainSettings } from "./config.js";
 import { createDocAnnotation } from "./storage/annotations.js";
 import { enqueueCognitionRun } from "./storage/run-queue.js";
@@ -485,33 +491,37 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     }
   });
 
-  it("prong 1 (experimental unset): no tasks scheduled, no jobs registered", async () => {
+  it("prong 1 (experimental unset): only durable privacy cleanup stays registered", async () => {
     const { deps, schedule, registerAll } = makeBootDeps(assignedResolver);
     await bootBriefs(deps);
-    expect(schedule).not.toHaveBeenCalled();
-    expect(registerAll).not.toHaveBeenCalled();
+    expect(schedule.mock.calls.map((call) => (call[0] as { name: string }).name)).toEqual([
+      "knowledge.cascade",
+    ]);
+    expect(registerAll).toHaveBeenCalledTimes(1);
+    expect(registerAll.mock.calls[0]?.[0]).toHaveLength(1);
   });
 
   it("experimental on with no model: tasks register once but remain live-gated", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
     const { deps, schedule, registerAll } = makeBootDeps(unassignedResolver);
     await bootBriefs(deps);
-    expect(schedule).toHaveBeenCalledTimes(12);
-    expect(registerAll.mock.calls.flatMap((call) => call[0] as unknown[])).toHaveLength(12);
+    expect(schedule).toHaveBeenCalledTimes(13);
+    expect(registerAll.mock.calls.flatMap((call) => call[0] as unknown[])).toHaveLength(13);
   });
 
   it("active: schedules the drain + rhythm tasks and registers their jobs", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
     const { deps, schedule, registerAll } = makeBootDeps(assignedResolver);
     await bootBriefs(deps);
-    expect(schedule).toHaveBeenCalledTimes(12);
+    expect(schedule).toHaveBeenCalledTimes(13);
     const names = schedule.mock.calls.map((c) => (c[0] as { name: string }).name);
     expect(names).toEqual([
+      "knowledge.cascade",
       "cognition.drain",
       "cognition.dailyRhythm",
       "cognition.digest",
       "cognition.decaySweep",
-      "cognition.snoozeResurface",
+      "cognition.observationRetention",
       "cognition.synthesis",
       "cognition.collisionSweep",
       "cognition.sweeps",
@@ -520,9 +530,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       "cognition.reverificationSweep",
       "cognition.provenanceRecheck",
     ]);
-    expect(registerAll).toHaveBeenCalledTimes(2);
+    expect(registerAll).toHaveBeenCalledTimes(3);
     const registered = registerAll.mock.calls.flatMap((c) => c[0] as unknown[]);
-    expect(registered.length).toBe(12);
+    expect(registered.length).toBe(13);
   });
 
   it("drains after a hot model assignment and parks again on removal without re-registering", async () => {
@@ -574,7 +584,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     const drains = scheduled.filter((task) => task.name === "cognition.drain");
     expect(drains).toHaveLength(1);
     const drain = drains[0]!;
-    const ctx = { signal: new AbortController().signal } as TaskContext;
+    const ctx = { signal: new AbortController().signal, shouldYield: () => false } as TaskContext;
     enqueueCognitionRun(
       db,
       { id: "run_hot_assignment", kind: "data", payload: { docId: "doc_fictional" } },
@@ -593,14 +603,17 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
 
     assigned = true;
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: false } });
-    expect(
-      db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
-        .get()?.status,
-    ).toBe("completed");
+    await expect
+      .poll(
+        () =>
+          db
+            .prepare<
+              [],
+              { status: string }
+            >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
+            .get()?.status,
+      )
+      .toBe("completed");
 
     enqueueCognitionRun(
       db,
@@ -688,7 +701,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     const { deps, schedule } = makeBootDeps(assignedResolver);
     (deps.runQueue as { eventBus?: Pick<EventBus, "on"> }).eventBus = new EventBus();
     await bootBriefs(deps);
-    expect(schedule).not.toHaveBeenCalled();
+    expect(schedule.mock.calls.map((call) => (call[0] as { name: string }).name)).toEqual([
+      "knowledge.cascade",
+    ]);
     expect(priorContentRequested()).toBe(false);
   });
 
@@ -705,11 +720,12 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     await bootBriefs(deps);
     const names = schedule.mock.calls.map((c) => (c[0] as { name: string }).name);
     expect(names).toEqual([
+      "knowledge.cascade",
       "cognition.drain",
       "cognition.dailyRhythm",
       "cognition.digest",
       "cognition.decaySweep",
-      "cognition.snoozeResurface",
+      "cognition.observationRetention",
       "cognition.synthesis",
       "cognition.collisionSweep",
       "cognition.sweeps",
@@ -790,7 +806,7 @@ describe("GET /status advertises the brain gate", () => {
       ...sourceRuntimeHooks(),
       getBriefsStatus: () => briefsFeatureStatus(assignedResolver, READY_DEPS),
     });
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: false,
       enabled: false,
       modelAssigned: true,
@@ -805,7 +821,7 @@ describe("GET /status advertises the brain gate", () => {
     });
     // The reason rides all the way out to the client, so a surface can say
     // what to fix instead of rendering a feature that does nothing.
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: true,
       enabled: true,
       modelAssigned: false,
@@ -818,11 +834,33 @@ describe("GET /status advertises the brain gate", () => {
       ...sourceRuntimeHooks(),
       getBriefsStatus: () => briefsFeatureStatus(assignedResolver, READY_DEPS),
     });
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: true,
       enabled: true,
       modelAssigned: true,
       active: true,
     });
+    // Apps that predate the Morning brief read `briefs`; it always reads off.
+    expect((await statusBody(app)).briefs).toMatchObject({ visible: false, active: false });
+  });
+});
+
+describe("maintenanceContextBudget", () => {
+  const settings = { contextHandoffRatio: 0.6, contextHandoffTokens: 90_000 };
+  it("budgets knowledge maintenance runs bound to a batch", () => {
+    expect(
+      maintenanceContextBudget(
+        { kind: "synthesis", payload: { focus: "knowledge-maintenance", batchId: "batch" } },
+        settings,
+      ),
+    ).toEqual({ ratio: 0.6, fallbackTokens: 90_000 });
+  });
+  it("leaves every other run to its backend's limits", () => {
+    for (const run of [
+      { kind: "synthesis" as const, payload: { focus: "noticing", date: "2031-04-03" } },
+      { kind: "synthesis" as const, payload: { focus: "knowledge-maintenance" } },
+      { kind: "data" as const, payload: { docId: "doc_a" } },
+    ])
+      expect(maintenanceContextBudget(run, settings)).toBeNull();
   });
 });

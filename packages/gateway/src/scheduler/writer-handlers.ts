@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
-import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
+import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
+import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
+
 import {
   type SyncIssue,
   type SyncIssueAssessment,
@@ -23,11 +24,6 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
-import {
-  preparePendingSourcePage,
-  acknowledgePendingSourcePage,
-  type PreparePendingSourcePage,
-} from "../data/repositories/PendingSourcePageRepository.js";
 
 /**
  * Single source of truth for every writer op the worker can dispatch.
@@ -50,7 +46,6 @@ import {
  */
 
 import type Database from "better-sqlite3";
-import { advanceOccWatermark } from "../data/occ-materialized.js";
 import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "../data/list-revisions.js";
 type Db = Database.Database;
 
@@ -60,6 +55,60 @@ type Db = Database.Database;
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
+import {
+  applyBriefReaction,
+  recordInterestSignal,
+  resetInterestEmbeddingsNotFrom,
+  setInterestSignalEmbedding,
+  supersedeInterestSignals,
+  type ApplyBriefReactionInput,
+  type BriefItemReaction,
+  type InterestSignal,
+  type InterestSupersedeScope,
+  type NewInterestSignal,
+} from "../brain/storage/interest.js";
+import { claimDueNote, enqueueNewNotes, finishNoteRun } from "../brain/note-agent/storage.js";
+import { advanceOccWatermark } from "../data/occ-materialized.js";
+import {
+  preparePendingSourcePage,
+  acknowledgePendingSourcePage,
+  type PreparePendingSourcePage,
+} from "../data/repositories/PendingSourcePageRepository.js";
+import {
+  captureCanonicalEnrollment,
+  enrollCanonicalMutation,
+} from "../brain/knowledge/canonical-enrollment.js";
+import {
+  assertPersonProfileReceipt,
+  getPersonAnnotation as getWithdrawalPersonAnnotation,
+  type PersonProfileBudget,
+} from "../brain/storage/person-annotations.js";
+import {
+  applyTaskCommand,
+  autoApplyTaskChange,
+  withdrawTaskProposal,
+  proposeTaskChange,
+  type ApplyTaskCommandOptions,
+  type AutoAppliedTaskChange,
+  type TaskCommand,
+} from "../brain/storage/tasks.js";
+import { KnowledgeStorageError } from "../brain/knowledge/types.js";
+import { assertStoredTemporalMutationScope } from "../brain/knowledge/temporal-scope-fence.js";
+import {
+  assertKnowledgeCanonicalFence,
+  refreshKnowledgeCanonicalOwners,
+  knowledgeCanonicalOwnerVersion,
+  type KnowledgeCanonicalFence,
+} from "../brain/knowledge/canonical-fence.js";
+import {
+  refreshKnowledgeReconciliationReceipt,
+  type KnowledgeReconciliationReceipt,
+} from "../brain/knowledge/reconciliation.js";
+import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
+import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
+import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
+import { withdrawKnowledgeOwner } from "../brain/knowledge/owner-withdrawal.js";
 
 // Handlers import from canonical homes, not the
 // (`./people.js`, `./links.js`) wrapper shells. The shells stay for
@@ -166,7 +215,6 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
-  cascadeTemporalAnnotationPrivacyDelete,
   type CreateTemporalAnnotationInput,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotationInvalidationResult,
@@ -232,11 +280,11 @@ import {
   resolveDocumentPeople,
   backfillManyPeople,
 } from "../domain/PeopleResolutionService.js";
+import { reviewBrainArtifactsForDeletedDocs } from "../brain/source-deletion-review.js";
 import {
   upsertDocuments,
   upsertWithCursorYieldable,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentForUser,
   deleteDocumentForRetention,
   completeDocumentRetention,
@@ -432,6 +480,7 @@ import {
   finalizeCognitionRun,
   recordSettledCognitionRun,
   cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   setCognitionEngineState,
@@ -440,35 +489,30 @@ import {
   rewriteOpenLoopPeople,
   appendOpenLoopLedger,
   deleteOpenLoop,
-  createBrief,
-  updateBrief,
-  retractBriefsForResolvedLoop,
-  retireBrief,
-  markBriefRead,
-  setBriefThreadConversation,
-  restampBriefThreadConversation,
-  resurfaceDueSnoozedBriefs,
+  createObservation,
+  transitionObservation,
+  recordObservationScores,
+  recordObservationClaims,
+  expireObservations,
+  dropObservationsForResolvedLoop,
+  setObservationUserAction,
+  pruneClosedObservations,
+  replaceMorningBriefItems,
+  markMorningBriefSent,
   writeCognitionNotes,
   appendCognitionNotes,
   editCognitionNotes,
   wipeCognitionNotes,
-  dismissBriefAndEnqueueFeedback,
   createDocAnnotation,
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
-  deleteDocAnnotation,
   invalidateAnnotationsForDoc,
-  cascadeAnnotationPrivacyDelete,
-  invalidateBriefClaimsForDoc,
-  cascadeBriefClaimPrivacyDelete,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
-  deletePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
-  cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
@@ -481,9 +525,8 @@ import {
   type RecordSettledCognitionRunInput,
   type CreateOpenLoopInput,
   type UpdateOpenLoopInput,
-  type CreateBriefInput,
-  type UpdateBriefInput,
-  type DismissBriefInput,
+  type CreateObservationInput,
+  type ObservationTransition,
   type CreateDocAnnotationInput,
   type UpdateDocAnnotationPatch,
   type CreatePersonAnnotationInput,
@@ -599,7 +642,72 @@ import type { MobilePermissionHealthReport } from "@omnesis/types/mobile-permiss
  * worker-side message loop already coerces `undefined` to `null` on
  * the wire, so the wire shape doesn't depend on return-statement style.
  */
+function guardedCanonicalMutation(
+  db: Db,
+  fence: KnowledgeCanonicalFence,
+  operation: string,
+  args: unknown[],
+):
+  | {
+      ok: true;
+      value: unknown;
+      owners: KnowledgeCanonicalFence["owners"];
+      collections?: KnowledgeReconciliationReceipt[];
+    }
+  | { ok: false; code: "revision_conflict"; message: string } {
+  if (!(operation.startsWith("cognition.") || operation.startsWith("temporalAnnotations.")))
+    throw new Error("Unsupported canonical maintenance mutation");
+  const handler = (
+    writerHandlers as unknown as Record<string, (db: Db, ...args: unknown[]) => unknown>
+  )[operation];
+  if (!handler) throw new Error("Unknown canonical maintenance mutation");
+  try {
+    const value = db.transaction(() => {
+      assertKnowledgeCanonicalFence(db, fence);
+      const enrollment = captureCanonicalEnrollment(db, operation, args);
+      const result = handler(db, ...args);
+      assertStoredTemporalMutationScope(db, fence.temporalScope, operation, args);
+      if (result instanceof Promise)
+        throw new Error("Canonical maintenance mutation must be synchronous");
+      // Person profile writers append trusted budget options after the clock.
+      const mutationTime =
+        operation === "cognition.personAnnotationCreate"
+          ? args[1]
+          : operation === "cognition.personAnnotationCreateSuperseding" ||
+              operation === "cognition.personAnnotationRevise"
+            ? args[2]
+            : args.at(-1);
+      if (enrollment) {
+        if (typeof mutationTime !== "number" || !Number.isFinite(mutationTime))
+          throw new Error("Canonical owner mutation requires a timestamp");
+        enrollCanonicalMutation(db, fence, enrollment, mutationTime);
+      }
+      const owners = refreshKnowledgeCanonicalOwners(db, fence);
+      if (
+        enrollment &&
+        !owners.some((owner) => owner.kind === enrollment.kind && owner.id === enrollment.id)
+      )
+        owners.push({
+          kind: enrollment.kind,
+          id: enrollment.id,
+          version: knowledgeCanonicalOwnerVersion(db, enrollment.kind, enrollment.id),
+        });
+      const collections = fence.collections?.map((receipt) =>
+        refreshKnowledgeReconciliationReceipt(db, receipt),
+      );
+      return { result, owners, collections };
+    })();
+    return { ok: true, value: value.result, owners: value.owners, collections: value.collections };
+  } catch (error) {
+    if (error instanceof KnowledgeStorageError && error.code === "revision_conflict")
+      return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
+}
+
 export const writerHandlers = {
+  "knowledge.canonicalMutation": guardedCanonicalMutation,
+  ...knowledgeWriterHandlers,
   // ── db.ts ─────────────────────────────────────────────────────────
   // Note: `db.upsertDocuments` lives in `writerYieldableHandlers` below
   // — handleCall dispatches there first since cooperative yield is
@@ -901,7 +1009,8 @@ export const writerHandlers = {
     records: MentionJudgementRecord[],
     deferrals: MentionJudgementDeferral[],
     answers: WorthAnswer[],
-  ) => applyMentionJudgements(db, records, deferrals, answers),
+    decisions: CognitionDecisionRecord[] = [],
+  ) => applyMentionJudgements(db, records, deferrals, answers, decisions),
   "db.requeueStaleMentionJudgements": (db: Db, rubricVersion: string, limit: number) =>
     requeueStaleMentionJudgements(db, rubricVersion, limit),
   // Drain of source-declared forward-reference edges: resolve parked
@@ -1347,7 +1456,7 @@ export const writerHandlers = {
   // ── briefs (the Cognition Steward run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
     enqueueCognitionRun(db, input, now),
-  "cognition.claimDue": (db: Db, opts: { now: number; limit?: number; maxAttempts?: number }) =>
+  "cognition.claimDue": (db: Db, opts: Parameters<typeof claimDueCognitionRuns>[1]) =>
     claimDueCognitionRuns(db, opts),
   "cognition.finalize": (db: Db, input: FinalizeCognitionRunInput): void =>
     finalizeCognitionRun(db, input),
@@ -1391,10 +1500,14 @@ export const writerHandlers = {
   },
   "cognition.cancelPending": (db: Db, dedupeKeys: string[]) =>
     cancelPendingCognitionRunsByDedupeKeys(db, dedupeKeys),
+  "cognition.retractUnclaimed": (db: Db, dedupeKeys: string[]) =>
+    retractUnclaimedCognitionRunsByDedupeKeys(db, dedupeKeys),
   "cognition.cancelScheduledForLoop": (db: Db, loopId: string) =>
     cancelScheduledRunsForLoop(db, loopId),
   "cognition.engineStateSet": (db: Db, key: string, value: string): void =>
     setCognitionEngineState(db, key, value),
+  "live.recordVoiceUsage": (db: Db, input: LiveVoiceUsageSample): void =>
+    recordLiveVoiceUsage(db, input),
   // Non-run spend accounting: fold one mechanism call's token usage into its
   // (day, mechanism, model) bucket. Run-settling spend goes through
   // `cognition.finalize`; this op serves mechanisms with no run row (the
@@ -1439,13 +1552,15 @@ export const writerHandlers = {
     loopId: string,
     entry: { runId: string; note: string },
     now: number,
-  ): void => appendOpenLoopLedger(db, loopId, entry, now),
+  ): void => {
+    appendOpenLoopLedger(db, loopId, entry, now);
+  },
   // The write-gated delete records a consolidation trace (the agent-issued
   // `open_loop_delete` path); the storage default is trace-free.
   "cognition.openLoopDelete": (db: Db, id: string, now: number) =>
     deleteOpenLoop(db, id, { retire: true, now }),
-  "cognition.openLoopCascade": (db: Db, deletedDocIds: readonly string[]) =>
-    cascadeOpenLoopPrivacyDeleteWithMirrors(db, deletedDocIds),
+  "cognition.sourceDeletionReview": (db: Db, deletedDocIds: readonly string[]) =>
+    reviewBrainArtifactsForDeletedDocs(db, deletedDocIds, Date.now()),
   "cognition.annotationCreate": (db: Db, input: CreateDocAnnotationInput, now: number) =>
     createDocAnnotation(db, input, now, true),
   // Atomic create-and-supersede (belief revision): the successor row and the
@@ -1473,43 +1588,55 @@ export const writerHandlers = {
     now: number,
   ) => updateDocAnnotation(db, id, patch, now),
   "cognition.annotationDelete": (db: Db, id: string, now: number): boolean =>
-    retractAnnotationWithDependentRechecks(db, "doc", id, now, () => deleteDocAnnotation(db, id)),
+    retractAnnotationWithDependentRechecks(db, "doc", id, now, () =>
+      withdrawKnowledgeOwner(db, "doc_annotation", id, now),
+    ),
   "cognition.annotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidateAnnotationsForDoc(db, docId, now),
-  "cognition.annotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeAnnotationPrivacyDelete(db, deletedDocIds),
-  "cognition.briefClaimInvalidate": (db: Db, docId: string, now: number): number =>
-    invalidateBriefClaimsForDoc(db, docId, now),
-  "cognition.briefClaimPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeBriefClaimPrivacyDelete(db, deletedDocIds),
-  "cognition.personAnnotationCreate": (db: Db, input: CreatePersonAnnotationInput, now: number) =>
-    createPersonAnnotation(db, input, now),
+  "cognition.personAnnotationCreate": (
+    db: Db,
+    input: CreatePersonAnnotationInput,
+    now: number,
+    budget?: PersonProfileBudget,
+  ) => createPersonAnnotation(db, input, now, budget),
   "cognition.personAnnotationCreateSuperseding": (
     db: Db,
     input: CreatePersonAnnotationInput,
-    supersedesId: string,
+    supersedesId: string | readonly string[],
     now: number,
-  ) => createPersonAnnotationSuperseding(db, input, supersedesId, now),
+    budget?: PersonProfileBudget,
+  ) => createPersonAnnotationSuperseding(db, input, supersedesId, now, budget),
   "cognition.personAnnotationSupersede": (
     db: Db,
     id: string,
     supersededById: string,
     now: number,
-  ): { superseded: boolean } => supersedePersonAnnotationBy(db, id, supersededById, now),
+    budget?: PersonProfileBudget,
+  ): { superseded: boolean } => supersedePersonAnnotationBy(db, id, supersededById, now, budget),
   "cognition.personAnnotationRevise": (
     db: Db,
     id: string,
     patch: UpdatePersonAnnotationPatch,
     now: number,
-  ): boolean => revisePersonAnnotation(db, id, patch, now),
-  "cognition.personAnnotationRetract": (db: Db, id: string, now: number): boolean =>
-    retractAnnotationWithDependentRechecks(db, "person", id, now, () =>
-      deletePersonAnnotation(db, id),
-    ),
+    budget?: PersonProfileBudget,
+  ): boolean => revisePersonAnnotation(db, id, patch, now, budget),
+  "cognition.personAnnotationRetract": (
+    db: Db,
+    id: string,
+    now: number,
+    budget?: PersonProfileBudget,
+  ): boolean =>
+    retractAnnotationWithDependentRechecks(db, "person", id, now, () => {
+      const owner = getWithdrawalPersonAnnotation(db, id);
+      if (budget) {
+        if (!owner)
+          throw new Error("Person profile changed; reread the complete profile before reconciling");
+        assertPersonProfileReceipt(db, owner.personId, budget);
+      }
+      return withdrawKnowledgeOwner(db, "person_annotation", id, now);
+    }),
   "cognition.personAnnotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidatePersonAnnotationsForDoc(db, docId, now),
-  "cognition.personAnnotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadePersonAnnotationPrivacyDelete(db, deletedDocIds),
   "conversationReadState.markSeen": (db: Db, conversationId: string): void =>
     markConversationOpened(db, conversationId),
   "conversationReadState.agentContentArrived": (
@@ -1650,43 +1777,91 @@ export const writerHandlers = {
     markTemporalAnnotationsRefilePresented(db, ids, runId);
     return null;
   },
-  "temporalAnnotations.privacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeTemporalAnnotationPrivacyDelete(db, deletedDocIds),
-  "cognition.briefCreate": (
+  "cognition.observationCreate": (
     db: Db,
-    input: CreateBriefInput,
+    input: CreateObservationInput,
     dependencies: ConsumptionDependencyContext,
     now: number,
   ) =>
-    mutateWithConsumptionDependencies(db, dependencies, "brief", input.id, now, () =>
-      createBrief(db, input, now),
+    mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
+      createObservation(db, input, now),
     ),
-  "cognition.briefUpdate": (
+  "cognition.observationTransition": (
     db: Db,
     id: string,
-    input: UpdateBriefInput,
-    dependencies: ConsumptionDependencyContext,
+    transition: ObservationTransition,
     now: number,
-  ) =>
-    mutateWithConsumptionDependencies(db, dependencies, "brief", id, now, () =>
-      updateBrief(db, id, input, now),
-    ),
-  "cognition.briefRetire": (db: Db, id: string, now: number) => retireBrief(db, id, now),
-  "cognition.briefRetractForLoop": (db: Db, loopId: string, now: number) =>
-    retractBriefsForResolvedLoop(db, loopId, now),
-  "cognition.briefDismiss": (db: Db, input: DismissBriefInput, now: number) =>
-    dismissBriefAndEnqueueFeedback(db, input, now),
-  "cognition.briefMarkRead": (db: Db, id: string, now: number) => markBriefRead(db, id, now),
-  "cognition.briefSetThread": (db: Db, id: string, conversationId: string, now: number) =>
-    setBriefThreadConversation(db, id, conversationId, now),
-  "cognition.briefRestampThread": (
+  ): boolean => transitionObservation(db, id, transition, now),
+  "cognition.observationScores": (db: Db, id: string, scores: ObservationScores, now: number) =>
+    recordObservationScores(db, id, scores, now),
+  "cognition.observationClaims": (
     db: Db,
     id: string,
-    deadId: string,
-    conversationId: string,
+    claims: readonly ObservationClaim[],
     now: number,
-  ) => restampBriefThreadConversation(db, id, deadId, conversationId, now),
-  "cognition.snoozeResurface": (db: Db, now: number): number => resurfaceDueSnoozedBriefs(db, now),
+  ) => recordObservationClaims(db, id, claims, now),
+  "cognition.observationExpire": (db: Db, now: number): string[] => expireObservations(db, now),
+  "cognition.observationDropForLoop": (db: Db, loopId: string, now: number): string[] =>
+    dropObservationsForResolvedLoop(db, loopId, now),
+  "cognition.observationUserAction": (db: Db, id: string, userAction: string | null, now: number) =>
+    setObservationUserAction(db, id, userAction, now),
+  "noteAgent.enqueue": (db: Db, now: number) => enqueueNewNotes(db, now),
+  "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
+    clearMorningBriefMessageItems(db, messageId),
+  "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
+  "noteAgent.finish": (
+    db: Db,
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof finishNoteRun>[3],
+    now: number,
+  ) => finishNoteRun(db, entryId, attempt, outcome, now),
+  "cognition.taskCommand": (
+    db: Db,
+    command: TaskCommand,
+    now: number,
+    opts?: ApplyTaskCommandOptions,
+  ) => applyTaskCommand(db, command, now, opts),
+  // The interest ledger.
+  "interest.record": (
+    db: Db,
+    signal: NewInterestSignal,
+    supersede: InterestSupersedeScope | null,
+  ): InterestSignal => recordInterestSignal(db, signal, supersede),
+  "interest.supersede": (db: Db, by: InterestSupersedeScope, now: number): number =>
+    supersedeInterestSignals(db, by, now),
+  "interest.embedding": (
+    db: Db,
+    id: string,
+    embedding: { vector: ArrayLike<number>; model: string } | null,
+    now: number,
+  ): boolean => setInterestSignalEmbedding(db, id, embedding, now),
+  "interest.resetEmbeddings": (db: Db, model: string): number =>
+    resetInterestEmbeddingsNotFrom(db, model),
+  "interest.reaction": (
+    db: Db,
+    input: ApplyBriefReactionInput,
+    now: number,
+  ): BriefItemReaction | null => applyBriefReaction(db, input, now),
+  "cognition.taskPropose": (db: Db, loopId: string, proposal: ProposedTaskChange, now: number) =>
+    proposeTaskChange(db, loopId, proposal, now),
+  "cognition.taskAutoApply": (db: Db, loopId: string, change: AutoAppliedTaskChange, now: number) =>
+    autoApplyTaskChange(db, loopId, change, now),
+  "cognition.taskProposalWithdraw": (db: Db, loopId: string, proposedAt: number) =>
+    withdrawTaskProposal(db, loopId, proposedAt),
+  "cognition.observationPrune": (db: Db, olderThan: number, now: number) =>
+    pruneClosedObservations(db, olderThan, now),
+  "cognition.morningBriefItems": (
+    db: Db,
+    day: string,
+    runId: string,
+    observationIds: readonly string[],
+  ): boolean => replaceMorningBriefItems(db, day, runId, observationIds),
+  "cognition.morningBriefSent": (
+    db: Db,
+    input: { day: string; runId: string; conversationId: string; messageId: string },
+    now: number,
+  ) => markMorningBriefSent(db, input, now),
   "cognition.notesWrite": (db: Db, content: string, opts: { maxBytes: number; now: number }) =>
     writeCognitionNotes(db, content, opts),
   "cognition.notesAppend": (db: Db, text: string, opts: { maxBytes: number; now: number }) =>
@@ -1705,11 +1880,18 @@ export const writerHandlers = {
   // with the supplied citation list. Pure write, no resolution; targets
   // arrive already resolved as document IDs (the agent's `annotate`
   // tool passed them).
+  "omnesisChat.upsertConversationDocument": (
+    db: Db,
+    doc: DocumentInput,
+    projection: ConversationEvidenceProjection,
+    citations: ReadonlyArray<ConversationCitationInput>,
+  ) => upsertConversationDocument(db, doc, projection, citations),
   "omnesisChat.upsertConversationCitations": (
     db: Db,
     sourceDocId: string,
     citations: ReadonlyArray<ConversationCitationInput>,
-  ) => upsertConversationCitations(db, sourceDocId, citations),
+    projection?: ConversationEvidenceProjection,
+  ) => upsertConversationCitations(db, sourceDocId, citations, projection),
 
   // ── omnesis-notes ─────────────────────────────────────────────────
   // The quick-capture ledger (`note_entries`). Append is the hot path
@@ -1779,6 +1961,12 @@ export const writerHandlers = {
  */
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "../brain/storage/types.js";
 import type {
   VocabularySettings,
   ExtractedVocabularyDocument,

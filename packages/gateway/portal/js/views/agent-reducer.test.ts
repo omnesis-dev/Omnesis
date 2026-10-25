@@ -612,42 +612,13 @@ describe("agent reducer — plan panel", () => {
     expect(s.planItems).toEqual([]);
   });
 
-  it("load-conversation with a brief origin hides the seed prefix and pins the snapshot", () => {
-    const origin = {
-      kind: "brief",
-      briefId: "brief_1",
-      runId: "run_1",
-      brief: {
-        title: "Return the borrowed projector",
-        description: "Back to the AV desk this week.",
-        body: null,
-      },
-      seedMessageCount: 2,
-    };
-    const s = r({ ...initialState() } as State, {
-      kind: "load-conversation",
-      sessionId: "sess-brief",
-      model: "demo",
-      backend: "replay",
-      origin,
-      messages: [
-        { role: "user", parts: [{ kind: "text", text: "Loop agent run run_1 (kind: daily, attempt 1)." }] },
-        { role: "assistant", parts: [{ kind: "text", text: "Composed the brief." }] },
-        { role: "user", parts: [{ kind: "text", text: "Push it to Friday?" }] },
-        { role: "assistant", parts: [{ kind: "text", text: "Done." }] },
-      ],
-    });
-    expect(s.briefOrigin).toEqual(origin);
-    expect(s.turns).toHaveLength(2);
-    expect((s.turns[0] as any).parts[0].text).toBe("Push it to Friday?");
-  });
-
   it("does not reapply the origin seed count to a server-visible page", () => {
     const origin = {
-      kind: "brief",
-      briefId: "brief_1",
-      runId: "run_1",
-      brief: { title: "Review the launch checklist" },
+      kind: "watch_firing",
+      firingId: "sfiring_1",
+      runId: "sfiring_1",
+      watchId: "sub_1",
+      watch: { name: "Launch checklist", condition: "the checklist changes", firedAt: 1_789_344_600_000 },
       seedMessageCount: 2,
     };
     const s = r({ ...initialState() } as State, {
@@ -854,21 +825,6 @@ describe("agent reducer — plan panel", () => {
     expect((s as any).messagePagingTruncated).toBe(true);
   });
 
-  it("a brief origin without a snapshot leaves the transcript fully visible", () => {
-    const s = r({ ...initialState() } as State, {
-      kind: "load-conversation",
-      sessionId: "sess-brief-old",
-      model: "demo",
-      backend: "replay",
-      origin: { kind: "brief", briefId: "brief_1", runId: "run_1" },
-      messages: [
-        { role: "user", parts: [{ kind: "text", text: "seed" }] },
-        { role: "assistant", parts: [{ kind: "text", text: "seeded" }] },
-      ],
-    });
-    expect(s.turns).toHaveLength(2);
-  });
-
   it("load-conversation with a watch-firing origin hides the hidden briefing", () => {
     // The seed here is the prompt that told the agent what to write. Without
     // the origin decoded and a card to stand in its place, the operator
@@ -899,7 +855,7 @@ describe("agent reducer — plan panel", () => {
         },
       ],
     });
-    expect(s.briefOrigin).toEqual(origin);
+    expect(s.conversationOrigin).toEqual(origin);
     expect(s.turns).toHaveLength(1);
     expect((s.turns[0] as any).parts[0].text).toBe("The half marathon moved to 4 October.");
   });
@@ -919,11 +875,11 @@ describe("agent reducer — plan panel", () => {
     expect(s.turns).toHaveLength(2);
   });
 
-  it("reset-conversation clears briefOrigin", () => {
+  it("reset-conversation clears the conversation origin", () => {
     let s = { ...initialState() } as State;
-    (s as any).briefOrigin = { kind: "brief", briefId: "b", runId: "r" };
+    (s as any).conversationOrigin = { kind: "watch_firing", firingId: "f", runId: "f", watchId: "w" };
     s = r(s, { kind: "reset-conversation", sessionId: "sess-n", model: "m", backend: "b" });
-    expect((s as any).briefOrigin).toBeNull();
+    expect((s as any).conversationOrigin).toBeNull();
   });
 
   it("steward tool calls are dropped from resumed interactive history", () => {

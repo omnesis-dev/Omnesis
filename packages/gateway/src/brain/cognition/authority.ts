@@ -4,13 +4,12 @@
 /**
  * What each cognitive workflow is allowed to write.
  *
- * Every background run has, until now, been handed the same mutation surface:
- * a merge adjudication could create briefs, a morning digest could retract
- * annotations, a re-grounding pass could mint loops. The restrictions existed
- * — they were written into the prompts ("must not create briefs", "issue the
- * verdict through its dedicated tool and nothing else") — but a prompt is a
- * request, not a permission. A model that ignores one, or a future prompt edit
- * that drops the sentence, silently gains the whole surface.
+ * Without this, every background run would hold the same mutation surface: a
+ * merge adjudication could note observations, a morning digest could retract
+ * annotations, a re-grounding pass could mint loops. A restriction written
+ * into a prompt ("issue the verdict through its dedicated tool and nothing
+ * else") is a request, not a permission. A model that ignores one, or a later
+ * prompt edit that drops the sentence, would silently gain the whole surface.
  *
  * Authority is declared per workflow here and enforced by the runtime when it
  * assembles the toolset, so a workflow physically cannot call a verb it was
@@ -27,8 +26,10 @@ import type { CognitiveWorkflowId } from "./workflows.js";
  * no per-workflow grant, while a new artifact is an explicit decision.
  */
 export const COGNITIVE_ARTIFACTS = [
+  "knowledge",
   "loop",
-  "brief",
+  "observation",
+  "morning-brief",
   "note",
   "scheduled-run",
   "doc-annotation",
@@ -45,17 +46,39 @@ export type CognitiveArtifact = (typeof COGNITIVE_ARTIFACTS)[number];
  * be denied to every workflow, which a test pins.
  */
 const ARTIFACT_TOOLS: Readonly<Record<CognitiveArtifact, readonly string[]>> = {
-  loop: ["open_loop_create", "open_loop_update", "open_loop_ledger_append", "open_loop_delete"],
-  brief: ["brief_create", "brief_update", "brief_delete"],
+  knowledge: [
+    "knowledge_link",
+    "knowledge_evidence",
+    "knowledge_save",
+    "knowledge_edit",
+    "knowledge_retire",
+    "knowledge_propose_page",
+    "knowledge_candidate_decide",
+    "knowledge_next_frontier",
+    "knowledge_discovery_complete",
+    "knowledge_organization_complete",
+    "knowledge_temporal_context",
+  ],
+  loop: [
+    "loop_synthesis_save",
+    "open_loop_create",
+    "open_loop_update",
+    "open_loop_ledger_append",
+    "open_loop_delete",
+  ],
+  observation: ["observation_note", "observation_withdraw"],
+  "morning-brief": ["morning_brief_send"],
   note: ["notes_append", "notes_rewrite", "notes_edit"],
   "scheduled-run": ["schedule_agent_run"],
   "doc-annotation": [
+    "doc_annotation_synthesis_save",
     "annotate_durable",
     "annotation_revise",
     "annotation_retract",
     "annotation_supersede",
   ],
   "person-annotation": [
+    "person_annotation_synthesis_save",
     "annotate_person",
     "person_annotation_revise",
     "person_annotation_retract",
@@ -71,10 +94,11 @@ const ARTIFACT_TOOLS: Readonly<Record<CognitiveArtifact, readonly string[]>> = {
 
 /**
  * What a workflow may write when nothing narrower is declared: everything
- * except a merge verdict, which only identity adjudication issues.
+ * except a merge verdict, which only identity adjudication issues, and the
+ * morning brief, which only the morning run sends.
  */
 const DEFAULT_AUTHORITY: readonly CognitiveArtifact[] = COGNITIVE_ARTIFACTS.filter(
-  (a) => a !== "merge-verdict",
+  (a) => a !== "merge-verdict" && a !== "morning-brief",
 );
 
 /**
@@ -107,10 +131,10 @@ const NARROWED_AUTHORITY: Partial<Record<CognitiveWorkflowId, readonly Cognitive
   // than incidental.
   "subscription-compile": [],
 
-  // Composes exactly one "Morning brief" card from state that other workflows
-  // already gathered. An editorial pass over existing artifacts, so it revises
-  // its own card and creates nothing new underneath it.
-  "morning-digest": ["brief"],
+  // Composes and sends the day's one morning brief from observations the
+  // morning recheck already ranked. An editorial pass: it writes the message
+  // and nothing underneath it.
+  "morning-digest": ["morning-brief"],
 
   // Re-grounds durable annotation memory against current evidence: revise,
   // retract, supersede. It maintains what is already believed and must not
@@ -118,13 +142,13 @@ const NARROWED_AUTHORITY: Partial<Record<CognitiveWorkflowId, readonly Cognitive
   "memory-regrounding": ["doc-annotation", "person-annotation", "temporal-annotation"],
 
   // Re-examines a dependent whose supporting prior died. Same shape as
-  // re-grounding — it revises the dependent it was pointed at, and may retire
+  // re-grounding — it revises the loop it was pointed at, and may retire
   // a loop that rested on nothing, but does not mint fresh state.
-  "provenance-recheck": ["loop", "brief", "doc-annotation", "person-annotation"],
+  "provenance-recheck": ["loop", "doc-annotation", "person-annotation"],
 
   // Rewrites the over-cap notes blob back under its size target. Pure
   // self-maintenance of one artifact — it curates existing memory and must
-  // not turn a housekeeping pass into loops, briefs, or annotations.
+  // not turn a housekeeping pass into loops, observations, or annotations.
   "notes-compaction": ["note"],
 };
 

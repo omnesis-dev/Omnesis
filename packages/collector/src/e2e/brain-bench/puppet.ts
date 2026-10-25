@@ -3,11 +3,12 @@
 
 /**
  * The puppet steward — an OpenAI-compatible server assigned to the
- * `background-agent` role, standing in for the model in a cognition run.
+ * `background-agent` role, standing in for the model in a cognition run
+ * and in the note agent's turn on a quick-capture note.
  *
  * It emits real `tool_calls`, so the gateway's run driver executes the REAL
- * tool layer: authority filtering, argument validation, the entailment and
- * judge gates, the write gate and every cascade behind it. A puppet-driven
+ * tool layer: authority filtering, argument validation, the entailment
+ * gate, the write gate and every cascade behind it. A puppet-driven
  * run leaves genuine rows behind; only the reasoning that chose them is
  * scripted.
  *
@@ -34,6 +35,7 @@ export interface PuppetCall {
   kind: string | null;
   flavour: string | null;
   subject: string | null;
+  detail: string | null;
   prompt: string;
   emitted: NextTurn;
 }
@@ -111,6 +113,7 @@ export async function startPuppetModelServer(opts: {
         kind: ctx?.kind ?? null,
         flavour: ctx?.flavour ?? null,
         subject: ctx?.subject ?? null,
+        detail: ctx?.detail ?? null,
         prompt,
         emitted: turn,
       });

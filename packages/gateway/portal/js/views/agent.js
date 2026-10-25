@@ -25,6 +25,9 @@
 import { html } from "htm/preact";
 import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
+import { conversationDraftRevision, migrateLandingDraft, migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
+import { ConversationControls } from "../components/agent/conversation-controls.js";
+import { recordConsumedQueueReceipts, handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
   Composer,
@@ -33,6 +36,7 @@ import {
   PlanPanel,
   WorkingIndicator,
 } from "../components/agent/parts.js";
+import { BriefThread } from "../components/agent/brief-thread.js";
 import {
   reducer,
   initialState,
@@ -40,6 +44,8 @@ import {
   hasContextCard,
 } from "./agent-reducer.js";
 import { navigate, replaceRoute, replaceUrl } from "../lib/router.js";
+import { canDeleteConversation } from "../lib/sidebar-conversations.js";
+import { localDay, taskCardFacts } from "../lib/tasks-model.js";
 import {
   conversationAgentTarget,
   freshAgentTarget,
@@ -48,7 +54,6 @@ import {
   resolveAgentReturnTarget,
   writeAgentReturnState,
 } from "../lib/agent-return-policy.js";
-import { renderMarkdown } from "../lib/markdown.js";
 import { getAgentModel } from "../api.js";
 import { AgentCloudInferenceRecovery, cloudInferenceRecovery } from "./agent-cloud-inference.js";
 import { ProviderIcon } from "../components/provider-icon.js";
@@ -77,6 +82,17 @@ export async function requestAgentCancel(client, sessionId) {
   return result;
 }
 
+/** Older gateways retain ordinary idle messaging without accepting unsupported control semantics. */
+export async function requestConversationSubmission(client, sessionId, submission, busy = false) {
+  try {
+    return await client.submitMessage(sessionId, submission);
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    if (busy) throw new Error("This gateway needs an update to accept follow-ups while working.");
+    return client.sendMessage(sessionId, submission.text, { deepResearch: submission.deepResearch === true });
+  }
+}
+
 export function agentRequestIsCurrent(
   requestGeneration,
   currentGeneration,
@@ -96,7 +112,7 @@ export function AgentActionError({ message, onDismiss }) {
     <span>${message}</span>
     <button
       type="button"
-      aria-label="Dismiss stop error"
+      aria-label="Dismiss action error"
       onClick=${onDismiss}
     >×</button>
   </div>`;
@@ -148,6 +164,7 @@ export function scheduleReplayGapReconcile(
 }
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { LoadMore } from "../components/load-more.js";
+import { anchorScrollTop, readingAnchor, replyEnded } from "../lib/reading-anchor.js";
 
 // Pushpin glyph marking a pinned conversation in the rail. The pin/unpin
 // action itself lives in the global sidebar's "…" menu (app.js); the rail
@@ -175,8 +192,8 @@ export function shouldReplaceLandingUrl(pathname) {
 // reconcile there avoids a spurious 404 that would surface the "Conversation
 // not found" banner over an otherwise-empty hero composer.
 //
-// `turnCount > 0` alone isn't a reliable signal: a talk-back thread opened
-// from a brief or watch firing carries a seeded prefix
+// `turnCount > 0` alone isn't a reliable signal: a thread opened from a
+// watch firing carries a seeded prefix
 // that's hidden from `turns` until the user's first reply (see
 // `visibleMessages`), so a real, already-persisted conversation can also
 // have zero visible turns. `convoId` (the route's addressed conversation)
@@ -230,6 +247,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // turn change. If they were, we keep them pinned; if they had scrolled up
   // to read history we don't yank them back down on every delta.
   const pinnedToBottomRef = useRef(true);
+  // Set by a conversation load so the next transcript render applies the
+  // reading anchor (see `readingAnchor`), and the reply the reader was last
+  // positioned on or watched to its end.
+  const anchorOnLoadRef = useRef(false);
+  const seenReplyRef = useRef(null);
   // Guards the "first mount auto-resumes the most recent" branch from
   // re-firing later when the URL bounces back to `/portal/agent` via "+ New".
   // Without this, clicking "+ New" would always re-resume the last
@@ -271,6 +293,49 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
   const [actionFailure, setActionFailure] = useState(null);
+  const [controls, setControls] = useState(null);
+  const queueHandoffsRef = useRef(new Map());
+  const [queueHandoffs, setQueueHandoffs] = useState(queueHandoffsRef.current);
+  const consumedQueueReceiptsRef = useRef(new Map());
+  const [consumedQueueReceipts, setConsumedQueueReceipts] = useState(consumedQueueReceiptsRef.current);
+  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId), consumedQueueReceipts.get(state.sessionId));
+  function dispatchConversationEvent(action) {
+    const consumed = recordConsumedQueueReceipts(consumedQueueReceiptsRef.current, action);
+    if (consumed !== consumedQueueReceiptsRef.current) {
+      consumedQueueReceiptsRef.current = consumed;
+      setConsumedQueueReceipts(consumed);
+    }
+    dispatch(action);
+  }
+  const [editPrompt, setEditPrompt] = useState(null);
+  const [unconfirmed, setUnconfirmed] = useState(null);
+  const composerDraftKey = convoId ?? (shouldReplaceLandingUrl(window.location.pathname) ? "new" : (state.sessionId ?? "new"));
+  const controlsRequestRef = useRef(0);
+  async function refreshControls(sessionId = activeSessionIdRef.current) {
+    if (!sessionId || !clientRef.current) return;
+    setUnconfirmed({ sessionId, submission: readPendingSubmission(sessionId) });
+    const request = ++controlsRequestRef.current;
+    try {
+      const result = await clientRef.current.getControls(sessionId);
+      if (request === controlsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        if (result.pendingClarification && migrateClarificationDraft(sessionId, result.pendingClarification.id)) {
+          window.dispatchEvent(new CustomEvent("omnesis:conversation-draft", { detail: { key: sessionId } }));
+        }
+        setControls({ ...result, sessionId });
+      }
+    } catch (error) {
+      if (error.status === 404 && request === controlsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setControls({ sessionId, unsupported: true });
+      }
+    }
+  }
+  useEffect(() => {
+    const savedEdit = readConversationDraft(`${composerDraftKey}:edit`);
+    setEditPrompt(savedEdit.text ? { text: savedEdit.text } : null);
+    refreshControls(state.sessionId);
+    const timer = setInterval(() => refreshControls(state.sessionId), 2000);
+    return () => clearInterval(timer);
+  }, [state.sessionId]);
 
   // The model that would answer right now — the current agent assignment,
   // independent of any one conversation's history. Shown in a small header
@@ -305,8 +370,13 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         ) {
           settleAgentTerminal(cancelGenerationRef);
           setActionFailure(null);
+          anchorOnLoadRef.current = false;
+          seenReplyRef.current = replyEnded(
+            activeSessionIdRef.current,
+            document.visibilityState !== "hidden",
+          );
         }
-        dispatch({ kind: msg.type, payload: msg.payload });
+        dispatchConversationEvent({ kind: msg.type, payload: msg.payload });
         // After each completed turn, refresh the conversations list so
         // the sidebar reflects the new updatedAt + messageCount.
         if (msg.type === "agent.message.end") {
@@ -445,6 +515,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         const page = await loadPersistedConversation(clientRef.current, id);
         if (loadSeq !== sessionLoadSeqRef.current) return;
         activeSessionIdRef.current = id;
+        anchorOnLoadRef.current = true;
         dispatch({
           kind: "load-conversation",
           sessionId: id,
@@ -490,6 +561,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       activeSessionIdRef.current = session.sessionId;
       if (session.busy === true) reloadAfterEndRef.current.add(session.sessionId);
       else reloadAfterEndRef.current.delete(session.sessionId);
+      anchorOnLoadRef.current = true;
       dispatch({
         kind: "load-conversation",
         sessionId: session.sessionId,
@@ -507,7 +579,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       // A busy turn can be reopened after derived SSE events have already
       // passed. Apply the server-projected active-turn replay after the parent
       // runtime snapshot, then drain only post-cursor buffered SSE below.
-      dispatchSessionReplay(dispatch, session.replayEvents);
+      dispatchSessionReplay(dispatchConversationEvent, session.replayEvents);
       const hasResearchCard = (session.replayEvents ?? []).some(
         (event) => event.type === "agent.subagent.spawned",
       );
@@ -817,10 +889,26 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       olderHistoryScrollHeightRef.current = null;
       return;
     }
+    if (anchorOnLoadRef.current) {
+      anchorOnLoadRef.current = false;
+      const { turnId, seen } = readingAnchor(state, seenReplyRef.current);
+      seenReplyRef.current = seen;
+      const bubble = turnId
+        ? [...el.querySelectorAll("[data-turn-id]")].find((node) => node.getAttribute("data-turn-id") === turnId)
+        : null;
+      if (bubble) {
+        // A Morning brief opens under its day's separator.
+        const isBrief = Boolean(state.turns.find((turn) => turn.id === turnId)?.brief);
+        const target = (isBrief && bubble.closest(".brief-day")) || bubble;
+        el.scrollTop = anchorScrollTop(el, target);
+        pinnedToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+        return;
+      }
+    }
     if (pinnedToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [state.turns]);
+  }, [state.turns, JSON.stringify([controls?.queuedMessages, controls?.pendingClarification, unconfirmed?.submission])]);
 
   // Grace-period clear for the plan panel: when a turn finishes (`busy`
   // flips true → false), wait ~700ms so the final ✓ animation reads,
@@ -878,14 +966,17 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // Research pill contributes `{ deepResearch: true }`); the Composer clears
   // its pill after handing them off so the next send is an ordinary turn.
   async function send(text, options = {}) {
-    if (!clientRef.current || state.terminalFailure) return;
+    if (!clientRef.current || state.terminalFailure) return false;
+    // Sending follows the transcript to the bottom, wherever the reader was.
+    anchorOnLoadRef.current = false;
+    pinnedToBottomRef.current = true;
     const sendGeneration = ++sendGenerationRef.current;
     cancelGenerationRef.current += 1;
     setActionFailure(null);
     let sessionId = state.sessionId;
     const pending = pendingSessionRef.current;
     if (pending) {
-      if (pendingActivationRef.current) return;
+      if (pendingActivationRef.current) return false;
       const loadSeq = sessionLoadSeqRef.current;
       const activation = activatePendingSession(clientRef.current, pending);
       pendingActivationRef.current = activation;
@@ -895,14 +986,14 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           loadSeq !== sessionLoadSeqRef.current ||
           pendingSessionRef.current !== pending
         ) {
-          return;
+          return false;
         }
         pendingSessionRef.current = null;
         sessionId = session.sessionId;
         activeSessionIdRef.current = sessionId;
         if (pending.resumeFromId) {
           dispatch(resumedConversationAction(session));
-          dispatchSessionReplay(dispatch, session.replayEvents);
+          dispatchSessionReplay(dispatchConversationEvent, session.replayEvents);
         } else {
           dispatch({
             kind: "reset-conversation",
@@ -917,7 +1008,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           loadSeq !== sessionLoadSeqRef.current ||
           pendingSessionRef.current !== pending
         ) {
-          return;
+          return false;
         }
         const failedId =
           typeof crypto !== "undefined" && crypto.randomUUID
@@ -933,12 +1024,12 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           kind: "agent.error",
           payload: { code: err?.code === "remote_inference_disabled" ? err.code : "send_failed", message: err.message ?? String(err) },
         });
-        return;
+        return false;
       } finally {
         if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
       }
     }
-    if (!sessionId) return;
+    if (!sessionId) return false;
     // First message in a fresh hero session — stamp the URL with the
     // session id so a refresh or a shared link resumes this conversation,
     // and tell the sidebar it's now the active row. (refreshConversations
@@ -947,6 +1038,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     // Read the browser location rather than the route prop here. `replaceUrl`
     // intentionally does not dispatch a route-change, so a stale prop must
     // never prevent the first durable conversation URL from being written.
+    const landingDraft = shouldReplaceLandingUrl(window.location.pathname) ? migrateLandingDraft(sessionId) : null;
+    const landingDraftRevision = conversationDraftRevision(sessionId);
     if (shouldReplaceLandingUrl(window.location.pathname)) {
       replaceUrl(`/portal/agent/${encodeURIComponent(sessionId)}`);
       lastLoadedConvoIdRef.current = sessionId;
@@ -955,60 +1048,67 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         new CustomEvent("omnesis:agent-active-convo", { detail: { id: sessionId } }),
       );
     }
-    // UUID-based optimistic id so the eventual `agent.user.message` event
-    // (which carries the server-assigned `userMessageId`) can be deduped
-    // against this placeholder without colliding on a turn-index counter.
-    const optimisticId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? `u-pending-${crypto.randomUUID()}`
-        : `u-pending-${Date.now()}-${Math.random()}`;
-    dispatch({ kind: "user-send", text, optimisticId, deepResearch: options.deepResearch === true });
-    clientRef.current
-      .sendMessage(sessionId, text, options)
-      .then((resp) => {
-        if (!agentRequestIsCurrent(
-          sendGeneration,
-          sendGenerationRef.current,
-          sessionId,
-          activeSessionIdRef.current,
-        )) return;
-        // The send response is the gateway's authoritative confirmation that
-        // this session is now a durable conversation. Repeat the landing-URL
-        // stamp here in case an earlier render raced the first optimistic send.
-        if (
-          activeSessionIdRef.current === sessionId &&
-          shouldReplaceLandingUrl(window.location.pathname)
-        ) {
-          replaceUrl(`/portal/agent/${encodeURIComponent(resp?.conversationId ?? sessionId)}`);
-        }
-        if (resp && resp.userMessageId) {
-          dispatch({ kind: "stamp-user-message", optimisticId, userMessageId: resp.userMessageId });
-        }
-      })
-      .catch((err) => {
-        if (!agentRequestIsCurrent(
-          sendGeneration,
-          sendGenerationRef.current,
-          sessionId,
-          activeSessionIdRef.current,
-        )) return;
-        if (err?.code === "CONTEXT_WINDOW_EXCEEDED") {
-          // The gateway is authoritative. Re-resume to discard the stale
-          // optimistic bubble and load its persisted terminalFailure.
-          resumeConversation(sessionId);
-          return;
-        }
-        dispatch({
-          kind: "agent.error",
-          payload: {
-            code: err?.code === "remote_inference_disabled" ? err.code : "send_failed",
-            message: err.message ?? String(err),
-          },
-        });
+    let submission;
+    try {
+      submission = submissionForRetry(sessionId, text, {
+        mode: options.mode ?? "queue",
+        ...(options.deepResearch ? { deepResearch: true } : {}),
+        ...(options.clarificationId ? { clarificationId: options.clarificationId } : {}),
       });
+      const result = await requestConversationSubmission(clientRef.current, sessionId, submission, state.busy);
+      if (result?.submission?.status === "failed") {
+        clearPendingSubmission(sessionId, submission.clientMessageId);
+        throw new Error(result.submission.error || "The message failed. Send again to retry.");
+      }
+      clearPendingSubmission(sessionId, submission.clientMessageId);
+      if (landingDraft) clearConversationDraft(sessionId, landingDraft.text, landingDraft.command, landingDraftRevision);
+      if (activeSessionIdRef.current === sessionId) {
+        await refreshControls(sessionId);
+        refreshConversations();
+      }
+      return true;
+    } catch (err) {
+      if (submission && err.status >= 400 && err.status < 500) clearPendingSubmission(sessionId, submission.clientMessageId);
+      if (agentRequestIsCurrent(sendGeneration, sendGenerationRef.current, sessionId, activeSessionIdRef.current)) {
+        if (err?.code === "CONTEXT_WINDOW_EXCEEDED") resumeConversation(sessionId);
+        if (err?.code === "remote_inference_disabled") {
+          dispatch({ kind: "agent.error", payload: { code: err.code, message: err.message } });
+        }
+        setUnconfirmed({ sessionId, submission: readPendingSubmission(sessionId) });
+        setActionFailure({ sessionId, message: `Message not confirmed. Send again to retry. ${err.message ?? String(err)}` });
+      }
+      return false;
+    }
   }
+
+  async function sendQueuedNow(submissionIds) {
+    const sessionId = state.sessionId;
+    const client = clientRef.current;
+    const generation = sendGenerationRef.current;
+    if (!sessionId || !client || state.terminalFailure) return;
+    const newlyHidden = newQueueHandoffIds(queueHandoffsRef.current.get(sessionId), submissionIds, consumedQueueReceiptsRef.current.get(sessionId));
+    if (!newlyHidden.length) return;
+    setActionFailure(null);
+    const updateMask = (hide) => {
+      const next = new Map(queueHandoffsRef.current);
+      const ids = new Set(next.get(sessionId));
+      for (const id of newlyHidden) hide ? ids.add(id) : ids.delete(id);
+      next.set(sessionId, ids);
+      queueHandoffsRef.current = next;
+      setQueueHandoffs(next);
+    };
+    await handoffQueuedMessages({
+      send: () => client.sendQueuedNow(sessionId, newlyHidden),
+      hide: () => updateMask(true),
+      restore: () => updateMask(false),
+      isCurrent: () => agentRequestIsCurrent(generation, sendGenerationRef.current, sessionId, activeSessionIdRef.current) && clientRef.current === client,
+      refresh: () => refreshControls(sessionId),
+      onError: (error) => setActionFailure({ sessionId, message: `Queued messages were not confirmed. Try Send now again. ${error.message ?? String(error)}` }),
+    });
+  }
+
   function cancel() {
-    if (!state.busy || !state.sessionId || !clientRef.current) return;
+    if (!state.sessionId || !clientRef.current) return;
     const sessionId = state.sessionId;
     const cancelGeneration = ++cancelGenerationRef.current;
     setActionFailure(null);
@@ -1036,7 +1136,14 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   }
 
   const cloudRecovery = cloudInferenceRecovery(state);
-  const isHero = state.turns.length === 0 && !state.terminalFailure;
+  // A conversation with a context card opens on the card, even before its
+  // first message, rather than on the landing hero.
+  const isHero =
+    state.turns.length === 0 && !state.terminalFailure && !hasContextCard(state.conversationOrigin);
+  // The Morning brief conversation reads by day: separators, brief headers,
+  // what each brief was based on, and earlier days folded.
+  const isBriefThread = state.conversationOrigin?.kind === "daily_brief";
+  const isTaskThread = state.conversationOrigin?.kind === "task";
   return html`
     <div class=${`agent-page${isHero ? " agent-page-hero" : ""}`}>
       <div class=${`agent-layout${isHero ? " agent-layout-hero" : ""}`}>
@@ -1045,7 +1152,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
             key=${`${state.sessionId ?? "pending"}:${cloudRecovery.key}`}
             recovery=${cloudRecovery}
             model=${agentModel}
-            busy=${state.busy}
+            busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
             getConfig=${() => clientRef.current.getConfig()}
             onEnabled=${(config) => {
               configPromiseRef.current = Promise.resolve(config);
@@ -1081,19 +1188,37 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
               </div>
             `
             : null}
-          ${state.turns.length === 0 &&
-          !state.terminalFailure &&
-          !hasContextCard(state.briefOrigin)
+              ${actionFailure?.sessionId === state.sessionId
+                ? html`<${AgentActionError}
+                    message=${actionFailure.message}
+                    onDismiss=${() => setActionFailure(null)}
+                  />`
+                : null}
+
+          ${isHero
             ? html`
               <div class="agent-hero">
                 <span class="agent-hero-mark" aria-hidden="true"></span>
                 <h1 class="agent-hero-headline">Ask Omnesis about your corpus</h1>
                 <div class="agent-hero-composer">
+              <${ConversationControls}
+                controls=${visibleControls?.sessionId === state.sessionId ? visibleControls : null}
+                unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
+                onAnswer=${send}
+                onSendNow=${sendQueuedNow}
+              />
                   <${Composer}
-                    key=${state.sessionId ?? "fresh-pending"}
                     disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
-                    busy=${state.busy}
-                    onSubmit=${send}
+                    busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
+                    controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
+                    key=${editPrompt ? "editing" : "draft"}
+                    draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
+                    onSubmit=${async (text, options) => {
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
+                      if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
+                      return accepted;
+                    }}
                     onCancel=${cancel}
                     variant="hero"
                     autoFocus=${true}
@@ -1104,13 +1229,15 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
             `
             : html`
               <div class="agent-conversation" ref=${conversationRef} onScroll=${handleConversationScroll}>
-                ${state.briefOrigin?.brief
-                  ? html`<${BriefContextCard} snapshot=${state.briefOrigin.brief} />`
-                  : null}
-                ${state.briefOrigin?.watch
+                ${state.conversationOrigin?.watch
                   ? html`<${WatchFiringContextCard}
-                      snapshot=${state.briefOrigin.watch}
-                      watchId=${state.briefOrigin.watchId} />`
+                      snapshot=${state.conversationOrigin.watch}
+                      watchId=${state.conversationOrigin.watchId} />`
+                  : null}
+                ${state.conversationOrigin?.kind === "task" && state.conversationOrigin.task
+                  ? html`<${TaskContextCard}
+                      snapshot=${state.conversationOrigin.task}
+                      taskId=${state.conversationOrigin.taskId} />`
                   : null}
                 <${LoadMore}
                   hasMore=${!state.busy && Boolean(state.messageNextCursor)}
@@ -1119,30 +1246,55 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   onLoadMore=${loadEarlierMessages}
                   label="Load earlier messages"
                 />
-                ${state.turns.map((turn) => html`
-                  <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} />
-                `)}
+                ${isBriefThread
+                  ? html`<${BriefThread}
+                      key=${state.sessionId}
+                      conversationId=${state.sessionId}
+                      turns=${state.turns}
+                      citations=${state.citations}
+                      dispatch=${dispatch}
+                      canEdit=${!state.terminalFailure}
+                      onEdit=${(text) => { writeConversationDraft(`${composerDraftKey}:edit`, text); setEditPrompt({ text }); }} />`
+                  : state.turns.map((turn) => html`
+                      <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} canEdit=${!state.terminalFailure} onEdit=${(text) => { writeConversationDraft(`${composerDraftKey}:edit`, text); setEditPrompt({ text }); }} />
+                    `)}
+
                 <${WorkingIndicator}
                   active=${workingIndicatorActive(state)}
                   rev=${workingIndicatorRev(state)} />
+              <${ConversationControls}
+                controls=${visibleControls?.sessionId === state.sessionId ? visibleControls : null}
+                unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
+                onAnswer=${send}
+                onSendNow=${sendQueuedNow}
+              />
               </div>
               <${PlanPanel} items=${state.planItems} />
-              ${actionFailure?.sessionId === state.sessionId
-                ? html`<${AgentActionError}
-                    message=${actionFailure.message}
-                    onDismiss=${() => setActionFailure(null)}
-                  />`
-                : null}
+
+
+              ${editPrompt ? html`<div class="agent-edit-notice">Editing as a new message. The original exchange stays in this conversation.
+                <button type="button" onClick=${() => { writeConversationDraft(`${composerDraftKey}:edit`, ""); setEditPrompt(null); }}>Cancel edit</button>
+              </div>` : null}
               ${state.terminalFailure
                 ? html`<${ContextWindowExceededCard}
                     onNewConversation=${newConversation}
                   />`
                 : html`<${Composer}
                     disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
-                    busy=${state.busy}
-                    onSubmit=${send}
+                    busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
+                    controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
+                    key=${editPrompt ? "editing" : "draft"}
+                    draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
+                    onSubmit=${async (text, options) => {
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
+                      if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
+                      return accepted;
+                    }}
                     onCancel=${cancel}
                     experimental=${experimental}
+                    autoFocus=${isTaskThread && state.turns.length === 0}
+                    placeholder=${isBriefThread ? "Reply about today's brief…" : isTaskThread ? "Ask about this task…" : null}
                   />`}
             `}
         </section>
@@ -1197,13 +1349,15 @@ function ConversationsRail({ collapsed, onToggle, conversations, activeId, onSel
                     <span>·</span>
                     <span>${c.messageCount} msg</span>
                   </div>
-                  <button
-                    class="agent-rail-item-delete"
-                    onClick=${(e) => { e.stopPropagation(); if (confirm("Delete this conversation?")) onDelete(c.id); }}
-                    title="Delete"
-                    aria-label="Delete">
-                    ×
-                  </button>
+                  ${canDeleteConversation(c)
+                    ? html`<button
+                        class="agent-rail-item-delete"
+                        onClick=${(e) => { e.stopPropagation(); if (confirm("Delete this conversation?")) onDelete(c.id); }}
+                        title="Delete"
+                        aria-label="Delete">
+                        ×
+                      </button>`
+                    : null}
                 </div>
               `)}
           </div>
@@ -1225,17 +1379,11 @@ function fmtRelative(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-// The brief a talk-back thread replies to, pinned above the messages.
-// Content is the snapshot stamped at thread creation — it survives the
-// brief's expiry/dismissal, and the folded run transcript it visually
-// replaces is hidden by `visibleMessages`. The long-form body folds
-// behind "Show details" so re-anchoring stays a glance. Mirrors iOS's
-// BriefContextCard.
 // The watch firing that made the agent open this conversation, pinned
 // above the messages. This thread arrives unprompted, and the briefing
 // that produced its first message is hidden — the card is what answers
-// "why am I reading this". Snapshot semantics as above: stamped at thread
-// creation, so it survives the watch being renamed or deleted. Mirrors
+// "why am I reading this". The snapshot is stamped at thread creation, so
+// it survives the watch being renamed or deleted. Mirrors
 // iOS's WatchFiringContextCard.
 export function WatchFiringContextCard({ snapshot, watchId }) {
   const firedAt = new Date(snapshot.firedAt);
@@ -1248,28 +1396,28 @@ export function WatchFiringContextCard({ snapshot, watchId }) {
     navigate(href);
   }
   const content = html`
-    <div class="agent-brief-card-kicker">
+    <div class="agent-context-card-kicker">
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M8 2a4 4 0 0 0-4 4c0 2.5-1 3.5-1 3.5h10S12 8.5 12 6a4 4 0 0 0-4-4Z" />
         <path d="M6.5 12a1.5 1.5 0 0 0 3 0" />
       </svg>
       <span>Watch fired</span>
-      ${href ? html`<span class="agent-brief-card-open" aria-hidden="true">View watch ›</span>` : null}
+      ${href ? html`<span class="agent-context-card-open" aria-hidden="true">View watch ›</span>` : null}
     </div>
-    <div class="agent-brief-card-title">${snapshot.name}</div>
-    <div class="agent-brief-card-description">
+    <div class="agent-context-card-title">${snapshot.name}</div>
+    <div class="agent-context-card-description">
       <!-- A heading, not a sentence stem: the condition is quoted verbatim
            in the operator's own words, often first person. -->
       <strong>Watching for</strong> ${snapshot.condition}
     </div>
-    <div class="agent-brief-card-description">
+    <div class="agent-context-card-description">
       <code>${Number.isNaN(firedAt.getTime()) ? "" : firedAt.toLocaleString()}</code>
     </div>
   `;
-  if (!href) return html`<div class="agent-brief-card">${content}</div>`;
+  if (!href) return html`<div class="agent-context-card">${content}</div>`;
   return html`
-    <a class="agent-brief-card agent-brief-card-link"
+    <a class="agent-context-card agent-context-card-link"
        href=${href}
        onClick=${onClick}>
       ${content}
@@ -1277,34 +1425,42 @@ export function WatchFiringContextCard({ snapshot, watchId }) {
   `;
 }
 
-function BriefContextCard({ snapshot }) {
-  const [bodyOpen, setBodyOpen] = useState(false);
-  const hasBody = typeof snapshot.body === "string" && snapshot.body.length > 0;
-  return html`
-    <div class="agent-brief-card">
-      <div class="agent-brief-card-kicker">
-        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="6" width="10" height="7" rx="1" />
-          <path d="M4.5 4h7 M6 2h4" />
-        </svg>
-        <span>Brief</span>
-      </div>
-      <div class="agent-brief-card-title">${snapshot.title}</div>
-      <div class="agent-brief-card-description"
-           dangerouslySetInnerHTML=${{ __html: renderMarkdown(snapshot.description || "") }} />
-      ${hasBody
-        ? html`
-          ${bodyOpen
-            ? html`<div class="agent-brief-card-body"
-                dangerouslySetInnerHTML=${{ __html: renderMarkdown(snapshot.body) }} />`
-            : null}
-          <button type="button" class="agent-brief-card-toggle"
-                  onClick=${() => setBodyOpen((v) => !v)}>
-            ${bodyOpen ? "Hide details" : "Show details"}
-          </button>
-        `
-        : null}
+// The task a "Chat about this" conversation is about, pinned above the
+// messages so it is plain what "this" means. Drawn from the snapshot stamped
+// when the conversation opened, so it survives the task changing or being
+// deleted; the agent itself reads the task as it currently stands. Clicking
+// it opens the task. Mirrors iOS's TaskContextCard.
+export function TaskContextCard({ snapshot, taskId }) {
+  const href = typeof taskId === "string" && taskId.length > 0
+    ? `/portal/tasks?task=${encodeURIComponent(taskId)}`
+    : null;
+  function onClick(e) {
+    if (!href || e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+    e.preventDefault();
+    navigate(href);
+  }
+  const facts = taskCardFacts(snapshot, localDay());
+  const content = html`
+    <div class="agent-context-card-kicker">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+        <path d="m5.5 8 1.75 1.75L10.5 6.5" />
+      </svg>
+      <span>About this task</span>
+      ${href ? html`<span class="agent-context-card-open" aria-hidden="true">Open task ›</span>` : null}
     </div>
+    <div class="agent-context-card-title">${snapshot.title}</div>
+    ${facts.length > 0
+      ? html`<div class="agent-context-card-description">${facts.join(" · ")}</div>`
+      : null}
+  `;
+  if (!href) return html`<div class="agent-context-card">${content}</div>`;
+  return html`
+    <a class="agent-context-card agent-context-card-link"
+       href=${href}
+       onClick=${onClick}>
+      ${content}
+    </a>
   `;
 }

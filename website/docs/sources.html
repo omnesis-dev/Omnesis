@@ -64,8 +64,6 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/brain">Omnesis Brain</a></li>
-            <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
@@ -713,6 +711,14 @@
           </table>
         </div>
 
+        <p>
+          For PDFs with repeated wide column gaps, extracted text preserves positioned segments in a
+          labelled text block. Coordinates describe the source layout; they are not values or
+          inferred table headings. This keeps otherwise empty columns distinguishable. Ordinary
+          prose stays plain text. Existing extracted copies change only when fetched again;
+          rebuilding a source deletes its indexed data before fetching it again.
+        </p>
+
         <h3 id="local-files">Local Files</h3>
         <p>
           Local Files indexes documents on the collector's own machine — the folders you name,
@@ -1207,6 +1213,15 @@
           Google verification for your own use: the first sign-in shows a “Google hasn't verified
           this app” warning, which you pass with <strong>Advanced → Continue</strong>.
         </p>
+        <p>
+          Google won't publish the consent screen until it has an app home page and a privacy
+          policy, but you don't need a website of your own: Google reviews these links only when an
+          app is submitted for verification, which Omnesis doesn't need. Enter
+          <code>https://omnesis.dev</code> as the home page,
+          <code>https://omnesis.dev/privacy</code> as the privacy policy, and add
+          <code>omnesis.dev</code> as an authorized domain, or use any public page you control.
+          Don't submit the app for verification.
+        </p>
 
         <h3 id="day-to-day">Day-to-day tasks</h3>
         <p>
@@ -1289,6 +1304,18 @@
           <a href="#several-devices">Sources on several devices</a>. When a source reports an error
           instead, start from <a href="/docs/operating#troubleshooting">Troubleshooting</a>.
         </p>
+        <p>
+          Accounts of one source type that write the same analytics table can leave rows from before
+          Omnesis recorded which account wrote them. A table only one account has ever written
+          labels them as that account's by itself, in the background, a batch at a time, whether or
+          not the account syncs again. In a table several accounts share, syncing never waits on
+          such a row: a deletion or a snapshot that names it leaves it in place, and the account
+          that still holds the record labels it whenever it syncs that record again.
+          <code>omnesis sources legacy-rows &lt;id&gt;</code> lists what remains;
+          <code>--claim</code> marks those rows as the source's account, for rows no other account
+          still syncs, and <code>--drop</code> deletes them. The CLI asks first; pass
+          <code>--yes</code> in scripts.
+        </p>
 
         <h3 id="removing-a-source">Removing a source</h3>
         <p>
@@ -1299,13 +1326,14 @@
           instead, pause the source.
         </p>
         <p>
-          Everything the source ingested — documents, analytics rows, search-index entries, and
-          anything derived from them — is then deleted in the background, queued behind indexing so
-          it does not interrupt work in flight. On a large mailbox that takes several minutes. Until
-          it finishes, the source stays in the list marked <strong>removing</strong>, and its
-          document count falls as the purge drains. If the gateway stops partway through, it resumes
-          the purge on the next start. You cannot add the same account again until the
-          <strong>removing</strong> row has gone; the re-added source then syncs from scratch.
+          Everything the source ingested — documents, analytics rows, search-index entries, and the
+          data derived from them — is then deleted in the background, queued behind indexing so it
+          does not interrupt work in flight. On a large mailbox that takes several minutes. Until it
+          finishes, the source stays in the list marked <strong>removing</strong>, and its document
+          count falls as the purge drains. If the gateway stops partway through, it resumes the
+          purge on the next start. You cannot add the same account again until the
+          <strong>removing</strong> row has gone; the re-added source then syncs from scratch. Tasks
+          and memories built on the removed documents stay, without their link to them.
         </p>
         <p>
           People survive the removal on the strength of what remains. An email address or phone

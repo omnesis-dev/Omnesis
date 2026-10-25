@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { parsePackReport } from "./publish-graph.mjs";
 
 import {
   assertExportsAreStaged,
@@ -45,10 +46,10 @@ describe("release package runtime assets", () => {
       expect(existsSync(join(staged, "native-runtime-preflight.mjs"))).toBe(true);
       const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
       expect(manifest.scripts).toEqual({ preinstall: "node native-runtime-preflight.mjs" });
-      const pack = JSON.parse(
+      const pack = parsePackReport(
         execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: staged, encoding: "utf8" }),
       );
-      expect(pack[0].files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
+      expect(pack.files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }

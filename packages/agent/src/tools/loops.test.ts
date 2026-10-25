@@ -51,6 +51,17 @@ function makePort(over: Partial<LoopReadPort> = {}): LoopReadPort {
   };
 }
 
+it("describes loop status as a candidate, not verified outstanding work", () => {
+  const deps = { port: makePort() };
+  expect(createSearchLoopsTool(deps).description).toContain("not verified outstanding");
+  expect(createListLoopsTool(deps).description).toContain("not verified outstanding work");
+  expect(createListLoopsTool(deps).description).toContain("do not fetch every row");
+  expect(createFetchLoopTool(deps).description).toContain("not proof the action is still needed");
+  expect(createFetchLoopTool(deps).description).toContain("exact supporting document");
+  expect(createFetchLoopTool(deps).description).toContain("retained done or dismissed loops");
+  expect(createFetchLoopTool(deps).description).toContain("not necessarily source event dates");
+});
+
 describe("search_loops", () => {
   it("returns a loops.searched result and declares no mutation", async () => {
     const tool = createSearchLoopsTool({ port: makePort() });
@@ -93,10 +104,34 @@ describe("fetch_loop", () => {
     }
   });
 
-  it("returns loop.fetched with no loop for a miss (clean no-match, not an error)", async () => {
-    const res = await createFetchLoopTool({ port: makePort() }).invoke({ loopId: "nope" }, ctx);
-    expect(res.kind).toBe("loop.fetched");
-    if (res.kind === "loop.fetched") expect(res.loop).toBeUndefined();
+  it("does not distinguish a missing loop from a privacy-filtered loop", async () => {
+    const missing = await createFetchLoopTool({ port: makePort() }).invoke({ loopId: "nope" }, ctx);
+    const filtered = await createFetchLoopTool({
+      port: makePort({ fetch: async () => null }),
+    }).invoke({ loopId: "olp_1" }, ctx);
+    expect(missing).toEqual({
+      kind: "error",
+      code: "loop_not_found",
+      message:
+        "No accessible loop was found for that ID. Copy an exact loopId from " +
+        "list_loops or search_loops before retrying; do not reconstruct or guess IDs.",
+    });
+    expect(filtered).toEqual(missing);
+  });
+
+  it("rejects an omitted ID before reading", async () => {
+    let reads = 0;
+    const tool = createFetchLoopTool({
+      port: makePort({
+        fetch: async () => {
+          reads++;
+          return null;
+        },
+      }),
+    });
+    const result = await tool.invoke({}, ctx);
+    expect(result).toMatchObject({ kind: "error", code: "invalid_args" });
+    expect(reads).toBe(0);
   });
 });
 
@@ -134,11 +169,18 @@ describe("list_loops", () => {
       expect((res.data as { truncated: boolean }).truncated).toBe(true);
   });
 
-  it("accepts the max limit (100) but rejects above it — schema matches the advertised ceiling", async () => {
-    const ok = await createListLoopsTool({ port: makePort() }).invoke({ limit: 100 }, ctx);
-    expect(ok.kind).toBe("structured");
-    const tooBig = await createListLoopsTool({ port: makePort() }).invoke({ limit: 101 }, ctx);
-    expect(tooBig.kind).toBe("error");
+  it("reads a limit above the advertised ceiling (100) as the ceiling", async () => {
+    let seenLimit: number | undefined;
+    const port = makePort({
+      async list(limit): Promise<LoopListPortResult> {
+        seenLimit = limit;
+        return { durationMs: 1, truncated: false, loops: [] };
+      },
+    });
+    const tooBig = await createListLoopsTool({ port }).invoke({ limit: 500 }, ctx);
+    expect(tooBig.kind).toBe("structured");
+    expect(seenLimit).toBe(100);
+    expect((await createListLoopsTool({ port }).invoke({ limit: 0 }, ctx)).kind).toBe("error");
   });
 
   it("forwards the default limit (30) to the port when none is given", async () => {
@@ -173,4 +215,26 @@ describe("list_loops", () => {
     const res = await createListLoopsTool({ port }).invoke({}, ctx);
     expect(res).toMatchObject({ kind: "error", code: "list_loops_failed" });
   });
+});
+
+it("passes explicit snapshot purpose and turn identity while defaulting to navigation", async () => {
+  const seen: unknown[] = [];
+  const port = makePort({
+    async list(_limit, _signal, read) {
+      seen.push(read);
+      return { loops: [], truncated: false, durationMs: 0 };
+    },
+  });
+  const tool = createListLoopsTool({ port });
+  await tool.invoke({}, ctx);
+  await tool.invoke({ mode: "snapshot" }, ctx);
+  expect(seen).toEqual([
+    { ...ctx, mode: "navigation" },
+    { ...ctx, mode: "snapshot" },
+  ]);
+  expect(await tool.invoke({ mode: "automatic" }, ctx)).toMatchObject({
+    kind: "error",
+    code: "invalid_args",
+  });
+  expect(seen).toHaveLength(2);
 });

@@ -117,8 +117,14 @@ mint_probe_token() {
   local device out token
   "$OMNESIS" whoami --json >"$E2E_WORK/whoami.json" 2>/dev/null || die "omnesis whoami failed on the gateway"
   device="$(json_get "$E2E_WORK/whoami.json" 'j.deviceId')" || die "could not resolve the gateway's own device id"
-  out="$("$OMNESIS" tokens create --device "$device" --scopes read,admin --name install-e2e-probe --ttl 1d 2>&1)" ||
+  # Keep stdout private: a partially successful command may already have
+  # printed the minted token before failing. Preserve stderr separately so
+  # a CI failure still carries its cause, redacted and bounded for the log.
+  (umask 077 && : >"$E2E_WORK/probe-token.stderr")
+  if ! out="$("$OMNESIS" tokens create --device "$device" --scopes read,admin --name install-e2e-probe --ttl 1d 2>"$E2E_WORK/probe-token.stderr")"; then
+    redact <"$E2E_WORK/probe-token.stderr" | tail -c 4096 >&2
     die "could not mint the probe token"
+  fi
   token="$(printf '%s\n' "$out" | sed -n 's/^ *Token: *//p' | head -1)"
   [ -n "$token" ] || die "the probe token was not printed"
   secret "$token"

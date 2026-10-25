@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { runSchemaSetup } from "./schema.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -21,6 +22,7 @@ describe("migration 61 - privacy reviewer health index", () => {
   test("adds the answer task review-time index to an existing v60 database", () => {
     runSchemaSetup(db);
     db.exec("DROP INDEX idx_answer_tasks_created_at");
+    createLegacyBriefTables(db);
     db.pragma("user_version = 60");
 
     runMigrations(db);

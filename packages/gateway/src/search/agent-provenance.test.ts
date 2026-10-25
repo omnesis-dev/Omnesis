@@ -687,6 +687,15 @@ describe("agent graph search evidence", () => {
     });
   });
 
+  test("a bounded title ends before an instant its cut would split", () => {
+    const seed = doc("seed");
+    const lead = "z".repeat(225);
+    db.prepare("UPDATE documents SET title = ? WHERE id = 'seed'").run(
+      `${lead} 2026-10-18T17:28:00Z and more words after it`,
+    );
+    expect(search([seed])[0].provenance?.copies[0].title).toBe(`${lead} …`);
+  });
+
   test("prefers authoritative URLs, omits oversized links and bounds metadata", () => {
     const seed = doc("seed", { extra: { path: "x".repeat(400) } });
     db.prepare("UPDATE documents SET source_url = ?, title = ? WHERE id = 'seed'").run(
@@ -755,6 +764,27 @@ describe("agent graph search evidence", () => {
     expect(
       search([seed], { indexedContentHashes: { [seed.documentId]: computeContentHash(BODY) } }),
     ).toEqual([]);
+  });
+
+  test.each(["brain-knowledge", "open-loops"])(
+    "drops missing generated %s index hits, including long IDs",
+    (source) => {
+      const ordinary = doc("ordinary-stale");
+      db.prepare("DELETE FROM documents WHERE id=?").run(ordinary.documentId);
+      for (const documentId of ["missing-projection", "generated-".repeat(40)]) {
+        expect(search([{ ...ordinary, documentId, sourceId: source }])).toEqual([]);
+      }
+      // A real deletion has a durable tombstone; only an unknown ordinary
+      // index hit retains the legacy missing-row fallback.
+      expect(search([ordinary])).toEqual([]);
+      expect(search([{ ...ordinary, documentId: "unknown-ordinary-stale" }])).toHaveLength(1);
+    },
+  );
+
+  test("checks authoritative privacy before optional long-ID graph fallback", () => {
+    const hit = doc("long-projection-".repeat(24));
+    db.prepare("UPDATE documents SET source_id='brain-knowledge' WHERE id=?").run(hit.documentId);
+    expect(search([hit])).toEqual([]);
   });
 
   test("uses partition device stream instead of source primary and preserves bounded path", () => {

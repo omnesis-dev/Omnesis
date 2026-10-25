@@ -59,7 +59,6 @@ export function resolveSweeps(input: ResolveSweepsInput): ResolvedSweeps {
       anchorMinutes: anchorMinutes ?? deriveAnchorMinutes(def.id, input.quietWindow),
       anchorExplicit: anchorMinutes !== null,
       expectedBeforeDigest: def.expectedBeforeDigest ?? false,
-      ...(def.briefLane !== undefined ? { briefLane: def.briefLane } : {}),
       ...(def.temporalAnnotationPrimeDays !== undefined
         ? { temporalAnnotationPrimeDays: def.temporalAnnotationPrimeDays }
         : {}),
@@ -149,12 +148,6 @@ export function resolveSweeps(input: ResolveSweepsInput): ResolvedSweeps {
       // Carried from the system sweep: a file cannot claim the digest should
       // wait for it.
       expectedBeforeDigest: base.expectedBeforeDigest,
-      // The lane, by contrast, is granted for the PROSE it was written
-      // against — retiming or renaming a sweep does not change what its cards
-      // say, but replacing its prose does, so only that drops the grant.
-      ...(content.steeringPrompt === "" && base.briefLane !== undefined
-        ? { briefLane: base.briefLane }
-        : {}),
       ...(prime !== undefined && prime > 0 ? { temporalAnnotationPrimeDays: prime } : {}),
     });
   }

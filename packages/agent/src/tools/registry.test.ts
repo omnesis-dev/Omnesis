@@ -66,15 +66,15 @@ describe("tool registry", () => {
 
   it("rejects an out-of-range item argument instead of forwarding it", async () => {
     // The batched item schema is the singular tool's schema, so an argument
-    // outside the offered bounds (`limit` is capped at 50) must come back as
-    // an argument error rather than reach the search port.
+    // outside the offered bounds must come back as an argument error rather
+    // than reach the search port; a limit above the cap of 50 reads as 50.
     const ctx = { sessionId: "S", messageId: "M" };
-    let called = false;
+    const limits: Array<number | undefined> = [];
     const tools = buildBuiltinTools({
       ports: {
         search: {
           search: async (input) => {
-            called = true;
+            limits.push(input.limit);
             return { query: input.query, durationMs: 0, results: [] };
           },
         },
@@ -82,10 +82,14 @@ describe("tool registry", () => {
       },
     });
     const search = findTool(tools, "search_many")!;
-    const r = await search.invoke({ queries: [{ query: "x", limit: 500 }] }, ctx);
+    const r = await search.invoke({ queries: [{ query: "x", limit: 0 }] }, ctx);
     expect(r.kind).toBe("error");
     if (r.kind === "error") expect(r.code).toBe("invalid_args");
-    expect(called).toBe(false);
+    expect(limits).toEqual([]);
+    expect((await search.invoke({ queries: [{ query: "x", limit: 500 }] }, ctx)).kind).toBe(
+      "search.batch",
+    );
+    expect(limits).toEqual([50]);
   });
 
   it("registers lookup_people when the person port is provided", () => {

@@ -355,6 +355,16 @@ const REQUEST_SCOPED_CODES = new Set([
 ]);
 
 /**
+ * Provider-scoped failures that arrive with a request-scoped status.
+ *
+ * - `anthropic_usage_limited` — Anthropic reports a reached usage limit or a
+ *   spent credit balance as HTTP 400, the status of a malformed body. The
+ *   payload was never judged, and it succeeds unchanged once a person raises
+ *   the limit or tops up the account.
+ */
+const PROVIDER_SCOPED_CODES = new Set(["anthropic_usage_limited"]);
+
+/**
  * Classify a terminal failure by what it blames.
  *
  * Reads only the machine-readable fields — never the provider's prose, which
@@ -367,6 +377,7 @@ export function agentFailureScope(failure: {
   provider?: { status?: number };
 }): AgentFailureScope {
   if (failure.code !== undefined && REQUEST_SCOPED_CODES.has(failure.code)) return "request";
+  if (failure.code !== undefined && PROVIDER_SCOPED_CODES.has(failure.code)) return "provider";
   const status = failure.provider?.status;
   if (status === undefined) return "provider";
   return REQUEST_SCOPED_STATUSES.has(status) ? "request" : "provider";

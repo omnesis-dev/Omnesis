@@ -194,3 +194,15 @@ describe("createAnnotateTool", () => {
     expect(s).toContain("shipped");
   });
 });
+
+it("records the authorized fetched canonical identity rather than its lookup alias", async () => {
+  const tool = createAnnotateTool({ port: port(FIXTURE) });
+  expect(await tool.invoke({ documentId: "alias:status" }, CTX)).toMatchObject({
+    kind: "annotate.recorded",
+    documentId: "doc1",
+    ref: REF,
+  });
+  expect(
+    await createAnnotateTool({ port: port(null) }).invoke({ documentId: "alias:private" }, CTX),
+  ).toMatchObject({ kind: "error", code: "document_not_found" });
+});

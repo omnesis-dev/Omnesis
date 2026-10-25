@@ -13,6 +13,7 @@ import { z } from "zod";
 import { runBatch, BATCH_MAX_ITEMS, type BatchChild } from "./batch.js";
 import {
   createFetchDocumentTool,
+  documentPagingNote,
   fetchDocumentArgsSchema,
   type FetchDocumentToolDeps,
 } from "./fetch-document.js";
@@ -31,7 +32,7 @@ export function createFetchManyTool(deps: FetchDocumentToolDeps): ToolHandle {
         "One or more documents to fetch concurrently. Batch every body you " +
           "need into a single call rather than fetching one at a time. Each " +
           "entry takes the same fields as a single fetch (documentId, optional " +
-          "includeNeighbors).",
+          "includeNeighbors, contentOffset and maxContentChars).",
       ),
   });
   return {
@@ -40,7 +41,11 @@ export function createFetchManyTool(deps: FetchDocumentToolDeps): ToolHandle {
       "Fetch the full bodies of SEVERAL previously surfaced documents at once, " +
       "concurrently, in one round-trip. Put each documentId in `documents`. " +
       "Returns one document (or error) per entry in order. Only fetch the hits " +
-      "likely to answer the question, not every candidate.",
+      "likely to answer the question, not every candidate." +
+      (deps.port.supportsKnowledgeAliases
+        ? " documentId also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. knowledgeContext separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly, without adding wiki: or any other prefix. Use search when a page is unavailable."
+        : "") +
+      documentPagingNote(deps.defaultMaxContentChars),
     schema,
     summarize(args: unknown): string | undefined {
       const d = (args as { documents?: unknown[] } | null)?.documents;

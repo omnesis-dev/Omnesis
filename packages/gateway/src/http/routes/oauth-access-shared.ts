@@ -25,11 +25,11 @@ export function oauthError(
   status: ContentfulStatusCode,
   error: string,
   description: string,
-) {
+): Response {
   return c.json({ error, error_description: description }, status);
 }
 
-export function oauthConfigurationRequired(c: Context<AppEnv>) {
+export function oauthConfigurationRequired(c: Context<AppEnv>): Response {
   return oauthError(
     c,
     503,
@@ -38,7 +38,7 @@ export function oauthConfigurationRequired(c: Context<AppEnv>) {
   );
 }
 
-export function oauthRateLimitError(c: Context<AppEnv>) {
+export function oauthRateLimitError(c: Context<AppEnv>): Response {
   c.header("Retry-After", "60");
   return oauthError(c, 429, "temporarily_unavailable", "Too many OAuth requests.");
 }
@@ -48,12 +48,12 @@ export const oauthBodyLimit = bodyLimit({
   onError: (c) => oauthError(c, 413, "invalid_request", "OAuth request is too large."),
 });
 
-export function invalidClientError(c: Context<AppEnv>) {
+export function invalidClientError(c: Context<AppEnv>): Response {
   c.header("WWW-Authenticate", 'Basic realm="Omnesis OAuth"');
   return oauthError(c, 401, "invalid_client", "Client authentication failed.");
 }
 
-export function tokenMutationError(c: Context<AppEnv>, error: string) {
+export function tokenMutationError(c: Context<AppEnv>, error: string): Response {
   if (error === "invalid-client" || error === "invalid-secret") return invalidClientError(c);
   if (error === "invalid-scope") {
     return oauthError(c, 400, "invalid_scope", "The requested scope is not permitted.");

@@ -10,7 +10,7 @@
  * one-belief-per-(subject, claimType) invariant, the entailment gate in all
  * three of its arms (reject / accept / unassigned), the supersession and
  * revise/retract lifecycles, the multi-evidence sidecar, and the consumption
- * edges that record which brief was built on which prior.
+ * edges that record which observation was built on which prior.
  *
  * Two gateways, split only where the entailment policy has to differ: the
  * first leaves the `entailment-verifier` role unassigned (the state every
@@ -19,9 +19,12 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -32,6 +35,16 @@ import {
 } from "./brain-bench/index.js";
 
 compressCognitionCadences();
+
+const ATOMIC_SOURCE =
+  "The ceramic sample weighs 240 grams. Its storage cabinet has not been assigned.";
+const ATOMIC_BAD = "The ceramic sample weighs 240 grams and is stored in cabinet R.";
+const ATOMIC_CORRECTED = "The ceramic sample weighs 240 grams; no storage cabinet is assigned.";
+const DOC_ATOMIC = note({
+  externalId: "atomic-sample-catalogue",
+  title: "Sample catalogue audit",
+  content: ATOMIC_SOURCE,
+});
 
 // ── fixtures (invented from scratch: fictional people, vendors, amounts) ────
 
@@ -175,9 +188,9 @@ let priorDocId = "";
 /** A tool result the gateway actually answered with. */
 type ToolResult = NonNullable<ToolResultView>;
 
-/** The settled data run a pushed document caused. */
+/** The settled source interpretation a pushed document caused. */
 async function runIdFor(bench: BrainBench, docId: string): Promise<string> {
-  const run = await bench.obs.runForDoc(docId);
+  const run = await bench.obs.interpretationForSource(docId);
   expect(run.status).toBe("completed");
   return run.id;
 }
@@ -223,271 +236,299 @@ describe("annotations with the entailment role unassigned", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: DOC_CLAMP.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "order-status",
-                  claimText: "The workshop bench order is confirmed under reference CG-4417.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: CLAMP_QUOTED,
-                  confidence: 0.99,
-                  claimBasis: "quoted",
-                }),
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "delivery-window",
-                  claimText: "The benches should arrive within fourteen business days.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: CLAMP_INFERRED,
-                  confidence: 0.99,
-                  claimBasis: "inferred",
-                }),
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "payment-terms",
-                  claimText: "Cedar Grove Supplies bills this account on net-thirty terms.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: CLAMP_SYNTHESIZED,
-                  confidence: 0.99,
-                  claimBasis: "synthesized",
-                }),
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: DOC_CLAMP.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "order-status",
+                    claimText: "The workshop bench order is confirmed under reference CG-4417.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: CLAMP_QUOTED,
+                    confidence: 0.99,
+                    claimBasis: "quoted",
+                  }),
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "delivery-window",
+                    claimText: "The benches should arrive within fourteen business days.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: CLAMP_INFERRED,
+                    confidence: 0.99,
+                    claimBasis: "inferred",
+                  }),
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "payment-terms",
+                    claimText: "Cedar Grove Supplies bills this account on net-thirty terms.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: CLAMP_SYNTHESIZED,
+                    confidence: 0.99,
+                    claimBasis: "synthesized",
+                  }),
+                ],
+                finalText: "Recorded three grounded observations at three claim bases.",
+              }),
+            },
+            {
+              docTitle: DOC_QUOTE_GATE.title,
+              expectedRefusals: [{ tool: "annotate_durable", code: "evidence_not_found" }],
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "availability",
+                    claimText: "The rehearsal room is unavailable next month.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: QUOTE_NOT_IN_DOC,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "The quote did not hold up; recorded nothing.",
+              }),
+            },
+            {
+              docTitle: DOC_FLOOR.title,
+              expectedRefusals: [
+                { tool: "annotate_durable", code: "insufficient_confidence_to_persist" },
               ],
-              finalText: "Recorded three grounded observations at three claim bases.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_QUOTE_GATE.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "availability",
-                  claimText: "The rehearsal room is unavailable next month.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: QUOTE_NOT_IN_DOC,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "The quote did not hold up; recorded nothing.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_FLOOR.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "access",
-                  claimText: "The site is probably hard to reach in winter.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "The access road is unpaved for the final two hundred metres.",
-                  confidence: 0.2,
-                  claimBasis: "synthesized",
-                }),
-              ],
-              finalText: "Too weak to keep as a prior.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_FAIL_OPEN.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "capacity",
-                  claimText: "Weekend parking is capped at twelve vehicles.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "Parking for the weekend is limited to twelve vehicles.",
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_PERSON.title,
-            plan: (ctx) => ({
-              calls: [
-                call("lookup_people", { query: "Maya Reeves" }),
-                call("annotate_person", {
-                  personId: ref("lookup_people", "results.0.canonicalId"),
-                  claimType: "role",
-                  claimText: "Maya Reeves runs the Cedar Grove Supplies account.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: PERSON_QUOTE,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_SUPERSEDE.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "booking-status",
-                  claimText: "The hall is provisionally held for the autumn weekend.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "The hall is provisionally held for the autumn weekend.",
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-                // Replaces the belief above with a corrected one, in one call.
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "booking-status",
-                  claimText: "The hall hold is unconfirmed until the contract is signed.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "A signed contract is still outstanding on our side.",
-                  confidence: 0.7,
-                  claimBasis: "inferred",
-                  supersedes: ref("annotate_durable", "id", 0),
-                }),
-                // A second live belief, under its own claim type, retired by a
-                // pure supersede in favour of the one above.
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "catering",
-                  claimText: "The catering headcount will be confirmed separately.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "We will confirm the catering headcount separately.",
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-                call("annotation_supersede", {
-                  id: ref("annotate_durable", "id", 2),
-                  supersededBy: ref("annotate_durable", "id", 1),
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_REVISE.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "quote-status",
-                  claimText: "Alex asked Stellar Sound about a monitor pair.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "The quote for the monitor pair comes to four hundred and ten.",
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
-                // Wording only: identity, basis and confidence must survive.
-                call("annotation_revise", {
-                  id: ref("annotate_durable", "id", 0),
-                  claimText: "Stellar Sound quoted four hundred and ten for the monitor pair.",
-                }),
-                // A basis downgrade with NO new confidence must still pull the
-                // standing 0.9 under the synthesized ceiling.
-                call("annotation_revise", {
-                  id: ref("annotate_durable", "id", 0),
-                  claimBasis: "synthesized",
-                }),
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "price-hold",
-                  claimText: "The quoted price holds until the end of the quarter.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "We can hold that price until the end of the quarter.",
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-                call("annotation_retract", { id: ref("annotate_durable", "id", 1) }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_MULTI.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "attendance",
-                  claimText: "The winter workshop ran at full capacity.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: "The winter workshop filled every available seat this year.",
-                  confidence: 0.9,
-                  claimBasis: "synthesized",
-                  additionalEvidence: [
-                    {
-                      docId: multiEvidenceDocId,
-                      quote: "Attendance for the winter workshop reached sixty two people.",
-                    },
-                  ],
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_PRIOR.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "review-due",
-                  claimText: "Cedar Grove Supplies expects the account review before month end.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: PRIOR_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_CONSUME.title,
-            plan: (ctx) => ({
-              calls: [
-                // The prior was written by an EARLIER run, so only this read
-                // can put it in front of the model this run.
-                call("annotation_search", { docId: priorDocId }),
-                call("brief_create", {
-                  kind: "info",
-                  title: "Cedar Grove Supplies review needs attendees",
-                  description: "The review is due next month and needs names from your side.",
-                  citations: [ctx.subject],
-                  confidence: 0.8,
-                  urgency: 0.4,
-                  annotationDependencies: [
-                    { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
-                  ],
-                }),
-                // The negative arm: a prior this run never saw cannot be
-                // declared as a dependency.
-                call("open_loop_create", {
-                  title: "Confirm the account review attendees",
-                  confidence: 0.8,
-                  importance: 0.5,
-                  docs: [ctx.subject],
-                  annotationDependencies: [
-                    { store: "doc", annotationId: "anno_never_surfaced_in_this_run" },
-                  ],
-                }),
-              ],
-            }),
-          },
-        ],
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "access",
+                    claimText: "The site is probably hard to reach in winter.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "The access road is unpaved for the final two hundred metres.",
+                    confidence: 0.2,
+                    claimBasis: "synthesized",
+                  }),
+                ],
+                finalText: "Too weak to keep as a prior.",
+              }),
+            },
+            {
+              docTitle: DOC_FAIL_OPEN.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "capacity",
+                    claimText: "Weekend parking is capped at twelve vehicles.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "Parking for the weekend is limited to twelve vehicles.",
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_PERSON.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("lookup_people", { query: "Maya Reeves" }),
+                  call("annotation_search", {
+                    personId: ref("lookup_people", "results.0.canonicalId"),
+                  }),
+                  call("annotate_person", {
+                    personId: ref("lookup_people", "results.0.canonicalId"),
+                    claimType: "role",
+                    claimText: "Maya Reeves runs the Cedar Grove Supplies account.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: PERSON_QUOTE,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_SUPERSEDE.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "booking-status",
+                    claimText: "The hall is provisionally held for the autumn weekend.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "The hall is provisionally held for the autumn weekend.",
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                  // Replaces the belief above with a corrected one, in one call.
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "booking-status",
+                    claimText: "The hall hold is unconfirmed until the contract is signed.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "A signed contract is still outstanding on our side.",
+                    confidence: 0.7,
+                    claimBasis: "inferred",
+                    supersedes: ref("annotate_durable", "id", 0),
+                  }),
+                  // A second live belief, under its own claim type, retired by a
+                  // pure supersede in favour of the one above.
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "catering",
+                    claimText: "The catering headcount will be confirmed separately.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "We will confirm the catering headcount separately.",
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotation_supersede", {
+                    id: ref("annotate_durable", "id", 2),
+                    supersededBy: ref("annotate_durable", "id", 1),
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_REVISE.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "quote-status",
+                    claimText: "Alex asked Stellar Sound about a monitor pair.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "The quote for the monitor pair comes to four hundred and ten.",
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                  // Wording only: identity, basis and confidence must survive.
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotation_revise", {
+                    id: ref("annotate_durable", "id", 0),
+                    claimText: "Stellar Sound quoted four hundred and ten for the monitor pair.",
+                  }),
+                  // A basis downgrade with NO new confidence must still pull the
+                  // standing 0.9 under the synthesized ceiling.
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotation_revise", {
+                    id: ref("annotate_durable", "id", 0),
+                    claimBasis: "synthesized",
+                  }),
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "price-hold",
+                    claimText: "The quoted price holds until the end of the quarter.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "We can hold that price until the end of the quarter.",
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotation_retract", { id: ref("annotate_durable", "id", 1) }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_MULTI.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: multiEvidenceDocId }] }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "attendance",
+                    claimText: "The winter workshop ran at full capacity.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: "The winter workshop filled every available seat this year.",
+                    confidence: 0.9,
+                    claimBasis: "synthesized",
+                    additionalEvidence: [
+                      {
+                        docId: multiEvidenceDocId,
+                        quote: "Attendance for the winter workshop reached sixty two people.",
+                      },
+                    ],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_PRIOR.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "review-due",
+                    claimText: "Cedar Grove Supplies expects the account review before month end.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: PRIOR_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_CONSUME.title,
+              expectedRefusals: [{ tool: "open_loop_create", code: "invalid_args" }],
+              plan: (ctx) => ({
+                calls: [
+                  // The prior was written by an EARLIER run, so only this read
+                  // can put it in front of the model this run.
+                  call("annotation_search", { docId: priorDocId }),
+                  call("observation_list", {}),
+                  call("observation_note", {
+                    summary: "Cedar Grove Supplies needs your account review attendees.",
+                    why: "The review is due before month end and needs names from your side.",
+                    citations: [ctx.subject],
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "Please confirm who is attending the account review from your side.",
+                      },
+                    ],
+                    annotationDependencies: [
+                      { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
+                    ],
+                  }),
+                  // The negative arm: a prior this run never saw cannot be
+                  // declared as a dependency.
+                  call("open_loop_search", { query: "account review attendees" }),
+                  call("open_loop_create", {
+                    title: "Confirm the account review attendees",
+                    confidence: 0.8,
+                    importance: 0.5,
+                    docs: [ctx.subject],
+                    annotationDependencies: [
+                      { store: "doc", annotationId: "anno_never_surfaced_in_this_run" },
+                    ],
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
   }, 300_000);
@@ -495,6 +536,32 @@ describe("annotations with the entailment role unassigned", () => {
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = await bench.obs.runs({ limit: 10 });
+    createLogger("collector:brain-bench").error(
+      `Annotation maintenance failure: ${JSON.stringify({
+        work: bench.sql
+          .prepare(
+            "SELECT subject_id,subject_kind,reason,status,input_revision,due_at,last_error FROM knowledge_work WHERE status IN ('pending','batched')",
+          )
+          .all(),
+        nodes: bench.sql.prepare("SELECT * FROM knowledge_nodes").all(),
+        annotations: bench.sql
+          .prepare("SELECT id,claim_type,invalidated_at,superseded_by FROM doc_annotations")
+          .all(),
+        tools: await Promise.all(
+          runs.items
+            .filter((run) => run.kind === "synthesis")
+            .map(async (run) => ({
+              id: run.id,
+              tools: await bench.obs.executedTools(run.id),
+            })),
+        ),
+      })}`,
+    );
+  });
 
   test("a durable annotation lands, clamped to its claim basis' ceiling", async () => {
     const [docId] = await bench.pushAndSettle([DOC_CLAMP]);
@@ -550,8 +617,7 @@ describe("annotations with the entailment role unassigned", () => {
         .get(docId!)?.n,
     ).toBe(0);
     // The refusal is re-askable, not fatal: the run still settles cleanly.
-    const runs = await bench.obs.runs({ kind: "data" });
-    expect(runs.items.find((r) => r.id === runId)!.status).toBe("completed");
+    expect((await bench.obs.run(runId)).run.status).toBe("completed");
     expect((await bench.obs.pulse()).counts.failedRuns24h).toBe(0);
   }, 120_000);
 
@@ -756,13 +822,13 @@ describe("annotations with the entailment role unassigned", () => {
     const surfaced = structured(search!).annotations as Array<{ id: string }>;
     expect(surfaced.map((a) => a.id)).toEqual([priorId]);
 
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult!.kind).toBe("structured");
-    const briefId = (structured(briefResult!).brief as { id: string }).id;
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult!.kind).toBe("structured");
+    const observationId = structured(observationResult!).id as string;
 
     const dependents = await bench.obs.dependents("doc", priorId);
     expect(dependents.items).toHaveLength(1);
-    expect(dependents.items[0]).toMatchObject({ kind: "brief", id: briefId, runId });
+    expect(dependents.items[0]).toMatchObject({ kind: "observation", id: observationId, runId });
 
     const edges = bench.sql
       .prepare<
@@ -774,7 +840,12 @@ describe("annotations with the entailment role unassigned", () => {
       )
       .all(priorId);
     expect(edges).toEqual([
-      { prior_store: "doc", dependent_kind: "brief", dependent_id: briefId, run_id: runId },
+      {
+        prior_store: "doc",
+        dependent_kind: "observation",
+        dependent_id: observationId,
+        run_id: runId,
+      },
     ]);
 
     // And the per-entity read route reports the same dependency.
@@ -842,67 +913,110 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       // One verifier, both arms: the quote that denies its claim is judged
       // NEUTRAL, everything else ENTAILMENT — so a single gateway covers the
       // refuse and the accept paths.
-      entailment: ({ evidence }) =>
-        evidence.includes("has not been scheduled") ? "neutral" : "entailment",
+      entailment: ({ claim, evidence, context, assessment }) => {
+        if (claim === ATOMIC_BAD || claim === ATOMIC_CORRECTED) {
+          expect(assessment).toBe("annotation_atomic");
+          return claim === ATOMIC_BAD ? "neutral" : "entailment";
+        }
+        if (evidence.includes("has not been scheduled")) {
+          if (!context || JSON.parse(context).kind !== "document annotation")
+            throw new Error("Annotation must use contextual verification");
+          return "neutral";
+        }
+        return "entailment";
+      },
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: DOC_ENTAIL_REJECT.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "catering-status",
-                  claimText: REJECT_CLAIM,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: REJECT_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: DOC_ATOMIC.title,
+              expectedRefusals: [
+                { tool: "annotate_durable", code: "evidence_does_not_entail_claim" },
               ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_ENTAIL_ACCEPT.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "rehearsal-status",
-                  claimText: ACCEPT_CLAIM,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: ACCEPT_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  ...[ATOMIC_BAD, ATOMIC_CORRECTED].map((claimText) =>
+                    call("annotate_durable", {
+                      docId: ctx.subject,
+                      claimType: "sample-catalogue",
+                      claimText,
+                      evidenceDocId: ctx.subject,
+                      evidenceQuote: ATOMIC_SOURCE,
+                      confidence: 0.8,
+                      claimBasis: "quoted",
+                    }),
+                  ),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_ENTAIL_REJECT.title,
+              expectedRefusals: [
+                { tool: "annotate_durable", code: "evidence_does_not_entail_claim" },
               ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_ENTAIL_MULTI.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "standing-booking",
-                  claimText: MULTI_CLAIM,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: MULTI_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "synthesized",
-                  additionalEvidence: [{ docId: entailAcceptDocId, quote: ACCEPT_QUOTE }],
-                }),
-              ],
-            }),
-          },
-        ],
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "catering-status",
+                    claimText: REJECT_CLAIM,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: REJECT_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_ENTAIL_ACCEPT.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "rehearsal-status",
+                    claimText: ACCEPT_CLAIM,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: ACCEPT_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DOC_ENTAIL_MULTI.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: entailAcceptDocId }] }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "standing-booking",
+                    claimText: MULTI_CLAIM,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: MULTI_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "synthesized",
+                    additionalEvidence: [{ docId: entailAcceptDocId, quote: ACCEPT_QUOTE }],
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
   }, 300_000);
@@ -933,8 +1047,46 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
     // The verifier was really consulted — with this claim, about this quote.
     const consulted = bench.entailmentCalls.filter((c) => c.claim === REJECT_CLAIM);
     expect(consulted).toHaveLength(1);
-    expect(consulted[0]!.evidence).toBe(REJECT_QUOTE);
-    expect(consulted[0]!.answer).toBe("NEUTRAL");
+    expect(JSON.parse(consulted[0]!.evidence!)).toMatchObject({
+      sources: [
+        {
+          authority: "selected_quote",
+          selectedQuotes: [REJECT_QUOTE],
+          text: DOC_ENTAIL_REJECT.content,
+          truncated: false,
+        },
+      ],
+      verifiedReferences: [],
+    });
+    expect(JSON.parse(consulted[0]!.answer)).toMatchObject({
+      assertions: [{ id: "a1", verdict: "unsupported" }],
+      placementSupport: { verdict: "not_applicable" },
+    });
+  }, 120_000);
+
+  test("a refused compound is corrected as one note while retaining its supported assertion", async () => {
+    const [docId] = await bench.pushAndSettle([DOC_ATOMIC]);
+    const runId = await runIdFor(bench, docId!);
+    const results = resultsOf(await bench.obs.executedTools(runId), "annotate_durable");
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({ kind: "error", code: "evidence_does_not_entail_claim" });
+    expect(String(results[0]!.message)).toContain("Unsupported candidate assertions");
+    expect(results[1]!.kind).toBe("structured");
+    const { annotations } = await bench.obs.docAnnotations(docId!);
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0]).toMatchObject({
+      claimText: ATOMIC_CORRECTED,
+      verificationState: "verified",
+    });
+    const attempts = bench.entailmentCalls.filter(
+      (c) => c.claim === ATOMIC_BAD || c.claim === ATOMIC_CORRECTED,
+    );
+    expect(attempts).toHaveLength(2);
+    expect(attempts.map((c) => c.assessment)).toEqual(["annotation_atomic", "annotation_atomic"]);
+    expect(attempts.map((c) => JSON.parse(c.answer).assertions[0].verdict)).toEqual([
+      "unsupported",
+      "supported",
+    ]);
   }, 120_000);
 
   test("an entailed claim persists born-verified with a check timestamp", async () => {
@@ -950,8 +1102,21 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
 
     const consulted = bench.entailmentCalls.slice(before).filter((c) => c.claim === ACCEPT_CLAIM);
     expect(consulted).toHaveLength(1);
-    expect(consulted[0]!.evidence).toBe(ACCEPT_QUOTE);
-    expect(consulted[0]!.answer).toBe("ENTAILMENT");
+    expect(JSON.parse(consulted[0]!.evidence!)).toMatchObject({
+      sources: [
+        {
+          authority: "selected_quote",
+          selectedQuotes: [ACCEPT_QUOTE],
+          text: DOC_ENTAIL_ACCEPT.content,
+          truncated: false,
+        },
+      ],
+      verifiedReferences: [],
+    });
+    expect(JSON.parse(consulted[0]!.answer)).toMatchObject({
+      assertions: [{ id: "a1", verdict: "supported" }],
+      placementSupport: { verdict: "not_applicable" },
+    });
   }, 120_000);
 
   test("a multi-atom grounding is judged jointly, in one verifier call", async () => {
@@ -963,9 +1128,21 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
     const consulted = bench.entailmentCalls.slice(before);
     expect(consulted).toHaveLength(1);
     expect(consulted[0]!.claim).toBe(MULTI_CLAIM);
-    // Both quotes reach the verifier, enumerated and jointly judged.
-    expect(consulted[0]!.prompt).toContain(`[1] ${MULTI_QUOTE}`);
-    expect(consulted[0]!.prompt).toContain(`[2] ${ACCEPT_QUOTE}`);
+    // Both selected quotes and their interpretation context reach one judgment.
+    expect(JSON.parse(consulted[0]!.evidence!)).toMatchObject({
+      sources: [
+        {
+          authority: "selected_quote",
+          selectedQuotes: [MULTI_QUOTE],
+          text: DOC_ENTAIL_MULTI.content,
+        },
+        {
+          authority: "selected_quote",
+          selectedQuotes: [ACCEPT_QUOTE],
+          text: DOC_ENTAIL_ACCEPT.content,
+        },
+      ],
+    });
 
     const { annotations } = await bench.obs.docAnnotations(docId!);
     expect(annotations).toHaveLength(1);

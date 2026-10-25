@@ -208,6 +208,9 @@ struct MenuRevealContainer<Menu: View, Content: View>: View {
                     if accepted { feedbackGenerator.prepare() }
                     return accepted
                 },
+                claimsEdge: { start in
+                    progressOverride == nil && MenuReveal.claimsEdge(startX: start.x, isOpen: isOpen)
+                },
                 onChanged: { translation in
                     dragDistance = MenuReveal.clampDragDistance(
                         translation.x,
@@ -380,7 +383,7 @@ private struct MenuRevealPreviewMenu: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
             Text("Omnesis").font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            ForEach(["Search", "Briefs", "Sources", "People"], id: \.self) { label in
+            ForEach(["Search", "Tasks", "Sources", "People"], id: \.self) { label in
                 Text(label).font(.system(size: 18)).foregroundStyle(Theme.textPrimary)
             }
             Spacer()

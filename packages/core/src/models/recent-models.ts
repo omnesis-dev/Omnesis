@@ -12,7 +12,7 @@
  *
  * Similarity is a fixed grouping over capability roles: the chat roles can
  * serve each other (`agent`, `privacy-reviewer`, `background-agent`,
- * `watch-judge`, `brief-judge`), while `ocr`, `transcriber` and `embedder`
+ * `watch-judge`), while `ocr`, `transcriber` and `embedder`
  * only ever reuse their own. The entailment verifier is deliberately
  * excluded — a special case left unhandled for now.
  *
@@ -34,23 +34,10 @@ export const MAX_RECENT_MODELS_PER_ROLE = 2;
  * shows no "Recently used" section at all.
  */
 const RECENT_MODEL_REFERENCE_GROUPS: Readonly<Record<CapabilityRole, readonly CapabilityRole[]>> = {
-  agent: ["agent", "privacy-reviewer", "background-agent", "watch-judge", "brief-judge"],
-  "privacy-reviewer": [
-    "agent",
-    "privacy-reviewer",
-    "background-agent",
-    "watch-judge",
-    "brief-judge",
-  ],
-  "background-agent": [
-    "agent",
-    "privacy-reviewer",
-    "background-agent",
-    "watch-judge",
-    "brief-judge",
-  ],
-  "watch-judge": ["agent", "privacy-reviewer", "background-agent", "watch-judge", "brief-judge"],
-  "brief-judge": ["agent", "privacy-reviewer", "background-agent", "watch-judge", "brief-judge"],
+  agent: ["agent", "privacy-reviewer", "background-agent", "watch-judge"],
+  "privacy-reviewer": ["agent", "privacy-reviewer", "background-agent", "watch-judge"],
+  "background-agent": ["agent", "privacy-reviewer", "background-agent", "watch-judge"],
+  "watch-judge": ["agent", "privacy-reviewer", "background-agent", "watch-judge"],
   ocr: ["ocr"],
   transcriber: ["transcriber"],
   embedder: ["embedder"],

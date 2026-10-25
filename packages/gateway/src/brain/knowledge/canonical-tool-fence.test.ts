@@ -1,0 +1,837 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import Database from "better-sqlite3";
+import { z } from "zod";
+import { beforeEach, afterEach, it, expect } from "vitest";
+import { createLogger, type EntailCapability } from "@omnesis/core";
+import { createAnnotationStorageTables, createDocAnnotation } from "../storage/annotations.js";
+import { createConsumptionEdgesTables } from "../storage/consumption-edges.js";
+import { createBriefsStorageTables } from "../storage/schema.js";
+import { directWriteGate, writeGateFromCall, type WriterCallFn } from "../../write-gate.js";
+import { buildAnnotationTools, buildCognitionOwnTools } from "../steward/tools.js";
+
+import {
+  createTemporalAnnotationTables,
+  insertTemporalAnnotation,
+} from "../../enrichment/temporal-annotations/storage.js";
+import { writerHandlers } from "../../scheduler/writer-handlers.js";
+import { appendOpenLoopLedger, createOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
+import { buildMaintenanceCanonicalTools } from "./canonical-tool-fence.js";
+import { createKnowledgeWorkTables } from "./work-schema.js";
+import { admitCanonicalMaintenance } from "./canonical-admission.js";
+import { captureKnowledgeCanonicalFence } from "./canonical-fence.js";
+import { reconcileKnowledgeOwner } from "./owner-sync.js";
+import { createKnowledgeTables } from "./schema.js";
+
+let db: Database.Database;
+beforeEach(() => {
+  db = new Database(":memory:");
+  db.exec(
+    "CREATE TABLE documents(id TEXT PRIMARY KEY,content TEXT,content_hash TEXT,metadata TEXT,source_id TEXT DEFAULT 'test-source'); CREATE TABLE removed_sources(id TEXT PRIMARY KEY); INSERT INTO documents(id,content,content_hash) VALUES('evidence','The workshop begins Friday.','v1')",
+  );
+  createBriefsStorageTables(db);
+  createAnnotationStorageTables(db);
+  createKnowledgeTables(db);
+  createKnowledgeWorkTables(db);
+  db.exec(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch','run','batch-fingerprint','routine','running',1,1)",
+  );
+  db.prepare(
+    "INSERT INTO knowledge_frontier(batch_id,node_id,input_fingerprint,input_versions_json,depth,status) VALUES('batch','source:evidence','input-fingerprint',?,0,'offered')",
+  ).run(JSON.stringify({ "source:evidence": "v1" }));
+});
+afterEach(() => db.close());
+it.each([
+  "abandoned",
+  "source-revised",
+  "frontier-replaced",
+  "cited-source-revised",
+  "cited-source-generated",
+  "additional-source-revised",
+  "current",
+])("fences a real canonical annotation after its delayed verifier: %s", async (change) => {
+  db.prepare("INSERT INTO documents(id,content,content_hash) VALUES(?,?,?)").run(
+    "extra",
+    "The workshop begins Friday.",
+    "extra-v1",
+  );
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const verifier: EntailCapability = {
+    verify: async () => {
+      enter();
+      await ready;
+      return { label: "entailment" };
+    },
+    dispose: () => {},
+  };
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    (writeGate) =>
+      buildAnnotationTools({
+        db,
+        writeGate,
+        clock: () => 10,
+        runId: "run",
+        log: createLogger("test:canonical-fence"),
+        getEntailmentVerifier: async () => verifier,
+      }),
+    { clock: () => 10 },
+  );
+  const pending = tools
+    .find((tool) => tool.name === "annotate_durable")!
+    .invoke(
+      {
+        docId: "evidence",
+        claimType: "key-date",
+        claimText: "The workshop begins Friday.",
+        evidenceDocId: change.startsWith("cited-source-") ? "extra" : "evidence",
+        ...(change === "additional-source-revised"
+          ? { additionalEvidence: [{ docId: "extra", quote: "The workshop begins Friday." }] }
+          : {}),
+        evidenceQuote: "The workshop begins Friday.",
+        confidence: 0.8,
+        claimBasis: "quoted",
+      },
+      { sessionId: "session", messageId: "message" },
+    );
+  await Promise.race([
+    entered,
+    pending.then((result) => {
+      throw new Error(`Tool ended before reaching the delayed boundary: ${JSON.stringify(result)}`);
+    }),
+  ]);
+  if (change === "abandoned") db.exec("UPDATE knowledge_batches SET status='abandoned'");
+  if (change === "source-revised")
+    db.exec("UPDATE documents SET content_hash='v2',content='The workshop begins Saturday.'");
+  if (change === "cited-source-revised" || change === "additional-source-revised")
+    db.exec(
+      "UPDATE documents SET content_hash='extra-v2',content='The workshop begins Saturday.' WHERE id='extra'",
+    );
+  if (change === "cited-source-generated")
+    db.exec("UPDATE documents SET source_id='brain-knowledge' WHERE id='extra'");
+  if (change === "frontier-replaced")
+    db.exec("UPDATE knowledge_frontier SET input_fingerprint='replacement'");
+  release();
+  expect(await pending).toMatchObject(
+    change === "current" ? { kind: "structured" } : { kind: "error", code: "revision_conflict" },
+  );
+  expect(db.prepare("SELECT COUNT(*) AS n FROM doc_annotations").get()).toEqual({
+    n: change === "current" ? 1 : 0,
+  });
+});
+
+it.each(["changed", "current", "missing-evidence"])(
+  "fences an unrelated canonical loop queued behind another writer: %s",
+  async (scenario) => {
+    const changed = scenario === "changed";
+    createOpenLoop(
+      db,
+      {
+        id: "target",
+        createdByRun: "prior",
+        title: "Prepare workshop",
+        confidence: 0.8,
+        importance: 0.5,
+        docs: [scenario === "missing-evidence" ? "missing" : "evidence"],
+      },
+      1,
+    );
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const call: WriterCallFn = async (op, args) => {
+      enter();
+      await ready;
+      const handler = (
+        writerHandlers as unknown as Record<
+          string,
+          (db: Database.Database, ...args: unknown[]) => unknown
+        >
+      )[op];
+      if (!handler) throw new Error(`Unexpected writer operation: ${op}`);
+      return handler(db, ...args) as never;
+    };
+    const tools = buildMaintenanceCanonicalTools(
+      db,
+      writeGateFromCall(call),
+      { batchId: "batch", runId: "run" },
+      (writeGate) =>
+        buildCognitionOwnTools({
+          db,
+          writeGate,
+          clock: () => 10,
+          runId: "run",
+          log: createLogger("test:canonical-fence"),
+          searchPort: {
+            search: (input) => Promise.resolve({ query: input.query, durationMs: 0, results: [] }),
+          },
+          mirror: { refresh: () => Promise.resolve(), remove: () => Promise.resolve() },
+          getNotesMaxBytes: () => 8192,
+        }),
+      { clock: () => 10 },
+    );
+    const pending = tools
+      .find((tool) => tool.name === "open_loop_update")!
+      .invoke(
+        { id: "target", state: "done", annotationDependencies: [] },
+        { sessionId: "session", messageId: "message" },
+      );
+    await Promise.race([
+      entered,
+      pending.then((result) => {
+        throw new Error(
+          `Tool ended before reaching the delayed boundary: ${JSON.stringify(result)}`,
+        );
+      }),
+    ]);
+    if (changed) updateOpenLoop(db, "target", { state: "dismissed" }, 2);
+    release();
+    expect(await pending).toMatchObject(
+      changed ? { kind: "error", code: "revision_conflict" } : { kind: "structured" },
+    );
+    expect(db.prepare("SELECT state FROM open_loops WHERE id='target'").get()).toEqual({
+      state: changed ? "dismissed" : "done",
+    });
+  },
+);
+
+it.each(["primary", "additional"])(
+  "refuses a current generated synthesis as %s annotation evidence before verification",
+  async (position) => {
+    db.prepare(
+      "INSERT INTO documents(id,content,content_hash,source_id,metadata) VALUES(?,?,?,?,?)",
+    ).run(
+      "generated",
+      "The workshop begins Friday.",
+      "generated-v1",
+      position === "primary" ? "brain-knowledge" : "test-source",
+      position === "additional" ? JSON.stringify({ documentType: "knowledge" }) : null,
+    );
+    let verifierCalls = 0;
+    const tools = buildMaintenanceCanonicalTools(
+      db,
+      directWriteGate(db),
+      { batchId: "batch", runId: "run" },
+      (writeGate) =>
+        buildAnnotationTools({
+          db,
+          writeGate,
+          clock: () => 10,
+          runId: "run",
+          log: createLogger("test:canonical-fence"),
+          getEntailmentVerifier: async () => ({
+            verify: async () => {
+              verifierCalls++;
+              return { label: "entailment" };
+            },
+            dispose: () => {},
+          }),
+        }),
+      { clock: () => 10 },
+    );
+    const result = await tools
+      .find((tool) => tool.name === "annotate_durable")!
+      .invoke(
+        {
+          docId: "evidence",
+          claimType: "key-date",
+          claimText: "The workshop begins Friday.",
+          evidenceDocId: position === "primary" ? "generated" : "evidence",
+          evidenceQuote: "The workshop begins Friday.",
+          confidence: 0.8,
+          claimBasis: "quoted",
+          ...(position === "additional"
+            ? { additionalEvidence: [{ docId: "generated", quote: "The workshop begins Friday." }] }
+            : {}),
+        },
+        { sessionId: "session", messageId: "message" },
+      );
+    expect(result).toMatchObject({ kind: "error", code: "invalid_evidence" });
+    expect(verifierCalls).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM doc_annotations").get()).toEqual({ n: 0 });
+  },
+);
+
+const parallelContext = { sessionId: "session", messageId: "message" };
+function parallelTools(
+  options: {
+    beforeRead?: () => Promise<void>;
+    beforeCreate?: () => void;
+    gate?: ReturnType<typeof directWriteGate>;
+  } = {},
+) {
+  let sequence = 0;
+  return buildMaintenanceCanonicalTools(
+    db,
+    options.gate ?? directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    (gate) => [
+      {
+        name: "open_loop_search",
+        description: "Search loops",
+        schema: z.object({}),
+        async invoke() {
+          const loops = db.prepare("SELECT id FROM open_loops").all();
+          await options.beforeRead?.();
+          return {
+            kind: "structured" as const,
+            resultType: "open_loop.search_results",
+            data: { loops },
+          };
+        },
+      },
+      {
+        name: "open_loop_fetch",
+        description: "Fetch loop",
+        schema: z.object({ id: z.string() }),
+        invoke(args: unknown) {
+          const { id } = args as { id: string };
+          return Promise.resolve({
+            kind: "structured" as const,
+            resultType: "open_loop.fetched",
+            data: { id },
+          });
+        },
+      },
+      {
+        name: "open_loop_create",
+        description: "Create loop",
+        schema: z.object({}),
+        mutates: true,
+        async invoke() {
+          options.beforeCreate?.();
+          const result = await gate.createOpenLoop(
+            {
+              id: `created-${++sequence}`,
+              createdByRun: "run",
+              title: "Prepare workshop",
+              confidence: 0.8,
+              importance: 0.5,
+            },
+            { runId: "run", priors: [] },
+            10,
+          );
+          return { kind: "structured" as const, resultType: "open_loop.created", data: result };
+        },
+      },
+      {
+        name: "open_loop_update",
+        description: "Update loop",
+        schema: z.object({ id: z.string() }),
+        mutates: true,
+        async invoke(args: unknown) {
+          const { id } = args as { id: string };
+          const result = await gate.updateOpenLoop(
+            id,
+            { state: "done" },
+            { runId: "run", priors: [] },
+            20,
+          );
+          return { kind: "structured" as const, resultType: "open_loop.updated", data: result };
+        },
+      },
+    ],
+    { clock: () => 10, parallel: true },
+  );
+}
+function invokeParallel(tools: ReturnType<typeof parallelTools>, name: string, args = {}) {
+  return tools.find((tool) => tool.name === name)!.invoke(args, parallelContext);
+}
+function seedParallelLoop(id = "target") {
+  createOpenLoop(
+    db,
+    { id, createdByRun: "prior", title: "Prepare workshop", confidence: 0.8, importance: 0.5 },
+    1,
+  );
+}
+
+it("requires a reconciliation read and refuses a second negative-search create", async () => {
+  const first = parallelTools();
+  const second = parallelTools();
+  expect(await invokeParallel(first, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  await Promise.all([
+    invokeParallel(first, "open_loop_search"),
+    invokeParallel(second, "open_loop_search"),
+  ]);
+  expect(await invokeParallel(first, "open_loop_create")).toMatchObject({ kind: "structured" });
+  expect(await invokeParallel(second, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual({ n: 1 });
+  await invokeParallel(second, "open_loop_search");
+  expect(await invokeParallel(second, "open_loop_update", { id: "created-1" })).toMatchObject({
+    kind: "structured",
+  });
+});
+
+it("refuses a stale model update even when the competing write precedes invocation", async () => {
+  seedParallelLoop();
+  const tools = parallelTools();
+  await invokeParallel(tools, "open_loop_fetch", { id: "target" });
+  updateOpenLoop(db, "target", { state: "dismissed" }, 2);
+  expect(await invokeParallel(tools, "open_loop_update", { id: "target" })).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  expect(db.prepare("SELECT state FROM open_loops WHERE id='target'").get()).toEqual({
+    state: "dismissed",
+  });
+});
+
+it("allows a freshly fetched exact owner update after an unrelated collection change", async () => {
+  seedParallelLoop();
+  const tools = parallelTools();
+  await invokeParallel(tools, "open_loop_search");
+  seedParallelLoop("unrelated");
+  await invokeParallel(tools, "open_loop_fetch", { id: "target" });
+  expect(await invokeParallel(tools, "open_loop_update", { id: "target" })).toMatchObject({
+    kind: "structured",
+  });
+  // The fresh owner read does not authorize another creation from the stale list.
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+});
+
+it("does not bless a DTO read before an asynchronous search completed", async () => {
+  seedParallelLoop();
+  const tools = parallelTools({
+    beforeRead: () => {
+      updateOpenLoop(db, "target", { state: "dismissed" }, 2);
+      return Promise.resolve();
+    },
+  });
+  expect(await invokeParallel(tools, "open_loop_search")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  expect(await invokeParallel(tools, "open_loop_update", { id: "target" })).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+});
+
+it("retains exact own-write receipts and never acknowledges a later writer", async () => {
+  let interleave = false;
+  const call: WriterCallFn = async (op, args) => {
+    const handler = (
+      writerHandlers as unknown as Record<
+        string,
+        (db: Database.Database, ...args: unknown[]) => unknown
+      >
+    )[op]!;
+    const result = handler(db, ...args);
+    // Admission is a separate preflight; this race starts after the actual mutation commits.
+    if (interleave && op === "knowledge.canonicalMutation") {
+      interleave = false;
+      seedParallelLoop("other");
+    }
+    return result as never;
+  };
+  const tools = parallelTools({ gate: writeGateFromCall(call) });
+  await invokeParallel(tools, "open_loop_search");
+  interleave = true;
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({ kind: "structured" });
+  expect(interleave).toBe(false);
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  // The newly created owner itself has an exact receipt, despite never being fetched.
+  // Reconcile the changed collection before this update.
+  await invokeParallel(tools, "open_loop_search");
+  expect(await invokeParallel(tools, "open_loop_update", { id: "created-1" })).toMatchObject({
+    kind: "structured",
+  });
+});
+
+it("keeps the collection revision monotone when an owner is deleted and recreated", async () => {
+  seedParallelLoop();
+  const tools = parallelTools();
+  await invokeParallel(tools, "open_loop_search");
+  db.prepare("DELETE FROM open_loops WHERE id=?").run("target");
+  seedParallelLoop();
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+});
+
+it("requires annotation reconciliation for the actual subject", async () => {
+  db.prepare("INSERT INTO documents(id,content,content_hash) VALUES(?,?,?)").run(
+    "other",
+    "The workshop begins Friday.",
+    "other-v1",
+  );
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    (writeGate) =>
+      buildAnnotationTools({
+        db,
+        writeGate,
+        clock: () => 10,
+        runId: "run",
+        log: createLogger("test:annotation-reconciliation"),
+      }),
+    { clock: () => 10, parallel: true },
+  );
+  await tools
+    .find((tool) => tool.name === "annotation_search")!
+    .invoke({ docId: "evidence" }, parallelContext);
+  const args = {
+    docId: "other",
+    claimType: "key-date",
+    claimText: "The workshop begins Friday.",
+    evidenceDocId: "other",
+    evidenceQuote: "The workshop begins Friday.",
+    confidence: 0.8,
+    claimBasis: "quoted",
+  };
+  expect(
+    await tools.find((tool) => tool.name === "annotate_durable")!.invoke(args, parallelContext),
+  ).toMatchObject({ kind: "error", code: "revision_conflict" });
+  expect(db.prepare("SELECT COUNT(*) AS n FROM doc_annotations").get()).toEqual({ n: 0 });
+  await tools
+    .find((tool) => tool.name === "annotation_search")!
+    .invoke({ docId: "other" }, parallelContext);
+  expect(
+    await tools.find((tool) => tool.name === "annotate_durable")!.invoke(args, parallelContext),
+  ).toMatchObject({ kind: "structured" });
+});
+
+it("points annotation retirement to the canonical subject read that permits the write", async () => {
+  createConsumptionEdgesTables(db);
+  createDocAnnotation(
+    db,
+    {
+      id: "workshop-note",
+      docId: "evidence",
+      claimType: "topic",
+      claimText: "The workshop begins Friday.",
+      evidenceDocId: "evidence",
+      evidenceQuote: "The workshop begins Friday.",
+      confidence: 0.8,
+      claimBasis: "quoted",
+      createdByRun: "prior",
+    },
+    1,
+  );
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    (writeGate) =>
+      buildAnnotationTools({
+        db,
+        writeGate,
+        clock: () => 10,
+        runId: "run",
+        log: createLogger("test:annotation-retirement"),
+      }),
+    { clock: () => 10, parallel: true },
+  );
+  const retract = tools.find((tool) => tool.name === "annotation_retract")!;
+  const refusal = await retract.invoke({ id: "workshop-note" }, parallelContext);
+  expect(refusal).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+    message: expect.stringContaining("annotation_search({docId: targetDocumentId})"),
+  });
+  expect(refusal).toMatchObject({
+    message: expect.stringContaining("knowledge_fetch and evidence-reference reads do not supply"),
+  });
+  expect(db.prepare("SELECT id FROM doc_annotations WHERE id='workshop-note'").get()).toBeTruthy();
+  await tools
+    .find((tool) => tool.name === "annotation_search")!
+    .invoke({ docId: "evidence" }, parallelContext);
+  expect(await retract.invoke({ id: "workshop-note" }, parallelContext)).toMatchObject({
+    kind: "structured",
+    resultType: "annotation.retracted",
+  });
+  expect(
+    db.prepare("SELECT id FROM doc_annotations WHERE id='workshop-note'").get(),
+  ).toBeUndefined();
+});
+
+it("rejects a fetched loop update after a ledger append at the same timestamp", async () => {
+  seedParallelLoop();
+  const tools = parallelTools();
+  await invokeParallel(tools, "open_loop_fetch", { id: "target" });
+  appendOpenLoopLedger(db, "target", { runId: "peer", note: "Workshop plan revised." }, 1);
+  expect(await invokeParallel(tools, "open_loop_update", { id: "target" })).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  expect(db.prepare("SELECT state,last_update FROM open_loops WHERE id='target'").get()).toEqual({
+    state: "open",
+    last_update: 1,
+  });
+});
+
+it("rejects an already stale loop inventory before entering the mutating tool", async () => {
+  let entered = 0;
+  const tools = parallelTools({
+    beforeCreate: () => {
+      entered++;
+    },
+  });
+  await invokeParallel(tools, "open_loop_search");
+  seedParallelLoop();
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+    message: expect.stringContaining("Repeat open_loop_search"),
+  });
+  expect(entered).toBe(0);
+  await invokeParallel(tools, "open_loop_search");
+  expect(await invokeParallel(tools, "open_loop_create")).toMatchObject({ kind: "structured" });
+  expect(entered).toBe(1);
+});
+
+it("reserves a discovered owner before paid work and requeues a colliding source with routing provenance", async () => {
+  seedParallelLoop();
+  reconcileKnowledgeOwner(db, "loop", "target", 2);
+  db.exec(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('other','other-run','other-fingerprint','routine','running',1,1)",
+  );
+  db.exec(
+    "INSERT INTO knowledge_frontier SELECT 'other',node_id,input_fingerprint,input_versions_json,depth,status,result_revision,attempts FROM knowledge_frontier WHERE batch_id='batch'",
+  );
+  db.exec(
+    "INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id) VALUES('other-work','evidence','source','change','v1',1,'routine',1,1,1,'batched','other')",
+  );
+  db.exec("INSERT INTO knowledge_batch_regions VALUES('other','previous-target')");
+  const fence = captureKnowledgeCanonicalFence(
+    db,
+    { batchId: "batch", runId: "run" },
+    { id: "target" },
+    "open_loop_update",
+  );
+  expect(admitCanonicalMaintenance(db, { fence, maxVisited: 256 }, 3)).toEqual({ admitted: true });
+  let calls = 0;
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "other", runId: "other-run" },
+    () => [
+      {
+        name: "open_loop_update",
+        description: "Update",
+        schema: z.object({ id: z.string() }),
+        mutates: true,
+        async invoke() {
+          calls++;
+          return { kind: "structured" as const, resultType: "updated", data: {} };
+        },
+      },
+    ],
+    { clock: () => 4 },
+  );
+  expect(await tools[0]!.invoke({ id: "target" }, parallelContext)).toMatchObject({
+    kind: "error",
+    code: "maintenance_handoff",
+  });
+  expect(calls).toBe(0);
+  expect(
+    db.prepare("SELECT status,updated_at FROM knowledge_batches WHERE id='other'").get(),
+  ).toEqual({
+    status: "abandoned",
+    updated_at: 4,
+  });
+  expect(
+    db
+      .prepare(
+        "SELECT subject_id,input_revision,tier,input_changed_at FROM knowledge_work WHERE status='pending'",
+      )
+      .all(),
+  ).toEqual([
+    { subject_id: "evidence", input_revision: "v1", tier: "routine", input_changed_at: 1 },
+  ]);
+  expect(
+    db.prepare("SELECT source_id,source_revision,node_id FROM knowledge_discovery_targets").all(),
+  ).toEqual([{ source_id: "evidence", source_revision: "v1", node_id: "target" }]);
+  expect(
+    db.prepare("SELECT COUNT(*) AS n FROM knowledge_dependencies WHERE target_kind='source'").get(),
+  ).toEqual({ n: 0 });
+  expect(
+    db
+      .prepare(
+        "SELECT r.node_id FROM knowledge_batch_regions r JOIN knowledge_batches b ON b.id=r.batch_id WHERE b.status NOT IN ('completed','abandoned') ORDER BY r.node_id",
+      )
+      .all(),
+  ).toEqual([{ node_id: "source:evidence" }, { node_id: "target" }]);
+});
+
+it("rejects a stale fetched owner before invoking any paid canonical tool", async () => {
+  seedParallelLoop();
+  let calls = 0;
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    () => [
+      {
+        name: "open_loop_fetch",
+        description: "Fetch",
+        schema: z.object({ id: z.string() }),
+        async invoke() {
+          return { kind: "structured" as const, resultType: "fetched", data: { id: "target" } };
+        },
+      },
+      {
+        name: "open_loop_update",
+        description: "Update",
+        schema: z.object({ id: z.string() }),
+        mutates: true,
+        async invoke() {
+          calls++;
+          return { kind: "structured" as const, resultType: "updated", data: {} };
+        },
+      },
+    ],
+    { clock: () => 10, parallel: true },
+  );
+  await tools[0]!.invoke({ id: "target" }, parallelContext);
+  appendOpenLoopLedger(db, "target", { runId: "elsewhere", note: "A new observation." }, 2);
+  expect(await tools[1]!.invoke({ id: "target" }, parallelContext)).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+  });
+  expect(calls).toBe(0);
+});
+
+it("bounds discovered regions and excludes shared roots from reservations", () => {
+  seedParallelLoop();
+  reconcileKnowledgeOwner(db, "loop", "target", 2);
+  db.prepare(
+    "INSERT INTO knowledge_nodes(id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at) VALUES('shared-root','root','Overview','','',1,1,'root-v1','current','{}','{}',1,1)",
+  ).run();
+  db.prepare("INSERT INTO knowledge_operational_arcs VALUES('target','shared-root')").run();
+  const fence = captureKnowledgeCanonicalFence(
+    db,
+    { batchId: "batch", runId: "run" },
+    { id: "target" },
+    "open_loop_update",
+  );
+  expect(() => admitCanonicalMaintenance(db, { fence, maxVisited: 1 }, 3)).toThrow(
+    "Maintenance region limit exceeded",
+  );
+  expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_batch_regions").get()).toEqual({ n: 0 });
+  expect(admitCanonicalMaintenance(db, { fence, maxVisited: 2 }, 3)).toEqual({ admitted: true });
+  expect(db.prepare("SELECT node_id FROM knowledge_batch_regions").all()).toEqual([
+    { node_id: "target" },
+  ]);
+});
+
+it("holds a handed-off source on its blocker even before the owner has a synthesis mirror", () => {
+  seedParallelLoop();
+  db.exec(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('blocker','blocker-run','blocker-fingerprint','routine','running',1,1)",
+  );
+  db.exec("INSERT INTO knowledge_batch_regions VALUES('blocker','target')");
+  db.exec("INSERT INTO knowledge_batch_regions VALUES('batch','source:evidence')");
+  const fence = captureKnowledgeCanonicalFence(
+    db,
+    { batchId: "batch", runId: "run" },
+    { id: "target" },
+    "open_loop_update",
+  );
+  expect(admitCanonicalMaintenance(db, { fence, maxVisited: 256 }, 3)).toEqual({ admitted: false });
+  expect(
+    db
+      .prepare(
+        "SELECT node_id FROM knowledge_batch_regions WHERE batch_id='blocker' ORDER BY node_id",
+      )
+      .all(),
+  ).toEqual([{ node_id: "source:evidence" }, { node_id: "target" }]);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_discovery_targets").get()).toEqual({
+    n: 0,
+  });
+});
+
+it.each(["create", "update"] as const)(
+  "atomically fences temporal %s evidence after a writer queue wait",
+  (operation) => {
+    createTemporalAnnotationTables(db);
+    db.prepare(
+      "INSERT INTO documents(id,content,content_hash) VALUES('temporal-source','The public observatory opens Friday.','temporal-v1')",
+    ).run();
+    const input = {
+      id: "temporal-entry",
+      intervalStartMs: 10,
+      intervalEndMs: 20,
+      precision: "instant" as const,
+      canonical: "2027-01-01T00:00:00Z",
+      sentence: "Original statement",
+      documentIds: ["temporal-source"],
+      createdByRun: "run",
+    };
+    if (operation === "update") insertTemporalAnnotation(db, input, 1);
+    const fence = captureKnowledgeCanonicalFence(
+      db,
+      { batchId: "batch", runId: "run" },
+      { evidence: { docId: "temporal-source", quote: "The public observatory opens Friday." } },
+      `temporal_annotation_${operation === "create" ? "add" : "update"}`,
+    );
+    expect(fence.evidenceVersions["temporal-source"]).toBe("temporal-v1");
+    const args =
+      operation === "create"
+        ? [
+            {
+              ...input,
+              evidence: [
+                { docId: "temporal-source", quote: "The public observatory opens Friday." },
+              ],
+            },
+            2,
+          ]
+        : [
+            input.id,
+            {
+              sentence: "Replacement statement",
+              evidence: [
+                { docId: "temporal-source", quote: "The public observatory opens Friday." },
+              ],
+            },
+            2,
+          ];
+    // Interleave after the tool's last check, at the queued writer seam. A source
+    // body may still contain the quote while its semantic revision has changed.
+    db.prepare("UPDATE documents SET content_hash='temporal-v2' WHERE id='temporal-source'").run();
+    expect(
+      writerHandlers["knowledge.canonicalMutation"](
+        db,
+        fence,
+        `temporalAnnotations.${operation}`,
+        args,
+      ),
+    ).toMatchObject({
+      ok: false,
+      code: "revision_conflict",
+      message: "Cited evidence changed before canonical mutation",
+    });
+    expect(db.prepare("SELECT sentence FROM temporal_annotations").all()).toEqual(
+      operation === "create" ? [] : [{ sentence: "Original statement" }],
+    );
+  },
+);

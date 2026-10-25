@@ -16,8 +16,9 @@
  *    and soft-invalidates an annotation that lost its last grounding.
  *
  *  - CONSUMPTION PROVENANCE (`brain/storage/consumption-edges.ts`): the edges
- *    recording which briefs/loops were built on which annotation priors, and
- *    the teeth that re-examine a dependent once a prior it rested on dies.
+ *    recording which observations/loops were built on which annotation priors,
+ *    and the teeth that act once a prior a dependent rested on dies: a loop is
+ *    re-examined by a provenance recheck, an observation is dropped as stale.
  *
  * Three of the tests here are LIVELOCK probes. A background lane whose
  * progress marker only moves under a condition it does not control — an
@@ -33,6 +34,8 @@ import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  refreshCurrentOwner,
   call,
   compressCognitionCadences,
   note,
@@ -238,6 +241,7 @@ describe("Brain Bench — the re-verification lane", () => {
       // That is the livelock setup: nothing but the tool layer's own
       // mechanical quote re-check can advance a last-checked stamp.
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         reverification: { enabled: true, intervalDays: 1, maxPerSweep: 1, batchSize: 2 },
         // Every other producer off: this bench asserts on the verification
         // queue, and a bootstrap/digest/sweep backlog would drown it.
@@ -248,27 +252,31 @@ describe("Brain Bench — the re-verification lane", () => {
         sweepsEnabled: false,
       },
       behaviors: {
-        behaviors: [
-          ...SEEDS.map((s) => ({
-            flavour: "data.created" as const,
-            docTitle: s.doc.title,
-            plan: (ctx: RunContext): PuppetPlan => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: s.claimType,
-                  claimText: s.claimText,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: s.quote,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded one durable observation.",
-            }),
-          })),
-          { flavour: "verification" as const, plan: verificationPlan },
-        ],
+        dynamic: sourceInterpretations({
+          maxRevisionConflictRetries: 8,
+          sources: [
+            ...SEEDS.map((s) => ({
+              docTitle: s.doc.title,
+              plan: (ctx: RunContext): PuppetPlan => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: s.claimType,
+                    claimText: s.claimText,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: s.quote,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded one durable observation.",
+              }),
+            })),
+          ],
+          maintainNode: refreshCurrentOwner,
+        }),
+        behaviors: [{ flavour: "verification" as const, plan: verificationPlan }],
       },
     });
   }, 300_000);
@@ -410,17 +418,22 @@ describe("Brain Bench — the re-verification lane", () => {
     );
     expect(verificationRuns()).toHaveLength(0);
 
-    await bench.pushAll(SEEDS.map((s) => s.doc));
-    await waitFor(
-      () =>
-        `${SEEDS.length} data runs to be enqueued (saw ${bench.puppetCalls.length} model calls)`,
-      async () => {
-        const runs = await bench.obs.runs({ kind: "data", limit: 200 });
-        return runs.items.length >= SEEDS.length ? runs.items.length : null;
-      },
-      90_000,
-    );
-    await bench.drainUntilQuiet();
+    const ids = await bench.pushAndSettle(SEEDS.map((s) => s.doc)).catch(async (error: unknown) => {
+      const runs = await bench.obs.runs({ kind: "synthesis", limit: 20 });
+      const diagnostics = await Promise.all(
+        runs.items.map(async (run) => ({
+          id: run.id,
+          tools: (await bench.obs.executedTools(run.id))
+            .filter((call) => call.result?.kind === "error")
+            .slice(-8),
+        })),
+      );
+      throw new Error(`${String(error)}; refused tools=${JSON.stringify(diagnostics)}`, {
+        cause: error,
+      });
+    });
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
 
     seeded = annotations();
     const rows = seeded;
@@ -664,7 +677,8 @@ const MULTI_DOC = note({
   content: `Hello Alex,\n\n${MULTI_QUOTE}\n\nRiverside Estate`,
 });
 
-const BRIEF_TITLE = "The studio calendar for May";
+const OBSERVATION_SUMMARY = "One rehearsal booking already sits on the studio calendar for May.";
+const LOOP_TITLE = "Plan the May schedule around the studio booking";
 const REPAIR_TEXT = "Re-checked after a supporting prior was retracted.";
 
 describe("Brain Bench — consumption provenance and the evidence firewall", () => {
@@ -675,12 +689,14 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
   let anchorDocId = "";
   let priorDocId = "";
   let priorAnnotationId = "";
-  let briefId = "";
+  let observationId = "";
+  let loopId = "";
 
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         provenanceRecheck: { enabled: true },
         bootstrap: { enabled: false },
         mergeAdjudication: { enabled: false },
@@ -689,111 +705,124 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
         sweepsEnabled: false,
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          maxRevisionConflictRetries: 8,
+          sources: [
+            {
+              docTitle: PRIOR_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "booking",
+                    claimText:
+                      "A rehearsal room at Studio Northstar is reserved for the first week of May.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: PRIOR_QUOTE,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded the booking as a durable prior.",
+              }),
+            },
+            {
+              docTitle: DEPENDENT_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("observation_list", {}),
+                  call("fetch_many", { documents: [{ documentId: priorDocId }] }),
+                  // The read that makes the prior eligible to be declared.
+                  call("annotation_search", { docId: priorDocId }),
+                  call("observation_note", {
+                    summary: OBSERVATION_SUMMARY,
+                    citations: [priorDocId],
+                    claims: [{ docId: priorDocId, quote: PRIOR_QUOTE }],
+                    annotationDependencies: [
+                      { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
+                    ],
+                  }),
+                  call("open_loop_search", { query: "May schedule" }),
+                  call("open_loop_create", {
+                    title: LOOP_TITLE,
+                    description: "The studio booking constrains the May plan.",
+                    confidence: 0.7,
+                    importance: 0.4,
+                    docs: [ctx.subject, priorDocId],
+                    annotationDependencies: [
+                      { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
+                    ],
+                  }),
+                ],
+                finalText: "Noted one observation and one loop resting on the recorded booking.",
+              }),
+            },
+            {
+              docTitle: KILLER_DOC.title,
+              plan: () => ({
+                calls: [
+                  call("annotation_search", { docId: priorDocId }),
+                  call("annotation_retract", {
+                    id: ref("annotation_search", "annotations.0.id"),
+                  }),
+                ],
+                finalText: "The booking never existed; retracted the prior.",
+              }),
+            },
+            {
+              docTitle: BREAKER_DOC.title,
+              contentContains: BREAKER_QUOTE,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "delivery-window",
+                    claimText: "The Cedar Grove pallet delivery window is the third week of May.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: BREAKER_QUOTE,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded the delivery window.",
+              }),
+            },
+            {
+              docTitle: MULTI_DOC.title,
+              contentContains: MULTI_QUOTE,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: anchorDocId }] }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "site-visit",
+                    claimText:
+                      "A Riverside Estate site visit is scheduled while the season access arrangements still stand.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: MULTI_QUOTE,
+                    additionalEvidence: [{ docId: anchorDocId, quote: ANCHOR_QUOTE }],
+                    confidence: 0.5,
+                    claimBasis: "synthesized",
+                  }),
+                ],
+                finalText: "Recorded the site visit against two grounding atoms.",
+              }),
+            },
+          ],
+          maintainNode: refreshCurrentOwner,
+        }),
         behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: PRIOR_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "booking",
-                  claimText:
-                    "A rehearsal room at Studio Northstar is reserved for the first week of May.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: PRIOR_QUOTE,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded the booking as a durable prior.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DEPENDENT_DOC.title,
-            plan: () => ({
-              calls: [
-                // The read that makes the prior eligible to be declared.
-                call("annotation_search", { docId: priorDocId }),
-                call("brief_create", {
-                  kind: "info",
-                  title: BRIEF_TITLE,
-                  description: "One rehearsal booking already sits on the studio calendar.",
-                  citations: [priorDocId],
-                  confidence: 0.7,
-                  urgency: 0.3,
-                  annotationDependencies: [
-                    { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
-                  ],
-                }),
-              ],
-              finalText: "Raised one card resting on the recorded booking.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: KILLER_DOC.title,
-            plan: () => ({
-              calls: [
-                call("annotation_search", { docId: priorDocId }),
-                call("annotation_retract", {
-                  id: ref("annotation_search", "annotations.0.id"),
-                }),
-              ],
-              finalText: "The booking never existed; retracted the prior.",
-            }),
-          },
           {
             flavour: "feedback.provenance",
             plan: (ctx) => ({
               calls: [
-                call("brief_fetch", { id: ctx.subject }),
-                call("brief_update", {
-                  id: ctx.subject,
-                  description: REPAIR_TEXT,
-                  annotationDependencies: [],
-                }),
+                call("open_loop_fetch", { id: ctx.subject }),
+                call("open_loop_update", { id: ctx.subject, description: REPAIR_TEXT }),
               ],
-              finalText: "Repaired the card that rested on the dead prior.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: BREAKER_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "delivery-window",
-                  claimText: "The Cedar Grove pallet delivery window is the third week of May.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: BREAKER_QUOTE,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded the delivery window.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: MULTI_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "site-visit",
-                  claimText:
-                    "A Riverside Estate site visit is scheduled while the season access arrangements still stand.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: MULTI_QUOTE,
-                  additionalEvidence: [{ docId: anchorDocId, quote: ANCHOR_QUOTE }],
-                  confidence: 0.5,
-                  claimBasis: "synthesized",
-                }),
-              ],
-              finalText: "Recorded the site visit against two grounding atoms.",
+              finalText: "Repaired the loop that rested on the dead prior.",
             }),
           },
         ],
@@ -829,28 +858,18 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
       >(`SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE dedupe_key = ? ORDER BY enqueued_at DESC LIMIT 1`)
       .get(key);
 
-  /** Push documents, wait for their data runs to be enqueued, then drain. */
+  /** Push documents, wait for their source interpretations to complete, then drain. */
   async function pushAndDrain(docs: readonly BenchDoc[]): Promise<string[]> {
-    const before = (await bench.obs.runs({ kind: "data", limit: 200 })).items.length;
-    await bench.pushAll(docs);
-    await waitFor(
-      () => `${docs.length} more data run(s) to be enqueued (had ${before})`,
-      async () => {
-        const runs = await bench.obs.runs({ kind: "data", limit: 200 });
-        return runs.items.length >= before + docs.length ? runs.items.length : null;
-      },
-      90_000,
-    );
-    await bench.drainUntilQuiet();
-    const ids: string[] = [];
-    for (const d of docs) ids.push(await bench.docId(d.externalId));
+    const ids = await bench.pushAndSettle(docs);
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
     return ids;
   }
 
   /**
    * A content change invalidates annotations off the event bus, deliberately
    * NOT awaited by ingest. Wait on the sidecar instead, then let the debounced
-   * `data.updated` run settle so the queue is clean for the next test.
+   * source maintenance settle so the queue is clean for the next test.
    */
   async function breakEvidence(doc: BenchDoc, replacement: string, annotationId: string) {
     await bench.update(doc, replacement);
@@ -878,38 +897,69 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
     priorAnnotationId = priors.annotations[0]!.id;
 
     await pushAndDrain([DEPENDENT_DOC]);
-    const briefs = (await bench.obs.briefs()).items.filter((b) => b.title === BRIEF_TITLE);
-    expect(briefs).toHaveLength(1);
-    briefId = briefs[0]!.id;
+    const observations = (await bench.obs.observations()).items.filter(
+      (o) => o.summary === OBSERVATION_SUMMARY,
+    );
+    expect(observations).toHaveLength(1);
+    observationId = observations[0]!.id;
+    const loops = await bench.obs.loopsMatching(LOOP_TITLE);
+    expect(loops).toHaveLength(1);
+    loopId = loops[0]!.id;
 
     const edges = bench.sql
       .prepare<
         [string],
-        { prior_store: string; prior_annotation_id: string; dependent_kind: string }
+        {
+          prior_store: string;
+          prior_annotation_id: string;
+          dependent_kind: string;
+          dependent_id: string;
+        }
       >(
-        `SELECT prior_store, prior_annotation_id, dependent_kind
-           FROM cognition_consumption_edges WHERE dependent_id = ?`,
+        `SELECT prior_store, prior_annotation_id, dependent_kind, dependent_id
+           FROM cognition_consumption_edges WHERE prior_annotation_id = ?
+          ORDER BY dependent_kind`,
       )
-      .all(briefId);
+      .all(priorAnnotationId);
     expect(edges).toEqual([
-      { prior_store: "doc", prior_annotation_id: priorAnnotationId, dependent_kind: "brief" },
+      {
+        prior_store: "doc",
+        prior_annotation_id: priorAnnotationId,
+        dependent_kind: "loop",
+        dependent_id: loopId,
+      },
+      {
+        prior_store: "doc",
+        prior_annotation_id: priorAnnotationId,
+        dependent_kind: "observation",
+        dependent_id: observationId,
+      },
     ]);
 
-    // The same edge, through the production read surface.
+    // The same edges, through the production read surface.
     const dependents = await bench.obs.dependents("doc", priorAnnotationId);
-    expect(dependents.items.map((d) => ({ kind: d.kind, id: d.id }))).toEqual([
-      { kind: "brief", id: briefId },
+    expect(
+      dependents.items
+        .map((d) => ({ kind: d.kind, id: d.id }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      { kind: "loop", id: loopId },
+      { kind: "observation", id: observationId },
     ]);
   }, 180_000);
 
-  test("killing the prior enqueues a provenance recheck that repairs the dependent", async () => {
+  test("killing the prior drops the observation and enqueues a provenance recheck that repairs the loop", async () => {
     await pushAndDrain([KILLER_DOC]);
 
     // A retract is a hard delete; the edge deliberately survives it as the
     // claim-time signal that the prior was hard-retracted.
     expect(annotationById(priorAnnotationId)).toBeUndefined();
 
-    const key = `feedback:provenance:brief:${briefId}`;
+    // An observation is a short-lived note: the dead prior drops it, no run.
+    const dropped = await bench.obs.observation(observationId);
+    expect(dropped.observation).toMatchObject({ state: "dropped", closeReason: "stale" });
+
+    const key = `feedback:provenance:loop:${loopId}`;
     const recheck = await waitFor(
       () => `a provenance recheck run keyed ${key}`,
       () => runByDedupeKey(key) ?? null,
@@ -921,17 +971,17 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
     expect(settled.status).toBe("completed");
 
     const prompt = await bench.obs.promptFor(recheck.id);
-    expect(prompt).toContain(`Provenance re-check for brief ${briefId}`);
+    expect(prompt).toContain(`Provenance re-check for loop ${loopId}`);
     expect(prompt).toContain(priorAnnotationId);
     // A hard-retracted prior has no claim text left to render.
     expect(prompt).toContain("(hard-retracted)");
 
-    const repaired = await bench.obs.brief(briefId);
-    expect(repaired.brief.description).toBe(REPAIR_TEXT);
+    const repaired = await bench.obs.loop(loopId);
+    expect(repaired.loop.description).toBe(REPAIR_TEXT);
 
     const calls = bench.puppetCalls.filter((c) => c.flavour === "feedback.provenance");
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls[0]!.subject).toBe(briefId);
+    expect(calls[0]!.subject).toBe(loopId);
   }, 180_000);
 
   test("a changed document breaks the evidence and invalidates the annotation", async () => {

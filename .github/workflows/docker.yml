@@ -47,10 +47,19 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build the gateway runtime image
-        run: docker build --target gateway-runtime -t omnesis-gateway-runtime:ci .
+        run: |
+          docker build --target gateway-runtime -t omnesis-gateway-runtime:ci .
+          scripts/docker/image-smoke.sh omnesis-gateway-runtime:ci gateway
 
       - name: Build the collector runtime image
-        run: docker build --target collector-runtime -t omnesis-collector-runtime:ci .
+        run: |
+          docker build --target collector-runtime -t omnesis-collector-runtime:ci .
+          scripts/docker/image-smoke.sh omnesis-collector-runtime:ci collector
+
+      - name: Build and test combined gateway and collector
+        run: |
+          docker build --target combined-runtime -t omnesis-combined:ci .
+          scripts/docker/image-smoke.sh omnesis-combined:ci combined
 
       # The updater is published like the two daemons, so a break in it must
       # not wait for a release to surface. It derives from the gateway image

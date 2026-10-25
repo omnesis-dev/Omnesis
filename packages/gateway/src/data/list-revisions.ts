@@ -78,6 +78,30 @@ export function installMutableListRevisions(db: Db): void {
       END;
 
   `);
+  installKnowledgeCoverageRevision(db);
+}
+
+/** Knowledge coverage changes share the existing cursor fence without resetting legacy rows. */
+export function installKnowledgeCoverageRevision(db: Db): void {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='knowledge_work' AND type='table'").get())
+    return;
+  for (const [table, prefix] of [
+    ["knowledge_work", "work"],
+    ["knowledge_discovery_coverage", "coverage"],
+  ] as const) {
+    for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
+      const row = event === "DELETE" ? "OLD" : "NEW";
+      const relevant =
+        prefix === "work" ? `${row}.subject_kind='source'` : `${row}.phase='organization'`;
+      db.exec(`CREATE TRIGGER IF NOT EXISTS mutable_list_knowledge_${prefix}_${event.toLowerCase()}
+        AFTER ${event} ON ${table} WHEN ${relevant} BEGIN
+        UPDATE mutable_list_revisions SET revision=revision+1 WHERE scope='cognition-coverage'; END;`);
+    }
+  }
+  db.exec(`CREATE TRIGGER IF NOT EXISTS mutable_list_knowledge_document_delete BEFORE DELETE ON documents
+    WHEN EXISTS(SELECT 1 FROM knowledge_work WHERE subject_kind='source' AND subject_id=OLD.id)
+      OR EXISTS(SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id=OLD.id)
+    BEGIN UPDATE mutable_list_revisions SET revision=revision+1 WHERE scope='cognition-coverage'; END;`);
 }
 
 /** Install the collector-membership fence introduced by schema migration 139. */
@@ -149,6 +173,17 @@ export function finishLinkDeclarationUpdate(db: Db): number {
     .get();
   if (!row) throw new Error("no link declaration update is in progress");
   return row.revision;
+}
+
+/**
+ * Read one page of a revision-fenced list inside a single read transaction, so
+ * the revision stamped into its next cursor and the rows on the page come from
+ * the same database snapshot. Read as separate statements, a commit landing
+ * between them would leave the page and its revision disagreeing; the fence
+ * then has no way to tell a moved list from an unlucky first page.
+ */
+export function readListPage<T>(db: Db, read: () => T): T {
+  return db.transaction(read)();
 }
 
 export function mutableListRevision(db: Db, scope: MutableListRevisionScope): number {

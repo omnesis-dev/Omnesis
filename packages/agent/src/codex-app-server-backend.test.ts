@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, readFileSync, rmSync, mkdtempSync, realpathSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  mkdtempSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
@@ -18,6 +27,7 @@ import {
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
+  parseCodexContextWindowTokens,
   parseCodexUsage,
   resolveCodexRuntimeCommand,
 } from "./codex-app-server-backend.js";
@@ -70,6 +80,7 @@ function makeBackend(opts: {
   requestedTool?: string;
   version?: string;
   reasoningEffort?: string;
+  turnIdleTimeoutMs?: number;
 }): CodexAppServerBackend {
   return new CodexAppServerBackend({
     model: "gpt-5.4",
@@ -81,12 +92,14 @@ function makeBackend(opts: {
     versionArgs: [fakeCodexPath, "--version"],
     startupTimeoutMs: 2_000,
     requestTimeoutMs: 2_000,
+    turnIdleTimeoutMs: opts.turnIdleTimeoutMs,
     toolTimeoutMs: 2_000,
     maxToolIterations: 4,
     env: {
       ...process.env,
       OMNESIS_FAKE_CODEX_LOG: opts.logPath,
       OMNESIS_FAKE_CODEX_SCENARIO: opts.scenario ?? "tool",
+      ...(opts.workspaceDir ? { OMNESIS_FAKE_CODEX_WORKSPACE: opts.workspaceDir } : {}),
       ...(opts.version ? { OMNESIS_FAKE_CODEX_VERSION: opts.version } : {}),
       ...(opts.requestedTool ? { OMNESIS_FAKE_CODEX_TOOL: opts.requestedTool } : {}),
       OPENAI_API_KEY: "must-not-leak",
@@ -168,9 +181,363 @@ describe("parseCodexUsage", () => {
     expect(parseCodexContextInputTokens({ total: tokenUsage.total })).toBe(25_696);
     expect(parseCodexContextInputTokens(undefined)).toBeUndefined();
   });
+
+  it("reads the model context window only when Codex reports a positive one", () => {
+    expect(parseCodexContextWindowTokens({ modelContextWindow: 258_400 })).toBe(258_400);
+    expect(parseCodexContextWindowTokens({ modelContextWindow: null })).toBeUndefined();
+    expect(parseCodexContextWindowTokens({ modelContextWindow: 0 })).toBeUndefined();
+    expect(parseCodexContextWindowTokens(undefined)).toBeUndefined();
+  });
 });
 
 describe("CodexAppServerBackend", () => {
+  it("roundtrips Unicode separators through a real tool and chunked app-server output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-unicode-"));
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      logPath,
+      scenario: "unicode-tool",
+    });
+    const result: ToolResult = {
+      kind: "structured",
+      resultType: "synthetic.unicode",
+      data: { text: "alpha\u2028beta\u2029gamma😀" },
+    };
+    try {
+      const events = await collect(
+        backend.runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })),
+      );
+      const response = firstPayload<{ result: { contentItems: Array<{ text: string }> } }>(
+        readLog(logPath),
+        "tool_call_response",
+      );
+      const text = response.result.contentItems[0]!.text;
+      expect(JSON.parse(text)).toEqual(result);
+      expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+        result,
+      );
+      expect(events.find((event) => event.type === "agent.text.delta")?.payload.delta).toBe(text);
+      expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // POSIX execute bits do not represent Windows process permissions.
+  it.skipIf(process.platform === "win32").each(["probe", "app-server"])(
+    "reports a sanitized OS permission refusal at %s startup",
+    async (stage) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-permission-")));
+      const command = join(dir, "private-executable");
+      writeFileSync(command, '#!/bin/sh\nchmod 600 "$0"\nprintf "codex-cli 0.142.4\\n"\n', {
+        mode: 0o700,
+      });
+      if (stage === "probe") chmodSync(command, 0o600);
+      const backend = new CodexAppServerBackend({
+        model: "synthetic",
+        codexHome: join(dir, "home"),
+        command,
+        startupTimeoutMs: 2000,
+        requestTimeoutMs: 2000,
+      });
+      try {
+        const events = await collect(backend.runTurn(baseInput()));
+        const ends = events.filter((event) => event.type === "agent.message.end");
+        expect(ends).toHaveLength(1);
+        expect(ends[0]!.payload).toMatchObject({
+          stopReason: "error",
+          failure: {
+            code: "codex_permission_denied",
+            message:
+              "The operating system denied starting the Codex runtime. Check execute permissions and directory access for the configured executable.",
+          },
+        });
+        expect(JSON.stringify(events)).not.toContain(command);
+        expect(JSON.stringify(events)).not.toContain("private-executable");
+        expect(events.some((event) => event.type === "agent.tool.start")).toBe(false);
+      } finally {
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("settles a failed spawn without waiting for an exit event that cannot occur", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-spawn-failure-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      logPath,
+      scenario: "missing-cwd",
+    });
+    try {
+      // The version probe succeeds, then removes the synthetic empty cwd before spawn.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const events = await collect(backend.runTurn(baseInput()));
+        expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+        expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+          "error",
+        );
+      }
+      expect(existsSync(logPath)).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("times out model silence once and awaits child exit before a queued fresh turn", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-idle-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath,
+      scenario: "watchdog-recovery",
+      turnIdleTimeoutMs: 100,
+    });
+    try {
+      const first = collect(backend.runTurn(baseInput()));
+      await waitForLog(logPath, (logs) => logs.some((entry) => entry.event === "turn_start"));
+      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      const queued = collect(backend.runTurn(baseInput()));
+      const failed = await first;
+      expect(failed.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(
+        failed.find((event) => event.type === "agent.message.end")?.payload.failure,
+      ).toMatchObject({ code: "codex_turn_idle_timeout", retryable: true });
+      expect(() => process.kill(pid, 0)).toThrow();
+      const next = await queued;
+      expect(next.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["watchdog-progress", "end_turn"],
+    ["watchdog-heartbeats", "error"],
+  ])("counts only meaningful active-turn progress for %s", async (scenario, expected) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-progress-")));
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath: join(dir, "events.jsonl"),
+      scenario,
+      turnIdleTimeoutMs: 180,
+    });
+    try {
+      const events = await collect(backend.runTurn(baseInput()));
+      const end = events.find((event) => event.type === "agent.message.end");
+      expect(end?.payload.stopReason).toBe(expected);
+      if (expected === "error") expect(end?.payload.failure?.code).toBe("codex_turn_idle_timeout");
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["timeout", "cancel", "dispose"])(
+    "awaits a noncooperative mutation before %s releases the turn",
+    async (ending) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-tool-wait-")));
+      const logPath = join(dir, "events.jsonl");
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        logPath,
+        scenario: "watchdog-after-tool",
+        turnIdleTimeoutMs: 100,
+      });
+      let entered!: () => void, finish!: () => void;
+      const entry = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      let mutationFinished = false,
+        finished = false;
+      const tool: ToolHandle = {
+        ...fakeToolHandle("search_documents", () => ({
+          kind: "structured",
+          resultType: "mutation",
+          data: "done",
+        })),
+        mutates: true,
+        async invoke() {
+          entered();
+          await gate;
+          mutationFinished = true;
+          return { kind: "structured", resultType: "mutation", data: "done" };
+        },
+      };
+      const abort = new AbortController();
+      let disposal: Promise<void> | undefined;
+      const turn = collect(backend.runTurn(baseInput({ tools: [tool] }), abort.signal)).finally(
+        () => {
+          finished = true;
+        },
+      );
+      try {
+        await entry;
+        if (ending === "cancel") abort.abort();
+        if (ending === "dispose") disposal = backend.dispose();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        expect(finished).toBe(false);
+        expect(mutationFinished).toBe(false);
+        finish();
+        const events = await turn;
+        await disposal;
+        expect(mutationFinished).toBe(true);
+        const end = events.find((event) => event.type === "agent.message.end");
+        if (ending === "timeout") {
+          expect(end?.payload.failure?.code).toBe("codex_turn_idle_timeout");
+          expect(
+            events.find((event) => event.type === "agent.tool.result")?.payload.result,
+          ).toMatchObject({ kind: "structured", resultType: "mutation", data: "done" });
+        } else expect(end?.payload.stopReason).toBe("canceled");
+        expect(readLog(logPath).filter((event) => event.event === "turn_start")).toHaveLength(1);
+      } finally {
+        finish();
+        await turn;
+        await disposal;
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("replaces an idle exited client before accepting concurrent queued turns", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-recovery-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({ codexHome: join(dir, "home"), logPath, scenario: "recovery" });
+    try {
+      expect(
+        (await collect(backend.runTurn(baseInput()))).find(
+          (event) => event.type === "agent.message.end",
+        )?.payload.stopReason,
+      ).toBe("end_turn");
+      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      process.kill(pid, "SIGTERM");
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+      const turns = await Promise.all([
+        collect(backend.runTurn(baseInput())),
+        collect(backend.runTurn(baseInput())),
+      ]);
+      for (const events of turns) {
+        expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+        expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+          "end_turn",
+        );
+      }
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(3);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an exited active turn once and gives its queued successor a fresh client", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-active-exit-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath,
+      scenario: "recovery-active-exit",
+    });
+    try {
+      const [failed, recovered] = await Promise.all([
+        collect(backend.runTurn(baseInput())),
+        collect(backend.runTurn(baseInput())),
+      ]);
+      expect(failed.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(
+        failed.find((event) => event.type === "agent.message.end")?.payload.failure?.code,
+      ).toBe("codex_process_exited");
+      expect(
+        recovered.find((event) => event.type === "agent.message.end")?.payload.stopReason,
+      ).toBe("end_turn");
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+      await backend.dispose();
+      const afterDispose = await collect(backend.runTurn(baseInput()));
+      expect(
+        afterDispose.find((event) => event.type === "agent.message.end")?.payload.stopReason,
+      ).toBe("error");
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["quota", "codex_usage_limited"],
+    ["auth", "codex_not_authenticated"],
+    ["context", "context_window_exceeded"],
+    ["internal", "codex_server_error"],
+    ["stream", "codex_stream_disconnected"],
+    ["httpauth", "codex_not_authenticated"],
+    ["httpquota", "codex_usage_limited"],
+    ["unknown", "codex_runtime_error"],
+    ["permissiontext", "codex_runtime_error"],
+  ])(
+    "preserves safe structured %s classification without restarting a live child",
+    async (category, code) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-structured-")));
+      const logPath = join(dir, "events.jsonl");
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        logPath,
+        scenario: `structured-${category}`,
+      });
+      try {
+        for (let turn = 0; turn < 2; turn++) {
+          const events = await collect(backend.runTurn(baseInput()));
+          expect(
+            events.find((event) => event.type === "agent.message.end")?.payload.failure?.code,
+          ).toBe(code);
+          expect(JSON.stringify(events)).not.toContain("private-");
+        }
+        expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(1);
+        expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+      } finally {
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("lets app-server retry notifications reach their authoritative completion", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-retry-")));
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath: join(dir, "events.jsonl"),
+      scenario: "structured-retry",
+    });
+    try {
+      const events = await collect(backend.runTurn(baseInput()));
+      expect(events.some((event) => event.type === "agent.error")).toBe(false);
+      expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("parses and gates the supported Codex CLI line", () => {
     expect(parseCodexCliVersion("codex-cli 0.142.4")).toBe("0.142.4");
     expect(parseCodexCliVersion("codex 0.142.0")).toBe("0.142.0");
@@ -350,8 +717,20 @@ describe("CodexAppServerBackend", () => {
         outputTokens: 11,
         cacheReadTokens: 20,
       });
-      // The context reading is the final request's whole input.
-      expect(end?.payload.context?.inputTokens).toBe(12);
+      // The context reading is the final request's whole input, against the
+      // window Codex reports for the model.
+      expect(end?.payload.context).toMatchObject({
+        inputTokens: 12,
+        peakInputTokens: 12,
+        contextWindowTokens: 258_400,
+        limitSource: "provider",
+      });
+      // The live update carries the same reading while the turn still runs.
+      const live = events.find((ev) => ev.type === "agent.usage.update");
+      expect(live?.payload.context).toMatchObject({
+        inputTokens: 12,
+        contextWindowTokens: 258_400,
+      });
 
       const configToml = readFileSync(join(codexHome, "config.toml"), "utf8");
       expect(configToml).toContain('approval_policy = "never"');

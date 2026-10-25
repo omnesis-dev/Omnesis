@@ -2,7 +2,6 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://omnesis.dev/</loc></url>
   <url><loc>https://omnesis.dev/brain</loc></url>
-  <url><loc>https://omnesis.dev/vision</loc></url>
   <url><loc>https://omnesis.dev/docs/</loc></url>
   <url><loc>https://omnesis.dev/docs/install</loc></url>
   <url><loc>https://omnesis.dev/docs/setup</loc></url>
@@ -22,6 +21,8 @@
   <url><loc>https://omnesis.dev/browser-extension-privacy-policy</loc></url>
   <!-- blog:start -->
   <url><loc>https://omnesis.dev/blog/</loc></url>
+  <url><loc>https://omnesis.dev/blog/omnesis-graph</loc></url>
+  <url><loc>https://omnesis.dev/blog/people-merge</loc></url>
   <url><loc>https://omnesis.dev/blog/chrome-agentic-search</loc></url>
   <url><loc>https://omnesis.dev/blog/bm25-search-speed</loc></url>
   <url><loc>https://omnesis.dev/blog/contextual-voice-vocabulary</loc></url>

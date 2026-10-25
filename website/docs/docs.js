@@ -89,12 +89,6 @@
       '<li><a href="/"' +
       (path === "/" ? ' aria-current="page"' : "") +
       ">Context Layer</a></li>" +
-      '<li><a href="/brain"' +
-      (path === "/brain" || path === "/brain.html" ? ' aria-current="page"' : "") +
-      ">Omnesis Brain</a></li>" +
-      '<li><a href="/vision"' +
-      (path === "/vision" || path === "/vision.html" ? ' aria-current="page"' : "") +
-      ">Vision</a></li>" +
       '<li><a href="/docs/"' +
       (docsPage ? ' aria-current="page"' : "") +
       ">Docs</a></li>" +

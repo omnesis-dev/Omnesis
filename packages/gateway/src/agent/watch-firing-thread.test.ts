@@ -18,11 +18,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReplayBackend, type DocumentPort, type SearchPort } from "@omnesis/agent";
 
 import { AgentService } from "./service.js";
-import {
-  FsConversationStore,
-  usesAnchoredThreadProfile,
-  type ConversationStore,
-} from "./conversation-store.js";
+import { originIsPermanent } from "./conversation-retention.js";
+import { FsConversationStore, type ConversationStore } from "./conversation-store.js";
 import { WATCH_FIRING_OPENING_SPEND_MECHANISM } from "./spend-recorder.js";
 import {
   buildWatchFiringBriefing,
@@ -509,17 +506,18 @@ describe("findWatchFiringThread", () => {
 });
 
 describe("origin classification", () => {
-  it("keeps a watch-firing thread off the Briefs anchored-thread profile", () => {
+  it("leaves a watch-firing thread to ordinary retention", () => {
     expect(
-      usesAnchoredThreadProfile({
+      originIsPermanent({
         kind: "watch_firing",
         firingId: FIRING.firingId,
+        runId: FIRING.firingId,
         watchId: FIRING.watchId,
       }),
     ).toBe(false);
   });
 
-  it("leaves the brief origin on it", () => {
-    expect(usesAnchoredThreadProfile({ kind: "brief", briefId: "b1", runId: "r1" })).toBe(true);
+  it("keeps only the Morning brief conversation permanent", () => {
+    expect(originIsPermanent({ kind: "daily_brief", runId: "r1", briefs: [] })).toBe(true);
   });
 });

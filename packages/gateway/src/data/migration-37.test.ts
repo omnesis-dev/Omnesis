@@ -19,6 +19,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -59,6 +60,7 @@ describe("migration 37 — retired_loops consolidation store", () => {
     // below head so the migration has work to do.
     runSchemaSetup(db);
     db.exec("DROP TABLE retired_loops");
+    createLegacyBriefTables(db);
     db.pragma("user_version = 36");
     expect(hasTable(db, "retired_loops")).toBe(false);
 

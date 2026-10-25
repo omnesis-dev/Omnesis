@@ -21,10 +21,11 @@ import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { PlanStore, selectSubagentTools } from "@omnesis/agent";
 import { ProviderId, SourceId } from "@omnesis/types";
+import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { writeCognitionNotes } from "../storage/notes.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
@@ -32,9 +33,12 @@ import { directWriteGate } from "../../write-gate.js";
 import { CognitionRunDriver } from "../run-driver.js";
 import { FsCognitionTranscriptStore } from "../transcripts.js";
 import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "../storage/open-loops.js";
-import { getBrief, listBriefs } from "../storage/briefs.js";
-import { claimDueCognitionRuns } from "../storage/run-queue.js";
-import { dismissBriefAndEnqueueFeedback } from "../feedback.js";
+import {
+  createObservation,
+  getObservation,
+  transitionObservation,
+} from "../storage/observations.js";
+import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { resolveBrainSettings } from "../config.js";
 import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
@@ -231,6 +235,119 @@ describe("assembled Cognition Steward through the real driver", () => {
       promptBuilder: (run) => buildCognitionRunPrompt(run, promptDeps()),
     });
   }
+
+  test("maintenance identity reads only current readable sources owned by its batch", async () => {
+    const loopId = await seedLoop();
+    for (const id of ["original", "reply", "unrelated"]) {
+      db.prepare(
+        `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at)
+        VALUES (?, 'fixture', ?, ?, ?, 'fictional body', 'v1', '{}', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+      ).run(id, `fixture-${id}`, id, id);
+    }
+    db.prepare("INSERT INTO open_loop_docs(loop_id,doc_id) VALUES (?,'original')").run(loopId);
+    db.prepare(
+      `INSERT INTO document_links(source_doc_id,link_type,raw_target,normalized_target,target_doc_id,resolved_at,created_at)
+      VALUES ('reply','part-of-thread','original','original','original','2026-07-01','2026-07-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+      VALUES ('owned-batch','owned-run','fp','soon','running',?,?)`,
+    ).run(NOW, NOW);
+    db.prepare(
+      `INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id)
+      VALUES ('work','reply','source','change','v1',?,'soon',?,?,?,'batched','owned-batch')`,
+    ).run(NOW, NOW, NOW, NOW);
+    const read = (runId: string) =>
+      buildCognitionToolset(
+        toolsetDeps,
+        claimed({
+          id: runId,
+          kind: "synthesis",
+          payload: { focus: "knowledge-maintenance", batchId: "owned-batch" },
+        }),
+      ).find((t) => t.name === "open_loop_search")!;
+    const search = read("owned-run");
+    const ids = async (tool: ToolHandle) =>
+      (
+        structuredData(await tool.invoke({ query: "unmatched-lexical-probe" })).loops as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+    expect(await ids(search)).toContain(loopId);
+    expect(await ids(read("foreign-run"))).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='unrelated'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='reply',input_revision='stale'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET input_revision='v1'").run();
+    db.prepare(
+      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES ('purge','source','reply','v1',?)",
+    ).run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("DELETE FROM knowledge_cascade_jobs WHERE target_id='reply'").run();
+    expect(await ids(search)).toContain(loopId);
+    db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES ('fixture-reply',?)").run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+  });
+
+  test("background and interactive toolsets expose the configured whole-profile budget", async () => {
+    db.prepare(
+      `INSERT INTO people
+      (id,canonical_name,source,first_seen,last_seen,created_at,updated_at)
+      VALUES ('profile-person','Fictional coordinator','test',?,?,?,?)`,
+    ).run(NOW, NOW, NOW, NOW);
+    toolsetDeps.getAnnotationSettings = () => ({
+      enabled: true,
+      confidenceCeiling: 0.9,
+      basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
+      confidenceFloor: 0.25,
+      personProfileBudget: { maxFacts: 9, maxCharacters: 1800 },
+    });
+    for (const tools of [
+      buildCognitionToolset(toolsetDeps, claimed({})),
+      buildCognitionInteractiveOwnTools(toolsetDeps, "interactive_profile"),
+    ]) {
+      const result = await tools
+        .find((tool) => tool.name === "annotation_search")!
+        .invoke({ personId: "profile-person" }, { sessionId: "test", messageId: "message" });
+      expect(result).toMatchObject({
+        kind: "structured",
+        data: {
+          profile: { budget: { maxFacts: 9, maxCharacters: 1800 } },
+        },
+      });
+    }
+  });
+
+  test("bounds each fetch_many read of a background run to the configured page size", async () => {
+    const body = "Venue checklist entry. ".repeat(100);
+    const basePorts: ToolPorts = {
+      ...toolsetDeps.basePorts,
+      document: {
+        fetch: async (id) => ({
+          ref: { documentId: id, sourceType: "test", sourceId: "test" },
+          document: { id, content: body },
+        }),
+      },
+    };
+    const fetchMany = (documentReadChars?: number) =>
+      buildCognitionToolset(
+        { ...toolsetDeps, basePorts, ...(documentReadChars ? { documentReadChars } : {}) },
+        claimed({}),
+      ).find((tool) => tool.name === "fetch_many")!;
+    expect(fetchMany(1024).description).toContain("nextOffset");
+    const result = await fetchMany(1024).invoke(
+      { documents: [{ documentId: "doc_long" }] },
+      { sessionId: "test", messageId: "message" },
+    );
+    if (result.kind !== "document.batch") throw new Error("expected a batch");
+    expect(result.items[0]).toMatchObject({
+      kind: "document",
+      document: { contentRange: { returnedCharacters: 1024, nextOffset: 1024 } },
+    });
+    // Without a page size the read stays whole, as interactive reads are.
+    expect(fetchMany().description).not.toContain("nextOffset");
+  });
 
   test("interactive annotations retain consumption provenance with background annotations disabled", async () => {
     const evidence = "The venue requires a response before Friday.";
@@ -451,11 +568,9 @@ describe("assembled Cognition Steward through the real driver", () => {
     "open_loop_update",
     "open_loop_ledger_append",
     "open_loop_delete",
-    "brief_list",
-    "brief_fetch",
-    "brief_create",
-    "brief_update",
-    "brief_delete",
+    "observation_list",
+    "observation_note",
+    "observation_withdraw",
     "notes_append",
     "notes_rewrite",
     "notes_edit",
@@ -533,20 +648,21 @@ describe("assembled Cognition Steward through the real driver", () => {
     // are absent from the assembled toolset, so the model cannot call them
     // however its prompt drifts.
 
-    // A morning digest composes one card and nothing beneath it.
+    // A morning digest sends one message and writes nothing beneath it; its
+    // one write (morning_brief_send) is added by the runtime, not the toolset.
     const digest = new Set(
       buildCognitionToolset(
         toolsetDeps,
         claimed({ id: "run_dg", kind: "daily", payload: { digest: true, date: "2026-01-02" } }),
       ).map((t) => t.name),
     );
-    expect(digest).toContain("brief_create");
-    expect(digest).toContain("brief_update");
+    expect(digest).not.toContain("observation_note");
+    expect(digest).not.toContain("observation_withdraw");
     expect(digest).not.toContain("open_loop_create");
     expect(digest).not.toContain("annotate_durable");
     // Reads stay broad — narrowing writes must not blind the run.
     expect(digest).toContain("search_many");
-    expect(digest).toContain("brief_list");
+    expect(digest).toContain("observation_list");
 
     // A per-source daily review rides the same queue kind and keeps the
     // default authority, so the split is by workflow and not by kind.
@@ -561,19 +677,19 @@ describe("assembled Cognition Steward through the real driver", () => {
       ).map((t) => t.name),
     );
     expect(review).toContain("open_loop_create");
-    expect(review).toContain("brief_create");
+    expect(review).toContain("observation_note");
 
     // Re-grounding maintains annotation memory and cannot mint an
     // interruption. (The annotation verbs themselves only exist when
     // annotations are enabled, which this fixture leaves off — what matters
-    // here is that the brief/loop verbs are gone.)
+    // here is that the observation/loop verbs are gone.)
     const regrounding = new Set(
       buildCognitionToolset(
         toolsetDeps,
         claimed({ id: "run_v", kind: "verification", payload: {} }),
       ).map((t) => t.name),
     );
-    expect(regrounding).not.toContain("brief_create");
+    expect(regrounding).not.toContain("observation_note");
     expect(regrounding).not.toContain("open_loop_create");
     expect(regrounding).not.toContain("notes_append");
     expect(regrounding).toContain("search_many");
@@ -640,11 +756,11 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(childNames).toContain("search_many");
     expect(childNames).toContain("open_loop_search");
     expect(childNames).toContain("open_loop_fetch");
-    expect(childNames).toContain("brief_list");
+    expect(childNames).toContain("observation_list");
   });
 
-  /** Seed one open loop with one attached confirm brief via scripted tools. */
-  async function seedLoopWithBrief(): Promise<{ loopId: string; briefId: string }> {
+  /** Seed one open loop via the scripted open_loop_create tool. */
+  async function seedLoop(): Promise<string> {
     await makeDriver(
       toolCallingBackend([
         {
@@ -657,118 +773,52 @@ describe("assembled Cognition Steward through the real driver", () => {
             annotationDependencies: [],
           }),
         },
-        {
-          tool: "brief_create",
-          args: (prior) => {
-            const loop = structuredData(prior[0]!).loop as { id: string };
-            return {
-              kind: "loop",
-              title: "Studio booking looks handled — confirm?",
-              confidence: 0.8,
-              urgency: 0.5,
-              relatedLoopIds: [loop.id],
-              annotationDependencies: [],
-            };
-          },
-        },
       ]),
     ).execute(claimed({ id: "run_seed" }));
     const loops = listOpenLoops(db);
-    const briefs = listBriefs(db);
     expect(loops).toHaveLength(1);
-    expect(briefs).toHaveLength(1);
-    return { loopId: loops[0]!.id, briefId: briefs[0]!.id };
+    return loops[0]!.id;
   }
 
-  test("snooze round-trip through the real driver: dismissal hides the brief, the feedback run honours the picked time, the brief returns to unread", async () => {
-    const { briefId } = await seedLoopWithBrief();
-    const until = NOW + 86_400_000;
-
-    // The user snoozes ("tomorrow"): synchronous flip + feedback-run enqueue.
-    const res = dismissBriefAndEnqueueFeedback(
+  test("deleting a loop through the real driver deletes its open observations; a shipped one stays without the loop edge", async () => {
+    const loopId = await seedLoop();
+    createObservation(
       db,
-      { briefId, reason: "snoozed", snoozeUntil: until, feedbackRunId: "run_fb" },
+      {
+        id: "obs_open",
+        createdByRun: "run_seed",
+        summary: "Studio booking still unconfirmed",
+        relatedLoopIds: [loopId],
+      },
       NOW,
     );
-    expect(res.outcome).toBe("dismissed");
-    // Invisible now: dismissed_snoozed is outside the feed's unread/read selection.
-    expect(getBrief(db, briefId)?.state).toBe("dismissed_snoozed");
-
-    // Claim the run the way the drainer does; its prompt carries the signal.
-    const [run] = claimDueCognitionRuns(db, { now: NOW });
-    expect(run).toMatchObject({ id: "run_fb", kind: "feedback" });
-    const prompt = buildCognitionRunPrompt(run!, promptDeps());
-    expect(prompt).toContain("dismissed_snoozed");
-    expect(prompt).toContain(new Date(until).toISOString());
-
-    // The feedback run honours the picked time via brief_update; the
-    // engine returns the brief to unread with next_show gating display.
-    const outcome = await makeDriver(
-      toolCallingBackend([
-        {
-          tool: "brief_update",
-          args: () => ({
-            id: briefId,
-            nextShow: new Date(until).toISOString(),
-            annotationDependencies: [],
-          }),
-        },
-      ]),
-    ).execute(run!);
-    expect(outcome.ok).toBe(true);
-    const after = getBrief(db, briefId)!;
-    expect(after.state).toBe("unread");
-    expect(after.nextShow).toBe(until);
-  });
-
-  test("already-handled through the real driver: the feedback run closes the related loop; its non-terminal briefs cascade, the dismissed one stays terminal", async () => {
-    const { loopId, briefId } = await seedLoopWithBrief();
-    // A second, still-unread brief on the same loop — cascade fodder.
-    await makeDriver(
-      toolCallingBackend([
-        {
-          tool: "brief_create",
-          args: () => ({
-            kind: "loop",
-            title: "Reminder: studio booking still open",
-            confidence: 0.7,
-            urgency: 0.4,
-            relatedLoopIds: [loopId],
-            // Deliberate sibling on one loop — cascade fodder for the
-            // retract assertion below; bypass the one-card-per-loop guard.
-            force: true,
-            annotationDependencies: [],
-          }),
-        },
-      ]),
-    ).execute(claimed({ id: "run_seed2" }));
-    const siblingId = listBriefs(db).find((b) => b.id !== briefId)!.id;
-
-    const res = dismissBriefAndEnqueueFeedback(
+    createObservation(
       db,
-      { briefId, reason: "already_handled", feedbackRunId: "run_fb", feedback: null },
+      {
+        id: "obs_shipped",
+        createdByRun: "run_seed",
+        summary: "Studio booking request sent",
+        relatedLoopIds: [loopId],
+      },
       NOW,
     );
-    expect(res.outcome).toBe("dismissed");
+    transitionObservation(
+      db,
+      "obs_shipped",
+      { state: "shipped", shipped: { conversationId: "conv_1", messageId: "msg_1" } },
+      NOW,
+    );
 
-    const [run] = claimDueCognitionRuns(db, { now: NOW });
-    const prompt = buildCognitionRunPrompt(run!, promptDeps());
-    expect(prompt).toContain("dismissed_already_handled");
-
-    // The feedback run closes (deletes) the related loop.
     const outcome = await makeDriver(
       toolCallingBackend([{ tool: "open_loop_delete", args: () => ({ id: loopId }) }]),
-    ).execute(run!);
+    ).execute(claimed({ id: "run_close" }));
     expect(outcome.ok).toBe(true);
 
-    // Loop gone; the unread sibling cascaded away with it; the dismissed
-    // brief survives in its terminal state (never re-surfaces) with no
-    // dangling loop edges.
     expect(getOpenLoop(db, loopId)).toBeNull();
-    expect(getBrief(db, siblingId)).toBeNull();
-    const terminal = getBrief(db, briefId)!;
-    expect(terminal.state).toBe("dismissed_already_handled");
-    expect(terminal.relatedLoopIds).toEqual([]);
+    expect(getObservation(db, "obs_open")).toBeNull();
+    const shipped = getObservation(db, "obs_shipped")!;
+    expect(shipped.state).toBe("shipped");
+    expect(shipped.relatedLoopIds).toEqual([]);
   });
 
   test("tool errors don't fail the run: an invalid scripted call surfaces as an error result the model can react to", async () => {
@@ -783,68 +833,6 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(outcome.ok).toBe(true); // the TURN completed; the tool refused
     expect(invoked[0]).toMatchObject({ kind: "error", code: "invalid_args" });
     expect(listOpenLoops(db)).toHaveLength(0);
-  });
-
-  // The wiring test the unit tests cannot stand in for: a lane resolved in
-  // run-payloads and a gate honoured in brief-judge prove nothing unless the
-  // lane actually travels from the claimed run into brief_create.
-  test("the run's lane reaches brief_create — a digest never consults the judge, a datum run always does", async () => {
-    const judged: string[] = [];
-    const judgingDeps: CognitionToolsetDeps = {
-      ...toolsetDeps,
-      getBriefJudge: () => ({
-        judge: async (candidate) => {
-          judged.push(candidate.lane ?? "(none)");
-          return { decision: "hold" as const, reason: "held by the stub" };
-        },
-      }),
-    };
-    const create = async (run: ClaimedCognitionRun) => {
-      const tool = buildCognitionToolset(judgingDeps, run).find((t) => t.name === "brief_create")!;
-      return tool.invoke(
-        {
-          kind: "info",
-          title: "t",
-          description: "d",
-          confidence: 0.5,
-          urgency: 0.5,
-          annotationDependencies: [],
-        },
-        { sessionId: "S", messageId: "M" },
-      );
-    };
-
-    const digest = await create(
-      claimed({ id: "run_digest", kind: "daily", payload: { digest: true, date: "2026-07-02" } }),
-    );
-    expect(judged).toEqual([]);
-    expect((structuredData(digest)["brief"] as { id?: string }).id).toBeTypeOf("string");
-
-    const datum = await create(claimed({ id: "run_datum", kind: "data" }));
-    expect(judged).toEqual(["reactive"]);
-    expect(structuredData(datum)["reason"]).toBe("held by the stub");
-
-    const mayDay = await create(
-      claimed({ id: "run_mayday", kind: "daily", payload: { mayDay: true, date: "2026-07-02" } }),
-    );
-    expect(judged).toEqual(["reactive", "lookahead"]);
-    expect(structuredData(mayDay)["reason"]).toBe("held by the stub");
-
-    await create(
-      claimed({
-        id: "run_sched",
-        kind: "time_based",
-        payload: { prompt: "re-verify before it surfaces", loopId: "loop_x" },
-      }),
-    );
-    await create(
-      claimed({
-        id: "run_notice",
-        kind: "synthesis",
-        payload: { focus: "noticing", date: "2026-07-02" },
-      }),
-    );
-    expect(judged).toEqual(["reactive", "lookahead", "dated_reminder", "noticing"]);
   });
 });
 
@@ -875,6 +863,105 @@ describe("createCognitionRuntime prompt wiring", () => {
       log,
     });
   }
+
+  test("digest preflight settles empty input without inference and defers unavailable reads", async () => {
+    const query = vi.spyOn(TemporalQueryService.prototype, "query").mockResolvedValue({
+      type: "temporal.results",
+      window: {
+        start: new Date(NOW).toISOString(),
+        endExclusive: new Date(NOW + 3 * 86_400_000).toISOString(),
+        timeZone: "UTC",
+      },
+      items: [],
+      summary: { anchored: 0, spanning: 0 },
+      coverage: { projectionSources: [], specialistSources: [], annotations: { selective: true } },
+      truncated: false,
+    });
+    try {
+      const rt = await runtime("");
+      const digest = claimed({ kind: "daily", payload: { digest: true, date: "2026-07-02" } });
+      expect(await rt.preflight!(digest)).toBe("complete");
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(await rt.preflight!(claimed({}))).toBe("continue");
+      expect(query).toHaveBeenCalledTimes(1);
+      createObservation(
+        db,
+        {
+          id: "digest-input",
+          createdByRun: "seed",
+          summary: "Calibration schedule changed",
+          why: "Inspect the revised schedule.",
+        },
+        NOW,
+      );
+      replaceMorningBriefItems(db, "2026-07-02", "run_recheck", ["digest-input"]);
+      expect(await rt.preflight!(digest)).toBe("continue");
+      query.mockRejectedValue(new Error("unavailable"));
+      expect(await rt.preflight!(digest)).toBe("defer");
+      // A day whose brief was already sent settles without reading anything.
+      query.mockClear();
+      markMorningBriefSent(
+        db,
+        {
+          day: "2026-07-02",
+          runId: "run_digest",
+          conversationId: "conv_daily",
+          messageId: "msg_daily",
+        },
+        NOW,
+      );
+      expect(await rt.preflight!(digest)).toBe("complete");
+      expect(query).not.toHaveBeenCalled();
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  test("maintenance rules precede changing root context while run data stays in USER", async () => {
+    db.prepare(
+      `INSERT INTO knowledge_nodes
+      (id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+      VALUES ('root','root','Overview','First reference','First reference',1,1,'first','current','{}','{}',?,?)`,
+    ).run(NOW, NOW);
+    const rt = await runtime("ZZOPERATOR use concise prose");
+    const a = claimed({
+      id: "first-run",
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "first-batch" },
+    });
+    const b = claimed({
+      id: "second-run",
+      attempts: 2,
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "second-batch" },
+    });
+    const first = rt.systemPrompt(a);
+    db.prepare(
+      "UPDATE knowledge_nodes SET revision=2,markdown='Second reference',plain_text='Second reference'",
+    ).run();
+    const second = rt.systemPrompt(b);
+    const marker = "## Maintained orientation (untrusted reference context)";
+    expect(first.split(marker)[0]).toBe(second.split(marker)[0]);
+    expect(first).toContain('"revision":1');
+    expect(second).toContain('"revision":2');
+    expect(first.indexOf("Maintain the evidence-backed synthesis graph")).toBeLessThan(
+      first.indexOf("ZZOPERATOR"),
+    );
+    expect(first.indexOf("ZZOPERATOR")).toBeLessThan(first.indexOf(marker));
+    expect(first).not.toContain("first-run");
+    expect(first).not.toContain("Current time:");
+    expect(rt.systemPrompt()).not.toContain("Maintain the evidence-backed synthesis graph");
+    expect(rt.systemPrompt(claimed({ kind: "feedback" }))).not.toContain(
+      "Maintain the evidence-backed synthesis graph",
+    );
+    const user = await rt.promptBuilder(b);
+    expect(user).toContain("second-run");
+    expect(user).toContain("Current time:");
+    expect(user).toContain("Maintain the evidence-backed synthesis graph for this batch.");
+    expect(user).not.toContain("Independent maintenance runs can execute concurrently");
+    expect(user).not.toContain("ZZOPERATOR");
+    expect(user).not.toContain("Second reference");
+  });
 
   test("the run prompt carries the stored notes and self-memory; OMNESIS.md rides the system prompt", async () => {
     writeCognitionNotes(db, "ZZNOTE the user files receipts weekly", { maxBytes: 8192, now: NOW });

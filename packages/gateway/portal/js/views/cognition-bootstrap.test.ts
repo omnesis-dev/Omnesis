@@ -67,7 +67,9 @@ describe("etaDays", () => {
 
   test("declines to answer when there is nothing to say", () => {
     expect(panel.etaDays(RUNNING, 0)).toBeNull();
-    expect(panel.etaDays({ ...RUNNING, settings: { maxRunsPerDay: 0, maxRuns: 10 } }, 3782)).toBeNull();
+    expect(
+      panel.etaDays({ ...RUNNING, settings: { maxRunsPerDay: 0, maxRuns: 10 } }, 3782),
+    ).toBeNull();
     expect(panel.etaDays(RUNNING, undefined)).toBeNull();
     expect(panel.etaDays(null, 3782)).toBeNull();
   });
@@ -119,7 +121,6 @@ describe("formatting", () => {
     expect(panel.fmtCount(null)).toBe("—");
     expect(panel.fmtCount(undefined)).toBe("—");
   });
-
 });
 
 describe("module health", () => {
@@ -158,4 +159,26 @@ describe("capExceedsThroughput", () => {
     expect(panel.capExceedsThroughput(null)).toBe(false);
     expect(panel.capExceedsThroughput({ settings: {}, enqueuedToday: 0 })).toBe(false);
   });
+});
+
+test("historical pause describes admission without promising all evidence work stops", () => {
+  const rendered = JSON.stringify(
+    panel.PauseControl({ status: { state: "running" }, busy: false, onToggle: () => {} }),
+  );
+  expect(rendered).toContain("Pause new historical admissions");
+  expect(rendered).toContain("Already queued work and new evidence can still be processed");
+  expect(rendered).not.toContain("re-reads nothing");
+});
+
+test("failed first discovery start remains visible before pause controls exist", () => {
+  const rendered = JSON.stringify(
+    panel.KnowledgeBootstrapPanel({
+      status: { state: "unstarted", admission: {} },
+      pauseError: "Start unavailable",
+      onStart: () => {},
+      onToggle: () => {},
+    }),
+  );
+  expect(rendered).toContain("Start unavailable");
+  expect(rendered).toContain("No source revisions have recorded discovery outcomes yet");
 });

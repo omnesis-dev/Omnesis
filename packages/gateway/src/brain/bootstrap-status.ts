@@ -51,13 +51,21 @@ type Db = Database.Database;
 
 /** The resolved knobs the lane runs under, as an observer needs to see them. */
 export interface BootstrapSettingsView {
+  /** Composition marker: the knowledge engine owns historical admission. */
+  knowledge?: boolean;
+  /** Initial-inventory recent window; independent of ordinary arrival recency. */
+  knowledgeRecentWindowMs?: number;
   enabled: boolean;
   direction: "recent-first" | "oldest-first";
   backlogTarget: number;
   maxRunsPerDay: number;
   maxRuns: number;
   batchSize: number;
+  /** How far back historical review reaches; see `knowledge/history-horizon.ts`. */
+  horizonMs: number;
   recencyWindowMs: number;
+  /** Sources the Brain never processes (`brain.excludedSources`); see `source-exclusion.ts`. */
+  excludedSources?: readonly string[];
   /** Optional daily window the lane may buy work in; absent means always. */
   activeHours?: { from: string; to: string };
 }
@@ -410,7 +418,7 @@ export function readBootstrapStatus(
  * elapsed `openUntil` is the normal resting state and must read as "no
  * outage", not as a stale alarm.
  */
-function readProviderOutage(db: Db, now: number): BootstrapStatus["providerOutage"] {
+export function readProviderOutage(db: Db, now: number): BootstrapStatus["providerOutage"] {
   const openUntil = finiteOrNull(getCognitionEngineState(db, PROVIDER_BREAKER_OPEN_UNTIL_KEY)) ?? 0;
   if (openUntil <= now) return null;
   return {
@@ -498,6 +506,10 @@ export class CachedScanProbe<T extends { computedAt: number }> {
  * the whole gate so the module stays testable with a two-line fake.
  */
 export interface BootstrapTimelineReader {
+  knowledgeDiscoveryByMonth?: (
+    notBefore: string,
+    excludedSources?: readonly string[],
+  ) => Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,

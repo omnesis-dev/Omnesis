@@ -4,7 +4,7 @@
 /**
  * Success-criterion 5 (queue durability) at the drain level: exactly-
  * once claim → run → settle, crash re-claim with an attempt-numbered
- * prompt, non-`daily` serialization regardless of the N knob, spend
+ * prompt, legacy-run serialization regardless of the N knob, spend
  * recorded for failed attempts, retention pruning, and the live
  * kill-switch. Everything runs on a scripted zero-token backend and a
  * compressed injectable clock.
@@ -33,13 +33,13 @@ import { listSweepTallies } from "./storage/sweep-tally.js";
 import { CognitionRunDriver } from "./run-driver.js";
 import { FsCognitionTranscriptStore } from "./transcripts.js";
 import { getCognitionRun } from "./storage/run-queue.js";
-import { dataRunDedupeKey } from "./run-payloads.js";
+import { dataRunDedupeKey, digestRunDedupeKey } from "./run-payloads.js";
 import {
   getCognitionSpendDayTotal,
   listCognitionSpend,
   cognitionSpendDay,
 } from "./storage/spend.js";
-import { createBrief } from "./storage/briefs.js";
+import { createObservation } from "./storage/observations.js";
 import { createOpenLoop } from "./storage/open-loops.js";
 import { countPendingBootstrap, fetchBootstrapBatch } from "./storage/bootstrap.js";
 import { listCognitionCoverage } from "./storage/coverage.js";
@@ -156,6 +156,7 @@ describe("steward run drainer", () => {
   }
 
   interface BundleOpts {
+    preflight?: () => Promise<"complete" | "continue" | "defer" | "yield">;
     backend?: (input: TurnInput) => AgentEvent[] | Promise<AgentEvent[]>;
     resolveBackend?: () => ChatBackend | null;
     isEnabled?: () => boolean;
@@ -165,10 +166,6 @@ describe("steward run drainer", () => {
     resurrectDebounceMs?: number;
     prompts?: string[];
     activity?: CognitionRunActivity;
-    digestPush?: {
-      getEnabled: () => boolean;
-      send: (brief: import("./storage/types.js").BriefRow, day: string) => Promise<void>;
-    };
   }
 
   function makeBundle(opts: BundleOpts = {}) {
@@ -185,7 +182,13 @@ describe("steward run drainer", () => {
           for (const event of await script(input)) yield event;
         },
       }));
-    const driver = new CognitionRunDriver({ resolveBackend, transcripts, log, clock });
+    const driver = new CognitionRunDriver({
+      resolveBackend,
+      transcripts,
+      log,
+      clock,
+      preflight: opts.preflight,
+    });
     const bundle = createCognitionDrainerTasks(
       {
         db,
@@ -200,69 +203,12 @@ describe("steward run drainer", () => {
         getResurrectDebounceMs: () => opts.resurrectDebounceMs ?? 0,
         clock,
         ...(opts.maxAttempts !== undefined ? { maxAttempts: opts.maxAttempts } : {}),
-        ...(opts.digestPush ? { digestPush: opts.digestPush } : {}),
       },
       schedulerStub,
     );
     const [drain] = bundle.tasks;
     return { writeGate, drain: drain!, prompts };
   }
-
-  test("a completed digest run pushes its minted brief; disabled knob stays silent", async () => {
-    const pushed: Array<{ briefId: string; day: string }> = [];
-    let pushEnabled = true;
-    const { writeGate, drain } = makeBundle({
-      digestPush: {
-        getEnabled: () => pushEnabled,
-        // eslint-disable-next-line @typescript-eslint/require-await
-        send: async (brief, day) => {
-          pushed.push({ briefId: brief.id, day });
-        },
-      },
-    });
-    // The digest run's card, stamped with the run id the hook looks up.
-    createBrief(
-      db,
-      {
-        id: "brf_digest",
-        createdByRun: "run_digest",
-        kind: "info",
-        title: "Morning brief — quiet day",
-        description: "Nothing needs you before noon.",
-        confidence: 0.9,
-        urgency: 0.2,
-      },
-      now - 1000,
-    );
-    await writeGate.enqueueCognitionRun(
-      { id: "run_digest", kind: "daily", payload: { digest: true, date: "2026-07-02" } },
-      now,
-    );
-    await drain.run(undefined, taskCtx);
-    expect(pushed).toEqual([{ briefId: "brf_digest", day: "2026-07-02" }]);
-
-    // Knob off → a second day's digest completes without pushing.
-    pushEnabled = false;
-    createBrief(
-      db,
-      {
-        id: "brf_digest_2",
-        createdByRun: "run_digest_2",
-        kind: "info",
-        title: "Morning brief — still quiet",
-        description: "d",
-        confidence: 0.9,
-        urgency: 0.2,
-      },
-      now - 500,
-    );
-    await writeGate.enqueueCognitionRun(
-      { id: "run_digest_2", kind: "daily", payload: { digest: true, date: "2026-07-03" } },
-      now,
-    );
-    await drain.run(undefined, taskCtx);
-    expect(pushed).toHaveLength(1);
-  });
 
   test("a settled sweep run folds into its sweep's tally; other kinds do not", async () => {
     // The drainer is the only writer of every number the Sweeps tab shows, and
@@ -280,15 +226,12 @@ describe("steward run drainer", () => {
       },
       now - 100,
     );
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_from_sweep",
+        id: "obs_from_sweep",
         createdByRun: "run_sweep",
-        kind: "info",
-        title: "Two subscriptions renew next week",
-        confidence: 0.8,
-        urgency: 0.4,
+        summary: "Two subscriptions renew next week",
       },
       now - 100,
     );
@@ -313,7 +256,7 @@ describe("steward run drainer", () => {
     expect(tallies.get("weekly-finances")).toMatchObject({
       runs: 1,
       failedRuns: 0,
-      briefsCreated: 1,
+      observationsNoted: 1,
       loopsCreated: 1,
       promptTokens: 50,
       completionTokens: 10,
@@ -377,6 +320,66 @@ describe("steward run drainer", () => {
     ).toEqual(["daily-lookahead", "daily-source-review", "morning-digest"]);
   });
 
+  test("preflight deferral preserves attempts and buys no model turn or spend", async () => {
+    let ready = false;
+    let backendResolutions = 0;
+    const { writeGate, drain } = makeBundle({
+      preflight: () => Promise.resolve(ready ? "complete" : "defer"),
+      resolveBackend: () => {
+        backendResolutions++;
+        return null;
+      },
+      maxAttempts: 1,
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_deferred", kind: "data", payload: { docId: "d", event: "created", datumAt: now } },
+      now,
+    );
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_deferred")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: now + 15_000,
+    });
+    expect(listCognitionSpend(db)).toEqual([]);
+    expect(getCognitionEngineState(db, PROVIDER_BREAKER_FAILURES_KEY)).toBeNull();
+    ready = true;
+    now += 15_000;
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_deferred")?.status).toBe("completed");
+    expect(backendResolutions).toBe(0);
+    expect(listCognitionSpend(db)).toEqual([]);
+  });
+
+  test("deterministic maintenance progress yields without advancing virtual time or buying a model", async () => {
+    let passes = 0;
+    const { writeGate, drain } = makeBundle({
+      preflight: async () => (++passes === 1 ? "yield" : "complete"),
+      resolveBackend: () => {
+        throw new Error("No model needed for bounded bookkeeping");
+      },
+      maxAttempts: 1,
+    });
+    await writeGate.enqueueCognitionRun(
+      {
+        id: "run_progress",
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch" },
+      },
+      now,
+    );
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_progress")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: now,
+    });
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_progress")?.status).toBe("completed");
+    expect(passes).toBe(2);
+    expect(listCognitionSpend(db)).toEqual([]);
+  });
+
   test("an exhausted day budget parks the queue instead of failing its runs", async () => {
     // Parking at the CLAIM boundary matters: an already-claimed run has burned
     // an attempt, so failing it there would walk the row toward the terminal
@@ -402,6 +405,92 @@ describe("steward run drainer", () => {
     expect(row?.status, "still claimable tomorrow").toBe("pending");
     expect(row?.attempts, "no attempt burned").toBe(0);
     expect(listCognitionSpend(db), "and nothing spent").toEqual([]);
+  });
+
+  test("an exhausted day budget still runs the morning brief, and only the brief", async () => {
+    // Overnight maintenance can spend the day's budget before the brief is due;
+    // the brief is one run a day, so it is exempt while everything else parks.
+    const { writeGate, drain } = makeBundle({
+      getBudgetVerdict: () => ({
+        exhausted: true,
+        dimension: "runs",
+        used: 40,
+        limit: 40,
+        reason: "Today's cognition run budget is spent.",
+      }),
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_parked", kind: "data", payload: { docId: "d", event: "created", datumAt: now } },
+      now,
+    );
+    await writeGate.enqueueCognitionRun(
+      {
+        id: "run_source_review",
+        kind: "daily",
+        payload: { sourceId: "src_1", dateFrom: "2026-07-02", dateTo: "2026-07-03" },
+      },
+      now,
+    );
+    await writeGate.enqueueCognitionRun(
+      {
+        id: "run_brief",
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-03" },
+        dedupeKey: digestRunDedupeKey("2026-07-03"),
+      },
+      now,
+    );
+
+    await drain.run(undefined, taskCtx);
+
+    expect(getCognitionRun(db, "run_brief")?.status).toBe("completed");
+    for (const id of ["run_parked", "run_source_review"]) {
+      expect(getCognitionRun(db, id)?.status, id).toBe("pending");
+      expect(getCognitionRun(db, id)?.attempts, id).toBe(0);
+    }
+    // The brief's own spend records like any run's, so it counts toward the day.
+    expect(listCognitionSpend(db).map((row) => [row.mechanism, row.runs])).toEqual([
+      ["morning-digest", 1],
+    ]);
+    // A second tick with nothing exempt left stays parked and idle.
+    expect(await drain.run(undefined, taskCtx)).toEqual({ kind: "done", value: { idle: true } });
+  });
+
+  test("an Anthropic usage-limit refusal waits out the outage instead of spending the run", async () => {
+    // Anthropic reports a reached account limit as HTTP 400, the status of a
+    // malformed body; its own code is what keeps the run from being retired.
+    const { writeGate, drain } = makeBundle({
+      maxAttempts: 1,
+      backend: (input) => [
+        {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: "error",
+            failure: {
+              code: "anthropic_usage_limited",
+              message: "Anthropic refused the request: the account's API usage limit is reached.",
+              retryable: true,
+              backend: "anthropic",
+              model: "claude-test",
+              provider: { status: 400, type: "invalid_request_error" },
+            },
+          },
+        },
+      ],
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_limited", kind: "data", payload: { docId: "d", event: "created", datumAt: now } },
+      now,
+    );
+
+    await drain.run(undefined, taskCtx);
+
+    const row = getCognitionRun(db, "run_limited");
+    expect(row?.status, "not retired at the attempt cap").toBe("pending");
+    expect(row?.attempts, "attempt refunded").toBe(0);
+    expect(row?.failureCode).toBe("anthropic_usage_limited");
   });
 
   test("enqueue → claim → run → complete, with usage recorded on the row and the day", async () => {
@@ -487,7 +576,7 @@ describe("steward run drainer", () => {
     expect(prompts[0]).toContain("Attempt: 2");
   });
 
-  test("non-daily runs serialize even at N=2; daily runs use the parallelism", async () => {
+  test("legacy data and daily runs remain exclusive even at N=2", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const gatedScript = async (input: TurnInput): Promise<AgentEvent[]> => {
@@ -507,14 +596,14 @@ describe("steward run drainer", () => {
     expect(getCognitionRun(db, "run_b")?.status).toBe("completed");
     expect(maxInFlight).toBe(1);
 
-    // Same shape, `daily` kind: the two runs overlap.
+    // Daily legacy work also reconciles shared state and stays exclusive.
     maxInFlight = 0;
     await writeGate.enqueueCognitionRun({ id: "run_c", kind: "daily", payload: {} }, now);
     await writeGate.enqueueCognitionRun({ id: "run_d", kind: "daily", payload: {} }, now);
     await drain.run(undefined, taskCtx);
     expect(getCognitionRun(db, "run_c")?.status).toBe("completed");
     expect(getCognitionRun(db, "run_d")?.status).toBe("completed");
-    expect(maxInFlight).toBe(2);
+    expect(maxInFlight).toBe(1);
   });
 
   test("a failing run retries with backoff, then fails terminally at the attempts cap", async () => {

@@ -9,7 +9,7 @@ extension ModelManagement {
     /// OCR use distinct inference paths that do not carry reasoning settings.
     static let behaviorRoles: Set<String> = [
         "agent", "privacy-reviewer", "background-agent", "watch-judge",
-        "entailment-verifier", "brief-judge",
+        "entailment-verifier",
     ]
 
     /// Preserve the configured backend key for selection while showing the

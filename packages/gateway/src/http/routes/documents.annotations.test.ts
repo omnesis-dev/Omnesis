@@ -20,7 +20,7 @@ import {
   createDocAnnotation,
   invalidateAnnotationsForDoc,
 } from "../../brain/storage/annotations.js";
-import { createBrief } from "../../brain/storage/briefs.js";
+import { createObservation } from "../../brain/storage/observations.js";
 import { recordConsumptionEdges } from "../../brain/storage/consumption-edges.js";
 import type Database from "better-sqlite3";
 
@@ -259,17 +259,9 @@ describe("GET /documents/:id/annotations", () => {
       },
       1000,
     );
-    createBrief(
+    createObservation(
       db,
-      {
-        id: "brief_dep",
-        createdByRun: "run_2",
-        kind: "info",
-        title: "Studio booking follow-up",
-        description: "A fictional follow-up.",
-        confidence: 0.7,
-        urgency: 0.4,
-      },
+      { id: "obs_dep", createdByRun: "run_2", summary: "Studio booking follow-up" },
       2000,
     );
     recordConsumptionEdges(
@@ -278,8 +270,8 @@ describe("GET /documents/:id/annotations", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "ann_dep",
-          dependentKind: "brief",
-          dependentId: "brief_dep",
+          dependentKind: "observation",
+          dependentId: "obs_dep",
           runId: "run_2",
         },
       ],

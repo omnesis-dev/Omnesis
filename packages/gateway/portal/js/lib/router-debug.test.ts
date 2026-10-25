@@ -211,8 +211,9 @@ describe("Cognition sub-routes", () => {
     expect(route("/portal/debug/cognition")).toEqual({
       view: "debug",
       tab: "cognition",
-      cognitionTab: "overview",
+      cognitionTab: "runs",
       cognitionId: null,
+      redirectTo: "/portal/debug/cognition/runs",
     });
     expect(route("/portal/debug/cognition/runs/run-42")).toEqual({
       view: "debug",
@@ -253,3 +254,19 @@ describe("Calendar route", () => {
     }
   });
 });
+
+test("retired loop routes preserve identity in the knowledge library", () => {
+  expect(route("/portal/debug/cognition/loops/outcome%2Fone")).toEqual({
+    view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: "outcome/one",
+    redirectTo: "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+  });
+  expect(route("/portal/debug/cognition/loops").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=loop");
+});
+
+
+test("observation deep links address the Observations inspector", () => {
+  expect(route("/portal/debug/cognition/observations/obs%2Ffixture")).toEqual({
+    view: "debug", tab: "cognition", cognitionTab: "observations", cognitionId: "obs/fixture",
+  });
+});
+

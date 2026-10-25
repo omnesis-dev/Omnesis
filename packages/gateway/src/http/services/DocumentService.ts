@@ -10,6 +10,8 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
   fetchDocumentProjections,
   getDocumentCount,
@@ -55,7 +57,7 @@ import {
   countLiveDependentsForAnnotation,
   listLiveDependentsForAnnotation,
 } from "../../brain/storage/consumption-edges.js";
-import { purgeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
 import {
   InvalidAnalyticsRecentCursorError,
   type AnalyticsDb,
@@ -176,6 +178,7 @@ interface CursorUpsertRequest {
    */
   replicaClaimDeviceId?: string;
   body: {
+    initialInventory?: UpsertWithCursorArgs["initialInventory"];
     pendingPageId?: string;
     providerId: string;
     sourceId: string;
@@ -530,8 +533,8 @@ export class DocumentService {
    * document-delete path here that yields deleted ids (explicit deletes + sync
    * reconcile); source removal runs the same cascade from `SourceService`.
    */
-  private async purgeAnnotationsFor(deletedDocIds: readonly string[]): Promise<void> {
-    await purgeCognitiveStateThroughGate(this.deps.db, this.deps.writeGate, deletedDocIds);
+  private async cascadeCognitionFor(deletedDocIds: readonly string[]): Promise<void> {
+    await cascadeCognitiveStateThroughGate(this.deps.db, this.deps.writeGate, deletedDocIds);
   }
 
   async deleteByIds(
@@ -569,7 +572,7 @@ export class DocumentService {
       if (indexWriteGate && deletedDocIds.length > 0) {
         indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
       }
-      await this.purgeAnnotationsFor(deletedDocIds);
+      await this.cascadeCognitionFor(deletedDocIds);
       log.debug(`Deleted ${externalIds.length} documents`, {
         providerId,
         sourceId,
@@ -652,7 +655,7 @@ export class DocumentService {
       if (indexWriteGate) {
         indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
       }
-      await this.purgeAnnotationsFor(deletedDocIds);
+      await this.cascadeCognitionFor(deletedDocIds);
       log.debug(
         `Privacy-deleted document ${externalId}: ${deletedDocIds.length} rows (incl. attachments), ${indexCleanedRows} index rows${tombstone ? "" : ", no tombstone"}`,
         { providerId, sourceId },
@@ -985,6 +988,7 @@ export class DocumentService {
         absencePlan,
         edges: body.edges,
         hasMore: body.hasMore,
+        initialInventory: body.initialInventory,
         cursor: body.cursor as UpsertWithCursorArgs["cursor"],
         cursorDeviceId: args.cursorDeviceId,
         streamId: args.streamId,
@@ -1009,7 +1013,7 @@ export class DocumentService {
           deleteIndex: indexWriteGate
             ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
             : undefined,
-          purgeCognition: (ids) => this.purgeAnnotationsFor(ids),
+          cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
           acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
         })
       : 0;
@@ -1282,7 +1286,7 @@ export class DocumentService {
           if (indexWriteGate && deletedIds.length > 0) {
             await indexWriteGate.deleteChunksByDocuments(deletedIds);
           }
-          await this.purgeAnnotationsFor(deletedIds);
+          await this.cascadeCognitionFor(deletedIds);
           if (outcome.disputed.length > 0) deletionDisputed = outcome.disputed.length;
         }
       }
@@ -1414,7 +1418,27 @@ export class DocumentService {
       opts?.excludeSourceIds,
       opts?.includeSourceIds,
     );
-    return listDocuments(this.deps.db, { ...opts, excludeSourceIds });
+    const limit = opts?.limit ?? 100;
+    const documents: ReturnType<typeof listDocuments>["documents"] = [];
+    let afterId = opts?.afterId;
+    let hasMore: boolean;
+    do {
+      const page = listDocuments(this.deps.db, {
+        ...opts,
+        excludeSourceIds,
+        afterId,
+        limit: limit - documents.length,
+      });
+      documents.push(
+        ...page.documents.filter((row) =>
+          isKnowledgeDocumentReadable(this.deps.db, row.id, row.sourceId),
+        ),
+      );
+      hasMore = page.hasMore;
+      afterId = page.documents.at(-1)?.id;
+      if (!afterId) break;
+    } while (hasMore && documents.length < limit);
+    return { documents, hasMore };
   }
 
   listIds() {
@@ -1459,7 +1483,8 @@ export class DocumentService {
     return this.deps.db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
       .all(`${idPrefix}%`)
-      .map((row) => row.id);
+      .map((row) => row.id)
+      .filter((id) => isKnowledgeDocumentReadable(this.deps.db, id));
   }
 
   listAnnotations(
@@ -1482,7 +1507,7 @@ export class DocumentService {
       verificationState: string | null;
       lastVerifiedAt: string | null;
       dependentCount: number;
-      dependents?: Array<{ kind: "brief" | "loop"; id: string; title: string }>;
+      dependents?: Array<{ kind: "observation" | "loop"; id: string; title: string }>;
       sortCreatedAt: number;
     }>;
     hasMore: boolean;
@@ -1609,6 +1634,10 @@ export class DocumentService {
   /** One row of a source's sync state: `""` (shared) or a member device's own. */
   getSyncState(sourceId: string, deviceId = "") {
     return this.sourceSyncState.getState(sourceId, deviceId);
+  }
+
+  getInitialSourceInventory(sourceId: string, cursorRow = "") {
+    return getInitialSourceInventory(this.deps.db, sourceId, cursorRow);
   }
 
   /** Current write epoch of one cursor row (0 if never claimed or wiped). */

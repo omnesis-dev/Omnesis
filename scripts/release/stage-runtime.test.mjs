@@ -4,6 +4,8 @@
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  mkdirSync,
+  writeFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -11,6 +13,7 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,6 +23,7 @@ import {
   compileRuntimeClosure,
   localRuntimeClosure,
   stageRuntime,
+  stageWorkspaceDependencies,
 } from "../runtime/stage-runtime.mjs";
 
 const temporaryDirectories = [];
@@ -38,6 +42,33 @@ function allFiles(directory, prefix = "") {
 }
 
 describe("runtime staging", () => {
+  it("preserves workspace-local production dependencies for runtime resolution", () => {
+    const root = mkdtempSync(join(tmpdir(), "runtime-dependencies-"));
+    temporaryDirectories.push(root);
+    const source = join(root, "source");
+    const dependency = join(source, "packages/cli/node_modules/yaml");
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(dependency, "index.js"), "module.exports = 42;");
+    writeFileSync(
+      join(source, "package-lock.json"),
+      JSON.stringify({
+        packages: {
+          "packages/cli": {},
+          "packages/absent": {},
+          "packages/cli/node_modules/yaml": {},
+        },
+      }),
+    );
+    const out = join(root, "output");
+    stageWorkspaceDependencies(out, source);
+    expect(readFileSync(join(out, "packages/cli/node_modules/yaml/index.js"), "utf8")).toBe(
+      "module.exports = 42;",
+    );
+    const runtimeRequire = createRequire(join(out, "packages/cli/dist/index.js"));
+    expect(runtimeRequire("yaml")).toBe(42);
+    expect(existsSync(join(out, "packages/absent"))).toBe(false);
+  });
+
   it("computes only the transitive local gateway closure", () => {
     const names = localRuntimeClosure("@omnesis/gateway").map((entry) => entry.pkg.name);
 

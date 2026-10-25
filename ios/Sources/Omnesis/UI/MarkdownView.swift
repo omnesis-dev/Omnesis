@@ -29,6 +29,7 @@ struct MarkdownView: View {
     /// Assistant value fences stay ordinary body text while streaming too.
     var plainValueFences: Bool = false
     var copyFont: UIFont = .systemFont(ofSize: 14)
+    var allowsTextSelection = true
 
     @State private var cache = MarkdownCache()
 
@@ -53,7 +54,7 @@ struct MarkdownView: View {
             inlineText(raw)
                 .font(bodyFont)
                 .foregroundStyle(Theme.textPrimary)
-                .textSelection(.enabled)
+                .modifier(MarkdownTextSelection(enabled: allowsTextSelection))
                 .fixedSize(horizontal: false, vertical: true)
         case .bulletList(let items):
             VStack(alignment: .leading, spacing: 4) {
@@ -106,7 +107,7 @@ struct MarkdownView: View {
                     Text(display)
                         .font(bodyFont)
                         .foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled)
+                        .modifier(MarkdownTextSelection(enabled: allowsTextSelection))
                 }
             } else {
                 codeBlock(raw, closed: closed)
@@ -132,7 +133,7 @@ struct MarkdownView: View {
         .padding(10)
         .background(Theme.bgTertiary)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .textSelection(.enabled)
+        .modifier(MarkdownTextSelection(enabled: allowsTextSelection))
     }
 
     @ViewBuilder
@@ -731,4 +732,16 @@ enum MarkdownStreaming {
     .preferredColorScheme(.dark)
 }
 #endif
+
+@available(iOS 17.0, *)
+private struct MarkdownTextSelection: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled {
+            content.textSelection(.enabled)
+        } else {
+            content.textSelection(.disabled)
+        }
+    }
+}
 #endif

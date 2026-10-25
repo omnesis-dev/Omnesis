@@ -78,6 +78,40 @@ class CaptureViewModel @Inject constructor(
     /** The recording was taken from this visit once; later dictation stays on the phone. */
     private var voiceNotesUnusable = false
 
+    /**
+     * Completing a task with a note rather than saving one ("Done + note" in Tasks), or accepting a suggestion with one: the words
+     * stay on the phone — the note is the completion's, not a voice note for the gateway — and
+     * Save hands them over as [CaptureUiState.completionNote] instead of sending them.
+     */
+    private var completingTask = false
+
+    /** Start afresh as the note of a task's completion. */
+    fun beginTaskCompletion() {
+        release()
+        completingTask = true
+        voiceNotesUnusable = true
+        consecutiveFaults = 0
+        _state.value = CaptureUiState()
+    }
+
+    /** The completion capture closed: the microphone goes and nothing carries over. */
+    fun endTaskCompletion() {
+        release()
+        completingTask = false
+        voiceNotesUnusable = false
+        _state.value = CaptureUiState()
+    }
+
+    /** The completion went through (null) or was refused with [error]; the words stay on a refusal. */
+    fun completionFinished(error: String?) {
+        _state.update {
+            it.copy(
+                completionNote = null,
+                save = if (error == null) SaveState.Done() else SaveState.Failed(error),
+            )
+        }
+    }
+
     /** Called once the RECORD_AUDIO permission state is known (on open, or after the runtime prompt). */
     fun onMicPermission(granted: Boolean) {
         if (!granted) {
@@ -175,9 +209,15 @@ class CaptureViewModel @Inject constructor(
             transcriber.cancel()
         }
         _state.update {
-            it.copy(text = text, partialText = "", speech = it.speech.demotedToIdle(), save = SaveState.Saving)
+            it.copy(
+                text = text,
+                partialText = "",
+                speech = it.speech.demotedToIdle(),
+                save = SaveState.Saving,
+                completionNote = text.takeIf { completingTask },
+            )
         }
-        send(text, null)
+        if (!completingTask) send(text, null)
     }
 
     /** Clears a failed save so the note can be edited and retried. */
@@ -185,11 +225,14 @@ class CaptureViewModel @Inject constructor(
         _state.update { it.copy(save = SaveState.Idle) }
     }
 
-    override fun onCleared() {
+    override fun onCleared() = release()
+
+    private fun release() {
         wantListening = false
         transcriber.cancel()
         voiceNote?.discard()
         voiceNote = null
+        resetHiddenTranscript()
     }
 
     private fun startVoiceNote(recording: VoiceNoteSession) {

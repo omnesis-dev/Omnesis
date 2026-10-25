@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
 import { runSchemaSetup } from "./schema.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -64,6 +65,7 @@ function seedPre83Install(d: Db): void {
       (subscription_id, revision, workflow_id, condition_json, created_at)
     VALUES ('sub_northstar', 1, 'wf_northstar', '{"kind":"natural-language"}', 1700000000000)
   `);
+  createLegacyBriefTables(d);
   d.exec("PRAGMA user_version = 82");
 }
 

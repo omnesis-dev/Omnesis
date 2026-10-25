@@ -40,6 +40,37 @@ Source providers expose a `defineSource<Cursor>({...})` factory call rather than
 
 - Helper: `packages/source-sdk/src/define-source.ts`
 
+### Voice is a media lease on the canonical agent
+
+The speech frontend delegates substantive work to `AgentService.openVoiceSession`.
+That facade submits through the ordinary durable conversation controls, using the
+configured backend, prompt, tools, permissions, citations and token accounting.
+Tool and citation UI consumes the existing agent event stream; speech captions are
+an independent presentation, not another stored assistant answer. Only the normal
+visible-history projection seeds the speech frontend. Ending media releases its
+lease without canceling accepted work; explicit Stop and authority revocation
+cancel only submissions owned by that lease.
+
+Before a voice-origin turn starts a mutating tool, admission shares the
+conversation controls' acceptance lock. Newer queued input stops the superseded
+turn at that boundary; an operation already admitted retains its normal
+cancellation semantics. Read-only work continues without a second execution
+queue. Transcript deltas append only to an unstarted submission owned by the
+voice lease; fragment IDs share that canonical receipt without consuming another
+ordinary queue slot. Each append advances the admission revision checked before
+mutations. Citation tools decorate the canonical answer, so speech preserves answer
+text around citations while discarding preambles before further research.
+
+Live media uses WebRTC to the provider, with gateway-owned authenticated signaling
+and sideband control. A separate versioned optional capability preserves the legacy
+Realtime transport. The lifecycle stream carries safe call status and errors, not
+a second conversation protocol. Provider duration accounting stays separate from
+the configured agent's token accounting.
+
+- Canonical agent facade: `packages/gateway/src/agent/voice-session.ts`
+- Media lifecycle: `packages/gateway/src/realtime/live-service.ts`
+- Delegation adapter: `packages/gateway/src/realtime/live-conversation.ts`
+
 ### Fresh local-source access evidence
 
 Local source instances implement `probeReadAccess({ signal })` for collector health
@@ -331,6 +362,40 @@ inserted into model-visible history.
 - Wire contract: `packages/core/src/agent-protocol.ts`
 - Session normalization: `packages/agent/src/session.ts`
 - Machine classifier: `packages/agent/src/turn-outcome.ts`
+
+### Conversation transports share one agent session and event stream
+
+Text and realtime voice use the same `AgentSession`, interactive prompt, wrapped
+tool handles, canonical history, citation tracking and persistence lifecycle. A
+transport can supply a backend for one turn; it must not delegate the request to
+another conversational model or maintain a second conversation reducer. The
+realtime backend adds spoken-response guidance to the shared prompt and derives
+each model response's context from canonical history plus its current audio item.
+
+The existing `agent.*` SSE stream owns conversation state on every frontend.
+Voice reuses its snapshot/cursor handoff, tool cards and citation drawer. Its
+WebSocket carries audio and media lifecycle controls. The media protocol
+advertises a supported range; a client selects a mutually supported version.
+An omitted version retains the legacy media format, while the negotiated SSE
+version omits the legacy tool-event mirror. Missing capabilities or incompatible
+ranges disable the unsupported voice surface without affecting text chat.
+
+Ending a negotiated voice call acknowledges release of its session lease before
+the client returns to the text composer. Release follows the canonical terminal
+event, without waiting for persistence, so an immediate text send cannot race
+the closing audio socket. A transport-owned model context failure is a turn
+failure; it must not make the default model's conversation permanently read-only.
+
+The voice lease also participates in ordinary conversation queue admission. Text
+can be durably queued during a call and runs after the lease ends; send-now
+controls cannot start a second backend in that session. Voice turn admission and
+clarification clearing use the queue's existing short serialization barrier,
+without holding it across model work.
+
+- Shared lifecycle: `packages/agent/src/session.ts`, `packages/gateway/src/agent/service.ts`
+- Realtime backend: `packages/gateway/src/realtime/backend.ts`
+- Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`
+- Native handoff: `ios/Sources/Omnesis/Coordinators/RealtimeConversationHandoff.swift`
 
 ### A credential gate answers from the credential, a sync failure from the failure
 
@@ -944,7 +1009,7 @@ Two consequences worth stating, because they are where this gets violated:
 - **A prose `reason` on the wire is addressed to a surface that can act on it.** Clients that only navigate read the booleans instead. A gate must therefore publish enough booleans to tell "this install asked for the feature and it is broken" apart from "this install merely previews it" — otherwise the client either guesses or shows a permanent false alarm on every demo gateway. `BriefsFeatureStatus.enabled` exists for exactly that.
 - **Derive the menu's state into a typed value next to the DTO, not into a branch in the view.** It keeps the blocked states distinguishable under test in the sim-less lane, where a view is not reachable.
 
-- Examples: `ios/Sources/Omnesis/Transport/BriefsClient.swift` (`BriefsMenuEntry`), `ios/Sources/Omnesis/UI/MainMenuDrawer.swift`, `android/app/src/main/kotlin/dev/omnesis/android/ui/home/MainMenuDrawer.kt`, `packages/gateway/src/brain/feature-gate.ts`
+- Examples: `ios/Sources/Omnesis/UI/MainMenuDrawer.swift` and `android/app/src/main/kotlin/dev/omnesis/android/ui/home/MainMenuDrawer.kt` (the queued-notes warning), `packages/gateway/src/brain/feature-gate.ts` (`BriefsFeatureStatus`)
 
 ### Portal tables share one vocabulary
 
@@ -1123,6 +1188,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | Typed worker dispatch              | `packages/gateway/src/workers/protocol.ts` + `packages/gateway/src/scheduler/write-ops.ts`                            |
 | Typed WS registry                  | `packages/core/src/ws-messages.ts`                                                                                    |
 | Negotiated protocol range          | `packages/gateway/src/subscriptions/delivery.ts` (`negotiatedDeliveryProtocol`)                                       |
+| Shared text/voice conversation     | `packages/agent/src/session.ts` + `packages/gateway/src/realtime/backend.ts`                                          |
 | Snapshot only from a complete read | `packages/source-sdk/src/snapshot.ts` + `packages/providers/apple/src/contacts.ts`                                    |
 | Absence marked, not deleted        | `packages/gateway/src/data/repositories/AbsenceRepository.ts`                                                         |
 | `omnesisConfigSchema`              | `packages/config/src/config-schema.ts`                                                                                |
@@ -1189,3 +1255,14 @@ Every rule below is documented but not machine-checked. Reviewers are expected t
 | `credentialState()` answers from the stored credential, never from a live request                                                                                                                | this doc Layer 1 + `packages/source-sdk/src/define-source.ts` JSDoc             |
 | Navigation menus mark, never explain — diagnostics live on the surface that owns the subject                                                                                                     | this doc Layer 1                                                                |
 | A separately deployed wire contract advertises a version range; no schema pins a single literal                                                                                                  | this doc Layer 1                                                                |
+
+### Source-owned evidence authority
+
+Gateway-internal sources with mixed human and generated material register an
+explicit evidence policy in `packages/gateway/src/sources/evidence-authority.ts`.
+Trusted source writers seal speaker ranges against exact body identity; ordinary
+collector metadata or rendered labels cannot mint those ranges. Shared factual
+consumers ask the registry and fail closed when a required projection is missing.
+They preserve attributed speech as indivisible witnesses and never expand a
+partial read. The semantic `evidenceAuthority` metadata digest participates in
+normal Knowledge source invalidation; its value alone does not grant authority.

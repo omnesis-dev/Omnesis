@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
+  oauthCallbackHost,
   CredentialPersistError,
   DEFAULT_CONFIG_DIR,
   readProviderCredentials,
@@ -75,8 +76,6 @@ const AUTHORITY = "https://login.microsoftonline.com/consumers";
 // code needed.
 const SCOPES = ["Mail.Read", "Files.Read", "Calendars.Read", "offline_access"];
 const CALLBACK_PORT = 3001;
-/** Loopback, explicitly — see the Google provider for why wildcard is wrong. */
-const CALLBACK_HOST = "localhost";
 const REDIRECT_URI = "http://localhost:3001/auth/callback";
 const CALLBACK_PATH = "/auth/callback";
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -610,7 +609,7 @@ function bindCallbackListener(
     }, timeoutMs);
     deadline.unref?.();
 
-    server.listen(port, () => {
+    server.listen(port, oauthCallbackHost("127.0.0.1"), () => {
       bound({
         result,
         close: () => {
@@ -738,7 +737,7 @@ function waitForAuthCode(expectedState: string): Promise<string> {
       res.writeHead(result.status, { "Content-Type": "text/plain" });
       res.end(result.message);
     });
-    server.listen(CALLBACK_PORT, CALLBACK_HOST);
+    server.listen(CALLBACK_PORT, oauthCallbackHost());
 
     setTimeout(() => {
       server.close();

@@ -15,11 +15,13 @@ export interface ConversationRetentionCandidate {
   fileIdentity: string;
 }
 
-/** Shared eligibility rule used by both typed runtime origins and worker JSON. */
-export function originUsesAnchoredThreadProfile(value: unknown): boolean {
+/**
+ * Origins the retention drip never deletes: the standing Morning brief
+ * conversation is permanent. Shared by typed runtime origins and worker JSON.
+ */
+export function originIsPermanent(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const kind = (value as Record<string, unknown>).kind;
-  return kind === "brief";
+  return (value as Record<string, unknown>).kind === "daily_brief";
 }
 
 /**
@@ -71,7 +73,7 @@ function isRetentionEligible(value: unknown, expectedId: string, cutoffMs: numbe
   ) {
     return false;
   }
-  if (originUsesAnchoredThreadProfile(record.origin)) return false;
+  if (originIsPermanent(record.origin)) return false;
   const updatedAt = Date.parse(record.updatedAt);
   return Number.isFinite(updatedAt) && updatedAt < cutoffMs;
 }

@@ -143,3 +143,20 @@ describe("search_documents passes its own conversation to the port", () => {
     expect(JSON.stringify(tool.schema)).not.toContain("currentConversationId");
   });
 });
+
+it("retains incomplete retrieval coverage even when search returns no matches", async () => {
+  const coverage = {
+    status: "catching_up" as const,
+    corpusBoundary: "2027-01-04T10:00:00.000Z",
+    publishedThrough: "2027-01-04T09:00:00.000Z",
+    notice: "Missing search results do not establish absence.",
+  };
+  const tool = createSearchDocumentsTool({
+    port: port(async () => ({ query: "workshop", durationMs: 1, results: [], coverage })),
+  });
+  expect(await tool.invoke({ query: "workshop" }, ctx)).toMatchObject({
+    kind: "search.results",
+    results: [],
+    coverage,
+  });
+});

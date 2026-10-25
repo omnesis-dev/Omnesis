@@ -69,12 +69,12 @@ describe("joinPageTextItems", () => {
   test("groups same-baseline runs from different columns into one line", () => {
     // Two columns of a form row share a baseline; both belong to one line.
     const items = [
-      item({ str: "Reeves", x: 100, y: 700, width: 40 }),
-      item({ str: "Family name", x: 300, y: 700, width: 60 }),
-      item({ str: "Maya", x: 100, y: 680, width: 30 }),
-      item({ str: "Given name", x: 300, y: 680, width: 55 }),
+      item({ str: "lantern", x: 100, y: 700, width: 40 }),
+      item({ str: "item code", x: 300, y: 700, width: 60 }),
+      item({ str: "rope", x: 100, y: 680, width: 30 }),
+      item({ str: "category", x: 300, y: 680, width: 55 }),
     ];
-    expect(joinPageTextItems(items)).toBe("Reeves Family name\nMaya Given name");
+    expect(joinPageTextItems(items)).toBe("lantern item code\nrope category");
   });
 
   test("does not double up when a run already carries whitespace", () => {

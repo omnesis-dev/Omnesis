@@ -10,6 +10,7 @@ import {
   type FindSearchInput,
 } from "./types.js";
 import type { DecisionCapability } from "@omnesis/core";
+import type { CognitionDecisionRecord } from "../../brain/storage/decisions.js";
 import type { AgentService } from "../../agent/service.js";
 import type { SearchPipeline } from "../pipeline.js";
 
@@ -20,6 +21,8 @@ export class FindSearchService {
       searchPipeline?: Pick<SearchPipeline, "search">;
       getDecision: () => DecisionCapability | null;
       recordDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
+      /** Appends each routing judgement to the decision ledger. */
+      recordDecision?: (record: CognitionDecisionRecord) => Promise<void>;
       getAgentService: () => AgentService | null;
     },
   ) {}
@@ -34,6 +37,7 @@ export class FindSearchService {
       this.deps.getDecision,
       signal,
       this.deps.recordDecisionSpend,
+      this.deps.recordDecision,
     );
     signal.throwIfAborted();
     emit({ type: "find.decision", payload: decision });

@@ -182,6 +182,57 @@ describe("mention judgements", () => {
     expect(kinds).toEqual({ [note]: "exempt", [booking]: "exempt", [invoice]: "exempt" });
   });
 
+  it("writes the gate's decision-ledger rows in the same transaction, with no run", () => {
+    const id = seed("a");
+    extract(id);
+    applyMentionJudgements(
+      db,
+      [],
+      [],
+      [],
+      [
+        {
+          id: "dec_mention",
+          runId: null,
+          documentId: id,
+          subjectDocumentId: id,
+          purpose: "mention-worth",
+          lane: "date-mentions",
+          rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+          contentHash: "hash-a",
+          requestedModelId: MODEL,
+          modelId: MODEL,
+          requestJson: "{}",
+          responseJson: "{}",
+          score: 0.4,
+          threshold: 1.08,
+          verdict: "skip",
+          error: null,
+          reusedFrom: null,
+          recordId: null,
+          enforced: true,
+          latencyMs: 30,
+          inputTokens: 200,
+          createdAt: 1,
+        },
+      ],
+    );
+    expect(
+      db
+        .prepare("SELECT run_id, purpose, verdict FROM cognition_decisions WHERE id = ?")
+        .get("dec_mention"),
+    ).toEqual({ run_id: null, purpose: "mention-worth", verdict: "skip" });
+    // A mention decision is not the Brain's worth answer; the gate records that itself.
+    expect(
+      findWorthAnswer(db, {
+        subjectDocumentId: id,
+        contentHash: "hash-a",
+        rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+        requestedModelId: MODEL,
+      }),
+    ).toBeNull();
+  });
+
   it("records the answer it asked for as the email's shared answer", () => {
     const id = seed("a");
     extract(id);

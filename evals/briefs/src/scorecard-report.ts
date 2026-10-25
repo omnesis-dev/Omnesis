@@ -26,7 +26,7 @@ import type {
 
 /**
  * Which direction each gateable metric fails in. `max` = the metric must
- * stay at or below the threshold; `min` = at or above. `briefs_per_day`,
+ * stay at or below the threshold; `min` = at or above. `observations_per_day`,
  * `tokens_per_day`, `scheduled_runs`, and `malformed_tool_call_rate_raw`
  * (all failed mutating calls, self-corrected ones included — the gated
  * `malformed_tool_call_rate` counts only uncorrected failures) are
@@ -120,7 +120,7 @@ export function evaluateVerdict(
 
 /** The fixed convergence-ledger template (frozen in the epic spec). */
 export const LEDGER_ROW_HEADER =
-  "| iter | backend | dup_rate | recall | precision | silent_close | briefs/day | tokens/day | infra_fail | cum_spend | shared_diff | verdict |";
+  "| iter | backend | dup_rate | recall | precision | silent_close | observations/day | tokens/day | infra_fail | cum_spend | shared_diff | verdict |";
 
 export function formatLedgerRow(input: {
   iter: string;
@@ -140,7 +140,7 @@ export function formatLedgerRow(input: {
     m.resolutionRecall.toFixed(3),
     m.loopPrecision.toFixed(3),
     String(m.silentCloseViolations),
-    m.briefsPerDay.toFixed(1),
+    m.observationsPerDay.toFixed(1),
     `${Math.round(m.tokensPerDay)} ($${input.estimatedUsdPerDay.toFixed(4)})`,
     m.infraFailureRate.toFixed(3),
     `$${input.cumulativeSpendUsd.toFixed(2)}`,
@@ -193,7 +193,7 @@ export function assembleScorecard(input: {
     loop_recall: m.loopRecall,
     update_recall: m.updateRecall,
     silent_close_violations: m.silentCloseViolations,
-    briefs_per_day: m.briefsPerDay,
+    observations_per_day: m.observationsPerDay,
     tokens_per_day: m.tokensPerDay,
     infra_failure_rate: m.infraFailureRate,
     malformed_tool_call_rate: m.malformedToolCallRate,

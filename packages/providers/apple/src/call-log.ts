@@ -526,6 +526,7 @@ export class AppleCallLogSource {
     const seenPeers = new Set<string>();
 
     for (const row of rows) {
+      // See #406 — planned: write clock times with a zone.
       const time = coreDataToISO(row.date).slice(11, 16);
       const outgoing = row.originated === 1;
       const connected = isConnected(row);

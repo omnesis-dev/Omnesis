@@ -61,7 +61,7 @@ describe("readRunContext", () => {
       ],
       [
         "daily",
-        "Morning digest for 2026-08-21. Compose EXACTLY ONE brief",
+        "Morning brief for 2026-08-21. Write the user's one message of the day and send it with morning_brief_send, exactly once.",
         "daily.digest",
         "2026-08-21",
       ],
@@ -79,15 +79,9 @@ describe("readRunContext", () => {
       ],
       [
         "feedback",
-        'The user reacted to brief brief_2 ("Deposit due"). Its state is now: dismissed_not_relevant.',
-        "feedback.dismissal",
-        "brief_2",
-      ],
-      [
-        "feedback",
-        'Provenance re-check for brief brief_5 ("Card", state: unread). It was built while these annotation priors',
+        'Provenance re-check for loop loop_5 ("Send the deposit", state: open). It was built while these annotation priors',
         "feedback.provenance",
-        "brief_5",
+        "loop_5",
       ],
       [
         "synthesis",
@@ -158,7 +152,7 @@ describe("readRunContext", () => {
       [
         "RETROSPECTIVE BOOTSTRAP. This run's document is a PAST document.",
         "",
-        "How a brief reads — the house style.",
+        "How the morning brief reads — the house style.",
         "",
         prompt("bootstrap", "Bootstrap document: doc_11. Fetch it with fetch_many.", 2),
       ].join("\n"),
@@ -169,6 +163,26 @@ describe("readRunContext", () => {
       attempt: 2,
       flavour: "bootstrap",
       subject: "doc_11",
+    });
+  });
+
+  test("a note-agent turn is read from its note block, with no run envelope", () => {
+    const ctx = readRunContext(
+      [
+        "Today is 2026-08-21.",
+        "The note was captured 2026-08-21T08:15:00.000Z (UTC) on 2026-08-21, from ios-app.",
+        "",
+        "<note>",
+        "Remind me to book the piano tuner.",
+        "Next week is fine.",
+        "</note>",
+      ].join("\n"),
+    );
+    expect(ctx).toMatchObject({
+      kind: "note",
+      flavour: "note",
+      subject: "Remind me to book the piano tuner.\nNext week is fine.",
+      detail: "2026-08-21",
     });
   });
 
@@ -213,7 +227,7 @@ describe("decideNextTurn", () => {
     });
   });
 
-  test("the plan runs in order, and the loop/brief tools always carry annotationDependencies", () => {
+  test("the plan runs in order, and the loop/observation tools always carry annotationDependencies", () => {
     const p = prompt("data", body);
     const afterFetch = convo(p, ["fetch_many", {}, fetched("Deposit request")]);
     expect(decideNextTurn(afterFetch, behaviors)).toEqual({
@@ -372,7 +386,7 @@ describe("plumbing", () => {
         {
           id: ref("open_loop_search", "loops.0.id"),
           nested: { deep: [ref("open_loop_search", "loops.0.id")] },
-          missing: ref("brief_create", "brief.id"),
+          missing: ref("observation_note", "id"),
         },
         steps,
       ),

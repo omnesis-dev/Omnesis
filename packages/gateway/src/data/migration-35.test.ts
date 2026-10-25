@@ -20,6 +20,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -42,6 +43,7 @@ describe("migration 35 — cycle_anchor_at back-fill", () => {
       `INSERT INTO cognition_runs (id, kind, status, next_attempt_at, enqueued_at)
          VALUES ('run_pre35', 'data', 'pending', 1700000000000, 1699999999000)`,
     );
+    createLegacyBriefTables(db);
     db.pragma("user_version = 34");
 
     // The pre-migration shape lacks the column entirely.
@@ -81,6 +83,7 @@ describe("migration 35 — cycle_anchor_at back-fill", () => {
 
   test("is a no-op on a fresh DB whose cognition_runs already has the column", () => {
     runSchemaSetup(db);
+    createLegacyBriefTables(db);
     db.pragma("user_version = 34");
     expect(() => runMigrations(db, { log: createLogger("test") })).not.toThrow();
     const cols = db

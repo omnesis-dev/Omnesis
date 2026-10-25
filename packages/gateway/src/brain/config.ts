@@ -22,11 +22,43 @@ import type { BrainSettings } from "@omnesis/config";
 
 /** What the record check does with its verdicts, as the config spells it. */
 export type RecordCheckMode = NonNullable<NonNullable<BrainSettings["annotations"]>["recordCheck"]>;
+/** What the interest gate on new suggestions does with its verdicts, as the config spells it. */
+export type TaskProposeGateMode = NonNullable<NonNullable<BrainSettings["tasks"]>["proposeGate"]>;
 import type { CognitionBudgetSettings } from "./cognition/budget.js";
 
 /** Effective defaults, config-shaped (durations as human-readable strings). */
 export const BRAIN_DEFAULTS = {
-  workerConcurrency: 1,
+  knowledge: {
+    immediateThreshold: 0.8,
+    soonThreshold: 0.4,
+    soonDelay: "1h",
+    routineDelay: "6h",
+    recentWindowDays: 30,
+    rootMaxChars: 8000,
+    maxSeeds: 64,
+    maxVisitedPerSeed: 256,
+    maxFrontierNodes: 32,
+    maxFrontierChars: 65536,
+    cascadeBatchSize: 100,
+    discoveryBatchSize: 32,
+    bootstrapBatchSize: 64,
+    maxReviewsPerTick: 16,
+    maxReviewInterval: "30d",
+    checkpointLead: "1d",
+    retryBackoff: "1h",
+    retryBackoffCap: "1d",
+    maxFailedAttempts: 5,
+    // A run ends while a third of the window is still free, so the response
+    // that crossed the line can finish its tool calls before the next request.
+    contextHandoffRatio: 0.65,
+    // Below the input window of the supported frontier models; used when none is reported.
+    contextHandoffTokens: 120_000,
+    maxStalledHandoffs: 2,
+  },
+  // About 4k tokens per document, so a full fetch_many batch stays a fraction
+  // of a context window.
+  documentReadChars: 16_384,
+  workerConcurrency: 4,
   conversationDebounce: "1h",
   // Max-defer ceilings are derived from their debounce timescales: 6× the 1h
   // conversation debounce and 8× the 30m document debounce — long enough that a
@@ -59,12 +91,10 @@ export const BRAIN_DEFAULTS = {
   // sit behind the brain gate (experimental mode + an assigned background-agent
   // model), which is where the real decision to spend is made.
   //
-  // `push` included: the digest is at most one notification a day, and it is
-  // the one thing the engine produces that is worth interrupting for. On an
-  // install with no registered device it is a clean no-op; where delivery is
-  // configured but broken the send fails, is logged once, and is swallowed
-  // rather than failing the run that minted the brief. Operators who do not
-  // want it set `brain.digest.push: false`.
+  // `push` included: the morning brief is at most one notification a day, and
+  // it is the one thing the engine produces that is worth interrupting for.
+  // On an install with no registered device it is a clean no-op. Operators
+  // who do not want it set `brain.digest.push: false`.
   awarenessAxis: true,
   synthesis: { enabled: true, cadenceHours: 24, maxPerDay: 1 },
   collision: {
@@ -75,6 +105,16 @@ export const BRAIN_DEFAULTS = {
     annotationContradictions: { enabled: true, maxPerSweep: 2 },
   },
   digest: { enabled: true, hour: 7, graceMinutes: 45, push: true },
+  // Observations awaiting the morning brief. Closed ones are kept 90 days for
+  // calibration and the "would have pushed" review, then reduced to outcome
+  // records. The decision thresholds are the salience policy's defaults.
+  observations: {
+    retentionDays: 90,
+    alreadyKnownMax: 0.6,
+    minConsequence: 2,
+    minTimelyConsequence: 1,
+    timelyLevel: 2,
+  },
   // Graduated: durable doc/person annotations are on by default under
   // experimental mode. The knob still lets an operator turn them off.
   // Per-basis ceilings tighten confidence the further a claim reasons from
@@ -83,6 +123,7 @@ export const BRAIN_DEFAULTS = {
     enabled: true,
     basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
     confidenceFloor: 0.25,
+    personProfile: { maxFacts: 20, maxCharacters: 4000 },
     // Observe-only by default: verdicts are recorded, nothing is dropped.
     // See #242 — decide enforce vs remove once there is shadow data.
     recordCheck: "shadow",
@@ -96,16 +137,17 @@ export const BRAIN_DEFAULTS = {
   reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
   // The provenance-recheck sweep (consumption-provenance teeth). Edge RECORDING
   // is always on (mechanical bookkeeping); this knob gates only the recheck runs
-  // it triggers, which are what stop a brief or loop resting on a prior that has
-  // since died.
+  // it triggers, which are what stop a loop resting on a prior that has since
+  // died. An observation resting on a dead prior is dropped without a run.
   provenanceRecheck: { enabled: true },
-  // The brief judge — the push bar. A separate model pass over every candidate
-  // brief (ship/no-ship against the four gates), so only what is new, timely,
-  // and consequential interrupts the user. On, because the bar carried only as
-  // generation-time guidance is the bar a model grades its own work against.
-  // Inert until a `brief-judge` model is assigned — with none, it fails open and
-  // briefs ship unjudged, exactly as they did before.
-  judge: { enabled: true },
+  // The interest gate on new suggestions records its verdicts (`shadow`)
+  // while every suggestion is still offered; `enforce` is the operator's
+  // call once the ledger shows the verdicts are right.
+  tasks: { autoApply: true, proposeGate: "shadow" },
+  // The interest ledger: what the owner did on purpose, shown to the decision
+  // gates as examples. On by default because it only ever records explicit
+  // reactions; nothing is inferred from silence.
+  interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
   // Merge adjudication — the background agent's verdict pass over pending
   // person-merge candidates. Bounded by construction: one run per candidate,
   // re-run only if the candidate is re-detected, so it cannot accumulate the
@@ -131,17 +173,56 @@ export const BRAIN_DEFAULTS = {
     maxRunsPerDay: 200,
     maxRuns: 1000000,
     batchSize: 100,
+    // Historical review reaches back three months by default. An install with
+    // years of history would otherwise spend for weeks reading the deep past
+    // before its review reached anything the operator still acts on; older
+    // evidence stays searchable when it matters.
+    horizon: "90d",
   },
   // The sweep lane — the six built-in themes plus any the operator has
   // written. On for the same reason as the rest: a sweep that never runs is
   // a prompt nobody reads. Individual themes are toggled per sweep rather
   // than through this switch, which turns the whole lane off.
   sweepsEnabled: true,
+  // No source is withheld from the Brain unless the operator names it.
+  excludedSources: [] as readonly string[],
 } as const;
 
 /** The `brain` block resolved to concrete runtime values (durations in ms). */
 export interface ResolvedBrainSettings {
-  /** Queue workers draining in parallel (non-daily runs serialize regardless). */
+  /** Knowledge maintenance follows the Brain gate; no independent enable switch. */
+  knowledge: {
+    immediateThreshold: number;
+    soonThreshold: number;
+    soonDelayMs: number;
+    routineDelayMs: number;
+    recentWindowMs: number;
+    rootMaxChars: number;
+    maxSeeds: number;
+    maxVisitedPerSeed: number;
+    maxFrontierNodes: number;
+    maxFrontierChars: number;
+    cascadeBatchSize: number;
+    discoveryBatchSize: number;
+    bootstrapBatchSize: number;
+    maxReviewsPerTick: number;
+    maxReviewIntervalMs: number;
+    checkpointLeadMs: number;
+    /** First delay after a failed batch; doubles per further failure up to the cap. */
+    retryBackoffMs: number;
+    retryBackoffCapMs: number;
+    /** Failed batch attempts after which work is parked until its input revision changes. */
+    maxFailedAttempts: number;
+    /** Share of a reported context window a maintenance run may fill before handing off. */
+    contextHandoffRatio: number;
+    /** Per-request input tokens that trigger a handoff when the window is unknown. */
+    contextHandoffTokens: number;
+    /** Consecutive context handoffs without settled progress before ordinary failure. */
+    maxStalledHandoffs: number;
+  };
+  /** Default characters of a document body per Brain read; longer bodies are paged. */
+  documentReadChars: number;
+  /** Concurrent fenced maintenance workers; root and legacy runs stay exclusive. */
   workerConcurrency: number;
   /** Quiet period before new conversation messages enqueue one `data` run. */
   conversationDebounceMs: number;
@@ -247,16 +328,29 @@ export interface ResolvedBrainSettings {
       maxPerSweep: number;
     };
   };
-  /** The composed morning digest + its push tier. */
+  /** The morning brief run + its notification. */
   digest: {
     /** Producer runs only when true (checked live per rhythm tick). */
     enabled: boolean;
-    /** Local hour (0-23) the digest composes at. */
+    /** Local hour (0-23) the morning brief is composed at. */
     hour: number;
     /** Minutes past the hour the readiness barrier waits before composing anyway. */
     graceMinutes: number;
-    /** Push the digest to paired iOS devices (at most one per day). */
+    /** Notify the user's devices when the brief is sent (at most once per day). */
     push: boolean;
+  };
+  /** Observations awaiting the morning brief, and the salience policy over them. */
+  observations: {
+    /** Days a closed observation is kept before it is reduced to an outcome record. */
+    retentionDays: number;
+    /** At or above this already-known probability an observation is dropped. */
+    alreadyKnownMax: number;
+    /** Ship at or above this consequence level (0–4) regardless of timing. */
+    minConsequence: number;
+    /** Ship a timely observation at or above this consequence level. */
+    minTimelyConsequence: number;
+    /** The timing level (0–3) from which an observation counts as timely. */
+    timelyLevel: number;
   };
   /** The durable doc-annotation layer. */
   annotations: {
@@ -280,15 +374,24 @@ export interface ResolvedBrainSettings {
     /** Producer runs only when true (checked live per rhythm tick). */
     enabled: boolean;
   };
-  /** The push bar — a ship/no-ship judge pass over every candidate brief. */
-  judge: {
-    /** The judge runs only when true (read live per brief_create). */
-    enabled: boolean;
-  };
   /** Background-agent adjudication of pending person-merge candidates. */
   mergeAdjudication: {
     /** The enqueue pass runs only when true (checked live per rhythm tick). */
     enabled: boolean;
+  };
+  /** How the Brain changes the user's own tasks. */
+  tasks: {
+    /** Apply a verified change directly instead of proposing it (read per run). */
+    autoApply: boolean;
+    /** What the interest gate's verdict on a new suggestion does (read per run). */
+    proposeGate: TaskProposeGateMode;
+  };
+  /** What the Brain learns from the owner's reactions. */
+  interest: {
+    /** Record reactions and show similar past ones to the decision gates (read per call). */
+    enabled: boolean;
+    /** How alike a past reaction must be to be shown, and how many are. */
+    lookup: { perPolarity: number; cosineFloor: number; overlapFloor: number };
   };
   /** The retrospective bootstrap lane (historical temporal-annotation / loop seeding). */
   bootstrap: {
@@ -305,6 +408,11 @@ export interface ResolvedBrainSettings {
     /** Documents enqueued per enqueuer tick. */
     batchSize: number;
     /**
+     * How far back (ms before now) historical review reaches, against each
+     * document's own date. See `knowledge/history-horizon.ts`.
+     */
+    horizonMs: number;
+    /**
      * Optional daily window, local wall-clock, during which the lane may buy
      * work. Absent means always. See `bootstrap-window.ts`.
      */
@@ -312,6 +420,11 @@ export interface ResolvedBrainSettings {
   };
   /** Master switch for the built-in scheduled sweep themes. */
   sweepsEnabled: boolean;
+  /**
+   * Sources the Brain never processes: bare source types and exact source ids,
+   * deduplicated. See `source-exclusion.ts`.
+   */
+  excludedSources: readonly string[];
   /**
    * Trailing window (ms) the synthesis "Noticing" pass reflects over and the
    * span of recent annotations surfaced as priors. Derived = the recency
@@ -338,6 +451,7 @@ export interface ResolvedBrainSettings {
    * as a prior.
    */
   annotationConfidenceFloor: number;
+  personProfileBudget: { maxFacts: number; maxCharacters: number };
 }
 
 /** Apply defaults to an operator's (possibly absent) `brain` config block. */
@@ -358,7 +472,44 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     dailyTokens: settings?.budget?.dailyTokens ?? null,
     dailyRuns: settings?.budget?.dailyRuns ?? null,
   };
+  const knowledge = settings?.knowledge;
+  const defaults = BRAIN_DEFAULTS.knowledge;
+  const soonDelayMs = parseDuration(knowledge?.soonDelay ?? defaults.soonDelay);
+  const retryBackoffMs = parseDuration(knowledge?.retryBackoff ?? defaults.retryBackoff);
   return {
+    knowledge: {
+      immediateThreshold: knowledge?.immediateThreshold ?? defaults.immediateThreshold,
+      soonThreshold: knowledge?.soonThreshold ?? defaults.soonThreshold,
+      recentWindowMs: (knowledge?.recentWindowDays ?? defaults.recentWindowDays) * 86_400_000,
+      rootMaxChars: knowledge?.rootMaxChars ?? defaults.rootMaxChars,
+      maxSeeds: knowledge?.maxSeeds ?? defaults.maxSeeds,
+      maxVisitedPerSeed: knowledge?.maxVisitedPerSeed ?? defaults.maxVisitedPerSeed,
+      maxFrontierNodes: knowledge?.maxFrontierNodes ?? defaults.maxFrontierNodes,
+      maxFrontierChars: knowledge?.maxFrontierChars ?? defaults.maxFrontierChars,
+      cascadeBatchSize: knowledge?.cascadeBatchSize ?? defaults.cascadeBatchSize,
+      discoveryBatchSize: knowledge?.discoveryBatchSize ?? defaults.discoveryBatchSize,
+      bootstrapBatchSize: knowledge?.bootstrapBatchSize ?? defaults.bootstrapBatchSize,
+      maxReviewsPerTick: knowledge?.maxReviewsPerTick ?? defaults.maxReviewsPerTick,
+      soonDelayMs,
+      routineDelayMs: Math.max(
+        soonDelayMs,
+        parseDuration(knowledge?.routineDelay ?? defaults.routineDelay),
+      ),
+      maxReviewIntervalMs: parseDuration(
+        knowledge?.maxReviewInterval ?? defaults.maxReviewInterval,
+      ),
+      checkpointLeadMs: parseDuration(knowledge?.checkpointLead ?? defaults.checkpointLead),
+      retryBackoffMs,
+      retryBackoffCapMs: Math.max(
+        retryBackoffMs,
+        parseDuration(knowledge?.retryBackoffCap ?? defaults.retryBackoffCap),
+      ),
+      maxFailedAttempts: knowledge?.maxFailedAttempts ?? defaults.maxFailedAttempts,
+      contextHandoffRatio: knowledge?.contextHandoffRatio ?? defaults.contextHandoffRatio,
+      contextHandoffTokens: knowledge?.contextHandoffTokens ?? defaults.contextHandoffTokens,
+      maxStalledHandoffs: knowledge?.maxStalledHandoffs ?? defaults.maxStalledHandoffs,
+    },
+    documentReadChars: settings?.documentReadChars ?? BRAIN_DEFAULTS.documentReadChars,
     workerConcurrency: settings?.workerConcurrency ?? BRAIN_DEFAULTS.workerConcurrency,
     conversationDebounceMs,
     // A ceiling below its debounce is nonsensical (it would clamp the very
@@ -429,6 +580,18 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
       graceMinutes: settings?.digest?.graceMinutes ?? BRAIN_DEFAULTS.digest.graceMinutes,
       push: settings?.digest?.push ?? BRAIN_DEFAULTS.digest.push,
     },
+    observations: {
+      retentionDays:
+        settings?.observations?.retentionDays ?? BRAIN_DEFAULTS.observations.retentionDays,
+      alreadyKnownMax:
+        settings?.observations?.alreadyKnownMax ?? BRAIN_DEFAULTS.observations.alreadyKnownMax,
+      minConsequence:
+        settings?.observations?.minConsequence ?? BRAIN_DEFAULTS.observations.minConsequence,
+      minTimelyConsequence:
+        settings?.observations?.minTimelyConsequence ??
+        BRAIN_DEFAULTS.observations.minTimelyConsequence,
+      timelyLevel: settings?.observations?.timelyLevel ?? BRAIN_DEFAULTS.observations.timelyLevel,
+    },
     annotations: {
       enabled: settings?.annotations?.enabled ?? BRAIN_DEFAULTS.annotations.enabled,
       recordCheck: settings?.annotations?.recordCheck ?? BRAIN_DEFAULTS.annotations.recordCheck,
@@ -446,6 +609,14 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     },
     annotationConfidenceFloor:
       settings?.annotations?.confidenceFloor ?? BRAIN_DEFAULTS.annotations.confidenceFloor,
+    personProfileBudget: {
+      maxFacts:
+        settings?.annotations?.personProfile?.maxFacts ??
+        BRAIN_DEFAULTS.annotations.personProfile.maxFacts,
+      maxCharacters:
+        settings?.annotations?.personProfile?.maxCharacters ??
+        BRAIN_DEFAULTS.annotations.personProfile.maxCharacters,
+    },
     reverification: {
       enabled: settings?.reverification?.enabled ?? BRAIN_DEFAULTS.reverification.enabled,
       intervalDays:
@@ -457,11 +628,23 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     provenanceRecheck: {
       enabled: settings?.provenanceRecheck?.enabled ?? BRAIN_DEFAULTS.provenanceRecheck.enabled,
     },
-    judge: {
-      enabled: settings?.judge?.enabled ?? BRAIN_DEFAULTS.judge.enabled,
-    },
     mergeAdjudication: {
       enabled: settings?.mergeAdjudication?.enabled ?? BRAIN_DEFAULTS.mergeAdjudication.enabled,
+    },
+    tasks: {
+      autoApply: settings?.tasks?.autoApply ?? BRAIN_DEFAULTS.tasks.autoApply,
+      proposeGate: settings?.tasks?.proposeGate ?? BRAIN_DEFAULTS.tasks.proposeGate,
+    },
+    interest: {
+      enabled: settings?.interest?.enabled ?? BRAIN_DEFAULTS.interest.enabled,
+      lookup: {
+        perPolarity:
+          settings?.interest?.lookup?.perPolarity ?? BRAIN_DEFAULTS.interest.lookup.perPolarity,
+        cosineFloor:
+          settings?.interest?.lookup?.cosineFloor ?? BRAIN_DEFAULTS.interest.lookup.cosineFloor,
+        overlapFloor:
+          settings?.interest?.lookup?.overlapFloor ?? BRAIN_DEFAULTS.interest.lookup.overlapFloor,
+      },
     },
     bootstrap: {
       enabled: settings?.bootstrap?.enabled ?? BRAIN_DEFAULTS.bootstrap.enabled,
@@ -470,12 +653,14 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
       maxRunsPerDay: settings?.bootstrap?.maxRunsPerDay ?? BRAIN_DEFAULTS.bootstrap.maxRunsPerDay,
       maxRuns: settings?.bootstrap?.maxRuns ?? BRAIN_DEFAULTS.bootstrap.maxRuns,
       batchSize: settings?.bootstrap?.batchSize ?? BRAIN_DEFAULTS.bootstrap.batchSize,
+      horizonMs: parseDuration(settings?.bootstrap?.horizon ?? BRAIN_DEFAULTS.bootstrap.horizon),
       // No default: absent means the lane may buy at any hour, which is not a
       // window with wide bounds but the absence of one — a distinction the
       // surfaces rely on to say "no restriction" rather than "00:00-00:00".
       ...(settings?.bootstrap?.activeHours ? { activeHours: settings.bootstrap.activeHours } : {}),
     },
     sweepsEnabled: settings?.sweepsEnabled ?? BRAIN_DEFAULTS.sweepsEnabled,
+    excludedSources: [...new Set(settings?.excludedSources ?? BRAIN_DEFAULTS.excludedSources)],
     // Derived (no operator knob): the noticing pass reflects over the recency
     // window; the annotation prime and confidence ceiling are fixed caps.
     synthesisLookbackMs: recencyWindowMs,

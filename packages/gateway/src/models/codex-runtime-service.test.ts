@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { CodexAppServerRuntime } from "@omnesis/agent";
+import { CODEX_RUNTIME_COMPAT, CodexAppServerRuntime } from "@omnesis/agent";
 import { z } from "zod";
 import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
@@ -149,6 +149,125 @@ describe("CodexRuntimeService parsers", () => {
       ).toThrow("inferencePoolSize must be an integer of at least 1");
     },
   );
+
+  it.each([0, -1, 1.5, 33, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid background capacity %s",
+    (backgroundPoolSize) => {
+      expect(
+        () => new CodexRuntimeService({ configDir: "/synthetic/config", backgroundPoolSize }),
+      ).toThrow("backgroundPoolSize must be an integer from 1 to 32");
+    },
+  );
+
+  it.each([0, 999, 1000.5, 3600001, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      expect(
+        () => new CodexRuntimeService({ configDir: "/synthetic/config", turnIdleTimeoutMs }),
+      ).toThrow("turnIdleTimeoutMs must be an integer from 1000 to 3600000");
+    },
+  );
+
+  it.each(["owner", "interactive", "background", "inference"] as const)(
+    "propagates configured model-stream idle timeout to the %s runtime",
+    async (lane) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-idle-"));
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        args: [fakeCodexPath, "app-server", "--listen", "stdio://"],
+        versionArgs: [fakeCodexPath, "--version"],
+        env: { ...process.env, OMNESIS_FAKE_CODEX_SCENARIO: "hang" },
+        interactivePoolSize: lane === "owner" ? 0 : 1,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+        turnIdleTimeoutMs: 1000,
+      });
+      try {
+        const events: AgentEvent[] = [];
+        for await (const event of service
+          .createBackend({
+            model: "gpt-example-frontier",
+            lane: lane === "owner" ? "interactive" : lane,
+          })
+          .runTurn(
+            {
+              sessionId: "idle-propagation",
+              messageId: lane,
+              userMessage: "Wait for scripted output.",
+              systemPrompt: "",
+              history: [],
+              tools: [],
+            },
+            AbortSignal.timeout(5000),
+          ))
+          events.push(event);
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "agent.error",
+              payload: expect.objectContaining({ code: "codex_turn_idle_timeout" }),
+            }),
+          ]),
+        );
+      } finally {
+        await service.dispose();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    10000,
+  );
+
+  it("defaults to four background turns with independent interactive capacity and immediate refill", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-capacity-"));
+    let finish!: () => void;
+    let finishSecond!: () => void;
+    const allDone = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const secondDone = new Promise<void>((resolve) => {
+      finishSecond = resolve;
+    });
+    const started: string[] = [];
+    const turn = vi
+      .spyOn(CodexAppServerRuntime.prototype, "runTurn")
+      .mockImplementation(async function* (opts) {
+        const message = opts.input.userMessage;
+        started.push(message);
+        if (message.startsWith("background-")) {
+          await (message === "background-1" ? Promise.race([allDone, secondDone]) : allDone);
+        }
+        yield* [];
+      });
+    const service = new CodexRuntimeService({ configDir: dir });
+    const run = async (lane: "background" | "interactive", userMessage: string) => {
+      const backend = service.createBackend({ model: "gpt-example-frontier", lane });
+      for await (const event of backend.runTurn({
+        sessionId: "synthetic-session",
+        messageId: userMessage,
+        userMessage,
+        systemPrompt: "",
+        history: [],
+        tools: [],
+      }))
+        void event;
+    };
+    const runs = Array.from({ length: 5 }, (_, index) => run("background", `background-${index}`));
+    try {
+      await waitUntil(async () => started.length === 4);
+      expect(started).toEqual(["background-0", "background-1", "background-2", "background-3"]);
+      await run("interactive", "interactive");
+      expect(started).toContain("interactive");
+      finishSecond();
+      await waitUntil(async () => started.includes("background-4"));
+    } finally {
+      finish();
+      await Promise.all(runs);
+      await service.dispose();
+      turn.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it("accepts current Codex device codes with a longer second group", () => {
     expect(
@@ -477,9 +596,9 @@ describe("CodexRuntimeService parsers", () => {
       await service.logout();
 
       const setup = service.setupAgent(configStore, "gpt-example-frontier");
+      const setupRejected = expect(setup).rejects.toBeInstanceOf(AgentSetupUnavailableError);
       releaseList();
-      await staleRefresh;
-      await expect(setup).rejects.toBeInstanceOf(AgentSetupUnavailableError);
+      await Promise.all([staleRefresh, setupRejected]);
       expect(configStore.get().inference?.assignments?.agent).toBeUndefined();
       expect(service.snapshot()).toMatchObject({ configured: false, loggedIn: false });
     } finally {
@@ -560,14 +679,14 @@ describe("CodexRuntimeService parsers", () => {
         onPhase?.("verifying");
         return {
           id: "update-1",
-          version: "0.151.0",
+          version: CODEX_RUNTIME_COMPAT.testedVersion,
           stagingDir: join(dir, "staging"),
         };
       },
       commit: async () => {
-        env.OMNESIS_FAKE_CODEX_VERSION = "0.151.0";
+        env.OMNESIS_FAKE_CODEX_VERSION = CODEX_RUNTIME_COMPAT.testedVersion;
         env.OMNESIS_FAKE_CODEX_SCENARIO = "no-tool";
-        return managed("0.151.0");
+        return managed(CODEX_RUNTIME_COMPAT.testedVersion);
       },
       discard: async () => {},
     } as unknown as CodexRuntimeInstaller;
@@ -633,7 +752,7 @@ describe("CodexRuntimeService parsers", () => {
       expect((await service.getRuntimeUpdate()).plan).toMatchObject({
         state: "update-available",
         currentVersion: "0.142.4",
-        targetVersion: "0.151.0",
+        targetVersion: CODEX_RUNTIME_COMPAT.testedVersion,
       });
       expect((await service.startRuntimeUpdate({ dryRun: false })).operation?.state).toBe(
         "checking",

@@ -831,9 +831,9 @@ export function planUpdate(detection: InstallMethod, flags: UpdateFlags): Update
         kind: "refuse",
         message:
           "--registry selects the npm registry a package install is installed from. " +
-          "This installation runs from container images: it reads the newest release number " +
-          "from the package index (OMNESIS_PACKAGE_INDEX_URL overrides it) and pulls that tag " +
-          "from a container registry, and --registry selects neither.",
+          "This installation runs from container images: it finds the newest stable tag " +
+          "shared by the images declared in its Compose project. Change the project's image " +
+          "repositories to select a container registry; --registry only selects an npm registry.",
       };
     }
     if (channel !== "stable") {

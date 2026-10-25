@@ -450,3 +450,14 @@ describe("createSession — the browser's time zone", () => {
     }
   });
 });
+
+it("sends only existing queued receipt IDs to the atomic send-now endpoint", async () => {
+  apiFetch.mockResolvedValue({ ok: true, json: async () => ({ busy: true, queuedMessages: [] }) });
+  vi.stubGlobal("EventSource", MockEventSource);
+  const client = createAgentClient();
+  try { await client.sendQueuedNow("session/one", ["receipt-one", "receipt-two"]); }
+  finally { client.close(); vi.unstubAllGlobals(); }
+  expect(apiFetch).toHaveBeenCalledWith("/agent/sessions/session%2Fone/queue/send-now", {
+    method: "POST", body: JSON.stringify({ submissionIds: ["receipt-one", "receipt-two"] }),
+  });
+});

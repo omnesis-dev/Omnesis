@@ -8,17 +8,18 @@
  * The gateway fetches the document to validate its id and obtain the
  * canonical `ref` for the sidebar card. A missing document returns an
  * actionable error so the agent can resolve the real document id and
- * retry instead of creating a broken citation. Quotes are not validated
- * against the body. Successful citations bubble up to the portal sidebar
+ * retry instead of creating a broken citation. Read-enforcing ports validate
+ * supplied quotes against the observed body or partial span. Successful citations bubble up to the portal sidebar
  * + iOS card via the session, which synthesises an `agent.citation` event
  * from each `annotate.recorded` result.
  */
 
 import { z } from "zod";
 
-import { isSelfQuoteAuthor, type ToolResult } from "@omnesis/core";
+import { assertNever, isSelfQuoteAuthor, type ToolResult } from "@omnesis/core";
 
 import type { ToolContext, ToolHandle } from "../backend.js";
+import type { CitationReadResolution, CitationReads } from "./citation-reads.js";
 import type { DocumentPort } from "./types.js";
 
 export const annotateArgsSchema = z.object({
@@ -37,7 +38,7 @@ export const annotateArgsSchema = z.object({
     .optional()
     .describe(
       "Short excerpt from the document body that supports the cited fact. " +
-        "Prefer one short sentence (≤25 words). Accepted as-is.",
+        "Prefer one short sentence (≤25 words). Must exactly match the observed body; required for a partial read and limited to its returned span.",
     ),
   quoteAuthor: z
     .string()
@@ -67,6 +68,7 @@ export type AnnotateArgs = z.infer<typeof annotateArgsSchema>;
 
 export interface AnnotateToolDeps {
   port: DocumentPort;
+  citationReads?: CitationReads;
 }
 
 export function createAnnotateTool(deps: AnnotateToolDeps): ToolHandle {
@@ -77,7 +79,10 @@ export function createAnnotateTool(deps: AnnotateToolDeps): ToolHandle {
       "documentId plus a short `quote` from the document body and/or a " +
       "one-line `note` (used when the source is non-text, or alongside a " +
       "quote as a 'why this matters' caption). The documentId is validated; " +
-      "if it is missing or invalid, resolve the canonical documentId and retry.",
+      "if it is missing or invalid, resolve the canonical documentId and retry." +
+      (deps.port.requiresCitationRead
+        ? " First fetch the cited document in this turn. A fetched wiki is directly citable; its source pointers alone do not authorize original-source citations. Partial reads require an exact quote from the returned span. This checks exposure and freshness, not truth."
+        : ""),
     schema: annotateArgsSchema,
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;
@@ -87,7 +92,7 @@ export function createAnnotateTool(deps: AnnotateToolDeps): ToolHandle {
         (typeof a.quote === "string" ? a.quote : typeof a.note === "string" ? a.note : "") ?? "";
       return text ? `${id}: "${text.slice(0, 40)}"` : id;
     },
-    async invoke(rawArgs: unknown, _ctx: ToolContext): Promise<ToolResult> {
+    async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = annotateArgsSchema.safeParse(rawArgs);
       if (!parsed.success) {
         return {
@@ -111,12 +116,26 @@ export function createAnnotateTool(deps: AnnotateToolDeps): ToolHandle {
               "cite_record instead. No citation was recorded.",
           };
         }
+        const observed = deps.port.requiresCitationRead
+          ? (deps.citationReads?.resolveDetailed(ctx, fetched, args.quote) ?? {
+              ok: false as const,
+              reason: "unread" as const,
+              full: false,
+            })
+          : { ok: true as const, quote: args.quote };
+        if (!observed.ok) {
+          return {
+            kind: "error",
+            code: "citation_read_required",
+            message: citationRecovery(observed),
+          };
+        }
         const quoteAuthor = args.quote ? args.quoteAuthor : undefined;
         return {
           kind: "annotate.recorded",
-          documentId: args.documentId,
+          documentId: fetched.ref.documentId,
           ref: fetched.ref,
-          quote: args.quote,
+          quote: observed.quote,
           quoteAuthor,
           // Resolve the agent's "You" convention to a boolean here so the
           // wire carries the orientation hint and renderers never re-derive
@@ -135,4 +154,48 @@ export function createAnnotateTool(deps: AnnotateToolDeps): ToolHandle {
       }
     },
   };
+}
+
+/** No IDs, body text or version values are exposed by recovery diagnostics. */
+function citationRecovery(failure: Extract<CitationReadResolution, { ok: false }>): string {
+  const prefix = "No citation recorded. ";
+  switch (failure.reason) {
+    case "unread":
+      return (
+        prefix +
+        "This document has no current explicit read in this turn. Fetch it with fetch_many first. A wiki or loop source pointer is not a read of that source; a fetched wiki may be cited directly."
+      );
+    case "changed":
+      return (
+        prefix +
+        "The document changed after its recorded read. Fetch it again with fetch_many and inspect the current body before citing it."
+      );
+    case "quote_required":
+      return (
+        prefix +
+        "This was a bounded body read. Supply an exact quote from the returned span; omitting the quote does not authorize the unread remainder."
+      );
+    case "body_unavailable":
+      return (
+        prefix +
+        "The current document has no text body available to validate this quote." +
+        (failure.full
+          ? " Omit quote and cite the fully read document with a short note."
+          : " Fetch an available text body before quoting it.")
+      );
+    case "quote_mismatch":
+    case "quote_ambiguous":
+      return (
+        prefix +
+        (failure.reason === "quote_ambiguous"
+          ? "The quote has multiple whitespace-equivalent matches in the observed text. "
+          : "The quote does not match the observed text. ") +
+        "Correct the quote rather than repeating it unchanged: copy a contiguous observed passage, retaining punctuation and quoted-reply prefixes." +
+        (failure.full
+          ? " You may instead omit quote and cite the fully read document with a short note."
+          : " Use only the returned span; omitting quote does not authorize the unread remainder.")
+      );
+    default:
+      return assertNever(failure.reason);
+  }
 }

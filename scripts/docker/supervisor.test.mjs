@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { createServer } from "node:net";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { test, onTestFinished } from "vitest";
+import { parse as parseYaml } from "yaml";
+import { GATEWAY_SHUTDOWN_BUDGET_MS } from "../../packages/core/src/gateway-lock.js";
+import { DEFAULT_COLLECTOR_DRAIN_MS, DEFAULT_GATEWAY_DRAIN_MS } from "./supervisor.mjs";
+
+const supervisorUrl = new URL("./supervisor.mjs", import.meta.url).href;
+
+test("shutdown budgets let the gateway finish and fit both drains inside Compose grace", async () => {
+  const compose = parseYaml(await readFile(new URL("../../compose.yaml", import.meta.url), "utf8"));
+  const grace = compose.services.gateway.stop_grace_period;
+  assert.match(grace, /^\d+s$/);
+  const graceMs = Number.parseInt(grace, 10) * 1000;
+  assert.ok(
+    DEFAULT_GATEWAY_DRAIN_MS > GATEWAY_SHUTDOWN_BUDGET_MS,
+    "Supervisor must wait beyond the gateway's own shutdown deadline",
+  );
+  assert.ok(
+    DEFAULT_COLLECTOR_DRAIN_MS + DEFAULT_GATEWAY_DRAIN_MS < graceMs,
+    "Compose must allow the collector and gateway to finish their sequential drains",
+  );
+});
+
+async function fixture({
+  fail,
+  ignoreTerm = false,
+  duplicateKillFails = false,
+  authGrandchild = false,
+} = {}) {
+  const dir = await mkdtemp(join(tmpdir(), "omnesis-supervisor-"));
+  const events = join(dir, "events");
+  await writeFile(events, "");
+  const auth = join(dir, "auth.mjs");
+  await writeFile(
+    auth,
+    `
+    import { appendFileSync } from 'node:fs';
+    import { createServer } from 'node:net';
+    process.on('SIGTERM', () => {});
+    const server = createServer();
+    server.listen(0, '127.0.0.1', () => appendFileSync(process.argv[2], 'auth:port:' + server.address().port + '\\n'));
+  `,
+  );
+  const daemon = join(dir, "daemon.mjs");
+  await writeFile(
+    daemon,
+    `
+    import { appendFileSync } from 'node:fs';
+    import { spawn } from 'node:child_process';
+    const [name, file, fail, ignore, auth] = process.argv.slice(2);
+    const log = (event) => appendFileSync(file, name + ':' + event + '\\n');
+    process.on('SIGTERM', () => { log('term'); if (ignore !== 'true') process.exit(0); });
+    log('pid:' + process.pid);
+    if (auth && name === 'collector') spawn(process.execPath, [auth, file], {stdio:'inherit'});
+    log('ready');
+    if (fail === name) setTimeout(() => process.exit(7), 100);
+    setInterval(() => {}, 1000);
+  `,
+  );
+  const runner = join(dir, "runner.mjs");
+  await writeFile(
+    runner,
+    `
+    import { supervise } from ${JSON.stringify(supervisorUrl)};
+    import { appendFileSync } from 'node:fs';
+    const kill = process.kill.bind(process);
+    const killed = new Set();
+    process.kill = (pid, signal) => {
+      if (${JSON.stringify(duplicateKillFails)} && signal === 'SIGKILL' && killed.has(pid)) {
+        throw Object.assign(new Error('Repeated process-group SIGKILL'), {code:'EPERM'});
+      }
+      const result = kill(pid, signal);
+      if (pid < 0 && signal === 'SIGKILL') {
+        killed.add(pid);
+        appendFileSync(${JSON.stringify(events)}, 'killed:' + -pid + '\\n');
+      }
+      return result;
+    };
+    const command = (name) => [process.execPath, ${JSON.stringify(daemon)}, name,
+      ${JSON.stringify(events)}, ${JSON.stringify(fail || "")}, ${JSON.stringify(String(ignoreTerm))}, ${JSON.stringify(authGrandchild ? auth : "")}];
+    process.exitCode = await supervise({gateway: command('gateway'), collector: command('collector'), drainMs: 150});
+  `,
+  );
+  const child = spawn(process.execPath, [runner], { stdio: "pipe" });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  // Keep exit-based completion: a crashed runner can leave descendants holding pipes open.
+  const done = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  const diagnostics = async () => {
+    const recordedEvents = await readFile(events, "utf8");
+    return JSON.stringify({ stdout, stderr, events: recordedEvents });
+  };
+  onTestFinished(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    await done;
+    // A failed runner may leave its mock daemons alive. Only these recorded
+    // fixture groups are ours; groups already killed must not be signalled twice.
+    const recorded = await readFile(events, "utf8");
+    const killed = new Set([...recorded.matchAll(/^killed:(\d+)$/gm)].map((m) => Number(m[1])));
+    for (const match of recorded.matchAll(/^(?:gateway|collector):pid:(\d+)$/gm)) {
+      const pid = Number(match[1]);
+      if (killed.has(pid)) continue;
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+  for (let i = 0; i < 200; i++) {
+    const log = await readFile(events, "utf8");
+    if (
+      log.includes("gateway:ready") &&
+      log.includes("collector:ready") &&
+      (!authGrandchild || log.includes("auth:port:"))
+    ) {
+      return { child, done, log: () => readFile(events, "utf8"), diagnostics };
+    }
+    await delay(10);
+  }
+  throw new Error(`Mock daemon processes never reported readiness: ${await diagnostics()}`);
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  test(`${signal} drains collector before gateway and exits successfully`, async () => {
+    const f = await fixture();
+    f.child.kill(signal);
+    assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+    const log = await f.log();
+    assert.ok(log.indexOf("collector:term") < log.indexOf("gateway:term"), log);
+  });
+}
+for (const fail of ["gateway", "collector"]) {
+  test(`${fail} failure stops its sibling and preserves failure status`, async () => {
+    const f = await fixture({ fail });
+    assert.deepEqual(await f.done, { code: 7, signal: null }, await f.diagnostics());
+    assert.match(await f.log(), new RegExp(`${fail === "gateway" ? "collector" : "gateway"}:term`));
+  });
+}
+test("unresponsive daemons are killed after their drain deadline", async () => {
+  const f = await fixture({ ignoreTerm: true });
+  f.child.kill("SIGTERM");
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+  assert.match(await f.log(), /collector:term/);
+  assert.match(await f.log(), /gateway:term/);
+});
+test("deadline shutdown sends only one SIGKILL to each process group", async () => {
+  const f = await fixture({ ignoreTerm: true, duplicateKillFails: true });
+  f.child.kill("SIGTERM");
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+  const events = await f.log();
+  assert.match(events, /collector:term/);
+  assert.match(events, /gateway:term/);
+  assert.equal([...events.matchAll(/^killed:\d+$/gm)].length, 2, events);
+});
+
+test("normal daemon exit still kills an auth grandchild holding its process group", async () => {
+  const f = await fixture({ authGrandchild: true });
+  const port = Number(/^auth:port:(\d+)$/m.exec(await f.log())?.[1]);
+  assert.ok(Number.isInteger(port) && port > 0);
+  f.child.kill("SIGTERM");
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+  // Group termination is asynchronous for grandchildren; prove the listener
+  // actually disappears, rather than checking only that a signal was requested.
+  for (let i = 0; i < 200; i++) {
+    const server = createServer();
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", resolve);
+      });
+      await new Promise((resolve) => server.close(resolve));
+      return;
+    } catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+      await delay(10);
+    }
+  }
+  assert.fail(`Owned auth grandchild still holds port ${port}: ${await f.diagnostics()}`);
+});
+
+test("spawn failure terminates the service", async () => {
+  const { supervise } = await import(supervisorUrl);
+  assert.equal(
+    await supervise({
+      gateway: ["/nonexistent-omnesis"],
+      collector: ["/nonexistent-omnesis"],
+      drainMs: 100,
+    }),
+    1,
+  );
+});

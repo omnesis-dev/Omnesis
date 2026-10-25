@@ -3,7 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { zodToJsonSchema } from "../zod-to-json-schema.js";
 import { createFetchDocumentTool } from "./fetch-document.js";
+import { createFetchManyTool } from "./fetch-many.js";
 import type { DocRef } from "@omnesis/core";
 
 import type { DocumentPort, DocumentPortResult } from "./types.js";
@@ -15,6 +17,54 @@ function port(
 ): DocumentPort {
   return { fetch: (id, opts) => impl(id, opts) };
 }
+
+describe("opaque fetch pointers", () => {
+  it.each([createFetchDocumentTool, createFetchManyTool])(
+    "explains corpus IDs separately from aliases only on supporting ports",
+    (create) => {
+      const ordinary = create({ port: port(async () => null) });
+      expect(ordinary.description).not.toContain("wiki:<pageId>");
+      const supported = create({
+        port: { ...port(async () => null), supportsKnowledgeAliases: true },
+      });
+      expect(supported.description).toContain("alias only from an actual wiki link");
+      expect(supported.description).toContain("returned documentIds are opaque corpus IDs");
+      expect(supported.description).toContain("without adding wiki: or any other prefix");
+      const schema = JSON.stringify(zodToJsonSchema(supported.schema));
+      expect(schema).toContain("Copy it exactly; do not add a prefix");
+    },
+  );
+
+  it("forwards returned corpus pointers exactly and does not guess a repair for prefixed IDs", async () => {
+    const seen: string[] = [];
+    const documentPort = {
+      supportsKnowledgeAliases: true,
+      fetch: async (id: string) => {
+        seen.push(id);
+        return id === "projection-detail"
+          ? {
+              ref: { documentId: id, sourceType: "knowledge", sourceId: "knowledge:fixture" },
+              document: { id },
+            }
+          : null;
+      },
+    };
+    const single = createFetchDocumentTool({ port: documentPort });
+    expect((await single.invoke({ documentId: "projection-detail" }, ctx)).kind).toBe("document");
+    const batch = createFetchManyTool({ port: documentPort });
+    const result = await batch.invoke(
+      {
+        documents: [{ documentId: "projection-detail" }, { documentId: "wiki:projection-detail" }],
+      },
+      ctx,
+    );
+    expect(result.kind).toBe("document.batch");
+    if (result.kind === "document.batch") {
+      expect(result.items.map((item) => item.kind)).toEqual(["document", "error"]);
+    }
+    expect(seen).toEqual(["projection-detail", "projection-detail", "wiki:projection-detail"]);
+  });
+});
 
 describe("fetch_document tool", () => {
   it("returns a document tool-result and forwards includeNeighbors", async () => {
@@ -62,5 +112,92 @@ describe("fetch_document tool", () => {
     const r = await tool.invoke({ documentId: "" }, ctx);
     expect(r.kind).toBe("error");
     if (r.kind === "error") expect(r.code).toBe("invalid_args");
+  });
+});
+
+describe("bounded default reads", () => {
+  const body = "Quarterly planning notes. ".repeat(40); // 1,040 characters
+  const ref: DocRef = { documentId: "long", sourceType: "notes", sourceId: "notes:fixture" };
+  const longPort = port(async (id) => ({ ref, document: { id, content: body } }));
+
+  it("returns the whole body when no default cap is configured", async () => {
+    const r = await createFetchDocumentTool({ port: longPort }).invoke({ documentId: "long" }, ctx);
+    if (r.kind !== "document") throw new Error("expected document");
+    expect((r.document as { content: string }).content).toBe(body);
+    expect(r.document).not.toHaveProperty("contentRange");
+  });
+
+  it("caps an unranged read and says where the next page starts", async () => {
+    const tool = createFetchDocumentTool({ port: longPort, defaultMaxContentChars: 400 });
+    expect(tool.description).toContain("contentOffset set to nextOffset");
+    const first = await tool.invoke({ documentId: "long" }, ctx);
+    if (first.kind !== "document") throw new Error("expected document");
+    expect(first.document).toMatchObject({
+      content: body.slice(0, 400),
+      contentRange: {
+        offset: 0,
+        returnedCharacters: 400,
+        totalCharacters: 1040,
+        truncated: true,
+        nextOffset: 400,
+      },
+    });
+    // Paging with the offset alone keeps the same bounded page size, and the
+    // last page carries no further offset.
+    const last = await tool.invoke({ documentId: "long", contentOffset: 800 }, ctx);
+    if (last.kind !== "document") throw new Error("expected document");
+    expect(last.document).toMatchObject({
+      content: body.slice(800),
+      contentRange: { offset: 800, returnedCharacters: 240, truncated: true },
+    });
+    expect(
+      (last.document as unknown as { contentRange: Record<string, unknown> }).contentRange,
+    ).not.toHaveProperty("nextOffset");
+  });
+
+  it("ends a page before an instant it would cut, and starts the next page on it", async () => {
+    const lead = `${"Fitting at the studio. ".repeat(16)}Bring the forms. `; // 385 characters
+    const timed = `${lead}**When:** 2026-10-18T17:28:00Z, doors open.`;
+    const timedPort = port(async (id) => ({ ref, document: { id, content: timed } }));
+    const tool = createFetchDocumentTool({ port: timedPort, defaultMaxContentChars: 400 });
+    const first = await tool.invoke({ documentId: "long" }, ctx);
+    if (first.kind !== "document") throw new Error("expected document");
+    const instantAt = timed.indexOf("2026-10-18T17:28:00Z");
+    expect(first.document).toMatchObject({
+      content: timed.slice(0, instantAt),
+      contentRange: { returnedCharacters: instantAt, nextOffset: instantAt },
+    });
+    const next = await tool.invoke({ documentId: "long", contentOffset: instantAt }, ctx);
+    if (next.kind !== "document") throw new Error("expected document");
+    expect((next.document as { content: string }).content).toMatch(/^2026-10-18T17:28:00Z, doors/u);
+  });
+
+  it("lets an explicit range override the default and leaves short bodies whole", async () => {
+    const tool = createFetchDocumentTool({ port: longPort, defaultMaxContentChars: 400 });
+    const wide = await tool.invoke({ documentId: "long", maxContentChars: 2000 }, ctx);
+    if (wide.kind !== "document") throw new Error("expected document");
+    expect((wide.document as { content: string }).content).toBe(body);
+    const short = createFetchDocumentTool({
+      port: port(async (id) => ({ ref, document: { id, content: "Short memo." } })),
+      defaultMaxContentChars: 400,
+    });
+    const whole = await short.invoke({ documentId: "short" }, ctx);
+    if (whole.kind !== "document") throw new Error("expected document");
+    expect(whole.document).toEqual({ id: "short", content: "Short memo." });
+  });
+
+  it("applies the cap to every document of a fetch_many batch", async () => {
+    const tool = createFetchManyTool({ port: longPort, defaultMaxContentChars: 400 });
+    expect(tool.description).toContain("contentOffset set to nextOffset");
+    const r = await tool.invoke(
+      { documents: [{ documentId: "long" }, { documentId: "long", contentOffset: 400 }] },
+      ctx,
+    );
+    if (r.kind !== "document.batch") throw new Error("expected batch");
+    expect(
+      r.items.map((item) =>
+        item.kind === "document" ? (item.document as { content: string }).content.length : -1,
+      ),
+    ).toEqual([400, 400]);
   });
 });

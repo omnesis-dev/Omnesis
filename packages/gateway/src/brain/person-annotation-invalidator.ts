@@ -9,9 +9,8 @@
  * live row surgically per atom: the annotation soft-invalidates only when NO
  * live atom remains (kept for audit); a survivor keeps living — its mirror
  * promoted if evidence[0] broke — re-stamped `unverified` for the
- * re-verification sweep. The deletion-driven HARD purge rides the
- * DocumentService privacy-delete seam
- * (`cascadePersonAnnotationPrivacyDelete`), not the bus.
+ * re-verification sweep. A document deletion is handled by the deleting
+ * write itself (`source-deletion-review.ts`), not the bus.
  *
  * Hot-path discipline mirrors the doc invalidator: a cheap indexed READ guard
  * on the read handle, then a fire-and-forget (single-writer) write op — never

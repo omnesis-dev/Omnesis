@@ -159,6 +159,7 @@ struct SourcesView: View {
         case .agentNotConfigured: "Agent isn't configured — showing cached sources."
         case .server(let status, _): "Gateway returned \(status) while refreshing."
         case .unknown(let message): message
+        case .voice(let failure): failure.errorDescription ?? failure.title
         }
     }
 

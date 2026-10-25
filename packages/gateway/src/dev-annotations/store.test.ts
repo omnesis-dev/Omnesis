@@ -105,7 +105,7 @@ describe("dev_annotations store", () => {
 
   test("lists open notes newest-first and filters by status and type", () => {
     createDevAnnotation(db, { id: "a", targetType: "document", note: "a" }, 100);
-    createDevAnnotation(db, { id: "b", targetType: "brief", note: "b" }, 300);
+    createDevAnnotation(db, { id: "b", targetType: "observation", note: "b" }, 300);
     createDevAnnotation(db, { id: "c", targetType: "document", note: "c" }, 200);
 
     const open = listDevAnnotations(db);

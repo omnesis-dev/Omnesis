@@ -13,12 +13,18 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 import { createLogger, TEMPORAL_KINDS } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
-import { getBrief, listShowableBriefs } from "../storage/briefs.js";
+import { applyTaskCommand } from "../storage/tasks.js";
+import {
+  createObservation,
+  getObservation,
+  transitionObservation,
+} from "../storage/observations.js";
 import { readCognitionNotes } from "../storage/notes.js";
 import {
   claimDueCognitionRuns,
@@ -115,8 +121,8 @@ function findTool(tools: ToolHandle[], name: string): ToolHandle {
   // Most tests in this file predate annotation provenance and exercise
   // unrelated tool behavior, so make their explicit judgment `[]` centrally.
   // grounding-teeth.test.ts invokes the raw handles to pin the required field
-  // and output-specific selection behavior for all four mutation tools.
-  if (["open_loop_create", "open_loop_update", "brief_create", "brief_update"].includes(name)) {
+  // and output-specific selection behavior for the dependency-carrying mutation tools.
+  if (["open_loop_create", "open_loop_update", "observation_note"].includes(name)) {
     return {
       ...t,
       invoke(args, context) {
@@ -173,6 +179,30 @@ describe("Cognition Steward tools", () => {
     cleanupDb(path);
   });
 
+  test("loop title schema describes the tracked stage without requiring an imperative", () => {
+    const schema = z.toJSONSchema(findTool(tools, "open_loop_create").schema);
+    expect(schema.properties?.title).toMatchObject({
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      description: expect.stringContaining(
+        "supported action stage, responsible actor and conditions",
+      ),
+    });
+    expect(schema.properties?.title?.description).toContain("waiting or uncertain status");
+    expect(schema.properties?.title?.description).not.toContain("imperative");
+  });
+
+  test("mutation contracts distinguish current obligations and display claims from historical evidence", () => {
+    const loop = findTool(tools, "open_loop_create");
+    expect(loop.description).toContain("currently actionable outcome for the user");
+    expect(loop.description).toContain("historical status or unsuccessful attempt alone");
+    expect(loop.description).toContain("proves neither resolution nor non-resolution");
+    const note = findTool(tools, "observation_note").description;
+    expect(note).toContain("Nothing you note reaches the user directly");
+    expect(note).toContain("Cite original sources; quote what establishes the observation");
+  });
+
   async function createLoop(extra: Record<string, unknown> = {}): Promise<string> {
     const result = await findTool(tools, "open_loop_create").invoke(
       {
@@ -187,6 +217,17 @@ describe("Cognition Steward tools", () => {
     );
     const { data } = structured(result);
     return (data.loop as { id: string }).id;
+  }
+
+  /** Store a live observation related to `loopId`; return its id. */
+  function createObservationForLoop(loopId: string, summary = "actionable"): string {
+    const id = `obs_${++seq}`;
+    createObservation(
+      db,
+      { id, createdByRun: "run_seed", summary, relatedLoopIds: [loopId] },
+      nowMs,
+    );
+    return id;
   }
 
   test("deadline reconciliation reports temporal overlaps and linked loops together", async () => {
@@ -292,6 +333,132 @@ describe("Cognition Steward tools", () => {
       .get(mirrorId!);
     expect(mirror!.source_id).toBe("open-loops");
     expect(mirror!.content).toContain("Reply to the venue quote");
+  });
+
+  test("open_loop_create acts on the suggestion gate's enforced tier and reports it", async () => {
+    const judged: string[] = [];
+    const gated = (tier: "adopt" | "withhold" | "suggest", enforced: boolean) =>
+      buildTools({
+        taskPropose: {
+          judge: (input) => {
+            judged.push(input.loopId);
+            return Promise.resolve({ tier, enforced, reason: `${tier} because of the ledger` });
+          },
+        } as unknown as CognitionToolDeps["taskPropose"],
+      });
+    const create = async (handles: ToolHandle[]) => {
+      const result = await findTool(handles, "open_loop_create").invoke(
+        {
+          title: "Renew the studio lease",
+          description: "An answer is due by Friday.",
+          confidence: 0.9,
+          importance: 0.7,
+        },
+        CTX,
+      );
+      const { data } = structured(result);
+      return { data, loop: getOpenLoop(db, (data.loop as { id: string }).id)! };
+    };
+
+    const withheld = await create(gated("withhold", true));
+    expect(withheld.data).toMatchObject({ gate: "withhold", loop: { withheldByGate: true } });
+    expect(withheld.data.loop).not.toHaveProperty("ignoredByUser");
+    expect(withheld.loop).toMatchObject({ ignored: true, accepted: false, state: "open" });
+    expect(listOpenLoopLedger(db, withheld.loop.id).map((e) => [e.event?.kind, e.note])).toEqual([
+      ["withheld", "withhold because of the ledger"],
+    ]);
+    expect(judged).toEqual([withheld.loop.id]);
+
+    const adopted = await create(gated("adopt", true));
+    expect(adopted.data).toMatchObject({ gate: "adopt", loop: { userTask: true } });
+    expect(adopted.data.loop).not.toHaveProperty("withheldByGate");
+    expect(adopted.loop).toMatchObject({ accepted: true, ignored: false });
+    const adoption = listOpenLoopLedger(db, adopted.loop.id);
+    expect(adoption.map((e) => e.event?.kind)).toEqual(["auto_accepted"]);
+    expect(adoption[0]!.event?.before).toMatchObject({ accepted: false, ignored: false });
+
+    // Shadow: the verdict is audit data, not the model's business; the
+    // suggestion is offered as before and the result says nothing about a gate.
+    const shadowed = await create(gated("withhold", false));
+    expect(shadowed.data).not.toHaveProperty("gate");
+    expect(shadowed.data).not.toHaveProperty("proposal");
+    expect(shadowed.data.loop).not.toHaveProperty("withheldByGate");
+    expect(shadowed.data.loop).not.toHaveProperty("ignoredByUser");
+    expect(shadowed.loop).toMatchObject({ ignored: false, accepted: false });
+    expect(listOpenLoopLedger(db, shadowed.loop.id)).toEqual([]);
+
+    // An enforced "suggest" changes nothing either, so it is not reported.
+    const suggested = await create(gated("suggest", true));
+    expect(suggested.data).not.toHaveProperty("gate");
+    expect(suggested.loop).toMatchObject({ ignored: false, accepted: false });
+
+    // No gate: offered, with nothing to say about it.
+    const ungated = await create(buildTools());
+    expect(ungated.data).not.toHaveProperty("gate");
+  });
+
+  test("open_loop_search and open_loop_fetch say whether the gate withheld a suggestion or the user ignored it", async () => {
+    const gatedTools = buildTools({
+      taskPropose: {
+        judge: () =>
+          Promise.resolve({ tier: "withhold", enforced: true, reason: "like what you ignore" }),
+      } as unknown as CognitionToolDeps["taskPropose"],
+    });
+    const held = structured(
+      await findTool(gatedTools, "open_loop_create").invoke(
+        { title: "Reply to the venue quote", confidence: 0.9, importance: 0.7 },
+        CTX,
+      ),
+    );
+    const heldId = (held.data.loop as { id: string }).id;
+    const ignoredId = await createLoop();
+    expect(
+      applyTaskCommand(
+        db,
+        { surface: "tasks", runId: "user:tasks", kind: "ignore", id: ignoredId },
+        Date.now(),
+      ).ok,
+    ).toBe(true);
+    const offeredId = await createLoop();
+
+    const flags = (loop: Record<string, unknown>) => ({
+      withheldByGate: loop.withheldByGate,
+      ignoredByUser: loop.ignoredByUser,
+    });
+    const fetched = async (id: string) =>
+      flags(structured(await findTool(tools, "open_loop_fetch").invoke({ id }, CTX)).data);
+    expect(await fetched(heldId)).toEqual({ withheldByGate: true, ignoredByUser: undefined });
+    expect(await fetched(ignoredId)).toEqual({ withheldByGate: undefined, ignoredByUser: true });
+    expect(await fetched(offeredId)).toEqual({
+      withheldByGate: undefined,
+      ignoredByUser: undefined,
+    });
+
+    const search = structured(
+      await findTool(tools, "open_loop_search").invoke({ query: "venue quote" }, CTX),
+    );
+    const byId = new Map(
+      (search.data.loops as Array<Record<string, unknown>>).map((loop) => [loop.id, flags(loop)]),
+    );
+    expect(byId.get(heldId)).toEqual({ withheldByGate: true, ignoredByUser: undefined });
+    expect(byId.get(ignoredId)).toEqual({ withheldByGate: undefined, ignoredByUser: true });
+    expect(byId.get(offeredId)).toEqual({ withheldByGate: undefined, ignoredByUser: undefined });
+  });
+
+  test("open_loop_create never loses a suggestion to a failing gate", async () => {
+    const failing = buildTools({
+      taskPropose: {
+        judge: () => Promise.reject(new Error("gate exploded")),
+      } as unknown as CognitionToolDeps["taskPropose"],
+    });
+    const result = await findTool(failing, "open_loop_create").invoke(
+      { title: "Renew the studio lease", confidence: 0.9, importance: 0.7 },
+      CTX,
+    );
+    const { data } = structured(result);
+    expect(data).not.toHaveProperty("gate");
+    expect(data).not.toHaveProperty("proposal");
+    expect(getOpenLoop(db, (data.loop as { id: string }).id)).toMatchObject({ ignored: false });
   });
 
   test("open_loop_create resolves person refs (emails → person ids) and reports drops", async () => {
@@ -510,46 +677,32 @@ describe("Cognition Steward tools", () => {
 
   test("open_loop_delete enforces the deletion invariant and removes the mirror", async () => {
     const loopId = await createLoop();
-    const briefResult = await findTool(tools, "brief_create").invoke(
-      {
-        kind: "loop",
-        title: "Venue quote needs a reply",
-        confidence: 0.9,
-        urgency: 0.5,
-        relatedLoopIds: [loopId],
-      },
-      CTX,
-    );
-    const briefId = (structured(briefResult).data.brief as { id: string }).id;
+    const observationId = createObservationForLoop(loopId, "Venue quote needs a reply");
 
     const result = await findTool(tools, "open_loop_delete").invoke({ id: loopId }, CTX);
     const { data } = structured(result);
-    expect(data.deletedBriefIds).toEqual([briefId]);
+    expect(data.deletedObservationIds).toEqual([observationId]);
     expect(getOpenLoop(db, loopId)).toBeNull();
-    expect(getBrief(db, briefId)).toBeNull();
+    expect(getObservation(db, observationId)).toBeNull();
     expect(docIdByExternal(db, loopId)).toBeNull();
   });
 
-  test("open_loop_search reaches only open-loop documents and returns loops with attached-brief summaries", async () => {
+  test("open_loop_search reaches only open-loop documents and returns loops with attached-observation summaries", async () => {
     // A source email containing the same phrase must NOT surface.
     upsertDocuments(db, [sourceDoc("msg_1", "venue quote discussion")]);
     const loopId = await createLoop();
-    await findTool(tools, "brief_create").invoke(
-      {
-        kind: "loop",
-        title: "Quote pending",
-        confidence: 0.8,
-        urgency: 0.4,
-        relatedLoopIds: [loopId],
-      },
-      CTX,
-    );
+    const observationId = createObservationForLoop(loopId, "Quote pending");
     const result = await findTool(tools, "open_loop_search").invoke({ query: "venue quote" }, CTX);
     const { data } = structured(result);
-    const loops = data.loops as Array<{ id: string; attachedBriefs: Array<{ title: string }> }>;
+    const loops = data.loops as Array<{
+      id: string;
+      attachedObservations: Array<{ id: string; summary: string; state: string }>;
+    }>;
     expect(loops).toHaveLength(1);
     expect(loops[0]!.id).toBe(loopId);
-    expect(loops[0]!.attachedBriefs.map((b) => b.title)).toEqual(["Quote pending"]);
+    expect(loops[0]!.attachedObservations).toEqual([
+      { id: observationId, summary: "Quote pending", state: "live" },
+    ]);
   });
 
   test("open_loop_search sees a just-created loop even when the pipeline knows nothing (fresh-reads overlay), without duplicating pipeline hits", async () => {
@@ -749,300 +902,6 @@ describe("Cognition Steward tools", () => {
 
     const missing = await findTool(tools, "open_loop_fetch").invoke({ id: "loop_nope" }, CTX);
     expect(missing).toMatchObject({ kind: "error", code: "not_found" });
-  });
-
-  test("brief_create stamps the run id, validates citations against the store, and starts unread", async () => {
-    upsertDocuments(db, [sourceDoc("msg_1", "the quote")]);
-    const known = docIdByExternal(db, "msg_1")!;
-    const result = await findTool(tools, "brief_create").invoke(
-      {
-        kind: "info",
-        title: "A quote arrived",
-        citations: [known, "doc_deleted"],
-        confidence: 0.7,
-        urgency: 0.3,
-        eventAt: "2026-07-02T18:00:00.000Z",
-      },
-      CTX,
-    );
-    const { data } = structured(result);
-    const brief = data.brief as { id: string; citations: string[]; state: string };
-    expect(brief.state).toBe("unread");
-    expect(brief.citations).toEqual([known]);
-    expect(data.droppedCitationIds).toEqual(["doc_deleted"]);
-    expect(getBrief(db, brief.id)!.createdByRun).toBe("run_test_1");
-    expect(getBrief(db, brief.id)!.eventAt).toBe(Date.parse("2026-07-02T18:00:00.000Z"));
-  });
-
-  test("brief_create refuses a sibling card on a shared loop and returns candidates", async () => {
-    const loopId = await createLoop();
-    const first = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Sign the studio hire quote",
-          confidence: 0.8,
-          urgency: 0.5,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    const firstId = (first.data.brief as { id: string }).id;
-
-    const second = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Studio hire quote still needs signing",
-          confidence: 0.8,
-          urgency: 0.6,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    expect(second.resultType).toBe("brief.loop_conflict_candidates");
-    const candidates = second.data.candidates as Array<{ id: string; sharedLoopIds: string[] }>;
-    expect(candidates.map((c) => c.id)).toEqual([firstId]);
-    expect(candidates[0]!.sharedLoopIds).toEqual([loopId]);
-    // Nothing was created.
-    const listed = structured(await findTool(tools, "brief_list").invoke({}, CTX));
-    expect((listed.data.briefs as Array<{ id: string }>).map((b) => b.id)).toEqual([firstId]);
-  });
-
-  test("brief_create with supersedes replaces the old card: created + old one leaves the feed", async () => {
-    const loopId = await createLoop();
-    const first = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Sign the studio hire quote",
-          confidence: 0.8,
-          urgency: 0.5,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    const firstId = (first.data.brief as { id: string }).id;
-
-    const second = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Studio quote — still unsigned, now urgent",
-          confidence: 0.85,
-          urgency: 0.8,
-          relatedLoopIds: [loopId],
-          supersedes: [firstId],
-        },
-        CTX,
-      ),
-    );
-    expect(second.resultType).toBe("brief.created");
-    expect(second.data.supersededBriefIds).toEqual([firstId]);
-    const newId = (second.data.brief as { id: string }).id;
-
-    // History preserved: the superseded row still exists, state untouched,
-    // but its relevance is expired so it is out of the user's feed.
-    const old = getBrief(db, firstId)!;
-    expect(old.state).toBe("unread");
-    expect(old.relevantUntil).not.toBeNull();
-
-    // The guard now sees only the NEW card as active on that loop: a third
-    // sibling create conflicts with the replacement, not the retired card.
-    const third = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Yet another card for the same quote",
-          confidence: 0.5,
-          urgency: 0.5,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    expect(third.resultType).toBe("brief.loop_conflict_candidates");
-    expect((third.data.candidates as Array<{ id: string }>).map((c) => c.id)).toEqual([newId]);
-  });
-
-  test("a snoozed card conflicts and is supersedable — it must not wake up beside a replacement", async () => {
-    const loopId = await createLoop();
-    const first = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Original card",
-          confidence: 0.8,
-          urgency: 0.5,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    const firstId = (first.data.brief as { id: string }).id;
-    db.prepare("UPDATE briefs SET state = 'dismissed_snoozed', next_show = ? WHERE id = ?").run(
-      nowMs + 3600_000,
-      firstId,
-    );
-
-    // Still a conflict while parked…
-    const refused = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Sibling while snoozed",
-          confidence: 0.8,
-          urgency: 0.5,
-          relatedLoopIds: [loopId],
-        },
-        CTX,
-      ),
-    );
-    expect(refused.resultType).toBe("brief.loop_conflict_candidates");
-
-    // …and supersedable: the replacement retires it so it cannot resurface.
-    const replaced = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Replacement card",
-          confidence: 0.85,
-          urgency: 0.6,
-          relatedLoopIds: [loopId],
-          supersedes: [firstId],
-        },
-        CTX,
-      ),
-    );
-    expect(replaced.resultType).toBe("brief.created");
-    expect(replaced.data.supersededBriefIds).toEqual([firstId]);
-    expect(getBrief(db, firstId)!.relevantUntil).not.toBeNull();
-  });
-
-  test("brief_update on a retired (relevance-expired) card warns; setting relevantUntil does not", async () => {
-    const loopId = await createLoop();
-    const created = structured(
-      await findTool(tools, "brief_create").invoke(
-        { kind: "loop", title: "t", confidence: 0.5, urgency: 0.5, relatedLoopIds: [loopId] },
-        CTX,
-      ),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-    db.prepare("UPDATE briefs SET relevant_until = ? WHERE id = ?").run(nowMs - 1000, briefId);
-
-    const blind = structured(
-      await findTool(tools, "brief_update").invoke({ id: briefId, title: "Edited" }, CTX),
-    );
-    expect(typeof blind.data.warning).toBe("string");
-
-    const resurfacing = structured(
-      await findTool(tools, "brief_update").invoke(
-        { id: briefId, relevantUntil: "2027-01-01T00:00:00.000Z" },
-        CTX,
-      ),
-    );
-    expect(resurfacing.data.warning).toBeUndefined();
-  });
-
-  test("brief_create force:true coexists on a shared loop; unknown supersedes ids are reported", async () => {
-    const loopId = await createLoop();
-    await findTool(tools, "brief_create").invoke(
-      {
-        kind: "loop",
-        title: "Specific card",
-        confidence: 0.8,
-        urgency: 0.5,
-        relatedLoopIds: [loopId],
-      },
-      CTX,
-    );
-    const rollup = structured(
-      await findTool(tools, "brief_create").invoke(
-        {
-          kind: "loop",
-          title: "Roll-up across several loops",
-          confidence: 0.7,
-          urgency: 0.4,
-          relatedLoopIds: [loopId],
-          force: true,
-          supersedes: ["brief_ghost"],
-        },
-        CTX,
-      ),
-    );
-    expect(rollup.resultType).toBe("brief.created");
-    expect(rollup.data.droppedSupersedeIds).toEqual(["brief_ghost"]);
-    const listed = structured(await findTool(tools, "brief_list").invoke({}, CTX));
-    expect((listed.data.briefs as Array<{ id: string }>).length).toBe(2);
-  });
-
-  test("brief_update edits content fields; brief_delete withdraws the card, keeping its record", async () => {
-    const loopId = await createLoop();
-    const created = structured(
-      await findTool(tools, "brief_create").invoke(
-        { kind: "loop", title: "t", confidence: 0.5, urgency: 0.5, relatedLoopIds: [loopId] },
-        CTX,
-      ),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-
-    const updated = structured(
-      await findTool(tools, "brief_update").invoke(
-        { id: briefId, title: "Updated title", nextShow: "2026-07-03T08:00:00.000Z" },
-        CTX,
-      ),
-    );
-    expect((updated.data.brief as { title: string }).title).toBe("Updated title");
-    expect(getBrief(db, briefId)!.nextShow).toBe(Date.parse("2026-07-03T08:00:00.000Z"));
-
-    // brief_delete withdraws the card: it leaves the feed, and the row —
-    // with its claims and edges — survives as the record of what was
-    // surfaced.
-    const deleted = await findTool(tools, "brief_delete").invoke({ id: briefId }, CTX);
-    expect(structured(deleted).data.briefId).toBe(briefId);
-    const retired = getBrief(db, briefId);
-    expect(retired).not.toBeNull();
-    expect(retired!.state).toBe("retired");
-    expect(listShowableBriefs(db, nowMs).map((b) => b.id)).not.toContain(briefId);
-    // Off every active-brief surface too, not just the feed.
-    expect(structured(await findTool(tools, "brief_list").invoke({}, CTX)).data.briefs).toEqual([]);
-    // Idempotent: a second withdrawal of an already-terminal card succeeds
-    // without disturbing it.
-    expect(
-      structured(await findTool(tools, "brief_delete").invoke({ id: briefId }, CTX)).data.briefId,
-    ).toBe(briefId);
-    expect(getBrief(db, briefId)!.state).toBe("retired");
-    // An unknown id still refuses rather than silently succeeding.
-    expect((await findTool(tools, "brief_delete").invoke({ id: "brief_missing" }, CTX)).kind).toBe(
-      "error",
-    );
-  });
-
-  test("brief_list shows unread/read/snoozed briefs with related loop ids and hides terminal ones", async () => {
-    const loopId = await createLoop();
-    const created = structured(
-      await findTool(tools, "brief_create").invoke(
-        { kind: "loop", title: "active", confidence: 0.5, urgency: 0.5, relatedLoopIds: [loopId] },
-        CTX,
-      ),
-    );
-    const activeId = (created.data.brief as { id: string }).id;
-    const terminal = structured(
-      await findTool(tools, "brief_create").invoke(
-        { kind: "info", title: "terminal", confidence: 0.5, urgency: 0.5 },
-        CTX,
-      ),
-    );
-    const terminalId = (terminal.data.brief as { id: string }).id;
-    db.prepare("UPDATE briefs SET state = 'dismissed_acknowledged' WHERE id = ?").run(terminalId);
-
-    const listed = structured(await findTool(tools, "brief_list").invoke({}, CTX));
-    const briefs = listed.data.briefs as Array<{ id: string; relatedLoopIds: string[] }>;
-    expect(briefs.map((b) => b.id)).toEqual([activeId]);
-    expect(briefs[0]!.relatedLoopIds).toEqual([loopId]);
   });
 
   function pendingCompactionRuns(): Array<{ id: string; payload_json: string; attempts: number }> {
@@ -1279,8 +1138,8 @@ describe("Cognition Steward tools", () => {
   // ── a second same-loop, same-day check ─────────────────────────────────
   const MORNING_AT = "2026-07-09T07:00:00.000Z";
   const EVENING_AT = "2026-07-09T18:00:00.000Z";
-  const MORNING_PROMPT = "Re-verify the venue quote reply before its brief surfaces";
-  const EVENING_PROMPT = "Refresh the venue quote brief before the evening call";
+  const MORNING_PROMPT = "Re-verify the venue quote reply before the morning brief";
+  const EVENING_PROMPT = "Refresh the venue quote notes before the evening call";
 
   /** Schedule the morning check for `loopId` and return its run id. */
   async function scheduleMorning(loopId: string): Promise<string> {
@@ -1567,80 +1426,84 @@ describe("Cognition Steward tools", () => {
     expect(autoLoop).not.toBe(explicitLoop);
   });
 
-  // ── (2) resolving a loop clears its still-actionable briefs ──────────
-  /** Create a loop-linked brief; return its id. */
-  async function createBriefForLoop(loopId: string, title = "actionable"): Promise<string> {
-    // force: fixtures legitimately stack several briefs on one loop to
-    // exercise retract/delete cascades; the one-card-per-loop guard is
-    // covered by its own tests above.
-    const result = await findTool(tools, "brief_create").invoke(
-      { kind: "loop", title, confidence: 0.6, urgency: 0.6, relatedLoopIds: [loopId], force: true },
-      CTX,
-    );
-    return (structured(result).data.brief as { id: string }).id;
-  }
+  // ── (2) resolving a loop drops its still-open observations ──────────
 
-  test("resolving a loop (done) retracts its non-terminal briefs to a terminal handled state", async () => {
+  test("resolving a loop (done) drops its open observations as superseded", async () => {
     const loopId = await createLoop();
-    const briefId = await createBriefForLoop(loopId);
-    expect(getBrief(db, briefId)!.state).toBe("unread");
+    const observationId = createObservationForLoop(loopId);
+    expect(getObservation(db, observationId)!.state).toBe("live");
 
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "done" }, CTX);
-    expect(getBrief(db, briefId)!.state).toBe("dismissed_already_handled");
+    expect(getObservation(db, observationId)).toMatchObject({
+      state: "dropped",
+      closeReason: "superseded",
+    });
   });
 
-  test("dismissing a loop also retracts its briefs; a read brief is cleared too", async () => {
+  test("dismissing a loop also drops its observations; a held one is dropped too", async () => {
     const loopId = await createLoop();
-    const briefId = await createBriefForLoop(loopId);
-    // Move it to `read` (still non-terminal / still actionable on the feed).
-    db.prepare("UPDATE briefs SET state = 'read' WHERE id = ?").run(briefId);
-    expect(getBrief(db, briefId)!.state).toBe("read");
+    const observationId = createObservationForLoop(loopId);
+    transitionObservation(db, observationId, { state: "held", reason: "below_bar" }, nowMs);
 
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "dismissed" }, CTX);
-    expect(getBrief(db, briefId)!.state).toBe("dismissed_already_handled");
+    expect(getObservation(db, observationId)!.state).toBe("dropped");
   });
 
-  test("the brief retraction leaves an unrelated loop's brief untouched and is idempotent", async () => {
+  test("the drop leaves an unrelated loop's observation untouched and is idempotent", async () => {
     const loopId = await createLoop();
     const otherLoop = await createLoop();
-    const briefId = await createBriefForLoop(loopId);
-    const otherBriefId = await createBriefForLoop(otherLoop, "other");
+    const observationId = createObservationForLoop(loopId);
+    const otherObservationId = createObservationForLoop(otherLoop, "other");
 
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "done" }, CTX);
-    expect(getBrief(db, briefId)!.state).toBe("dismissed_already_handled");
-    // The other loop's brief is untouched.
-    expect(getBrief(db, otherBriefId)!.state).toBe("unread");
+    expect(getObservation(db, observationId)!.state).toBe("dropped");
+    expect(getObservation(db, otherObservationId)!.state).toBe("live");
 
     // Idempotent: resolving the already-resolved loop again is a clean no-op.
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "done" }, CTX);
-    expect(getBrief(db, briefId)!.state).toBe("dismissed_already_handled");
+    expect(getObservation(db, observationId)!.state).toBe("dropped");
   });
 
-  test("a snooze does not retract briefs; a terminal brief is left as-is on resolve", async () => {
+  test("an observation that still concerns another active loop survives the resolve", async () => {
     const loopId = await createLoop();
-    const activeBrief = await createBriefForLoop(loopId);
-    const terminalBrief = await createBriefForLoop(loopId, "already handled");
-    db.prepare("UPDATE briefs SET state = 'dismissed_acknowledged' WHERE id = ?").run(
-      terminalBrief,
+    const otherLoop = await createLoop();
+    const id = `obs_${++seq}`;
+    createObservation(
+      db,
+      { id, createdByRun: "run_seed", summary: "shared", relatedLoopIds: [loopId, otherLoop] },
+      nowMs,
+    );
+    await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "done" }, CTX);
+    expect(getObservation(db, id)!.state).toBe("live");
+  });
+
+  test("a snooze does not drop observations; a shipped one is left as-is on resolve", async () => {
+    const loopId = await createLoop();
+    const openObservation = createObservationForLoop(loopId);
+    const shippedObservation = createObservationForLoop(loopId, "already shown");
+    transitionObservation(
+      db,
+      shippedObservation,
+      { state: "shipped", shipped: { conversationId: "conv_1", messageId: "msg_1" } },
+      nowMs,
     );
 
-    // A snooze is "revisit later" — briefs must NOT be retracted.
+    // A snooze is "revisit later" — observations must NOT be dropped.
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "snoozed" }, CTX);
-    expect(getBrief(db, activeBrief)!.state).toBe("unread");
+    expect(getObservation(db, openObservation)!.state).toBe("live");
 
-    // Now resolve: the active brief is retracted; the terminal one is untouched.
+    // Now resolve: the open observation is dropped; the shipped one is untouched.
     await findTool(tools, "open_loop_update").invoke({ id: loopId, state: "done" }, CTX);
-    expect(getBrief(db, activeBrief)!.state).toBe("dismissed_already_handled");
-    expect(getBrief(db, terminalBrief)!.state).toBe("dismissed_acknowledged");
+    expect(getObservation(db, openObservation)!.state).toBe("dropped");
+    expect(getObservation(db, shippedObservation)!.state).toBe("shipped");
   });
 
-  test("deleting a loop clears its non-terminal briefs (deletion invariant)", async () => {
+  test("deleting a loop deletes its open observations (deletion invariant)", async () => {
     const loopId = await createLoop();
-    const briefId = await createBriefForLoop(loopId);
+    const observationId = createObservationForLoop(loopId);
     const result = await findTool(tools, "open_loop_delete").invoke({ id: loopId }, CTX);
-    // The deletion invariant removes the attached non-terminal brief outright.
-    expect(structured(result).data.deletedBriefIds as string[]).toContain(briefId);
-    expect(getBrief(db, briefId)).toBeNull();
+    expect(structured(result).data.deletedObservationIds as string[]).toContain(observationId);
+    expect(getObservation(db, observationId)).toBeNull();
   });
 
   test("zod-at-boundary: malformed arguments never reach the store", async () => {
@@ -1648,11 +1511,9 @@ describe("Cognition Steward tools", () => {
       ["open_loop_create", { title: "", confidence: 0.5, importance: 0.5 }],
       ["open_loop_create", { title: "t", confidence: 1.5, importance: 0.5 }],
       ["open_loop_update", { id: "x", state: "resolved" }],
-      ["brief_create", { kind: "alert", title: "t", confidence: 0.5, urgency: 0.5 }],
-      [
-        "brief_create",
-        { kind: "info", title: "t", confidence: 0.5, urgency: 0.5, eventAt: "soonish" },
-      ],
+      ["observation_note", { summary: "", citations: ["doc_x"] }],
+      ["observation_note", { summary: "t", citations: [] }],
+      ["observation_note", { summary: "t", citations: ["doc_x"], relevantUntil: "soonish" }],
       ["schedule_agent_run", { when: "not-a-date", prompt: "p" }],
       ["notes_append", { text: "" }],
       ["notes_edit", { oldText: "", newText: "x" }],
@@ -1669,7 +1530,7 @@ describe("Cognition Steward tools", () => {
       });
     }
     expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM briefs").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM observations").get()).toEqual({ n: 0 });
   });
 
   test("mutations against missing ids are clean not_found errors", async () => {
@@ -1677,9 +1538,7 @@ describe("Cognition Steward tools", () => {
       ["open_loop_update", { id: "loop_gone", state: "done" }],
       ["open_loop_ledger_append", { id: "loop_gone", note: "n" }],
       ["open_loop_delete", { id: "loop_gone" }],
-      ["brief_update", { id: "brief_gone", title: "t" }],
-      ["brief_delete", { id: "brief_gone" }],
-      ["brief_fetch", { id: "brief_gone" }],
+      ["observation_withdraw", { id: "obs_gone" }],
     ] as Array<[string, unknown]>) {
       const result = await findTool(tools, name).invoke(args, CTX);
       expect(result, name).toMatchObject({ kind: "error", code: "not_found" });
@@ -1941,12 +1800,14 @@ describe("Cognition Steward tools", () => {
     // are on) — the contract list must still enumerate it for the sub-agent split.
     const full = buildTools({ annotationsEnabled: true });
     const declared = new Set(full.filter((t) => t.mutates === true).map((t) => t.name));
-    // `merge_adjudicate` is built by the runtime for a merge-adjudication run
-    // rather than here, but it writes durable state and is listed so the
-    // per-workflow authority filter covers it.
-    expect(declared.add("merge_adjudicate")).toEqual(new Set(COGNITION_MUTATING_TOOL_NAMES));
+    // `merge_adjudicate` and `morning_brief_send` are built by the runtime for
+    // their own runs rather than here, but they write durable state and are
+    // listed so the per-workflow authority filter covers them.
+    expect(declared.add("merge_adjudicate").add("morning_brief_send")).toEqual(
+      new Set(COGNITION_MUTATING_TOOL_NAMES),
+    );
     // Read tools stay undeclared.
-    for (const name of ["open_loop_search", "open_loop_fetch", "brief_list", "brief_fetch"]) {
+    for (const name of ["open_loop_search", "open_loop_fetch", "observation_list"]) {
       expect(findTool(tools, name).mutates).not.toBe(true);
     }
   });

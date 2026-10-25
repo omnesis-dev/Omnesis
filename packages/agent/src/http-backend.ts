@@ -14,8 +14,12 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
-import { serializeToolResultForModel } from "./tool-result-text.js";
+import { invokeToolHandle } from "./invoke-tool.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import { modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
@@ -311,6 +315,7 @@ export class HttpChatBackend implements ChatBackend {
       input.systemPrompt,
       replayReasoningContent,
       replayReasoningDetails,
+      { timeZone },
     );
 
     const totalUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
@@ -483,6 +488,7 @@ export class HttpChatBackend implements ChatBackend {
                   cacheReadTokens: totalUsage.cacheReadTokens + iterationUsage.cachedInput,
                   outputTokens: totalUsage.outputTokens + iterationUsage.completion,
                 },
+                context: contextAssessment,
               });
             }
 
@@ -657,6 +663,13 @@ export class HttpChatBackend implements ChatBackend {
           requestIteration,
         );
         if (attempt.usage.reasoning > 0) this.extendedOutputObserved = true;
+        if (attempt.usage.prompt > 0)
+          yield wrapEvent("agent.usage.update", {
+            sessionId,
+            messageId,
+            usage: { ...totalUsage },
+            context: contextAssessment,
+          });
 
         if (attempt.reasoning) {
           if (replayReasoningContent) reasoningBuf = attempt.reasoning;
@@ -865,24 +878,16 @@ export class HttpChatBackend implements ChatBackend {
             } else if (!argsResult.ok) {
               result = toolArgsUnparseableResult(argsResult.error, tc.function.arguments);
             } else {
-              try {
-                result = await handle.invoke(argsResult.args, {
-                  sessionId,
-                  messageId,
-                  abortSignal: signal,
-                  timeZone,
-                  caller,
-                  ...childEventHooks({ sessionId, messageId, toolCallId: tc.id }, (event) =>
-                    progress.push(event),
-                  ),
-                });
-              } catch (err) {
-                result = {
-                  kind: "error",
-                  code: "tool_threw",
-                  message: (err as Error).message ?? "tool threw",
-                };
-              }
+              result = await invokeToolHandle(handle, argsResult.args, {
+                sessionId,
+                messageId,
+                abortSignal: signal,
+                timeZone,
+                caller,
+                ...childEventHooks({ sessionId, messageId, toolCallId: tc.id }, (event) =>
+                  progress.push(event),
+                ),
+              });
             }
             return { tc, result, durationMs: Date.now() - start };
           }),
@@ -906,7 +911,7 @@ export class HttpChatBackend implements ChatBackend {
           messages.push({
             role: "tool",
             tool_call_id: r.tc.id,
-            content: serializeToolResultForModel(r.result),
+            content: serializeToolResultForModel(r.result, { timeZone }),
           });
         }
         iter += 1;
@@ -1350,6 +1355,7 @@ export function convertHistoryToOpenAI(
   systemPrompt: string,
   replayReasoningContent = false,
   replayReasoningDetails = false,
+  serialization: ToolResultSerializationOptions = {},
 ): OpenAIMessage[] {
   const out: OpenAIMessage[] = [{ role: "system", content: systemPrompt }];
 
@@ -1365,7 +1371,7 @@ export function convertHistoryToOpenAI(
           out.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: serializeToolResultForModel(part.result),
+            content: serializeToolResultForModel(part.result, serialization),
           });
         }
       }
@@ -1434,7 +1440,7 @@ export function convertToolsToOpenAI(tools: ReadonlyArray<ToolHandle>): OpenAITo
     function: {
       name: h.name,
       description: h.description,
-      parameters: zodToJsonSchema(h.schema) as Record<string, unknown>,
+      parameters: toolInputJsonSchema(h.schema) as Record<string, unknown>,
     },
   }));
 }

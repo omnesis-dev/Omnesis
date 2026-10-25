@@ -38,6 +38,7 @@
  * samples ride on exactly the same footing as transaction/activity docs.
  */
 
+import { isBrainExcludedSource } from "../source-exclusion.js";
 import { WAKER_DAILY_BATCH_DOC_TYPES } from "../waker/eligibility.js";
 import { dailySourceRunDedupeKey, type CognitionDailyRunPayload } from "../run-payloads.js";
 import {
@@ -66,6 +67,8 @@ export interface DailyEnqueuerDeps {
   writeGate: DailyEnqueuerWriteOps;
   clock: Clock;
   getDailyRunHour: () => number;
+  /** Sources the Brain never processes (`brain.excludedSources`); none get a batch. */
+  getExcludedSources?: () => readonly string[];
   log: Logger;
   /**
    * Sources whose analytics store held samples with a semantic timestamp
@@ -133,7 +136,10 @@ export async function runDailyEnqueuePass(
   const analyticsSourceIds = deps.listAnalyticsSampleSourceIds
     ? await deps.listAnalyticsSampleSourceIds(boundary.prevBoundaryMs, boundary.boundaryMs)
     : [];
-  const sourceIds = [...new Set([...docSourceIds, ...analyticsSourceIds])].sort();
+  const excluded = deps.getExcludedSources?.() ?? [];
+  const sourceIds = [...new Set([...docSourceIds, ...analyticsSourceIds])]
+    .filter((sourceId) => !isBrainExcludedSource(excluded, sourceId))
+    .sort();
   for (const sourceId of sourceIds) {
     const payload: CognitionDailyRunPayload = {
       sourceId,

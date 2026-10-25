@@ -104,10 +104,17 @@ public final class AgentCoordinator {
     /// and may continue running after this request fails.
     private(set) var cancelError: Error?
 
-    /// Origin anchor of the active conversation when it is an anchored
-    /// thread (brief talk-back or watch firing). Drives the context
-    /// card pinned above the transcript; nil for plain conversations.
-    private(set) var briefOrigin: ConversationOrigin?
+    /// Origin anchor of the active conversation when it did not start as a
+    /// blank chat (a watch firing, the Morning brief). Drives the context
+    /// card pinned above a watch thread and the Morning brief's undeletable
+    /// state; nil for plain conversations.
+    private(set) var conversationOrigin: ConversationOrigin?
+
+    /// Index, among the conversation's visible messages, of the first one
+    /// loaded. Older pages prepend before it. Lets the Morning brief thread
+    /// place the latest brief's `messageIndex` within what is loaded.
+    @ObservationIgnored
+    private var loadedMessageStartIndex = 0
 
     /// True while the transcript for a just-switched-to conversation is
     /// still loading over the network. Set the instant a resume begins —
@@ -119,6 +126,15 @@ public final class AgentCoordinator {
     /// disabled (the resumed session isn't live server-side yet).
     private(set) var transcriptLoading: Bool = false
     private(set) var transcriptPaging = CursorPagingState()
+
+    /// The turn a just-loaded transcript should open on, with its top at the
+    /// top of the view, until the transcript takes it. See
+    /// `TranscriptReadingAnchor` for when a load sets one.
+    private(set) var pendingReadingAnchor: String?
+
+    /// The reply the reader was last positioned on, or watched finish.
+    @ObservationIgnored
+    private var readingAnchorSeen: TranscriptReadingAnchor.Seen?
 
     private(set) var conversations: [ConversationSummary] = []
     private(set) var conversationsLoading: Bool = false
@@ -159,6 +175,215 @@ public final class AgentCoordinator {
     var canComposeMessage: Bool {
         client != nil && !transcriptLoading && fatalError == nil && terminalFailure == nil
             && liveSessionMissingReason == nil
+    }
+
+    private(set) var conversationControls: ConversationControls?
+    private(set) var conversationControlsSupported = false
+    private(set) var submitting = false
+    private var draftSubmissionID: UUID?
+    private(set) var submissionError: Error?
+    private let draftStore = ConversationDraftStore()
+    private(set) var dismissedConversationActivity = ConversationActivityDismissal()
+
+    var composerDraftKey: String {
+        guard let client else { return "unpaired" }
+        return ConversationDraftStore.scope(url: client.baseURL, token: client.token)
+            + ":" + (sessionId ?? "new")
+    }
+
+    func draft(for key: String) -> String {
+        draftStore.read(key)?.text ?? ""
+    }
+
+    func draftResearch(for key: String) -> Bool {
+        draftStore.research(key)
+    }
+
+    func saveDraftResearch(_ enabled: Bool, for key: String) {
+        draftStore.setResearch(enabled, key: key)
+    }
+
+    func saveDraft(_ text: String, for key: String) {
+        draftStore.write(text, key: key)
+    }
+
+    /// A voice snapshot refreshes the same conversation without consuming its unsent text.
+    func restoreDraftAfterVoiceHandoff(from previousKey: String) {
+        if previousKey.hasSuffix(":new"), previousKey != composerDraftKey {
+            draftStore.move(from: previousKey, to: composerDraftKey)
+        }
+        composerDraft = draft(for: composerDraftKey)
+    }
+
+    func draftHasBackup(for key: String) -> Bool {
+        draftStore.hasBackup(key)
+    }
+
+    func replaceDraft(_ text: String, for key: String, deepResearch: Bool = false, answerCurrentQuestion: Bool = true) {
+        draftStore.beginReplacement(text, key: key, deepResearch: deepResearch, answerCurrentQuestion: answerCurrentQuestion)
+    }
+
+    func cancelDraftReplacement(for key: String) {
+        draftStore.restoreBackup(key)
+    }
+
+    private var queueHandoff = ConversationQueueHandoff()
+
+    var presentedConversationControls: ConversationControls? {
+        conversationControls.map(queueHandoff.presenting)
+    }
+
+    func refreshConversationControls() async {
+        guard let client, let id = sessionId else { return }
+        let choice = sessionChoiceCount
+        do {
+            let controls = try await client.conversationControls(sessionId: id)
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            conversationControls = controls
+            conversationControlsSupported = true
+        } catch {
+            if case GatewayClient.Error.notFound = error, sessionChoiceCount == choice, sessionId == id, self.client === client {
+                conversationControlsSupported = false
+                conversationControls = nil
+            }
+            // Keep the last confirmed state while the event stream reconnects.
+        }
+    }
+
+    func sendQueuedMessagesNow(submissionIds: [String]) async {
+        guard let client, let id = sessionId, canComposeMessage, !submitting,
+              let controls = conversationControls, controls.capabilities?.queueSendNow == true,
+              !submissionIds.isEmpty else { return }
+        let choice = sessionChoiceCount
+        submitting = true
+        submissionError = nil
+        defer {
+            if sessionChoiceCount == choice, sessionId == id, self.client === client { submitting = false }
+        }
+        let handoff = queueHandoff.begin(ids: submissionIds)
+        await dismissPriorConversationActivity()
+        guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+        do {
+            let updated = try await client.sendQueuedMessagesNow(sessionId: id, submissionIds: submissionIds)
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            conversationControls = updated
+        } catch {
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            queueHandoff.failed(handoff)
+            dismissedConversationActivity.requestFailed()
+            submissionError = error
+            await refreshConversationControls()
+        }
+    }
+
+    /// Retire presentation, not transcript content or failure handling. Drain
+    /// parked prose immediately because its old card will no longer mount.
+    func dismissPriorConversationActivity() async {
+        let assistants = turns.compactMap { turn -> AgentAssistantTurn? in
+            if case .assistant(let assistant) = turn { return assistant }
+            return nil
+        }
+        dismissedConversationActivity.begin(
+            messageIds: assistants.map(\.id),
+            toolCallIds: assistants.flatMap { assistant in
+                assistant.parts.compactMap { part in
+                    if case .tool(let call) = part { return call.toolCallId }
+                    return nil
+                }
+            }
+        )
+        cancelAllGateHolds()
+        var pending: [AgentEvent] = []
+        for index in turns.indices {
+            guard case .assistant(var turn) = turns[index] else { continue }
+            for partIndex in turn.parts.indices {
+                guard case .tool(var call) = turn.parts[partIndex], agentEphemeralTools.contains(call.tool) else { continue }
+                pending.append(contentsOf: call.pendingTail)
+                call.pendingTail = []
+                call.tailDismissed = true
+                turn.parts[partIndex] = .tool(call)
+            }
+            turns[index] = .assistant(turn)
+        }
+        for event in pending {
+            await handle(event: event)
+        }
+    }
+
+    private func finishDraftSubmission(_ operation: UUID) {
+        guard draftSubmissionID == operation else { return }
+        draftSubmissionID = nil
+        submitting = false
+    }
+
+    /// Keep the unsent draft until the gateway acknowledges its durable submission.
+    func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
+        guard let client, canComposeMessage, !submitting else { return false }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return false }
+        let operation = UUID()
+        draftSubmissionID = operation
+        submitting = true
+        submissionError = nil
+        defer { finishDraftSubmission(operation) }
+        let originalKey = composerDraftKey
+        draftStore.write(text, key: originalKey)
+        guard let draft = draftStore.prepare(
+            key: originalKey,
+            submission: ConversationDraftSubmission(
+                interrupt: interrupt,
+                deepResearch: deepResearch,
+                clarificationId: draftStore.read(originalKey)?.answerCurrentQuestion == false ? nil : conversationControls?
+                    .pendingClarification?.id
+            )
+        ), let request = draft.submission else { return false }
+        if !conversationControlsSupported {
+            guard !interrupt, !busy else { return false }
+            var acceptedKey: String?
+            _ = await send(text: text, deepResearch: request.deepResearch) { id in
+                let key = ConversationDraftStore.scope(url: client.baseURL, token: client.token) + ":" + id
+                acceptedKey = key
+                if self.draftStore.read(key) == draft {
+                    self.draftStore.write("", key: key)
+                    self.draftStore.restoreBackup(key)
+                }
+            }
+            return acceptedKey == composerDraftKey && self.client === client && draftSubmissionID == operation
+        }
+        switch await mintSessionIfNeeded(client: client) {
+        case .ready: break
+        case .superseded: return false
+        case .failed(let error):
+            submissionError = error
+            return false
+        }
+        guard let id = sessionId else { return false }
+        let acceptedDraftKey = composerDraftKey
+        do {
+            try await client.submitMessage(
+                sessionId: id,
+                text: cleaned,
+                clientMessageId: draft.clientMessageId,
+                interrupt: request.interrupt,
+                deepResearch: request.deepResearch,
+                clarificationId: request.clarificationId
+            )
+            if draftStore.read(acceptedDraftKey) == draft {
+                draftStore.write("", key: acceptedDraftKey)
+                draftStore.restoreBackup(acceptedDraftKey)
+            }
+            guard sessionId == id, self.client === client, draftSubmissionID == operation else { return false }
+            await refreshConversationControls()
+            return sessionId == id && self.client === client && draftSubmissionID == operation
+        } catch {
+            if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
+               draftStore.read(acceptedDraftKey) == draft {
+                draftStore.renewRequest(acceptedDraftKey)
+                await refreshConversationControls()
+            }
+            if sessionId == id, self.client === client, draftSubmissionID == operation { submissionError = error }
+            return false
+        }
     }
 
     // MARK: - Private internals
@@ -316,6 +541,12 @@ public final class AgentCoordinator {
         client = nil
         pairing = nil
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
+        draftSubmissionID = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -331,10 +562,11 @@ public final class AgentCoordinator {
         lastTurnError = nil
         cancelError = nil
         pendingSessionMint = nil
-        briefOrigin = nil
+        conversationOrigin = nil
         transcriptLoading = false
         transcriptVersion = 0
         transcriptPaging.reset()
+        pendingReadingAnchor = nil
         conversations = []
         conversationsLoading = false
         conversationsLoadingMore = false
@@ -361,6 +593,27 @@ public final class AgentCoordinator {
     /// the snapshot-compare cannot itself race.
     @ObservationIgnored
     private var sessionChoiceCount = 0
+
+    /// What the composer holds, unsent. Conversation state like the
+    /// transcript, so a new conversation starts with an empty composer
+    /// whatever the field held before.
+    var composerDraft = ""
+
+    /// Persist explicit editor changes, never a coordinator-driven session reset.
+    func updateComposerDraft(_ text: String, for key: String?) {
+        composerDraft = text
+        if let key, key == composerDraftKey, !submitting { saveDraft(text, for: key) }
+    }
+
+    /// Send the composer's words. The composer empties at once; a send the
+    /// gateway never accepted puts them back, unless newer words are there.
+    @discardableResult
+    func sendComposerDraft(_ text: String, deepResearch: Bool = false) async -> Bool {
+        composerDraft = ""
+        let sent = await send(text: text, deepResearch: deepResearch)
+        if !sent, composerDraft.isEmpty { composerDraft = text }
+        return sent
+    }
 
     /// Start a fresh conversation. This is a purely local, instantaneous
     /// operation: it clears the surface synchronously and mints no session
@@ -460,10 +713,10 @@ public final class AgentCoordinator {
     /// and reconciles the view. An explicit open that's superseded while its
     /// fetch is in flight (a newer tap, a new conversation) is discarded via
     /// the `sessionChoiceCount` guard rather than clobbering the surface.
-    func resumeConversation(id: String) async {
+    func resumeConversation(id: String, forceRefresh: Bool = false) async {
         // Re-tapping the conversation already on screen is a no-op — don't
         // flash a skeleton over content that's already correct.
-        if id == sessionId, !transcriptLoading { return }
+        if id == sessionId, !transcriptLoading, !forceRefresh { return }
         sessionChoiceCount += 1
         let choice = sessionChoiceCount
         guard let client else { return }
@@ -554,6 +807,7 @@ public final class AgentCoordinator {
     /// left untouched. Kept in one place so the two callers — and the
     /// wholesale reset in `applyCreatedSession` — can't drift.
     private func clearTranscriptState() {
+        dismissedConversationActivity = ConversationActivityDismissal()
         sendOperationGeneration &+= 1
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
@@ -569,7 +823,8 @@ public final class AgentCoordinator {
         trailAnnotations = .empty
         recordCitations = []
         planItems = []
-        briefOrigin = nil
+        conversationOrigin = nil
+        loadedMessageStartIndex = 0
         busy = false
         terminalFailure = nil
         deepResearch = false
@@ -580,6 +835,7 @@ public final class AgentCoordinator {
         liveSessionMissingReason = nil
         transcriptVersion = 0
         transcriptPaging.reset()
+        pendingReadingAnchor = nil
     }
 
     /// Reset the surface to the blank slate a brand-new conversation shows.
@@ -590,7 +846,14 @@ public final class AgentCoordinator {
         overflowSnapshotTask = nil
         snapshotHandoff = nil
         clearTranscriptState()
+        composerDraft = ""
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
+        draftSubmissionID = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -648,6 +911,18 @@ public final class AgentCoordinator {
         }
     }
 
+    private func adoptConversationId(_ id: String) {
+        if sessionId != id {
+            queueHandoff = ConversationQueueHandoff()
+            conversationControls = nil
+            conversationControlsSupported = false
+        }
+        let previousDraftKey = composerDraftKey
+        let wasNewConversation = sessionId == nil
+        sessionId = id
+        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
+    }
+
     private func applyCreatedSession(
         _ session: CreateSessionResponse,
         preserving optimisticSend: PendingSessionMint? = nil
@@ -656,7 +931,7 @@ public final class AgentCoordinator {
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
-        sessionId = session.sessionId
+        adoptConversationId(session.sessionId)
         activeConversationPinned = conversations
             .first(where: { $0.sessionId == session.sessionId })?.pinned ?? activeConversationPinned
         // The surface now shows this conversation — covers an explicit open,
@@ -666,16 +941,21 @@ public final class AgentCoordinator {
         model = session.model
         backend = session.backend
         title = session.title
-        briefOrigin = session.origin
-        // A brief thread's leading messages are the folded transcript of
-        // the steward run that created the brief — context for the
-        // agent, internals for the user. Hide that prefix everywhere
-        // (turns, citations, annotations) and let the pinned brief card
-        // carry the context instead.
+        conversationOrigin = session.origin
+        // A watch thread's leading messages are the folded transcript of
+        // the run that opened it — context for the agent, internals for the
+        // user. Hide that prefix everywhere (turns, citations, annotations)
+        // and let the pinned watch card carry the context instead.
         let visible = session.messagesAreVisible
             ? session.messages
             : Self.visibleMessages(session.messages, origin: session.origin)
-        turns = AgentTurnBuilder.turns(from: visible, busy: session.busy)
+        loadedMessageStartIndex = max(0, session.messageCount - visible.count)
+        let sourced = Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: session.origin)
+        turns = AgentTurnBuilder.turns(
+            from: visible,
+            busy: session.busy,
+            breakBefore: Self.briefTurnBreaks(origin: session.origin, startIndex: loadedMessageStartIndex)
+        )
         // The record's own account of how the last turn died, which carries the
         // provider's disposition. `AgentTurnBuilder.turns(from:)` already lifted
         // a failure out of the history marker for a conversation stored before
@@ -697,7 +977,7 @@ public final class AgentCoordinator {
                 )
             }
         }
-        var cits = AgentTurnBuilder.citations(from: visible)
+        var cits = AgentTurnBuilder.citations(from: sourced)
         // Seed the Citations set from any persisted Deep Research
         // `report_artifact` part. A deep-research run cites via the
         // merged artifact set, not via `annotate` tool pairs, so
@@ -705,7 +985,7 @@ public final class AgentCoordinator {
         // resumed citation drawer loses those sources. Each seed has empty
         // entries because quote/note context is not persisted.
         var seenDocs = Set(cits.map(\.documentId))
-        for ref in AgentTurnBuilder.reportArtifactCitations(from: visible)
+        for ref in AgentTurnBuilder.reportArtifactCitations(from: sourced)
             where !seenDocs.contains(ref.documentId) {
             seenDocs.insert(ref.documentId)
             cits.append(AgentCitation(documentId: ref.documentId, ref: ref, entries: []))
@@ -717,8 +997,8 @@ public final class AgentCoordinator {
         // resume the same way it does live. Mirror of the citations rebuild
         // above. The raw `trace_connections` walk output is deliberately not
         // rebuilt — it never feeds the Timeline.
-        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: visible)
-        recordCitations = AgentTurnBuilder.recordCitations(from: visible)
+        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: sourced)
+        recordCitations = AgentTurnBuilder.recordCitations(from: sourced)
         // Reset persisted-history state first. Active-turn state not represented
         // by ChatMessage (plan, usage, tool children, research lifecycle) is
         // restored by replayEvents below.
@@ -758,6 +1038,7 @@ public final class AgentCoordinator {
             pendingSessionMint = nil
         }
         transcriptPaging.reset(nextCursor: session.messagePageInfo?.nextCursor)
+        placeReadingAnchor(messageCount: session.messageCount)
         for event in session.replayEvents {
             await handle(event: event)
         }
@@ -769,21 +1050,27 @@ public final class AgentCoordinator {
     /// supply: there are no replay events to fold, nothing is busy, and no
     /// turn is in flight.
     private func applyStoredTranscript(_ page: ConversationMessagePage) {
+        conversationOrigin = page.origin ?? conversationOrigin
         let visible = page.messagesAreVisible
             ? page.messages
-            : Self.visibleMessages(page.messages, origin: briefOrigin)
-        turns = AgentTurnBuilder.turns(from: visible)
-        var cits = AgentTurnBuilder.citations(from: visible)
+            : Self.visibleMessages(page.messages, origin: conversationOrigin)
+        loadedMessageStartIndex = max(0, page.messageCount - visible.count)
+        let sourced = Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: conversationOrigin)
+        turns = AgentTurnBuilder.turns(
+            from: visible,
+            breakBefore: Self.briefTurnBreaks(origin: conversationOrigin, startIndex: loadedMessageStartIndex)
+        )
+        var cits = AgentTurnBuilder.citations(from: sourced)
         var seenDocs = Set(cits.map(\.documentId))
-        for ref in AgentTurnBuilder.reportArtifactCitations(from: visible)
+        for ref in AgentTurnBuilder.reportArtifactCitations(from: sourced)
             where !seenDocs.contains(ref.documentId) {
             seenDocs.insert(ref.documentId)
             cits.append(AgentCitation(documentId: ref.documentId, ref: ref, entries: []))
         }
         citations = cits
         citationsByDocId = Dictionary(uniqueKeysWithValues: cits.enumerated().map { ($1.documentId, $0) })
-        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: visible)
-        recordCitations = AgentTurnBuilder.recordCitations(from: visible)
+        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: sourced)
+        recordCitations = AgentTurnBuilder.recordCitations(from: sourced)
         planClearTask?.cancel()
         planClearTask = nil
         planItems = []
@@ -793,6 +1080,28 @@ public final class AgentCoordinator {
         transcriptVersion = 0
         fatalError = nil
         transcriptPaging.reset(nextCursor: page.messagePageInfo.nextCursor)
+        placeReadingAnchor(messageCount: page.messageCount)
+    }
+
+    /// Decide where the transcript just loaded opens. A load that should
+    /// follow the bottom also drops an anchor an earlier load left untaken,
+    /// since that one named turns that have since been replaced.
+    private func placeReadingAnchor(messageCount: Int) {
+        let decision = TranscriptReadingAnchor.decide(
+            sessionId: sessionId,
+            busy: busy,
+            turns: turns,
+            messageCount: messageCount,
+            seen: readingAnchorSeen
+        )
+        readingAnchorSeen = decision.seen
+        pendingReadingAnchor = decision.turnId
+    }
+
+    /// Hand the transcript the turn to open on, once.
+    func takeReadingAnchor() -> String? {
+        defer { pendingReadingAnchor = nil }
+        return pendingReadingAnchor
     }
 
     /// Prepend one complete page of older persisted turns while preserving
@@ -811,14 +1120,21 @@ public final class AgentCoordinator {
             guard transcriptPaging.owns(request) else { return false }
             let visible = page.messagesAreVisible
                 ? page.messages
-                : Self.visibleMessages(page.messages, origin: briefOrigin)
+                : Self.visibleMessages(page.messages, origin: conversationOrigin)
             let prefix = "older-\(request.cursor?.hashValue ?? 0)-"
-            let olderTurns = AgentTurnBuilder.turns(from: visible, idPrefix: prefix)
+            loadedMessageStartIndex = max(0, loadedMessageStartIndex - visible.count)
+            let olderTurns = AgentTurnBuilder.turns(
+                from: visible,
+                idPrefix: prefix,
+                breakBefore: Self.briefTurnBreaks(origin: conversationOrigin, startIndex: loadedMessageStartIndex)
+            )
             turns.insert(
                 contentsOf: olderTurns,
                 at: 0
             )
-            mergeOlderCitations(from: visible)
+            mergeOlderCitations(
+                from: Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: conversationOrigin)
+            )
             transcriptVersion &+= 1
             transcriptPaging.finishLoadMore(
                 request,
@@ -884,9 +1200,8 @@ public final class AgentCoordinator {
         recordCitations = records
     }
 
-    /// The messages a user should see for a conversation. An anchored
-    /// thread (brief talk-back or watch firing) opens with the
-    /// creating run's folded transcript — agent context, not user
+    /// The messages a user should see for a conversation. A watch thread
+    /// opens with the creating run's folded transcript — agent context, not user
     /// content — so when the origin declares a seed prefix AND carries
     /// the snapshot that replaces it visually (the pinned context card),
     /// that prefix is dropped. Without the snapshot (threads created
@@ -910,8 +1225,45 @@ public final class AgentCoordinator {
     /// Whether this build renders a pinned context card for the origin —
     /// the precondition for hiding the seeded transcript prefix.
     nonisolated static func hasContextCard(_ origin: ConversationOrigin) -> Bool {
-        (origin.kind == "brief" && origin.brief != nil)
-            || (origin.kind == "watch_firing" && origin.watch != nil)
+        (origin.kind == "watch_firing" && origin.watch != nil) || origin.taskCard != nil
+    }
+
+    /// Where the Morning brief thread's turns must break, as indices into a page whose first message has
+    /// visible index `startIndex`, each with the brief that starts there. A brief is an assistant message
+    /// with no user message before it, so without a break it would fold into the previous day's last answer.
+    nonisolated static func briefTurnBreaks(origin: ConversationOrigin?, startIndex: Int) -> [Int: DailyBriefMessageRef] {
+        guard let origin, origin.isDailyBrief else { return [:] }
+        return Dictionary(origin.briefs.map { ($0.messageIndex - startIndex, $0) }.filter { $0.0 >= 0 }) { _, last in last }
+    }
+
+    /// The messages the citation timeline is built from. The Morning brief
+    /// thread is one conversation but its working state is one day, so its
+    /// timeline starts at the latest brief: earlier days stay in the
+    /// transcript but their sources do not crowd today's. Every other
+    /// conversation's timeline covers everything loaded.
+    ///
+    /// `startIndex` is the visible-message index of `messages.first`, which
+    /// is how a loaded page is placed against the brief's `messageIndex`.
+    nonisolated static func timelineMessages(
+        _ messages: [ChatMessage],
+        startIndex: Int,
+        origin: ConversationOrigin?
+    )
+        -> [ChatMessage] {
+        guard let latest = origin?.latestDailyBrief else { return messages }
+        let cut = latest.messageIndex - startIndex
+        if cut <= 0 { return messages }
+        if cut >= messages.count { return [] }
+        return Array(messages[cut...])
+    }
+
+    /// Whether the conversation on screen may be deleted. The Morning brief
+    /// conversation may not; either the open transcript's origin or its list
+    /// summary can say so, whichever arrived first.
+    var activeConversationDeletable: Bool {
+        guard conversationOrigin?.isDailyBrief != true else { return false }
+        guard let sessionId else { return true }
+        return conversations.first { $0.sessionId == sessionId }?.isDeletable ?? true
     }
 
     /// Whether the surface is already a blank new conversation — nothing said on it, nothing it
@@ -923,7 +1275,7 @@ public final class AgentCoordinator {
     var isBlankNewConversation: Bool {
         sessionId == nil
             && turns.isEmpty
-            && briefOrigin == nil
+            && conversationOrigin == nil
             && !transcriptLoading
             && fatalError == nil
             && terminalFailure == nil
@@ -938,7 +1290,7 @@ public final class AgentCoordinator {
     /// newer turn returns `true`: restoring its stale text would overwrite the
     /// newer composer even when that older HTTP request failed.
     @discardableResult
-    func send(text: String, deepResearch: Bool = false) async -> Bool {
+    func send(text: String, deepResearch: Bool = false, onAccepted: ((String) -> Void)? = nil) async -> Bool {
         guard let client else { return false }
         guard terminalFailure == nil else { return false }
         // The gateway accepts one active turn per session. In particular,
@@ -1026,6 +1378,7 @@ public final class AgentCoordinator {
                 text: cleaned,
                 deepResearch: deepResearch
             )
+            onAccepted?(sessionId)
             // The request was accepted, but its UI completion may have been
             // superseded by navigation or a newer turn in this conversation.
             // In that case the newer surface already owns all presentation.
@@ -1174,6 +1527,10 @@ public final class AgentCoordinator {
     /// by `busy` and cannot disturb the settled transcript.
     private func retireActiveTurn() {
         busy = false
+        readingAnchorSeen = TranscriptReadingAnchor.replyEnded(
+            sessionId: sessionId,
+            watching: surfaceVisible && appActive
+        )
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
@@ -1601,6 +1958,9 @@ public final class AgentCoordinator {
         // this guard so the drawer updates live for conversations advanced on
         // another device.
         guard let live = sessionId, event.sessionId == live else { return }
+        dismissedConversationActivity.observe(event)
+        if case .thinkingDelta(_, let id, _) = event,
+           dismissedConversationActivity.messageIds.contains(id) { return }
         // Causality gate. While the latest ephemeral tool card is still
         // playing out its dismiss animation, every event that would
         // extend the assistant turn is parked on that card's tail queue.
@@ -1608,12 +1968,13 @@ public final class AgentCoordinator {
         // fade-out completes; that drains the queue back through this
         // same handler in order. Net effect: card → result → fade →
         // next text / next tool reads as one chronological narration.
-        if eventAppendsToTurn(event), let gateIdx = activeEphemeralGateIndex() {
+        if !dismissedConversationActivity.contains(event), eventAppendsToTurn(event), let gateIdx = activeEphemeralGateIndex() {
             parkOnEphemeralGate(at: gateIdx, event: event)
             return
         }
         switch event {
-        case .userMessage(_, let userMessageId, let text):
+        case .userMessage(_, let userMessageId, let text, let submissionIds):
+            queueHandoff.delivered(ids: submissionIds)
             // Cross-device user-message sync. The originator already has
             // an optimistic bubble; the HTTP send-response stamps it with
             // this `userMessageId`. If we find a turn that matches, skip
@@ -1641,8 +2002,8 @@ public final class AgentCoordinator {
             turns.append(.assistant(.init(id: messageId, parts: [], stopReason: nil, failure: nil)))
             transcriptVersion &+= 1
 
-        case .textDelta(_, _, let delta):
-            mutateLastAssistant { turn in
+        case .textDelta(_, let messageId, let delta):
+            mutateAssistant(messageId: messageId) { turn in
                 if case .text(var text) = turn.parts.last {
                     text += delta
                     turn.parts[turn.parts.count - 1] = .text(text)
@@ -1666,7 +2027,7 @@ public final class AgentCoordinator {
             // top-level turn has no separate token-progress surface.
             break
 
-        case .toolInputStart(_, _, let toolCallId, let tool):
+        case .toolInputStart(_, let messageId, let toolCallId, let tool):
             // `plan` is panel-only and `join_subagents` is orchestration-only;
             // neither belongs in the transcript. Plan results still route into
             // the pinned TODO panel below.
@@ -1676,7 +2037,7 @@ public final class AgentCoordinator {
             // seconds later (`toolStart`). Without this the card
             // pops in fully-formed and the user sees nothing for the
             // gap.
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 turn.parts.append(.tool(.init(
                     toolCallId: toolCallId,
                     tool: tool,
@@ -1688,9 +2049,9 @@ public final class AgentCoordinator {
                 )))
             }
 
-        case .toolStart(_, _, let toolCallId, let tool, let args, let argsSummary):
+        case .toolStart(_, let messageId, let toolCallId, let tool, let args, let argsSummary):
             if agentHiddenTranscriptTools.contains(tool) { break }
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 // If the stub from `toolInputStart` is already there,
                 // upgrade it in place; otherwise append a fresh part
                 // (replay backends + non-Anthropic backends may skip
@@ -1719,7 +2080,7 @@ public final class AgentCoordinator {
                 }
             }
 
-        case .toolResult(_, _, let toolCallId, let result, let durationMs):
+        case .toolResult(_, let messageId, let toolCallId, let result, let durationMs):
             // `plan` is panel-only: feed the snapshot directly into
             // `planItems` and skip the transcript-mutation path. No
             // matching tool part was ever appended (see toolInputStart /
@@ -1729,7 +2090,7 @@ public final class AgentCoordinator {
                 planItems = items
                 break
             }
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 if let idx = turn.parts.lastIndex(where: {
                     if case .tool(let call) = $0 { return call.toolCallId == toolCallId }
                     return false
@@ -1765,12 +2126,12 @@ public final class AgentCoordinator {
                 // A directly-cited record is a citation too — bump the
                 // citing turn's chip count so the bubble footer matches
                 // the annotate path.
-                mutateLastAssistant { $0.citationCount += 1 }
+                mutateAssistant(messageId: messageId, toolCallId: toolCallId) { $0.citationCount += 1 }
             default:
                 break
             }
 
-        case .toolChildStart(_, _, let toolCallId, let childIndex, let tool, let argsSummary):
+        case .toolChildStart(_, let messageId, let toolCallId, let childIndex, let tool, let argsSummary):
             // Live per-child progress for a batch tool (search_many /
             // fetch_many). Attach the child onto its parent tool part's
             // `children`, keyed by index; AgentPartView projects one live
@@ -1778,7 +2139,7 @@ public final class AgentCoordinator {
             // out-of-order completion still renders correctly. Bypasses the
             // causality gate (not in `eventAppendsToTurn`) — a live progress
             // signal, never a transcript-extending event.
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -1798,8 +2159,8 @@ public final class AgentCoordinator {
                 turn.parts[idx] = .tool(call)
             }
 
-        case .toolChildResult(_, _, let toolCallId, let childIndex, let result):
-            mutateLastAssistant { turn in
+        case .toolChildResult(_, let messageId, let toolCallId, let childIndex, let result):
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -1890,6 +2251,7 @@ public final class AgentCoordinator {
             }
 
         case .subagentSpawned(_, let subagentId, let specialist, let task, let title, let parentToolCallId):
+            guard !dismissedConversationActivity.dismissesSpawn(parentToolCallId: parentToolCallId) else { break }
             // The worker row supersedes the launch call's temporary tool card.
             // Bind by tool-call id so parallel launches remove only their own
             // orchestration chrome.
@@ -2089,6 +2451,28 @@ public final class AgentCoordinator {
         } else {
             recordCitations.append(record)
         }
+    }
+
+    private func mutateAssistant(
+        messageId: String, toolCallId: String? = nil, _ mutation: (inout AgentAssistantTurn) -> Void
+    ) {
+        guard dismissedConversationActivity.messageIds.contains(messageId) else {
+            mutateLastAssistant(mutation)
+            return
+        }
+        let index = turns.firstIndex { turn in
+            guard case .assistant(let assistant) = turn else { return false }
+            if assistant.id == messageId { return true }
+            guard let toolCallId, dismissedConversationActivity.toolCallIds.contains(toolCallId) else { return false }
+            return assistant.parts.contains { part in
+                if case .tool(let call) = part { return call.toolCallId == toolCallId }
+                return false
+            }
+        }
+        guard let index, case .assistant(var assistant) = turns[index] else { return }
+        mutation(&assistant)
+        turns[index] = .assistant(assistant)
+        transcriptVersion &+= 1
     }
 
     private func mutateLastAssistant(_ mutation: (inout AgentAssistantTurn) -> Void) {
@@ -2379,6 +2763,7 @@ public final class AgentCoordinator {
     var researchPanels: [AgentResearchPanel] {
         for turn in turns.reversed() {
             guard case .assistant(let assistant) = turn else { continue }
+            if dismissedConversationActivity.messageIds.contains(assistant.id) { return [] }
             // The most-recent assistant turn is the run in flight: its
             // sub-agent cards are the researchers. (Matches the portal
             // selector, which stops at the latest assistant turn.)
@@ -2495,10 +2880,12 @@ public final class AgentCoordinator {
             if case .assistant = $0 { return true }
             return false
         }) else { return nil }
-        guard case .assistant(let assistant) = turns[turnIdx] else { return nil }
+        guard case .assistant(let assistant) = turns[turnIdx],
+              !dismissedConversationActivity.messageIds.contains(assistant.id) else { return nil }
         for i in (0 ..< assistant.parts.count).reversed() {
             guard case .tool(let call) = assistant.parts[i] else { continue }
             guard agentEphemeralTools.contains(call.tool) else { continue }
+            if dismissedConversationActivity.toolCallIds.contains(call.toolCallId) { continue }
             // A batch parent (search_many / fetch_many) renders as N
             // independent per-child cards, each with its own dismiss
             // lifecycle — there is no single card to drive a gate flush for
@@ -3092,54 +3479,11 @@ struct AgentResearchPanel: Equatable, Identifiable {
 /// the causality gate key off this single set. Mirrors the portal's
 /// `EPHEMERAL_TOOLS`.
 @available(iOS 17.0, *)
-let agentEphemeralTools: Set<String> = [
+let agentEphemeralTools: Set<String> = AgentToolCards.ephemeralTools.union([
     // Visible only until `agent.subagent.spawned` replaces it with the stable
     // worker row; also dropped from rebuilt history.
     "spawn_subagent",
-    "search_documents",
-    "fetch_document",
-    // Batch retrieval tools: each renders live as N per-child ephemeral cards
-    // (AgentPartView projects `call.children`), dropped from resumed history
-    // like the singular ephemeral tools they wrap.
-    "search_many",
-    "fetch_many",
-    "run_sql",
-    "trace_connections",
-    "lookup_people",
-    "lookup_document_by_url",
-    "search_loops",
-    "fetch_loop",
-    "list_loops",
-    "entity_context",
-    // The steward toolset, reachable from brief talk-back threads.
-    // These are quick background actions the agent narrates in prose —
-    // their cards flash by live (AgentEphemeralActionCard) and are never
-    // rebuilt into resumed history.
-    "open_loop_search",
-    "open_loop_fetch",
-    "open_loop_create",
-    "open_loop_update",
-    "open_loop_delete",
-    "open_loop_ledger_append",
-    "brief_list",
-    "brief_fetch",
-    "brief_create",
-    "brief_update",
-    "brief_delete",
-    "temporal_query",
-    "temporal_annotation_add",
-    "temporal_annotation_update",
-    "temporal_annotation_delete",
-    // Rollout compatibility for persisted turns from older gateways.
-    "time_index_add",
-    "time_index_update",
-    "time_index_delete",
-    "time_index_query",
-    "notes_append", "notes_rewrite", "annotate_durable",
-    "conversation_memory_evidence", "annotation_search", "annotation_revise", "annotation_retract",
-    "annotation_supersede", "annotate_person", "person_annotation_revise",
-    "person_annotation_retract", "person_annotation_supersede", "schedule_agent_run",
-]
+])
 
 /// Orchestration calls that never own durable transcript content.
 @available(iOS 17.0, *)
@@ -3213,8 +3557,16 @@ enum AgentTurnBuilder {
     /// per-turn shape the UI renders. Each user-text message starts a
     /// new turn; subsequent assistant + user(tool_result) messages are
     /// folded into the same assistant turn until the next user-text
-    /// arrives.
-    static func turns(from messages: [ChatMessage], idPrefix: String = "", busy: Bool = false) -> [AgentTurn] {
+    /// arrives — or until an index in `breakBefore`, where an assistant
+    /// message starts a turn of its own even with no user message before
+    /// it (each morning brief, whose turn takes the brief's `turnId`).
+    static func turns(
+        from messages: [ChatMessage],
+        idPrefix: String = "",
+        busy: Bool = false,
+        breakBefore: [Int: DailyBriefMessageRef] = [:]
+    )
+        -> [AgentTurn] {
         var out: [AgentTurn] = []
         var i = 0
         var n = 0
@@ -3243,12 +3595,15 @@ enum AgentTurnBuilder {
                 i += 1
             case .assistant:
                 var assistant = AgentAssistantTurn(
-                    id: "\(idPrefix)a-\(n)", parts: [], stopReason: nil, failure: nil, citationCount: 0
+                    id: breakBefore[i]?.turnId ?? "\(idPrefix)a-\(n)", parts: [], stopReason: nil, failure: nil, citationCount: 0
                 )
                 n += 1
                 var toolIndexById: [String: Int] = [:]
+                let turnStart = i
                 fold: while i < messages.count {
                     switch messages[i] {
+                    case .assistant where i != turnStart && breakBefore[i] != nil:
+                        break fold
                     case .unknown:
                         // The fold belongs to the preceding assistant
                         // turn; a whole new role ends it. Hand control
@@ -3681,7 +4036,7 @@ enum AgentTurnBuilder {
             return url.count > 80 ? String(url.prefix(77)) + "…" : url
         default:
             if agentEphemeralTools.contains(tool) {
-                // Loop-agent actions (briefs / loops / temporal notes / notes):
+                // Steward actions (brief items / loops / temporal notes / notes):
                 // surface the most human-readable arg instead of raw JSON —
                 // these render in the ephemeral card's header.
                 if let title = dict["title"] as? String { return String(title.prefix(80)) }
@@ -3709,6 +4064,11 @@ extension AgentCoordinator {
     /// broken gateway. Pass real `URLError` / `GatewayClient.Error`
     /// shapes so `GatewayErrorView`'s classifier sees the same
     /// inputs it would in production.
+    func installPreviewConversationControls(_ controls: ConversationControls) {
+        conversationControls = controls
+        conversationControlsSupported = true
+    }
+
     func installPreviewFatal(error: Error) {
         self.fatalError = error
     }
@@ -3834,8 +4194,7 @@ extension AgentCoordinator {
     /// Test/preview hook — stamp in a transcript without touching the
     /// network.
     func installPreviewState(
-        // Nil for the landing: a session is minted lazily on the first send, so a conversation
-        // nobody has spoken in yet does not have one.
+        // Nil for the landing: a session is minted lazily on the first send.
         sessionId: String?,
         model: String,
         backend: String,
@@ -3850,7 +4209,8 @@ extension AgentCoordinator {
         conversationsNextCursor: String? = nil,
         transcriptNextCursor: String? = nil,
         conversationsError: Error? = nil,
-        conversationActionError: Error? = nil
+        conversationActionError: Error? = nil,
+        origin: ConversationOrigin? = nil
     ) {
         sendOperationGeneration &+= 1
         turnGeneration &+= 1
@@ -3889,6 +4249,7 @@ extension AgentCoordinator {
             )
         }
         self.planItems = planItems
+        self.conversationOrigin = origin
     }
 }
 #endif

@@ -37,9 +37,6 @@ export const SYSTEM_SWEEPS: readonly SystemSweepDef[] = [
     // waits on — deliberately. The digest is an editorial pass over what the
     // overnight work found, and this pass is most of that work.
     expectedBeforeDigest: true,
-    // Its product is informative event preparation — restating today with the
-    // context around it — which the reactive awareness gate reads as an echo.
-    briefLane: "lookahead",
     steeringPrompt:
       "Prepare the user for the day that is starting. Look at what is happening today — meetings, appointments, scheduled events — and for the ones that merit it write an informative brief: what it is, when, with whom, and the context worth having to hand, drawn from the surrounding correspondence. Stamp each brief with the time of the event it concerns so the feed can rank it into the right part of the day, and cite the documents you drew it from. Check the open loops falling due today or very shortly and remind the user where a reminder would help. Then look a week out — across both source-owned schedules and your own recorded interpretations of upcoming time — and for anything genuinely approaching that needs preparing, surface it and open a loop if it is a real obligation nobody is tracking yet. If along the way you find a tracked obligation has already been fulfilled — a receipt, a confirmation, a reply that settles it — close its loop as done with a note and remove the briefs it made moot; never delete a loop that was actually completed, because the record of what happened is worth keeping. Check what is already in the feed before writing anything, so an earlier pass's card is updated rather than duplicated. Where an event later today would benefit from the freshest possible picture, schedule yourself a short follow-up shortly beforehand to rebuild its brief. Most days only a handful of things merit a brief, and an empty pass is a fine outcome.",
   },

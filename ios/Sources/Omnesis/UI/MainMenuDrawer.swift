@@ -11,8 +11,8 @@ import SwiftUI
 ///
 /// Layout (top → bottom):
 ///   - Header: the "Omnesis" wordmark.
-///   - Navigation rows: Search, Briefs when the gateway offers it, Sources,
-///     People, and experimental-only destinations.
+///   - Navigation rows: Search, Tasks when the gateway offers it, Tell
+///     Omnesis, Sources, People, and experimental-only destinations.
 ///   - Conversations list: prior agent sessions with the active one
 ///     highlighted.
 ///   - A bar held across the bottom carrying the two actions that are never a
@@ -55,9 +55,8 @@ struct MainMenuDrawer: View {
             }
             // Refresh drawer state each time it opens — the same refresh-on-open
             // cadence for both surfaces the drawer shows, no live push:
-            //   - The Briefs unread badge. The store's refresh no-ops (zeroes the
-            //     badge) when experimental mode is off, so it's cheap even with the
-            //     feature off.
+            //   - The Tasks count. The store's refresh zeroes it against a
+            //     gateway that does not serve Tasks.
             //   - The Privacy badge. A held answer expires, so the count has to
             //     be read afresh rather than carried from whenever the Privacy
             //     screen was last visited.
@@ -68,7 +67,7 @@ struct MainMenuDrawer: View {
             //     full relaunch.
             .onChange(of: isOpen) { _, nowOpen in
                 if nowOpen {
-                    Task { await store.refreshBriefsUnreadCount() }
+                    Task { await store.refreshTasksTodayCount() }
                     Task { await store.refreshPrivacyPendingCount() }
                     Task { await store.agent.refreshConversations() }
                     // Siri and Watch capture can enqueue through separate
@@ -85,6 +84,11 @@ struct MainMenuDrawer: View {
                 scheduleWarningDeadline()
             }
             .onDisappear { warningDeadlineTask?.cancel() }
+            // The drawer is built once, under the app, before `/status` has
+            // said whether Tasks exists; read the count as soon as it does.
+            .task(id: store.tasksAvailable) {
+                if store.tasksAvailable { await store.refreshTasksTodayCount() }
+            }
     }
 
     private var panel: some View {
@@ -215,36 +219,29 @@ struct MainMenuDrawer: View {
             row(id: "search", icon: "magnifyingglass", label: "Search", isActive: selection == .search) {
                 select(.search)
             }
-            // Omnesis Briefs — the proactive awareness feed. Experimental mode
-            // keeps historical briefs available even while the background
-            // agent is parked. A marked row still opens the feed; its warning
-            // banner owns the shortcut to the model picker.
-            if let destination = store.briefsMenuEntry.destination {
+            // Tasks is a standard surface: shown whenever the gateway serves
+            // it, never gated on experimental mode. Its label carries today's
+            // open count, "Tasks (4)".
+            if store.tasksAvailable {
                 row(
-                    id: "briefs",
-                    icon: "rectangle.stack",
-                    label: "Briefs",
-                    isActive: selection == .briefs,
-                    badge: store.briefsUnreadCount,
-                    warning: store.briefsMenuEntry == .needsAttention
-                        ? RowWarning(label: "Background agent needs attention")
-                        : nil
+                    id: "tasks",
+                    icon: "checklist",
+                    label: TaskJournal.menuLabel(todayCount: store.tasksTodayCount),
+                    isActive: selection == .tasks
                 ) {
-                    switch destination {
-                    case .feed: select(.briefs)
-                    }
+                    select(.tasks)
                 }
             }
 
+            // Tell Omnesis is generally available. The offline queue still
+            // preserves captures when paired to an older gateway without /notes.
+            tellOmnesisRow
             row(id: "sources", icon: "square.grid.2x2", label: "Sources", isActive: selection == .sources) {
                 select(.sources)
             }
             row(id: "people", icon: "person.2", label: "People", isActive: selection == .people) {
                 select(.people)
             }
-            // Tell Omnesis is generally available. The offline queue still
-            // preserves captures when paired to an older gateway without /notes.
-            tellOmnesisRow
             // Privacy is a standard control surface, not an experimental one:
             // an integration asking a question can require an owner decision
             // in ordinary operation, and the badge is how the owner learns a
@@ -489,7 +486,7 @@ private struct MenuBadge: View {
 }
 
 @available(iOS 17.0, *)
-#Preview("MainMenuDrawer — Briefs unread badge") {
+#Preview("MainMenuDrawer — Tasks for today") {
     @Previewable @State var isOpen = true
     @Previewable @State var selection: HomeTab = .agent
     return ZStack(alignment: .leading) {
@@ -497,9 +494,9 @@ private struct MenuBadge: View {
         MainMenuDrawer(isOpen: $isOpen, selection: $selection, onOpenSettings: {})
             .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
             .environment(AppStore.preview(
-                statusSnapshot: PreviewMocks.statusSnapshotBriefsActive,
-                briefsUnreadCount: 3,
-                agentPreview: PreviewMocks.agentConversationsRich
+                statusSnapshot: PreviewMocks.statusSnapshotTasks,
+                tasksTodayCount: 4,
+                agentPreview: PreviewMocks.agentConversationsWithMorningBrief
             ))
     }
     .preferredColorScheme(.dark)
@@ -515,22 +512,6 @@ private struct MenuBadge: View {
             .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
             .environment(AppStore.preview(
                 privacyPendingCount: 2,
-                agentPreview: PreviewMocks.agentConversationsRich
-            ))
-    }
-    .preferredColorScheme(.dark)
-}
-
-@available(iOS 17.0, *)
-#Preview("MainMenuDrawer — Briefs needs attention") {
-    @Previewable @State var isOpen = true
-    @Previewable @State var selection: HomeTab = .agent
-    return ZStack(alignment: .leading) {
-        Theme.bgDrawer.ignoresSafeArea()
-        MainMenuDrawer(isOpen: $isOpen, selection: $selection, onOpenSettings: {})
-            .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
-            .environment(AppStore.preview(
-                statusSnapshot: PreviewMocks.statusSnapshotBriefsNeedsAttention,
                 agentPreview: PreviewMocks.agentConversationsRich
             ))
     }

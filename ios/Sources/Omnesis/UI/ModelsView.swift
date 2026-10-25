@@ -314,8 +314,8 @@ struct ModelsContent: View {
     /// "Recently used" entries for a capability. Never throws — a failure
     /// yields [], hiding the picker's section.
     var onLoadRecent: (String) async -> [RecentModelEntry] = { _ in [] }
-    /// Optional deep link used by focused setup affordances such as the
-    /// Briefs warning. Unknown/withheld capabilities safely leave the list up.
+    /// Optional deep link that opens one capability's picker on arrival.
+    /// Unknown/withheld capabilities safely leave the list up.
     var initialPickerRole: String?
 
     @State private var notice: Notice?

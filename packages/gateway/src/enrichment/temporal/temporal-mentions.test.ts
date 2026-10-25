@@ -4,11 +4,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { serializeToolResultForModel } from "@omnesis/agent";
 import { createDatabase } from "../../db.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { replaceDocumentTemporalProjections } from "../temporal-projections/document-storage.js";
 import { applyExtractedDates, ensureMentionDayColumns } from "../dates/storage.js";
 import { mentionDays } from "../dates/mention-bounds.js";
+import { extractDatesFromText } from "../dates/extractor.js";
 import { insertTemporalAnnotation } from "../temporal-annotations/storage.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../../sources/omnesis-chat/ids.js";
 import { MENTION_COUNT_CAP } from "./temporal-mentions.js";
@@ -122,6 +124,23 @@ describe("temporal query — mention layer", () => {
     });
     expect(item.id).toMatch(/^dm_\d{16}$/);
     expect(result.summary).toEqual({ anchored: 1, spanning: 0 });
+  });
+
+  it("hands the model a mention of an instant with its local time, never a bare UTC clock", async () => {
+    const content = "# Rail to Riverside\n**When:** 2026-10-18T17:28:00Z → 2026-10-18T18:26:00Z";
+    const dates = extractDatesFromText(content, new Date("2026-09-01T09:00:00.000Z"));
+    seed("instant", dates, { title: "Rail to Riverside", content });
+
+    const result = await mentions({ from: "2026-10-18", timeZone: "Europe/London" });
+    const text = serializeToolResultForModel(
+      { kind: "structured", resultType: "temporal.results", data: result },
+      { timeZone: "Europe/London" },
+    );
+
+    expect(text).toContain(
+      "Rail to Riverside — “2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London)”",
+    );
+    expect(text).not.toMatch(/T17:28(?::00)?”/u);
   });
 
   it("leaves out mentions from email judged not worth recording while the worth gate is active", async () => {

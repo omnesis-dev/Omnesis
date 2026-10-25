@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AgentService } from "./service.js";
-import type { AgentEvent } from "@omnesis/core";
+import type { AgentEvent, AgentTextDeltaEvent } from "@omnesis/core";
 import type { ChatBackend, DocumentPort, SearchPort, ToolCaller, TurnInput } from "@omnesis/agent";
 
 const stubSearch: SearchPort = {
@@ -28,12 +28,14 @@ const stubSearch: SearchPort = {
 const stubDocument: DocumentPort = { fetch: async () => null };
 
 /** Records the turn the session hands the backend, then ends the turn. */
-function recordingService(): {
+function recordingService(reply?: string): {
   service: AgentService;
   seen: () => TurnInput | undefined;
+  streamed: () => string;
   turnComplete: Promise<void>;
 } {
   let seen: TurnInput | undefined;
+  let streamed = "";
   let resolveTurn!: () => void;
   const turnComplete = new Promise<void>((resolve) => {
     resolveTurn = resolve;
@@ -43,6 +45,11 @@ function recordingService(): {
     model: "recording",
     async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
       seen = input;
+      if (reply)
+        yield {
+          type: "agent.text.delta",
+          payload: { sessionId: input.sessionId, messageId: input.messageId, delta: reply },
+        };
       yield {
         type: "agent.message.end",
         payload: {
@@ -60,11 +67,13 @@ function recordingService(): {
     // The turn is over when its end event reaches the broadcast — this service
     // has no transcript store, so there is no persistence hook to wait on.
     broadcastEvent: (event) => {
+      if (event.type === "agent.text.delta")
+        streamed += (event.payload as AgentTextDeltaEvent).delta;
       if (event.type === "agent.message.end") resolveTurn();
     },
     sessionIdGen: () => "S_1",
   });
-  return { service, seen: () => seen, turnComplete };
+  return { service, seen: () => seen, streamed: () => streamed, turnComplete };
 }
 
 async function turnFor(caller?: ToolCaller): Promise<TurnInput | undefined> {
@@ -93,4 +102,18 @@ describe("the audience a conversation speaks for", () => {
   it("stays absent when the session was opened without one", async () => {
     expect((await turnFor())?.caller).toBeUndefined();
   });
+});
+
+// A conversation's reply reaches the user exactly as the agent wrote it,
+// streamed live.
+it("streams a conversation reply unchanged", async () => {
+  const { service, streamed, turnComplete } = recordingService("Hello.");
+  try {
+    const { sessionId } = await service.createSession("token:test", {});
+    service.sendMessage("token:test", sessionId, "Hi.");
+    await turnComplete;
+    expect(streamed()).toBe("Hello.");
+  } finally {
+    await service.dispose();
+  }
 });

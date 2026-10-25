@@ -7,7 +7,7 @@ import Foundation
 ///
 /// Screens keep their domain items themselves — this type owns only the
 /// cursor and request lifecycle. That keeps it reusable for ordinary arrays,
-/// tagged recent-item responses, and richer stores such as `BriefsFeedState`.
+/// tagged recent-item responses, and richer stores that track more than the array.
 struct CursorPagingState {
     enum Phase: Equatable {
         case refresh

@@ -111,16 +111,17 @@ describe("temporal_query contract", () => {
     expect(js.properties?.kinds?.items?.enum).toEqual([...ACCEPTED_TEMPORAL_KINDS]);
   });
 
-  it("rejects limits outside the exact 1-100 contract", async () => {
-    const { port } = recordingPort();
+  it("rejects invalid limits and reads one above the maximum as the maximum", async () => {
+    const { port, seenInput } = recordingPort();
     const tool = createTemporalQueryTool({ port });
 
     const base = { from: "now", timeZone: "UTC" };
     expect((await tool.invoke({ ...base, limit: 0 }, ctx)).kind).toBe("error");
     expect((await tool.invoke({ ...base, limit: 1.5 }, ctx)).kind).toBe("error");
-    expect((await tool.invoke({ ...base, limit: TEMPORAL_QUERY_MAX_LIMIT + 1 }, ctx)).kind).toBe(
-      "error",
-    );
+    expect((await tool.invoke({ ...base, limit: 500 }, ctx)).kind).not.toBe("error");
+    expect(seenInput()?.limit).toBe(TEMPORAL_QUERY_MAX_LIMIT);
+    const js = zodToJsonSchema(tool.schema) as { properties?: { limit?: { maximum?: number } } };
+    expect(js.properties?.limit?.maximum).toBe(TEMPORAL_QUERY_MAX_LIMIT);
   });
 
   it("advertises from/timeZone and limit as optional, with an integer limit", () => {

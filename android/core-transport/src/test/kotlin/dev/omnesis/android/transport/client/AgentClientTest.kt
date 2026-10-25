@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.http.GatewayHttp
 import java.time.ZoneId
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -27,6 +28,48 @@ class AgentClientTest {
     @After fun tearDown() { server.shutdown() }
 
     private fun client() = AgentClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
+
+    @Test
+    fun controls_accept_future_fields_and_statuses() = runTest {
+        server.enqueue(MockResponse().setBody("""{"busy":true,"future":{},"pendingClarification":{"id":"q_one","question":"Which period?","choices":[{"label":"This year","extra":true}]},"queuedMessages":[{"id":"m_one","text":"Compare totals","status":"paused","future":123}]}"""))
+        val result = client().controls("s_one")
+        assertEquals("/agent/sessions/s_one/controls", server.takeRequest().path)
+        assertEquals("This year", result.pendingClarification?.choices?.single()?.label)
+        assertEquals("paused", result.queuedMessages.single().status)
+    }
+
+    @Test
+    fun defaultQueueModeIsRequiredOnWireIncludingPreviouslyPersistedRequests() = runTest {
+        // Older app versions omitted the default mode from persisted requests as well as HTTP.
+        val saved = OmnesisJson.decodeFromString<ConversationSubmissionBody>(
+            """{"clientMessageId":"saved-request","text":"Travel","clarificationId":"question-one"}""",
+        )
+        for (body in listOf(ConversationSubmissionBody("new-request", "Annual totals"), saved)) {
+            server.enqueue(MockResponse().setBody("""{"submission":{"id":"accepted","text":"Accepted","status":"queued"}}"""))
+            client().submit("s_one", body)
+            val payload = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals("queue", payload["mode"]?.jsonPrimitive?.content)
+            assertEquals(body.clientMessageId, payload["clientMessageId"]?.jsonPrimitive?.content)
+            assertEquals(body.clarificationId, payload["clarificationId"]?.jsonPrimitive?.content)
+            assertTrue("Optional absent flags stay omitted", "deepResearch" !in payload)
+        }
+    }
+
+    @Test
+    fun retry_reuses_submission_id_and_preserves_interrupt_and_clarification() = runTest {
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"submission":{"id":"request-one","text":"Annual totals","status":"queued"},"future":true}""")) }
+        val body = ConversationSubmissionBody("request-one", "Annual totals", "interrupt", true, "question-one")
+        repeat(2) { client().submit("s_one", body) }
+        val first = server.takeRequest()
+        val second = server.takeRequest()
+        assertEquals("/agent/sessions/s_one/submissions", first.path)
+        val payload = first.body.readUtf8()
+        assertEquals(payload, second.body.readUtf8())
+        val json = OmnesisJson.parseToJsonElement(payload).jsonObject
+        assertEquals("request-one", json["clientMessageId"]?.jsonPrimitive?.content)
+        assertEquals("interrupt", json["mode"]?.jsonPrimitive?.content)
+        assertEquals("question-one", json["clarificationId"]?.jsonPrimitive?.content)
+    }
 
     /**
      * The device's zone rides the session-create body so the agent renders
@@ -188,15 +231,16 @@ class AgentClientTest {
         server.enqueue(
             MockResponse().setBody(
                 """{"sessionId":"s_one","messages":[],"messagesAreVisible":true,
-                   "origin":{"kind":"brief","runId":"run-example","brief":{"title":"Invented brief"},"seedMessageCount":2},
+                   "origin":{"kind":"watch_firing","firingId":"fir-example","runId":"fir-example","watchId":"watch-example",
+                             "watch":{"name":"Invented watch","condition":"A fictional change","firedAt":1},"seedMessageCount":2},
                    "messagePageInfo":{"hasMore":true,"limit":25,"nextCursor":"older/cursor"}}""",
             ),
         )
         val session = client().createSession("s_one", transcriptLimit = 25)
         assertEquals("older/cursor", session.messagePageInfo?.nextCursor)
-        assertEquals("brief", session.origin?.kind)
+        assertEquals("watch_firing", session.origin?.kind)
         assertEquals(2, session.origin?.seedMessageCount)
-        assertTrue(session.origin?.brief != null)
+        assertTrue(session.origin?.watch != null)
         server.takeRequest().also {
             assertEquals("POST", it.method)
             assertEquals("/agent/sessions?transcriptLimit=25", it.path)
@@ -217,4 +261,79 @@ class AgentClientTest {
             server.takeRequest().path,
         )
     }
+
+    /** The brief's items are read with the conversation id and day as single encoded segments, never cached. */
+    @Test
+    fun daily_brief_items_are_read_per_day_and_never_cached() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"day":"2026-10-14","messageId":"mb_today","items":[{"rank":1,"observationId":"o","summary":"S"}]}""",
+            ),
+        )
+
+        val page = client().dailyBriefItems("conv brief/1", "2026-10-14")
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/agent/conversations/conv%20brief%2F1/briefs/2026-10-14", request.path)
+        assertEquals("no-store", request.getHeader("Cache-Control"))
+        assertEquals(1, page.items.size)
+    }
+
+    /** A reaction is a PUT on the item, its words riding along, the receipt (with the note's id) read back. */
+    @Test
+    fun react_to_brief_item_puts_the_reaction_with_its_note() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"observationId":"obs/1","reaction":"factual_error","note":"The tuner comes Friday.",
+                   "noteId":"0f6c0e2a-9b1e-4a53-8c3f-1a2b3c4d5e6f","at":"2026-10-14T08:00:00.000Z"}""",
+            ),
+        )
+
+        val receipt = client().reactToBriefItem(
+            "conv brief/1",
+            "2026-10-14",
+            "obs/1",
+            reaction = "factual_error",
+            note = "  The tuner comes Friday. ",
+        )
+
+        val request = server.takeRequest()
+        assertEquals("PUT", request.method)
+        assertEquals("/agent/conversations/conv%20brief%2F1/briefs/2026-10-14/items/obs%2F1/reaction", request.path)
+        val body = OmnesisJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("factual_error", body["reaction"]?.jsonPrimitive?.content)
+        assertEquals("The tuner comes Friday.", body["note"]?.jsonPrimitive?.content)
+        assertTrue("noteId" !in body)
+        assertEquals("0f6c0e2a-9b1e-4a53-8c3f-1a2b3c4d5e6f", receipt.noteId)
+        assertEquals("factual_error", receipt.asReaction?.kind)
+        assertEquals("The tuner comes Friday.", receipt.asReaction?.note)
+        assertEquals("2026-10-14T08:00:00.000Z", receipt.asReaction?.at)
+    }
+
+    /** Clearing sends an explicit JSON null, which the gateway's body schema requires, and no note. */
+    @Test
+    fun clearing_a_brief_reaction_sends_json_null() = runTest {
+        server.enqueue(MockResponse().setBody("""{"observationId":"obs_a","reaction":null}"""))
+
+        val receipt = client().reactToBriefItem("conv", "2026-10-14", "obs_a", reaction = null, note = "   ")
+
+        val body = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(body.containsKey("reaction"))
+        assertEquals(JsonNull, body["reaction"])
+        assertTrue("note" !in body)
+        assertEquals(null, receipt.asReaction)
+    }
+    @Test
+    fun sendQueuedNowRetriesOriginalIdsWithoutResubmittingText() = runTest {
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"busy":true,"queuedMessages":[],"capabilities":{"queueSendNow":true,"coalescedQueue":true,"future":true}}""")) }
+        repeat(2) {
+            val controls = client().sendQueuedNow("s_one", listOf("first", "second"))
+            assertTrue(controls.capabilities.queueSendNow)
+            val request = server.takeRequest()
+            assertEquals("/agent/sessions/s_one/queue/send-now", request.path)
+            assertEquals("""{"submissionIds":["first","second"]}""", request.body.readUtf8())
+        }
+    }
+
 }

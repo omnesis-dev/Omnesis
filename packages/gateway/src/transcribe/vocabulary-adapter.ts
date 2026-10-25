@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { TranscribeCapability } from "@omnesis/core";
+
 /** Vocabulary selection is recognizer-independent; this adapter owns runtime limits. */
 export interface RankedTranscriptionVocabulary {
   entries: readonly { text: string; score: number }[];
@@ -13,27 +15,35 @@ export interface WhisperVocabularyHint {
 }
 
 // Standard Whisper has a 448-token text context; whisper.cpp retains at most
-// half of it as an initial prompt. Larger caller budgets cannot raise this cap.
+// half of it as an initial prompt, and OpenAI-compatible transcription
+// endpoints document the same 224-token prompt limit. Larger caller budgets
+// cannot raise this cap.
 export const WHISPER_MAX_PROMPT_TOKENS = 224;
 
+/** Runtimes whose prompt this adapter knows how to bound. */
+const PROMPT_RUNTIMES: ReadonlySet<string> = new Set<
+  NonNullable<TranscribeCapability["vocabularyRuntime"]>
+>(["smart-whisper", "openai-prompt"]);
+
 /**
- * Pack complete, high-ranked phrases into a smart-whisper initial prompt.
+ * Pack complete, high-ranked phrases into a Whisper initial prompt.
  *
- * smart-whisper does not expose whisper_tokenize. Its bundled whisper.cpp
- * tokenizer emits one token per nonempty UTF-8 substring, so UTF-8 byte length
- * is a guaranteed upper bound on token count. This deliberately underfills the
+ * Neither runtime exposes its tokenizer. Whisper's tokenizer is a byte-level
+ * BPE that emits at least one byte per token, so UTF-8 byte length is a
+ * guaranteed upper bound on token count. This deliberately underfills the
  * token budget, particularly for non-Latin scripts, rather than truncating the
- * most relevant terms unpredictably inside the native runtime. Separators count
+ * most relevant terms unpredictably inside the recognizer. Separators count
  * toward the same bound. No instructions or corpus prose are added.
  *
- * Only the known local binding is supported. Other runtimes must declare their
- * own capabilities before receiving private vocabulary.
+ * `smart-whisper` is the in-process binding; `openai-prompt` is the `prompt`
+ * field of an OpenAI-compatible transcription endpoint. Other runtimes must
+ * declare their own capabilities before receiving private vocabulary.
  */
 export function adaptTranscriptionVocabulary(
   vocabulary: RankedTranscriptionVocabulary,
   options: { runtime: string; maxPromptTokens?: number },
 ): WhisperVocabularyHint | undefined {
-  if (options.runtime !== "smart-whisper") return undefined;
+  if (!PROMPT_RUNTIMES.has(options.runtime)) return undefined;
   const requested = options.maxPromptTokens ?? WHISPER_MAX_PROMPT_TOKENS;
   if (!Number.isFinite(requested) || requested < 1) return undefined;
   const budget = Math.min(Math.floor(requested), WHISPER_MAX_PROMPT_TOKENS);

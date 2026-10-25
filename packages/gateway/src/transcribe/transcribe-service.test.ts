@@ -15,6 +15,15 @@ const enc = (s: string) => new TextEncoder().encode(s);
 
 const disabled: ResolvedAssignment = { role: "transcriber", kind: "disabled" };
 const replay: ResolvedAssignment = { role: "transcriber", kind: "replay" };
+const httpAssignment: ResolvedAssignment = {
+  role: "transcriber",
+  kind: "http",
+  backendKey: "whisper-gpu",
+  model: "whisper-large-v3-turbo",
+  url: "http://127.0.0.1:8003",
+  allowRemoteInference: false,
+  available: true,
+};
 const localUnavailable: ResolvedAssignment = {
   role: "transcriber",
   kind: "local",
@@ -66,23 +75,48 @@ describe("TranscribeService", () => {
     expect(await svc.transcribe(enc("hi"), "audio/ogg")).toBeNull();
   });
 
-  test("transcription is local-only: http and anthropic assignments resolve to no transcriber", async () => {
-    const http: ResolvedAssignment = {
-      role: "transcriber",
-      kind: "http",
-      backendKey: "vllm",
-      model: "whisper-1",
-      url: "http://localhost:8000",
-      allowRemoteInference: false,
-      available: true,
-    };
-    expect(
-      await new TranscribeService({ resolveAssignment: () => http }).transcribe(
-        enc("hi"),
-        "audio/ogg",
-      ),
-    ).toBeNull();
+  test("an http assignment transcribes through its backend", async () => {
+    const svc = new TranscribeService({
+      resolveAssignment: () => httpAssignment,
+      deps: {
+        decodeAudio: async () => new Float32Array(16_000),
+        fetchFn: (async () => Response.json({ text: " from the server " })) as typeof fetch,
+      },
+    });
+    await expect(svc.transcribe(enc("hi"), "audio/ogg")).resolves.toEqual({
+      text: "from the server",
+      durationSec: 1,
+    });
+  });
 
+  test("moving or re-keying the http backend reloads the transcriber", async () => {
+    let assignment: ResolvedAssignment = httpAssignment;
+    let apiKey = "first";
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const svc = new TranscribeService({
+      resolveAssignment: () => assignment,
+      deps: {
+        getBackendApiKey: () => apiKey,
+        decodeAudio: async () => new Float32Array(16_000),
+        fetchFn: (async (input: string | URL | Request, init?: RequestInit) => {
+          seen.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+          return Response.json({ text: "ok" });
+        }) as typeof fetch,
+      },
+    });
+    await svc.transcribe(enc("a"), "audio/ogg");
+    apiKey = "second";
+    await svc.transcribe(enc("b"), "audio/ogg");
+    assignment = { ...httpAssignment, url: "http://127.0.0.1:9009" };
+    await svc.transcribe(enc("c"), "audio/ogg");
+    expect(seen).toEqual([
+      { url: "http://127.0.0.1:8003/v1/audio/transcriptions", auth: "Bearer first" },
+      { url: "http://127.0.0.1:8003/v1/audio/transcriptions", auth: "Bearer second" },
+      { url: "http://127.0.0.1:9009/v1/audio/transcriptions", auth: "Bearer second" },
+    ]);
+  });
+
+  test("a chat-agent backend assignment resolves to no transcriber", async () => {
     const anthropic: ResolvedAssignment = {
       role: "transcriber",
       kind: "anthropic",
@@ -96,6 +130,31 @@ describe("TranscribeService", () => {
         "audio/ogg",
       ),
     ).toBeNull();
+  });
+
+  test("skips a queued transcription whose caller stopped waiting", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const svc = new TranscribeService({
+      resolveAssignment: () => httpAssignment,
+      deps: {
+        decodeAudio: async () => new Float32Array(16_000),
+        fetchFn: (async () => {
+          calls += 1;
+          if (calls === 1) await new Promise<void>((resolve) => (release = resolve));
+          return Response.json({ text: "done" });
+        }) as typeof fetch,
+      },
+    });
+    const first = svc.transcribe(enc("one"), "audio/ogg");
+    const abandoned = new AbortController();
+    const second = svc.transcribe(enc("two"), "audio/ogg", { signal: abandoned.signal });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    abandoned.abort();
+    release();
+    await expect(first).resolves.toMatchObject({ text: "done" });
+    await expect(second).resolves.toBeNull();
+    expect(calls).toBe(1);
   });
 
   test("transcribes through the synthetic (replay) capability", async () => {
@@ -362,6 +421,11 @@ describe("TranscribeService", () => {
       reason: "No transcriber model is assigned.",
     });
     expect(readinessOf(localUnavailable)).toEqual({ runnable: false, reason: "not installed" });
+    expect(readinessOf(httpAssignment)).toEqual({ runnable: true });
+    expect(
+      readinessOf({ ...httpAssignment, available: false, reason: "connect ECONNREFUSED" }),
+    ).toEqual({ runnable: false, reason: "connect ECONNREFUSED" });
+    expect(readinessOf({ ...httpAssignment, model: "" }).runnable).toBe(false);
     expect(
       readinessOf({
         role: "transcriber",

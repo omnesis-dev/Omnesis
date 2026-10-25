@@ -33,8 +33,7 @@ const SHIPPED = {
     failedRuns: 0,
     promptTokens: 900,
     completionTokens: 100,
-    briefsCreated: 1,
-    briefsHeld: 2,
+    observationsNoted: 1,
     loopsCreated: 3,
     loopsTouched: 5,
     annotationsCreated: 0,
@@ -96,18 +95,18 @@ describe("SweepsView table", () => {
       .toEqual(["Loose ends", "Quarter close"]);
     // Every column but the name and the actions is the shared numeric column.
     // Counting them exactly is what makes this catch a partial rename: two
-    // schedule columns losing the class still leaves eight counters behind it.
+    // schedule columns losing the class still leaves seven counters behind it.
     const cells = [...rows[0].querySelectorAll("td")];
-    expect(cells).toHaveLength(12);
-    expect(cells.filter((cell) => cell.classList.contains("portal-table-num"))).toHaveLength(10);
+    expect(cells).toHaveLength(11);
+    expect(cells.filter((cell) => cell.classList.contains("portal-table-num"))).toHaveLength(9);
     expect(cells[1].classList.contains("portal-table-num")).toBe(true);
     expect(cells[2].classList.contains("portal-table-num")).toBe(true);
-    expect(host.querySelectorAll("thead th.portal-table-num")).toHaveLength(10);
+    expect(host.querySelectorAll("thead th.portal-table-num")).toHaveLength(9);
     // Each counter reads its own field off the stats block, so a fixture with a
     // field missing would render the string "undefined" into a cell.
     expect(cells.map((cell) => cell.textContent?.trim()).join("|")).not.toContain("undefined");
     expect(cells[3].textContent?.trim()).toBe("4");
-    expect(cells[5].textContent?.trim()).toBe("2");
+    expect(cells[5].textContent?.trim()).toBe("3");
     // The row's origin and state read as pills under its name.
     expect(rows[0].querySelector(".portal-table-sub .portal-pill")?.textContent?.trim()).toBe("System");
     expect(rows[1].querySelector(".portal-table-sub .portal-pill")?.textContent?.trim()).toBe("Yours");

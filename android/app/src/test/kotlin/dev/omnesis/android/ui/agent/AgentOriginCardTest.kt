@@ -8,14 +8,17 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
+import dev.omnesis.android.transport.dto.AssistantPart
+import dev.omnesis.android.transport.dto.ChatMessage
 import dev.omnesis.android.transport.dto.ConversationOrigin
+import dev.omnesis.android.transport.dto.TaskOriginSnapshot
+import dev.omnesis.android.transport.dto.UserPart
 import dev.omnesis.android.transport.dto.WatchFiringOriginSnapshot
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,7 +29,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * An anchored thread — one opened from a brief or a watch firing — is a reply to a card, and
+ * An anchored thread — one the agent opened when a watch fired — is a reply to a card, and
  * the gateway hides the folded run transcript that seeded it. On a thread nobody has replied to
  * yet that seed is the *whole* transcript, so there are no visible turns at all: the card is the
  * only thing standing between the reader and a screen that looks broken.
@@ -37,16 +40,6 @@ class AgentOriginCardTest {
 
     @get:Rule
     val compose = createComposeRule()
-
-    private val briefOrigin = ConversationOrigin(
-        kind = "brief",
-        brief = BriefOriginSnapshot(
-            title = "Two invoices quote the same reference",
-            description = "Studio Northstar billed reference NS-8841 twice.",
-            body = "The second invoice arrived nine days after the first.",
-        ),
-        seedMessageCount = 2,
-    )
 
     private val watchOrigin = ConversationOrigin(
         kind = "watch_firing",
@@ -59,10 +52,23 @@ class AgentOriginCardTest {
         seedMessageCount = 1,
     )
 
+    private val taskOrigin = ConversationOrigin(
+        kind = "task",
+        runId = "task_example",
+        taskId = "task_example",
+        task = TaskOriginSnapshot(
+            title = "Renew the studio lease",
+            state = "open",
+            due = "2026-10-22",
+            sourceCount = 3,
+        ),
+        seedMessageCount = 0,
+    )
+
     @Test
     fun a_recognised_origin_carrying_its_snapshot_has_a_card() {
-        assertTrue(hasContextCard(briefOrigin))
         assertTrue(hasContextCard(watchOrigin))
+        assertTrue(hasContextCard(taskOrigin))
     }
 
     /**
@@ -72,32 +78,11 @@ class AgentOriginCardTest {
     @Test
     fun an_origin_without_its_snapshot_or_of_an_unknown_kind_has_no_card() {
         assertFalse(hasContextCard(null))
-        assertFalse(hasContextCard(briefOrigin.copy(brief = null)))
         assertFalse(hasContextCard(watchOrigin.copy(watch = null)))
+        assertFalse(hasContextCard(taskOrigin.copy(task = null)))
         assertFalse(hasContextCard(ConversationOrigin(kind = "something_later", seedMessageCount = 2)))
-    }
-
-    @Test
-    fun a_brief_thread_with_nothing_said_yet_shows_its_card_and_not_the_blank_chat() {
-        showAgent(briefOrigin)
-
-        compose.onNodeWithText("Two invoices quote the same reference").assertIsDisplayed()
-        compose.onNodeWithText("Studio Northstar billed reference NS-8841 twice.").assertIsDisplayed()
-        compose.onNodeWithText("Ask Omnesis about your corpus").assertDoesNotExist()
-    }
-
-    /**
-     * The toggle speaks as one control, so its label is the accessible name rather than the two
-     * words drawn inside it.
-     */
-    @Test
-    fun a_brief_card_keeps_its_body_behind_a_disclosure() {
-        showAgent(briefOrigin)
-
-        compose.onNodeWithText("The second invoice arrived nine days after the first.").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Show the brief's details").performClick()
-        compose.onNodeWithText("The second invoice arrived nine days after the first.").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Hide the brief's details").assertIsDisplayed()
+        // The Morning brief conversation is an ordinary visible thread with nothing to hide.
+        assertFalse(hasContextCard(ConversationOrigin(kind = "daily_brief", runId = "run_example")))
     }
 
     @Test
@@ -116,7 +101,7 @@ class AgentOriginCardTest {
     @Test
     fun tapping_a_watch_firing_card_opens_that_watch() {
         var openedWatchId: String? = null
-        showAgent(watchOrigin) { openedWatchId = it }
+        showAgent(watchOrigin, onOpenWatch = { openedWatchId = it })
 
         compose.onNode(
             hasText("a deposit clears") and
@@ -130,11 +115,91 @@ class AgentOriginCardTest {
     @Test
     fun a_legacy_watch_firing_without_an_id_stays_noninteractive() {
         var openedWatchId: String? = null
-        showAgent(watchOrigin.copy(watchId = null)) { openedWatchId = it }
+        showAgent(watchOrigin.copy(watchId = null), onOpenWatch = { openedWatchId = it })
 
         compose.onNodeWithText("a deposit clears").assertHasNoClickAction()
 
         assertEquals(null, openedWatchId)
+    }
+
+    /**
+     * A task conversation has no seed, so nothing is hidden: every message the user and the
+     * agent wrote shows under the card.
+     */
+    @Test
+    fun a_task_conversation_hides_no_messages() {
+        val messages = listOf(
+            ChatMessage.User(listOf(UserPart.Text("What is left before the lease can be renewed?"))),
+            ChatMessage.Assistant(listOf(AssistantPart.Text("The signed form and the deposit."))),
+        )
+        assertEquals(messages, visibleConversationMessages(messages, taskOrigin))
+        assertEquals(messages, visibleConversationMessages(messages, taskOrigin.copy(seedMessageCount = null)))
+    }
+
+    @Test
+    fun a_task_card_reads_its_state_due_day_and_sources() {
+        val today = LocalDate.of(2026, 10, 21)
+        assertEquals(
+            listOf("Open", "Due tomorrow", "3 sources"),
+            taskOriginFacts(taskOrigin.task!!, today).map { it.text },
+        )
+        assertEquals(
+            listOf("Done", "1 source"),
+            taskOriginFacts(TaskOriginSnapshot(title = "T", state = "done", sourceCount = 1), today).map { it.text },
+        )
+        assertEquals(
+            listOf("Struck", "Due Fri 6 Nov"),
+            taskOriginFacts(TaskOriginSnapshot(title = "T", state = "dismissed", due = "2026-11-06"), today)
+                .map { it.text },
+        )
+        // A due day that has passed is overdue only while the task is still unresolved.
+        val late = TaskOriginSnapshot(title = "T", state = "open", due = "2026-10-19")
+        assertEquals(
+            TaskOriginFact(TaskOriginFactIcon.DUE, "Due Mon 19 Oct", overdue = true),
+            taskOriginFacts(late, today)[1],
+        )
+        assertFalse(taskOriginFacts(late.copy(state = "done"), today)[1].overdue)
+        assertFalse(taskOriginFacts(taskOrigin.task!!, today)[1].overdue)
+        // A state a newer gateway names reads as it is spelled; an unreadable due day is left out.
+        assertEquals(
+            listOf("Waiting"),
+            taskOriginFacts(TaskOriginSnapshot(title = "T", state = "waiting", due = "soon"), today).map { it.text },
+        )
+    }
+
+    @Test
+    fun a_task_conversation_says_which_task_it_is_about_ready_for_the_first_message() {
+        showAgent(taskOrigin)
+
+        compose.onNodeWithText("TASK").assertIsDisplayed()
+        compose.onNodeWithText("Renew the studio lease").assertIsDisplayed()
+        compose.onNodeWithText("3 sources").assertIsDisplayed()
+        compose.onNodeWithText("Ask Omnesis about your corpus").assertDoesNotExist()
+        assertTrue(awaitsFirstMessage(AgentCoordinator.UiState(sessionId = "s", conversationOrigin = taskOrigin)))
+        assertFalse(
+            awaitsFirstMessage(
+                AgentCoordinator.UiState(sessionId = "s", conversationOrigin = taskOrigin, transcriptLoading = true),
+            ),
+        )
+        assertFalse(awaitsFirstMessage(AgentCoordinator.UiState(sessionId = "s", conversationOrigin = watchOrigin)))
+    }
+
+    @Test
+    fun tapping_a_task_card_opens_that_task() {
+        var openedTaskId: String? = null
+        showAgent(taskOrigin, onOpenTask = { openedTaskId = it })
+
+        compose.onNode(hasText("Renew the studio lease") and hasClickAction()).performClick()
+
+        assertEquals("task_example", openedTaskId)
+    }
+
+    @Test
+    fun a_task_card_without_a_task_id_stays_noninteractive() {
+        showAgent(taskOrigin.copy(taskId = null), onOpenTask = { error("nothing to open") })
+
+        compose.onNodeWithText("Renew the studio lease").assertHasNoClickAction()
+        compose.onNodeWithText("View task").assertDoesNotExist()
     }
 
     /** A plain thread with nothing in it is still the blank chat it always was. */
@@ -145,7 +210,11 @@ class AgentOriginCardTest {
         compose.onNodeWithText("Ask Omnesis about your corpus").assertIsDisplayed()
     }
 
-    private fun showAgent(origin: ConversationOrigin?, onOpenWatch: ((String) -> Unit)? = null) {
+    private fun showAgent(
+        origin: ConversationOrigin?,
+        onOpenWatch: ((String) -> Unit)? = null,
+        onOpenTask: (String) -> Unit = {},
+    ) {
         compose.setContent {
             OmnesisTheme(darkTheme = false) {
                 AgentContent(
@@ -163,6 +232,7 @@ class AgentOriginCardTest {
                     onFlushEphemeral = {},
                     onOpenDocument = {},
                     onOpenWatch = onOpenWatch,
+                    onOpenTask = onOpenTask,
                 )
             }
         }

@@ -55,26 +55,31 @@ async function materializeRuntime(prefix: string, opts: { bin?: string; version?
 
 function fakeRunner(
   calls: Array<{ command: string; args: readonly string[] }>,
+  version: string = CODEX_RUNTIME_COMPAT.testedVersion,
 ): CodexInstallCommandRunner {
   return async (command, args) => {
     calls.push({ command, args: [...args] });
     if (command === "synthetic-npm") {
       const prefix = args[args.indexOf("--prefix") + 1];
       if (!prefix) throw new Error("missing prefix");
-      await materializeRuntime(prefix);
+      await materializeRuntime(prefix, { version });
       return { stdout: "", stderr: "" };
     }
-    return { stdout: `codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}\n`, stderr: "" };
+    return { stdout: `codex-cli ${version}\n`, stderr: "" };
   };
 }
 
 describe("CodexRuntimeInstaller", () => {
-  it("pins the wrapper and every platform payload to release-owned SRI digests", () => {
+  it("pins the wrapper and every platform payload to release-owned SRI digests", async () => {
+    const rootLock = JSON.parse(
+      await readFile(new URL("../../../../package-lock.json", import.meta.url), "utf8"),
+    ) as { packages: Record<string, unknown> };
     expect(CODEX_RUNTIME_LOCK.packages[""].dependencies["@openai/codex"]).toBe(
       CODEX_RUNTIME_COMPAT.testedVersion,
     );
     for (const [path, entry] of Object.entries(CODEX_RUNTIME_LOCK.packages)) {
       if (!path) continue;
+      expect(entry).toEqual(rootLock.packages[path]);
       expect("integrity" in entry ? entry.integrity : undefined).toMatch(/^sha512-/);
       expect("resolved" in entry ? entry.resolved : undefined).toMatch(
         /^https:\/\/registry\.npmjs\.org\/@openai\/codex\//,
@@ -114,19 +119,21 @@ describe("CodexRuntimeInstaller", () => {
     expect(calls[1]?.args).toEqual(["--version"]);
 
     const installed = await installer.commit(prepared);
-    expect(installed.version).toBe("0.151.0");
-    expect(installed.command).toContain(join("versions", "0.151.0"));
+    expect(installed.version).toBe(CODEX_RUNTIME_COMPAT.testedVersion);
+    expect(installed.command).toContain(join("versions", CODEX_RUNTIME_COMPAT.testedVersion));
     await expect(installer.readActive()).resolves.toMatchObject({
-      version: "0.151.0",
-      packageVersion: "0.151.0",
+      version: CODEX_RUNTIME_COMPAT.testedVersion,
+      packageVersion: CODEX_RUNTIME_COMPAT.testedVersion,
     });
     const pointer = JSON.parse(
       await readFile(codexPaths(configDir).runtimeCurrent, "utf8"),
     ) as Record<string, unknown>;
     expect(pointer).toEqual({
       schemaVersion: 1,
-      version: "0.151.0",
-      generation: expect.stringMatching(/^0\.151\.0--operation-/),
+      version: CODEX_RUNTIME_COMPAT.testedVersion,
+      generation: expect.stringMatching(
+        new RegExp(`^${CODEX_RUNTIME_COMPAT.testedVersion.replaceAll(".", "\\.")}--operation-`),
+      ),
       activatedAt: "2026-09-03T12:00:00.000Z",
     });
     expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
@@ -171,7 +178,7 @@ describe("CodexRuntimeInstaller", () => {
         await materializeRuntime(args[args.indexOf("--prefix") + 1]!);
         return { stdout: "", stderr: "" };
       }
-      return { stdout: "codex-cli 0.151.0", stderr: "" };
+      return { stdout: `codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}`, stderr: "" };
     };
     const installer = new CodexRuntimeInstaller({
       configDir,
@@ -262,7 +269,7 @@ describe("CodexRuntimeInstaller", () => {
         await materializeRuntime(prefix, { bin: "../../../outside.js" });
         await writeFile(join(prefix, "outside.js"), "synthetic");
       }
-      return { stdout: "codex-cli 0.151.0", stderr: "" };
+      return { stdout: `codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}`, stderr: "" };
     };
     const installer = new CodexRuntimeInstaller({
       configDir,
@@ -286,7 +293,7 @@ describe("CodexRuntimeInstaller", () => {
         await symlink("../@openai/codex/bin/codex.js", join(binDir, "codex"));
         await symlink("package.json", join(prefix, "node_modules/@openai/codex/unexpected"));
       }
-      return { stdout: "codex-cli 0.151.0", stderr: "" };
+      return { stdout: `codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}`, stderr: "" };
     };
     const installer = new CodexRuntimeInstaller({
       configDir,
@@ -395,7 +402,7 @@ describe("CodexRuntimeInstaller", () => {
     for (const generation of [currentGeneration, orphanGeneration]) {
       const dir = join(paths.runtimeVersions, generation);
       await mkdir(dir, { recursive: true });
-      await materializeRuntime(dir);
+      await materializeRuntime(dir, { version: "0.151.0" });
     }
     await mkdir(paths.runtimeStore, { recursive: true });
     await writeFile(
@@ -409,7 +416,7 @@ describe("CodexRuntimeInstaller", () => {
     );
     const installer = new CodexRuntimeInstaller({
       configDir,
-      runner: fakeRunner([]),
+      runner: fakeRunner([], "0.151.0"),
       compatibilityProbe: async () => {},
     });
 
@@ -424,7 +431,9 @@ describe("CodexRuntimeInstaller", () => {
     const paths = codexPaths(configDir);
     const previousGeneration = "0.151.0--previous";
     await mkdir(join(paths.runtimeVersions, previousGeneration), { recursive: true });
-    await materializeRuntime(join(paths.runtimeVersions, previousGeneration));
+    await materializeRuntime(join(paths.runtimeVersions, previousGeneration), {
+      version: "0.151.0",
+    });
     await mkdir(paths.runtimeStore, { recursive: true });
     await writeFile(
       paths.runtimeCurrent,
@@ -439,7 +448,7 @@ describe("CodexRuntimeInstaller", () => {
     );
     const installer = new CodexRuntimeInstaller({
       configDir,
-      runner: fakeRunner([]),
+      runner: fakeRunner([], "0.151.0"),
       compatibilityProbe: async () => {},
       id: () => "recovery-read",
     });
@@ -461,7 +470,7 @@ describe("CodexRuntimeInstaller", () => {
     for (const generation of [currentGeneration, previousGeneration, orphanGeneration]) {
       const dir = join(paths.runtimeVersions, generation);
       await mkdir(dir, { recursive: true });
-      await materializeRuntime(dir);
+      await materializeRuntime(dir, { version: "0.151.0" });
     }
     await mkdir(paths.runtimeStaging, { recursive: true });
     await mkdir(join(paths.runtimeStaging, "interrupted"));
@@ -479,7 +488,7 @@ describe("CodexRuntimeInstaller", () => {
     );
     const installer = new CodexRuntimeInstaller({
       configDir,
-      runner: fakeRunner([]),
+      runner: fakeRunner([], "0.151.0"),
       compatibilityProbe: async () => {},
     });
 

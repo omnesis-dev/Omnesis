@@ -47,7 +47,7 @@ function fixture() {
     sourceDataRemoval: new SourceDataRemovalService({
       db,
       writeGate,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
     listDevices: () => [],
     syncStatus,
@@ -185,7 +185,7 @@ describe("SourceService ownership", () => {
       sourceDataRemoval: new SourceDataRemovalService({
         db,
         writeGate: gate,
-        purgeAnnotationsFor: async () => {},
+        cascadeCognitionFor: async () => {},
       }),
       listDevices: () => [],
       notifySourceChange: vi.fn(),
@@ -226,7 +226,7 @@ describe("SourceService ownership", () => {
       sourceDataRemoval: new SourceDataRemovalService({
         db,
         writeGate: gate,
-        purgeAnnotationsFor: async () => {},
+        cascadeCognitionFor: async () => {},
       }),
       listDevices: () => [],
       notifySourceChange: vi.fn(),
@@ -284,7 +284,7 @@ describe("SourceService ownership", () => {
       sourceDataRemoval: new SourceDataRemovalService({
         db,
         writeGate: gate,
-        purgeAnnotationsFor: async () => {},
+        cascadeCognitionFor: async () => {},
       }),
       listDevices: () => [alpha, beta],
       notifySourceChange: vi.fn(),

@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createKnowledgeTables } from "../brain/knowledge/schema.js";
+import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
+import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
+import { installKnowledgeReconciliationTriggers } from "../brain/knowledge/reconciliation.js";
+import { createKnowledgeSourceTriggers } from "../brain/knowledge/source-triggers.js";
+import { createKnowledgeWorkTables } from "../brain/knowledge/work-schema.js";
 import { createNotificationQueueTables } from "../push/queue.js";
 import {
   createBriefsStorageTables,
-  createBriefClaimsTables,
   createAnnotationStorageTables,
   createPersonAnnotationStorageTables,
   createConsumptionEdgesTables,
   createBootstrapMarkerIndexes,
 } from "../brain/index.js";
+import { createLiveVoiceUsageTable } from "../realtime/live-voice-usage.js";
 import { createConversationReadStateTables } from "../agent/conversation-read-state.js";
 import { createDevAnnotationsTables } from "../dev-annotations/store.js";
 import { createExtractedDatesTables } from "../enrichment/dates/storage.js";
@@ -18,11 +24,13 @@ import { createTemporalAnnotationTables } from "../enrichment/temporal-annotatio
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { createNoteEntriesTables } from "../sources/omnesis-notes/storage.js";
 import { createVoiceNoteTables } from "../voice-notes/storage.js";
+import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createAgentMessagesTables } from "../sources/agent-conversations/storage.js";
 import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -1375,17 +1383,17 @@ function runSchemaSetupInTxn(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_links_unprocessed ON documents(id) WHERE links_extracted_at IS NULL",
   );
-  // Backlog AGE per derivation stage: `MIN(ingested_at) WHERE <col> IS NULL`
+  // Backlog AGE per derivation stage: `MIN(updated_at) WHERE <col> IS NULL`
   // is what the derivation-SLA observers report, and carrying the column in
-  // the index keeps that MIN index-only rather than a row lookup per entry.
+  // the index keeps that MIN index-only rather than a walk of every document.
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_links_pending_age ON documents(ingested_at) WHERE links_extracted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_links_pending_updated ON documents(updated_at) WHERE links_extracted_at IS NULL",
   );
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_people_pending_age ON documents(ingested_at) WHERE people_resolved_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_people_pending_updated ON documents(updated_at) WHERE people_resolved_at IS NULL",
   );
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_dates_pending_age ON documents(ingested_at) WHERE dates_extracted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_dates_pending_updated ON documents(updated_at) WHERE dates_extracted_at IS NULL",
   );
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_dates_unprocessed ON documents(id) WHERE dates_extracted_at IS NULL",
@@ -1438,14 +1446,19 @@ function runSchemaSetupInTxn(db: Db): void {
   // Briefs / Cognition Steward storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.
   createBriefsStorageTables(db);
+  createSourceInventoryTables(db);
+  createKnowledgeTables(db);
+  createKnowledgeWorkTables(db);
+  createKnowledgeSourceTriggers(db);
+  createKnowledgeDecisionTable(db);
   // Brief-claims sidecar: per-brief atomic asserted claims, each bound to
   // its evidence document + quote. FK on briefs(id), so it follows the
   // briefs DDL above.
-  createBriefClaimsTables(db);
   // Durable doc-annotation store — the abstract-graph substrate.
   createAnnotationStorageTables(db);
   // Durable person-annotation store — the person-keyed sibling.
   createPersonAnnotationStorageTables(db);
+  installKnowledgeOwnerTriggers(db);
   // Consumption provenance: which briefs/loops were built on which
   // annotation priors, so invalidating a prior can re-examine its dependents.
   createConsumptionEdgesTables(db);
@@ -1467,6 +1480,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Temporal annotations (experimental): interval-addressed semantic time the
   // background agent adds to and queries.
   createTemporalAnnotationTables(db);
+  installKnowledgeReconciliationTriggers(db);
   // Deterministic, source-owned projections over typed document dates. Kept
   // separate from mutable LLM temporal annotations and from DuckDB's
   // analytics-row projection store.
@@ -1477,9 +1491,11 @@ function runSchemaSetupInTxn(db: Db): void {
   // Voice notes waiting on the gateway's transcriber (after note_entries,
   // which their rows reference).
   createVoiceNoteTables(db);
+  createNoteAgentTables(db);
   // agent-conversations: the append-only ledger of turns a
   // harness plugin pushes, projected into per-day conversation documents.
   createAgentMessagesTables(db);
+  createLiveVoiceUsageTable(db);
   installMutableListRevisions(db);
   installCollectorRosterRevision(db);
 

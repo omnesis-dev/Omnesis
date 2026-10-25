@@ -3,7 +3,7 @@
 
 import { html } from "htm/preact";
 
-export const BRIEF_GLYPH = html`
+export const OBSERVATION_GLYPH = html`
   <svg
     width="11"
     height="11"
@@ -15,8 +15,8 @@ export const BRIEF_GLYPH = html`
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <rect x="3" y="6" width="10" height="7" rx="1" />
-    <path d="M4.5 4h7 M6 2h4" />
+    <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z" />
+    <circle cx="8" cy="8" r="1.8" />
   </svg>
 `;
 export const CLOCK_GLYPH = html`
@@ -165,5 +165,69 @@ export const LOOP_GLYPH = html`
     <path d="M13 3.5V6h-2.5" />
     <path d="M13 8a5 5 0 0 1-8.6 3.5L3 10" />
     <path d="M3 12.5V10h2.5" />
+  </svg>
+`;
+export const CALENDAR_GLYPH = html`
+  <svg
+    width="11"
+    height="11"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+    <path d="M2.5 7h11 M5.5 2v3 M10.5 2v3" />
+  </svg>
+`;
+export const MEMORY_GLYPH = html`
+  <svg
+    width="11"
+    height="11"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M8 3.2a2.4 2.4 0 0 0-4.6.9A2.4 2.4 0 0 0 2.6 8.6 2.4 2.4 0 0 0 5 12.8a2.4 2.4 0 0 0 3 .4z" />
+    <path d="M8 3.2a2.4 2.4 0 0 1 4.6.9 2.4 2.4 0 0 1 .8 4.5 2.4 2.4 0 0 1-2.4 4.2 2.4 2.4 0 0 1-3 .4" />
+  </svg>
+`;
+export const NOTES_GLYPH = html`
+  <svg
+    width="11"
+    height="11"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M3 2.5h10v7L9.5 13H3z" />
+    <path d="M9.5 13V9.5H13 M5.5 5.5h5 M5.5 8h3" />
+  </svg>
+`;
+export const TASK_GLYPH = html`
+  <svg
+    width="11"
+    height="11"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M2.5 4.2l1.2 1.2L6 3.1 M2.5 9.2l1.2 1.2L6 8.1" />
+    <path d="M8.5 4.5h5 M8.5 9.5h5 M8.5 13h5" />
   </svg>
 `;

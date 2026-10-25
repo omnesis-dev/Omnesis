@@ -38,6 +38,9 @@ public struct OmnesisApp: App {
         // `AutomationPairing`. Runs before AppStore reads the Keychain.
         #if DEBUG
         AutomationPairing.applyLaunchEnvironment()
+        if ProcessInfo.processInfo.environment["DEMO_DISABLE_ANIMATIONS"] == "1" {
+            UIView.setAnimationsEnabled(false)
+        }
         #endif
 
         // iOS only accepts BGTaskScheduler.register calls that happen
@@ -64,10 +67,14 @@ public struct OmnesisApp: App {
             // simulator (which the offscreen snapshot harness can't — it
             // reports zero safe area); `scroll-stress` drives the
             // scroll-to-bottom UI test. No-op unless the env var is set.
-            if Self.settingsPreview {
+            if ProcessInfo.processInfo.environment["DEMO_REALTIME_SCROLL"] == "1" {
+                RealtimeScrollDemoSurface()
+            } else if Self.settingsPreview {
                 settingsPreviewRoot
             } else if Self.accessAuthorizationPreview {
                 accessAuthorizationPreviewRoot
+            } else if Self.agentReadingAnchorPreview {
+                LoadedAgentPreview(session: PreviewMocks.agentReadingAnchorSession)
             } else if let seed = Self.agentPreviewSeed {
                 if Self.agentPreviewDelayed {
                     DelayedAgentPreview(seed: seed)
@@ -79,7 +86,7 @@ public struct OmnesisApp: App {
                 PushTapDemoRoot(mode: mode, delegate: appDelegate)
             } else if Self.menuRevealDemo {
                 // Menu-reveal UI-test harness — see MenuRevealDemoRoot.
-                MenuRevealDemoRoot(surface: Self.menuRevealDemoSurface ?? .briefs)
+                MenuRevealDemoRoot(surface: Self.menuRevealDemoSurface ?? .list)
             } else {
                 appRoot
             }
@@ -155,6 +162,7 @@ public struct OmnesisApp: App {
     static var agentPreviewSeed: AppStore.AgentPreviewSeed? {
         switch ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] {
         case "store": PreviewMocks.agentStoreTranscript
+        case "conversation-controls": PreviewMocks.agentConversationControls
         case "tall": PreviewMocks.agentTallTranscript
         case "scroll-stress", "scroll-stress-delayed": PreviewMocks.agentScrollStressTranscript
         default: nil
@@ -194,7 +202,14 @@ public struct OmnesisApp: App {
         ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "scroll-stress-delayed"
     }
 
-    /// `DEMO_MENU_REVEAL=briefs|capture` boots the menu-reveal UI-test
+    /// `reading-anchor` opens a stored conversation through the coordinator's
+    /// load path, as a resume does, so the transcript positions itself the
+    /// way a real open would. See `LoadedAgentPreview`.
+    static var agentReadingAnchorPreview: Bool {
+        ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "reading-anchor"
+    }
+
+    /// `DEMO_MENU_REVEAL=list|capture|tasks|briefs` boots the menu-reveal UI-test
     /// harness over that surface. See `MenuRevealDemoRoot`.
     static var menuRevealDemoSurface: MenuRevealDemoSurface? {
         MenuRevealDemoSurface(
@@ -207,28 +222,37 @@ public struct OmnesisApp: App {
     }
 
     /// The seeded agent transcript shown when `DEMO_AGENT_PREVIEW` is set.
+    @ViewBuilder
     private func agentPreviewRoot(_ seed: AppStore.AgentPreviewSeed) -> some View {
-        AgentView(menuOpen: .constant(false))
-            .environment(AppStore.preview(agentPreview: seed))
+        if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] != nil {
+            ConversationComposerPreviewRoot(seed: seed)
+        } else {
+            staticAgentPreviewRoot(seed)
+        }
+    }
+
+    private func staticAgentPreviewRoot(_ seed: AppStore.AgentPreviewSeed) -> some View {
+        let store = AppStore.preview(agentPreview: seed)
+        if ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "conversation-controls" {
+            store.agent.installPreviewConversationControls(PreviewMocks.conversationControls)
+        }
+        return AgentView(menuOpen: .constant(false))
+            .environment(store)
             .environment(\.appearanceStore, AppearanceStore(mode: .dark))
     }
     #endif
 }
 
 #if DEBUG
-/// Which surface the menu-reveal harness puts under the container.
-///
-/// `briefs` is the list whose swipe actions have to keep working alongside the
-/// reveal; `capture` is quick capture, which carries a swipe-down-to-discard
-/// drag of its own and so is the other place the two can fight over a touch.
+/// Which surface the menu-reveal harness puts under the container: `list`, rows with trailing swipe
+/// actions that must keep working alongside the reveal; `capture`, quick capture with its own swipe-down
+/// drag; `tasks` and `briefs`, the Tasks screen and the Morning brief conversation over demo gateways.
 @available(iOS 17.0, *)
 enum MenuRevealDemoSurface: String {
-    case briefs
-    case capture
+    case list, capture, tasks, briefs
 }
 
-/// Harness for the menu-reveal gesture tests: a `MenuRevealContainer` over a
-/// real `BriefsListContent`, seeded from fixtures so it needs no gateway.
+/// Harness for the menu-reveal gesture tests: a `MenuRevealContainer` over a fixture surface, so it needs no gateway.
 ///
 /// This is the exact composition that goes wrong in ways a still render can
 /// never show. The container's drag spans the whole app, so it sits directly
@@ -237,7 +261,7 @@ enum MenuRevealDemoSurface: String {
 /// buttons, leaving them dead. Only driving real gestures catches that.
 ///
 /// Everything the test asserts on is visible on screen: rows disappear,
-/// "More…" writes a marker, and opening a row presents a marker sheet whose
+/// "More" writes a marker, and opening a row presents a marker sheet whose
 /// content reflects whether the menu changed underneath it.
 private struct MenuRevealDemoRoot: View {
     static let moreMarker = "MENU-REVEAL-MORE-TAPPED"
@@ -245,12 +269,18 @@ private struct MenuRevealDemoRoot: View {
     static let detailMarker = "MENU-REVEAL-DETAIL-VISIBLE"
     static let menuBehindSheetMarker = "MENU-REVEAL-OPENED-UNDER-SHEET"
 
+    /// A row of the fixture list.
+    struct Row: Identifiable {
+        let id: Int
+        let title: String
+    }
+
     let surface: MenuRevealDemoSurface
 
     @State private var menuOpen = false
-    @State private var feed = BriefsFeedState(briefs: PreviewMocks.briefs)
+    @State private var rows = (1 ... 8).map { Row(id: $0, title: "Fixture row \($0)") }
     @State private var moreTapped = false
-    @State private var openBrief: BriefRecord?
+    @State private var openRow: Row?
 
     var body: some View {
         MenuRevealContainer(isOpen: $menuOpen) {
@@ -271,28 +301,45 @@ private struct MenuRevealDemoRoot: View {
                 // on appear when it is idle, and a permission prompt would sit
                 // over the gesture under test.
                 CaptureView(surface: .app, speech: .preview(state: .listening))
-            case .briefs:
-                briefsSurface
+            case .tasks: TasksFanDemoSurface(menuOpen: $menuOpen)
+            case .briefs: DailyBriefDemoSurface(menuOpen: $menuOpen)
+            case .list:
+                listSurface
             }
         }
         .environment(AppStore.preview())
         .environment(\.appearanceStore, AppearanceStore(mode: .dark))
     }
 
-    private var briefsSurface: some View {
+    private var listSurface: some View {
         NavigationStack {
-            BriefsListContent(
-                feed: feed,
-                loading: false,
-                loadError: nil,
-                onOpen: { openBrief = $0 },
-                onQuickClear: { brief in _ = feed.remove(id: brief.id) },
-                onAsk: { _ in },
-                onMoreOptions: { _ in moreTapped = true },
-                onRetry: {},
-                onRefresh: {}
-            )
-            .navigationTitle("Briefs")
+            List {
+                ForEach(rows) { row in
+                    Text(row.title)
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { openRow = row }
+                        .listRowBackground(Theme.bgPrimary)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                rows.removeAll { $0.id == row.id }
+                            } label: {
+                                Label("Done", systemImage: "checkmark")
+                            }
+                            .tint(Theme.success)
+                            Button {
+                                moreTapped = true
+                            } label: {
+                                Label("More", systemImage: "ellipsis")
+                            }
+                            .tint(Color(white: 0.35))
+                        }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("List")
             .navigationBarTitleDisplayMode(.inline)
             .background(Theme.bgPrimary.ignoresSafeArea())
             // A real push, so the edge can be tested where the interactive
@@ -314,13 +361,13 @@ private struct MenuRevealDemoRoot: View {
                 .foregroundStyle(Theme.textMuted)
             }
         }
-        .sheet(item: $openBrief) { _ in
+        .sheet(item: $openRow) { _ in
             VStack(spacing: Theme.Spacing.lg) {
                 Text(menuOpen ? Self.menuBehindSheetMarker : Self.detailMarker)
                 Button("Stage open menu") { menuOpen = true }
                     .accessibilityIdentifier("stageOpenMenu")
-                Button("Close brief") { openBrief = nil }
-                    .accessibilityIdentifier("closeBriefSheet")
+                Button("Close sheet") { openRow = nil }
+                    .accessibilityIdentifier("closeRowSheet")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.bgPrimary.ignoresSafeArea())
@@ -351,6 +398,26 @@ private struct DelayedAgentPreview: View {
             .task {
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 store.installAgentPreview(seed)
+            }
+    }
+}
+
+/// Opens a stored conversation the way the app does: the surface first shows
+/// its empty state, then the session snapshot arrives and goes through the
+/// coordinator's load path, which decides where the transcript opens. Drives
+/// the reading-anchor UI test.
+@available(iOS 17.0, *)
+private struct LoadedAgentPreview: View {
+    let session: CreateSessionResponse
+    @State private var store: AppStore = .preview(agentPreview: nil)
+
+    var body: some View {
+        AgentView(menuOpen: .constant(false))
+            .environment(store)
+            .environment(\.appearanceStore, AppearanceStore(mode: .dark))
+            .task {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                await store.agent.applySnapshotForTesting(session, buffered: [])
             }
     }
 }
@@ -856,10 +923,10 @@ public final class AppStore {
         adminCoord.watches
     }
 
-    /// Briefs client exposed to views — used by the Briefs feed tab.
-    /// `nil` until pairing completes.
-    public var briefs: BriefsClient? {
-        adminCoord.briefs
+    /// Tasks client exposed to the Tasks screen. `nil` until pairing
+    /// completes.
+    public var tasks: TasksClient? {
+        adminCoord.tasks
     }
 
     /// Privacy client exposed to the paired owner's Privacy controls. Its
@@ -875,26 +942,23 @@ public final class AppStore {
         adminCoord.access
     }
 
-    /// What the navigation menu shows for Omnesis Briefs, derived from the
-    /// paired gateway's feature gate. Both available states navigate to the
-    /// feed; `.needsAttention` adds the setup warning while historical briefs
-    /// remain readable.
-    public var briefsMenuEntry: BriefsMenuEntry {
-        BriefsMenuEntry(status: adminCoord.statusSnapshot?.briefs)
+    /// Whether the paired gateway serves Tasks (`/status` → `tasks.available`).
+    /// Not an experimental surface: any gateway that serves it shows it.
+    public var tasksAvailable: Bool {
+        adminCoord.statusSnapshot?.tasks?.available == true
     }
 
-    /// Count of unread Briefs awaiting attention — drives the small badge
-    /// on the drawer's Briefs entry. Refreshed when the drawer opens (the
-    /// same refresh-on-open cadence as the feed); 0 when the feature is
-    /// inactive. In-app only — never an OS app-icon badge or a push.
-    public var briefsUnreadCount: Int {
-        adminCoord.briefsUnreadCount
+    /// Open tasks on today's page — the count on the drawer's Tasks entry.
+    /// Refreshed when the drawer opens, on return to the foreground, and on
+    /// every Tasks read. In-app only — never an OS app-icon badge or a push.
+    public var tasksTodayCount: Int {
+        adminCoord.tasksTodayCount
     }
 
-    /// Refresh the unread-Briefs badge count. Called when the menu drawer
-    /// opens. Best-effort; failures zero the badge.
-    public func refreshBriefsUnreadCount() async {
-        await adminCoord.refreshBriefsUnreadCount()
+    /// Refresh today's Tasks count, from `counts` a Tasks read already
+    /// carried or by asking the gateway. Best-effort; failures zero it.
+    public func refreshTasksTodayCount(from counts: TaskCounts? = nil) async {
+        await adminCoord.refreshTasksTodayCount(from: counts)
     }
 
     /// Agent coordinator — observable handle for the Agent tab. Always
@@ -965,7 +1029,7 @@ public final class AppStore {
     /// Shared deep-link router for inbound push notifications. The
     /// AppDelegate writes into it on tap; HomeView observes
     /// `pendingTarget` to flip the active section, and the destination
-    /// views (Watches, Briefs, Privacy, Agent) consume it.
+    /// views (Watches, Privacy, Agent) consume it.
     @ObservationIgnored
     public let notificationRouter = NotificationRouter()
 
@@ -3229,7 +3293,7 @@ extension AppStore {
         sourcePermissionHealthLoading: Bool = false,
         sourcePermissionHealthDeferred: Set<String> = [],
         pairingRecovery: PairingRecovery? = nil,
-        briefsUnreadCount: Int = 0,
+        tasksTodayCount: Int = 0,
         privacyPendingCount: Int = 0,
         pendingAccessRequests: [AccessPendingRequest] = [],
         agentPreview: AgentPreviewSeed? = nil,
@@ -3261,7 +3325,7 @@ extension AppStore {
             sourceUnitNameByType: sourceUnitNameByType,
             sourceBgColorByType: sourceBgColorByType,
             sourceAccentColorByType: sourceAccentColorByType,
-            briefsUnreadCount: briefsUnreadCount,
+            tasksTodayCount: tasksTodayCount,
             privacyPendingCount: privacyPendingCount,
             pendingAccessRequests: pendingAccessRequests,
             pendingSourceRemovals: pendingSourceRemovals
@@ -3325,7 +3389,8 @@ extension AppStore {
             connected: seed.connected,
             planItems: seed.planItems,
             conversationsNextCursor: seed.conversationsNextCursor,
-            transcriptNextCursor: seed.transcriptNextCursor
+            transcriptNextCursor: seed.transcriptNextCursor,
+            origin: seed.origin
         )
         if seed.trailAnnotations != .empty || !seed.recordCitations.isEmpty {
             agentCoord.installPreviewTimeline(
@@ -3361,6 +3426,8 @@ extension AppStore {
         /// Directly-cited analytics rows so previews can exercise
         /// the record-only Timeline row without a live SSE stream.
         var recordCitations: [AgentTrailRecord] = []
+        /// What opened the conversation, such as the Morning brief's origin.
+        var origin: ConversationOrigin?
     }
 }
 #endif

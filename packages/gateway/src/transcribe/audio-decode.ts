@@ -19,6 +19,12 @@ import { spawn } from "node:child_process";
 
 const FFMPEG_STATIC_SPECIFIER = "ffmpeg-static";
 
+/** Sample rate of the decoded PCM; samples ÷ rate = seconds. */
+export const PCM_SAMPLE_RATE = 16_000;
+
+/** Decode audio bytes to 16 kHz mono float PCM. Injectable so tests skip ffmpeg. */
+export type AudioDecoder = (bytes: Uint8Array, mimeType: string) => Promise<Float32Array>;
+
 /** Resolve the bundled ffmpeg binary path, or null if ffmpeg-static is absent. */
 export async function resolveFfmpegPath(): Promise<string | null> {
   try {
@@ -68,7 +74,7 @@ export async function decodeToPcm16kMono(
         "-ac",
         "1",
         "-ar",
-        "16000",
+        String(PCM_SAMPLE_RATE),
         "pipe:1",
       ],
       { stdio: ["pipe", "pipe", "pipe"] },

@@ -3,8 +3,18 @@
 
 package dev.omnesis.android.transport.dto
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 @Serializable
 data class AgentContextAssessment(
@@ -68,7 +78,7 @@ data class CreateSessionResponse(
     val terminalFailure: AgentConversationTerminalFailure? = null,
     /** Durable marker for a partial latest answer; does not freeze the conversation. */
     val lastTurnFailure: AgentTerminalFailure? = null,
-    /** Anchor metadata for conversations created from a brief or a watch firing. */
+    /** Anchor metadata: a watch firing's thread or the standing Morning brief conversation. */
     val origin: ConversationOrigin? = null,
     /** Active-turn state not reconstructible from persisted [ChatMessage]s. */
     val replayEvents: List<AgentEvent> = emptyList(),
@@ -77,35 +87,102 @@ data class CreateSessionResponse(
 )
 
 /**
- * What a conversation is a reply to, when it did not start as a blank chat. Absent on plain
- * threads. [kind] is `"brief"` or `"watch_firing"`; an unrecognised kind decodes with both
- * snapshots null, which keeps the seeded prefix visible rather than hiding it behind a card
- * this build cannot draw.
+ * Where a conversation came from, when it did not start as a blank chat. Absent on plain
+ * threads. [kind] is `"watch_firing"`, `"daily_brief"` or `"task"`; any other kind decodes with every
+ * kind-specific field at its default, which keeps the thread an ordinary visible conversation
+ * rather than hiding anything behind a card this build cannot draw.
+ *
+ * Gateway TS shape:
+ *
+ * ```ts
+ * type ConversationOrigin =
+ *   | { kind: "watch_firing"; firingId: string; runId: string; watchId: string;
+ *       watch?: WatchFiringOriginSnapshot; seedMessageCount?: number }
+ *   | { kind: "daily_brief"; runId: string; briefs: DailyBriefMessageRef[] }
+ *   | { kind: "task"; taskId: string; runId: string; task: TaskOriginSnapshot;
+ *       seedMessageCount: 0 };
+ * ```
  */
 @Serializable
 data class ConversationOrigin(
     val kind: String = "",
+    /** The run that seeded the thread (a watch firing) or sent its latest brief; a task conversation repeats its task id. */
+    val runId: String? = null,
     /** The watch that fired — the thread's durable subject. */
     val watchId: String? = null,
-    val brief: BriefOriginSnapshot? = null,
     val watch: WatchFiringOriginSnapshot? = null,
+    /** The task a `task` conversation is about. */
+    val taskId: String? = null,
+    val task: TaskOriginSnapshot? = null,
     /**
      * How many messages at the start of the thread are the folded transcript of the run that
      * created it. Clients hide that prefix and show the origin's card in its place.
      */
     val seedMessageCount: Int? = null,
+    /**
+     * The morning briefs in a `daily_brief` thread, oldest first. Empty on conversation-list
+     * summaries, which carry only the anchor; full on a session or a messages page.
+     */
+    @Serializable(with = LenientDailyBriefRefListSerializer::class)
+    val briefs: List<DailyBriefMessageRef> = emptyList(),
+) {
+    /** The standing Morning brief conversation: pinned, and never deletable. */
+    val isDailyBrief: Boolean get() = kind == DAILY_BRIEF_KIND
+
+    /** The newest brief that names a real message, or null outside a `daily_brief` thread. */
+    val latestDailyBrief: DailyBriefMessageRef?
+        get() = if (isDailyBrief) briefs.lastOrNull { it.messageIndex >= 0 } else null
+
+    companion object {
+        const val DAILY_BRIEF_KIND = "daily_brief"
+
+        /** A conversation "Chat about this" opened about a task. */
+        const val TASK_KIND = "task"
+    }
+}
+
+/** Where one morning brief sits in the Morning brief conversation. */
+@Serializable
+data class DailyBriefMessageRef(
+    /** The local day the brief was written for (`YYYY-MM-DD`). */
+    val day: String = "",
+    /** Index of the brief's assistant message in the conversation's visible messages. */
+    val messageIndex: Int = -1,
+    /** Stable id of the brief message. */
+    val messageId: String = "",
+    /** When the brief was sent (ISO 8601, UTC); absent on briefs recorded before it was kept. */
+    val sentAt: String? = null,
 )
 
 /**
- * The brief as it read when the thread was opened, so the card survives the brief itself
- * expiring or being deleted.
+ * Decodes the brief index one entry at a time, dropping any entry that is not an object with
+ * a string `day`, a whole-number `messageIndex` and a string `messageId`; a `sentAt` that is not
+ * a string reads as absent. The index lays out the conversation's days, so a malformed entry
+ * must never cost the whole conversation.
  */
-@Serializable
-data class BriefOriginSnapshot(
-    val title: String = "",
-    val description: String = "",
-    val body: String? = null,
-)
+object LenientDailyBriefRefListSerializer : KSerializer<List<DailyBriefMessageRef>> {
+    private val delegate = ListSerializer(DailyBriefMessageRef.serializer())
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun serialize(encoder: Encoder, value: List<DailyBriefMessageRef>) =
+        delegate.serialize(encoder, value)
+
+    override fun deserialize(decoder: Decoder): List<DailyBriefMessageRef> {
+        val json = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
+        val array = json.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return array.mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            fun str(key: String): String? = (o[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            val index = (o["messageIndex"] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+            DailyBriefMessageRef(
+                day = str("day") ?: return@mapNotNull null,
+                messageIndex = index?.takeIf { it >= 0 } ?: return@mapNotNull null,
+                messageId = str("messageId") ?: return@mapNotNull null,
+                sentAt = str("sentAt"),
+            )
+        }
+    }
+}
 
 /**
  * The watch and firing as they read when the thread was opened, so the card survives the watch
@@ -119,6 +196,21 @@ data class WatchFiringOriginSnapshot(
     val condition: String = "",
     /** When the firing happened, in epoch milliseconds. */
     val firedAt: Long = 0L,
+)
+
+/**
+ * The task as it read when "Chat about this" opened the conversation, so the card still draws
+ * after the task is edited or deleted.
+ */
+@Serializable
+data class TaskOriginSnapshot(
+    val title: String = "",
+    /** The task's state as `/tasks` reports it: `open`, `snoozed`, `done` or `dismissed`. */
+    val state: String = "",
+    /** The local day the task is due (`YYYY-MM-DD`), when it has a deadline. */
+    val due: String? = null,
+    /** How many documents the task refers to. */
+    val sourceCount: Int = 0,
 )
 
 /** `POST /agent/sessions/:id/messages` response. */
@@ -148,7 +240,15 @@ data class ConversationSummary(
      * Defaulted so a gateway that predates read state decodes as read.
      */
     val unread: Boolean = false,
-)
+    /**
+     * The conversation's anchor, without the per-kind detail a session carries. Lets the list
+     * withhold Delete from the Morning brief conversation, which the gateway refuses to delete.
+     */
+    val origin: ConversationOrigin? = null,
+) {
+    /** Whether the gateway lets this conversation be deleted. */
+    val deletable: Boolean get() = origin?.isDailyBrief != true
+}
 
 @Serializable
 data class ConversationsResponse(

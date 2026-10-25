@@ -30,27 +30,39 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 <p align="center">
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/trip_spending.webp">
-      <img src="website/demos/light/trip_spending.webp" alt="View the Omnesis cross-source spending demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/trip_spending.gif">
+      <img src="website/demos/light/trip_spending.gif" alt="View the Omnesis cross-source spending demo" width="29%">
     </picture>
   </a>
   &nbsp;
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/person_catchup.webp">
-      <img src="website/demos/light/person_catchup.webp" alt="View the Omnesis people catch-up demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/person_catchup.gif">
+      <img src="website/demos/light/person_catchup.gif" alt="View the Omnesis people catch-up demo" width="29%">
     </picture>
   </a>
   &nbsp;
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/sleep_recovery.webp">
-      <img src="website/demos/light/sleep_recovery.webp" alt="View the Omnesis health-trend demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/sleep_recovery.gif">
+      <img src="website/demos/light/sleep_recovery.gif" alt="View the Omnesis health-trend demo" width="29%">
     </picture>
   </a>
 </p>
 
 <p align="center"><sub>One question, every source: spending reconstruction, people catch-up, and health trends. <a href="https://omnesis.dev/#demos">Explore the live demos →</a></sub></p>
+
+<p align="center">
+  <a href="https://omnesis.dev/docs/connect">
+    <img src="website/demos/chatgpt-apple-health-and-audit.gif" alt="Connect ChatGPT to Omnesis, ask about Apple Health, and audit the data shared with ChatGPT" width="29%">
+  </a>
+  &nbsp;
+  <a href="https://omnesis.dev/docs/connect">
+    <img src="website/demos/claude-whatsapp.gif" alt="Ask Claude to search your WhatsApp conversation history with Omnesis" width="29%">
+  </a>
+</p>
+
+<p align="center"><sub>Connect ChatGPT and Claude to Omnesis: ask about your data, search conversation history, and audit what is shared. <a href="https://omnesis.dev/docs/connect">Connect your agents →</a></sub></p>
 
 ## Contents
 
@@ -65,6 +77,8 @@ curl -fsSL https://omnesis.dev/install.sh | sh
 ```
 
 The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements, every flag, and uninstalling.
+
+For Docker on a Linux server or NAS, add `--docker --combined` to run the gateway and collector in one container. `--docker --gateway-only` runs a gateway for collectors on other machines. See the [Docker and Unraid guide](https://omnesis.dev/docs/install#docker) for persistent storage, encryption, networking, and the included Compose configuration.
 
 Then add a source and open the portal:
 
@@ -203,7 +217,7 @@ reserved; see [`TRADEMARKS.md`](TRADEMARKS.md).
 
 Two larger features are experimental: unstable research and exploration projects within the Omnesis code base, hidden unless the gateway starts with `OMNESIS_EXPERIMENTAL=1`.
 
-- **Omnesis Brain** reads your records in the background, without waiting for a question, and records what it learns: dates and deadlines buried in documents, open commitments, cited notes about documents and people, and occasional briefs worth your attention. It spends model tokens with nobody asking, so it has its own spend limits.
+- **Omnesis Brain** reads your records in the background, without waiting for a question, and records what it learns: dates and deadlines buried in documents, open commitments, cited notes about documents and people, and a once-a-day morning brief of what you may want to know. What you accept, ignore or give a thumbs to teaches it what you care about. It spends model tokens with nobody asking, so it has its own spend limits.
 - **Omnesis Watch** notices when a condition becomes true — an unanswered renewal notice, a trend in your health data — and can notify your phone or wake a paired agent. Each watch is a validated definition you can trial against history before turning delivery on.
 
 [Experimental](https://omnesis.dev/docs/experimental) documents both in detail. [Learn more about the Omnesis Brain →](https://omnesis.dev/brain)

@@ -21,7 +21,9 @@
  * The window is the local day, matching how spend is already bucketed. At
  * exhaustion the queue parks rather than failing runs: a parked run is
  * resumable tomorrow, whereas a failed one burns its attempt budget and
- * eventually lands in the terminal state.
+ * eventually lands in the terminal state. The day's morning brief is the one
+ * exemption: it is a single run a day, and overnight maintenance can spend the
+ * budget before it is due. Its spend still counts toward the day.
  */
 
 import { getCognitionSpendDayTotal, cognitionSpendDay } from "../storage/spend.js";
@@ -82,7 +84,7 @@ export function cognitionBudgetVerdict(
         dimension: "tokens",
         used: tokens,
         limit: settings.dailyTokens,
-        reason: `Today's cognition token budget is spent (${tokens.toLocaleString()} of ${settings.dailyTokens.toLocaleString()}). Background work resumes tomorrow, or when the limit is raised.`,
+        reason: `Today's cognition token budget is spent (${tokens.toLocaleString()} of ${settings.dailyTokens.toLocaleString()}). Background work resumes tomorrow, or when the limit is raised; the morning brief still runs.`,
       };
     }
   }
@@ -93,7 +95,7 @@ export function cognitionBudgetVerdict(
       dimension: "runs",
       used: total.runs,
       limit: settings.dailyRuns,
-      reason: `Today's cognition run budget is spent (${total.runs} of ${settings.dailyRuns}). Background work resumes tomorrow, or when the limit is raised.`,
+      reason: `Today's cognition run budget is spent (${total.runs} of ${settings.dailyRuns}). Background work resumes tomorrow, or when the limit is raised; the morning brief still runs.`,
     };
   }
 

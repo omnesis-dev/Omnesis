@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import { createLogger, type DecisionCapability, type DecisionRequest } from "@omnesis/core";
+import type { CognitionDecisionRecord } from "../../brain/storage/decisions.js";
 import type { FindDecision, FindSearchInput } from "./types.js";
 
 const log = createLogger("gateway:search:find");
@@ -60,11 +62,58 @@ export function routingRequest(input: FindSearchInput): DecisionRequest {
   };
 }
 
+export const FIND_ROUTE_RUBRIC_VERSION = "find-route-v1";
+
+/**
+ * The decision-ledger row of one routing call. A search runs outside any
+ * Brain run and reads no document, so the row names neither; the lane is the
+ * route chosen, or `unavailable`. The request quotes the query and is kept on
+ * the row until retention deletes it.
+ */
+export function findRouteDecisionRecord(input: {
+  request: DecisionRequest;
+  requestedModelId: string;
+  response: { model: string; answers: unknown; inputTokens?: number } | null;
+  route: "direct" | "agentic" | null;
+  error: string | null;
+  latencyMs: number;
+  now: number;
+}): CognitionDecisionRecord {
+  return {
+    id: `dec_${randomUUID()}`,
+    runId: null,
+    documentId: null,
+    subjectDocumentId: null,
+    purpose: "find-route",
+    lane: input.route ?? "unavailable",
+    rubricVersion: FIND_ROUTE_RUBRIC_VERSION,
+    contentHash: null,
+    requestedModelId: input.requestedModelId,
+    modelId: input.response?.model ?? null,
+    requestJson: JSON.stringify({ model: input.requestedModelId, ...input.request }),
+    responseJson: input.response
+      ? JSON.stringify({ model: input.response.model, answers: input.response.answers })
+      : null,
+    score: null,
+    threshold: 0,
+    verdict: input.route === null ? "unavailable" : "pass",
+    error: input.error,
+    reusedFrom: null,
+    recordId: null,
+    enforced: true,
+    latencyMs: input.latencyMs,
+    inputTokens:
+      typeof input.response?.inputTokens === "number" ? input.response.inputTokens : null,
+    createdAt: input.now,
+  };
+}
+
 export async function decideFindRoute(
   input: FindSearchInput,
   getDecision: () => DecisionCapability | null,
   signal: AbortSignal,
   recordSpend?: (modelId: string, inputTokens: number) => Promise<void>,
+  recordDecision?: (record: CognitionDecisionRecord) => Promise<void>,
 ): Promise<FindDecision> {
   signal.throwIfAborted();
   if (input.mode === "direct")
@@ -96,6 +145,26 @@ export async function decideFindRoute(
       };
     }
   }
+  let asked: { request: DecisionRequest; modelId: string; startedAt: number } | null = null;
+  let answered: { model: string; answers: unknown; inputTokens?: number } | null = null;
+  const ledger = async (route: "direct" | "agentic" | null, error: string | null) => {
+    if (!asked || !recordDecision) return;
+    try {
+      await recordDecision(
+        findRouteDecisionRecord({
+          request: asked.request,
+          requestedModelId: asked.modelId,
+          response: answered,
+          route,
+          error,
+          latencyMs: Date.now() - asked.startedAt,
+          now: Date.now(),
+        }),
+      );
+    } catch {
+      log.warn("Find decision could not be recorded");
+    }
+  };
   try {
     const decision = getDecision();
     if (!decision)
@@ -104,9 +173,12 @@ export async function decideFindRoute(
         status: "not_configured",
         reason: "Decision model is not enabled; using index search.",
       };
-    const response = await decision.decide(routingRequest(input), {
+    const request = routingRequest(input);
+    asked = { request, modelId: decision.modelId, startedAt: Date.now() };
+    const response = await decision.decide(request, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
     });
+    answered = response;
     if (
       recordSpend &&
       typeof response.inputTokens === "number" &&
@@ -130,6 +202,7 @@ export async function decideFindRoute(
     )
       throw new Error("Invalid routing decision");
     const mode = route.choice as "direct" | "agentic";
+    await ledger(mode, null);
     return {
       mode,
       status: "decided",
@@ -147,8 +220,9 @@ export async function decideFindRoute(
         ? { confidence: route.confidence }
         : {}),
     };
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
+    await ledger(null, error instanceof Error ? error.message.slice(0, 500) : "Routing failed");
     log.warn("Find routing unavailable; using index search");
     return {
       mode: "direct",

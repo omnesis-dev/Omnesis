@@ -2,18 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Consumption provenance — which briefs/loops were built on which annotation
+ * Consumption provenance — which observations/loops were built on which annotation
  * PRIORS. One `cognition_consumption_edges` row per (prior annotation →
- * dependent brief/loop) pair, recorded mechanically by the steward tool
+ * dependent observation/loop) pair, recorded mechanically by the steward tool
  * layer: "consumed" means the model explicitly declared that the annotation
- * materially informed that particular brief/loop mutation. The declaration
+ * materially informed that particular observation/loop mutation. The declaration
  * is accepted only when the prior was actually surfaced earlier in the run
  * (through `annotation_search`, a prompt-inlined prior, or self-memory).
  *
  * The edges are the teeth's lookup table: when a prior is invalidated or
  * superseded, the provenance-recheck sweep walks its LIVE dependents and
  * enqueues a re-examination instead of leaving them silently resting on a
- * dead belief. Edges reference their endpoints by id only (no FKs — briefs
+ * dead belief. Edges reference their endpoints by id only (no FKs — observations
  * and loops hard-delete on their own lifecycles, and a dangling edge is
  * simply never returned by the live-dependent reads).
  *
@@ -22,9 +22,20 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { persistOutcomeAssessment } from "../knowledge/outcome-assessment.js";
+import {
+  isKnowledgeOwnerReadable,
+  knowledgeOwnerReadPredicate,
+} from "../knowledge/storage-fence.js";
 import { provenanceRecheckDedupeKey } from "../run-payloads.js";
+import {
+  outcomeWriteConflict,
+  type OutcomeWriteFence,
+  type OutcomeWriteConflict,
+} from "./outcome-write-fence.js";
 import { getDocAnnotation } from "./annotations.js";
 import { getPersonAnnotation } from "./person-annotations.js";
+import { transitionObservation } from "./observations.js";
 import { enqueueCognitionRun } from "./run-queue.js";
 import type Database from "better-sqlite3";
 
@@ -47,7 +58,7 @@ export function createConsumptionEdgesTables(db: Db): void {
       PRIMARY KEY (prior_store, prior_annotation_id, dependent_kind, dependent_id)
     )
   `);
-  // "What was this brief/loop built on" — the recheck prompt's claim-time read.
+  // "What was this observation/loop built on" — the recheck prompt's claim-time read.
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_cognition_consumption_dependent ON cognition_consumption_edges(dependent_kind, dependent_id)",
   );
@@ -57,7 +68,7 @@ export function createConsumptionEdgesTables(db: Db): void {
 export type ConsumptionPriorStore = "doc" | "person";
 
 /** What kind of cognition output depends on a prior. */
-export type ConsumptionDependentKind = "brief" | "loop";
+export type ConsumptionDependentKind = "observation" | "loop";
 
 /** One prior→dependent edge as the tool layer records it. */
 export interface ConsumptionEdgeInput {
@@ -71,6 +82,8 @@ export interface ConsumptionEdgeInput {
 
 /** Priors selected by one output mutation, before its dependent id is known. */
 export interface ConsumptionDependencyContext {
+  /** Trusted loop snapshot for asynchronous outcome judgments. */
+  outcomeFence?: OutcomeWriteFence;
   priors: readonly {
     priorStore: ConsumptionPriorStore;
     priorAnnotationId: string;
@@ -82,13 +95,14 @@ export type ConsumptionMutationResult<T> =
   | { ok: true; value: T }
   | {
       ok: false;
+      conflict?: OutcomeWriteConflict;
       dead: Array<{ priorStore: ConsumptionPriorStore; priorAnnotationId: string }>;
     };
 
 /**
  * Record a batch of edges in one transaction. `INSERT OR IGNORE` on the
  * (prior, dependent) tuple: re-recording the same dependency — a later
- * update of the same brief in the same run, or a retried run — is a no-op,
+ * update of the same observation in the same run, or a retried run — is a no-op,
  * and the FIRST run to record the pair keeps the attribution. Returns how
  * many edges were newly inserted.
  */
@@ -134,6 +148,11 @@ export function mutateWithConsumptionDependencies<T>(
   mutate: () => T,
 ): ConsumptionMutationResult<T> {
   const txn = db.transaction((): ConsumptionMutationResult<T> => {
+    if (context.outcomeFence) {
+      if (dependentKind !== "loop") return { ok: false, dead: [], conflict: "outcome_changed" };
+      const conflict = outcomeWriteConflict(db, dependentId, context.outcomeFence);
+      if (conflict) return { ok: false, dead: [], conflict };
+    }
     const dead = context.priors.filter(({ priorStore, priorAnnotationId }) => {
       const annotation =
         priorStore === "doc"
@@ -145,6 +164,14 @@ export function mutateWithConsumptionDependencies<T>(
 
     const value = mutate();
     if (value !== null) {
+      if (dependentKind === "loop" && context.outcomeFence?.assessment)
+        persistOutcomeAssessment(
+          db,
+          dependentId,
+          context.outcomeFence.assessment,
+          context.outcomeFence.sources,
+          now,
+        );
       recordConsumptionEdges(
         db,
         context.priors.map((prior) => ({
@@ -183,25 +210,41 @@ export function retractAnnotationWithDependentRechecks(
   const txn = db.transaction((): boolean => {
     const dependents = listLiveDependentsForAnnotation(db, store, annotationId);
     if (!retract()) return false;
-    for (const dependent of dependents) {
-      enqueueCognitionRun(
-        db,
-        {
-          id: `run_${randomUUID()}`,
-          kind: "feedback",
-          payload: {
-            recheckDependentKind: dependent.kind,
-            recheckDependentId: dependent.id,
-            recheckGeneration: randomUUID(),
-          },
-          dedupeKey: provenanceRecheckDedupeKey(dependent.kind, dependent.id),
-        },
-        now,
-      );
-    }
+    for (const dependent of dependents) recheckDependent(db, dependent.kind, dependent.id, now);
     return true;
   });
   return txn();
+}
+
+/**
+ * React to a dependent whose prior died. A loop gets a provenance recheck run;
+ * an open observation is simply dropped as stale — it is a short-lived note,
+ * and the next relevant run can note it again from current evidence.
+ */
+function recheckDependent(
+  db: Db,
+  kind: ConsumptionDependentKind,
+  dependentId: string,
+  now: number,
+): void {
+  if (kind === "observation") {
+    transitionObservation(db, dependentId, { state: "dropped", reason: "stale" }, now);
+    return;
+  }
+  enqueueCognitionRun(
+    db,
+    {
+      id: `run_${randomUUID()}`,
+      kind: "feedback",
+      payload: {
+        recheckDependentKind: kind,
+        recheckDependentId: dependentId,
+        recheckGeneration: randomUUID(),
+      },
+      dedupeKey: provenanceRecheckDedupeKey(kind, dependentId),
+    },
+    now,
+  );
 }
 
 /**
@@ -219,32 +262,23 @@ export function enqueueRechecksForMissingConsumptionPriors(db: Db, now: number):
            ON e.prior_store = 'doc' AND d.id = e.prior_annotation_id
          LEFT JOIN person_annotations p
            ON e.prior_store = 'person' AND p.id = e.prior_annotation_id
-         LEFT JOIN briefs b
-           ON e.dependent_kind = 'brief' AND b.id = e.dependent_id
+         LEFT JOIN observations b
+           ON e.dependent_kind = 'observation' AND b.id = e.dependent_id
          LEFT JOIN open_loops l
            ON e.dependent_kind = 'loop' AND l.id = e.dependent_id
         WHERE ((e.prior_store = 'doc' AND d.id IS NULL)
             OR (e.prior_store = 'person' AND p.id IS NULL))
-          AND (b.id IS NOT NULL OR l.id IS NOT NULL)`,
+          AND (b.id IS NOT NULL OR l.id IS NOT NULL)
+          AND ${knowledgeOwnerReadPredicate(db, "e.dependent_id")}`,
     )
     .all();
-  for (const dependent of dependents) {
-    const kind = dependent.dependent_kind as ConsumptionDependentKind;
-    enqueueCognitionRun(
+  for (const dependent of dependents)
+    recheckDependent(
       db,
-      {
-        id: `run_${randomUUID()}`,
-        kind: "feedback",
-        payload: {
-          recheckDependentKind: kind,
-          recheckDependentId: dependent.dependent_id,
-          recheckGeneration: randomUUID(),
-        },
-        dedupeKey: provenanceRecheckDedupeKey(kind, dependent.dependent_id),
-      },
+      dependent.dependent_kind as ConsumptionDependentKind,
+      dependent.dependent_id,
       now,
     );
-  }
   return dependents.length;
 }
 
@@ -254,12 +288,12 @@ export interface ConsumptionDependentRow {
   id: string;
   runId: string;
   createdAt: number;
-  /** The dependent brief/loop's current title. */
+  /** The dependent observation/loop's current title. */
   title: string;
 }
 
 /**
- * The LIVE dependents of one annotation — edges whose brief/loop row still
+ * The LIVE dependents of one annotation — edges whose observation/loop row still
  * exists (a hard-deleted dependent simply drops out; its edge is inert).
  * Newest-recorded first.
  */
@@ -304,12 +338,13 @@ export function listLiveDependentsForAnnotation(
       }
     >(
       `SELECT e.dependent_kind, e.dependent_id, e.run_id, e.created_at,
-              COALESCE(b.title, l.title) AS title
+              COALESCE(b.summary, l.title) AS title
          FROM cognition_consumption_edges e
-         LEFT JOIN briefs b ON e.dependent_kind = 'brief' AND b.id = e.dependent_id
+         LEFT JOIN observations b ON e.dependent_kind = 'observation' AND b.id = e.dependent_id
          LEFT JOIN open_loops l ON e.dependent_kind = 'loop' AND l.id = e.dependent_id
         WHERE e.prior_store = ? AND e.prior_annotation_id = ?
           AND (b.id IS NOT NULL OR l.id IS NOT NULL)
+          AND ${knowledgeOwnerReadPredicate(db, "e.dependent_id")}
           ${cursor}
         ORDER BY e.created_at DESC, e.dependent_kind ASC, e.dependent_id ASC
         ${limit}`,
@@ -335,10 +370,11 @@ export function countLiveDependentsForAnnotation(
       .prepare<[string, string], { n: number }>(
         `SELECT COUNT(*) AS n
            FROM cognition_consumption_edges e
-           LEFT JOIN briefs b ON e.dependent_kind = 'brief' AND b.id = e.dependent_id
+           LEFT JOIN observations b ON e.dependent_kind = 'observation' AND b.id = e.dependent_id
            LEFT JOIN open_loops l ON e.dependent_kind = 'loop' AND l.id = e.dependent_id
           WHERE e.prior_store = ? AND e.prior_annotation_id = ?
-            AND (b.id IS NOT NULL OR l.id IS NOT NULL)`,
+            AND (b.id IS NOT NULL OR l.id IS NOT NULL)
+          AND ${knowledgeOwnerReadPredicate(db, "e.dependent_id")}`,
       )
       .get(store, annotationId)?.n ?? 0
   );
@@ -368,6 +404,7 @@ export function listConsumedPriorsForDependent(
   kind: ConsumptionDependentKind,
   dependentId: string,
 ): ConsumedPriorRow[] {
+  if (!isKnowledgeOwnerReadable(db, dependentId)) return [];
   return db
     .prepare<
       [string, string],
@@ -389,7 +426,9 @@ export function listConsumedPriorsForDependent(
               COALESCE(d.superseded_by, p.superseded_by) AS superseded_by
          FROM cognition_consumption_edges e
          LEFT JOIN doc_annotations d ON e.prior_store = 'doc' AND d.id = e.prior_annotation_id
+          AND ${knowledgeOwnerReadPredicate(db, "d.id")}
          LEFT JOIN person_annotations p ON e.prior_store = 'person' AND p.id = e.prior_annotation_id
+          AND ${knowledgeOwnerReadPredicate(db, "p.id")}
         WHERE e.dependent_kind = ? AND e.dependent_id = ?
         ORDER BY e.created_at ASC`,
     )
@@ -439,11 +478,12 @@ export function listDeadPriorDependents(
         `SELECT e.prior_annotation_id, a.invalidated_at, e.dependent_kind, e.dependent_id
            FROM cognition_consumption_edges e
            JOIN ${table} a ON a.id = e.prior_annotation_id
-           LEFT JOIN briefs b ON e.dependent_kind = 'brief' AND b.id = e.dependent_id
+           LEFT JOIN observations b ON e.dependent_kind = 'observation' AND b.id = e.dependent_id
            LEFT JOIN open_loops l ON e.dependent_kind = 'loop' AND l.id = e.dependent_id
           WHERE e.prior_store = '${store}'
             AND a.invalidated_at IS NOT NULL AND a.invalidated_at > ? AND a.invalidated_at <= ?
-            AND (b.id IS NOT NULL OR l.id IS NOT NULL)`,
+            AND (b.id IS NOT NULL OR l.id IS NOT NULL)
+          AND ${knowledgeOwnerReadPredicate(db, "e.dependent_id")}`,
       )
       .all(opts.sinceExclusive, opts.until)
       .map((r) => ({

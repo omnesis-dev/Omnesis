@@ -19,6 +19,7 @@ import {
   TEMPORAL_STATUSES,
   temporalVocabularyCheck,
 } from "@omnesis/core";
+import { stableProjectionId } from "../enrichment/temporal-projections/derive.js";
 import { escapeStr, formatValue, parseSchemaJson, quoteIdent } from "./internal.js";
 import {
   deriveAnalyticsProjection,
@@ -256,6 +257,68 @@ export class AnalyticsTemporalProjectionStore {
        WHERE source_id = '${escapeStr(sourceId)}'
          AND table_name = '${escapeStr(tableName)}'
          AND record_key IN (${recordKeys.map((key) => `'${escapeStr(key)}'`).join(", ")})`,
+    );
+  }
+
+  /**
+   * Delete the named rows' projections whichever source recorded them. A row
+   * written before its table recorded its account has an unknown writer, so
+   * its projection can only be found by table and key.
+   */
+  async deleteKeysForTable(
+    conn: DuckDBConnection,
+    tableName: string,
+    recordKeys: string[],
+  ): Promise<void> {
+    if (recordKeys.length === 0) return;
+    await conn.run(
+      `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE}
+       WHERE table_name = '${escapeStr(tableName)}'
+         AND record_key IN (${recordKeys.map((key) => `'${escapeStr(key)}'`).join(", ")})`,
+    );
+  }
+
+  /**
+   * Move the named rows' projections to `sourceId`, whichever source recorded
+   * them, so that source can retract and re-derive them as its own. A
+   * projection's id is derived from its source, so the id moves with it; a
+   * projection the new source already holds for the same key and slot is the
+   * one that stays.
+   */
+  async rehomeKeys(
+    conn: DuckDBConnection,
+    tableName: string,
+    recordKeys: string[],
+    sourceId: string,
+  ): Promise<void> {
+    if (recordKeys.length === 0) return;
+    const keyList = recordKeys.map((key) => `'${escapeStr(key)}'`).join(", ");
+    const foreign = await conn.runAndReadAll(
+      `SELECT id, record_key, slot FROM ${TEMPORAL_PROJECTIONS_TABLE}
+        WHERE table_name = '${escapeStr(tableName)}'
+          AND record_key IN (${keyList})
+          AND source_id <> '${escapeStr(sourceId)}'`,
+    );
+    const moves = (foreign.getRows() as unknown[][]).map((row) => ({
+      from: String(row[0]),
+      to: stableProjectionId(sourceId, tableName, String(row[1]), String(row[2])),
+    }));
+    if (moves.length === 0) return;
+    const mapping = moves
+      .map((move) => `('${escapeStr(move.from)}', '${escapeStr(move.to)}')`)
+      .join(", ");
+    await conn.run(
+      `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE}
+        WHERE id IN (${moves.map((move) => `'${escapeStr(move.from)}'`).join(", ")})
+          AND EXISTS (SELECT 1 FROM ${TEMPORAL_PROJECTIONS_TABLE} held
+                       WHERE held.id IN (${moves.map((move) => `'${escapeStr(move.to)}'`).join(", ")})
+                         AND held.record_key = ${TEMPORAL_PROJECTIONS_TABLE}.record_key
+                         AND held.slot = ${TEMPORAL_PROJECTIONS_TABLE}.slot)`,
+    );
+    await conn.run(
+      `UPDATE ${TEMPORAL_PROJECTIONS_TABLE} SET id = moved.to_id, source_id = '${escapeStr(sourceId)}'
+        FROM (VALUES ${mapping}) AS moved(from_id, to_id)
+        WHERE ${TEMPORAL_PROJECTIONS_TABLE}.id = moved.from_id`,
     );
   }
 

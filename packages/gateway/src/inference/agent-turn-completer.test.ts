@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
+import Database from "better-sqlite3";
+import { recordCognitionSpend } from "../brain/storage/spend.js";
+import { LlmJudgeEntailmentVerifier, type EntailmentUsage } from "./entailment-loader.js";
 import { AgentTurnCompleter } from "./agent-turn-completer.js";
 import type { AgentEvent, AgentMessageEndEvent } from "@omnesis/core";
 import type { ChatBackend } from "@omnesis/agent";
@@ -47,6 +50,65 @@ describe("AgentTurnCompleter", () => {
     expect(calls[0]![0].sessionId).not.toEqual(calls[1]![0].sessionId);
     await completer.dispose();
     expect(model.dispose).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { inputTokens: 23, outputTokens: 7, cacheReadTokens: 50, cacheCreationTokens: 3 },
+    { inputTokens: 23, outputTokens: 7, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    { inputTokens: 23, outputTokens: 7 },
+  ])("preserves reported cache through the verifier and spend sink: %j", async (reported) => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE cognition_spend (
+      day TEXT, mechanism TEXT, model_id TEXT, runs INTEGER,
+      prompt_tokens INTEGER, completion_tokens INTEGER,
+      cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
+      PRIMARY KEY(day, mechanism, model_id))`);
+    const receipts: EntailmentUsage[] = [];
+    const completer = new AgentTurnCompleter({
+      backend: backend([delta, end({ usage: reported })]),
+    });
+    const verifier = new LlmJudgeEntailmentVerifier({
+      completer: {
+        modelId: completer.modelId,
+        complete: (prompt, options) => completer.completeWithUsage(prompt, options),
+        dispose: () => completer.dispose(),
+      },
+      getPromptStyle: () => "judge",
+      recordUsage: (receipt) => {
+        receipts.push(receipt);
+        recordCognitionSpend(db, "2026-01-01", "entailment-gate", receipt.modelId, receipt);
+      },
+    });
+    try {
+      await verifier.verify({ claim: "The lantern is blue.", evidence: "The lantern is red." });
+      const cacheRead = "cacheReadTokens" in reported ? reported.cacheReadTokens : undefined;
+      const cacheCreation =
+        "cacheCreationTokens" in reported ? reported.cacheCreationTokens : undefined;
+      expect(receipts).toEqual([
+        {
+          modelId: "example-model",
+          promptTokens: 23 + (cacheRead ?? 0) + (cacheCreation ?? 0),
+          completionTokens: 7,
+          ...(cacheRead !== undefined ? { cacheReadTokens: cacheRead } : {}),
+          ...(cacheCreation !== undefined ? { cacheCreationTokens: cacheCreation } : {}),
+        },
+      ]);
+      expect(
+        db
+          .prepare(
+            "SELECT prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens FROM cognition_spend",
+          )
+          .get(),
+      ).toEqual({
+        prompt_tokens: 23 + (cacheRead ?? 0) + (cacheCreation ?? 0),
+        completion_tokens: 7,
+        cache_read_tokens: cacheRead ?? 0,
+        cache_creation_tokens: cacheCreation ?? 0,
+      });
+    } finally {
+      await verifier.dispose();
+      db.close();
+    }
   });
 
   test.each(["error", "canceled", "max_tokens", "tool_use"] as const)(
@@ -149,7 +211,11 @@ describe("Codex completion over the app-server protocol", () => {
         expect(await completer.completeWithUsage("Classify the claim")).toEqual({
           text: "NEUTRAL",
           // The whole turn (`total`), cached input included: 30 in, 11 out.
-          usage: { promptTokens: 30, completionTokens: 11 },
+          usage: {
+            promptTokens: 30,
+            completionTokens: 11,
+            cacheReadTokens: 20,
+          },
         });
         await completer.dispose();
       } finally {

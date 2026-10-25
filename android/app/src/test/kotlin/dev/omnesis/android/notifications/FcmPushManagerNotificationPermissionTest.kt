@@ -25,11 +25,11 @@ class FcmPushManagerNotificationPermissionTest {
         val manager = FcmPushManager(application)
         val delivery = ClaimedNotificationDelivery(
             id = "00000000-0000-4000-8000-000000000101",
-            kind = "brief",
-            targetId = "brief_permission_test",
+            kind = "watch",
+            targetId = "watch_permission_test",
             title = "Fictional permission update",
             body = "Invented notification body.",
-            collapseId = "brief:permission-test",
+            collapseId = "watch:permission-test",
         )
 
         applicationShadow.denyPermissions(Manifest.permission.POST_NOTIFICATIONS)

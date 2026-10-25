@@ -30,7 +30,11 @@ export {
   type AgentTurnOutcome,
 } from "./turn-outcome.js";
 
-export { serializeToolResultForModel } from "./tool-result-text.js";
+export {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
+export { annotateLocalTimes, instantSafeEnd, withoutCutInstantAtEnd } from "./local-times.js";
 
 export {
   DEFAULT_MAX_TOOL_ITERATIONS,
@@ -50,6 +54,12 @@ export {
   type ToolCaller,
   type ToolContext,
   UNATTRIBUTED_CALLER,
+  summarizeToolArgs,
+  parseToolArgs,
+  toolArgsUnparseableResult,
+  childEventHooks,
+  ToolProgressQueue,
+  summaryExcerpt,
   wrapEvent,
 } from "./backend.js";
 
@@ -133,12 +143,13 @@ export {
   type ClaudeCodeTurnRunner,
 } from "./claude-code-backend.js";
 
-export { zodToJsonSchema } from "./zod-to-json-schema.js";
+export { toolInputJsonSchema, zodToJsonSchema } from "./zod-to-json-schema.js";
 
 export {
   CORPUS_CONTENT_IS_DATA,
   SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE,
   renderAnalyticsCatalog,
+  renderRetrievalContext,
   renderAnalyticsRetrievalGuidance,
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
@@ -194,6 +205,13 @@ export {
   type LookupPeopleArgs,
   type LookupPeopleToolDeps,
 } from "./tools/lookup-people.js";
+export {
+  createCountMessagesTool,
+  countMessagesArgsSchema,
+  COUNT_MESSAGES_MAX_LIMIT,
+  type CountMessagesArgs,
+  type CountMessagesToolDeps,
+} from "./tools/count-messages.js";
 export {
   createLookupDocumentByUrlTool,
   lookupDocumentByUrlArgsSchema,
@@ -301,11 +319,24 @@ export type {
   SubagentJoinResult,
   LoopReadPort,
   LoopListPortResult,
+  LoopListObservation,
+  LoopListReadIdentity,
+  LoopListValidationFailure,
+  LoopListReadOptions,
   LoopSearchPortInput,
   LoopSearchPortResult,
   TemporalReadPort,
+  MessageCountPort,
+  MessageCountPortInput,
+  MessageCountPortResult,
+  MessageCountPerson,
+  MessageCountSource,
+  MessageCountsBody,
   EntityContextPort,
   EntityContextResult,
   EntityContextSeed,
   EntityContextSeedKind,
 } from "./tools/types.js";
+export { CitationReads } from "./tools/citation-reads.js";
+
+export { invokeToolHandle } from "./invoke-tool.js";

@@ -203,7 +203,7 @@ describe("voice toolset", () => {
    * populate has no viewer — and each of their calls costs a model round the
    * user waits through. They must not be offered on the voice surface.
    */
-  it("withholds the citation tools from a voice turn but keeps retrieval", async () => {
+  it("withholds citation and clarification tools from a voice turn but keeps retrieval", async () => {
     const backend = new RecordingBackend();
     const service = makeService(backend);
     const created = await service.createSession("device:A", { profile: "voice" });
@@ -213,13 +213,14 @@ describe("voice toolset", () => {
     const names = (backend.turns.at(-1)?.tools ?? []).map((t) => t.name);
     expect(names).not.toContain("annotate_many");
     expect(names).not.toContain("cite_record");
+    expect(names).not.toContain("ask_clarification");
     // The tools that actually answer the question are untouched.
     expect(names).toContain("search_many");
     expect(names).toContain("fetch_many");
     await service.dispose();
   });
 
-  it("an interactive turn still gets the citation tools", async () => {
+  it("offers clarification only on the interactive session, not the shared tool registry", async () => {
     const backend = new RecordingBackend();
     const service = makeService(backend);
     const created = await service.createSession("device:A");
@@ -228,11 +229,13 @@ describe("voice toolset", () => {
 
     const names = (backend.turns.at(-1)?.tools ?? []).map((t) => t.name);
     expect(names).toContain("annotate_many");
+    expect(names).toContain("ask_clarification");
+    expect(service.listTools().map((tool) => tool.name)).not.toContain("ask_clarification");
     await service.dispose();
   });
 
   /** A session switched onto the voice prompt must also lose the tools. */
-  it("resuming onto the voice profile drops the citation tools too", async () => {
+  it("resuming onto voice drops citation and clarification tools", async () => {
     const backend = new RecordingBackend();
     const service = makeService(backend);
     const created = await service.createSession("device:A");
@@ -245,6 +248,7 @@ describe("voice toolset", () => {
 
     const names = (backend.turns.at(-1)?.tools ?? []).map((t) => t.name);
     expect(names).not.toContain("annotate_many");
+    expect(names).not.toContain("ask_clarification");
     await service.dispose();
   });
 
@@ -253,7 +257,7 @@ describe("voice toolset", () => {
    * app becomes an interactive session, which does render a Timeline and must
    * get its citation tools back.
    */
-  it("swapping a voice session back to interactive restores the citation tools", async () => {
+  it("swapping voice back to interactive restores citation and clarification tools", async () => {
     const backend = new RecordingBackend();
     const service = makeService(backend);
     const created = await service.createSession("device:A", { profile: "voice" });
@@ -266,6 +270,7 @@ describe("voice toolset", () => {
 
     const names = (backend.turns.at(-1)?.tools ?? []).map((t) => t.name);
     expect(names).toContain("annotate_many");
+    expect(names).toContain("ask_clarification");
     await service.dispose();
   });
 });

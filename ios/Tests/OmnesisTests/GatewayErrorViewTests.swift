@@ -13,6 +13,14 @@ import XCTest
 @available(iOS 17.0, *)
 @MainActor
 final class GatewayErrorViewTests: XCTestCase {
+    func testVoiceFailureRetainsActionableTitleAndSafeDetail() {
+        let failure = RealtimeCallFailure(code: "quota_exhausted", fatal: true, retryable: false)
+        let kind = GatewayErrorView.classify(failure)
+        XCTAssertEqual(kind, .voice(failure))
+        XCTAssertEqual(kind.title, "OpenAI credit or quota limit")
+        XCTAssertTrue(kind.detail(for: "start a call").contains("billing"))
+    }
+
     // MARK: - classify(_:)
 
     func testNilErrorClassifiesAsUnreachable() {

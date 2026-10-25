@@ -385,12 +385,46 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         },
         { name: "search_loops", arguments: { query: "fictional no match", limit: 1 } },
         { name: "list_loops", arguments: { limit: 1 } },
-        { name: "fetch_loop", arguments: { loopId: "loop_fictional_missing" } },
       ];
       for (const call of experimentalCalls) {
         const result = await authorized.client.callTool(call);
         expect(result.isError, `${call.name} should accept its real schema`).not.toBe(true);
       }
+      const snapshot = await authorized.client.callTool({
+        name: "list_loops",
+        arguments: { limit: 1, mode: "snapshot" },
+      });
+      expect(snapshot.isError).not.toBe(true);
+      expect(snapshot.structuredContent).toMatchObject({
+        kind: "structured",
+        resultType: "loops.listed",
+        data: {
+          mode: "snapshot",
+          observation: {
+            mode: "snapshot",
+            observedAt: expect.any(String),
+            readScope: {
+              limit: 1,
+              population: "accessible_stored_records",
+              states: ["open", "snoozed"],
+            },
+          },
+        },
+      });
+      const invalidMode = await authorized.client.callTool({
+        name: "list_loops",
+        arguments: { mode: "invented" },
+      });
+      expect(invalidMode.isError).toBe(true);
+      const missingLoop = await authorized.client.callTool({
+        name: "fetch_loop",
+        arguments: { loopId: "loop_fictional_missing" },
+      });
+      expect(missingLoop.isError).toBe(true);
+      expect(missingLoop.structuredContent).toMatchObject({
+        kind: "error",
+        code: "loop_not_found",
+      });
     } finally {
       try {
         if (authorized) await closeAuthorized(authorized);

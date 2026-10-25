@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The decision ledger: one row per typed decision the Brain asked of the
- * decision model, keyed to the run it was asked for.
+ * The decision ledger: one row per typed decision asked of the decision
+ * model, keyed to the run it was asked for when there is one.
  *
  * It is the audit trail of the worth gate — the exact request sent (state and
  * questions), the answers, the score, the threshold, the verdict, the model and
@@ -15,12 +15,21 @@
  *
  * Attachments are judged by their parent email: `document_id` is the run's own
  * document, `subject_document_id` the one that was actually scored. Both
- * cascade: deleting a document deletes every judgement that quotes it.
+ * cascade: deleting a document deletes every judgement that quotes it. A
+ * judgement about something no document anchors (a task, an observation the
+ * user wrote, a search query) leaves both null, and one made outside any
+ * Brain run (a date mention, a search) leaves `run_id` null; its exact input
+ * is kept in the decision payload store under the subjects it was read from.
  * Past the activity-retention window the request and answer text is cleared
  * (see the `cognitionDecisions` retention phase); verdicts and scores stay.
  */
 
 import { recordWorthAnswers } from "../../worth/answers.js";
+import {
+  recordDecisionPayload,
+  type DecisionPayloadCapture,
+  type DecisionPayload,
+} from "../decision-payload.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -29,15 +38,44 @@ export type DecisionVerdict = "pass" | "skip" | "unavailable";
 
 /**
  * What a decision was asked for: `worth-gate` judges a run's document before
- * the run, `record-check` a record a run is about to save.
+ * the run, `record-check` a record a run is about to save,
+ * `observation-salience` whether an observation belongs in a morning brief,
+ * `task-check` a Brain write to one of the user's own tasks, `task-propose`
+ * whether a new Brain suggestion is withheld, suggested or adopted, `mention-worth`
+ * whether an email's date mentions are worth recording, and `find-route`
+ * whether a search needs agent research.
  */
-export type DecisionPurpose = "worth-gate" | "record-check";
+export type DecisionPurpose =
+  | "worth-gate"
+  | "record-check"
+  | "observation-salience"
+  | "task-check"
+  | "task-propose"
+  | "mention-worth"
+  | "find-route";
+
+/** Every purpose, in the order the audit lists them. */
+export const DECISION_PURPOSES: readonly DecisionPurpose[] = [
+  "worth-gate",
+  "record-check",
+  "observation-salience",
+  "task-check",
+  "task-propose",
+  "mention-worth",
+  "find-route",
+];
 
 export interface CognitionDecisionRecord {
+  /** Optional exact input snapshot, stored separately under its full privacy ancestry. */
+  payloadCapture?: DecisionPayloadCapture;
+  payload?: DecisionPayload;
   id: string;
-  runId: string;
-  documentId: string;
-  subjectDocumentId: string;
+  /** The Brain run that asked; null for a decision made outside any run. */
+  runId: string | null;
+  /** The run's document; null when no document anchors the decision. */
+  documentId: string | null;
+  /** The document actually judged; null when no document anchors the decision. */
+  subjectDocumentId: string | null;
   purpose: DecisionPurpose;
   lane: string;
   rubricVersion: string;
@@ -54,8 +92,9 @@ export interface CognitionDecisionRecord {
   error: string | null;
   reusedFrom: string | null;
   /**
-   * The Brain record the decision was about (an annotation id), when it judged
-   * a record rather than a document; null for document judgements.
+   * The Brain record the decision was about (an annotation, task or
+   * observation id), when it judged a record rather than a document; null for
+   * document judgements.
    */
   recordId: string | null;
   /**
@@ -69,16 +108,33 @@ export interface CognitionDecisionRecord {
 }
 
 export function createCognitionDecisionsTable(db: Db): void {
-  db.exec(COGNITION_DECISIONS_DDL);
+  db.exec(cognitionDecisionsDdl("cognition_decisions"));
   for (const statement of COGNITION_DECISIONS_INDEXES) db.exec(statement);
 }
 
-const COGNITION_DECISIONS_DDL = `
-  CREATE TABLE IF NOT EXISTS cognition_decisions (
+/**
+ * Rebuild the table under the current DDL, keeping every row. Run inside a
+ * transaction; nothing references the table, so foreign keys can stay on.
+ */
+export function rebuildCognitionDecisionsTable(db: Db): void {
+  db.exec(cognitionDecisionsDdl("cognition_decisions_rebuild"));
+  db.exec(`INSERT INTO cognition_decisions_rebuild (${DECISION_COLUMNS})
+    SELECT ${DECISION_COLUMNS} FROM cognition_decisions`);
+  db.exec("DROP TABLE cognition_decisions");
+  db.exec("ALTER TABLE cognition_decisions_rebuild RENAME TO cognition_decisions");
+  for (const statement of COGNITION_DECISIONS_INDEXES) db.exec(statement);
+}
+
+const DECISION_COLUMNS = `id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
+  content_hash, requested_model_id, model_id, score, threshold, verdict, error, reused_from,
+  record_id, enforced, latency_ms, input_tokens, created_at, request_json, response_json`;
+
+const cognitionDecisionsDdl = (table: string) => `
+  CREATE TABLE IF NOT EXISTS ${table} (
     id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL,
-    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    subject_document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    run_id TEXT,
+    document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+    subject_document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
     purpose TEXT NOT NULL,
     lane TEXT NOT NULL,
     rubric_version TEXT NOT NULL,
@@ -111,13 +167,17 @@ const COGNITION_DECISIONS_INDEXES = [
   "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_document ON cognition_decisions(document_id, purpose, created_at DESC, verdict)",
   // Retention walks old rows by age.
   "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_created ON cognition_decisions(created_at)",
+  // A Brain record's own judgements (an observation's salience history).
+  "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_record ON cognition_decisions(record_id, purpose, created_at DESC) WHERE record_id IS NOT NULL",
+  // One purpose's newest judgements across every record (the Interest tab's gate verdicts).
+  "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_purpose ON cognition_decisions(purpose, created_at DESC)",
 ];
 
 interface DecisionRow {
   id: string;
-  run_id: string;
-  document_id: string;
-  subject_document_id: string;
+  run_id: string | null;
+  document_id: string | null;
+  subject_document_id: string | null;
   purpose: string;
   lane: string;
   rubric_version: string;
@@ -172,9 +232,12 @@ function fromRow(row: DecisionRow): CognitionDecisionRecord {
  */
 export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord): void {
   db.transaction(() => {
-    insertDecisionRow(db, record);
+    const inserted = insertDecisionRow(db, record);
+    if (inserted && record.payloadCapture && record.payload)
+      recordDecisionPayload(db, record.id, record.payloadCapture, record.payload, record.createdAt);
     if (
       record.purpose === "worth-gate" &&
+      record.subjectDocumentId !== null &&
       record.score !== null &&
       record.reusedFrom === null &&
       record.contentHash !== null
@@ -195,38 +258,42 @@ export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord)
   })();
 }
 
-function insertDecisionRow(db: Db, record: CognitionDecisionRecord): void {
-  db.prepare(
-    `INSERT INTO cognition_decisions (
+function insertDecisionRow(db: Db, record: CognitionDecisionRecord): boolean {
+  return (
+    db
+      .prepare(
+        `INSERT INTO cognition_decisions (
        id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
        content_hash, requested_model_id, model_id, request_json, response_json, score,
        threshold, verdict, error, reused_from, record_id, enforced, latency_ms, input_tokens,
        created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
-  ).run(
-    record.id,
-    record.runId,
-    record.documentId,
-    record.subjectDocumentId,
-    record.purpose,
-    record.lane,
-    record.rubricVersion,
-    record.contentHash,
-    record.requestedModelId,
-    record.modelId,
-    record.requestJson,
-    record.responseJson,
-    record.score,
-    record.threshold,
-    record.verdict,
-    record.error,
-    record.reusedFrom,
-    record.recordId,
-    record.enforced ? 1 : 0,
-    record.latencyMs,
-    record.inputTokens,
-    record.createdAt,
+      )
+      .run(
+        record.id,
+        record.runId,
+        record.documentId,
+        record.subjectDocumentId,
+        record.purpose,
+        record.lane,
+        record.rubricVersion,
+        record.contentHash,
+        record.requestedModelId,
+        record.modelId,
+        record.requestJson,
+        record.responseJson,
+        record.score,
+        record.threshold,
+        record.verdict,
+        record.error,
+        record.reusedFrom,
+        record.recordId,
+        record.enforced ? 1 : 0,
+        record.latencyMs,
+        record.inputTokens,
+        record.createdAt,
+      ).changes > 0
   );
 }
 
@@ -238,6 +305,37 @@ export function listDecisionsForRun(db: Db, runId: string): CognitionDecisionRec
       DecisionRow
     >(`SELECT * FROM cognition_decisions WHERE run_id = ? ORDER BY created_at, id`)
     .all(runId)
+    .map(fromRow);
+}
+
+/** The latest decisions of one purpose about one Brain record, newest first. */
+/** The newest rows of one purpose across every record, newest first. */
+export function listDecisionsForPurpose(
+  db: Db,
+  purpose: DecisionPurpose,
+  limit: number,
+): CognitionDecisionRecord[] {
+  return db
+    .prepare<[DecisionPurpose, number], DecisionRow>(
+      `SELECT * FROM cognition_decisions WHERE purpose = ?
+        ORDER BY created_at DESC, id LIMIT ?`,
+    )
+    .all(purpose, limit)
+    .map(fromRow);
+}
+
+export function listDecisionsForRecord(
+  db: Db,
+  purpose: DecisionPurpose,
+  recordId: string,
+  limit: number,
+): CognitionDecisionRecord[] {
+  return db
+    .prepare<[DecisionPurpose, string, number], DecisionRow>(
+      `SELECT * FROM cognition_decisions WHERE purpose = ? AND record_id = ?
+        ORDER BY created_at DESC, id LIMIT ?`,
+    )
+    .all(purpose, recordId, limit)
     .map(fromRow);
 }
 

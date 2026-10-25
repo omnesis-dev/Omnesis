@@ -6,9 +6,12 @@
  * (experimental). Projects the Cognition Steward's `open_loops` into the compact
  * `LoopSummary` / `LoopDetail` wire shapes — no mutation surface, so the chat
  * agent can find and read what the background agent tracks but never change it.
- * Terminal (done / dismissed) loops are never surfaced; only live obligations.
+ * Lists/search show active loops; exact-ID reads also preserve terminal state.
  */
 
+import { LoopListReceipts } from "./loop-list-receipts.js";
+import { systemClock, type Clock, type OpenLoopRow } from "./storage/types.js";
+import { readKnowledgeNodeDocumentContext } from "./knowledge/document-context.js";
 import {
   getOpenLoop,
   listOpenLoops,
@@ -24,7 +27,6 @@ import type {
   LoopSearchPortInput,
   LoopSearchPortResult,
 } from "@omnesis/agent";
-import type { OpenLoopRow } from "./storage/types.js";
 
 type Db = Database.Database;
 
@@ -78,14 +80,16 @@ function loopToSummary(loop: OpenLoopRow): LoopSummary {
 }
 
 function loopToDetail(db: Db, loop: OpenLoopRow, now: number): LoopDetail {
-  const relatedLoops = listRelatedLoops(db, loop.id, now).map((l) => ({
+  const relatedLoops = listRelatedLoops(db, loop.id).map((l) => ({
     loopId: l.id,
     title: l.title,
     state: l.state,
     ...(l.importance !== undefined ? { importance: l.importance } : {}),
   }));
+  const knowledgeContext = readKnowledgeNodeDocumentContext(db, loop.id);
   return {
     ...loopToSummary(loop),
+    ...(knowledgeContext ? { knowledgeContext } : {}),
     actors: resolveNames(db, loop.actors),
     involved: resolveNames(db, loop.involved),
     docIds: [...loop.docs],
@@ -96,7 +100,8 @@ function loopToDetail(db: Db, loop: OpenLoopRow, now: number): LoopDetail {
   };
 }
 
-export function createGatewayLoopReadPort(db: Db): LoopReadPort {
+export function createGatewayLoopReadPort(db: Db, clock: Clock = systemClock): LoopReadPort {
+  const receipts = new LoopListReceipts(db);
   return {
     async search(input: LoopSearchPortInput): Promise<LoopSearchPortResult> {
       const t0 = Date.now();
@@ -107,26 +112,37 @@ export function createGatewayLoopReadPort(db: Db): LoopReadPort {
       return { query: input.query, durationMs: Date.now() - t0, loops };
     },
     async fetch(loopId: string): Promise<LoopDetail | null> {
-      const loop = getOpenLoop(db, loopId);
-      if (!loop || !isActive(loop)) return null;
-      return loopToDetail(db, loop, Date.now());
+      return db.transaction(() => {
+        const loop = getOpenLoop(db, loopId);
+        if (!loop) return null;
+        return loopToDetail(db, loop, Date.now());
+      })();
     },
-    async list(limit: number | undefined): Promise<LoopListPortResult> {
-      const t0 = Date.now();
-      const cap = Math.min(Math.max(limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-      // Importance-first so that when the active-loop count exceeds the cap it is
-      // the LEAST important loops that fall off, never a stale-but-important one.
-      // Over-fetch by one to detect (not silently drop) that more exist.
-      const rows = listOpenLoops(db, {
-        states: [...ACTIVE_STATES],
-        orderBy: "importance",
-        limit: cap + 1,
-      });
-      return {
-        durationMs: Date.now() - t0,
-        loops: rows.slice(0, cap).map(loopToSummary),
-        truncated: rows.length > cap,
-      };
+    async list(limit, signal, read): Promise<LoopListPortResult> {
+      signal?.throwIfAborted();
+      return db.transaction(() => {
+        const t0 = clock();
+        const cap = Math.min(Math.max(limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+        const rows = listOpenLoops(db, {
+          states: [...ACTIVE_STATES],
+          orderBy: "importance-stable",
+          limit: cap + 1,
+        });
+        const result: LoopListPortResult = {
+          durationMs: clock() - t0,
+          loops: rows.slice(0, cap).map(loopToSummary),
+          truncated: rows.length > cap,
+        };
+        return read ? receipts.capture(result, read, t0, cap) : result;
+      })();
+    },
+    async validateListAsNavigation(result, identity, signal) {
+      signal?.throwIfAborted();
+      return receipts.validateAsNavigation(result, identity);
+    },
+    async validateList(result, identity, signal, onRefusal) {
+      signal?.throwIfAborted();
+      return receipts.validate(result, identity, onRefusal);
     },
   };
 }

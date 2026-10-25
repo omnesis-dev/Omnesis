@@ -24,9 +24,14 @@
 
 import "./synth-env.js";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { cognitionTranscriptsDir } from "@omnesis/gateway/src/brain/transcripts.js";
+import { createLogger } from "@omnesis/core";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -271,6 +276,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       docTitle: GRANT_DOC.title,
       plan: (ctx) => ({
         calls: [
+          call("open_loop_search", { query: MARK_GRANTED }),
           call("open_loop_create", {
             title: `Confirm the rehearsal slot ${MARK_GRANTED}`,
             description: "Tracked from the booking request.",
@@ -278,14 +284,14 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             importance: 0.7,
             docs: [ctx.subject],
           }),
-          call("brief_create", {
-            kind: "info",
-            title: `Rehearsal hold expires ${MARK_GRANTED}`,
-            description: "The studio releases the hold unless the slot is confirmed.",
+          call("observation_list", {}),
+          call("observation_note", {
+            summary: `The rehearsal hold expires unless the slot is confirmed ${MARK_GRANTED}`,
+            why: "The studio releases the hold unless the slot is confirmed.",
             citations: [ctx.subject],
-            confidence: 0.85,
-            urgency: 0.6,
+            claims: [{ docId: ctx.subject, quote: GRANT_QUOTE }],
           }),
+          call("annotation_search", { docId: ctx.subject }),
           call("annotate_durable", {
             docId: ctx.subject,
             claimType: "commitment",
@@ -299,7 +305,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
         finalText: "Tracked the rehearsal hold.",
       }),
     },
-    // morning-digest: authority is `brief` only.
+    // morning-digest: authority is the morning brief only.
     {
       flavour: "daily.digest",
       plan: () => ({
@@ -309,15 +315,11 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             confidence: 0.8,
             importance: 0.5,
           }),
-          call("brief_create", {
-            kind: "info",
-            title: `Morning read ${MARK_DIGEST}`,
-            description: "One card composed by the digest pass.",
-            confidence: 0.8,
-            urgency: 0.4,
+          call("morning_brief_send", {
+            text: `**Worth your attention**\n\n- Confirm the rehearsal slot before Friday. ${MARK_DIGEST}`,
           }),
         ],
-        finalText: "Digest composed.",
+        finalText: "Morning brief sent.",
       }),
     },
     // memory-regrounding (`verification`): annotations only.
@@ -325,12 +327,11 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       flavour: "verification",
       plan: () => ({
         calls: [
-          call("brief_create", {
-            kind: "info",
-            title: `Verification tried to raise a card ${MARK_VERIFY}`,
-            description: "A re-grounding pass must not interrupt the user.",
-            confidence: 0.8,
-            urgency: 0.4,
+          call("observation_note", {
+            summary: `Verification tried to note an observation ${MARK_VERIFY}`,
+            why: "A re-grounding pass must not interrupt the user.",
+            citations: [grantDocId],
+            claims: [{ docId: grantDocId, quote: GRANT_QUOTE }],
           }),
           call("annotation_revise", { id: grantAnnotationId, confidence: 0.45 }),
         ],
@@ -411,10 +412,22 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      behaviors: { behaviors },
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ docTitle: GRANT_DOC.title, plan: behaviors[0]!.plan }],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors,
+      },
       // The retrospective lane would fill the queue with its own runs and make
       // every claim-order and concurrency assertion below unreadable.
-      brain: { bootstrap: { enabled: false } },
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        bootstrap: { enabled: false },
+      },
+      // The morning brief is appended to a conversation, which needs the
+      // interactive role assigned; no conversation turn runs here.
+      agent: { behaviors: [] },
     });
     await bench.drainUntilQuiet();
   }, 300_000);
@@ -427,17 +440,24 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     [grantDocId] = await bench.pushAndSettle([GRANT_DOC]);
 
     const loops = await bench.obs.loopsMatching(MARK_GRANTED);
-    expect(loops).toHaveLength(1);
-    const briefs = await bench.obs.briefsMatching(MARK_GRANTED);
-    expect(briefs).toHaveLength(1);
+    const sourceRuns = await bench.obs.runsForSource(grantDocId);
+    const tools = await Promise.all(
+      sourceRuns.map(async (run) => ({
+        runId: run.id,
+        tools: await bench.obs.executedTools(run.id),
+      })),
+    );
+    expect(loops, JSON.stringify(tools)).toHaveLength(1);
+    const observations = await bench.obs.observationsMatching(MARK_GRANTED);
+    expect(observations).toHaveLength(1);
+    expect(observations[0]!.state).toBe("live");
     const annotations = await bench.obs.docAnnotations(grantDocId);
     expect(annotations.annotations).toHaveLength(1);
     grantAnnotationId = annotations.annotations[0]!.id;
 
     // Not vacuous: the same three tools are attempted below on runs whose
     // workflow lacks them, and none of those calls even reaches a handler.
-    const runs = await bench.obs.settledRuns("data");
-    const dataRun = runs.find((r) => r.dedupeKey === `data:doc:${grantDocId}`);
+    const dataRun = await bench.obs.interpretationForSource(grantDocId);
     expect(dataRun?.status).toBe("completed");
     const calls = await toolOutcomes(bench, dataRun!.id);
     expect(calls.filter((c) => c.kind === "error")).toEqual([]);
@@ -445,10 +465,13 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
 
   test("a morning digest cannot create a loop — the tool is not in its toolset", async () => {
     const now = Date.now();
+    const day = todayIso(now);
+    // The live observation the granted run noted is the morning's editorial
+    // input; without one the run would settle in preflight with no model turn.
     const runId = bench.seedRun({
       id: `run_${randomUUID()}`,
       kind: "daily",
-      payload: { digest: true, date: todayIso(now) },
+      payload: { digest: true, date: day },
       dedupeKey: `daily:digest:probe-${now}`,
     });
     await waitSettled(bench, [runId]);
@@ -460,11 +483,15 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     const calls = await toolOutcomes(bench, runId);
     expect(calls).toContainEqual({ tool: "open_loop_create", kind: "error", code: "unknown_tool" });
     // …while the artifact the digest IS authorized over went through.
-    expect(calls.find((c) => c.tool === "brief_create")?.kind).toBe("structured");
-    expect(await bench.obs.briefsMatching(MARK_DIGEST)).toHaveLength(1);
+    expect(calls.find((c) => c.tool === "morning_brief_send")?.kind).toBe("structured");
+    const brief = await bench.obs.morningBrief(day);
+    expect(brief.sent).toMatchObject({ day, runId });
+    expect(brief.items.map((item) => item.observation?.summary)).toEqual([
+      expect.stringContaining(MARK_GRANTED),
+    ]);
   }, 180_000);
 
-  test("a re-grounding pass cannot create a brief, but can revise its annotations", async () => {
+  test("a re-grounding pass cannot note an observation, but can revise its annotations", async () => {
     expect(grantAnnotationId).not.toBe("");
     const runId = bench.seedRun({
       id: `run_${randomUUID()}`,
@@ -475,9 +502,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     await waitSettled(bench, [runId]);
 
     expect(runRow(bench, runId)!.status).toBe("completed");
-    expect(await bench.obs.briefsMatching(MARK_VERIFY)).toEqual([]);
+    expect(await bench.obs.observationsMatching(MARK_VERIFY)).toEqual([]);
     const calls = await toolOutcomes(bench, runId);
-    expect(calls).toContainEqual({ tool: "brief_create", kind: "error", code: "unknown_tool" });
+    expect(calls).toContainEqual({ tool: "observation_note", kind: "error", code: "unknown_tool" });
     expect(calls.find((c) => c.tool === "annotation_revise")?.kind).toBe("structured");
 
     const after = await bench.obs.docAnnotations(grantDocId);
@@ -561,6 +588,14 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
   test("a payload folded onto a run in flight gets its own execution, not silence", async () => {
     await bench.pushAll([FOLD_DOC]);
     foldDocId = await bench.docId(FOLD_DOC.externalId);
+    // This case exercises recovery of a persisted legacy queue row, not source admission.
+    bench.seedRun({
+      id: `run_${randomUUID()}`,
+      kind: "data",
+      payload: { docId: foldDocId, event: "created", datumAt: Date.now() },
+      dedupeKey: `data:doc:${foldDocId}`,
+      enqueuedAt: Date.now(),
+    });
 
     // The fold is applied from inside the model turn, so by construction it
     // lands while the row is claimed and executing.
@@ -653,7 +688,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
         {
           id: ids.feedback,
           kind: "feedback",
-          payload: { briefId: `brief_${randomUUID()}` },
+          // A provenance recheck for a loop that no longer exists: the
+          // current feedback variant, settled without touching anything.
+          payload: { recheckDependentKind: "loop", recheckDependentId: `loop_${randomUUID()}` },
           nextAttemptAt: now - 1_000,
         },
       ],
@@ -684,7 +721,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     expect(order).toEqual(["feedback", "data", "synthesis", "bootstrap", "verification"]);
   }, 240_000);
 
-  test("worker concurrency parallelizes daily batches and still serializes the rest", async () => {
+  test("legacy daily and data runs remain exclusive with multiple worker slots", async () => {
     await bench.patchConfig({ brain: { workerConcurrency: 2 } });
     // The drainer re-reads the knob per tick; give it one.
     await sleep(1_000);
@@ -692,7 +729,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     const sourceIds = bench.harness.getSourceIds();
     expect(sourceIds.length).toBeGreaterThanOrEqual(2);
 
-    // ── daily, non-digest: allowed to use the full N in parallel.
+    // Legacy daily work has no scoped maintenance frontier and remains exclusive.
     const now = Date.now();
     const dailyIds = [`run_${randomUUID()}`, `run_${randomUUID()}`];
     seedBatch(
@@ -710,8 +747,8 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       now,
     );
     const dailyMax = await maxConcurrent(bench, dailyIds);
-    expect(dailyMax).toBe(2);
-    expectOneClaimBatch(bench, dailyIds);
+    expect(dailyMax).toBe(1);
+    expectExclusiveClaims(bench, dailyIds);
 
     // ── data: reconcile-before-create is read-then-write, so these never overlap.
     await bench.pushAll([SLOW_DOC_A, SLOW_DOC_B]);
@@ -738,22 +775,19 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       then,
     );
     const dataMax = await maxConcurrent(bench, dataIds);
-    // Not vacuous: the pair was claimed by ONE tick, so the drainer had both
-    // in hand and chose to run them one after the other.
-    expectOneClaimBatch(bench, dataIds);
+    // Each run genuinely executed once; exclusive admission claims them separately.
+    expectExclusiveClaims(bench, dataIds);
     expect(dataMax).toBe(1);
   }, 240_000);
 });
 
 /**
- * Assert a set of runs was claimed by a single drain tick: the claim statement
- * stamps one `last_attempt_at` across the whole batch, so equal stamps (with
- * no re-claim) mean the drainer held them all at once.
+ * Exclusive admission claims one run at a time; every probe must actually execute.
  */
-function expectOneClaimBatch(bench: BrainBench, ids: readonly string[]): void {
+function expectExclusiveClaims(bench: BrainBench, ids: readonly string[]): void {
   const rows = runRows(bench, ids);
   expect(rows.map((r) => r.attempts)).toEqual(ids.map(() => 1));
-  expect(new Set(rows.map((r) => r.lastAttemptAt)).size).toBe(1);
+  expect(new Set(rows.map((r) => r.lastAttemptAt)).size).toBe(ids.length);
 }
 
 /**
@@ -802,7 +836,12 @@ describe("brain engine — the experimental gate off", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
-    bench = await BrainBench.start({ experimental: false });
+    bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
+      experimental: false,
+    });
   }, 300_000);
 
   afterAll(async () => {
@@ -813,11 +852,11 @@ describe("brain engine — the experimental gate off", () => {
     const status = await bench.obs.status();
     // A model IS assigned — the only thing missing is the experimental switch,
     // so this is the gate talking, not a misconfiguration.
-    expect(status.briefs.modelAssigned).toBe(true);
-    expect(status.briefs.enabled).toBe(false);
-    expect(status.briefs.active).toBe(false);
+    expect(status.brain.modelAssigned).toBe(true);
+    expect(status.brain.enabled).toBe(false);
+    expect(status.brain.active).toBe(false);
 
-    expect(await bench.obs.statusOf("/briefs/feed")).toBe(404);
+    expect(await bench.obs.statusOf("/admin/brain/observations")).toBe(404);
     expect(await bench.obs.statusOf("/admin/brain/loops")).toBe(404);
     expect(await bench.obs.statusOf("/admin/brain/runs")).toBe(404);
 
@@ -955,9 +994,15 @@ describe("brain engine — failure, backpressure and the budget", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      behaviors: { behaviors },
+      behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: preserveCurrentOwner }),
+        behaviors,
+      },
       clock: "virtual",
-      brain: { bootstrap: { enabled: false } },
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        bootstrap: { enabled: false },
+      },
     });
     await bench.drainUntilQuiet();
     await bench.pushAll([FAIL_DOC, HOLD_DOC, QUIET_DOC]);
@@ -1073,7 +1118,7 @@ describe("brain engine — failure, backpressure and the budget", () => {
     expect(held.attempts).toBeLessThan(5);
   }, 300_000);
 
-  test("an unresolvable backend soft-fails the run and writes no transcript", async () => {
+  test("an unavailable backend parks unclaimed work without attempts or a transcript", async () => {
     const config = await readConfig(bench);
     const inference = config.inference as { assignments?: Record<string, string> };
     const original = inference.assignments?.["background-agent"];
@@ -1089,8 +1134,8 @@ describe("brain engine — failure, backpressure and the budget", () => {
     const orphanRunId = `run_${randomUUID()}`;
     assignmentRemoved = false;
 
-    // Both are claimed by the same tick (limit 2) and then executed strictly
-    // one at a time, so the assignment can be pulled between them.
+    // Exclusive legacy admission starts the first row and leaves its successor
+    // unclaimed. Removing the assignment must park that owed work untouched.
     seedBatch(
       bench,
       [
@@ -1123,52 +1168,48 @@ describe("brain engine — failure, backpressure and the budget", () => {
     await bench.patchConfig({ inference: { assignments: { "background-agent": null } } });
     assignmentRemoved = true;
 
-    await waitFor(
-      () => `run ${orphanRunId} to soft-fail: ${JSON.stringify(runRow(bench, orphanRunId))}`,
-      () => {
-        const r = runRow(bench, orphanRunId);
-        return r && r.attempts >= 1 && r.lastError !== null ? r : null;
-      },
-      120_000,
-      150,
-    );
+    await waitSettled(bench, [holdRunId]);
+    // Disabled ticks return before recording drain metrics; give admission a
+    // compressed cadence interval without requiring nonexistent successful ticks.
+    await sleep(1_000);
 
     const orphan = runRow(bench, orphanRunId)!;
-    // Soft, not terminal: still pending, rescheduled, one attempt burned.
     expect(orphan.status).toBe("pending");
-    expect(orphan.attempts).toBe(1);
+    expect(orphan.attempts).toBe(0);
     expect(orphan.failureCode).toBeNull();
-    expect(orphan.lastError).toContain("background-agent backend unavailable");
-    expect(orphan.nextAttemptAt).toBeGreaterThan(virtualNow);
+    expect(orphan.lastError).toBeNull();
+    expect(orphan.lastAttemptAt).toBeNull();
+    expect(orphan.nextAttemptAt).toBe(virtualNow - 1_000);
+    expect(bench.puppetCalls.some((entry) => entry.runId === orphanRunId)).toBe(false);
+    // The gated admin transcript route is unavailable while the engine is off.
+    // Inspect the actual isolated transcript directory before restoring admission.
+    const transcriptDir = cognitionTranscriptsDir(bench.harness.getConfigDir());
+    expect(
+      existsSync(transcriptDir)
+        ? readdirSync(transcriptDir).filter((name) => name.includes(orphanRunId))
+        : [],
+    ).toEqual([]);
 
     // The gateway is alive and says why it is idle.
     const off = await bench.obs.status();
-    expect(off.briefs.modelAssigned).toBe(false);
-    expect(off.briefs.active).toBe(false);
-    expect(off.briefs.reason).toBeTruthy();
+    expect(off.brain.modelAssigned).toBe(false);
+    expect(off.brain.active).toBe(false);
+    expect(off.brain.reason).toBeTruthy();
 
-    // Restore the model and cross the back-off: the run is retried, not lost.
-    // (The admin surface 404s while the gate is shut, so the transcript
-    // assertion below waits for the engine to come back — restoring the model
-    // cannot conjure a transcript for an attempt that never opened a session.)
+    // Restoring the assignment admits the still-due row once, without a retry.
     await bench.patchConfig({
       inference: { assignments: { "background-agent": original! } },
     });
     await waitFor(
       () => "the engine to come back",
-      async () => ((await bench.obs.status()).briefs.active ? true : null),
+      async () => ((await bench.obs.status()).brain.active ? true : null),
       60_000,
       200,
     );
 
-    // No session ran, so there is nothing to transcribe.
-    const transcripts = await bench.obs.transcripts({ runId: orphanRunId });
-    expect(transcripts.items).toEqual([]);
-
-    await bench.clock.set(orphan.nextAttemptAt + 10);
     await waitSettled(bench, [orphanRunId]);
     expect(runRow(bench, orphanRunId)!.status).toBe("completed");
-    expect(runRow(bench, orphanRunId)!.attempts).toBe(2);
+    expect(runRow(bench, orphanRunId)!.attempts).toBe(1);
 
     await bench.patchConfig({ brain: { workerConcurrency: 1 } });
     await sleep(1_000);
@@ -1276,88 +1317,96 @@ const STAND_DOC = email({
 });
 
 const COLLIDE_MORNING = `Re-verify the sound check window (${MARK_COLLIDE}).`;
-const COLLIDE_EVENING = `Refresh the sound check brief before the evening slot (${MARK_COLLIDE}).`;
+const COLLIDE_EVENING = `Refresh the sound check notes before the evening slot (${MARK_COLLIDE}).`;
 const COLLIDE_LATE = `Confirm the crew list was closed out (${MARK_COLLIDE}).`;
 const STAND_MORNING = `Re-verify the catering headcount (${MARK_STAND}).`;
-const STAND_EVENING = `Refresh the catering brief before the evening (${MARK_STAND}).`;
+const STAND_EVENING = `Refresh the catering notes before the evening (${MARK_STAND}).`;
 
 describe("brain engine — a scheduled check that collides with a pending one", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          {
-            // The full exchange: a morning check lands, an evening one for the
-            // same loop is refused, the retry with `merge` folds it into the
-            // morning check, and a late one with `add` stands on its own.
-            flavour: "data.created",
-            docTitle: COLLIDE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: `Confirm the sound check window (${MARK_COLLIDE})`,
-                  confidence: 0.9,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("schedule_agent_run", {
-                  when: MORNING_AT,
-                  prompt: COLLIDE_MORNING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: COLLIDE_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: COLLIDE_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                  onConflict: "merge",
-                }),
-                call("schedule_agent_run", {
-                  when: LATE_AT,
-                  prompt: COLLIDE_LATE,
-                  loopId: ref("open_loop_create", "loop.id"),
-                  onConflict: "add",
-                }),
-              ],
-              finalText: "Scheduled the day-of checks.",
-            }),
-          },
-          {
-            // The refusal with no retry: deciding the second check was
-            // redundant needs no flag at all.
-            flavour: "data.created",
-            docTitle: STAND_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: `Confirm the catering headcount (${MARK_STAND})`,
-                  confidence: 0.9,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("schedule_agent_run", {
-                  when: MORNING_AT,
-                  prompt: STAND_MORNING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: STAND_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-              ],
-              finalText: "The morning check already covers it.",
-            }),
-          },
-          { kind: "data", plan: { calls: [] } },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              // The full exchange: a morning check lands, an evening one for the
+              // same loop is refused, the retry with `merge` folds it into the
+              // morning check, and a late one with `add` stands on its own.
+              docTitle: COLLIDE_DOC.title,
+              expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: MARK_COLLIDE }),
+                  call("open_loop_create", {
+                    title: `Confirm the sound check window (${MARK_COLLIDE})`,
+                    confidence: 0.9,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("schedule_agent_run", {
+                    when: MORNING_AT,
+                    prompt: COLLIDE_MORNING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: COLLIDE_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: COLLIDE_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                    onConflict: "merge",
+                  }),
+                  call("schedule_agent_run", {
+                    when: LATE_AT,
+                    prompt: COLLIDE_LATE,
+                    loopId: ref("open_loop_create", "loop.id"),
+                    onConflict: "add",
+                  }),
+                ],
+                finalText: "Scheduled the day-of checks.",
+              }),
+            },
+            {
+              // The refusal with no retry: deciding the second check was
+              // redundant needs no flag at all.
+              docTitle: STAND_DOC.title,
+              expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: MARK_STAND }),
+                  call("open_loop_create", {
+                    title: `Confirm the catering headcount (${MARK_STAND})`,
+                    confidence: 0.9,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("schedule_agent_run", {
+                    when: MORNING_AT,
+                    prompt: STAND_MORNING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: STAND_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                ],
+                finalText: "The morning check already covers it.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [{ kind: "data", plan: { calls: [] } }],
       },
     });
   }, 300_000);
@@ -1366,9 +1415,31 @@ describe("brain engine — a scheduled check that collides with a pending one", 
     await bench?.destroy();
   }, 60_000);
 
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = await bench.obs.runs({ limit: 20 });
+    createLogger("collector:brain-bench").error(
+      `Scheduled collision failure: ${JSON.stringify({
+        owners: bench.sql.prepare("SELECT * FROM knowledge_owner_changes").all(),
+        nodes: bench.sql
+          .prepare("SELECT id,owner_id,kind,validity,revision FROM knowledge_nodes")
+          .all(),
+        tools: await Promise.all(
+          runs.items
+            .filter((run) => run.kind === "synthesis")
+            .map(async (run) => ({ id: run.id, tools: await bench.obs.executedTools(run.id) })),
+        ),
+        gateway: readFileSync(bench.harness.getGatewayLogPath(), "utf8")
+          .split("\n")
+          .filter((line) => /error|warn|constraint|knowledge/i.test(line))
+          .slice(-50),
+      })}`,
+    );
+  });
+
   /** The `schedule_agent_run` calls a run made, in order, with the gateway's answers. */
   async function scheduleCalls(docId: string) {
-    const run = await bench.obs.runForDoc(docId);
+    const run = await bench.obs.interpretationForSource(docId);
     const steps = await bench.obs.executedTools(run.id);
     return steps.filter((s) => s.tool === "schedule_agent_run");
   }

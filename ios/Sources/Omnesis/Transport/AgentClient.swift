@@ -184,6 +184,49 @@ public final class AgentClient: Sendable {
         )
     }
 
+    public func conversationControls(sessionId: String) async throws -> ConversationControls {
+        let (data, _) = try await dispatch(
+            method: "GET", path: "/agent/sessions/\(percentEncode(sessionId))/controls", body: nil
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
+    public func sendQueuedMessagesNow(sessionId: String, submissionIds: [String]) async throws -> ConversationControls {
+        struct Body: Encodable {
+            let submissionIds: [String]
+        }
+        let (data, _) = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/queue/send-now",
+            body: encoder.encode(Body(submissionIds: submissionIds))
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
+    public func submitMessage(
+        sessionId: String, text: String, clientMessageId: String,
+        interrupt: Bool, deepResearch: Bool = false, clarificationId: String? = nil
+    ) async throws {
+        struct Body: Encodable {
+            let text: String
+            let clientMessageId: String
+            let mode: String
+            let deepResearch: Bool
+            let clarificationId: String?
+        }
+        _ = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/submissions",
+            body: encoder.encode(Body(
+                text: text,
+                clientMessageId: clientMessageId,
+                mode: interrupt ? "interrupt" : "queue",
+                deepResearch: deepResearch,
+                clarificationId: clarificationId
+            ))
+        )
+    }
+
     /// POST `/agent/sessions/:id/cancel` — abort the in-flight turn.
     public func cancel(sessionId: String) async throws {
         _ = try await dispatch(
@@ -642,8 +685,8 @@ public struct CreateSessionResponse: Decodable, Sendable, Equatable {
     public let terminalFailure: AgentConversationTerminalFailure?
     /// Durable marker for a partial latest answer; does not freeze the conversation.
     public let lastTurnFailure: AgentTerminalFailure?
-    /// Present when the resumed conversation is anchored to something —
-    /// today, a brief talk-back thread or watch firing. Nil for plain conversations,
+    /// Present when the resumed conversation is anchored to something — a
+    /// watch firing or the Morning brief. Nil for plain conversations,
     /// fresh sessions, and gateways predating origins.
     public let origin: ConversationOrigin?
     /// Active-turn events not reconstructible from persisted ChatMessages
@@ -722,80 +765,108 @@ public struct CreateSessionResponse: Decodable, Sendable, Equatable {
     }
 }
 
-/// Origin anchor for a conversation that did not start as a blank chat —
-/// a brief's talk-back thread (`kind == "brief"`) or a thread the agent
-/// opened itself when one of the operator's watches fired
-/// (`kind == "watch_firing"`). Carries the anchor's id, the creating run, a
-/// content snapshot for the pinned context card, and how many leading
-/// messages are the folded run transcript (hidden by the UI, visible to the
-/// agent). The per-kind ids are optional in the decode so an unknown future
-/// kind degrades to a plain conversation instead of failing the session
-/// decode.
+/// Origin anchor for a conversation that did not start as a blank chat — a
+/// thread the agent opened itself when one of the operator's watches fired
+/// (`kind == "watch_firing"`), the standing Morning brief conversation
+/// (`kind == "daily_brief"`), or a chat about a task (`kind == "task"`). The
+/// per-kind fields are optional in the decode so an unknown future kind
+/// degrades to a plain conversation instead of failing the session decode.
 public struct ConversationOrigin: Decodable, Sendable, Equatable {
     public let kind: String
-    /// The anchoring brief, when `kind == "brief"`.
-    public let briefId: String?
     /// The firing that opened the thread, when `kind == "watch_firing"`.
     public let firingId: String?
     /// The watch that fired — the thread's durable subject.
     public let watchId: String?
+    /// The task a `task` conversation is about.
+    public let taskId: String?
     public let runId: String
-    /// Brief content at thread creation — survives the brief's expiry.
-    public let brief: BriefOriginSnapshot?
     /// Watch + firing content at thread creation — survives the watch's
     /// later renaming, editing or deletion.
     public let watch: WatchFiringOriginSnapshot?
+    /// The task as it stood when the conversation was started, for its card.
+    public let task: TaskConversationOriginSnapshot?
     /// Leading messages that are the folded run transcript.
     public let seedMessageCount: Int?
+    /// Where each morning brief sits in a `daily_brief` thread, oldest first; empty on list summaries.
+    public let briefs: [DailyBriefMessageRef]
 
     public init(
         kind: String,
-        briefId: String? = nil,
         firingId: String? = nil,
         watchId: String? = nil,
+        taskId: String? = nil,
         runId: String,
-        brief: BriefOriginSnapshot? = nil,
         watch: WatchFiringOriginSnapshot? = nil,
-        seedMessageCount: Int? = nil
+        task: TaskConversationOriginSnapshot? = nil,
+        seedMessageCount: Int? = nil,
+        briefs: [DailyBriefMessageRef] = []
     ) {
         self.kind = kind
-        self.briefId = briefId
         self.firingId = firingId
         self.watchId = watchId
+        self.taskId = taskId
         self.runId = runId
-        self.brief = brief
         self.watch = watch
+        self.task = task
         self.seedMessageCount = seedMessageCount
+        self.briefs = briefs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, briefId, firingId, watchId, runId
-        case brief, watch, seedMessageCount
+        case kind, firingId, watchId, taskId, runId, watch, task, seedMessageCount, briefs
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         kind = try container.decode(String.self, forKey: .kind)
-        briefId = try container.decodeIfPresent(String.self, forKey: .briefId)
         firingId = try container.decodeIfPresent(String.self, forKey: .firingId)
         watchId = try container.decodeIfPresent(String.self, forKey: .watchId)
         runId = try container.decode(String.self, forKey: .runId)
-        brief = try container.decodeIfPresent(BriefOriginSnapshot.self, forKey: .brief)
+        taskId = try container.decodeIfPresent(String.self, forKey: .taskId)
         watch = try container.decodeIfPresent(WatchFiringOriginSnapshot.self, forKey: .watch)
+        // An unreadable task snapshot drops only the card.
+        task = try? container.decodeIfPresent(TaskConversationOriginSnapshot.self, forKey: .task)
         seedMessageCount = try container.decodeIfPresent(Int.self, forKey: .seedMessageCount)
+        // A malformed reference is dropped on its own; the thread still opens.
+        briefs = (try? container.decodeIfPresent([LossyDailyBriefRef].self, forKey: .briefs))?
+            .compactMap(\.ref) ?? []
+    }
+
+    /// The standing Morning brief conversation. It is undeletable: the gateway refuses, and no surface offers it.
+    public var isDailyBrief: Bool {
+        kind == "daily_brief"
+    }
+
+    /// The newest morning brief in a `daily_brief` thread.
+    public var latestDailyBrief: DailyBriefMessageRef? {
+        isDailyBrief ? briefs.last : nil
     }
 }
 
-/// The brief fields needed to draw its card inside the thread.
-public struct BriefOriginSnapshot: Decodable, Sendable, Equatable {
-    public let title: String
-    public let description: String
-    public let body: String?
+/// Where one morning brief sits in the Morning brief conversation.
+public struct DailyBriefMessageRef: Decodable, Sendable, Equatable {
+    /// Local day the brief was sent for (`YYYY-MM-DD`).
+    public let day: String
+    /// Index of the brief's assistant message among the conversation's visible messages.
+    public let messageIndex: Int
+    public let messageId: String
+    /// When the brief was sent (ISO 8601, UTC); absent from older references.
+    public let sentAt: String?
 
-    public init(title: String, description: String, body: String? = nil) {
-        self.title = title
-        self.description = description
-        self.body = body
+    public init(day: String, messageIndex: Int, messageId: String, sentAt: String? = nil) {
+        self.day = day
+        self.messageIndex = messageIndex
+        self.messageId = messageId
+        self.sentAt = sentAt
+    }
+}
+
+/// Decodes one brief reference without failing the list it sits in.
+private struct LossyDailyBriefRef: Decodable {
+    let ref: DailyBriefMessageRef?
+
+    init(from decoder: Decoder) throws {
+        ref = try? DailyBriefMessageRef(from: decoder)
     }
 }
 
@@ -847,10 +918,13 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
     /// Optional-with-default like `pinned`, so a gateway that predates read
     /// state decodes as read rather than failing the whole list.
     public let unread: Bool
+    /// What opened the conversation, when it did not start as a blank chat.
+    /// A summary's daily-brief origin carries no brief references.
+    public let origin: ConversationOrigin?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "id"
-        case title, model, backend, createdAt, updatedAt, messageCount, pinned, unread
+        case title, model, backend, createdAt, updatedAt, messageCount, pinned, unread, origin
     }
 
     public init(from decoder: Decoder) throws {
@@ -864,6 +938,8 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
         messageCount = try container.decode(Int.self, forKey: .messageCount)
         pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         unread = try container.decodeIfPresent(Bool.self, forKey: .unread) ?? false
+        // An origin this build cannot read leaves a plain conversation.
+        origin = try? container.decodeIfPresent(ConversationOrigin.self, forKey: .origin)
     }
 
     public init(
@@ -875,7 +951,8 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
         updatedAt: String,
         messageCount: Int,
         pinned: Bool = false,
-        unread: Bool = false
+        unread: Bool = false,
+        origin: ConversationOrigin? = nil
     ) {
         self.sessionId = sessionId
         self.title = title
@@ -886,6 +963,13 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
         self.messageCount = messageCount
         self.pinned = pinned
         self.unread = unread
+        self.origin = origin
+    }
+
+    /// Whether the conversation can be deleted. The Morning brief
+    /// conversation cannot: the gateway refuses, so no surface offers it.
+    public var isDeletable: Bool {
+        origin?.isDailyBrief != true
     }
 
     /// Returns a copy with `pinned` flipped — used for optimistic UI
@@ -900,7 +984,8 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
             updatedAt: updatedAt,
             messageCount: messageCount,
             pinned: pinned,
-            unread: unread
+            unread: unread,
+            origin: origin
         )
     }
 
@@ -917,7 +1002,8 @@ public struct ConversationSummary: Decodable, Sendable, Equatable, Identifiable 
             updatedAt: updatedAt,
             messageCount: messageCount,
             pinned: pinned,
-            unread: false
+            unread: false,
+            origin: origin
         )
     }
 }
@@ -945,21 +1031,26 @@ public struct ConversationMessagePage: Decodable, Sendable, Equatable {
     public let messagePageInfo: PageInfo
     public let messageCount: Int
     public let messagesAreVisible: Bool
+    /// The conversation's origin, in full — for a Morning brief thread,
+    /// brief references included.
+    public let origin: ConversationOrigin?
 
     public init(
         messages: [ChatMessage],
         messagePageInfo: PageInfo? = nil,
         messageCount: Int = 0,
-        messagesAreVisible: Bool = true
+        messagesAreVisible: Bool = true,
+        origin: ConversationOrigin? = nil
     ) {
         self.messages = messages
         self.messagePageInfo = messagePageInfo ?? .exhausted(limit: messages.count)
         self.messageCount = messageCount
         self.messagesAreVisible = messagesAreVisible
+        self.origin = origin
     }
 
     private enum CodingKeys: String, CodingKey {
-        case messages, messagePageInfo, messageCount, messagesAreVisible
+        case messages, messagePageInfo, messageCount, messagesAreVisible, origin
     }
 
     public init(from decoder: Decoder) throws {
@@ -970,6 +1061,7 @@ public struct ConversationMessagePage: Decodable, Sendable, Equatable {
         messageCount = try container.decodeIfPresent(Int.self, forKey: .messageCount) ?? messages.count
         messagesAreVisible = try container.decodeIfPresent(Bool.self, forKey: .messagesAreVisible)
             ?? false
+        origin = try? container.decodeIfPresent(ConversationOrigin.self, forKey: .origin)
     }
 }
 
@@ -2174,7 +2266,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
     /// begins. Fans out to every device on this session so non-originator
     /// devices can render the user bubble. Originator dedupes by the
     /// `userMessageId` it got back from `POST /agent/sessions/:id/messages`.
-    case userMessage(sessionId: String, userMessageId: String, text: String)
+    case userMessage(sessionId: String, userMessageId: String, text: String, submissionIds: [String] = [])
     case messageStart(sessionId: String, messageId: String)
     case textDelta(sessionId: String, messageId: String, delta: String)
     case thinkingDelta(sessionId: String, messageId: String, delta: String)
@@ -2331,7 +2423,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
 
     public var sessionId: String {
         switch self {
-        case .userMessage(let id, _, _),
+        case .userMessage(let id, _, _, _),
              .messageStart(let id, _),
              .textDelta(let id, _, _),
              .thinkingDelta(let id, _, _),
@@ -2368,7 +2460,8 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
             self = .userMessage(
                 sessionId: payload.sessionId,
                 userMessageId: payload.userMessageId,
-                text: payload.text
+                text: payload.text,
+                submissionIds: payload.submissionIds ?? []
             )
         case "agent.message.start":
             let payload = try container.decode(MessageStartPayload.self, forKey: .payload)
@@ -2551,10 +2644,21 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
 
     // MARK: - Typed payload helpers
 
+    private enum UserMessageKey: String, CodingKey { case sessionId, userMessageId, text, submissionIds }
+
     private struct UserMessagePayload: Decodable {
         let sessionId: String
         let userMessageId: String
         let text: String
+        let submissionIds: [String]?
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: UserMessageKey.self)
+            sessionId = try values.decode(String.self, forKey: .sessionId)
+            userMessageId = try values.decode(String.self, forKey: .userMessageId)
+            text = try values.decode(String.self, forKey: .text)
+            submissionIds = try? values.decode([String].self, forKey: .submissionIds)
+        }
     }
 
     /// sessionId / messageId are OPTIONAL on these payloads because the same

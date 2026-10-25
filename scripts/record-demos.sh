@@ -8,7 +8,7 @@
 # Usage:
 #   scripts/record-demos.sh [--ipad] [--light] [scenario ...]
 #
-# With no scenario args, records all 10 default-universe scenarios. Pass
+# With no scenario args, records all default-universe scenarios. Pass
 # scenario names (matching test method suffixes) to record a subset:
 #
 #   scripts/record-demos.sh find_maria birthday_gifts
@@ -44,6 +44,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+source scripts/lib/boot_budget
 
 # Parse the --ipad form flag and --light/--dark appearance flag out of the
 # args; everything else is a scenario name.
@@ -76,13 +77,14 @@ else
     OUTPUT_DIR="$MASTER_ROOT"
 fi
 
-DEMO_CONFIG_DIR="/tmp/omnesis-agent-demo"
+DEMO_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-agent-demo}"
+export OMNESIS_CONFIG_DIR="$DEMO_CONFIG_DIR"
 GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-27600}"
 PAIRING_FILE="/tmp/omnesis-demo-pairing.json"
 SCHEME="OmnesisDemoUITests"
 PROJECT="ios/Omnesis.xcodeproj"
 # Resolve device ID to avoid ambiguity when multiple runtimes exist.
-SIMULATOR_ID=$(xcrun simctl list devices available | grep "$SIMULATOR_NAME" | head -1 | grep -oE '[A-F0-9-]{36}')
+SIMULATOR_ID="${OMNESIS_DEMO_SIMULATOR_ID:-$(xcrun simctl list devices available | grep -F "$SIMULATOR_NAME (" | head -1 | grep -oE '[A-F0-9-]{36}')}"
 DESTINATION="platform=iOS Simulator,id=$SIMULATOR_ID"
 
 ALL_SCENARIOS=(
@@ -120,19 +122,9 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Step 1: Boot simulator ────────────────────────────────────────
-# Target the resolved device ID everywhere (boot, record, terminate), not
-# the name or "booted" — there can be more than one simulator with this
-# name (one per installed runtime). `simctl io booted recordVideo` would
-# then capture whichever device "booted" resolves to, which may NOT be the
-# one xcodebuild installed onto — yielding a recording of an idle home
-# screen on the wrong twin. Shut any OTHER booted device that shares this
-# exact name (the duplicate runtime), so the "booted" alias is
-# unambiguous; unrelated simulators (a CI iPhone, etc.) are left alone.
+# Capture and drive only the selected simulator; other devices may belong
+# to another developer. OMNESIS_DEMO_SIMULATOR_ID selects an owned device.
 echo "==> Booting simulator: $SIMULATOR_NAME ($SIMULATOR_ID)"
-xcrun simctl list devices available | grep "$SIMULATOR_NAME" \
-    | grep -oE '[A-F0-9-]{36}' \
-    | grep -v "$SIMULATOR_ID" \
-    | while read -r twin; do xcrun simctl shutdown "$twin" 2>/dev/null || true; done || true
 xcrun simctl boot "$SIMULATOR_ID" 2>/dev/null || true
 # Wait for the simulator to be fully ready.
 xcrun simctl bootstatus "$SIMULATOR_ID" -b
@@ -142,12 +134,16 @@ echo "==> Starting demo gateway..."
 bash scripts/start-demo-gateway.sh start
 
 # Wait for gateway to be healthy (HTTPS with self-signed cert).
-for i in $(seq 1 30); do
+for i in $(seq 1 "$(gateway_boot_budget_seconds)"); do
     if curl -sfk "https://localhost:$GATEWAY_PORT/health" >/dev/null 2>&1; then
         break
     fi
     sleep 1
 done
+curl -sfk "https://localhost:$GATEWAY_PORT/health" >/dev/null || {
+    echo "error: demo gateway did not become healthy" >&2
+    exit 1
+}
 echo "==> Demo gateway healthy."
 
 # ── Step 3: Create pairing file with TLS fingerprint ─────────────
@@ -191,9 +187,8 @@ for scenario in "${SCENARIOS[@]}"; do
     # signals /tmp/demo-oriented (app launched and — on iPad — finished
     # rotating to landscape). simctl's recordVideo cannot survive a
     # mid-stream framebuffer resolution change, so it must not be running
-    # while the device rotates. The auto-pilot's gateway-session wait sits
-    # between the oriented marker and the first visible action, so we
-    # never miss the interesting part; the dead lead-in is trimmed below.
+    # while the device rotates. The auto-pilot waits for recording readiness
+    # before its first action, preserving the complete opening question.
     TEST_ID="OmnesisDemoUITests/DemoRecorderTests/test_${scenario}"
     set +e
     # TEST_RUNNER_-prefixed env vars reach the on-simulator test runner
@@ -215,49 +210,60 @@ for scenario in "${SCENARIOS[@]}"; do
         [ -f /tmp/demo-oriented ] && break
         sleep 0.5
     done
+    if [ ! -f /tmp/demo-oriented ]; then
+        wait "$TEST_PID" || true
+        echo "error: $scenario did not become ready for recording" >&2
+        exit 1
+    fi
     sleep 1  # Let the post-rotation frame settle.
 
     # Start screen recording in the background, on the EXACT device the
     # test is driving (not "booted"). SIGINT stops it gracefully and
     # finalizes the file.
-    xcrun simctl io "$SIMULATOR_ID" recordVideo --codec h264 "$RAW_VIDEO" &
+    RECORD_LOG=$(mktemp "${TMPDIR:-/tmp}/omnesis-demo-recorder.XXXXXX")
+    xcrun simctl io "$SIMULATOR_ID" recordVideo --codec h264 "$RAW_VIDEO" >"$RECORD_LOG" 2>&1 &
     RECORD_PID=$!
 
-    # Let simctl's recordVideo fully spin up its capture pipeline before
-    # releasing the demo. recordVideo buffers frames (it doesn't write them
-    # to disk until stop), so there's no in-band signal for "first frame
-    # captured" — we wait out the spin-up instead. The in-app auto-pilot
-    # blocks on /tmp/demo-recording-ready until this completes, then holds on
-    # the pre-filled prompt for a few seconds before sending, so the clip
-    # opens on the question with the agent not yet started. 5s comfortably
-    # covers the observed ~5s spin-up; the auto-pilot's own dwell adds the
-    # safety margin on top. Bump it if a slower machine ever opens clips
-    # mid-stream.
-    sleep 5
+    # Wait for simctl to acknowledge capture startup rather than adding a
+    # fixed lead-in to every video. The auto-pilot holds the question for
+    # another second after this handshake, preserving the opening frame.
+    for _i in $(seq 1 100); do
+        grep -q "Recording started" "$RECORD_LOG" && break
+        kill -0 "$RECORD_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    if ! grep -q "Recording started" "$RECORD_LOG"; then
+        cat "$RECORD_LOG" >&2
+        echo "error: recorder did not start for $scenario" >&2
+        exit 1
+    fi
+    sleep 0.25
     # Release the auto-pilot: the recorder is now capturing.
     touch /tmp/demo-recording-ready
 
     # Poll for the done marker so we can stop the recording BEFORE the
     # test framework tears down the app (which shows the home screen).
-    for _i in $(seq 1 180); do
+    for _i in $(seq 1 1800); do
         if [ -f /tmp/demo-recording-done ]; then
-            sleep 1  # Brief grace period to capture the final state.
+            sleep 0.2  # Capture the settled final frame.
             break
         fi
-        sleep 1
+        sleep 0.1
     done
 
     # Stop recording while the app is still in the foreground.
     kill -INT "$RECORD_PID" 2>/dev/null
     wait "$RECORD_PID" 2>/dev/null || true
     unset RECORD_PID
+    cat "$RECORD_LOG"
+    rm -f "$RECORD_LOG"
 
     # Now let the test finish.
     wait "$TEST_PID" 2>/dev/null
     TEST_EXIT=$?
     set -e
 
-    if [ $TEST_EXIT -eq 0 ]; then
+    if [ "$TEST_EXIT" -eq 0 ] && [ -f /tmp/demo-recording-done ] && [ -s "$RAW_VIDEO" ]; then
         # No front-trim. The recorder-ready handshake means recordVideo is
         # live before the auto-pilot acts, and recordVideo only starts
         # capturing after orientation, so the raw clip already opens on the
@@ -275,7 +281,8 @@ for scenario in "${SCENARIOS[@]}"; do
         echo "  ✓ $scenario → $VIDEO_PATH"
     else
         echo "  ✗ $scenario FAILED (exit $TEST_EXIT)"
-        mv "$RAW_VIDEO" "$VIDEO_PATH" 2>/dev/null || true
+        echo "error: incomplete recording; retaining raw video at $RAW_VIDEO" >&2
+        exit 1
     fi
 
     # Reset app state between scenarios by uninstalling + reinstalling
@@ -291,4 +298,4 @@ ls -lh "$OUTPUT_DIR"/*.mp4 2>/dev/null || echo "(no recordings)"
 # ── Step 6: Encode landing-page videos ───────────────────────────
 echo ""
 echo "==> Encoding landing-page videos..."
-bash scripts/demos-to-video.sh --variant "$VARIANT" --appearance "$APPEARANCE"
+bash scripts/demos-to-video.sh --variant "$VARIANT" --appearance "$APPEARANCE" "${SCENARIOS[@]}"

@@ -76,7 +76,9 @@ export function createLookupPeopleTool(deps: LookupPeopleToolDeps): ToolHandle {
       "Returns 0..N candidates ordered by recency-decayed interaction score; " +
       "each carries the person's full alias list, interaction counts " +
       "per channel (email / chat / meeting), and the timestamp of the " +
-      "last interaction. Use BEFORE a `search_documents` whenever the " +
+      "last interaction. Grounded person notes are included in `annotations` when available; " +
+      "use them as profile context and follow their evidenceDocId when verifying a claim. " +
+      "Use BEFORE a `search_documents` whenever the " +
       "user mentions a person by name and the right alias isn't " +
       "obvious — pick the candidate the user most likely meant, then " +
       "pass one of that candidate's aliases to `search_documents` as a " +

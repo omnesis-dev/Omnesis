@@ -42,11 +42,11 @@ describe("notification claim routes", () => {
   test("claim is bearer-device-bound and returns only that device's leased content", async () => {
     const claimed = {
       id: LEASE_ID,
-      kind: "brief" as const,
-      targetId: "brief-fictional",
-      title: "Fictional brief",
+      kind: "conversation" as const,
+      targetId: "conversation-fictional",
+      title: "Fictional conversation",
       body: "An invented summary is ready.",
-      collapseId: "brief:fictional",
+      collapseId: "conversation:fictional",
       remaining: 2,
     };
     const claim = vi.fn(async () => claimed);

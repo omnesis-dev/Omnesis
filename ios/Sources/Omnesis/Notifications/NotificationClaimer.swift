@@ -9,7 +9,6 @@ import UserNotifications
 public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
     case agentAnswer(conversationId: String)
     case conversation(conversationId: String)
-    case brief(briefId: String)
     case watch(watchId: String, firingKey: String, conversationId: String?)
     case needsAuth(sourceId: String, providerId: String?)
     case privacyApproval(approvalId: String)
@@ -17,7 +16,7 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
     case unknown
 
     private enum CodingKeys: String, CodingKey {
-        case kind, conversationId, briefId, watchId, firingKey
+        case kind, conversationId, watchId, firingKey
         case sourceId, providerId, approvalId
     }
 
@@ -33,12 +32,6 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
         case "conversation":
             if let id = try? values.decode(String.self, forKey: .conversationId) {
                 self = .conversation(conversationId: id)
-            } else {
-                self = .unknown
-            }
-        case "brief":
-            if let id = try? values.decode(String.self, forKey: .briefId) {
-                self = .brief(briefId: id)
             } else {
                 self = .unknown
             }
@@ -133,7 +126,6 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
             switch (kind, route) {
             case ("agent-answer", .agentAnswer(_)),
                  ("conversation", .conversation(_)),
-                 ("brief", .brief(_)),
                  ("watch", .watch(_, _, _)),
                  ("needs-auth", .needsAuth(_, _)),
                  ("privacy-approval", .privacyApproval(_)),
@@ -148,8 +140,6 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
             ["kind": "agent-answer", "targetId": conversationId]
         case .conversation(let conversationId):
             ["kind": "conversation", "targetId": conversationId]
-        case .brief(let briefId):
-            ["kind": "brief", "targetId": briefId]
         case .watch(let watchId, let firingKey, let conversationId):
             // A firing the agent opened a thread about lands in the thread,
             // whose opening sentence this banner is quoting. One it did not

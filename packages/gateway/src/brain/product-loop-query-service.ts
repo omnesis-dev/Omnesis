@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mutableListRevision } from "../data/list-revisions.js";
+import { mutableListRevision, readListPage } from "../data/list-revisions.js";
 import { fetchSelfPersonId } from "../domain/InteractionScoreService.js";
 import { displayPersonRefs } from "./person-refs.js";
 import {
@@ -27,6 +27,11 @@ export class ProductLoopQueryService {
 
   paginationRevision(): number {
     return mutableListRevision(this.db, "product-loops");
+  }
+
+  /** Run a page's revision read and row reads against one snapshot. */
+  readListPage<T>(read: () => T): T {
+    return readListPage(this.db, read);
   }
 
   list(options: ListOpenLoopsOptions = {}): ProductLoopView[] {

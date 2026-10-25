@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { decideFindRoute } from "./decision.js";
 import type { DecisionCapability, DecisionRequest } from "@omnesis/core";
+import type { CognitionDecisionRecord } from "../../brain/storage/decisions.js";
 
 function capability(route = "agentic", reason = "calculation"): DecisionCapability {
   return {
@@ -154,5 +155,51 @@ describe("Find routing", () => {
       mode: "agentic",
       reason: "The decision model selected research to find the requested destination.",
     });
+  });
+
+  it("ledgers each routing call with the route chosen, and an outage as unavailable", async () => {
+    const recorded: CognitionDecisionRecord[] = [];
+    const record = vi.fn(async (entry: CognitionDecisionRecord) => {
+      recorded.push(entry);
+    });
+    const signal = new AbortController().signal;
+    await decideFindRoute(
+      { text: "my longest run" },
+      () => capability(),
+      signal,
+      undefined,
+      record,
+    );
+    const failing: DecisionCapability = {
+      modelId: "replay",
+      dispose() {},
+      decide: vi.fn().mockRejectedValue(new Error("decision offline")),
+    };
+    await decideFindRoute({ text: "budget notes" }, () => failing, signal, undefined, record);
+    await decideFindRoute(
+      { text: "a page", mode: "direct" },
+      () => failing,
+      signal,
+      undefined,
+      record,
+    );
+    expect(recorded.map((entry) => [entry.purpose, entry.lane, entry.verdict])).toEqual([
+      ["find-route", "agentic", "pass"],
+      ["find-route", "unavailable", "unavailable"],
+    ]);
+    expect(recorded[0]).toMatchObject({ runId: null, documentId: null, modelId: "replay" });
+    expect(JSON.parse(recorded[0]!.requestJson!).state).toEqual({ query: "my longest run" });
+    expect(recorded[1]!.error).toBe("decision offline");
+  });
+
+  it("keeps the chosen route if the decision cannot be recorded", async () => {
+    const result = await decideFindRoute(
+      { text: "my longest run" },
+      () => capability(),
+      new AbortController().signal,
+      undefined,
+      vi.fn().mockRejectedValue(new Error("write unavailable")),
+    );
+    expect(result).toMatchObject({ mode: "agentic", status: "decided" });
   });
 });

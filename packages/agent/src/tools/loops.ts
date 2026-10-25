@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { cappedLimit } from "./limit.js";
 
 import type { ToolResult } from "@omnesis/core";
 
@@ -34,11 +35,7 @@ const searchLoopsArgsSchema = z
         "Free-form match against the tracked obligations — a person, a topic, " +
           'a thing owed or awaited. Examples: "deposit refund", "the notary", "Maya".',
       ),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(SEARCH_LOOPS_MAX_LIMIT)
+    limit: cappedLimit(SEARCH_LOOPS_MAX_LIMIT)
       .optional()
       .describe("Cap loops returned (default 10)."),
   })
@@ -58,11 +55,13 @@ const LIST_LOOPS_MAX_LIMIT = 100;
 
 const listLoopsArgsSchema = z
   .object({
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(LIST_LOOPS_MAX_LIMIT)
+    mode: z
+      .enum(["navigation", "snapshot"])
+      .default("navigation")
+      .describe(
+        "navigation selects records to fetch and supplies no factual/count evidence. snapshot explicitly captures an as-of inventory of stored tracking state for counts, absence or rank questions; never a complete list of real-world obligations.",
+      ),
+    limit: cappedLimit(LIST_LOOPS_MAX_LIMIT)
       .optional()
       .describe("Cap loops returned (default 30, max 100; most-important first)."),
   })
@@ -79,9 +78,9 @@ export function createSearchLoopsTool(deps: LoopToolDeps): ToolHandle {
   return {
     name: "search_loops",
     description:
-      "Search the background agent's open loops — the obligations, requests, " +
-      "and unresolved decisions it privately tracks about the user's life " +
-      "(e.g. an unanswered reply, a pending refund, a decision awaiting input). " +
+      "Search the background agent's tracked outcome candidates. Open status " +
+      "means still tracked, not verified outstanding; source evidence may " +
+      "already answer or supersede a summary. " +
       "READ-ONLY: you can find and read loops to inform your answer, never " +
       "create, change, or close them. Returns matching loop summaries; open one " +
       "in full with `fetch_loop`. Empty results (nothing tracked matches) is a " +
@@ -128,11 +127,14 @@ export function createFetchLoopTool(deps: LoopToolDeps): ToolHandle {
   return {
     name: "fetch_loop",
     description:
-      "Open one of the background agent's open loops in full: its current " +
-      "state, importance, deadline, the people it concerns, the source " +
-      "documents it rests on, and its recent history. READ-ONLY — you can " +
-      "read what is in a loop, never change it. `loop` is absent when the id " +
-      "matches nothing (a clean no-match, not an error).",
+      "Open a shortlisted tracked outcome: its stored state, importance, " +
+      "deadline, people, source document IDs and recorded history. Exact-ID reads " +
+      "also return retained done or dismissed loops with their terminal state. Open status " +
+      "is not proof the action is still needed. Reconcile related records and " +
+      "follow the exact supporting document when their evidence disagrees; " +
+      "history timestamps record notes, not necessarily source event dates. READ-ONLY — you can " +
+      "read what is in a loop, never change it. Copy the exact loopId from " +
+      "list_loops or search_loops; an unavailable ID returns loop_not_found.",
     schema: fetchLoopArgsSchema,
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;
@@ -150,7 +152,16 @@ export function createFetchLoopTool(deps: LoopToolDeps): ToolHandle {
       }
       try {
         const loop = await deps.port.fetch(parsed.data.loopId, ctx.abortSignal);
-        return { kind: "loop.fetched", ...(loop ? { loop } : {}) };
+        if (!loop) {
+          return {
+            kind: "error",
+            code: "loop_not_found",
+            message:
+              "No accessible loop was found for that ID. Copy an exact loopId from " +
+              "list_loops or search_loops before retrying; do not reconstruct or guess IDs.",
+          };
+        }
+        return { kind: "loop.fetched", loop };
       } catch (err) {
         return {
           kind: "error",
@@ -167,17 +178,21 @@ export function createListLoopsTool(deps: LoopToolDeps): ToolHandle {
   return {
     name: "list_loops",
     description:
-      "List ALL of the background agent's currently open loops — the complete " +
-      "set of tracked obligations, requests, and unresolved decisions, **most " +
-      'important first**. Use this for "what am I tracking", "what are all my ' +
-      'open loops", "what\'s outstanding" — it returns every active loop, so it ' +
-      "does NOT miss any the way a keyword `search_loops` can. If more loops " +
-      "exist than the returned cap, `truncated` is true and the ones dropped are " +
-      "the least important. READ-ONLY; open one in full with `fetch_loop`. An " +
-      "empty list (nothing tracked) is a clean, successful result.",
+      "List active tracked outcome candidates, most important first. Default navigation " +
+      "is only a shortlist: fetch_loop grounds relevant records; do not assert counts or absence " +
+      "from navigation. For counts, empty inventories or recorded rankings choose mode=snapshot " +
+      "and report the returned observation time and scope, not current real-world obligations. " +
+      "Snapshot returned count is exact only when truncated=false; discovery may still be incomplete. Use this " +
+      'for "what am I tracking" or to shortlist relevant priorities. Open ' +
+      "status is not verified outstanding work: later evidence can answer or " +
+      "supersede a tracked request. Compare summaries before choosing which " +
+      "to open with `fetch_loop`; do not fetch every row merely because it is " +
+      "listed. `truncated` means the cap omitted less important tracked items; " +
+      "even an untruncated list is not a complete inventory of real-world " +
+      "obligations. READ-ONLY; an empty list is a successful result.",
     schema: listLoopsArgsSchema,
-    summarize(): string | undefined {
-      return undefined;
+    summarize(): string {
+      return "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = listLoopsArgsSchema.safeParse(rawArgs);
@@ -189,12 +204,20 @@ export function createListLoopsTool(deps: LoopToolDeps): ToolHandle {
         };
       }
       try {
-        const result = await deps.port.list(parsed.data.limit ?? defaultLimit, ctx.abortSignal);
+        const result = await deps.port.list(parsed.data.limit ?? defaultLimit, ctx.abortSignal, {
+          mode: parsed.data.mode,
+          sessionId: ctx.sessionId,
+          messageId: ctx.messageId,
+        });
         return {
           kind: "structured",
           resultType: "loops.listed",
           data: {
             count: result.loops.length,
+            mode: parsed.data.mode,
+            ...(result.observation ? { observation: result.observation } : {}),
+            coverage:
+              "Stored tracking only; source discovery and maintenance may be incomplete. This is not a complete inventory of real-world obligations.",
             truncated: result.truncated,
             durationMs: result.durationMs,
             loops: result.loops.map((l) => ({ ...l })),

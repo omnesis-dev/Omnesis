@@ -6,7 +6,7 @@
  *
  * The bridge turns a corpus SNAPSHOT (a copied gateway `omnesis.db` —
  * never the live database) into a time-faithful replay against an
- * ISOLATED mirror gateway running the briefs virtual clock:
+ * ISOLATED mirror gateway running the Brain virtual clock:
  *
  *   1. every document dated ≤ T0 is bulk-backfilled — establishing the
  *      mirror's corpus/index/graph state as of T0;
@@ -173,7 +173,7 @@ export class MirrorGatewayClient {
     const clock = await this.json<{ virtual: boolean }>("/admin/brain/clock");
     if (!clock.virtual) {
       throw new Error(
-        "target gateway is NOT running the briefs virtual clock — refusing to replay. " +
+        "target gateway is NOT running the Brain virtual clock — refusing to replay. " +
           "The mirror must be started with OMNESIS_BRIEFS_VIRTUAL_CLOCK=1; a live gateway never is.",
       );
     }

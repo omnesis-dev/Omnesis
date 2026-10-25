@@ -9,6 +9,7 @@ import {
   EphemeralHeader,
   useRollingRotation,
   ephemeralResultArrived,
+  ephemeralHasFollowingText,
   EPHEMERAL_REVEAL_MS,
   EPHEMERAL_SLOT_HEIGHT,
   EPHEMERAL_SQL_SLOT_HEIGHT,
@@ -20,7 +21,6 @@ import {
 } from "./lifecycle.js";
 import {
   SEARCH_GLYPH,
-  DOC_GLYPH,
   SQL_GLYPH,
   TRAIL_GLYPH,
   PEOPLE_GLYPH,
@@ -32,6 +32,19 @@ import { flattenTrailDocs, normaliseRow, formatSqlCell } from "./tool-values.js"
 export { flattenTrailDocs, normaliseRow, formatSqlCell } from "./tool-values.js";
 
 import { EphemeralActionCard } from "./actions.js";
+import { toolCardLabel } from "./tool-card-table.js";
+import { toolCardGlyph } from "./tool-cards.js";
+
+/**
+ * The document a read returned: a `document` result, or the first document of
+ * a `document.batch` (a wiki read returns the batch shape `fetch_many` does).
+ */
+export function documentRead(result) {
+  if (result?.kind === "document") return result;
+  if (result?.kind === "document.batch" && Array.isArray(result.items))
+    return result.items.find((item) => item?.kind === "document") ?? null;
+  return null;
+}
 
 export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopRow } = {}) {
   const loopRow =
@@ -120,7 +133,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       ? (call.result.results || []).slice(0, EPHEMERAL_SEARCH_RESULTS_MAX)
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, results.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -128,7 +142,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${SEARCH_GLYPH}
-        label="Search"
+        label=${toolCardLabel(call.tool)}
         monospaceArg=${query}
         showSpinner=${!resultArrived}
       />
@@ -168,14 +182,15 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const resultArrived = ephemeralResultArrived(call);
     const docs = hasResult ? flattenTrailDocs(call.result.events ?? []) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, docs.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     return html`
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${TRAIL_GLYPH}
-        label="Trace connections"
+        label=${toolCardLabel(call.tool)}
         showSpinner=${!resultArrived}
       />
       ${
@@ -209,11 +224,19 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
    * card's "glance, not exhaustive replay" rule.
    */
 
+  /**
+   * One card for every tool that reads a body of text — an opened document, a
+   * wiki page. The header names the tool's action and, once the body lands,
+   * its source icon and title; the body's lines then scroll under it before
+   * the card dismisses. Until then a wiki read shows the page title the
+   * gateway summarized the call with.
+   */
   function EphemeralDocumentCard({ call, dispatch }) {
-    const hasResult = call.result?.kind === "document";
+    const read = documentRead(call.result);
+    const hasResult = read != null;
     const resultArrived = ephemeralResultArrived(call);
-    const docRef = hasResult ? call.result.ref : null;
-    const content = hasResult ? (call.result.document?.content ?? "") : "";
+    const docRef = read?.ref ?? null;
+    const content = read?.document?.content ?? "";
     // Skip blank lines: an empty slot would flash a void frame and break
     // the cadence. Matches iOS's `filter { !$0.trimmingCharacters(...).isEmpty }`.
     const lines = content
@@ -224,9 +247,11 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
           .slice(0, EPHEMERAL_DOC_LINES_MAX)
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, lines.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
+    const pendingTitle = call.tool === "knowledge_fetch" ? call.argsSummary || "" : "";
     const titleNode = docRef
       ? html`<span class="agent-ephemeral-doc-title">
           <span class="agent-ephemeral-result-icon"
@@ -235,12 +260,14 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
           <span>${docRef.title || "Untitled"}</span>
           ${loopChip(docRef)}
         </span>`
-      : null;
+      : pendingTitle
+        ? html`<span class="agent-ephemeral-doc-title"><span>${pendingTitle}</span></span>`
+        : null;
     return html`
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
-        glyph=${DOC_GLYPH}
-        label="Open document"
+        glyph=${toolCardGlyph(call.tool)}
+        label=${toolCardLabel(call.tool)}
         headerExtra=${titleNode}
         showSpinner=${!resultArrived}
       />
@@ -268,7 +295,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const resultArrived = ephemeralResultArrived(call);
     const loops = hasResult ? (call.result.loops || []).slice(0, EPHEMERAL_SEARCH_RESULTS_MAX) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, loops.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -276,7 +304,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${LOOP_GLYPH}
-        label="Search loops"
+        label=${toolCardLabel(call.tool)}
         monospaceArg=${query}
         showSpinner=${!resultArrived}
       />
@@ -305,7 +333,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const loop = hasResult ? call.result.loop : null;
     const lines = loop ? loopDetailLines(loop) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, lines.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const titleNode = loop
@@ -320,7 +349,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${LOOP_GLYPH}
-        label="Open loop"
+        label=${toolCardLabel(call.tool)}
         headerExtra=${titleNode}
         showSpinner=${!resultArrived}
       />
@@ -408,7 +437,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     // dismiss lifecycle and flushes the reducer's causality gate.
     const rowsReady = resultArrived && sqlDone;
     const { currentIndex: rowIndex, phase } = useRollingRotation(rowsReady, allRows.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
 
@@ -416,7 +446,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${SQL_GLYPH}
-        label="Run SQL"
+        label=${toolCardLabel(call.tool)}
         headerExtra=${headerExtra}
         showSpinner=${!resultArrived}
       />
@@ -480,7 +510,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       ? (call.result.results || []).slice(0, EPHEMERAL_PEOPLE_RESULTS_MAX)
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, results.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -488,7 +519,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${PEOPLE_GLYPH}
-        label="Find people"
+        label=${toolCardLabel(call.tool)}
         monospaceArg=${query}
         showSpinner=${!resultArrived}
       />
@@ -548,7 +579,8 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     // on iOS.
     const items = hasResult ? [ref ? { kind: "ref", ref } : { kind: "no-match" }] : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, items.length, {
-      expedite: (call.pendingTail?.length ?? 0) > 0,
+      expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+      postText: ephemeralHasFollowingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const url = call.args?.url || call.argsSummary || "";
@@ -556,7 +588,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
         glyph=${LINK_GLYPH}
-        label="Lookup URL"
+        label=${toolCardLabel(call.tool)}
         monospaceArg=${url}
         showSpinner=${!resultArrived}
       />
@@ -586,7 +618,9 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
   `;
   }
 
-  function renderToolPart(part, key, dispatch) {
+  function renderToolPart(part, key, dispatch, followingText = false) {
+    // This is a render-only hint, independent of the reducer's causality gate.
+    if (followingText) part = { ...part, followingText: true };
     if (part.tailDismissed) return null;
     if (part.tool === "search_many" || part.tool === "fetch_many") {
       const tool = part.tool === "search_many" ? "search_documents" : "fetch_document";
@@ -605,6 +639,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
           },
           `${key}-${c.index}`,
           dispatch,
+          followingText,
         ),
       );
     }
@@ -612,6 +647,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       {
         search_documents: EphemeralSearchCard,
         fetch_document: EphemeralDocumentCard,
+        knowledge_fetch: EphemeralDocumentCard,
         run_sql: EphemeralSqlCard,
         trace_connections: EphemeralTrailCard,
         lookup_people: EphemeralPeopleCard,

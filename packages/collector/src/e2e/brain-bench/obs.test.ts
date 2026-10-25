@@ -6,46 +6,49 @@ import { BrainObs } from "./obs.js";
 import type { SyntheticE2EHarness } from "../synth-harness.js";
 
 describe("BrainObs runs", () => {
-  test("restarts a first-page read when the run list changes during the query", async () => {
-    const stale = Object.assign(new Error("stale page"), {
-      status: 409,
-      body: JSON.stringify({ code: "STALE_PAGE_CURSOR" }),
-    });
-    const gatewayJson = vi
-      .fn()
-      .mockRejectedValueOnce(stale)
-      .mockRejectedValueOnce(stale)
-      .mockResolvedValue({ items: [], pageInfo: { hasMore: false } });
-    const obs = new BrainObs({ gatewayJson } as unknown as SyntheticE2EHarness);
-
-    await expect(obs.runs({ kind: "data" })).resolves.toEqual({
-      items: [],
-      pageInfo: { hasMore: false },
-    });
-    expect(gatewayJson).toHaveBeenCalledTimes(3);
+  test("finds actual successful maintenance runs without a per-document datum alias", async () => {
+    const obs = new BrainObs({} as SyntheticE2EHarness);
+    vi.spyOn(obs, "runs").mockResolvedValue({
+      items: [{ id: "batch" }, { id: "refused" }],
+    } as Awaited<ReturnType<BrainObs["runs"]>>);
+    vi.spyOn(obs, "executedTools").mockImplementation(async (id) => [
+      {
+        tool: "knowledge_discovery_complete",
+        args: { id: "source:document" },
+        result:
+          id === "batch"
+            ? { kind: "structured", data: {} }
+            : { kind: "error", code: "revision_conflict" },
+      },
+    ]);
+    expect((await obs.runsForSource("document")).map((run) => run.id)).toEqual(["batch"]);
+    expect(await obs.runsForSource("other")).toEqual([]);
   });
-
-  test("does not retry an unrelated conflict", async () => {
-    const conflict = Object.assign(new Error("other conflict"), {
-      status: 409,
-      body: JSON.stringify({ code: "OTHER_CONFLICT" }),
+  test("an organization cohort's completion of a member is not its interpretation", async () => {
+    const obs = new BrainObs({} as SyntheticE2EHarness);
+    vi.spyOn(obs, "runs").mockResolvedValue({
+      items: [{ id: "cohort" }, { id: "interpretation" }],
+    } as Awaited<ReturnType<BrainObs["runs"]>>);
+    const frontier = (sourceIds?: string[]) => ({
+      tool: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: { items: [], ...(sourceIds ? { organization: { sourceIds } } : {}) },
+      },
     });
-    const gatewayJson = vi.fn().mockRejectedValue(conflict);
-    const obs = new BrainObs({ gatewayJson } as unknown as SyntheticE2EHarness);
-
-    await expect(obs.runs()).rejects.toBe(conflict);
-    expect(gatewayJson).toHaveBeenCalledOnce();
-  });
-
-  test("bounds retries when the run list never stabilizes", async () => {
-    const stale = Object.assign(new Error("stale page"), {
-      status: 409,
-      body: JSON.stringify({ code: "STALE_PAGE_CURSOR" }),
-    });
-    const gatewayJson = vi.fn().mockRejectedValue(stale);
-    const obs = new BrainObs({ gatewayJson } as unknown as SyntheticE2EHarness);
-
-    await expect(obs.runs()).rejects.toBe(stale);
-    expect(gatewayJson).toHaveBeenCalledTimes(6);
+    const complete = {
+      tool: "knowledge_discovery_complete",
+      args: { id: "source:document" },
+      result: { kind: "structured", data: {} },
+    };
+    vi.spyOn(obs, "executedTools").mockImplementation(async (id) =>
+      id === "cohort" ? [frontier(["document"]), complete] : [frontier(), complete],
+    );
+    expect((await obs.runsForSource("document")).map((run) => run.id)).toEqual([
+      "cohort",
+      "interpretation",
+    ]);
+    expect((await obs.interpretationForSource("document")).id).toBe("interpretation");
   });
 });

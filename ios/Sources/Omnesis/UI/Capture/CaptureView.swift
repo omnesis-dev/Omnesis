@@ -34,6 +34,14 @@ extension EnvironmentValues {
 /// instead (`VoiceNoteCaptureState`): the screen shows the recording, not
 /// the phone's transcript, and Done saves it at once for the gateway to
 /// transcribe. Discarding the recording turns it back into a typed note.
+///
+/// The same screen writes words about something else when given a
+/// `NoteCaptureCompletion` — completing a task with a note ("Done + note" on
+/// Tasks), accepting a suggestion with one ("Accept with note"), or
+/// explaining a reaction to a morning brief item: it listens at once and can
+/// be typed into just the same, and Done hands the text to the completion
+/// instead of saving a note here. That note is always text, so it is never
+/// a voice note.
 @available(iOS 17.0, *)
 struct CaptureView: View {
     @Environment(AppStore.self) private var store
@@ -49,6 +57,9 @@ struct CaptureView: View {
     /// dismiss and the shell hands down its own teardown. Previews and
     /// snapshots, which really are presented, fall back to `dismiss`.
     var onClose: (() -> Void)?
+
+    /// Set when the words are about something rather than a note on their own.
+    let completion: NoteCaptureCompletion?
 
     @State private var speech: SpeechRecognizer
     @State private var text: String = ""
@@ -87,6 +98,7 @@ struct CaptureView: View {
     init(
         surface: NoteSurface = .app,
         onClose: (() -> Void)? = nil,
+        completion: NoteCaptureCompletion? = nil,
         speech: SpeechRecognizer = SpeechRecognizer(),
         previewText: String = "",
         previewPhase: Phase = .capturing,
@@ -95,6 +107,7 @@ struct CaptureView: View {
     ) {
         self.surface = surface
         self.onClose = onClose
+        self.completion = completion
         self._speech = State(initialValue: speech)
         self._text = State(initialValue: previewText)
         self._phase = State(initialValue: previewPhase)
@@ -112,6 +125,14 @@ struct CaptureView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let completion {
+                Text(completion.subject)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.top, Theme.Spacing.md)
+            }
             Spacer(minLength: Theme.Spacing.lg)
             micCluster
             Spacer(minLength: Theme.Spacing.lg)
@@ -169,7 +190,7 @@ struct CaptureView: View {
             Button("Keep editing", role: .cancel) {}
         }
         .onAppear {
-            if voiceNoteLimit == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
+            if voiceNoteLimit == nil, completion == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
             // Listening starts the moment the surface appears — that is
             // the point of the feature. Chained onto the permission
             // grants so a first-ever run prompts, then starts.
@@ -230,7 +251,7 @@ struct CaptureView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .accessibilityLabel("Cancel capture")
             Spacer()
-            Text("Tell Omnesis")
+            Text(completion?.heading ?? "Tell Omnesis")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
@@ -301,13 +322,17 @@ struct CaptureView: View {
 
     static let transcriptShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
+    private var placeholder: String {
+        completion?.placeholder ?? "What should the brain remember?"
+    }
+
     /// Live transcript / manual entry. Editable whenever speech is
     /// stopped; while listening the recognizer owns the text, so a tap
     /// stops listening first and then hands over the keyboard.
     private var transcriptArea: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
-                Text(speech.isListening ? "Start speaking…" : "What should the brain remember?")
+                Text(speech.isListening ? "Start speaking…" : placeholder)
                     .font(.system(size: 17))
                     .foregroundStyle(Theme.textMuted)
                     .padding(.horizontal, Theme.Spacing.md + 4)
@@ -498,6 +523,16 @@ struct CaptureView: View {
         if speech.isListening { stopDictation() }
         keyboardFocused = false
         withAnimation(.easeInOut(duration: 0.15)) { phase = .saving }
+        if let completion {
+            // The Tasks screen confirms the change itself, with Undo.
+            if await completion.save(noteText) {
+                close()
+            } else {
+                phase = .capturing
+                saveError = completion.failure
+            }
+            return
+        }
         let outcome = await store.notes.save(text: noteText, surface: surface, captureTime: captureTime)
         await settle(outcome)
     }

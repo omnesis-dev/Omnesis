@@ -22,6 +22,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -73,6 +74,7 @@ function seedPre57(): void {
     `INSERT INTO person_annotations (id, person_id, claim_type, claim_text, evidence_doc_id, evidence_quote, confidence, created_by_run, created_at)
      VALUES ('panno_pre', 'per_1', 'role', 'runs the weekly sync', 'doc_ev', 'she runs the weekly sync', 0.7, 'run_seed', 1000)`,
   ).run();
+  createLegacyBriefTables(db);
   db.pragma("user_version = 58");
 }
 
@@ -156,6 +158,7 @@ describe("migration 59 — evidence child tables + consumption edges", () => {
     try {
       runSchemaSetup(upgraded);
       for (const t of NEW_TABLES) upgraded.exec(`DROP TABLE ${t}`);
+      createLegacyBriefTables(upgraded);
       upgraded.pragma("user_version = 58");
       runSchemaSetup(upgraded);
       runMigrations(upgraded, { log: createLogger("test") });

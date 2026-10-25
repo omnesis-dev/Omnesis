@@ -359,6 +359,8 @@ export interface TurnInput {
   history: ReadonlyArray<ChatMessage>;
   /** The just-arrived user message text. */
   userMessage: string;
+  /** Runtime-only contextual note, also included in userMessage for ordinary backends. */
+  modelNote?: string;
   /** Inline image inputs for vision-capable backends; callers check model support. */
   images?: ReadonlyArray<{ url: string }>;
   /** Tool handles the model may invoke. */
@@ -584,6 +586,12 @@ export function toolArgsUnparseableResult(parseError: string, raw: string): Tool
     code: "tool_args_unparseable",
     message: `tool-call arguments were not valid JSON (${parseError}); raw arguments as received: ${echo}. Re-issue the call with complete JSON arguments.`,
   };
+}
+
+/** A one-line excerpt for a tool-call summary: whitespace collapsed, capped with an ellipsis. */
+export function summaryExcerpt(text: string, max = 60): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
 /**

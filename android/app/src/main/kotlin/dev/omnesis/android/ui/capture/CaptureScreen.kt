@@ -51,6 +51,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -88,7 +90,16 @@ import kotlinx.coroutines.delay
 fun CaptureScreen(
     onClose: () -> Unit,
     vm: CaptureViewModel = hiltViewModel(),
+    /** Set when the capture completes a task with its note rather than saving a note. */
+    completion: TaskCompletionCapture? = null,
 ) {
+    if (completion != null) {
+        // Before the permission effect below starts listening, so this visit starts afresh.
+        DisposableEffect(vm) {
+            vm.beginTaskCompletion()
+            onDispose { vm.endTaskCompletion() }
+        }
+    }
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -107,11 +118,18 @@ fun CaptureScreen(
         if (micGranted()) vm.onMicPermission(true) else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    // Linger on the confirmation just long enough to read it, then close.
+    // A completion's note goes to the task; the Tasks screen says what happened, with Undo.
+    val completionNote = state.completionNote
+    if (completion != null && completionNote != null) {
+        LaunchedEffect(completionNote) { vm.completionFinished(completion.save(completionNote)) }
+    }
+
+    // Linger on the confirmation just long enough to read it, then close. A completion has no
+    // confirmation of its own: the task's receipt is it.
     val save = state.save
     LaunchedEffect(save) {
         if (save is SaveState.Done) {
-            delay(1200)
+            if (completion == null) delay(1200)
             onClose()
         }
     }
@@ -134,6 +152,8 @@ fun CaptureScreen(
         onCancel = onClose,
         onDismissError = vm::dismissError,
         onDiscardVoiceNote = vm::discardVoiceNote,
+        completionSubject = completion?.subject,
+        completionKind = completion?.kind ?: TaskNoteKind.COMPLETE,
     )
 }
 
@@ -147,6 +167,10 @@ fun CaptureContent(
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
     onDiscardVoiceNote: () -> Unit = {},
+    /** What the note is about — a task's title or a brief item's sentence — when it does not stand alone. */
+    completionSubject: String? = null,
+    /** What the note does to that subject, which words the screen. */
+    completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -165,7 +189,22 @@ fun CaptureContent(
                         Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = c.accent)
                     }
                 },
-                title = { Text("Tell Omnesis") },
+                title = {
+                    if (completionSubject == null) {
+                        Text("Tell Omnesis")
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(completionKind.heading)
+                            Text(
+                                completionSubject,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = Color.Transparent,
                     titleContentColor = c.textPrimary,
@@ -178,6 +217,7 @@ fun CaptureContent(
                 is SaveState.Done -> SavedConfirmation(queued = save.queued)
                 else -> CaptureForm(
                     state = state,
+                    completing = completionKind.takeIf { completionSubject != null },
                     saving = save is SaveState.Saving,
                     onMicTap = onMicTap,
                     onTextChange = onTextChange,
@@ -195,6 +235,8 @@ fun CaptureContent(
 @Composable
 private fun CaptureForm(
     state: CaptureUiState,
+    /** What the note does to its subject, when it has one. */
+    completing: TaskNoteKind?,
     saving: Boolean,
     onMicTap: () -> Unit,
     onTextChange: (String) -> Unit,
@@ -243,7 +285,7 @@ private fun CaptureForm(
             onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
             placeholder = {
-                Text("What should Omnesis remember?", color = c.textMuted)
+                Text(completing?.prompt ?: "What should Omnesis remember?", color = c.textMuted)
             },
             enabled = !saving,
             shape = RoundedCornerShape(20.dp),
@@ -310,7 +352,7 @@ private fun CaptureForm(
                     Spacer(Modifier.width(8.dp))
                     Text("Saving…")
                 } else {
-                    Text("Tell Omnesis")
+                    Text(completing?.confirm ?: "Tell Omnesis")
                 }
             }
         }

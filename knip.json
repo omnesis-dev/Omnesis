@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "entry": [
-        "scripts/*.{ts,mjs}",
+        "scripts/*.{ts,mts,mjs}",
         "scripts/release/*.mjs",
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",

@@ -51,6 +51,9 @@ interface ResponsesCompletionResponse {
 interface HttpCompletionUsage {
   promptTokens: number;
   completionTokens: number;
+  /** Optional reported subsets of promptTokens; absent means unknown. */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 /** Text + usage of one completion. `usage` is null when the server sent none. */
@@ -107,6 +110,7 @@ export class HttpCompleter implements CompleteCapability {
       maxTokens?: number;
       temperature?: number;
       stop?: readonly string[];
+      signal?: AbortSignal;
     },
   ): Promise<string> {
     return (await this.completeWithUsage(prompt, opts)).text;
@@ -125,8 +129,10 @@ export class HttpCompleter implements CompleteCapability {
       maxTokens?: number;
       temperature?: number;
       stop?: readonly string[];
+      signal?: AbortSignal;
     },
   ): Promise<HttpCompletion> {
+    opts?.signal?.throwIfAborted();
     const messages = [{ role: "user", content: prompt }];
     const maxTokens = outputBudgetForSelectedReasoning(
       opts?.maxTokens ?? 150,
@@ -134,7 +140,7 @@ export class HttpCompleter implements CompleteCapability {
       this.modelBehavior?.reasoningBudgetTokens,
     );
     if (this.protocol === "responses") {
-      return this.completeViaResponses(prompt, maxTokens);
+      return this.completeViaResponses(prompt, maxTokens, opts?.signal);
     }
     const reasoningFields = modelReasoningRequestFields(
       this.modelControls,
@@ -157,7 +163,7 @@ export class HttpCompleter implements CompleteCapability {
     // Budget for the reasoning-model retry: never below the caller's request.
     const reasoningBudget = Math.max(maxTokens, REASONING_RETRY_TOKENS);
 
-    let res = await this.post(primary);
+    let res = await this.post(primary, opts?.signal);
 
     // Reasoning models (OpenAI o-series, GPT-5, …) reject `max_tokens` and a
     // non-default `temperature` with a 400. Retry once with the shape they
@@ -166,12 +172,15 @@ export class HttpCompleter implements CompleteCapability {
     // answer, so they work without Omnesis having to recognize which they are.
     let bumpedBudget = false;
     if (res.status === 400) {
-      res = await this.post({
-        model: this.modelId,
-        messages,
-        max_completion_tokens: reasoningBudget,
-        ...reasoningFields,
-      });
+      res = await this.post(
+        {
+          model: this.modelId,
+          messages,
+          max_completion_tokens: reasoningBudget,
+          ...reasoningFields,
+        },
+        opts?.signal,
+      );
       bumpedBudget = true;
     }
 
@@ -208,12 +217,15 @@ export class HttpCompleter implements CompleteCapability {
       stripThinkTags(content).trim() === "" &&
       json.choices?.[0]?.finish_reason === "length"
     ) {
-      const retry = await this.post({
-        model: this.modelId,
-        messages,
-        max_completion_tokens: reasoningBudget,
-        ...reasoningFields,
-      });
+      const retry = await this.post(
+        {
+          model: this.modelId,
+          messages,
+          max_completion_tokens: reasoningBudget,
+          ...reasoningFields,
+        },
+        opts?.signal,
+      );
       if (retry.ok) {
         json = (await retry.json()) as ChatCompletionResponse;
         addUsage(json);
@@ -228,21 +240,29 @@ export class HttpCompleter implements CompleteCapability {
     return { text: content, usage };
   }
 
-  private async completeViaResponses(prompt: string, maxTokens: number): Promise<HttpCompletion> {
+  private async completeViaResponses(
+    prompt: string,
+    maxTokens: number,
+    signal?: AbortSignal,
+  ): Promise<HttpCompletion> {
     const reasoningFields = modelReasoningRequestFields(
       this.modelControls,
       this.modelBehavior,
       "responses",
     );
-    const res = await this.postTo("responses", {
-      model: this.modelId,
-      input: prompt,
-      max_output_tokens:
-        Object.keys(reasoningFields).length > 0
-          ? Math.max(maxTokens, REASONING_RETRY_TOKENS)
-          : maxTokens,
-      ...reasoningFields,
-    });
+    const res = await this.postTo(
+      "responses",
+      {
+        model: this.modelId,
+        input: prompt,
+        max_output_tokens:
+          Object.keys(reasoningFields).length > 0
+            ? Math.max(maxTokens, REASONING_RETRY_TOKENS)
+            : maxTokens,
+        ...reasoningFields,
+      },
+      signal,
+    );
     if (!res.ok) await this.throwHttpError(res);
 
     const json = (await res.json()) as ResponsesCompletionResponse;
@@ -265,14 +285,20 @@ export class HttpCompleter implements CompleteCapability {
     return { text: content, usage };
   }
 
-  private async post(body: Record<string, unknown>): Promise<Response> {
-    return this.postTo("chat/completions", body);
+  private async post(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    return this.postTo("chat/completions", body, signal);
   }
 
-  private async postTo(path: string, body: Record<string, unknown>): Promise<Response> {
+  private async postTo(
+    path: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    signal?.throwIfAborted();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const deadline = signal ? AbortSignal.any([signal, timeout]) : timeout;
     return retryRateLimitedRequest(
       () =>
         fetchWithInferenceUrlPolicy(

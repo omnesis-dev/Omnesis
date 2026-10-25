@@ -21,7 +21,8 @@
  * Lifecycle mirrors the doc-annotation store: agent-authored derived state in
  * `omnesis.db`, evidence grounded in documents — per-atom verbatim quotes in
  * `temporal_annotation_evidence` — surgical per-atom invalidation on content
- * change, and a hard privacy-purge cascade when a cited document is deleted.
+ * change; a deleted cited document breaks the atoms citing it and never deletes
+ * the annotation.
  * The exact per-atom contract: an atom breaks when its quote no longer
  * appears in the cited document (or that document's row vanished), and HEALS
  * when a later change to the same document restores the quote. An annotation
@@ -77,7 +78,7 @@ export function createLegacyTimeIndexTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_time_index_start ON time_index_entries(interval_start_ms) WHERE invalidated_at IS NULL",
   );
-  // "which entries cite this document" — the privacy cascade + doc→entries lookup.
+  // "which entries cite this document" — the doc→entries lookup.
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_time_index_entry_docs_doc ON time_index_entry_docs(document_id)",
   );
@@ -145,12 +146,10 @@ export function createTemporalAnnotationTables(db: Db): void {
     )
   `);
   // `document_id` carries NO FK — the doc-link convention (`open_loop_docs`,
-  // `time_index_entry_people`). The privacy cascade selects its victims FROM
-  // this table after the document rows are gone; an FK cascade would erase
-  // the very rows the purge keys on, leaving annotations about a deleted
-  // document alive and queryable. Stale ids are tolerated on read (a missing
-  // document simply resolves to no row) and the purge removes the links with
-  // their annotations.
+  // `time_index_entry_people`): a document delete must never take an
+  // annotation's links with it. The annotation keeps its link and its atoms
+  // citing the deleted document break. Stale ids are tolerated on read (a
+  // missing document simply resolves to no row).
   db.exec(`
     CREATE TABLE IF NOT EXISTS temporal_annotation_documents (
       annotation_id TEXT NOT NULL REFERENCES temporal_annotations(id) ON DELETE CASCADE,
@@ -184,8 +183,8 @@ export function createTemporalAnnotationTables(db: Db): void {
   // stamps atoms whose quote no longer appears in the cited document — and
   // clears the stamp when a later change restores the quote — so an
   // annotation is invalidated only while every atom is broken. `document_id`
-  // carries no FK — the privacy cascade purges the whole annotation when a
-  // cited doc is deleted, and the doc-delete path clears leftovers explicitly.
+  // carries no FK — a deleted cited document breaks the atoms citing it and
+  // never removes them.
   db.exec(`
     CREATE TABLE IF NOT EXISTS temporal_annotation_evidence (
       annotation_id TEXT NOT NULL REFERENCES temporal_annotations(id) ON DELETE CASCADE,
@@ -258,6 +257,26 @@ export function expandCanonical(
     return { startMs: Date.UTC(y, 0, 1), endMs: Date.UTC(y + 1, 0, 1) - 1, precision: "year" };
   }
   return null;
+}
+
+/**
+ * A canonical with every ISO part spelt as a UTC instant.
+ *
+ * A writer may give an instant without an offset (`2026-10-18T19:26`), which
+ * {@link expandCanonical} reads in the gateway host's zone. Shown back as
+ * written, that clock names no zone, and a reader takes it for their own local
+ * time. Re-spelling it as the instant it was stored as (`…T18:26:00.000Z`)
+ * keeps the moment unambiguous. Calendar parts (`YYYY[-MM[-DD]]`) stay as
+ * written: a day names no moment.
+ */
+export function canonicalWithUtcInstants(canonical: string): string {
+  return canonical
+    .split(" .. ")
+    .map((part) => {
+      const expanded = expandCanonical(part);
+      return expanded?.precision === "instant" ? new Date(expanded.startMs).toISOString() : part;
+    })
+    .join(" .. ");
 }
 
 /** One grounding atom as callers supply it (create / evidence replace). */
@@ -982,10 +1001,11 @@ export function listTemporalAnnotationsAwaitingRefile(
   db: Db,
   docId: string,
   limit: number,
+  excludePresentedRunId: string | null = null,
 ): InvalidatedTemporalAnnotation[] {
   return db
     .prepare<
-      [string, string, number],
+      [string, string, string | null, string | null, number],
       {
         id: string;
         sentence: string;
@@ -1009,10 +1029,11 @@ export function listTemporalAnnotationsAwaitingRefile(
           AND (e.refile_presented_run IS NULL
                OR EXISTS (SELECT 1 FROM cognition_runs r
                            WHERE r.id = e.refile_presented_run AND r.status <> 'completed'))
+          AND (? IS NULL OR e.refile_presented_run IS NULL OR e.refile_presented_run <> ?)
         ORDER BY e.invalidated_at DESC, e.id DESC
         LIMIT ?`,
     )
-    .all(docId, docId, Math.max(1, limit))
+    .all(docId, docId, excludePresentedRunId, excludePresentedRunId, Math.max(1, limit))
     .map((r) => ({
       id: r.id,
       sentence: r.sentence,
@@ -1298,11 +1319,44 @@ export function invalidateTemporalAnnotationsForDoc(
 }
 
 /**
- * Hard-purge every annotation that cites any of `deletedDocIds` — the privacy
- * cascade a document delete triggers (an annotation's sentence may embed
- * content derived from the deleted document). Annotations with no link to a deleted doc
- * (including agent-added doc-less entries) are untouched. Chunked under the
- * SQLite bind-variable cap. Returns the purged entry ids.
+ * Source documents were deleted: every annotation citing one survives. Each
+ * of its evidence atoms citing a deleted document is stamped broken (the quote
+ * stays on record, unservable) and its link to the document stays, so the
+ * entry reads as ungrounded rather than disappearing. Nothing is invalidated:
+ * only a deliberate `temporal_annotation_update` or `temporal_annotation_delete`
+ * changes it. Returns the ids of the annotations that lost grounding.
+ * Idempotent: an already-broken atom is not counted again.
+ */
+export function breakTemporalAnnotationEvidenceForDeletedDocs(
+  db: Db,
+  deletedDocIds: readonly string[],
+  now: number,
+): string[] {
+  if (deletedDocIds.length === 0) return [];
+  const docs = JSON.stringify(deletedDocIds);
+  const ids = db
+    .prepare<[string], { annotation_id: string }>(
+      `SELECT DISTINCT annotation_id FROM temporal_annotation_evidence
+        WHERE document_id IN (SELECT value FROM json_each(?)) AND broken_at IS NULL`,
+    )
+    .all(docs)
+    .map((row) => row.annotation_id);
+  if (ids.length === 0) return [];
+  db.prepare<[number, string]>(
+    `UPDATE temporal_annotation_evidence SET broken_at = ?
+      WHERE document_id IN (SELECT value FROM json_each(?)) AND broken_at IS NULL`,
+  ).run(now, docs);
+  return ids;
+}
+
+/**
+ * Hard-purge every annotation that cites any of `deletedDocIds`. Only the
+ * historical retired-web-documents migration uses this; a live source
+ * deletion never deletes a temporal annotation (see
+ * {@link breakTemporalAnnotationEvidenceForDeletedDocs}). Annotations with no
+ * link to a deleted doc (including agent-added doc-less entries) are
+ * untouched. Chunked under the SQLite bind-variable cap. Returns the purged
+ * entry ids.
  */
 export function cascadeTemporalAnnotationPrivacyDelete(
   db: Db,

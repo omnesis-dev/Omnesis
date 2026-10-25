@@ -20,6 +20,7 @@ import {
   AnthropicBackend,
   HttpAgentBackend,
   buildBuiltinTools,
+  CitationReads,
   createBuiltinSpecialistRegistry,
   type ChatBackend,
 } from "@omnesis/agent";
@@ -50,6 +51,8 @@ import { PrivacyReviewer } from "../privacy/reviewer.js";
 import { cognitionSpendDay } from "../brain/storage/spend.js";
 import { toCognitionRunUsage } from "../brain/run-driver.js";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
+import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
+import { namedPagesNote, renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
   ConversationReadStateService,
@@ -73,6 +76,7 @@ import {
   renderSourceRestrictedAnswerSection,
   rendersTimeline,
 } from "./system-prompt.js";
+import { createGatewayMessageCountPort, type MessageCountGate } from "./message-count-port.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { PreflightOutcome } from "../watch/preflight.js";
@@ -137,6 +141,8 @@ export interface AgentServiceDeps {
   /** Read-worker gate for `lookup_people`. When wired the person port runs the
    *  heavy assembly off the main event loop; absent, it runs synchronously. */
   personLookupGate?: PersonLookupGate;
+  /** Read-worker gate for `count_messages`; absent, the count runs synchronously. */
+  messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
   /**
@@ -145,6 +151,7 @@ export interface AgentServiceDeps {
    * a gateway assembled without a config directory (tests, embedded harnesses).
    */
   getOperatorInstructions?: () => string;
+  getKnowledgeRootMaxChars?: () => number;
 }
 
 /**
@@ -401,7 +408,10 @@ export function createAgentService(
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
-    return buildSystemPrompt({
+    const root = restricted
+      ? { text: "", support: [] }
+      : captureKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.());
+    const prompt = buildSystemPrompt({
       audience: options.audience,
       now: new Date(),
       timeZone: context.timeZone,
@@ -410,17 +420,21 @@ export function createAgentService(
       experimental,
       selfMemory,
       selfPersonId,
+      knowledgeRootContext: restricted ? root.text : root.text + renderKnowledgePageDirectory(db),
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
+      messageCounts: !restricted,
       operatorInstructions,
       citationSurface: options.citationSurface,
       copyableValues: options.copyableValues === true,
       // Source-restricted grants receive no graph context on their searches.
       graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
     });
+    return prompt;
   };
   return new AgentService({
     backendFactory,
+    namedPagesNote: (message) => namedPagesNote(db, message),
     ports: {
       // `db` is passed so the agent search port can attach the 1-hop
       // breadcrumb to top hits when graph context is off.
@@ -441,6 +455,11 @@ export function createAgentService(
       // contract) and the document store (to resolve a bound document id).
       record: createGatewayRecordPort(db, analyticsDb),
       person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
+      // Unscoped, like `temporal`, so the source-restricted answer scope below
+      // never gets it.
+      messageCounts: createGatewayMessageCountPort(db, {
+        ...(deps.messageCountGate ? { gate: deps.messageCountGate } : {}),
+      }),
       watch: experimentalVisible()
         ? createGatewayWatchPort({
             getAuthoring: deps.getWatchAuthoring,
@@ -476,10 +495,9 @@ export function createAgentService(
     // Source-specific knowledge (table schemas, available `source:`
     // filter values) is pulled from the registry here so nothing in the
     // prompt template knows about any individual provider.
-    // Prompt caching (cache_control: ephemeral) absorbs the per-session token
-    // cost. The rendered block varies by calendar date and by the caller's
-    // zone, so sessions opened the same day from the same place share a cached
-    // prefix; nothing in it changes faster than that.
+    // Stable built-in guidance precedes live catalog, memory, root and caller
+    // date context, preserving its prefix across session-context changes.
+    // A live session retains its prompt until a profile switch or disk resume.
     systemPrompt: (profile, context) =>
       buildLiveSystemPrompt(context, {
         audience: "interactive",
@@ -496,11 +514,14 @@ export function createAgentService(
         "lookup_document_by_url",
         "annotate_many",
       ]);
+      const citationReads = new CitationReads();
+      const document = createGatewayDocumentPort(db, syncStatus, undefined, authorization);
       const tools = buildBuiltinTools({
+        citationReads,
         experimental: false,
         ports: {
           search: createGatewaySearchPort(searchPipeline, syncStatus, db, authorization),
-          document: createGatewayDocumentPort(db, syncStatus, undefined, authorization),
+          document,
           documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, authorization),
         },
       }).filter((tool) => safeNames.has(tool.name));
@@ -544,7 +565,7 @@ export function createAgentService(
       // edit reaches the next research stage. Generic workers get theirs
       // through `genericSystemPrompt` below, which builds the whole prompt.
       // Adjudicating specialists are the exception, for the same reason the
-      // privacy reviewer, the entailment verifier and the brief judge get
+      // privacy reviewer and the entailment verifier get
       // nothing: a bar the operator's own prose can move is not a bar.
       resolveSpecialist: (name) =>
         decorateSpecialist(
@@ -622,6 +643,8 @@ export interface AgentLifecycleDeps {
   claudeCodeService?: ClaudeCodeService | null;
   /** Read-worker gate forwarded to the person port for off-thread `lookup_people`. */
   personLookupGate?: PersonLookupGate;
+  /** Read-worker gate forwarded to the message-count port for off-thread `count_messages`. */
+  messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
   /** Worker-coordinated bounded index cleanup for activity retention. */
@@ -657,16 +680,57 @@ export interface AgentLifecycleDeps {
  */
 export class AgentLifecycle {
   /**
-   * Brief talk-back session profile,
-   * installed by the Briefs feature when it boots active. Held here (not
-   * only on the AgentService) because an agent-model swap rebuilds the
-   * service, and the new instance must keep serving anchored threads.
+   * The Morning brief conversation's per-turn context. Held here (not only
+   * on the AgentService) because an agent-model swap rebuilds the service,
+   * and the new instance must keep it.
    */
-  private anchoredThreadProfile: import("./service.js").AnchoredThreadProfile | null = null;
+  private dailyBriefContext: import("./service.js").DailyBriefContextProvider | null = null;
 
-  setAnchoredThreadProfile(profile: import("./service.js").AnchoredThreadProfile | null): void {
-    this.anchoredThreadProfile = profile;
-    this.routeDeps.agentService?.setAnchoredThreadProfile(profile);
+  setDailyBriefContextProvider(
+    provider: import("./service.js").DailyBriefContextProvider | null,
+  ): void {
+    this.dailyBriefContext = provider;
+    this.routeDeps.agentService?.setDailyBriefContextProvider(provider);
+  }
+
+  /**
+   * What each morning brief was based on, for the brief route. The route
+   * deps outlive a model swap, so it is set on them directly.
+   */
+  setDailyBriefDetailReader(
+    reader: import("./daily-brief-detail.js").DailyBriefDetailReader | null,
+  ): void {
+    if (reader) this.routeDeps.dailyBriefDetail = reader;
+    else delete this.routeDeps.dailyBriefDetail;
+  }
+
+  /**
+   * Thumbs on a shipped brief item, for the brief reaction route. The route
+   * deps outlive a model swap, so it is set on them directly.
+   */
+  setBriefItemReactor(
+    reactor: import("../brain/observations/brief-reactions.js").BriefItemReactor | null,
+  ): void {
+    if (reactor) this.routeDeps.briefItemReaction = reactor;
+    else delete this.routeDeps.briefItemReaction;
+  }
+
+  /**
+   * A task conversation's per-turn context, kept here for the same reason as
+   * the Morning brief's: a model swap rebuilds the service.
+   */
+  private taskContext: import("./service.js").TaskContextProvider | null = null;
+
+  setTaskContextProvider(provider: import("./service.js").TaskContextProvider | null): void {
+    this.taskContext = provider;
+    this.routeDeps.agentService?.setTaskContextProvider(provider);
+  }
+
+  private taskTools: import("./service.js").TaskToolsProvider | null = null;
+
+  setTaskToolsProvider(provider: import("./service.js").TaskToolsProvider | null): void {
+    this.taskTools = provider;
+    this.routeDeps.agentService?.setTaskToolsProvider(provider);
   }
 
   private interactiveMemoryProfile: import("./service.js").InteractiveWriteProfile | null = null;
@@ -869,6 +933,8 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
+        getKnowledgeRootMaxChars: () =>
+          this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,
         syncStatus: this.deps.syncStatus,
         analyticsDb: this.deps.analyticsDb,
@@ -887,6 +953,7 @@ export class AgentLifecycle {
         conversationReadState: this.conversationReadState,
         notifyConversation: this.deps.notifyConversation,
         personLookupGate: this.deps.personLookupGate,
+        ...(this.deps.messageCountGate ? { messageCountGate: this.deps.messageCountGate } : {}),
         ...(this.deps.mentionWorthGateActive
           ? { mentionWorthGateActive: this.deps.mentionWorthGateActive }
           : {}),
@@ -1151,8 +1218,10 @@ export class AgentLifecycle {
     }
 
     if (agentService) this.deps.wsEventHandler.attachAgentService(agentService);
-    if (agentService && this.anchoredThreadProfile) {
-      agentService.setAnchoredThreadProfile(this.anchoredThreadProfile);
+    if (agentService && this.taskTools) agentService.setTaskToolsProvider(this.taskTools);
+    if (agentService && this.taskContext) agentService.setTaskContextProvider(this.taskContext);
+    if (agentService && this.dailyBriefContext) {
+      agentService.setDailyBriefContextProvider(this.dailyBriefContext);
     }
     if (agentService && this.interactiveMemoryProfile) {
       agentService.setInteractiveMemoryProfile(this.interactiveMemoryProfile);
@@ -1391,8 +1460,10 @@ export class AgentLifecycle {
       }
     }
 
-    if (newService && this.anchoredThreadProfile) {
-      newService.setAnchoredThreadProfile(this.anchoredThreadProfile);
+    if (newService && this.taskTools) newService.setTaskToolsProvider(this.taskTools);
+    if (newService && this.taskContext) newService.setTaskContextProvider(this.taskContext);
+    if (newService && this.dailyBriefContext) {
+      newService.setDailyBriefContextProvider(this.dailyBriefContext);
     }
     if (newService && this.interactiveMemoryProfile) {
       newService.setInteractiveMemoryProfile(this.interactiveMemoryProfile);

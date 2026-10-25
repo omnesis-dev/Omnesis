@@ -5,7 +5,8 @@
  * `BrainObs` — the read half of the brain end-to-end kit.
  *
  * Every assertion a bench test makes goes through the production read
- * surface (`/admin/brain/*`, `/admin/cognition/*`, `/briefs`, `/loops`),
+ * surface (`/admin/brain/*`, `/admin/cognition/*`, `/loops`, `/tasks`,
+ * `/notes`, `/agent/conversations`),
  * never through a bespoke test query. Two payoffs: the assertions describe
  * what an operator can actually see, and each bench run doubles as a
  * contract test for the routes the portal and CLI depend on.
@@ -19,26 +20,18 @@
 import { sleep } from "../briefs-scorecard.js";
 import type { SyntheticE2EHarness } from "../synth-harness.js";
 
-const MAX_STALE_RUN_PAGE_RETRIES = 5;
-
-function isStalePageCursor(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const response = error as Error & { status?: unknown; body?: unknown };
-  if (response.status !== 409 || typeof response.body !== "string") return false;
-  try {
-    const body = JSON.parse(response.body) as unknown;
-    return (
-      typeof body === "object" &&
-      body !== null &&
-      "code" in body &&
-      (body as { code?: unknown }).code === "STALE_PAGE_CURSOR"
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ── wire shapes (the fields bench assertions actually read) ─────────────────
+
+/** One phase's discovery outcomes for a month of the corpus. */
+export interface BootstrapTimelinePhaseCounts {
+  considered: number;
+  gated: number;
+  deferred: number;
+  failed: number;
+  pending: number;
+  outOfScope: number;
+  excluded: number;
+}
 
 export interface PulseCounts {
   queuedRuns: number;
@@ -47,8 +40,9 @@ export interface PulseCounts {
   openLoops: number;
   snoozedLoops: number;
   totalLoops: number;
-  unreadBriefs: number;
-  totalBriefs: number;
+  /** Observations still waiting for a morning brief (`live` or `held`). */
+  openObservations: number;
+  totalObservations: number;
   failedRuns24h: number;
   /** Wakes the waker accepted but has not yet turned into queue rows. */
   bufferedWakes: number;
@@ -76,6 +70,13 @@ export interface RunDto {
   lastAttemptAt: string | null;
   completedAt: string | null;
   usage: { promptTokens?: number; completionTokens?: number } | null;
+  /** Context-window occupancy and the reason the run handed its work on, if it did. */
+  context: {
+    peakInputTokens: number | null;
+    lastInputTokens: number | null;
+    contextWindowTokens: number | null;
+    handoffReason: string | null;
+  } | null;
   /**
    * The worth gate's verdict for the run (the newest decision's), or null when
    * the gate never judged it. Served on the runs LIST only.
@@ -97,12 +98,13 @@ export interface GateDecisionDto {
   threshold: number;
   modelId: string | null;
   rubricVersion: string;
-  documentId: string;
-  subjectDocumentId: string;
+  /** Null when no document anchors the decision (a task, a search). */
+  documentId: string | null;
+  subjectDocumentId: string | null;
   inheritedFromParent: boolean;
   subjectDoc: AdminDocRef | null;
   reusedFrom: string | null;
-  /** The record a record-check decision judged; null for a document judgement. */
+  /** The record a record, task or salience decision judged; null for a document judgement. */
   recordId: string | null;
   /** False when the verdict was only observed (a record check in shadow mode). */
   enforced: boolean;
@@ -112,6 +114,8 @@ export interface GateDecisionDto {
   createdAt: string;
   request: { model?: string; state: unknown; questions: unknown } | null;
   response: { model: string; answers: Record<string, unknown> } | null;
+  /** Whether `/admin/brain/decisions/:id` serves its request and answer. */
+  inputInspection: boolean;
 }
 
 /**
@@ -151,49 +155,179 @@ export interface LedgerEntry {
   note: string;
 }
 
-export interface BriefClaim {
-  id: string;
-  claimText: string;
-  claimBasis: string;
-  confidence: number;
-  verificationState: string;
-  evidenceQuote: string | null;
-  evidenceDoc: { id: string; title: string; sourceType: string } | null;
-  createdAt: string;
-}
-
-/** Documents are echoed as `{id,…}` on the admin surface, `{docId,…}` on the product feed. */
+/** Documents are echoed as `{id,…}` refs on the admin detail routes. */
 export interface AdminDocRef {
   id: string;
   title: string | null;
   sourceType: string | null;
 }
 
-export interface FeedDocRef {
-  docId: string;
-  title: string;
+/** The salience scores an observation was given (levels; null when unavailable). */
+export interface ObservationScoresDto {
+  consequence: number | null;
+  timing: number | null;
+  alreadyKnown: number | null;
+  modelId: string | null;
+  at: number;
 }
 
-export interface BriefDto {
+/** One observation as `/admin/brain/observations*` serves it. */
+export interface ObservationDto {
   id: string;
   createdByRun: string;
-  kind: "info" | "loop";
-  state: string;
-  title: string;
-  description: string;
-  body: string | null;
+  state: "live" | "held" | "shipped" | "dropped";
+  closeReason: string | null;
+  summary: string;
+  why: string;
+  userAuthored: boolean;
+  windowStart: string | null;
+  relevantUntil: string | null;
   /** Raw doc ids on the list route; resolved refs on the detail route. */
   citations: string[];
   relatedLoopIds: string[];
-  confidence: number;
-  urgency: number;
-  relevantUntil: string | null;
-  nextShow: string | null;
-  eventAt: string | null;
-  userFeedback: string | null;
+  claims: Array<{ docId: string; quote: string; verification: string }>;
+  notedScores: ObservationScoresDto | null;
+  scores: ObservationScoresDto | null;
+  wouldPushAt: string | null;
+  shippedAt: string | null;
+  shippedConversationId: string | null;
+  shippedMessageId: string | null;
+  userAction: string | null;
   createdAt: string;
   updatedAt: string;
-  threadConversationId: string | null;
+  closedAt: string | null;
+}
+
+/** One sent (or composed) morning brief as `/admin/brain/morning-brief` serves it. */
+export interface MorningBriefDto {
+  sent: {
+    day: string;
+    runId: string;
+    conversationId: string;
+    messageId: string;
+    itemCount: number;
+    sentAt: string;
+  } | null;
+  items: Array<{
+    rank: number;
+    observationId: string;
+    runId: string;
+    messageId: string | null;
+    observation: ObservationDto | null;
+  }>;
+}
+
+/** What one brief in the Morning brief conversation was based on, as its route serves it. */
+export interface BriefDetailDto {
+  day: string;
+  messageId: string;
+  sentAt?: string;
+  items: Array<{
+    rank: number;
+    observationId: string;
+    summary: string;
+    sources: Array<{
+      id: string;
+      title: string | null;
+      sourceType: string | null;
+      createdAt: string | null;
+    }>;
+    tasks: Array<{ id: string; title: string; state: string }>;
+  }>;
+}
+
+/** Open tasks per journal view on one day, as `/tasks/counts` and every `/tasks` view serve them. */
+export interface TaskCountsDto {
+  today: number;
+  month: number;
+  future: number;
+  anytime: number;
+  waiting: number;
+  suggested: number;
+  proposals: number;
+  carried: number;
+}
+
+/** One task as `/tasks*` serves it. */
+export interface TaskDto {
+  id: string;
+  title: string;
+  description: string;
+  state: "open" | "snoozed" | "done" | "dismissed";
+  origin: "brain" | "note" | "user";
+  accepted: boolean;
+  /** A suggestion the user ignored: out of Tasks, still tracked by the Brain. */
+  ignored: boolean;
+  scheduledFor: string | null;
+  deadline: unknown;
+  dueDay: string | null;
+  carried: boolean;
+  completionNote: string | null;
+  proposedChange: {
+    kind: "complete" | "strike" | "edit";
+    fields: Record<string, unknown> | null;
+    reason: string;
+    evidence: string[];
+    proposedAt: string | null;
+  } | null;
+  /** The documents the task refers to that are still there to open. */
+  documents: Array<{ id: string; title: string; sourceId: string }>;
+  createdAt: string;
+  lastUpdate: string;
+  resolvedAt: string | null;
+}
+
+export interface TaskEventDto {
+  seq: number;
+  at: string;
+  note: string;
+  kind: string;
+  surface: string;
+  conversationId: string | null;
+  from: string | null;
+  to: string | null;
+  /** For `auto_applied`: `complete` or `edit`. */
+  change: string | null;
+  /** For `auto_applied`: the documents whose quotes established the change. */
+  evidence: string[];
+}
+
+/** What a task command answers: the task after the change and its undo handle. */
+export interface TaskReceiptDto {
+  task: TaskDto | null;
+  receipt: { text: string; undoSeq: number | null };
+}
+
+/** One quick-capture note as `GET /notes` lists it, with the note agent's receipt. */
+export interface ListedNoteDto {
+  id: string;
+  text: string;
+  /** The task the note is about, when written while accepting a suggestion. */
+  taskId?: string;
+  transcription?: string;
+  agent?: {
+    state: "pending" | "running" | "done" | "failed" | "skipped";
+    receipt: {
+      text: string;
+      changes: Array<{ text: string; taskId: string | null; undoSeq: number | null }>;
+    } | null;
+  };
+}
+
+/** One stored conversation as `GET /agent/conversations/:id` serves it. */
+export interface ConversationDto {
+  id: string;
+  title?: string;
+  pinned?: boolean;
+  origin?: {
+    kind: string;
+    runId?: string;
+    briefs?: Array<{ day: string; messageIndex: number; messageId: string; sentAt?: string }>;
+  };
+  messages: Array<{
+    role: string;
+    parts: Array<{ kind: string; text?: string; tool?: string; result?: unknown }>;
+  }>;
 }
 
 export interface AnnotationDto {
@@ -267,6 +401,7 @@ export interface DecisionDto {
   failureCode: string | null;
   subject: string | null;
   docId: string | null;
+  docIds?: string[];
   /** Mutating calls in order. Empty means the run decided to do nothing. */
   actions: DecisionAction[];
   researchToolCalls: number;
@@ -277,6 +412,28 @@ export interface DecisionDto {
 export interface PageOf<T> {
   items: T[];
   pageInfo?: { nextCursor?: string | null; hasMore?: boolean };
+}
+
+/**
+ * True when `steps` complete discovery for the source outside an organization
+ * cohort: the frontier that offered it did not list it as a cohort member.
+ */
+function interpretedSource(steps: readonly ExecutedTool[], docId: string): boolean {
+  let cohortMembers: readonly unknown[] = [];
+  for (const step of steps) {
+    if (step.tool === "knowledge_next_frontier") {
+      const organization = step.result?.data?.organization as { sourceIds?: unknown } | undefined;
+      cohortMembers = Array.isArray(organization?.sourceIds) ? organization.sourceIds : [];
+    } else if (
+      step.tool === "knowledge_discovery_complete" &&
+      step.args.id === `source:${docId}` &&
+      step.result?.kind === "structured" &&
+      !cohortMembers.includes(docId)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export class BrainObs {
@@ -292,7 +449,7 @@ export class BrainObs {
   // ── gate ────────────────────────────────────────────────────────────────
 
   async status(): Promise<{
-    briefs: {
+    brain: {
       visible: boolean;
       enabled: boolean;
       modelAssigned: boolean;
@@ -302,6 +459,7 @@ export class BrainObs {
     };
     experimental: boolean;
     developer: boolean;
+    tasks: { available: boolean; noteAgent: boolean };
   }> {
     return this.h.gatewayJson("/status");
   }
@@ -321,15 +479,7 @@ export class BrainObs {
   async runs(
     opts: { kind?: string; status?: string; order?: string; limit?: number } = {},
   ): Promise<PageOf<RunDto>> {
-    const path = `/admin/brain/runs${this.q({ limit: 200, ...opts })}`;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await this.h.gatewayJson(path);
-      } catch (error) {
-        if (attempt >= MAX_STALE_RUN_PAGE_RETRIES || !isStalePageCursor(error)) throw error;
-        await sleep(10);
-      }
-    }
+    return this.h.gatewayJson(`/admin/brain/runs${this.q({ limit: 200, ...opts })}`);
   }
 
   async run(id: string): Promise<{
@@ -398,6 +548,7 @@ export class BrainObs {
       events: Array<{ type: string; payload: unknown }>;
       finalText: string;
       outcome: string;
+      failureCode?: string;
       usage: unknown;
     };
   }> {
@@ -417,16 +568,17 @@ export class BrainObs {
    * The tool calls a run made, paired with what the gateway ANSWERED.
    *
    * This is the only way to observe two things that leave no row behind: a
-   * structured refusal (`brief.held_for_verification`, `brief.held_by_judge`,
-   * `*.conflict_candidates`) and an authority denial — a tool withheld from a
+   * structured refusal (`*.conflict_candidates`,
+   * `temporal_annotation.overlap_candidates`) and an authority denial — a tool withheld from a
    * run's toolset comes back `unknown_tool` and is otherwise invisible.
    * `puppetCalls` records only what the puppet EMITTED; the answers live in the
    * transcript's event stream.
    */
-  async executedTools(runId: string): Promise<ExecutedTool[]> {
+  async executedTools(runId: string, attempt?: number): Promise<ExecutedTool[]> {
     const refs = await this.transcripts({ runId });
     const steps: ExecutedTool[] = [];
     for (const entry of refs.items) {
+      if (attempt !== undefined && entry.attempt !== attempt) continue;
       const { transcript } = await this.transcript(entry.fileName);
       const indexByCallId = new Map<string, number>();
       for (const event of transcript.events) {
@@ -448,12 +600,44 @@ export class BrainObs {
     return steps;
   }
 
-  /** The settled `data` run a pushed document drove. */
+  /** A legacy datum run only. Maintenance tests use runsForSource instead. */
   async runForDoc(docId: string): Promise<RunDto> {
     const page = await this.runs({ kind: "data", limit: 200 });
     const run = page.items.find((r) => r.dedupeKey === `data:doc:${docId}`);
     if (!run) throw new Error(`no data run for document ${docId}`);
     return run;
+  }
+
+  /** Real synthesis runs that processed this source; one batch may contain several sources. */
+  async runsForSource(docId: string): Promise<RunDto[]> {
+    const page = await this.runs({ kind: "synthesis", limit: 200 });
+    const matches: RunDto[] = [];
+    for (const run of page.items) {
+      const steps = await this.executedTools(run.id);
+      if (
+        steps.some(
+          (step) =>
+            step.tool === "knowledge_discovery_complete" &&
+            step.args.id === `source:${docId}` &&
+            step.result?.kind === "structured",
+        )
+      )
+        matches.push(run);
+    }
+    return matches;
+  }
+
+  /**
+   * Latest successful interpretation run, retaining its actual shared-batch
+   * identity. An organization cohort run also completes discovery for each
+   * member source it offers, but a member was interpreted by an earlier run,
+   * so the cohort run's completion of it is not its interpretation.
+   */
+  async interpretationForSource(docId: string): Promise<RunDto> {
+    for (const run of await this.runsForSource(docId)) {
+      if (interpretedSource(await this.executedTools(run.id), docId)) return run;
+    }
+    throw new Error(`no successful maintenance interpretation for source ${docId}`);
   }
 
   /** The `<diff>` block a data run's prompt carried, if any. */
@@ -488,7 +672,7 @@ export class BrainObs {
       involved: Array<{ id: string; name: string | null }>;
     };
     ledger: LedgerEntry[];
-    briefs: Array<{ id: string; kind: string; state: string; title: string }>;
+    observations: ObservationDto[];
     scheduledRuns: RunDto[];
     provenance: unknown;
   }> {
@@ -538,49 +722,135 @@ export class BrainObs {
     return this.h.gatewayJson(`/loops/${id}${this.q(opts)}`);
   }
 
-  // ── briefs ──────────────────────────────────────────────────────────────
+  // ── observations & the morning brief ───────────────────────────────────
 
-  async briefs(opts: { state?: string; limit?: number } = {}): Promise<PageOf<BriefDto>> {
-    return this.h.gatewayJson(`/admin/brain/briefs${this.q({ limit: 500, ...opts })}`);
+  async observations(
+    opts: { state?: string; limit?: number } = {},
+  ): Promise<PageOf<ObservationDto>> {
+    return this.h.gatewayJson(`/admin/brain/observations${this.q({ limit: 500, ...opts })}`);
   }
 
-  async brief(id: string): Promise<{
-    brief: Omit<BriefDto, "citations"> & { citations: AdminDocRef[] };
-    feedTier: { rank: number; label: string };
-    claims: BriefClaim[];
+  async observation(id: string): Promise<{
+    observation: Omit<ObservationDto, "citations"> & { citations: AdminDocRef[] };
+    relatedLoops: Array<{ id: string; title: string | null; state: string | null }>;
+    decisions: GateDecisionDto[];
     provenance: unknown;
   }> {
-    return this.h.gatewayJson(`/admin/brain/briefs/${id}`);
+    return this.h.gatewayJson(`/admin/brain/observations/${id}`);
   }
 
-  async feed(
-    opts: { limit?: number } = {},
-  ): Promise<{ briefs: Array<Omit<BriefDto, "citations"> & { citations: FeedDocRef[] }> }> {
-    return this.h.gatewayJson(`/briefs/feed${this.q(opts)}`);
+  /** Observations whose summary contains a marker — the attribution probe. */
+  async observationsMatching(marker: string): Promise<ObservationDto[]> {
+    return (await this.observations()).items.filter((o) => o.summary.includes(marker));
   }
 
-  async unreadCount(): Promise<number> {
-    const r = await this.h.gatewayJson<{ unread: number }>("/briefs/count");
-    return r.unread;
+  /** The "would have pushed" log, newest first. */
+  async wouldPush(): Promise<{
+    items: Array<{
+      id: string;
+      summary: string;
+      state: string;
+      notedScores: ObservationScoresDto | null;
+      createdAt: string;
+      wouldPushAt: string;
+      shippedAt: string | null;
+      relevantUntil: string | null;
+    }>;
+  }> {
+    return this.h.gatewayJson("/admin/brain/observations/would-push");
   }
 
-  async readBrief(id: string): Promise<unknown> {
-    return this.h.gatewayJson(`/briefs/${id}/read`, { method: "POST" });
+  /** Closed observations reduced to outcome records by retention. */
+  async observationOutcomes(): Promise<{
+    items: Array<{
+      id: string;
+      topic: string;
+      sourceKinds: string[];
+      state: string;
+      closeReason: string | null;
+      notedScores: ObservationScoresDto | null;
+      userAction: string | null;
+      closedAt: string | null;
+      prunedAt: string;
+    }>;
+  }> {
+    return this.h.gatewayJson("/admin/brain/observations/outcomes");
   }
 
-  async dismissBrief(
+  /** A day's morning brief (its ranked items and, once sent, the message); the latest by default. */
+  async morningBrief(day?: string): Promise<MorningBriefDto> {
+    return this.h.gatewayJson(`/admin/brain/morning-brief${this.q({ day })}`);
+  }
+
+  // ── tasks ───────────────────────────────────────────────────────────────
+
+  async tasks(
+    view: string,
+    opts: { date?: string; limit?: number } = {},
+  ): Promise<{
+    view: string;
+    day: string;
+    tasks: TaskDto[];
+    counts: TaskCountsDto;
+  }> {
+    return this.h.gatewayJson(`/tasks${this.q({ view, ...opts })}`);
+  }
+
+  async taskCounts(date?: string): Promise<{ day: string; counts: TaskCountsDto }> {
+    return this.h.gatewayJson(`/tasks/counts${this.q({ date })}`);
+  }
+
+  async task(
     id: string,
-    body: Record<string, unknown> = {},
-  ): Promise<{ ok: boolean; state: string; feedbackRunId: string | null }> {
-    return this.h.gatewayJson(`/briefs/${id}/dismiss`, {
+  ): Promise<{ task: TaskDto; history: TaskEventDto[]; undoSeq: number | null }> {
+    return this.h.gatewayJson(`/tasks/${id}`);
+  }
+
+  async createTask(body: Record<string, unknown>): Promise<TaskReceiptDto> {
+    return this.h.gatewayJson("/tasks", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /** One task command; the raw response, so a refusal's status is assertable. */
+  async taskAction(id: string, body: Record<string, unknown>): Promise<Response> {
+    return this.h.gatewayFetch(`/tasks/${id}/actions`, {
       method: "POST",
       body: JSON.stringify(body),
     });
   }
 
-  async briefsMatching(marker: string): Promise<BriefDto[]> {
-    const page = await this.briefs();
-    return page.items.filter((b) => b.title.includes(marker) || b.description.includes(marker));
+  async undoTask(seq: number): Promise<Response> {
+    return this.h.gatewayFetch("/tasks/undo", { method: "POST", body: JSON.stringify({ seq }) });
+  }
+
+  // ── notes ───────────────────────────────────────────────────────────────
+
+  /** Quick-capture notes captured on `day`, each with the note agent's receipt once it ran. */
+  async tellNotes(day: string): Promise<ListedNoteDto[]> {
+    const page = await this.h.gatewayJson<{ entries: ListedNoteDto[] }>(`/notes${this.q({ day })}`);
+    return page.entries;
+  }
+
+  // ── conversations ───────────────────────────────────────────────────────
+
+  async conversations(): Promise<{
+    conversations: Array<{
+      id: string;
+      title?: string;
+      pinned?: boolean;
+      messageCount?: number;
+      origin?: { kind: string };
+    }>;
+  }> {
+    return this.h.gatewayJson("/agent/conversations?limit=100");
+  }
+
+  async conversation(id: string): Promise<ConversationDto> {
+    return this.h.gatewayJson(`/agent/conversations/${id}`);
+  }
+
+  /** One day's brief in the Morning brief conversation: its shipped items, sources and tasks. */
+  async briefDetail(conversationId: string, day: string): Promise<BriefDetailDto> {
+    return this.h.gatewayJson(`/agent/conversations/${conversationId}/briefs/${day}`);
   }
 
   // ── annotations ─────────────────────────────────────────────────────────
@@ -616,10 +886,34 @@ export class BrainObs {
    * has stopped claiming against.
    */
   async bootstrapStatus(): Promise<{
+    mode?: "knowledge";
+    liveDiscoveryIndependent?: boolean;
+    corpusCompletion?: "not-measured";
+    /** History dated before `notBefore` is outside review, not pending. */
+    horizon?: { horizonMs: number; notBefore: string };
+    /** Sources the Brain never processes (`brain.excludedSources`). */
+    excludedSources?: string[];
+    admission?: {
+      total: number;
+      today: number;
+      pending: number;
+      batched: number;
+      completed: number;
+      deferred: number;
+      remainingLifetime: number;
+      remainingToday: number;
+      backlogRoom: number;
+      windowOpen: boolean;
+      windowOpensAt: number | null;
+    };
     state: string;
     reason: string;
-    runs: { pending: number; completed: number; failed: number };
-    providerOutage: { openUntil: string; consecutiveFailures: number; lastError: string } | null;
+    runs?: { pending: number; completed: number; failed: number };
+    providerOutage: {
+      openUntil: string | number;
+      consecutiveFailures: number;
+      lastError: string;
+    } | null;
   }> {
     return this.h.gatewayJson("/admin/brain/bootstrap");
   }
@@ -630,15 +924,12 @@ export class BrainObs {
    * reads it once, after the state it asserts on has settled.
    */
   async bootstrapTimeline(): Promise<{
+    mode: "knowledge";
     pending: boolean;
     months: Array<{
-      month: string;
-      unscanned: number;
-      discarded: number;
-      owed: number;
-      reviewed: number;
-      gated: number;
-      failed: number;
+      month: string | null;
+      interpretation: BootstrapTimelinePhaseCounts;
+      organization: BootstrapTimelinePhaseCounts;
     }>;
     computedAt: string;
   }> {
@@ -687,11 +978,13 @@ export class BrainObs {
       sourceId: string;
       workflowId: string;
       workflowVersion?: number;
+      unit?: string;
+      costAttribution?: string;
       eligible: number;
       processed: number;
       skipped: number;
-      promptTokens: number;
-      completionTokens: number;
+      promptTokens: number | null;
+      completionTokens: number | null;
       lastProgressAt: string | null;
       status: string;
     }>;

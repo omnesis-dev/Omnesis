@@ -7,7 +7,11 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { ephemeralResultArrived, MessageBubble, renderPart } from "./parts.js";
+import { ephemeralResultArrived, MessageBubble, prettyToolName, renderPart } from "./parts.js";
+import { initialState, reducer } from "../../views/agent-reducer.js";
+
+// Card lifecycle tests use LinkeDOM; DOMPurify requires a browser window at import time.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 
 describe("ephemeralResultArrived", () => {
   it("is false until a result lands (spinner stays, rotation parked)", () => {
@@ -77,6 +81,90 @@ describe("ephemeral card layout lifecycle", () => {
     await act(async () => { vi.advanceTimersByTime(300); });
   }
 
+  it.each([0, 100, 600])(
+    "flushes following prose after the shorter visibility floor and fade (arrives at %sms)",
+    async (arrivalMs) => {
+      const call = {
+        kind: "tool", toolCallId: "search-text", tool: "search_documents", args: {},
+        result: { kind: "search.results", results: Array.from({ length: 12 }, (_, i) => ({ title: `Result ${i}` })) },
+        pendingTail: [],
+      };
+      await renderTurn([call]);
+      await act(async () => { vi.advanceTimersByTime(arrivalMs); });
+      await act(async () => {
+        render(h(MessageBubble, {
+          turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+            { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+          ] }], done: false, citationCount: 0 },
+          citations: [], dispatch,
+        }), host!);
+      });
+      const remaining = Math.max(0, 167 - arrivalMs);
+      if (remaining > 0) {
+        await act(async () => { vi.advanceTimersByTime(remaining - 1); });
+        expect(host!.querySelector(".is-dismissed")).toBeNull();
+        await act(async () => { vi.advanceTimersByTime(1); });
+      }
+      expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(99); });
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith({ kind: "ephemeral-tail-flush", toolCallId: "search-text" });
+    },
+  );
+
+  it("shortens an already expedited non-text tail when prose arrives, cancelling its old timer", async () => {
+    const thinking = { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } };
+    const call = {
+      kind: "tool", toolCallId: "search-tail-update", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [thinking],
+    };
+    await renderTurn([call]);
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await act(async () => {
+      render(h(MessageBubble, {
+        turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+          thinking, { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+        ] }], done: false, citationCount: 0 },
+        citations: [], dispatch,
+      }), host!);
+    });
+    await act(async () => { vi.advanceTimersByTime(66); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+    await act(async () => { vi.advanceTimersByTime(99); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+      kind: "ephemeral-tail-flush", toolCallId: "search-tail-update",
+    });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } },
+    { kind: "agent.tool.start", payload: { tool: "search_documents" } },
+    { kind: "agent.text.delta", payload: { delta: " \n " } },
+  ])("keeps non-prose queued events at the existing dismissal pace: $kind", async (action) => {
+    await renderTurn([{
+      kind: "tool", toolCallId: "search-non-text", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [action],
+    }]);
+    await act(async () => { vi.advanceTimersByTime(499); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("300ms");
+    await act(async () => { vi.advanceTimersByTime(299); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("removes a dismissed card's DOM node so prose keeps only its normal flex gap", async () => {
     await renderTurn([
       { kind: "text", text: "" },
@@ -122,6 +210,94 @@ describe("ephemeral card layout lifecycle", () => {
       toolCallId: "memory-1",
     });
   });
+
+  it("reads a wiki page live: its title while pending, then its lines scrolling, then gone", async () => {
+    const pending = {
+      kind: "tool", toolCallId: "wiki-1", tool: "knowledge_fetch",
+      args: { id: "candidate_pottery", editing: false }, argsSummary: "Pottery workshop", result: null,
+    };
+    await renderTurn([pending]);
+    const card = () => host!.querySelector(".agent-ephemeral");
+    expect(card()!.textContent).toContain("Read wiki page");
+    expect(card()!.textContent).toContain("Pottery workshop");
+    expect(card()!.textContent).not.toContain("candidate_pottery");
+    expect(card()!.querySelector(".kn-link-icon, svg")).not.toBeNull();
+
+    await act(async () => {
+      render(h(MessageBubble, {
+        turn: {
+          role: "assistant",
+          parts: [{
+            ...pending,
+            result: {
+              kind: "document.batch",
+              items: [{
+                kind: "document",
+                ref: { documentId: "wiki-doc", sourceId: "brain-knowledge", title: "Pottery workshop" },
+                document: { id: "wiki-doc", title: "Pottery workshop", content: "Opens at nine.\n\nBring clay." },
+              }],
+            },
+          }],
+          done: false,
+          citationCount: 0,
+        },
+        citations: [],
+        dispatch,
+      }), host!);
+    });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect([...host!.querySelectorAll(".agent-ephemeral-doc-line")].map((n) => n.textContent)).toEqual([
+      "Opens at nine.",
+      "Bring clay.",
+    ]);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+    expect(dispatch).toHaveBeenCalledWith({ kind: "ephemeral-tail-flush", toolCallId: "wiki-1" });
+  });
+
+  it.each(["search_many", "fetch_many"])(
+    "dismisses %s children promptly when later prose appears without adding a reducer gate",
+    async (tool) => {
+      const sessionId = "batch-session";
+      let state = { ...initialState(), sessionId };
+      state = reducer(state, { kind: "agent.message.start", payload: { sessionId, messageId: "batch-message" } });
+      state = reducer(state, { kind: "agent.tool.start", payload: {
+        sessionId, toolCallId: "batch-followed", tool,
+        args: tool === "search_many" ? { queries: [{ query: "first" }, { query: "second" }] }
+          : { documents: [{ documentId: "doc-first" }, { documentId: "doc-second" }] },
+      } });
+      const items = ["first", "second"].map((name) => tool === "search_many"
+        ? { kind: "search.results", results: Array.from({ length: 12 }, (_, i) => ({ title: `${name} result ${i}` })) }
+        : { kind: "document", ref: { documentId: `doc-${name}`, title: name },
+          document: { title: name, content: Array.from({ length: 10 }, (_, i) => `Document line ${i}`).join("\n") } });
+      state = reducer(state, { kind: "agent.tool.result", payload: {
+        sessionId, toolCallId: "batch-followed", result: {
+          kind: tool === "search_many" ? "search.batch" : "document.batch", items,
+        },
+      } });
+      await renderTurn(state.turns.at(-1).parts);
+      const initialCards = [...host!.querySelectorAll(".agent-ephemeral")];
+      expect(initialCards).toHaveLength(2);
+      await act(async () => { vi.advanceTimersByTime(100); });
+      state = reducer(state, { kind: "agent.text.delta", payload: { sessionId, delta: "The answer is ready." } });
+      const turn = state.turns.at(-1);
+      expect(turn.parts.find((part) => part.tool === tool).pendingTail ?? []).toEqual([]);
+      expect(turn.parts.at(-1)).toMatchObject({ kind: "text", text: "The answer is ready." });
+      await act(async () => { render(h(MessageBubble, { turn, citations: [], dispatch }), host!); });
+      expect([...host!.querySelectorAll(".agent-ephemeral")]).toEqual(initialCards);
+      expect(host!.textContent).toContain("The answer is ready.");
+      await act(async () => { vi.advanceTimersByTime(67); });
+      expect(host!.querySelectorAll(".is-dismissed")).toHaveLength(2);
+      await act(async () => { vi.advanceTimersByTime(99); });
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(host!.querySelectorAll(".agent-ephemeral")).toHaveLength(0);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      for (const index of [0, 1]) expect(dispatch).toHaveBeenCalledWith({
+        kind: "ephemeral-tail-flush", toolCallId: `batch-followed#${index}`,
+      });
+    },
+  );
 
   it("removes every projected child DOM node of a dismissed batch card", async () => {
     await renderTurn([
@@ -703,6 +879,31 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(resultLinks()).toEqual(["/portal/doc/doc-9"]);
   });
 
+  it("reads a wiki page as a document: its glyph, label and linked title", async () => {
+    await renderStatic(
+      toolPart(
+        "knowledge_fetch",
+        {
+          kind: "document.batch",
+          items: [
+            {
+              kind: "document",
+              ref: { documentId: "wiki-1", sourceId: "brain-knowledge", title: "Pottery workshop" },
+              document: { id: "wiki-1", title: "Pottery workshop", content: "Opens at nine." },
+            },
+          ],
+        },
+        { id: "candidate_pottery" },
+      ),
+    );
+    expect(host!.textContent).toContain("Read wiki page");
+    expect(host!.querySelector(".agent-ephemeral-doc-title")?.textContent).toContain(
+      "Pottery workshop",
+    );
+    expect(resultLinks()).toEqual(["/portal/doc/wiki-1"]);
+    expect(host!.textContent).not.toContain("candidate_pottery");
+  });
+
   it("links trail documents and URL-lookup matches", async () => {
     await renderStatic(
       toolPart("trace_connections", {
@@ -771,7 +972,8 @@ describe("renderPart — after-the-fact card affordances", () => {
     const loopAnchors = [...host!.querySelectorAll("a.agent-loop-row")].map((a) =>
       a.getAttribute("href"),
     );
-    expect(loopAnchors).toEqual(["/portal/debug/cognition/loops/loop-1"]);
+    expect(loopAnchors).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
+    expect(host!.querySelector("a.agent-loop-row .kn-link-icon--loop")).not.toBeNull();
     await renderStatic(
       toolPart("list_loops", { kind: "structured", resultType: "loops.listed", data: { loops } }),
     );
@@ -782,7 +984,7 @@ describe("renderPart — after-the-fact card affordances", () => {
         loop: { loopId: "loop-1", title: "First loop", state: "open" },
       }),
     );
-    expect(resultLinks()).toEqual(["/portal/debug/cognition/loops/loop-1"]);
+    expect(resultLinks()).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
   });
 
   it("prints SQL rows statically with a more-rows note", async () => {
@@ -820,7 +1022,7 @@ describe("renderPart — after-the-fact card affordances", () => {
       }),
     );
     expect(host!.querySelector("a.agent-loop-row")?.getAttribute("href")).toBe(
-      "/portal/debug/cognition/loops/loop-1",
+      "/portal/debug/cognition/knowledge/loop-1?kind=loop",
     );
     expect(host!.querySelector(".agent-ephemeral-note")?.textContent).toBe("2 retired");
     await renderStatic(
@@ -830,7 +1032,7 @@ describe("renderPart — after-the-fact card affordances", () => {
         data: { loopId: "loop-1", title: "Steward loop", state: "open" },
       }),
     );
-    expect(resultLinks()).toEqual(["/portal/debug/cognition/loops/loop-1"]);
+    expect(resultLinks()).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
   });
 
   it("lists entity neighborhoods", async () => {
@@ -849,7 +1051,7 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(resultLinks()).toEqual([
       "/portal/doc/doc-1",
       "/portal/people/person-1",
-      "/portal/debug/cognition/loops/loop-1",
+      "/portal/debug/cognition/knowledge/loop-1?kind=loop",
     ]);
     expect(host!.textContent).toContain("Near moment");
   });
@@ -971,5 +1173,18 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(host!.querySelector(".agent-ephemeral-time")?.textContent).toBe("10:47 AM");
     expect(host!.textContent).not.toContain("raw-invented");
     expect(host!.querySelector('button[aria-label="Show raw JSON"]')).not.toBeNull();
+  });
+});
+
+describe("prettyToolName", () => {
+  it("names the task tools in words", () => {
+    expect(prettyToolName("task_list")).toBe("Check tasks");
+    expect(prettyToolName("task_create")).toBe("Add a task");
+    expect(prettyToolName("task_update")).toBe("Update a task");
+    expect(prettyToolName("task_undo")).toBe("Undo a task change");
+  });
+
+  it("falls back to the raw name for a tool it does not know", () => {
+    expect(prettyToolName("cite_record")).toBe("cite_record");
   });
 });

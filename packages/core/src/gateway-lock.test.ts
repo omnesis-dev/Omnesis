@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireGatewayLock,
   GATEWAY_LOCK_FILE,
   GatewayLockHeldError,
+  holderIsAlive,
+  liveGatewayHolder,
   readGatewayLockHolder,
 } from "./gateway-lock.js";
 
@@ -28,7 +30,159 @@ beforeEach(() => {
   sleeper = null;
 });
 
+describe.skipIf(process.platform !== "linux")("Linux gateway lifetime lease", () => {
+  it("rejects a lease symlink without following its target", async () => {
+    const target = join(dir, "unrelated-file");
+    writeFileSync(target, "untouched");
+    symlinkSync(target, join(dir, `${GATEWAY_LOCK_FILE}.lease`));
+    await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toMatchObject({ code: "ELOOP" });
+    expect(readFileSync(target, "utf8")).toBe("untouched");
+    expect(readGatewayLockHolder(dir)).toBeNull();
+  });
+
+  it("rejects non-regular lease files without blocking on a FIFO", async () => {
+    execFileSync("mkfifo", [join(dir, `${GATEWAY_LOCK_FILE}.lease`)]);
+    await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toThrow("regular file");
+    expect(readGatewayLockHolder(dir)).toBeNull();
+  });
+
+  it("closes a claimed lease if the guard exits unsuccessfully", async () => {
+    const originalPath = process.env.PATH;
+    const realFlock = execFileSync("sh", ["-c", "command -v flock"], { encoding: "utf8" }).trim();
+    const shim = join(dir, "flock");
+    writeFileSync(
+      shim,
+      `#!${process.execPath}
+      const {spawnSync} = require('node:child_process');
+      const args = process.argv.slice(2);
+      const result = spawnSync(${JSON.stringify(realFlock)}, args, {stdio: args[0] === '-n' ? ['inherit', 'inherit', 'inherit', 3] : 'inherit'});
+      process.exit(args[1]?.endsWith('.guard') && result.status === 0 ? 9 : result.status ?? 1);
+    `,
+      { mode: 0o700 },
+    );
+    vi.stubEnv("PATH", `${dir}:${originalPath ?? ""}`);
+    await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toThrow(
+      "guard exited with code 9",
+    );
+    vi.stubEnv("PATH", originalPath);
+    expect(liveGatewayHolder(dir)).toBeNull();
+    const replacement = await acquireGatewayLock(dir, { waitMs: 0 });
+    replacement.release();
+  });
+
+  it("keeps the lease after flock exits and reports this process as live", async () => {
+    const lock = await acquireGatewayLock(dir);
+    try {
+      expect(readGatewayLockHolder(dir)?.locking).toBe("flock-v1");
+      expect(liveGatewayHolder(dir)?.pid).toBe(process.pid);
+      await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+        GatewayLockHeldError,
+      );
+    } finally {
+      lock.release();
+    }
+    expect(liveGatewayHolder(dir)).toBeNull();
+  });
+
+  it("refuses a live lease across hostname and PID namespace identities", async () => {
+    const lock = await acquireGatewayLock(dir);
+    const record = JSON.parse(readFileSync(lock.path, "utf8"));
+    writeFileSync(lock.path, JSON.stringify({ ...record, hostname: "other-container.example" }));
+    try {
+      // The recorded PID equals ours, but the kernel lease wins over both
+      // the self-PID shortcut and the conservative foreign-host fallback.
+      expect(holderIsAlive(readGatewayLockHolder(dir)!)).toBe(true);
+      await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+        GatewayLockHeldError,
+      );
+    } finally {
+      lock.release();
+    }
+  });
+
+  it("reclaims a dead container's lease despite a foreign hostname and reused PID", async () => {
+    writeFileSync(
+      join(dir, GATEWAY_LOCK_FILE),
+      JSON.stringify({
+        pid: 1,
+        processStart: null,
+        hostname: "retired-container.example",
+        startedAt: new Date().toISOString(),
+        locking: "flock-v1",
+        leaseId: "retired-claim",
+      }),
+    );
+    expect(liveGatewayHolder(dir)).toBeNull();
+    const lock = await acquireGatewayLock(dir, { waitMs: 0 });
+    expect(readGatewayLockHolder(dir)?.pid).toBe(process.pid);
+    lock.release();
+  });
+
+  it("releases the lease on SIGKILL without relying on owner cleanup", async () => {
+    const module = new URL("./gateway-lock.ts", import.meta.url).href;
+    sleeper = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `
+      import { acquireGatewayLock } from ${JSON.stringify(module)};
+      await acquireGatewayLock(${JSON.stringify(dir)});
+      process.stdout.write("ready");
+      setInterval(() => {}, 1000);
+    `,
+      ],
+      { cwd: join(import.meta.dirname, "../../.."), stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await new Promise<void>((resolve, reject) => {
+      sleeper!.stdout!.once("data", () => resolve());
+      sleeper!.once("error", reject);
+      sleeper!.once("exit", () => reject(new Error("Owner exited before acquiring its lease")));
+    });
+    const path = join(dir, GATEWAY_LOCK_FILE);
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(
+      path,
+      JSON.stringify({ ...record, hostname: "killed-container.example", pid: 1 }),
+    );
+    expect(liveGatewayHolder(dir)).not.toBeNull();
+    sleeper.kill("SIGKILL");
+    await new Promise<void>((resolve) => sleeper!.once("exit", () => resolve()));
+    expect(liveGatewayHolder(dir)).toBeNull();
+    const replacement = await acquireGatewayLock(dir, { waitMs: 0 });
+    replacement.release();
+  });
+
+  it("makes release idempotent across a same-process successor", async () => {
+    const previous = await acquireGatewayLock(dir);
+    const firstId = readGatewayLockHolder(dir)?.leaseId;
+    previous.release();
+    const replacement = await acquireGatewayLock(dir);
+    try {
+      expect(readGatewayLockHolder(dir)?.leaseId).not.toBe(firstId);
+      previous.release();
+      expect(liveGatewayHolder(dir)?.pid).toBe(process.pid);
+    } finally {
+      replacement.release();
+    }
+  });
+
+  it("never removes a different claim with the same PID", async () => {
+    const previous = await acquireGatewayLock(dir);
+    const path = join(dir, GATEWAY_LOCK_FILE);
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...record, leaseId: "different-claim" }));
+    previous.release();
+    expect(readGatewayLockHolder(dir)?.leaseId).toBe("different-claim");
+    const replacement = await acquireGatewayLock(dir, { waitMs: 0 });
+    replacement.release();
+  });
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   if (sleeper && sleeper.exitCode === null && sleeper.signalCode === null) {
     sleeper.kill("SIGKILL");
     await new Promise<void>((resolve) => sleeper!.once("exit", () => resolve()));
@@ -170,11 +324,11 @@ describe("acquireGatewayLock", () => {
     }
   });
 
-  it("leaves a lock from another host alone", async () => {
+  it("leaves a legacy lock from another host alone even with our PID", async () => {
     writeFileSync(
       join(dir, GATEWAY_LOCK_FILE),
       JSON.stringify({
-        pid: 1,
+        pid: process.pid,
         processStart: null,
         hostname: "some-other-host.example",
         startedAt: new Date().toISOString(),

@@ -185,6 +185,59 @@ describe("runReverificationSweepPass", () => {
     expect(getCognitionEngineState(db, COGNITION_REVERIFICATION_LAST_RUN_KEY)).toBe(String(NOW));
   });
 
+  test("annotations about or resting on an excluded source are left as they are", async () => {
+    const insertDoc = db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+         metadata, source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES (?, 'prov', ?, ?, 't', 'c', 'h', '{}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    );
+    insertDoc.run("doc_session", "codex:local", "ext_session");
+    insertDoc.run("doc_mail", "gmail:maya@example.com", "ext_mail");
+    insertPerson(db, "per_other", "Jamie Lopez", 0);
+    const annotate = (id: string, docId: string, evidenceDocId: string) =>
+      createDocAnnotation(
+        db,
+        {
+          id,
+          docId,
+          claimType: "topic",
+          claimText: `claim ${id}`,
+          evidenceDocId,
+          evidenceQuote: `quote ${id}`,
+          confidence: 0.6,
+          claimBasis: "quoted",
+          createdByRun: "run_seed",
+        },
+        NOW - 50 * DAY,
+      );
+    annotate("anno_about_session", "doc_session", "doc_mail");
+    annotate("anno_from_session", "doc_mail", "doc_session");
+    annotate("anno_mail", "doc_mail", "doc_mail");
+    createPersonAnnotation(
+      db,
+      {
+        id: "panno_session",
+        personId: "per_other",
+        claimType: "role",
+        claimText: "claim panno_session",
+        evidenceDocId: "doc_session",
+        evidenceQuote: "quote panno_session",
+        confidence: 0.6,
+        claimBasis: "quoted",
+        createdByRun: "run_seed",
+      },
+      NOW - 50 * DAY,
+    );
+    const result = await runReverificationSweepPass({
+      ...deps(),
+      getExcludedSources: () => ["codex"],
+    });
+    expect(result.enqueued).toBe(1);
+    expect(verificationRuns(db).map((run) => run.payload)).toEqual([
+      { annotationIds: ["anno_mail"], store: "doc" },
+    ]);
+  });
+
   test("annotations inside the freshness interval, and invalidated rows, are not due", async () => {
     docAnno(db, "anno_fresh", NOW - 30 * DAY, NOW - 1 * DAY);
     docAnno(db, "anno_dead", NOW - 30 * DAY);

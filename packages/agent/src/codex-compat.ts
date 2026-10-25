@@ -5,13 +5,13 @@
  * The Codex runtime contract tested by this Omnesis release.
  *
  * Managed installations are exact so every gateway runs the artifact exercised
- * by the release tests. The previous minor remains accepted long enough for an
- * already-running gateway to drain its turns and replace that runtime in place.
+ * by the release tests. Previously supported minors remain accepted while a
+ * running gateway drains its turns and replaces that runtime in place.
  */
 export const CODEX_RUNTIME_COMPAT = Object.freeze({
   packageName: "@openai/codex",
-  testedVersion: "0.151.0",
-  supportedVersionPrefixes: ["0.142.", "0.151."] as const,
+  testedVersion: "0.163.0",
+  supportedVersionPrefixes: ["0.142.", "0.151.", "0.163."] as const,
 });
 
 export function isSupportedCodexCliVersion(version: string): boolean {

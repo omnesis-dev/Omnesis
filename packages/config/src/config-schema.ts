@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { sourceTypeOf } from "@omnesis/types";
+import { sourceTypeOf, trySourceId } from "@omnesis/types";
 
 /**
  * Generation number of the persisted config shape (`omnesis.json`).
@@ -2464,18 +2464,117 @@ const brainProvenanceRecheck = z
     enabled: z
       .boolean()
       .describe(
-        "Enable the provenance-recheck sweep — when an annotation prior is invalidated or superseded, re-examine each brief/loop that was built on it via a folded feedback run per dependent (rechecks execute strictly serialized in the run drainer). The small per-pass budget is a soft cap: dependents of priors that died at the same instant always enqueue together, so one pass may overshoot the budget by that single group. Edge recording itself is always on; this gates only the recheck runs.",
+        "Enable the provenance-recheck sweep — when an annotation prior is invalidated or superseded, re-examine each loop that was built on it via a folded feedback run per dependent (rechecks execute strictly serialized in the run drainer). The small per-pass budget is a soft cap: dependents of priors that died at the same instant always enqueue together, so one pass may overshoot the budget by that single group. Edge recording itself is always on; this gates only the recheck runs.",
       )
+      .optional(),
+  })
+  .strict();
+
+const brainTasks = z
+  .object({
+    autoApply: z
+      .boolean()
+      .describe(
+        "Let the Brain keep your own tasks current: a new title or description applies directly unless you wrote that field (an addition to your description also applies), and a completion or deadline applies when the entailment verifier confirms the quoted evidence establishes it. Striking a task and changes to what you wrote stay proposals. Each applied change is recorded in the task's history and can be undone. False makes every change a proposal you confirm.",
+      )
+      .optional(),
+    proposeGate: z
+      .enum(["off", "shadow", "enforce"])
+      .describe(
+        "What the decision model's verdict on a new Brain suggestion does, judged against tasks you accepted, created and ignored before. off: every suggestion is offered. shadow: the verdict is recorded in the decision ledger and every suggestion is still offered. enforce: a suggestion clearly like ones you ignored is withheld from the Tasks views (still tracked, undoable from its history), and one clearly like tasks you accepted becomes your task at once (undoable).",
+      )
+      .optional(),
+  })
+  .strict();
+
+const brainInterestLookup = z
+  .object({
+    perPolarity: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .describe(
+        "How many past reactions of each kind (wanted, not wanted, said) a gate is shown at most.",
+      )
+      .optional(),
+    cosineFloor: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Below this cosine similarity between the item's vector and a reaction's, the reaction is not shown. Depends on the embedder; raise it if unrelated reactions appear.",
+      )
+      .optional(),
+    overlapFloor: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Below this share of words in common (used while a reaction has no vector yet, or with no embedder), the reaction is not shown.",
+      )
+      .optional(),
+  })
+  .strict();
+
+const brainInterest = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Let the Brain learn what you care about from what you did on purpose — tasks you accepted, created or ignored, thumbs on morning-brief items, and what you say in the Morning brief conversation — and show the decision model similar past reactions when it ranks observations for the brief, judges a new suggestion, or schedules new evidence. False stops recording and showing them; nothing is inferred from silence either way.",
+      )
+      .optional(),
+    lookup: brainInterestLookup
+      .describe("How similar a past reaction must be to be shown, and how many are.")
       .optional(),
   })
   .strict();
 
 const brainJudge = z
   .object({
-    enabled: z
-      .boolean()
+    enabled: z.boolean().describe("Deprecated — no effect.").optional(),
+  })
+  .strict();
+
+const brainObservations = z
+  .object({
+    retentionDays: z
+      .number()
+      .int()
+      .positive()
       .describe(
-        "Enable the brief judge — the push bar. A separate model pass over every candidate brief that decides ship/no-ship against four gates (does it tell the user something new, land before it matters, carry a real cost of inaction, and state a conclusion no single document shows?), so only what genuinely warrants interrupting the user is created. Runs at the brief_create choke point; when a configured judge times out or is unavailable, the brief is held rather than shipped unreviewed. Requires a model assigned to the `brief-judge` role — an independent model turn, including Codex; with none assigned, briefs ship unjudged.",
+        "Days a closed observation is kept before it is reduced to a small outcome record (state, scores, what you did).",
+      )
+      .optional(),
+    alreadyKnownMax: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Drop an observation when the decision model's probability that you already know it reaches this value.",
+      )
+      .optional(),
+    minConsequence: z
+      .number()
+      .min(0)
+      .max(4)
+      .describe(
+        "Include an observation in the morning brief when its consequence level (0 nothing … 4 money, legal, health or a hard deadline) reaches this value.",
+      )
+      .optional(),
+    minTimelyConsequence: z
+      .number()
+      .min(0)
+      .max(4)
+      .describe("Lower consequence bar for observations that are timely (see timelyLevel).")
+      .optional(),
+    timelyLevel: z
+      .number()
+      .min(0)
+      .max(3)
+      .describe(
+        "Timing level (0 no deadline … 3 today or tomorrow) from which an observation counts as timely.",
       )
       .optional(),
   })
@@ -2521,6 +2620,32 @@ const brainAnnotationBasisCeilings = z
 
 const brainAnnotations = z
   .object({
+    personProfile: z
+      .object({
+        maxFacts: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Maximum active facts in a person's compact profile. Consolidate or replace lower-value facts before adding more.",
+          ),
+        maxCharacters: z
+          .number()
+          .int()
+          .min(500)
+          .max(20000)
+          .optional()
+          .describe(
+            "Maximum total claim-text characters in a person's profile; evidence and retired history do not consume this budget.",
+          ),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Whole-person profile budget, enforced across merged identities and concurrent writes. Oversized profiles may be repaired by shrinking them.",
+      ),
     enabled: z
       .boolean()
       .describe(
@@ -2562,7 +2687,7 @@ const brainBudget = z
       .int()
       .positive()
       .describe(
-        "Stop background cognition once the day's total tokens (prompt + completion, every mechanism) reach this. Omit for no token ceiling.",
+        "Stop background cognition once the day's total tokens (prompt + completion, every mechanism) reach this. The morning brief still runs. Omit for no token ceiling.",
       )
       .optional(),
     dailyRuns: z
@@ -2570,7 +2695,7 @@ const brainBudget = z
       .int()
       .positive()
       .describe(
-        "Stop background cognition once this many runs have completed today. Omit for no run ceiling.",
+        "Stop background cognition once this many runs have completed today. The morning brief still runs. Omit for no run ceiling.",
       )
       .optional(),
   })
@@ -2615,6 +2740,11 @@ const brainBootstrap = z
       .int()
       .positive()
       .describe("Documents enqueued per bootstrap enqueuer tick.")
+      .optional(),
+    horizon: positiveDuration
+      .describe(
+        "How far back historical review reaches, measured from now against each document's own date (when it was written or sent, not when it was imported). Older documents are never read proactively — not by the historical backfill and not by a new source's initial import — and count as outside the horizon rather than as pending; agents still find them through search when they are relevant. Applies to documents not yet reviewed; already reviewed work is kept. Raise it (for example 1y, or 100y for all history) to backfill further, at proportionally more spend.",
+      )
       .optional(),
     activeHours: z
       .object({
@@ -2681,7 +2811,7 @@ const brainDigest = z
     enabled: z
       .boolean()
       .describe(
-        "Compose the once-a-morning digest brief — one 'Morning brief' card assembled from the temporal horizon, due loops, and overnight activity.",
+        "Send the morning brief — one message a day in the Morning brief conversation, built from the day's calendar, due loops and the ranked observations the Brain noted since the last brief.",
       )
       .optional(),
     hour: z
@@ -2689,33 +2819,214 @@ const brainDigest = z
       .int()
       .min(0)
       .max(23)
-      .describe("Local hour the digest composes at (after the overnight batches settle).")
+      .describe("Local hour the morning brief is composed at (after the overnight batches settle).")
       .optional(),
     graceMinutes: z
       .number()
       .int()
       .positive()
       .describe(
-        "How long past the hour the digest waits for the overnight run queue to drain before composing anyway.",
+        "How long past the hour the morning brief waits for the overnight run queue to drain before composing anyway.",
       )
       .optional(),
     push: z
       .boolean()
-      .describe(
-        "Send the morning digest as a push notification to paired iOS devices (at most one per day).",
-      )
+      .describe("Notify your devices when the morning brief is sent (at most once a day).")
       .optional(),
   })
   .strict();
 
+/** Bounded maintenance of grounded synthesis; shares the existing Brain gate. */
+const brainKnowledge = z
+  .object({
+    immediateThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis immediately.")
+      .optional(),
+    soonThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis in the soon tier.")
+      .optional(),
+    soonDelay: duration.describe("Maximum debounce for the soon maintenance tier.").optional(),
+    routineDelay: duration
+      .describe("Maximum debounce for routine maintenance; floored to the soon delay.")
+      .optional(),
+    recentWindowDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .describe(
+        "Recent initial-inventory window in days; older inventory follows historical review controls.",
+      )
+      .optional(),
+    rootMaxChars: z
+      .number()
+      .int()
+      .min(256)
+      .max(32000)
+      .describe("Hard character budget for the tagged root wiki.")
+      .optional(),
+    maxSeeds: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum evidence changes considered in one maintenance plan.")
+      .optional(),
+    maxVisitedPerSeed: z
+      .number()
+      .int()
+      .min(1)
+      .max(4096)
+      .describe("Maximum dependency region explored per evidence change.")
+      .optional(),
+    maxFrontierChars: z
+      .number()
+      .int()
+      .min(4096)
+      .max(1048576)
+      .describe(
+        "Maximum JSON characters in a maintenance frontier response; oversized nodes require an explicit fetch.",
+      )
+      .optional(),
+    maxFrontierNodes: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis nodes offered in one frontier tool response.")
+      .optional(),
+    cascadeBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .describe("Maximum deterministic cascade steps per writer slice.")
+      .optional(),
+    discoveryBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum new evidence records considered in one discovery slice.")
+      .optional(),
+    bootstrapBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum historical records inventoried per resumable bootstrap slice.")
+      .optional(),
+    maxReviewsPerTick: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis review candidates considered per scheduling tick.")
+      .optional(),
+    maxReviewInterval: duration
+      .describe("Maximum time since meaningful verification before a review is required.")
+      .optional(),
+    checkpointLead: duration
+      .describe("How far ahead of a checkpoint proactive review becomes due.")
+      .optional(),
+    retryBackoff: duration
+      .describe(
+        "Delay before retrying maintenance work a failed batch left unfinished; doubles per further failure.",
+      )
+      .optional(),
+    retryBackoffCap: duration
+      .describe("Longest delay between maintenance retries; floored to the retry backoff.")
+      .optional(),
+    maxFailedAttempts: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .describe(
+        "Failed batch attempts after which maintenance work is parked until its input changes.",
+      )
+      .optional(),
+    contextHandoffRatio: z
+      .number()
+      .min(0.1)
+      .max(0.95)
+      .describe(
+        "Share of the model's reported context window a maintenance run may fill before it ends and a fresh run continues the batch.",
+      )
+      .optional(),
+    contextHandoffTokens: z
+      .number()
+      .int()
+      .min(4096)
+      .max(10_000_000)
+      .describe(
+        "Input tokens per model request at which a maintenance run hands off when the model reports no context window.",
+      )
+      .optional(),
+    maxStalledHandoffs: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .describe(
+        "Consecutive context handoffs without settled frontier progress before the batch takes the ordinary failure path.",
+      )
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.soonThreshold ?? 0.4) > (value.immediateThreshold ?? 0.8))
+      ctx.addIssue({
+        code: "custom",
+        path: ["soonThreshold"],
+        message: "Soon urgency threshold must not exceed the immediate threshold.",
+      });
+  });
+
+// One `brain.excludedSources` entry: a bare source type covers every source of
+// that type, a `type:account` id exactly one source. The type need not be
+// installed yet, so only the syntax is checked.
+const brainExcludedSource = z
+  .string()
+  .refine(
+    (value) => trySourceId(value) !== null,
+    "must be a source type (for example codex) or a source id (for example github:someone)",
+  );
+
 const brain = z
   .object({
+    excludedSources: z
+      .array(brainExcludedSource)
+      .max(256)
+      .describe(
+        "Sources the Brain never processes. A source type (for example codex) covers every source of that type; a source id (for example github:someone) covers exactly that source. The Brain admits no work from their documents, live or historical, its runs cannot search, fetch or newly cite them, and pending work already queued for them is withdrawn. Knowledge already derived from them is kept. Removing an entry lets historical review admit the source's documents again; arrivals while it was excluded are not replayed as live changes. The interactive agent is unaffected. Takes effect without a restart.",
+      )
+      .optional(),
+    knowledge: brainKnowledge
+      .describe("Grounded synthesis, discovery and maintenance scheduling.")
+      .optional(),
+    documentReadChars: z
+      .number()
+      .int()
+      .min(1024)
+      .max(65536)
+      .describe(
+        "Characters of a document body a Brain run receives per read unless it asks for a range; longer bodies are paged with contentOffset.",
+      )
+      .optional(),
     workerConcurrency: z
       .number()
       .int()
       .min(1)
+      .max(32)
       .describe(
-        "Agent-run-queue workers draining in parallel. Non-daily runs are serialized regardless of this knob.",
+        "Concurrent region-fenced knowledge maintenance runs (default 4, maximum 32). Root and legacy runs execute exclusively.",
       )
       .optional(),
     conversationDebounce: duration
@@ -2790,11 +3101,16 @@ const brain = z
       .optional(),
     provenanceRecheck: brainProvenanceRecheck
       .describe(
-        "Provenance-recheck sweep tunables (re-examine briefs/loops built on a since-dead annotation prior).",
+        "Provenance-recheck sweep tunables (re-examine loops built on a since-dead annotation prior).",
       )
       .optional(),
-    judge: brainJudge
-      .describe("The push bar — a ship/no-ship judge pass over every candidate brief.")
+    tasks: brainTasks.describe("How the Brain changes the tasks you own.").optional(),
+    interest: brainInterest
+      .describe("What the Brain learns from your reactions, and where it uses it.")
+      .optional(),
+    judge: brainJudge.describe("Deprecated — no effect.").optional(),
+    observations: brainObservations
+      .describe("Observations awaiting the morning brief, and the policy that ranks them.")
       .optional(),
     mergeAdjudication: brainMergeAdjudication
       .describe("Background-agent adjudication of pending person-merge candidates.")
@@ -2807,7 +3123,7 @@ const brain = z
     budget: brainBudget
       .describe("Daily spend ceilings for background cognition. Absent = no ceiling.")
       .optional(),
-    digest: brainDigest.describe("The composed morning digest + its push tier.").optional(),
+    digest: brainDigest.describe("The morning brief and its notification.").optional(),
     sweepsEnabled: z
       .boolean()
       .describe(
@@ -2889,7 +3205,19 @@ const modelSettingsEntry = z
   })
   .strict();
 
-const inferenceModelSettings = z
+/**
+ * Drop roles that no longer exist from a role-keyed record, so a config
+ * written by an older build still loads. `brief-judge` was the per-brief
+ * push bar, replaced by the once-a-day morning brief.
+ */
+function withoutRetiredRoles(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const value = { ...(input as Record<string, unknown>) };
+  delete value["brief-judge"];
+  return value;
+}
+
+const inferenceModelSettingsObject = z
   .object({
     embedder: modelSettingsEntry.optional(),
     agent: modelSettingsEntry.optional(),
@@ -2899,12 +3227,12 @@ const inferenceModelSettings = z
     "background-agent": modelSettingsEntry.optional(),
     "watch-judge": modelSettingsEntry.optional(),
     "entailment-verifier": modelSettingsEntry.optional(),
-    "brief-judge": modelSettingsEntry.optional(),
     decision: modelSettingsEntry.optional(),
   })
   .strict();
+const inferenceModelSettings = z.preprocess(withoutRetiredRoles, inferenceModelSettingsObject);
 
-const inferenceAssignments = z
+const inferenceAssignmentsObject = z
   .object({
     embedder: assignmentValue.optional(),
     agent: assignmentValue.optional(),
@@ -2912,13 +3240,16 @@ const inferenceAssignments = z
     // from `agent`: selecting a reviewer must never change the conversational
     // model assignment, and an omitted reviewer fails closed at the gate.
     "privacy-reviewer": assignmentValue.optional(),
+    // Speech-to-text. A catalog Whisper model id (run in-process through
+    // whisper.cpp), `"<httpBackend>/<model>"` (an OpenAI-compatible
+    // transcription server, such as a GPU whisper server), or `"replay"`.
     transcriber: assignmentValue.optional(),
     // OCR. Besides `"<httpBackend>/<model>"` (a vLLM / llama-server
     // vision model) and `"replay"`, accepts the built-in runtimes
     // "apple-vision", "tesseract", and "gguf" — see `ocr` below for the GGUF
     // model paths.
     ocr: assignmentValue.optional(),
-    // Omnesis Briefs' Cognition Steward (experimental). Keyed by the capability
+    // The note agent and the Brain's Cognition Steward. Keyed by the capability
     // role id — assignment keys always equal their `CapabilityRole`, which
     // is what lets the registry, the portal picker, and `/admin/models`
     // treat every role generically. Never assigned by default: unset means
@@ -2933,10 +3264,6 @@ const inferenceAssignments = z
     // Never assigned by default: unset means the gate is absent and
     // annotation writes behave exactly as without it.
     "entailment-verifier": assignmentValue.optional(),
-    // The push bar over Omnesis Briefs (experimental). A dedicated role so the
-    // judge runs independently from the background agent, including when both
-    // use Codex. Never assigned by default: unset means briefs ship unjudged.
-    "brief-judge": assignmentValue.optional(),
     // Typed decisions: "typesafe/<model>" (TypeSafe Jev) or "replay". Only
     // typed-decision backends serve it — never a chat model. Never assigned by
     // default: unset means the mention worth gate and the Brain's worth gate
@@ -2944,6 +3271,7 @@ const inferenceAssignments = z
     decision: assignmentValue.optional(),
   })
   .strict();
+const inferenceAssignments = z.preprocess(withoutRetiredRoles, inferenceAssignmentsObject);
 
 // Local file paths for the built-in `gguf` OCR runtime (llama.cpp
 // `llama-mtmd-cli`). Only consulted when `assignments.ocr = "gguf"`. Kept here
@@ -3143,17 +3471,35 @@ const inference = z
     allowRemoteInference: z
       .boolean()
       .describe(
-        "Permit HTTP inference backends whose resolved address is not loopback. Off by default so document chunks, queries, prompts, and OCR images stay local unless explicitly opted in.",
+        "Permit HTTP inference backends whose resolved address is not loopback. Off by default so document chunks, queries, prompts, OCR images, and recorded audio stay local unless explicitly opted in.",
       )
       .optional(),
     codex: z
       .object({
+        turnIdleTimeoutMs: z
+          .number()
+          .int()
+          .min(1000)
+          .max(3600000)
+          .describe(
+            "Maximum Codex model-stream silence in milliseconds while awaiting output, excluding Omnesis tool execution. Default 300000 (five minutes); 1000–3600000. Restart the gateway after changing.",
+          )
+          .optional(),
         interactivePoolSize: z
           .number()
           .int()
           .min(0)
           .describe(
-            "Concurrent top-level Codex agent turns. Default 3; 0 shares the serialized background runtime. Restart the gateway after changing.",
+            "Concurrent interactive Codex agent turns. Default 3; 0 uses the owner runtime. Restart the gateway after changing.",
+          )
+          .optional(),
+        backgroundPoolSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(32)
+          .describe(
+            "Concurrent background Codex agent turns, independent of interactive and nested calls. Default 4; maximum 32. Restart the gateway after changing.",
           )
           .optional(),
         inferencePoolSize: z

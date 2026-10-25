@@ -59,8 +59,8 @@ Two shared building blocks apply to every purpose:
 
 - **`inference.allowRemoteInference`** (config; default off). When off, the
   gateway only probes and calls loopback HTTP inference endpoints, so document
-  chunks, queries, prompts, and OCR images stay local unless the operator
-  explicitly opts in. Enforced at the transport by `fetchWithInferenceUrlPolicy`.
+  chunks, queries, prompts, OCR images, and recorded audio stay local unless the
+  operator explicitly opts in. Enforced at the transport by `fetchWithInferenceUrlPolicy`.
 - **`apiPathPrefix`** — the path segment between the base URL and the
   OpenAI-compatible endpoints (`/chat/completions`, `/embeddings`, `/models`),
   normalized by `normalizeApiPathPrefix` (leading slash, no trailing slash,
@@ -232,6 +232,25 @@ and never echoed back in history. Usage read from
 `usage.prompt_tokens` / `completion_tokens`. 120s timeout. Non-2xx bodies are
 classified into privacy-safe Omnesis failures by `decodeHttpError`.
 
+### Transcriber — `HttpTranscriber`
+
+**Request.** `POST {url}{apiPathPrefix}/audio/transcriptions` as
+`multipart/form-data`: `file` (the recording decoded by ffmpeg to 16 kHz mono
+16-bit WAV, the one format every such server accepts), `model`,
+`response_format=json`, `temperature=0`, `language` when the caller names one,
+and `prompt` carrying personal vocabulary hints only when the backend is on
+loopback. whisper.cpp's `whisper-server` serves this shape when started with
+`--inference-path /v1/audio/transcriptions`; vLLM, speaches and OpenAI serve it
+natively.
+
+**Parsing.** `text` (required; its absence is an error, not an empty
+transcript) and `language` when present. Any non-2xx is an error whose body is
+drained unread, since a backend can echo the audio; the collector retries the
+recording on a later sync. The deadline scales with the recording's duration up
+to `MAX_TRANSCRIPTION_MS`, and the request uses `fetchAllowingSlowResponse`
+because Node's built-in `fetch` abandons a response that takes longer than five
+minutes to start.
+
 ## Model roles and presets
 
 ### Role classification — `classifyModelRoles`
@@ -247,7 +266,7 @@ the portal reads the gateway-computed result.
 - `transcriber`, `ocr`, and `embedder` are exclusive single-purpose roles matched
   by name families.
 - Generative models serve every text role: `agent`, `privacy-reviewer`,
-  `background-agent`, `watch-judge`, `entailment-verifier`, and `brief-judge`. The latter five
+  `background-agent`, `watch-judge`, and `entailment-verifier`. The latter four
   deliberately offer exactly the models the Agent capability does, so a model
   that can hold a conversation can also be assigned to any of the bounded
   passes.

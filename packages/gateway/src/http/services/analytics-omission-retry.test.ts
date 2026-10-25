@@ -185,7 +185,7 @@ function leaseServices() {
       db,
       writeGate,
       sourceWriteEpochFence: fence,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
   });
   const guarded = new AnalyticsService(
@@ -441,7 +441,7 @@ test("HTTP document handoff cannot advance a cursor after its lease changes", as
       db,
       writeGate,
       sourceWriteEpochFence: fence,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
   });
   await sources.claimLease(sourceId, { deviceId: DeviceId(owner) });

@@ -3,10 +3,10 @@
 
 /**
  * `omnesis brain` — the operator window into the Cognition Steward
- * engine (experimental). Read-only by contract: loops and briefs are
- * mutated only by the Cognition Steward in V1, so there are no create/resolve
- * subcommands; the agent-notes wipe (`notes --wipe`) is the one
- * sanctioned operator mutation. The iOS Loops screen (over the gateway's
+ * engine (experimental). Read-only by contract: loops change through the
+ * user's task commands and the Cognition Steward, observations through the
+ * Steward alone; the agent-notes wipe (`notes --wipe`) is the one sanctioned
+ * operator mutation here. The iOS Loops screen (over the gateway's
  * `/loops` routes) is the product read surface for open loops; this
  * command is the operator's, with the engine internals included.
  *
@@ -60,11 +60,10 @@ interface LoopLedgerEntryDto {
   note: string;
 }
 
-interface LoopBriefSummaryDto {
+interface LoopObservationSummaryDto {
   id: string;
-  kind: string;
   state: string;
-  title: string;
+  summary: string;
   createdAt: string | null;
 }
 
@@ -89,6 +88,31 @@ interface RunDto {
     cacheReadTokens?: number;
     cacheCreationTokens?: number;
   } | null;
+  /** Context-window occupancy of the run's conversation; absent from older gateways. */
+  context?: RunContextDto | null;
+}
+
+interface RunContextDto {
+  peakInputTokens: number | null;
+  lastInputTokens: number | null;
+  contextWindowTokens: number | null;
+  handoffReason: string | null;
+}
+
+/** One line describing a run's context occupancy and handoff, or null when unknown. */
+export function renderRunContext(context: RunContextDto | null | undefined): string | null {
+  if (!context) return null;
+  const parts: string[] = [];
+  if (context.peakInputTokens !== null) {
+    const window =
+      context.contextWindowTokens !== null
+        ? ` of ${context.contextWindowTokens} (${Math.round((context.peakInputTokens / context.contextWindowTokens) * 100)}%)`
+        : "";
+    parts.push(`peak ${context.peakInputTokens} input tokens${window}`);
+  }
+  if (context.lastInputTokens !== null) parts.push(`latest ${context.lastInputTokens}`);
+  if (context.handoffReason !== null) parts.push(`handed off: ${context.handoffReason}`);
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 /**
@@ -341,6 +365,8 @@ export function triggerLabel(t: RunTrigger): string {
       return `brief ${t.briefId}`;
     case "provenance-recheck":
       return `re-check ${t.dependentKind} ${t.dependentId}`;
+    case "knowledge-maintenance":
+      return `knowledge maintenance${t.batchId ? ` ${t.batchId}` : ""}`;
     case "synthesis-noticing":
       return `noticing ${t.date ?? "?"}`;
     case "synthesis-collision":
@@ -453,6 +479,9 @@ export function renderRunTrigger(t: RunTrigger): string[] {
     case "provenance-recheck":
       out.push(`    re-check:   ${t.dependentKind} ${t.dependentId} (a consumed prior died)`);
       break;
+    case "knowledge-maintenance":
+      out.push(`    maintenance batch: ${t.batchId ?? "-"}`);
+      break;
     case "synthesis-noticing":
       out.push(`    noticing:   ${t.date ?? "-"}`);
       break;
@@ -547,17 +576,20 @@ const loopsCommand = defineCommand({
 });
 
 const loopShowCommand = defineCommand({
-  meta: { name: "loop", description: "Show one open loop in full: fields, ledger, briefs" },
+  meta: {
+    name: "loop",
+    description: "Show one open loop in full: fields, ledger, observations",
+  },
   args: {
     id: { type: "positional", description: "open-loop id", required: true },
   },
   async run(ctx) {
     const id = ctx.args.id;
     if (!id) throw new CliError(`${c.red}Missing loop id${c.reset}`, EXIT_USER_ERROR);
-    const { loop, ledger, briefs } = await gatewayJson<{
+    const { loop, ledger, observations } = await gatewayJson<{
       loop: Omit<OpenLoopDto, "docs"> & { docs: LoopDocRefDto[] };
       ledger: LoopLedgerEntryDto[];
-      briefs: LoopBriefSummaryDto[];
+      observations: LoopObservationSummaryDto[];
     }>(`/admin/brain/loops/${encodeURIComponent(id)}`);
     console.log(`\n${c.bold}${loop.title}${c.reset}  (${loop.id})`);
     console.log(`  state:        ${loop.state}`);
@@ -593,13 +625,13 @@ const loopShowCommand = defineCommand({
       }
     }
 
-    console.log(`\n  ${c.dim}attached briefs:${c.reset}`);
-    if (briefs.length === 0) {
+    console.log(`\n  ${c.dim}observations:${c.reset}`);
+    if (observations.length === 0) {
       console.log(`  ${c.dim}(none)${c.reset}`);
     } else {
-      for (const brief of briefs) {
+      for (const observation of observations) {
         console.log(
-          `  ${pad(brief.id, 26)} ${pad(brief.kind, 6)} ${pad(brief.state, 26)} ${truncate(brief.title, 40)}`,
+          `  ${pad(observation.id, 26)} ${pad(observation.state, 9)} ${truncate(observation.summary, 60)}`,
         );
       }
     }
@@ -677,6 +709,8 @@ const runShowCommand = defineCommand({
           `  tokens:       ${run.usage.promptTokens} prompt${cached} + ${run.usage.completionTokens} completion`,
         );
       }
+      const context = renderRunContext(run.context);
+      if (context) console.log(`  context:      ${context}`);
       if (run.lastError) console.log(`  last error:   ${c.red}${oneLine(run.lastError)}${c.reset}`);
       // The decoded payload — WHAT the run reacts to. Live for pending
       // AND settled runs (settling retains the reference-shaped payload);
@@ -926,7 +960,7 @@ const calibrationCommand = defineCommand({
   args: {
     family: {
       type: "string",
-      description: "Restrict to one family (brief | doc-annotation | person-annotation)",
+      description: "Restrict to one family (doc-annotation | person-annotation)",
     },
     "since-days": {
       type: "string",
@@ -982,7 +1016,7 @@ export const brainCommand = defineCommand({
   meta: {
     name: "brain",
     description:
-      "Inspect the Cognition Steward: open loops, briefs, runs, transcripts, decisions, spend, calibration (operator, read-only)",
+      "Inspect the Cognition Steward: open loops, runs, transcripts, decisions, spend, calibration (operator, read-only)",
   },
   subCommands: {
     loops: gateVisible(loopsCommand),

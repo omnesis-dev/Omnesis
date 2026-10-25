@@ -16,17 +16,21 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
+import BetterSqlite3 from "better-sqlite3";
 import { createDatabase } from "../db.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/storage.js";
+import { recordKnowledgeDecision } from "./knowledge/decision-storage.js";
+import { saveKnowledgeNode } from "./knowledge/storage.js";
 import { recordRunAttribution } from "./storage/run-attribution.js";
+import { CognitionAdminQueryService } from "./cognition-admin-query-service.js";
 import { createMutableClock } from "./virtual-clock.js";
-import { createBrief } from "./storage/briefs.js";
-import { cascadeBriefClaimPrivacyDelete } from "./storage/brief-claims.js";
+import { createObservation, transitionObservation } from "./storage/observations.js";
+import { replaceMorningBriefItems } from "./storage/morning-brief-items.js";
 import { appendOpenLoopLedger, createOpenLoop, updateOpenLoop } from "./storage/open-loops.js";
 import { writeCognitionNotes, readCognitionNotes } from "./storage/notes.js";
 import { cognitionSpendDay, recordCognitionSpend } from "./storage/spend.js";
@@ -53,14 +57,17 @@ let dbPath: string;
 let configDir: string;
 let app: ReturnType<typeof createServer>;
 let ioBacklogCalls = 0;
+/** The history horizon floors the knowledge timeline scan was asked for. */
+const timelineFloors: string[] = [];
 /** Mutable so a test can express a ceiling the lane has actually passed. */
-let bootstrapSettings = {
+let bootstrapSettings: import("./bootstrap-status.js").BootstrapSettingsView = {
   enabled: true,
   direction: "recent-first" as const,
   backlogTarget: 200,
   maxRunsPerDay: 200,
   maxRuns: 1_000_000,
   batchSize: 100,
+  horizonMs: 90 * 86_400_000,
   recencyWindowMs: 7 * 86_400_000,
 };
 /** Mutable so a test can express an install with, and without, a ceiling. */
@@ -182,6 +189,7 @@ const ALL_ROUTES: Array<{ method: "GET" | "POST"; path: string }> = [
   { method: "GET", path: "/admin/brain/transcripts" },
   { method: "GET", path: "/admin/brain/transcripts/1000-run_1-a1.json" },
   { method: "GET", path: "/admin/brain/decisions" },
+  { method: "GET", path: "/admin/brain/decisions/decision_fixture" },
   { method: "GET", path: "/admin/brain/spend" },
   { method: "GET", path: "/admin/brain/budget" },
   { method: "GET", path: "/admin/brain/coverage" },
@@ -189,10 +197,13 @@ const ALL_ROUTES: Array<{ method: "GET" | "POST"; path: string }> = [
   { method: "GET", path: "/admin/brain/bootstrap/backlog" },
   { method: "GET", path: "/admin/brain/bootstrap/timeline?cached=1" },
   { method: "POST", path: "/admin/brain/bootstrap/start" },
-  { method: "GET", path: "/admin/brain/briefs" },
-  { method: "GET", path: "/admin/brain/briefs/brf_1" },
+  { method: "GET", path: "/admin/brain/observations" },
+  { method: "GET", path: "/admin/brain/observations/would-push" },
+  { method: "GET", path: "/admin/brain/observations/outcomes" },
+  { method: "GET", path: "/admin/brain/observations/obs_1" },
+  { method: "GET", path: "/admin/brain/morning-brief" },
   { method: "GET", path: "/admin/brain/loops/loop_1/ledger" },
-  { method: "GET", path: "/admin/brain/loops/loop_1/briefs" },
+  { method: "GET", path: "/admin/brain/loops/loop_1/observations" },
   { method: "GET", path: "/admin/brain/loops/loop_1/scheduled" },
   { method: "GET", path: "/admin/brain/scheduled" },
   { method: "GET", path: "/admin/brain/retired-loops" },
@@ -228,6 +239,7 @@ beforeEach(() => {
     maxRunsPerDay: 200,
     maxRuns: 1_000_000,
     batchSize: 100,
+    horizonMs: 90 * 86_400_000,
     recencyWindowMs: 7 * 86_400_000,
   };
   app = createServer(db, dbPath, {
@@ -240,6 +252,32 @@ beforeEach(() => {
         return { remaining: 42, dateScanPending: 0, corpusTotal: 100 };
       },
       bootstrapCorpusByMonth: async () => [],
+      knowledgeDiscoveryByMonth: async (notBefore: string) => {
+        timelineFloors.push(notBefore);
+        return [
+          {
+            month: "2025-06",
+            interpretation: {
+              considered: 2,
+              gated: 1,
+              deferred: 0,
+              failed: 0,
+              pending: 3,
+              outOfScope: 0,
+              excluded: 0,
+            },
+            organization: {
+              considered: 1,
+              gated: 0,
+              deferred: 1,
+              failed: 0,
+              pending: 4,
+              outOfScope: 0,
+              excluded: 0,
+            },
+          },
+        ];
+      },
     },
     getBootstrapSettings: () => bootstrapSettings,
     getBudgetSettings: () => budgetSettings,
@@ -278,7 +316,8 @@ describe("inert-when-off + scopes", () => {
         continue;
       }
       if (
-        route.path === "/admin/brain/briefs/brf_1" ||
+        route.path === "/admin/brain/observations/obs_1" ||
+        route.path === "/admin/brain/decisions/decision_fixture" ||
         route.path === "/admin/brain/transcripts/1000-run_1-a1.json"
       ) {
         // Genuinely-missing resources still 404 — the gate is not what refuses them.
@@ -472,20 +511,17 @@ describe("GET /admin/brain/pulse", () => {
 });
 
 describe("GET /admin/brain/loops/:id", () => {
-  test("returns the loop with its ledger (oldest first) and attached briefs", async () => {
+  test("returns the loop with its ledger (oldest first) and attached observations", async () => {
     seedLoop("loop_a");
     appendOpenLoopLedger(db, "loop_a", { runId: "run_1", note: "Quote received." }, 2000);
     appendOpenLoopLedger(db, "loop_a", { runId: "run_2", note: "Still no reply." }, 3000);
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_1",
+        id: "obs_1",
         createdByRun: "run_2",
-        kind: "loop",
-        title: "Nudge: the venue quote is still unanswered",
-        description: "Three days now.",
-        confidence: 0.7,
-        urgency: 0.5,
+        summary: "The venue quote is still unanswered",
+        why: "The hold lapses on Friday.",
         relatedLoopIds: ["loop_a"],
       },
       4000,
@@ -495,7 +531,7 @@ describe("GET /admin/brain/loops/:id", () => {
     const body = (await res.json()) as {
       loop: { id: string };
       ledger: Array<{ runId: string; note: string; at: string }>;
-      briefs: Array<{ id: string; state: string }>;
+      observations: Array<{ id: string; state: string }>;
     };
     expect(body.loop.id).toBe("loop_a");
     expect(body.ledger.map((e) => e.runId)).toEqual(["run_1", "run_2"]);
@@ -503,9 +539,15 @@ describe("GET /admin/brain/loops/:id", () => {
       note: "Quote received.",
       at: new Date(2000).toISOString(),
     });
-    expect(body.briefs).toEqual([
-      expect.objectContaining({ id: "brf_1", kind: "loop", state: "unread" }),
-    ]);
+    expect(body.observations).toHaveLength(1);
+    expect(body.observations[0]).toMatchObject({
+      id: "obs_1",
+      state: "live",
+      summary: "The venue quote is still unanswered",
+      why: "The hold lapses on Friday.",
+      relatedLoopIds: ["loop_a"],
+      createdAt: new Date(4000).toISOString(),
+    });
   });
 
   test("enriches linked docs to { id, title, sourceType }, with nulls for a missing doc", async () => {
@@ -645,6 +687,56 @@ describe("GET /admin/brain/runs", () => {
     expect((await get("/admin/brain/runs?status=bogus")).status).toBe(400);
   });
 
+  test("reports a run's context occupancy and the reason it handed off", async () => {
+    enqueueCognitionRun(
+      db,
+      {
+        id: "run_segment",
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch_demo" },
+      },
+      1000,
+    );
+    claimDueCognitionRuns(db, { now: 2000, limit: 1 });
+    completeCognitionRun(db, "run_segment", {
+      usage: {
+        promptTokens: 400_000,
+        completionTokens: 900,
+        context: {
+          peakInputTokens: 168_000,
+          lastInputTokens: 168_000,
+          contextWindowTokens: 258_400,
+        },
+      },
+      now: 3000,
+    });
+    db.prepare(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.continuedByRunId','run_next','$.handoffReason','context_budget') WHERE id='run_segment'",
+    ).run();
+    seedCompletedRun("run_plain", "doc_a");
+    const expected = {
+      peakInputTokens: 168_000,
+      lastInputTokens: 168_000,
+      contextWindowTokens: 258_400,
+      handoffReason: "context_budget",
+    };
+    const { items } = (await (await get("/admin/brain/runs")).json()) as {
+      items: Array<{ id: string; context: unknown }>;
+    };
+    const segment = items.find((run) => run.id === "run_segment") as
+      | { context: unknown; usage: Record<string, unknown> }
+      | undefined;
+    expect(segment?.context).toEqual(expected);
+    // Spend and occupancy are served separately.
+    expect(segment?.usage).toEqual({ promptTokens: 400_000, completionTokens: 900 });
+    // A run whose backend reported no input sizes carries no context.
+    expect(items.find((run) => run.id === "run_plain")?.context).toBeNull();
+    const detail = (await (await get("/admin/brain/runs/run_segment")).json()) as {
+      run: { context: unknown };
+    };
+    expect(detail.run.context).toEqual(expected);
+  });
+
   test("orders and keyset-pages scheduled runs by nextAttemptAt", async () => {
     enqueueCognitionRun(
       db,
@@ -670,6 +762,47 @@ describe("GET /admin/brain/runs", () => {
     ).json()) as { items: Array<{ id: string }>; pageInfo: { hasMore: boolean } };
     expect(second.items.map((run) => run.id)).toEqual(["run_later"]);
     expect(second.pageInfo.hasMore).toBe(false);
+  });
+
+  test("a first page read while another connection enqueues a run is served from one snapshot", async () => {
+    enqueueCognitionRun(db, { id: "run_old", kind: "data", payload: {} }, 1_000);
+    enqueueCognitionRun(db, { id: "run_older", kind: "data", payload: {} }, 500);
+    // The runs list is read on the route's connection while a second
+    // connection — standing in for the writer thread — commits a new run
+    // between the revision read and the row read.
+    const writer = new BetterSqlite3(dbPath);
+    const listRuns = CognitionAdminQueryService.prototype.listRuns;
+    const spy = vi
+      .spyOn(CognitionAdminQueryService.prototype, "listRuns")
+      .mockImplementationOnce(function (this: CognitionAdminQueryService, options) {
+        enqueueCognitionRun(writer, { id: "run_new", kind: "data", payload: {} }, 2_000);
+        return listRuns.call(this, options);
+      });
+    try {
+      const first = await get("/admin/brain/runs?limit=1");
+      expect(first.status).toBe(200);
+      const page = (await first.json()) as {
+        items: Array<{ id: string }>;
+        pageInfo: { nextCursor?: string };
+      };
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The page and its cursor both belong to the snapshot before the commit.
+      expect(page.items.map((run) => run.id)).toEqual(["run_old"]);
+      // The list has since moved, so continuing from that cursor is refused.
+      const next = await get(
+        `/admin/brain/runs?limit=1&cursor=${encodeURIComponent(page.pageInfo.nextCursor!)}`,
+      );
+      expect(next.status).toBe(409);
+      expect(await next.json()).toMatchObject({ code: "STALE_PAGE_CURSOR" });
+      // A fresh first page sees the committed run.
+      const fresh = (await (await get("/admin/brain/runs?limit=1")).json()) as {
+        items: Array<{ id: string }>;
+      };
+      expect(fresh.items.map((run) => run.id)).toEqual(["run_new"]);
+    } finally {
+      spy.mockRestore();
+      writer.close();
+    }
   });
 
   test("decodes each kind's pending payload into a display-safe trigger", async () => {
@@ -783,7 +916,246 @@ describe("GET /admin/brain/runs", () => {
   });
 });
 
+describe("GET /admin/brain/knowledge/:id", () => {
+  test("a stale page names the changed source documents behind it", async () => {
+    seedDocument("doc_agenda", { title: "Workshop agenda", sourceId: "notes:test-account" });
+    saveKnowledgeNode(
+      db,
+      {
+        id: "wiki_agenda",
+        kind: "wiki",
+        title: "Workshop plan",
+        markdown: '<claim id="start" refs="source:doc_agenda">The workshop starts Friday.</claim>',
+        expectedRevision: 0,
+        inputVersions: { "source:doc_agenda": "hash-doc_agenda" },
+      },
+      1000,
+    );
+    const current = (await (await get("/admin/brain/knowledge/wiki_agenda")).json()) as {
+      staleCauses: unknown;
+    };
+    expect(current.staleCauses).toBeNull();
+    db.prepare("UPDATE documents SET content_hash='hash-revised' WHERE id='doc_agenda'").run();
+    const response = await get("/admin/brain/knowledge/wiki_agenda");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      validity: "stale",
+      staleCauses: {
+        total: 1,
+        reason: null,
+        items: [
+          {
+            kind: "source",
+            id: "doc_agenda",
+            title: "Workshop agenda",
+            sourceId: "notes:test-account",
+            change: "changed",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("GET /admin/brain/knowledge/batches", () => {
+  test("filters maintenance before pagination and exposes exact mixed reasons on list and detail", async () => {
+    const batch = (id: string, at: number, reasons: string[]) => {
+      db.prepare(
+        "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,?,'routine','completed',?,?)",
+      ).run(id, `run_${id}`, `hash_${id}`, at, at);
+      reasons.forEach((reason, index) =>
+        db
+          .prepare(
+            "INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id) VALUES(?,?,'source',?,'v1',1,'routine',1,1,1,'completed',?)",
+          )
+          .run(`work_${id}_${index}`, `source_${id}`, reason, id),
+      );
+    };
+    batch("new_evidence", 100, ["change"]);
+    batch("older_mixed", 90, ["root", "review"]);
+    batch("oldest_root", 80, ["root"]);
+    const firstResponse = await get(
+      "/admin/brain/knowledge/batches?reason=root&tier=routine&status=history&limit=1",
+    );
+    expect(firstResponse.status).toBe(200);
+    const first = (await firstResponse.json()) as {
+      items: Array<{ id: string; reasons: string[] }>;
+      nextCursor: string;
+      hasMore: boolean;
+    };
+    expect(first.items).toMatchObject([{ id: "older_mixed", reasons: ["review", "root"] }]);
+    expect(first.hasMore).toBe(true);
+    const next = (await (
+      await get(
+        `/admin/brain/knowledge/batches?reason=root&tier=routine&status=history&limit=1&cursor=${encodeURIComponent(first.nextCursor)}`,
+      )
+    ).json()) as { items: Array<{ id: string }> };
+    expect(next.items.map((item) => item.id)).toEqual(["oldest_root"]);
+    const detail = (await (await get("/admin/brain/knowledge/batches/older_mixed")).json()) as {
+      reasons: string[];
+    };
+    expect(detail.reasons).toEqual(["review", "root"]);
+    expect((await get("/admin/brain/knowledge/batches?reason=guessed-topic")).status).toBe(400);
+    expect((await get("/admin/brain/knowledge/batches?status=all")).status).toBe(200);
+  });
+});
+
+describe("GET /admin/brain/knowledge/decisions/:id", () => {
+  test("serves historical input as unavailable only to admin and never reconstructs it", async () => {
+    recordKnowledgeDecision(
+      db,
+      {
+        id: "historical_urgency",
+        purpose: "urgency",
+        inputFingerprint: "old",
+        score: 0.5,
+        modelId: "scripted",
+        latencyMs: 1,
+        inputTokens: 3,
+        rubricVersion: "knowledge-decisions-v2",
+      },
+      1,
+    );
+    const response = await get("/admin/brain/knowledge/decisions/historical_urgency");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      purpose: "urgency",
+      input: { availability: "unavailable", request: null, response: null },
+    });
+    expect(
+      (await get("/admin/brain/knowledge/decisions/historical_urgency", READ_TOKEN)).status,
+    ).toBe(403);
+    expect((await get("/admin/brain/knowledge/decisions/missing")).status).toBe(404);
+  });
+});
+
 describe("GET /admin/brain/runs/:id", () => {
+  test("legacy decision input is admin-only and marks uncaptured history unavailable", async () => {
+    seedDocument("doc_fixture");
+    seedCompletedRun("run_fixture", "doc_fixture");
+    db.prepare(
+      `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at)
+      VALUES('decision_fixture','run_fixture','doc_fixture','doc_fixture','record-check','interactive','fixture','scripted',1,'pass',1)`,
+    ).run();
+    const response = await get("/admin/brain/decisions/decision_fixture");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      input: { availability: "unavailable", request: null, response: null },
+    });
+    expect((await get("/admin/brain/decisions/decision_fixture", READ_TOKEN)).status).toBe(403);
+    expect((await get("/admin/brain/decisions/missing")).status).toBe(404);
+  });
+  test.each(["purge", "tombstone", "removed"] as const)(
+    "redacts legacy decision text and subject title during %s",
+    async (hidden) => {
+      seedDocument("decision_private_source", {
+        title: "Private fixture title",
+        sourceId: "notes:fixture",
+      });
+      seedCompletedRun("decision_private_run", "decision_private_source");
+      db.prepare(
+        `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at,request_json,response_json,error)
+      VALUES('private_decision','decision_private_run','decision_private_source','decision_private_source','worth-gate','data','fixture','scripted',1,'pass',1,?,?,?)`,
+      ).run(
+        JSON.stringify({ state: { content: "Private fixture request" } }),
+        JSON.stringify({ answer: "Private fixture response" }),
+        "Private fixture error",
+      );
+      if (hidden === "purge")
+        db.prepare(
+          "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source','decision_private_source','1',1)",
+        ).run();
+      else if (hidden === "tombstone")
+        db.prepare(
+          "INSERT OR REPLACE INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('decision_private_source','hash',1,1)",
+        ).run();
+      else db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES('notes:fixture',1)").run();
+      const response = await get("/admin/brain/runs/decision_private_run");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        decisions: [
+          { id: "private_decision", request: null, response: null, error: null, subjectDoc: null },
+        ],
+      });
+      expect(JSON.stringify(body.decisions)).not.toContain("Private fixture");
+      expect(await (await get("/admin/brain/decisions/private_decision")).json()).toMatchObject({
+        input: { availability: "unavailable", request: null, response: null },
+      });
+      expect(
+        db
+          .prepare("SELECT request_json FROM cognition_decisions WHERE id='private_decision'")
+          .get(),
+      ).toMatchObject({ request_json: expect.stringContaining("Private fixture request") });
+    },
+  );
+  test("retained legacy input remains inspectable without a run and labels redaction", async () => {
+    seedDocument("retained_source", { sourceId: "notes:fixture" });
+    db.prepare(
+      `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at,request_json,response_json)
+      VALUES('retained_decision','pruned_run','retained_source','retained_source','record-check','data','fixture','scripted',1,'skip',1,?,?)`,
+    ).run(
+      JSON.stringify({ state: { document_context: { redacted: true, replayable: false } } }),
+      JSON.stringify({ score: 0.1 }),
+    );
+    const response = await get("/admin/brain/decisions/retained_decision");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      input: { availability: "unavailable" },
+      retained: {
+        requestFidelity: "redacted",
+        responseFidelity: "score-only",
+        response: { score: 0.1 },
+      },
+    });
+    db.prepare(
+      "UPDATE cognition_decisions SET request_json=?,response_json=? WHERE id='retained_decision'",
+    ).run('"' + "x".repeat(131073) + '"', "invalid-json");
+    expect(await (await get("/admin/brain/decisions/retained_decision")).json()).not.toHaveProperty(
+      "retained",
+    );
+  });
+  test("exposes normalized synthesis admission judgements separately from record decisions", async () => {
+    enqueueCognitionRun(
+      db,
+      { id: "run_admission", kind: "synthesis", payload: { focus: "knowledge-maintenance" } },
+      1000,
+    );
+    recordKnowledgeDecision(
+      db,
+      {
+        id: "decision_admission",
+        purpose: "discovery",
+        inputFingerprint: "invented",
+        score: 0.37,
+        threshold: 0.25,
+        runId: "run_admission",
+        batchId: "batch_admission",
+        modelId: "scripted",
+        latencyMs: 4,
+        inputTokens: 12,
+        rubricVersion: "knowledge-discovery-value-v3",
+      },
+      1100,
+    );
+    const body = (await (await get("/admin/brain/runs/run_admission")).json()) as {
+      decisions: unknown[];
+      knowledgeDecisions: Array<Record<string, unknown>>;
+    };
+    expect(body.decisions).toEqual([]);
+    expect(body.knowledgeDecisions).toMatchObject([
+      {
+        kind: "knowledge",
+        purpose: "discovery",
+        scoreScale: "normalized-0-1",
+        score: 0.37,
+        threshold: 0.25,
+        recommendation: "inspect",
+        association: "recorded",
+      },
+    ]);
+  });
+
   test("returns the run row plus its transcript refs", async () => {
     seedCompletedRun("run_1", "doc_a");
     seedTranscript({ runId: "run_1", finishedAt: 3000 });
@@ -1352,103 +1724,90 @@ describe("GET /admin/brain/coverage", () => {
   });
 });
 
-describe("GET /admin/brain/briefs", () => {
-  function seedBrief(
+describe("GET /admin/brain/observations", () => {
+  function seedObservation(
     id: string,
-    over: { state?: string; kind?: "info" | "loop"; title?: string; loopId?: string } = {},
+    over: { state?: "held" | "shipped" | "dropped"; summary?: string; createdAt?: number } = {},
   ): void {
-    createBrief(
+    createObservation(
       db,
       {
         id,
         createdByRun: "run_seed",
-        kind: over.kind ?? "loop",
-        title: over.title ?? "Nudge: the venue quote is still unanswered",
-        description: "Three days now.",
-        confidence: 0.7,
-        urgency: 0.5,
+        summary: over.summary ?? "The venue quote is still unanswered",
+        why: "The hold lapses on Friday.",
         citations: ["doc_a"],
-        ...(over.loopId ? { relatedLoopIds: [over.loopId] } : {}),
       },
-      4000,
+      over.createdAt ?? 4000,
     );
-    if (over.state && over.state !== "unread") {
-      db.prepare("UPDATE briefs SET state = ? WHERE id = ?").run(over.state, id);
+    if (over.state === "held") {
+      transitionObservation(db, id, { state: "held", reason: "below_bar" }, 5000);
+    } else if (over.state === "shipped") {
+      transitionObservation(
+        db,
+        id,
+        { state: "shipped", shipped: { conversationId: "conv_1", messageId: "msg_1" } },
+        5000,
+      );
+    } else if (over.state === "dropped") {
+      transitionObservation(db, id, { state: "dropped", reason: "withdrawn" }, 5000);
     }
   }
 
-  test("lists ALL briefs (every state, newest first) with the full field set", async () => {
-    seedBrief("brf_a", { title: "Active nudge" });
-    seedBrief("brf_b", { state: "dismissed_not_relevant", title: "Dismissed one", kind: "info" });
-    const res = await get("/admin/brain/briefs");
+  test("lists ALL observations (every state, newest first) with the full field set", async () => {
+    seedObservation("obs_a", { summary: "Live one", createdAt: 4000 });
+    seedObservation("obs_b", { state: "dropped", summary: "Dropped one", createdAt: 3000 });
+    const res = await get("/admin/brain/observations");
     expect(res.status).toBe(200);
     const { items } = (await res.json()) as { items: Array<Record<string, unknown>> };
-    // Both surface — dismissed briefs the user feed hides are visible here.
-    expect(items.map((b) => b.id).sort()).toEqual(["brf_a", "brf_b"]);
-    const active = items.find((b) => b.id === "brf_a")!;
-    expect(active).toMatchObject({
-      kind: "loop",
-      state: "unread",
-      title: "Active nudge",
+    expect(items.map((o) => o.id)).toEqual(["obs_a", "obs_b"]);
+    expect(items[0]).toMatchObject({
+      state: "live",
+      summary: "Live one",
+      why: "The hold lapses on Friday.",
       citations: ["doc_a"],
-      confidence: 0.7,
-      urgency: 0.5,
+      relatedLoopIds: [],
+      closeReason: null,
+      createdAt: new Date(4000).toISOString(),
     });
-    expect(active.createdAt).toBe(new Date(4000).toISOString());
+    expect(items[1]).toMatchObject({
+      state: "dropped",
+      closeReason: "withdrawn",
+      closedAt: new Date(5000).toISOString(),
+    });
   });
 
   test("filters by state and validates state/limit params", async () => {
-    seedBrief("brf_a");
-    seedBrief("brf_b", { state: "read" });
-    seedBrief("brf_c", { state: "dismissed_snoozed" });
-    seedBrief("brf_d", { state: "dismissed_wrong" });
-    const wrong = (await (await get("/admin/brain/briefs?state=dismissed_wrong")).json()) as {
-      items: Array<{ id: string }>;
-    };
-    expect(wrong.items.map((b) => b.id)).toEqual(["brf_d"]);
-    const read = (await (await get("/admin/brain/briefs?state=read")).json()) as {
-      items: Array<{ id: string }>;
-    };
-    expect(read.items.map((brief) => brief.id)).toEqual(["brf_b"]);
-    const snoozed = (await (await get("/admin/brain/briefs?state=snoozed")).json()) as {
-      items: Array<{ id: string }>;
-    };
-    expect(snoozed.items.map((brief) => brief.id)).toEqual(["brf_c"]);
-    const dismissed = (await (await get("/admin/brain/briefs?state=dismissed")).json()) as {
-      items: Array<{ id: string }>;
-    };
-    expect(dismissed.items.map((brief) => brief.id)).toEqual(["brf_d"]);
-    expect((await get("/admin/brain/briefs?state=bogus")).status).toBe(400);
-    expect((await get("/admin/brain/briefs?limit=0")).status).toBe(400);
+    seedObservation("obs_a", { createdAt: 4000 });
+    seedObservation("obs_b", { state: "held", createdAt: 3000 });
+    seedObservation("obs_c", { state: "shipped", createdAt: 2000 });
+    seedObservation("obs_d", { state: "dropped", createdAt: 1000 });
+    const ids = async (state: string) =>
+      (
+        (await (await get(`/admin/brain/observations?state=${state}`)).json()) as {
+          items: Array<{ id: string }>;
+        }
+      ).items.map((o) => o.id);
+    expect(await ids("live")).toEqual(["obs_a"]);
+    expect(await ids("held")).toEqual(["obs_b"]);
+    expect(await ids("shipped")).toEqual(["obs_c"]);
+    expect(await ids("dropped")).toEqual(["obs_d"]);
+    expect(await ids("open")).toEqual(["obs_a", "obs_b"]);
+    expect((await get("/admin/brain/observations?state=bogus")).status).toBe(400);
+    expect((await get("/admin/brain/observations?limit=0")).status).toBe(400);
   });
 });
 
 describe("artifact provenance on the detail routes", () => {
-  test("names the workflow behind a brief, and admits when it cannot", async () => {
-    createBrief(
+  test("names the workflow behind an observation, and admits when it cannot", async () => {
+    createObservation(
       db,
-      {
-        id: "brf_prov",
-        createdByRun: "run_attributed",
-        kind: "info",
-        title: "Something noticed",
-        description: "d",
-        confidence: 0.5,
-        urgency: 0.5,
-      },
+      { id: "obs_prov", createdByRun: "run_attributed", summary: "Something noticed" },
       1000,
     );
-    createBrief(
+    createObservation(
       db,
-      {
-        id: "brf_old",
-        createdByRun: "run_from_before_attribution",
-        kind: "info",
-        title: "Older card",
-        description: "d",
-        confidence: 0.5,
-        urgency: 0.5,
-      },
+      { id: "obs_old", createdByRun: "run_from_before_attribution", summary: "Older note" },
       1000,
     );
     recordRunAttribution(db, {
@@ -1459,15 +1818,15 @@ describe("artifact provenance on the detail routes", () => {
       settledAt: 5000,
     });
 
-    const attributed = (await (await get("/admin/brain/briefs/brf_prov")).json()) as {
+    const attributed = (await (await get("/admin/brain/observations/obs_prov")).json()) as {
       provenance: { workflow: { id: string; label: string } | null; modelId: string | null };
     };
     expect(attributed.provenance.workflow).toMatchObject({ id: "noticing", label: "Noticing" });
     expect(attributed.provenance.modelId).toBe("scripted-model");
 
-    // The run row is not consulted — attribution outlives it — so a brief
-    // whose run was never attributed reports the gap instead of guessing.
-    const older = (await (await get("/admin/brain/briefs/brf_old")).json()) as {
+    // The run row is not consulted — attribution outlives it — so an
+    // observation whose run was never attributed reports the gap instead of guessing.
+    const older = (await (await get("/admin/brain/observations/obs_old")).json()) as {
       provenance: { workflow: unknown; runId: string };
     };
     expect(older.provenance.workflow).toBeNull();
@@ -1502,10 +1861,9 @@ describe("artifact provenance on the detail routes", () => {
   });
 });
 
-describe("GET /admin/brain/briefs/:id", () => {
-  test("returns the brief in full plus its derived feed tier", async () => {
-    // A loop with a past deadline, so the loop brief's tier is deterministically
-    // "due-loop" regardless of the wall clock the endpoint reads.
+describe("GET /admin/brain/observations/:id", () => {
+  test("returns the observation in full with enriched citations, related loops and claims", async () => {
+    seedDocument("doc_ev", { title: "Deposit receipt from Stellar Sound" });
     createOpenLoop(
       db,
       {
@@ -1515,107 +1873,98 @@ describe("GET /admin/brain/briefs/:id", () => {
         description: "Overdue.",
         confidence: 0.8,
         importance: 0.6,
-        deadline: { type: "by", date: "2020-01-01" },
       },
       1000,
     );
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_1",
+        id: "obs_1",
         createdByRun: "run_1",
-        kind: "loop",
-        title: "The venue quote is due",
-        description: "Reply before the deadline.",
-        body: "Longer context here.",
-        confidence: 0.6,
-        urgency: 0.4,
-        citations: ["doc_x"],
-        relatedLoopIds: ["loop_a"],
-      },
-      4000,
-    );
-    const body = (await (await get("/admin/brain/briefs/brf_1")).json()) as {
-      brief: {
-        id: string;
-        body: string;
-        relatedLoopIds: string[];
-        citations: Array<{ id: string; title: string | null; sourceType: string | null }>;
-      };
-      feedTier: { rank: number; label: string };
-    };
-    expect(body.brief).toMatchObject({
-      id: "brf_1",
-      body: "Longer context here.",
-      relatedLoopIds: ["loop_a"],
-      // Citations come back enriched like a loop detail's docs; doc_x was
-      // never ingested, so it keeps its id with null title/sourceType.
-      citations: [{ id: "doc_x", title: null, sourceType: null }],
-    });
-    // loop_a's deadline (2026-07-10) is due relative to the loop's fake now,
-    // so a loop brief lands in the due-loop tier.
-    expect(body.feedTier.label).toBe("due-loop");
-  });
-
-  test("serves the brief's live asserted claims on the detail payload; the list stays slim", async () => {
-    seedDocument("doc_ev", { title: "Deposit receipt from Stellar Sound" });
-    createBrief(
-      db,
-      {
-        id: "brf_claims",
-        createdByRun: "run_1",
-        kind: "info",
-        title: "Venue deposit confirmed",
-        confidence: 0.6,
-        urgency: 0.4,
+        summary: "The venue deposit was paid",
+        why: "The booking is now held.",
+        windowStart: 5000,
+        relevantUntil: 9000,
+        citations: ["doc_ev", "doc_x"],
+        relatedLoopIds: ["loop_a", "loop_gone"],
         claims: [
-          {
-            id: "bclaim_1",
-            claimText: "the venue deposit was paid",
-            evidenceDocId: "doc_ev",
-            evidenceQuote: "we paid the venue deposit this morning",
-            claimBasis: "quoted",
-            confidence: 0.8,
-            verificationState: "verified",
-          },
+          { docId: "doc_ev", quote: "we paid the venue deposit", verification: "unverified" },
         ],
       },
       4000,
     );
-    const body = (await (await get("/admin/brain/briefs/brf_claims")).json()) as {
-      claims: Array<Record<string, unknown>>;
+    const res = await get("/admin/brain/observations/obs_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      observation: Record<string, unknown>;
+      relatedLoops: Array<{ id: string; title: string | null; state: string | null }>;
+      decisions: unknown[];
     };
-    expect(body.claims).toHaveLength(1);
-    expect(body.claims[0]).toMatchObject({
-      id: "bclaim_1",
-      claimText: "the venue deposit was paid",
-      claimBasis: "quoted",
-      confidence: 0.8,
-      verificationState: "verified",
-      evidenceQuote: "we paid the venue deposit this morning",
-      // The evidence doc is enriched like the detail route's citations.
-      evidenceDoc: { id: "doc_ev", title: "Deposit receipt from Stellar Sound" },
+    expect(body.observation).toMatchObject({
+      id: "obs_1",
+      summary: "The venue deposit was paid",
+      why: "The booking is now held.",
+      windowStart: new Date(5000).toISOString(),
+      relevantUntil: new Date(9000).toISOString(),
+      claims: [{ docId: "doc_ev", quote: "we paid the venue deposit", verification: "unverified" }],
     });
-    expect(body.claims[0]!.createdAt).toBe(new Date(4000).toISOString());
+    // Citations come back enriched like a loop detail's docs; doc_x was
+    // never ingested, so it keeps its id with null title/sourceType.
+    expect(body.observation.citations).toEqual([
+      expect.objectContaining({ id: "doc_ev", title: "Deposit receipt from Stellar Sound" }),
+      { id: "doc_x", title: null, sourceType: null },
+    ]);
+    expect(body.relatedLoops).toEqual([
+      { id: "loop_a", title: "Reply to the venue quote", state: "open" },
+      { id: "loop_gone", title: null, state: null },
+    ]);
+    expect(body.decisions).toEqual([]);
 
-    // The list endpoint stays slim: no claims field rides its items.
-    const list = (await (await get("/admin/brain/briefs")).json()) as {
+    // The list endpoint keeps citations as bare ids.
+    const list = (await (await get("/admin/brain/observations")).json()) as {
       items: Array<Record<string, unknown>>;
     };
-    const item = list.items.find((b) => b.id === "brf_claims")!;
-    expect(item.claims).toBeUndefined();
-
-    // Privacy-deleting the evidence document purges the claims — the detail
-    // payload stops serving the verbatim quote.
-    cascadeBriefClaimPrivacyDelete(db, ["doc_ev"]);
-    const after = (await (await get("/admin/brain/briefs/brf_claims")).json()) as {
-      claims: Array<Record<string, unknown>>;
-    };
-    expect(after.claims).toEqual([]);
+    expect(list.items.find((o) => o.id === "obs_1")!.citations).toEqual(["doc_ev", "doc_x"]);
   });
 
-  test("404s for an unknown brief", async () => {
-    expect((await get("/admin/brain/briefs/brf_missing")).status).toBe(404);
+  test("404s for an unknown observation", async () => {
+    expect((await get("/admin/brain/observations/obs_missing")).status).toBe(404);
+  });
+});
+
+describe("GET /admin/brain/morning-brief", () => {
+  test("serves a day's ranked items with their observations before anything is sent", async () => {
+    createObservation(
+      db,
+      { id: "obs_ranked", createdByRun: "run_seed", summary: "Parking permit renewal closes" },
+      1000,
+    );
+    replaceMorningBriefItems(db, "2026-07-02", "run_recheck", ["obs_ranked", "obs_vanished"]);
+    const body = (await (await get("/admin/brain/morning-brief?day=2026-07-02")).json()) as {
+      sent: unknown;
+      items: Array<{
+        rank: number;
+        observationId: string;
+        messageId: string | null;
+        observation: { summary: string } | null;
+      }>;
+    };
+    expect(body.sent).toBeNull();
+    expect(body.items).toEqual([
+      expect.objectContaining({
+        rank: 1,
+        observationId: "obs_ranked",
+        messageId: null,
+        observation: expect.objectContaining({ summary: "Parking permit renewal closes" }),
+      }),
+      expect.objectContaining({ rank: 2, observationId: "obs_vanished", observation: null }),
+    ]);
+    // With no day and nothing sent, there is no brief to show.
+    const latest = (await (await get("/admin/brain/morning-brief")).json()) as {
+      sent: unknown;
+      items: unknown[];
+    };
+    expect(latest).toEqual({ sent: null, items: [] });
   });
 });
 
@@ -2215,4 +2564,73 @@ describe("GET /admin/brain/budget", () => {
   test("is admin-only", async () => {
     expect([401, 403]).toContain((await get("/admin/brain/budget", READ_TOKEN)).status);
   });
+});
+
+test("knowledge timeline serves cached IO phase counts with dated snapshot without legacy milestones", async () => {
+  bootstrapSettings = { ...bootstrapSettings, knowledge: true };
+  const pending = await get("/admin/brain/bootstrap/timeline?cached=1");
+  expect(await pending.json()).toEqual({ mode: "knowledge", pending: true });
+  const response = await get("/admin/brain/bootstrap/timeline");
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result).toMatchObject({
+    mode: "knowledge",
+    pending: false,
+    months: [
+      {
+        month: "2025-06",
+        interpretation: { considered: 2, pending: 3 },
+        organization: { considered: 1, pending: 4 },
+      },
+    ],
+  });
+  expect(typeof result.computedAt).toBe("string");
+  expect(Number.isFinite(Date.parse(result.computedAt))).toBe(true);
+  expect(result).not.toHaveProperty("milestones");
+  // The scan is told where the history horizon falls, so old months read as out of scope.
+  expect(timelineFloors).toHaveLength(1);
+  expect(Number.isFinite(Date.parse(timelineFloors[0]!))).toBe(true);
+  expect(await (await get("/admin/brain/bootstrap/timeline?cached=1")).json()).toEqual(result);
+});
+
+test("Library exposes canonical owner pages and validates status filters", async () => {
+  const page = await get("/admin/brain/knowledge/library?kind=loop&limit=1");
+  expect(page.status).toBe(200);
+  expect(await page.json()).toMatchObject({
+    items: [],
+    pageInfo: { hasMore: false, limit: 1, nextCursor: null },
+  });
+  expect((await get("/admin/brain/knowledge/library?kind=wiki&status=retired")).status).toBe(400);
+  expect((await get("/admin/brain/knowledge/library/retired-loop%3Amissing")).status).toBe(404);
+});
+
+test("pending work details require exact groups and admin scope, with no invented associated decision", async () => {
+  seedDocument("pending-cabinet", { sourceId: "fictional:manuals", title: "Cabinet inventory" });
+  db.prepare(
+    "INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,last_error) VALUES('pending-work','pending-cabinet','source','change','v1',1,'soon',2,1,1,'pending','pending_content')",
+  ).run();
+  const path =
+    "/admin/brain/knowledge/pending-work?reason=change&tier=soon&readiness=pending_content";
+  expect(await (await get(path)).json()).toMatchObject({
+    items: [
+      {
+        id: "pending-work",
+        nodeId: "source:pending-cabinet",
+        readiness: "pending_content",
+        subjectRef: { title: "Cabinet inventory" },
+        decisions: { items: [], truncated: false },
+      },
+    ],
+    hasMore: false,
+    nextCursor: null,
+  });
+  expect((await get(path, READ_TOKEN)).status).toBe(403);
+  expect((await app.request(path)).status).toBe(401);
+  expect((await get("/admin/brain/knowledge/pending-work?reason=change")).status).toBe(400);
+  expect((await get("/admin/brain/knowledge/pending-work?reason=unknown&tier=soon")).status).toBe(
+    400,
+  );
+  expect(
+    await (await get("/admin/brain/knowledge/pending-work?reason=change&tier=soon")).json(),
+  ).toMatchObject({ items: [] });
 });

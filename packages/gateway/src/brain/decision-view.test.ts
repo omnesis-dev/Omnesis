@@ -39,6 +39,42 @@ function toolResult(toolCallId: string, kind: string) {
 }
 
 describe("summarizeCognitionTranscript", () => {
+  test("shows canonical synthesis writes without presenting frontier plumbing as decisions", () => {
+    const decision = summarizeCognitionTranscript(
+      transcript({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch-fictional" },
+        events: [
+          toolStart("a", "knowledge_next_frontier", {}),
+          toolStart("b", "knowledge_discovery_complete", {}),
+          toolStart("c", "knowledge_save", {
+            node: { kind: "wiki", id: "project", title: "Workshop" },
+          }),
+          toolStart("d", "knowledge_edit", {
+            node: {
+              id: "project",
+              edits: [
+                { op: "replace_text", old: "a", new: "b" },
+                { op: "replace_section", heading: "Costs", markdown: "x" },
+                { op: "replace_text", old: "c", new: "d" },
+              ],
+            },
+          }),
+        ],
+      }),
+    );
+    expect(decision.subject).toBe("knowledge maintenance batch batch-fictional");
+    expect(decision.docId).toBeNull();
+    expect(decision.actions).toEqual([
+      { tool: "knowledge_save", detail: "save wiki Workshop", ok: true },
+      {
+        tool: "knowledge_edit",
+        detail: "edit project (replace_text, replace_section)",
+        ok: true,
+      },
+    ]);
+  });
+
   test("splits tool calls into decision actions vs research, in order", () => {
     const decision = summarizeCognitionTranscript(
       transcript({
@@ -48,7 +84,7 @@ describe("summarizeCognitionTranscript", () => {
           toolStart("t2", "open_loop_create", { title: "Pay the studio invoice" }),
           toolResult("t2", "structured"),
           toolStart("t3", "open_document", { id: "doc_a" }),
-          toolStart("t4", "brief_create", { title: "An invoice arrived" }),
+          toolStart("t4", "observation_note", { summary: "An invoice arrived" }),
           toolResult("t4", "structured"),
         ],
       }),
@@ -56,7 +92,7 @@ describe("summarizeCognitionTranscript", () => {
     expect(decision.researchToolCalls).toBe(2);
     expect(decision.actions).toEqual([
       { tool: "open_loop_create", detail: 'create loop "Pay the studio invoice"', ok: true },
-      { tool: "brief_create", detail: 'create brief "An invoice arrived"', ok: true },
+      { tool: "observation_note", detail: expect.any(String), ok: true },
     ]);
     expect(decision.subject).toBe("doc doc_a (created)");
     expect(decision.docId).toBe("doc_a");
@@ -90,8 +126,6 @@ describe("summarizeCognitionTranscript", () => {
         events: [
           toolStart("t1", "open_loop_ledger_append", { id: "loop_x", note: "Reply landed." }),
           toolStart("t2", "open_loop_delete", { id: "loop_x" }),
-          toolStart("t3", "brief_update", { id: "brf_1" }),
-          toolStart("t4", "brief_delete", { id: "brf_1" }),
           toolStart("t5", "notes_rewrite", { text: "…" }),
           toolStart("t6", "schedule_agent_run", { when: "2026-07-04T09:00:00Z", prompt: "…" }),
           toolStart("t7", "annotation_supersede", { id: "anno_a", supersededBy: "anno_b" }),
@@ -105,8 +139,6 @@ describe("summarizeCognitionTranscript", () => {
     expect(decision.actions.map((a) => a.detail)).toEqual([
       "ledger loop_x: Reply landed.",
       "delete loop loop_x",
-      "update brief brf_1",
-      "withdraw brief brf_1",
       "rewrite agent notes",
       "schedule run at 2026-07-04T09:00:00Z",
       "supersede anno_a → anno_b",

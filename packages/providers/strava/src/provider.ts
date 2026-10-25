@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
+  oauthCallbackHost,
   CredentialPersistError,
   DEFAULT_CONFIG_DIR,
   MissingCredentialsError,
@@ -685,7 +686,7 @@ function bindCallbackListener(expectedState: string): Promise<CallbackListener> 
       rejectResult(failure);
     });
 
-    server.listen(OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_HOST, () => {
+    server.listen(OAUTH_CALLBACK_PORT, oauthCallbackHost(), () => {
       bound({
         result,
         close: () => {

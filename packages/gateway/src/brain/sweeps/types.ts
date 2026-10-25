@@ -54,17 +54,6 @@ export interface SweepDef {
    */
   expectedBeforeDigest: boolean;
   /**
-   * The editorial lane this sweep's briefs belong to, which decides how many
-   * of the push bar's gates they face (see `CognitionBriefLane`). Declared by
-   * the system sweep, because a lane is a charter — the day-ahead pass is
-   * commissioned to restate today with context, which the reactive awareness
-   * gate would read as an echo. A file cannot claim one: an operator's sweep
-   * faces the strict bar, and so does a fork of a system sweep that carries
-   * a lane, because forked prose is no longer the prose the lane was granted
-   * for.
-   */
-  briefLane?: "lookahead" | "noticing";
-  /**
    * When set, the run's prompt is primed with live temporal annotations
    * overlapping `now .. now + N days`. This LLM-owned memory avoids
    * re-deriving known interpretations while `temporal_query` remains the
@@ -87,8 +76,6 @@ export interface SystemSweepDef {
   at: string;
   /** See `SweepDef.expectedBeforeDigest`. */
   expectedBeforeDigest?: boolean;
-  /** See `SweepDef.briefLane`. */
-  briefLane?: "lookahead" | "noticing";
   temporalAnnotationPrimeDays?: number;
 }
 

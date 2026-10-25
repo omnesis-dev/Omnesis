@@ -75,15 +75,19 @@ export interface TranscriptionResult {
 /**
  * Speech-to-text. Takes raw audio bytes (any container/codec — the backend
  * owns decoding) plus the MIME type, and returns the transcript. Backends:
- * a local Whisper model (whisper.cpp), or a deterministic synthetic
- * transcriber for tests. Unlike the other capabilities this one consumes
+ * a local Whisper model (whisper.cpp), an OpenAI-compatible HTTP
+ * transcription server, or a deterministic synthetic transcriber for tests. Unlike the other capabilities this one consumes
  * binary input, so it is the single seam where audio enters the model layer.
  */
 export interface TranscribeCapability {
   readonly name: string;
   readonly modelId: string;
-  /** Known vocabulary adapter runtime; absent means hints are unsupported. */
-  readonly vocabularyRuntime?: "smart-whisper";
+  /**
+   * Known vocabulary adapter runtime; absent means hints are unsupported.
+   * `smart-whisper` is the in-process whisper.cpp binding; `openai-prompt` is
+   * the `prompt` field of an OpenAI-compatible transcription endpoint.
+   */
+  readonly vocabularyRuntime?: "smart-whisper" | "openai-prompt";
   transcribe(
     audio: Uint8Array,
     mimeType: string,
@@ -100,6 +104,8 @@ export interface TranscribeCapability {
       vocabulary?: import("../transcription.js").TranscriptionVocabulary;
       /** Conservative hint token budget, capped by the recognizer adapter. */
       maxPromptTokens?: number;
+      /** Aborted when nobody is waiting for the transcript any more. */
+      signal?: AbortSignal;
     },
   ): Promise<TranscriptionResult>;
   dispose(): Promise<void>;
@@ -185,7 +191,16 @@ export interface EntailVerdict {
  * verdict silently blocking or approving writes.
  */
 export interface EntailCapability {
-  verify(input: { claim: string; evidence: string }): Promise<EntailVerdict>;
+  verify(input: {
+    claim: string;
+    evidence: string;
+    /** Untrusted interpretation constraints; never additional evidence. */
+    context?: string;
+    /** Internal proof protocols; omitted uses the default contextual or scalar verifier. */
+    assessment?: "annotation_atomic" | "answer_segments";
+    /** Prevent release and further attempts after cancellation; transport may finish in flight. */
+    signal?: AbortSignal;
+  }): Promise<EntailVerdict>;
   dispose(): Promise<void> | void;
 }
 
@@ -198,7 +213,6 @@ export type CapabilityRole =
   | "background-agent"
   | "watch-judge"
   | "entailment-verifier"
-  | "brief-judge"
   | "decision";
 
 export const CAPABILITY_ROLES = [
@@ -210,7 +224,6 @@ export const CAPABILITY_ROLES = [
   "background-agent",
   "watch-judge",
   "entailment-verifier",
-  "brief-judge",
   "decision",
 ] as const;
 
@@ -221,7 +234,6 @@ export const CODEX_SUPPORTED_ROLES: readonly CapabilityRole[] = [
   "background-agent",
   "watch-judge",
   "entailment-verifier",
-  "brief-judge",
   "ocr",
 ];
 
@@ -256,8 +268,7 @@ export interface CapabilityMetadata {
   readonly hidden?: boolean;
   /**
    * When true, the capability only exists to serve an experimental feature
-   * (e.g. the background agent behind Omnesis Briefs, or the annotation write
-   * gate's entailment firewall). The gateway omits it from the capability grid
+   * (e.g. the annotation write gate's entailment firewall). The gateway omits it from the capability grid
    * unless experimental mode is on, so an operator who never opted in is not
    * shown a model role they cannot use. See `experimentalVisible()`.
    */
@@ -331,16 +342,15 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     icon: "scan-text",
     section: "core",
   },
-  // Powers the Omnesis Briefs feature (experimental). Offers the same
-  // chat-capable models as the Agent capability; deliberately never
-  // auto-assigned — no model assigned means no proactive intelligence.
+  // Powers the note agent and, in experimental mode, the Brain. Offers the
+  // same chat-capable models as the Agent capability; deliberately never
+  // auto-assigned — no model assigned means no background agent work.
   "background-agent": {
     role: "background-agent",
     title: "Background agent",
     description:
-      "The model for everything Omnesis does headlessly in the background: reacting to new data to maintain open loops and surface briefs, and the small judgement calls the people graph needs while matching contacts. Same model choices as the Agent capability.",
+      "The model for everything Omnesis does headlessly in the background: reading each Tell Omnesis note to add and update your tasks, the small judgement calls the people graph needs while matching contacts and, in experimental mode, the Brain. Same model choices as the Agent capability.",
     icon: "bot",
-    experimental: true,
     section: "cognition",
   },
   // The precision pass over a Watch nomination (experimental). It is separate
@@ -364,19 +374,6 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     title: "Entailment verifier",
     description:
       "Checks that a memory claim is actually supported by its quoted evidence before it persists. A small, fast chat model works well; MiniCheck-family fact checkers (e.g. bespoke-minicheck served via an OpenAI-compatible server) are purpose-built for this — note bespoke-minicheck's weights are CC BY-NC (non-commercial), which suits personal installs.",
-    icon: "shield-check",
-    experimental: true,
-    section: "cognition",
-  },
-  // The push bar over Omnesis Briefs (experimental). A dedicated role — not
-  // the background agent — so its ship/no-ship pass runs on an independent
-  // backend and never re-enters the background agent's own model mid-run.
-  // Never auto-assigned — unset means briefs ship unjudged.
-  "brief-judge": {
-    role: "brief-judge",
-    title: "Brief judge",
-    description:
-      "The push bar for Omnesis Briefs: a separate model pass that decides whether a candidate brief is worth interrupting you for — is it new, timely, consequential, and a real synthesis? Uses an independent model turn; Codex judges run separately from the background agent, even when both use the same model.",
     icon: "shield-check",
     experimental: true,
     section: "cognition",

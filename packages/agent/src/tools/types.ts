@@ -19,6 +19,7 @@
 
 import type {
   AgentTerminalFailure,
+  ToolResult,
   AgentUsage,
   DocRef,
   EventTrail,
@@ -61,6 +62,7 @@ export interface SearchPortFilters {
 }
 
 export interface SearchPortResult {
+  coverage?: Extract<ToolResult, { kind: "search.results" }>["coverage"];
   query: string;
   durationMs: number;
   totalCandidates?: number;
@@ -97,6 +99,13 @@ export interface SearchPort {
 // ─── fetch_document ───────────────────────────────────────────────────────
 
 export interface DocumentPortResult {
+  /** Internal authorized snapshot identity; never a claim-support guarantee. */
+  readSnapshot?: {
+    documentId: string;
+    version: string;
+    /** Server-bound qualified page authority, usable only after a complete page read. */
+    fullPageAuthorityVersion?: string;
+  };
   ref: DocRef;
   /** Opaque full document. Renderer reads what it understands. */
   document: unknown;
@@ -112,6 +121,15 @@ export interface DocumentPortResult {
 }
 
 export interface DocumentPort {
+  /** Citation tools require a successful explicit read of the current snapshot. */
+  readonly requiresCitationRead?: boolean;
+  /** This adapter resolves canonical wiki links through the same authorized corpus read. */
+  readonly supportsKnowledgeAliases?: boolean;
+  /**
+   * The `wiki:<nodeId>` reference of a maintained wiki or root page, given the
+   * document id its search hit carries; null for any other document.
+   */
+  knowledgePageRef?(documentId: string): string | null;
   fetch(
     documentId: string,
     opts?: { includeNeighbors?: boolean },
@@ -164,6 +182,77 @@ export interface PersonPortResult {
  */
 export interface PersonPort {
   lookup(input: PersonPortInput, signal?: AbortSignal): Promise<PersonPortResult>;
+}
+
+// ─── count_messages ───────────────────────────────────────────────────────
+
+export interface MessageCountPortInput {
+  /** Window start, in the `temporal_query` window grammar. */
+  from: string;
+  /** Exclusive window end in the same grammar; the whole `from` period when absent. */
+  to?: string;
+  /** IANA zone the window's dates are read in. */
+  timeZone: string;
+  /** Restrict the count to these sources; every source when absent. */
+  sourceIds?: readonly string[];
+  /** How many people to return, most messaged first. */
+  limit: number;
+}
+
+/** One person the user exchanged messages with in the window. */
+export interface MessageCountPerson {
+  personId: string;
+  name: string;
+  /** Messages in conversations with this person alone, and single messages they were on. */
+  messages: number;
+  /** Messages in group conversations they took part in, shared by the whole group. */
+  groupMessages: number;
+  /** Message documents (an email, a chat's day) they were on. */
+  documents: number;
+  /** Of those messages, the ones the user sent, where the source records a sender. */
+  sentByYou: number;
+  /** Of those messages, the ones this person sent, where the source records a sender. */
+  sentByThem: number;
+  sourceIds: string[];
+  /** When the most recent of those documents was written. */
+  lastAt: string;
+}
+
+/** What one source contributed to a count. */
+export interface MessageCountSource {
+  sourceId: string;
+  documents: number;
+  messages: number;
+  /**
+   * `declared-count` when the source records how many messages each document
+   * holds; `document` when each document counts as one message.
+   */
+  countedPer: "declared-count" | "document";
+}
+
+export interface MessageCountsBody {
+  people: MessageCountPerson[];
+  /** Everyone the user exchanged a message with in the window. */
+  totalPeople: number;
+  /** More people than `people` lists. */
+  truncated: boolean;
+  /** Every source that contributed, most messages first. */
+  sources: MessageCountSource[];
+  /** Whether the user's own person is known; when false they may appear as a counterpart. */
+  selfKnown: boolean;
+}
+
+export interface MessageCountPortResult extends MessageCountsBody {
+  window: { from: string; toExclusive: string; timeZone: string };
+  durationMs: number;
+}
+
+/**
+ * Counts the messages the user exchanged with each person over a window,
+ * across every messaging source. READ-ONLY.
+ */
+export interface MessageCountPort {
+  count(input: MessageCountPortInput, signal?: AbortSignal): Promise<MessageCountPortResult>;
 }
 
 // ─── trace_connections ──────────────────────────────────────────────────────────
@@ -743,7 +832,26 @@ export interface LoopSearchPortResult {
   durationMs: number;
   loops: ReadonlyArray<LoopSummary>;
 }
+export interface LoopListObservation {
+  receiptId: string;
+  mode: "navigation" | "snapshot";
+  observedAt: string;
+  readScope: {
+    states: readonly ["open", "snoozed"];
+    order: "importance_desc_id_desc";
+    limit: number;
+    population: "accessible_stored_records";
+  };
+}
+export interface LoopListReadIdentity {
+  sessionId: string;
+  messageId: string;
+}
+export interface LoopListReadOptions extends LoopListReadIdentity {
+  mode: "navigation" | "snapshot";
+}
 export interface LoopListPortResult {
+  observation?: LoopListObservation;
   durationMs: number;
   loops: ReadonlyArray<LoopSummary>;
   /** True when more active loops exist than the returned cap. */
@@ -759,6 +867,24 @@ export interface LoopListPortResult {
  * tools (`search_loops`, `fetch_loop`) on this port being wired AND experimental
  * mode. Absent ⇒ neither tool is registered.
  */
+/** Closed diagnostics only; no record IDs, source content or exception messages. */
+export type LoopListValidationFailure =
+  | "missing_observation"
+  | "missing_receipt"
+  | "identity_mismatch"
+  | "payload_mismatch"
+  | "owner_unavailable"
+  | "owner_privacy"
+  | "owner_identity_changed"
+  | "source_unavailable"
+  | "ancestor_unavailable"
+  | "source_changed"
+  | "association_changed"
+  | "proof_changed"
+  | "authority_changed"
+  | "authority_budget"
+  | "validation_error";
+
 export interface LoopReadPort {
   search(input: LoopSearchPortInput, signal?: AbortSignal): Promise<LoopSearchPortResult>;
   /** Full read-only detail of one loop, or null when the id matches nothing. */
@@ -769,7 +895,25 @@ export interface LoopReadPort {
    * tracking / all my open loops" instead of guessing `search` terms (lexical
    * search can silently miss loops).
    */
-  list(limit: number | undefined, signal?: AbortSignal): Promise<LoopListPortResult>;
+  list(
+    limit: number | undefined,
+    signal?: AbortSignal,
+    read?: LoopListReadOptions,
+  ): Promise<LoopListPortResult>;
+  /** Validate the original turn-bound observation, never silently reread a collection. */
+  validateList?(
+    result: LoopListPortResult,
+    identity: LoopListReadIdentity,
+    signal?: AbortSignal,
+    onRefusal?: (category: LoopListValidationFailure) => void,
+  ): Promise<boolean>;
+  /** Trusted recovery only: validate the original snapshot as navigation after
+   * removing all its factual summary/count/ranking support. Never changes the payload. */
+  validateListAsNavigation?(
+    result: LoopListPortResult,
+    identity: LoopListReadIdentity,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
 }
 
 /**
@@ -835,6 +979,12 @@ export interface ToolPorts {
    */
   documentByUrl?: DocumentByUrlPort;
   person?: PersonPort;
+  /**
+   * Optional READ-ONLY message-count port. The registry registers
+   * `count_messages` whenever it is wired; a caller restricted to some
+   * sources is never given one, because the port reads every source.
+   */
+  messageCounts?: MessageCountPort;
   trail?: TrailPort;
   sql?: SqlPort;
   /**

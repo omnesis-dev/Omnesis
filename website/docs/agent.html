@@ -30,13 +30,13 @@
 
     <meta
       name="description"
-      content="The built-in Omnesis chat agent: what it does, memory, sandboxing, conversations, time zones, model choice, and standing instructions."
+      content="The built-in Omnesis chat agent: what it does, memory, tasks, sandboxing, conversations, time zones, model choice, and standing instructions."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/agent" />
     <meta property="og:title" content="The agent — Omnesis Docs" />
     <meta
       property="og:description"
-      content="The built-in Omnesis chat agent: what it does, memory, sandboxing, conversations, time zones, model choice, and standing instructions."
+      content="The built-in Omnesis chat agent: what it does, memory, tasks, sandboxing, conversations, time zones, model choice, and standing instructions."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -64,8 +64,6 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/brain">Omnesis Brain</a></li>
-            <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
@@ -133,6 +131,7 @@
               <ul class="side-sub">
                 <li><a href="#what-it-does">What it does</a></li>
                 <li><a href="#memory">Memory</a></li>
+                <li><a href="#tasks">Tasks</a></li>
                 <li><a href="#sandboxed-by-design">Sandboxed by design</a></li>
                 <li><a href="#conversations">Conversations</a></li>
                 <li><a href="#times-and-time-zones">Times and time zones</a></li>
@@ -159,9 +158,9 @@
         <p class="docs-lead">
           Omnesis has a built-in chat agent that runs inside the gateway. Ask it a question about
           your indexed data and it answers with citations to the source documents. This page is for
-          anyone who chats with it: what it can do, what it remembers, how it is contained, and how
-          to choose the model it runs on. To let an outside AI tool such as Claude, ChatGPT or Codex
-          read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
+          anyone who chats with it: what it can do, what it remembers, how it keeps your tasks, how
+          it is contained, and how to choose the model it runs on. To let an outside AI tool such as
+          Claude, ChatGPT or Codex read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
         </p>
 
         <h2 id="what-it-does">What it does</h2>
@@ -181,6 +180,11 @@
           </li>
           <li><strong>Look up people</strong> by name, email, phone, or handle.</li>
           <li>
+            <strong>Count messages</strong>: how many messages you exchanged with each person over a
+            period, across every chat and email source, so “who did I message most this week?” is
+            answered from a count rather than from whichever conversations a search returned first.
+          </li>
+          <li>
             <strong>Query time</strong>: everything dated in a window, such as calendar entries and
             other dated fields a source publishes, together with the documents whose text names a
             day in that window, such as an email saying “the lease renews on 14 March”.
@@ -195,6 +199,12 @@
           itself. When a hard question splits into substantial independent parts, the agent can fan
           out workers in parallel. Each worker gets a fresh context and the same read-only retrieval
           tools, and reports its evidence; the agent then compares and merges what they found.
+        </p>
+        <p>
+          Recording a document citation requires the agent to fetch its current contents during the
+          turn. Any supplied quote must match the read body exactly. For a partial read, a quote
+          from the returned passage is required. This checks which source was read, not whether
+          every conclusion is correct.
         </p>
         <p>
           For a deliberate, fully orchestrated research pass, type <code>/</code> in the composer
@@ -230,13 +240,46 @@
           evidence, and an agent reply never counts as something you said. Person pages show what
           Omnesis has learned about that person, your own person page shows your profile, and a
           document's details show its annotations under <strong>Enriched by Omnesis</strong>.
-          Deleting a conversation also removes the annotations that cite it.
+          Deleting a conversation does not delete the annotations that cite it. Their evidence from
+          it can no longer be read, so they are marked unverified for re-checking, and one that
+          cites no other stored document is no longer used as memory.
+        </p>
+
+        <h2 id="tasks">Tasks</h2>
+        <p>
+          In any conversation, the agent works with your <a href="/docs/apps#tasks">Tasks</a> when
+          you ask it to. It can list them, add one, complete, move, strike or edit one, and undo a
+          change it made: “move the dentist call to next week”, “I sent the invoice, tick it off”.
+          It states each change in one line, such as <em>Moved to 2026-10-19: Call the dentist</em>,
+          and the change is recorded in the task's history as made in that conversation, where
+          <strong>Undo</strong> in the Tasks view also reverses it. It changes a task only when you
+          ask; a question about your tasks gets an answer, not an edit.
+        </p>
+        <h3 id="chat-about-a-task">Chat about a task</h3>
+        <p>
+          <strong>Chat about this</strong> on a task opens a new conversation about it, titled with
+          the task and showing a card with its state, due day and number of linked documents; the
+          card opens the task. Each reply in that conversation reads the task as it stands at that
+          moment: its title, state, planned time, deadline, description, history, and its linked
+          documents with a short excerpt of each, which the agent can open in full. A change you
+          make to the task between messages is in the next reply's context. If the task is deleted,
+          the conversation stays and the agent is told so. Each tap opens a new conversation;
+          earlier ones stay in the conversation list.
+        </p>
+        <p>
+          With a model assigned to the <code>background-agent</code> role, notes you capture with
+          Tell Omnesis from the portal, the apps or the CLI are also read and acted on, each by one
+          short agent turn of its own. Reading starts the first time such a model is assigned; notes
+          captured while it is later unassigned are read once it is assigned again. Notes that
+          external agents add, and notes taken in the browser extension, are never acted on. See
+          <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
         </p>
 
         <h2 id="sandboxed-by-design">Sandboxed by design</h2>
         <p>
-          The agent reads your documents and writes only its own memory. Its retrieval tools
-          (search, documents, trails, people, SQL) read and never change anything:
+          The agent reads your documents and writes only its own memory and your tasks. Its
+          retrieval tools (search, documents, trails, people, message counts, SQL) read and never
+          change anything:
         </p>
         <ul>
           <li>There is no shell and no filesystem access.</li>
@@ -266,6 +309,37 @@
           Returning to the portal or either mobile app within an hour reopens the conversation you
           were using. After an hour away, Omnesis opens a fresh conversation with the composer
           ready, and the previous one stays in the conversation list.
+        </p>
+        <h3 id="conversation-controls">Questions, follow-ups, and corrections</h3>
+        <p>
+          In portal, iOS, and Android chat, the agent can offer selectable answers when it needs
+          clarification. Choose one or write your own reply in the normal message composer. An
+          unanswered question remains available when you reopen the conversation on another device.
+        </p>
+        <p>
+          You can send a follow-up while an answer is running. The gateway keeps accepted messages
+          together in one queued message. Additional follow-ups grow that message, and the agent
+          receives them together when its current answer finishes. Right-click the queued message in
+          the portal, or long-press it on mobile, and choose <strong>Send now</strong> to interrupt
+          the current answer and send the queue immediately. You can also select the blue
+          <strong>send now</strong> beneath the queued message on all three surfaces. In the portal,
+          <strong>Interrupt and send</strong> stops the current answer and puts your correction
+          ahead of queued follow-ups. Stopping a run does not undo actions it has already completed.
+        </p>
+        <p>
+          The portal, iOS, and Android keep unsent drafts on the device, separately for each
+          conversation. Accepted queued messages stay with the gateway when you close the app. After
+          a gateway restart, opening the conversation resumes queued work; a message interrupted by
+          the restart is shown for review instead of silently repeated. Right-click a message in the
+          portal or long-press it on mobile to open its menu.
+          <strong>Copy</strong> copies a user or agent message to the clipboard. On your own
+          messages, <strong>Edit and resend</strong> appends a corrected prompt and keeps the
+          original exchange in the history.
+        </p>
+        <p>
+          These controls require support from both the app and gateway. An app connected to a
+          gateway without queue support keeps ordinary chat available and offers send once the
+          current answer finishes. Older apps can still answer clarification questions in text.
         </p>
         <h3 id="unread-conversations">Unread conversations and notifications</h3>
         <p>

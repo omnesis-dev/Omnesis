@@ -8,64 +8,14 @@ import {
   EphemeralHeader,
   useRollingRotation,
   ephemeralResultArrived,
+  ephemeralHasFollowingText,
   EPHEMERAL_SLOT_HEIGHT,
 } from "./lifecycle.js";
-import { LOOP_GLYPH, BRIEF_GLYPH, CLOCK_GLYPH, DOC_GLYPH } from "./glyphs.js";
+import { toolCardLabel } from "./tool-card-table.js";
+import { toolCardGlyph } from "./tool-cards.js";
 
 export function actionToolLabel(tool) {
-  return (
-    {
-      open_loop_search: "Search loops",
-      open_loop_fetch: "Open loop",
-      open_loop_create: "Create loop",
-      open_loop_update: "Update loop",
-      open_loop_delete: "Delete loop",
-      open_loop_ledger_append: "Note on loop",
-      brief_list: "List briefs",
-      brief_fetch: "Open brief",
-      brief_create: "Create brief",
-      brief_update: "Update brief",
-      brief_delete: "Withdraw brief",
-      temporal_query: "Query time",
-      temporal_annotation_add: "Add temporal annotation",
-      temporal_annotation_update: "Update temporal annotation",
-      temporal_annotation_delete: "Remove temporal annotation",
-      time_index_query: "Query time",
-      time_index_add: "Add temporal annotation",
-      time_index_update: "Update temporal annotation",
-      time_index_delete: "Remove temporal annotation",
-      notes_append: "Append notes",
-      notes_rewrite: "Rewrite notes",
-      conversation_memory_evidence: "Prepare memory",
-      annotation_search: "Search memory",
-      annotate_durable: "Remember document",
-      annotation_revise: "Update document memory",
-      annotation_retract: "Forget document memory",
-      annotation_supersede: "Replace document memory",
-      annotate_person: "Remember person",
-      person_annotation_revise: "Update person memory",
-      person_annotation_retract: "Forget person memory",
-      person_annotation_supersede: "Replace person memory",
-      schedule_agent_run: "Schedule follow-up",
-      list_loops: "List loops",
-      entity_context: "Gather context",
-    }[tool] ?? tool
-  );
-}
-
-function actionToolGlyph(tool) {
-  if (tool.startsWith("open_loop_")) return LOOP_GLYPH;
-  if (tool === "list_loops") return LOOP_GLYPH;
-  if (tool.startsWith("brief_")) return BRIEF_GLYPH;
-  if (
-    tool === "temporal_query" ||
-    tool.startsWith("temporal_annotation_") ||
-    tool.startsWith("time_index_")
-  ) {
-    return CLOCK_GLYPH;
-  }
-  if (tool === "schedule_agent_run") return CLOCK_GLYPH;
-  return DOC_GLYPH;
+  return toolCardLabel(tool);
 }
 
 /**
@@ -91,13 +41,14 @@ export function EphemeralActionCard({ call, dispatch }) {
   }
   const items = line == null ? [] : [{ kind: "outcome", line, isError }];
   const { currentIndex, phase } = useRollingRotation(resultArrived, items.length, {
-    expedite: (call.pendingTail?.length ?? 0) > 0,
+    expedite: (call.pendingTail?.length ?? 0) > 0 || ephemeralHasFollowingText(call),
+    postText: ephemeralHasFollowingText(call),
     onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
   });
   return html`
     <${EphemeralCard} phase=${phase}>
       <${EphemeralHeader}
-        glyph=${actionToolGlyph(call.tool)}
+        glyph=${toolCardGlyph(call.tool)}
         label=${actionToolLabel(call.tool)}
         monospaceArg=${call.argsSummary || ""}
         showSpinner=${!resultArrived}

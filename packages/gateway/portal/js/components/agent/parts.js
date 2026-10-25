@@ -12,21 +12,27 @@
  */
 
 import { html } from "htm/preact";
-import { createAgentToolRenderer, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
+import { createAgentToolRenderer, documentRead, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
 import { EphemeralHeader, EPHEMERAL_HOLD_MS, EPHEMERAL_FADE_MS, EPHEMERAL_SEARCH_RESULTS_MAX, EPHEMERAL_SQL_ROWS_MAX } from "../../shared/agent-ui/lifecycle.js";
 import { SEARCH_GLYPH, DOC_GLYPH, SQL_GLYPH, TRAIL_GLYPH, BOLT_GLYPH, PEOPLE_GLYPH, LINK_GLYPH, LOOP_GLYPH, CLOCK_GLYPH } from "../../shared/agent-ui/glyphs.js";
 import { actionToolLabel } from "../../shared/agent-ui/actions.js";
+import { EPHEMERAL_CARD_TOOLS, SILENT_CARD_TOOLS, toolCardLabel } from "../../shared/agent-ui/tool-card-table.js";
+import { toolCardGlyph } from "../../shared/agent-ui/tool-cards.js";
 export { ephemeralResultArrived } from "../../shared/agent-ui/lifecycle.js";
 
 import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
+import { KnowledgeIcon } from "../../lib/knowledge-link-icons.js";
 import { navigate } from "../../lib/router.js";
+import { MessageActions } from "./message-actions.js";
 import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
 import { TimelineColumn } from "../timeline.js";
 import { buildUnifiedTimeline } from "../../views/agent-reducer.js";
-import { matchSlashCommands, sendOptionsForArmed } from "../../lib/slash-commands.js";
+import { getSlashCommand, matchSlashCommands, sendOptionsForArmed } from "../../lib/slash-commands.js";
+
+import { conversationDraftRevision, clearConversationDraft, readConversationDraft, writeConversationDraft } from "../../lib/conversation-draft.js";
 
 // Agent components sit inline with body text, so icons should match the
 // surrounding font size rather than the portal default (16px). 12px reads
@@ -72,7 +78,9 @@ function AgentFailureCodes({ failure, className = "agent-msg-error-codes" }) {
   </span>`;
 }
 
-export function MessageBubble({ turn, citations, dispatch }) {
+// `header` and `footer` are optional slots around the message — the Morning
+// brief thread puts its brief header above a brief and its sources below it.
+export function MessageBubble({ turn, citations, dispatch, header = null, footer = null, onEdit, canEdit = true }) {
   const count = turn.role === "assistant" ? (turn.citationCount ?? 0) : 0;
   // Pre-compute citation-pill coalescing: every consecutive run of
   // pending annotate tool parts collapses into ONE pill rendered at the
@@ -81,8 +89,19 @@ export function MessageBubble({ turn, citations, dispatch }) {
   // alternative (one pill per part) reads as a stack of identical
   // animations when the agent fires off five annotates in a row.
   const pillRuns = computeCitationPillRuns(turn.parts ?? []);
+  // Batch tools do not gate the reducer. Their cards still yield promptly
+  // once later assistant prose is already present in the transcript.
+  const followedByText = new Set();
+  let textFollows = false;
+  for (let i = turn.parts.length - 1; i >= 0; i--) {
+    if (textFollows) followedByText.add(i);
+    const part = turn.parts[i];
+    if (part.kind === "text" && typeof part.text === "string" && part.text.trim()) textFollows = true;
+  }
   return html`
-    <div class=${`agent-msg agent-msg-${turn.role}`}>
+    <${MessageActions} text=${turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")} action=${turn.role === "user" && onEdit && canEdit ? { label: "Edit and resend", onSelect: () => onEdit(turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")) } : null}>
+    <div class=${`agent-msg agent-msg-${turn.role}`} data-turn-id=${turn.id}>
+      ${header}
       <div class="agent-msg-body">
         ${turn.parts.map((part, i) =>
           // A thinking part is "live" only while it is the trailing part of
@@ -101,6 +120,7 @@ export function MessageBubble({ turn, citations, dispatch }) {
             true,
             turn.role === "assistant" && turn.done === true,
             turn.role === "assistant",
+            turn.role === "assistant" && followedByText.has(i),
           ))}
       </div>
       ${turn.error
@@ -115,7 +135,9 @@ export function MessageBubble({ turn, citations, dispatch }) {
       ${count > 0
         ? html`<div class="agent-msg-footer"><${CitationCountChip} count=${count} /></div>`
         : null}
+      ${footer}
     </div>
+    </${MessageActions}>
   `;
 }
 
@@ -182,7 +204,7 @@ function computeCitationPillRuns(parts) {
 // tool parts on resume, so only sub-agent `childTurns` (which retain them) need
 // the static path; without it the rolling cards animate-then-vanish, leaving
 // bare text blobs.
-export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false, plainValueFences = true) {
+export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false, plainValueFences = true, followingText = false) {
   switch (part.kind) {
     case "text":
       // Assistant text is markdown — tables, bold, lists, code fences.
@@ -252,8 +274,8 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // transcript recorded before they were removed still reopens
       // without an empty card where a background fetch used to be.
       if (
-        part.tool === "plan" ||
-        part.tool === "join_subagents" ||
+        part.tool === "ask_clarification" ||
+        SILENT_CARD_TOOLS.has(part.tool) ||
         part.tool === "triggers_list" ||
         part.tool === "trigger_get" ||
         part.tool === "trigger_firings"
@@ -290,8 +312,8 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       ) {
         return html`<${StaticToolCard} key=${key} call=${part} />`;
       }
-      if (live && (part.tool === "search_many" || part.tool === "fetch_many" || EPHEMERAL_TOOLS.has(part.tool) || EPHEMERAL_ACTION_TOOLS.has(part.tool))) {
-        return sharedTools.renderToolPart(part, key, dispatch);
+      if (live && (EPHEMERAL_TOOLS.has(part.tool) || EPHEMERAL_CARD_TOOLS.has(part.tool))) {
+        return sharedTools.renderToolPart(part, key, dispatch, followingText);
       }
       return html`<${ToolCallChip} key=${key} call=${part} citations=${citations} />`;
     default:
@@ -393,6 +415,7 @@ const EPHEMERAL_TOOLS = new Set([
   "spawn_subagent",
   "search_documents",
   "fetch_document",
+  "knowledge_fetch",
   "run_sql",
   "trace_connections",
   "lookup_people",
@@ -408,48 +431,6 @@ const EPHEMERAL_TOOLS = new Set([
 // generic action card and resume/drop behavior stays exactly as it was.
 const STATIC_CARD_TOOLS = new Set(["temporal_query", "open_loop_search", "open_loop_fetch"]);
 
-// Background actions without a dedicated card. Live interactive streams
-// render these through the generic EphemeralActionCard;
-// static renders (sub-agent folds, cognition run transcripts) deliberately
-// do NOT — there they stay persistent ToolCallChips so every call is
-// inspectable. The reducer's EPHEMERAL_TOOLS (agent-reducer.js) separately
-// drops them from resumed interactive history.
-const EPHEMERAL_ACTION_TOOLS = new Set([
-  "open_loop_search",
-  "open_loop_fetch",
-  "open_loop_create",
-  "open_loop_update",
-  "open_loop_delete",
-  "open_loop_ledger_append",
-  "brief_list",
-  "brief_fetch",
-  "brief_create",
-  "brief_update",
-  "brief_delete",
-  "temporal_annotation_add",
-  "temporal_annotation_update",
-  "temporal_annotation_delete",
-  "temporal_query",
-  // Rolling aliases preserved in stored experimental conversations.
-  "time_index_add",
-  "time_index_update",
-  "time_index_delete",
-  "time_index_query",
-  "notes_append",
-  "notes_rewrite",
-  "annotate_durable",
-  "conversation_memory_evidence",
-  "annotation_search",
-  "annotation_revise",
-  "annotation_retract",
-  "annotation_supersede",
-  "annotate_person",
-  "person_annotation_revise",
-  "person_annotation_retract",
-  "person_annotation_supersede",
-  "schedule_agent_run",
-]);
-
 function docHref(documentId) {
   return `/portal/doc/${encodeURIComponent(documentId)}`;
 }
@@ -461,7 +442,7 @@ function personHref(canonicalId) {
 // Loop detail lives on the debug cognition surface — the same target the
 // cognition view's own cross-entity links use.
 function loopHref(loopId) {
-  return `/portal/debug/cognition/loops/${encodeURIComponent(loopId)}`;
+  return `/portal/debug/cognition/knowledge/${encodeURIComponent(loopId)}?kind=loop`;
 }
 
 // In-SPA navigation for transcript links. Modifier/middle clicks fall
@@ -557,7 +538,7 @@ function entitySeedDisplay(args, data) {
     };
   }
   if (seedKind === "loop") {
-    return { text: label, icon: LOOP_GLYPH, href: seedId ? loopHref(seedId) : null };
+    return { text: label, icon: html`<${KnowledgeIcon} kind="loop" />`, href: seedId ? loopHref(seedId) : null };
   }
   if (seedKind === "person") {
     return { text: label, icon: PEOPLE_GLYPH, href: seedId ? personHref(seedId) : null };
@@ -624,12 +605,13 @@ function StaticToolCard({ call }) {
           ),
         );
     }
-  } else if (tool === "fetch_document") {
-    glyph = DOC_GLYPH;
-    label = "Open document";
+  } else if (tool === "fetch_document" || tool === "knowledge_fetch") {
+    glyph = toolCardGlyph(tool);
+    label = toolCardLabel(tool);
     arg = "";
-    const ref = call.result?.kind === "document" ? call.result.ref : null;
-    if (call.result?.kind === "document") matched = true;
+    const read = documentRead(call.result);
+    const ref = read?.ref ?? null;
+    if (read) matched = true;
     if (ref) {
       const opened = html`
         <span class="agent-ephemeral-result-icon">${sourceIcon(ref.sourceId, { size: 11 })}</span>
@@ -1279,11 +1261,8 @@ function ToolCallChip({ call }) {
   `;
 }
 
-function prettyToolName(tool) {
-  switch (tool) {
-    case "trace_connections": return "Trace connections";
-    default:                  return tool;
-  }
+export function prettyToolName(tool) {
+  return toolCardLabel(tool);
 }
 
 function renderToolResult(result) {
@@ -1305,7 +1284,7 @@ function renderToolResult(result) {
 function loopRow(loop) {
   const inner = html`
     <span class="agent-loop-state agent-loop-state-${loop.state}">${loop.state}</span>
-    <span class="agent-loop-title">${loop.title || "Untitled loop"}</span>`;
+    <span class="agent-loop-title"><${KnowledgeIcon} kind="loop" />${loop.title || "Untitled loop"}</span>`;
   return loop?.loopId
     ? html`<a
         class="agent-loop-row agent-ephemeral-result-link"
@@ -1321,7 +1300,7 @@ function loopRow(loop) {
 function loopHeaderExtra(loop) {
   const opened = html`
     <span class="agent-loop-state agent-loop-state-${loop.state}">${loop.state}</span>
-    <span>${loop.title || "Untitled loop"}</span>`;
+    <span><${KnowledgeIcon} kind="loop" />${loop.title || "Untitled loop"}</span>`;
   const id = loop.loopId ?? loop.id;
   return id
     ? html`<a
@@ -1648,14 +1627,41 @@ const SLASH_ICONS = {
  * character so the empty state stays uncluttered. When the slash menu is
  * open, Enter selects the highlighted command instead of sending.
  */
-export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false }) {
-  const [text, setText] = useState("");
+export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false, placeholder = null, draftKey = "new", controlsSupported = true }) {
+  const [text, setText] = useState(() => readConversationDraft(draftKey).text);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
   // The armed per-message command (a SLASH_COMMANDS descriptor) or null.
   // Cleared after each send so the next message is an ordinary turn unless
   // re-armed.
-  const [armed, setArmed] = useState(null);
+  const [armed, setArmed] = useState(() => getSlashCommand(readConversationDraft(draftKey).command));
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
+  const [sending, setSending] = useState(false);
+  const [storageFailed, setStorageFailed] = useState(false);
   const taRef = useRef(null);
-  const canSend = !disabled && !busy && text.trim().length > 0;
+  const canSend = !disabled && !sending && (!busy || controlsSupported) && text.trim().length > 0;
+  function updateDraft(value, command = armed) {
+    textRef.current = value;
+    armedRef.current = command;
+    setText(value);
+    setStorageFailed(!writeConversationDraft(draftKey, value, command?.id ?? null));
+  }
+  useEffect(() => {
+    function restore(event) {
+      if (event?.detail?.key && event.detail.key !== draftKey) return;
+      const draft = readConversationDraft(draftKey);
+      textRef.current = draft.text;
+      setText(draft.text);
+      armedRef.current = getSlashCommand(draft.command);
+      setArmed(armedRef.current);
+    }
+    restore();
+    window.addEventListener("omnesis:conversation-draft", restore);
+    return () => window.removeEventListener("omnesis:conversation-draft", restore);
+  }, [draftKey]);
 
   // Slash-menu state derived purely from the current text. When `open`, the
   // textarea's Enter selects the first match rather than submitting.
@@ -1682,23 +1688,37 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
   function armCommand(cmd) {
     if (!cmd) return;
     setArmed(cmd);
-    setText("");
+    updateDraft("", cmd);
     taRef.current?.focus();
   }
 
   function disarm() {
     setArmed(null);
+    updateDraft(text, null);
     taRef.current?.focus();
   }
 
-  function submit(e) {
+  async function submit(e, mode) {
     e?.preventDefault?.();
     if (!canSend) return;
     const options = sendOptionsForArmed(armed?.id ?? null);
-    onSubmit(text.trim(), options);
-    setText("");
-    // Per-message: the pill governs this one send only.
-    setArmed(null);
+    if (mode) options.mode = mode;
+    const submittedRevision = conversationDraftRevision(draftKey);
+    setSending(true);
+    try {
+      const accepted = await onSubmit(text.trim(), options);
+      if (accepted !== false) {
+        const draftUnchanged = conversationDraftRevision(draftKey) === submittedRevision;
+        clearConversationDraft(draftKey, text, armed?.id ?? null, submittedRevision);
+        if (draftUnchanged && draftKeyRef.current === draftKey && textRef.current === text && armedRef.current?.id === armed?.id) {
+          textRef.current = "";
+          setText("");
+          setArmed(null);
+        }
+      }
+    } finally {
+      setSending(false);
+    }
   }
 
   return html`
@@ -1743,15 +1763,15 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
         ref=${taRef}
         name="text"
         class="agent-composer-input"
-        placeholder=${busy ? "Working…" : (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…")}
-        disabled=${disabled}
+        placeholder=${busy ? "Add a follow-up…" : (placeholder ?? (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…"))}
+        disabled=${disabled || sending}
         value=${text}
-        onInput=${(e) => setText(e.target.value)}
+        onInput=${(e) => updateDraft(e.target.value)}
         onKeyDown=${(e) => {
           if (e.key === "Escape" && menu.open) {
             e.preventDefault();
             // Clear the `/query` token so the menu closes.
-            setText("");
+            updateDraft("");
             return;
           }
           if (e.key === "Enter" && !e.shiftKey) {
@@ -1767,16 +1787,12 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
         }}
         rows=${variant === "hero" ? 2 : 1}
       />
-      ${busy
-        ? html`<button type="button" class="agent-composer-cancel" onClick=${onCancel} aria-label="Cancel">Cancel</button>`
-        : canSend
-          ? html`<button type="submit" class="agent-composer-send" aria-label="Send">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M8 13V3" />
-                <path d="M3 8l5-5 5 5" />
-              </svg>
-            </button>`
-          : null}
+      ${storageFailed ? html`<p role="status">Draft could not be saved on this browser.</p>` : null}
+      <div class="agent-composer-actions">
+        ${busy ? html`<button type="button" onClick=${onCancel}>Stop</button>` : null}
+        ${busy && canSend ? html`<button type="button" onClick=${(e) => submit(e, "interrupt")}>Interrupt and send</button>` : null}
+        ${canSend ? html`<button type="submit" class="agent-composer-submit">${busy ? "Send follow-up" : "Send"}</button>` : null}
+      </div>
     </form>
   `;
 }

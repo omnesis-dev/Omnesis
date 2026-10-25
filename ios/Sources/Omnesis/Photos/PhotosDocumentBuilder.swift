@@ -6,7 +6,7 @@ import Foundation
 /// Composes a `DocumentInput` from a photo asset's merged analyzer
 /// fragment. The single place every acquired signal gets folded into
 /// `content`/`title`/`tags` so it is actually served by search, the
-/// agent, and Briefs — never left stranded in `metadata.extra` alone.
+/// agent, and the Brain — never left stranded in `metadata.extra` alone.
 /// Operates on `PhotoAssetRef` (not `PHAsset` directly) so this logic is
 /// unit-testable without PhotoKit.
 public enum PhotosDocumentBuilder {

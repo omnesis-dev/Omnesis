@@ -22,6 +22,7 @@ export * from "./analytics.js";
 export * from "./model-credentials.js";
 export * from "./notes.js";
 export * from "./agent-messages.js";
+export * from "./agent-briefs.js";
 export * from "./portal.js";
 export * from "./oauth-access.js";
 export * from "./web-capture-policy.js";

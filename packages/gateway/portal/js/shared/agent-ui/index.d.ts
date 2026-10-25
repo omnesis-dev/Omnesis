@@ -36,6 +36,7 @@ export function createAgentToolRenderer(options?: {
     part: AgentUiPart,
     key: string | number,
     dispatch?: (action: { kind: string; toolCallId: string }) => void,
+    followingText?: boolean,
   ): ComponentChildren;
 };
 export function AssistantMarkdown(props: {

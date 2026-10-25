@@ -58,6 +58,7 @@ export default defineSource<WhatsAppSyncCursor>({
         path: "extra.isGroup",
         type: "boolean",
         description: "True for a group conversation, false for a one-to-one chat.",
+        semantics: "group-conversation",
       },
       {
         path: "extra.chatName",
@@ -88,6 +89,7 @@ export default defineSource<WhatsAppSyncCursor>({
         path: "extra.messageCount",
         type: "number",
         description: "Messages exchanged that day, excluding reactions.",
+        semantics: "message-count",
       },
       {
         path: "extra.mediaCount",

@@ -14,7 +14,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import {
-  cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   enqueueCognitionRun,
   listCognitionRuns,
 } from "../storage/run-queue.js";
@@ -68,8 +68,8 @@ describe("steward rhythm tasks", () => {
     const writeGate = {
       enqueueCognitionRun: async (input: Parameters<typeof enqueueCognitionRun>[1], now: number) =>
         enqueueCognitionRun(db, input, now),
-      cancelPendingCognitionRuns: async (keys: string[]) =>
-        cancelPendingCognitionRunsByDedupeKeys(db, keys),
+      retractUnclaimedCognitionRuns: async (keys: string[]) =>
+        retractUnclaimedCognitionRunsByDedupeKeys(db, keys),
       setCognitionEngineState: async (key: string, value: string) =>
         setCognitionEngineState(db, key, value),
     };
@@ -151,8 +151,8 @@ describe("steward rhythm tasks", () => {
     const writeGate = {
       enqueueCognitionRun: async (input: Parameters<typeof enqueueCognitionRun>[1], now: number) =>
         enqueueCognitionRun(db, input, now),
-      cancelPendingCognitionRuns: async (keys: string[]) =>
-        cancelPendingCognitionRunsByDedupeKeys(db, keys),
+      retractUnclaimedCognitionRuns: async (keys: string[]) =>
+        retractUnclaimedCognitionRunsByDedupeKeys(db, keys),
       setCognitionEngineState: async (key: string, value: string) =>
         setCognitionEngineState(db, key, value),
     };
@@ -203,8 +203,8 @@ describe("steward rhythm tasks", () => {
     const writeGate = {
       enqueueCognitionRun: async (input: Parameters<typeof enqueueCognitionRun>[1], now: number) =>
         enqueueCognitionRun(db, input, now),
-      cancelPendingCognitionRuns: async (keys: string[]) =>
-        cancelPendingCognitionRunsByDedupeKeys(db, keys),
+      retractUnclaimedCognitionRuns: async (keys: string[]) =>
+        retractUnclaimedCognitionRunsByDedupeKeys(db, keys),
       setCognitionEngineState: async (key: string, value: string) =>
         setCognitionEngineState(db, key, value),
     };

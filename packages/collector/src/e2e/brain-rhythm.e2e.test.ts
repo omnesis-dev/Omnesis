@@ -11,7 +11,7 @@
  * `cognition_engine_state`, enqueues under a day-scoped dedupe key, and writes
  * its marker LAST so a crash replays and folds.
  *
- * Every test here runs the gateway on the briefs VIRTUAL clock and crosses the
+ * Every test here runs the gateway on the cognition VIRTUAL clock and crosses the
  * boundaries deliberately rather than waiting them out. Wall-clock time of day
  * is never load-bearing: each suite pins the clock to a local instant it
  * computes, and every stimulus document carries an explicit source timestamp,
@@ -25,9 +25,19 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
+import { z } from "zod";
+import { createObservation } from "../../../gateway/src/brain/storage/observations.js";
+import { structuredData } from "./brain-bench/puppet-plan.js";
 import {
   BrainBench,
+  seedHistory,
+  historicalAdmissions,
+  sourceInterpretations,
+  preserveCurrentOwner,
+  refreshCurrentOwner,
   call,
   compressCognitionCadences,
   ref,
@@ -35,31 +45,19 @@ import {
   waitFor,
 } from "./brain-bench/index.js";
 
+import { localHour } from "./brain-bench/local-calendar.js";
+
 compressCognitionCadences();
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 /**
- * Local midnight of the day `ms` falls in — the same arithmetic the kit's
- * `bench.clock.localMidnight` does, restated here because the suites' boundary
- * constants are evaluated while the module and the `describe` bodies load,
- * before any bench exists to ask. Callers that want another day pass a
- * NOON-anchored instant plus whole days, which lands on the intended local day
- * either side of a DST shift.
- */
-function localMidnight(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-/**
  * The shared anchor for suites that pin their clock before observing rhythm
  * work. The synthesis suite instead follows the gateway's boot day because
  * it observes the first noticing run before moving the clock.
  */
-const D0_NOON = localMidnight(Date.now()) + 12 * HOUR;
+const D0_NOON = localHour(Date.now(), 12);
 
 const SRC_A = "synthetic:alpha@example.com";
 const SRC_B = "synthetic:beta@example.com";
@@ -151,7 +149,7 @@ describe("rhythm: the daily boundary", () => {
   let loopId = "";
   const DAILY_HOUR = 5;
   /** The boundary the suite drives across: tomorrow at `DAILY_HOUR`. */
-  const BOUNDARY = localMidnight(D0_NOON + DAY) + DAILY_HOUR * HOUR;
+  const BOUNDARY = localHour(D0_NOON + DAY, DAILY_HOUR);
   const CROSS_AT = BOUNDARY + 30 * 60_000;
   /** The day key that boundary belongs to; resolved once the bench exists. */
   let CROSSED_DAY = "";
@@ -161,6 +159,9 @@ describe("rhythm: the daily boundary", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        // This frozen-clock scenario isolates day boundaries; readiness has its own E2E.
+        derivationBarrier: "0s",
         dailyRunHour: DAILY_HOUR,
         // Every other rhythm lane off: this suite asserts on the `daily` kind,
         // and the digest rides that same kind.
@@ -172,30 +173,32 @@ describe("rhythm: the daily boundary", () => {
         collision: { enabled: false },
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: "Studio Northstar rehearsal hold",
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "rehearsal hold" }),
+                  call("open_loop_create", {
+                    title: "Confirm the rehearsal hold with Studio Northstar",
+                    description: "Tracked from the booking request.",
+                    confidence: 0.9,
+                    importance: 0.85,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: "Studio holds the slot until it is confirmed.",
+                  }),
+                ],
+                finalText: "Tracked the rehearsal hold.",
+              }),
+            },
+          ],
+          maintainNode: refreshCurrentOwner,
+        }),
         behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: "Studio Northstar rehearsal hold",
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: "rehearsal hold" }),
-                call("open_loop_create", {
-                  title: "Confirm the rehearsal hold with Studio Northstar",
-                  description: "Tracked from the booking request.",
-                  confidence: 0.9,
-                  importance: 0.85,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: "Studio holds the slot until it is confirmed.",
-                }),
-              ],
-              finalText: "Tracked the rehearsal hold.",
-            }),
-          },
-          // The daily batches themselves do nothing — this suite asserts on the
-          // ENQUEUE side (one run per source, its key, and its prompt).
           { flavour: "daily.source", plan: { calls: [], finalText: "Nothing in the batch." } },
         ],
       },
@@ -254,9 +257,8 @@ describe("rhythm: the daily boundary", () => {
     expect(bench.markers.get("daily_last_run_day")).toBe(bench.clock.localDay(D0_NOON));
     // Its window was the day BEFORE the stimulus, so nothing was batched yet.
     expect(runRows(bench, "daily")).toHaveLength(0);
-    // And the sample-typed documents are deferred, not woken on directly.
-    const data = await bench.obs.settledRuns("data");
-    expect(data.map((r) => r.dedupeKey)).toEqual([`data:doc:${alphaDocId}`]);
+    expect((await bench.obs.interpretationForSource(alphaDocId)).kind).toBe("synthesis");
+    expect(await bench.obs.settledRuns("data")).toHaveLength(0);
     expect(loopId).not.toBe("");
   }, 120_000);
 
@@ -379,11 +381,11 @@ describe("rhythm: the daily boundary", () => {
       documentType: "transaction",
       sourceId: SRC_A,
       providerId: SRC_A,
-      at: localMidnight(D0_NOON + 3 * DAY) + 12 * HOUR,
+      at: localHour(D0_NOON + 3 * DAY, 12),
     });
     await bench.docId("rhythm-alpha-txn-late");
 
-    const boundary = localMidnight(D0_NOON + 4 * DAY) + DAILY_HOUR * HOUR;
+    const boundary = localHour(D0_NOON + 4 * DAY, DAILY_HOUR);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await bench.markers.waitFor("daily_last_run_day", (v) => v === day, 60_000);
@@ -394,8 +396,8 @@ describe("rhythm: the daily boundary", () => {
     const fresh = runRows(bench, "daily").filter((r) => !before.has(r.id));
     expect(fresh.map((r) => r.dedupe_key)).toEqual([`daily:source:${SRC_A}:${day}`]);
     const skipped = [
-      bench.clock.localDay(localMidnight(D0_NOON + 2 * DAY) + DAILY_HOUR * HOUR),
-      bench.clock.localDay(localMidnight(D0_NOON + 3 * DAY) + DAILY_HOUR * HOUR),
+      bench.clock.localDay(localHour(D0_NOON + 2 * DAY, DAILY_HOUR)),
+      bench.clock.localDay(localHour(D0_NOON + 3 * DAY, DAILY_HOUR)),
     ];
     for (const missed of skipped) {
       expect(runRows(bench, "daily").filter((r) => r.dedupe_key?.endsWith(`:${missed}`))).toEqual(
@@ -415,8 +417,8 @@ describe("rhythm: the morning digest", () => {
   const DIGEST_HOUR = 7;
   const GRACE_MINUTES = 45;
   /** The digest hour on D+1, and ten minutes past it — inside the grace window. */
-  const DIGEST_BOUNDARY = localMidnight(D0_NOON + DAY) + DIGEST_HOUR * HOUR;
-  const DIGEST_AT = DIGEST_BOUNDARY + 10 * 60_000;
+  let DIGEST_BOUNDARY: number;
+  let DIGEST_AT: number;
   /** The day key that boundary belongs to; resolved once the bench exists. */
   let DIGEST_DAY = "";
   const DIGEST_MARKER = "Riverside rehearsal week";
@@ -426,6 +428,7 @@ describe("rhythm: the morning digest", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         dailyRunHour: DAILY_HOUR,
         digest: { enabled: true, hour: DIGEST_HOUR, graceMinutes: GRACE_MINUTES },
         bootstrap: { enabled: false },
@@ -434,26 +437,20 @@ describe("rhythm: the morning digest", () => {
         synthesis: { enabled: false },
         collision: { enabled: false },
       },
+      // The morning brief is appended to a conversation, which needs the
+      // interactive role assigned; no conversation turn runs here.
+      agent: { behaviors: [] },
       behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: preserveCurrentOwner }),
         behaviors: [
           {
             flavour: "daily.digest",
             // The digest's subject is the local day it composes for, so the
-            // card carries it — one suite boots several digests and each
-            // must be attributable to its own day.
+            // message carries it — each send is attributable to its own day.
             plan: (ctx) => ({
               calls: [
-                call("brief_list"),
-                call("brief_create", {
-                  kind: "info",
-                  title: `Morning brief — ${DIGEST_MARKER} ${ctx.subject}`,
-                  description: "One rehearsal to confirm; nothing else needs you today.",
-                  body: "Nothing else needs you today.",
-                  confidence: 0.7,
-                  urgency: 0.4,
-                }),
                 // Authority probe. The morning-digest workflow is granted the
-                // brief artifact and nothing else, so this verb is not in its
+                // morning brief and nothing else, so this verb is not in its
                 // toolset at all — the call cannot land.
                 call("open_loop_create", {
                   title: `Digest overreach — ${DIGEST_MARKER}`,
@@ -461,15 +458,24 @@ describe("rhythm: the morning digest", () => {
                   confidence: 0.8,
                   importance: 0.8,
                 }),
+                call("morning_brief_send", {
+                  text: `**Worth your attention**\n\n- ${DIGEST_MARKER} ${ctx.subject}: the rehearsal room changed.`,
+                }),
               ],
-              finalText: "Composed the morning brief.",
+              finalText: "Sent the morning brief.",
             }),
           },
         ],
       },
     });
+    // Boot can already admit root maintenance. Rewinding to today's noon
+    // strands that work behind a frozen clock, so start at the next local noon.
+    const bootNow = (await bench.clock.now()).now;
+    const startNoon = localHour(localHour(bootNow, 12) + DAY, 12);
+    DIGEST_BOUNDARY = localHour(startNoon + DAY, DIGEST_HOUR);
+    DIGEST_AT = DIGEST_BOUNDARY + 10 * 60_000;
     DIGEST_DAY = bench.clock.localDay(DIGEST_BOUNDARY);
-    await bench.clock.set(D0_NOON);
+    await bench.clock.set(startNoon);
     await bench.drainUntilQuiet();
   }, 300_000);
 
@@ -477,7 +483,34 @@ describe("rhythm: the morning digest", () => {
     await bench?.destroy();
   }, 60_000);
 
+  test("empty digest packets settle without buying a model or publishing an all-clear", async () => {
+    const digests = runRows(bench, "daily").filter((r) =>
+      r.dedupe_key?.startsWith("daily:digest:"),
+    );
+    expect(digests.length).toBeGreaterThan(0);
+    for (const run of digests) {
+      expect(run.status).toBe("completed");
+      expect((await bench.obs.run(run.id)).transcripts).toEqual([]);
+    }
+    expect((await bench.obs.morningBrief()).sent).toBeNull();
+  }, 120_000);
+
   test("crossing the digest hour composes exactly one digest for the day", async () => {
+    // An editorial pass needs something real to compose; an empty morning
+    // is tested above and must not send a fabricated all-clear message.
+    const seedAt = (await bench.clock.now()).now;
+    bench.withWriteHandle((db) =>
+      createObservation(
+        db,
+        {
+          id: "obs_digest_editorial_input",
+          createdByRun: "seed",
+          summary: "The rehearsal room changed.",
+          why: "Use the revised room assignment.",
+        },
+        seedAt,
+      ),
+    );
     const before = new Set(runRows(bench, "daily").map((r) => r.id));
 
     await bench.clock.set(DIGEST_AT);
@@ -498,23 +531,22 @@ describe("rhythm: the morning digest", () => {
     expect(bench.markers.get("daily_last_run_day")! >= DIGEST_DAY).toBe(true);
   }, 240_000);
 
-  test("the digest prompt is the composition flavour and its card is the day's one brief", async () => {
+  test("the digest prompt is the composition flavour and its send is the day's one message", async () => {
     const run = runRows(bench, "daily").find((r) => r.dedupe_key === `daily:digest:${DIGEST_DAY}`)!;
     const prompt = await bench.obs.promptFor(run.id);
-    expect(prompt).toContain(`Morning digest for ${DIGEST_DAY}.`);
-    expect(prompt).toContain('Compose EXACTLY ONE brief of kind "info"');
+    expect(prompt).toContain(`Morning brief for ${DIGEST_DAY}.`);
+    expect(prompt).toContain("send it with morning_brief_send, exactly once");
+    expect(prompt).toContain("[obs_digest_editorial_input] The rehearsal room changed.");
     // The digest is delta-primed with what is landing, not with a source batch.
     expect(prompt).toContain("Loops due soon or recently touched (most important first):");
     expect(prompt).not.toContain("Daily batch review for source");
 
-    const briefs = await bench.obs.briefs();
-    const cards = briefs.items.filter((b) => b.title.includes(`${DIGEST_MARKER} ${DIGEST_DAY}`));
-    expect(cards).toHaveLength(1);
-    expect(cards[0]!.kind).toBe("info");
-    expect(cards[0]!.createdByRun).toBe(run.id);
+    const brief = await bench.obs.morningBrief(DIGEST_DAY);
+    expect(brief.sent).toMatchObject({ day: DIGEST_DAY, runId: run.id, itemCount: 1 });
+    expect(brief.items.map((item) => item.observationId)).toEqual(["obs_digest_editorial_input"]);
   }, 120_000);
 
-  test("the digest's authority is brief-only — its loop write never lands", async () => {
+  test("the digest's authority is the morning brief only — its loop write never lands", async () => {
     const loops = await bench.obs.loops();
     expect(loops.items).toHaveLength(0);
     const pulse = await bench.obs.pulse();
@@ -540,10 +572,10 @@ describe("rhythm: the morning digest", () => {
     await bench.drainUntilQuiet();
 
     expect(runRows(bench, "daily").map((r) => r.id)).toEqual(before);
-    const briefs = await bench.obs.briefs();
-    expect(
-      briefs.items.filter((b) => b.title.includes(`${DIGEST_MARKER} ${DIGEST_DAY}`)),
-    ).toHaveLength(1);
+    const brief = await bench.obs.morningBrief(DIGEST_DAY);
+    expect(brief.sent?.runId).toBe(
+      runRows(bench, "daily").find((r) => r.dedupe_key === `daily:digest:${DIGEST_DAY}`)!.id,
+    );
   }, 120_000);
 });
 
@@ -551,55 +583,24 @@ describe("rhythm: the morning digest", () => {
 // G3 — the retrospective bootstrap
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("rhythm: bootstrap coverage", () => {
+describe("rhythm: historical admission coverage", () => {
   let bench: BrainBench;
-  const SRC_HISTORY = "synthetic:history@example.com";
-  const MAX_PER_DAY = 2;
-  /**
-   * D+1 noon: comfortably past the ten-minute boot hold whatever hour the
-   * suite booted at, and far enough from midnight that a later advance inside
-   * the test stays on the same local day (the pace cap is per day).
-   */
-  const PAST_HOLD_AT = localMidnight(D0_NOON + DAY) + 12 * HOUR;
-  /** The local day that instant falls on; resolved once the bench exists. */
-  let PAST_HOLD_DAY = "";
-  const SEEDS = [
-    {
-      externalId: "rhythm-history-1",
-      title: "Rehearsal room lease renewal",
-      content:
-        "Your rehearsal room lease at Riverside Estate renews on 14 March 2029. Give notice in writing if you do not intend to continue.",
-    },
-    {
-      externalId: "rhythm-history-2",
-      title: "Equipment warranty registration",
-      content:
-        "The warranty on your Stellar Sound desk runs until 2 September 2030. Keep this message for the claim reference.",
-    },
-    {
-      externalId: "rhythm-history-3",
-      title: "Insurance policy schedule",
-      content:
-        "The public liability policy for Studio Northstar is scheduled to expire on 30 June 2029 unless renewed.",
-    },
-    {
-      externalId: "rhythm-history-4",
-      title: "Membership term confirmation",
-      content:
-        "Your Cedar Grove Supplies trade membership is valid through to 11 November 2029 at the current rate.",
-    },
-  ];
-
+  let sourceId: string;
+  const ids = ["rhythm-history-1", "rhythm-history-2", "rhythm-history-3", "rhythm-history-4"];
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // This suite bounds exactly the four archived revisions seeded below.
+      syncSources: false,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        derivationBarrier: "0s",
         bootstrap: {
           enabled: true,
           direction: "recent-first",
-          backlogTarget: MAX_PER_DAY,
-          maxRunsPerDay: MAX_PER_DAY,
+          backlogTarget: 2,
+          maxRunsPerDay: 2,
           maxRuns: 50,
           batchSize: 10,
         },
@@ -610,164 +611,115 @@ describe("rhythm: bootstrap coverage", () => {
         collision: { enabled: false },
       },
       behaviors: {
-        // Bootstrap runs fetch their document, then do nothing: this suite is
-        // about which documents the lane BUYS and what the counters say, not
-        // about what the steward writes when it reads one.
-        behaviors: [{ flavour: "bootstrap", plan: { calls: [], finalText: "Nothing to seed." } }],
+        dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
       },
     });
-
-    await bench.obs.startBootstrap();
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v !== undefined);
-
-    PAST_HOLD_DAY = bench.clock.localDay(PAST_HOLD_AT);
-
-    // Just outside the waker's 7-day recency window, so these are the lane's
-    // most recent candidates and `recent-first` takes them before the
-    // universe's (months-old) ambient corpus.
-    const seededAt = Date.now() - 8 * DAY;
-    for (const seed of SEEDS) {
-      await bench.push({
-        ...seed,
-        documentType: "email",
-        sourceId: SRC_HISTORY,
-        providerId: SRC_HISTORY,
-        at: seededAt,
-      });
-    }
-    for (const seed of SEEDS) {
-      const docId = await bench.docId(seed.externalId);
-      await waitFor(
-        `extracted dates for ${seed.externalId}`,
-        () =>
-          (bench.sql
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM document_extracted_dates WHERE document_id = ?")
-            .get(docId)?.n ?? 0) > 0
-            ? true
-            : null,
-        90_000,
-      );
-    }
+    sourceId = bench.harness.getSourceIds()[0]!;
+    await bench.drainUntilQuiet();
+    const instant = (await bench.clock.now()).now;
+    await bench.clock.set(localHour(instant, 12));
+    const { now } = await bench.clock.now();
+    ids.forEach((id, i) =>
+      seedHistory(bench, {
+        id,
+        sourceId,
+        title: `Archived workshop ${i}`,
+        content: "A workshop planning record from the archive.",
+        at: now - (8 + i) * DAY,
+      }),
+    );
   }, 300_000);
-
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
-
-  test("the lane holds through the boot window", async () => {
-    // A pass inside the boot window defers, stamping the hold rather than
-    // probing the corpus — so nothing is bought in the minutes after a start.
-    expect(bench.markers.get("bootstrap_hold_since")).toBeDefined();
-    expect(bench.markers.get("bootstrap_hold_since")).not.toBe("0");
-    expect(runRows(bench, "bootstrap")).toHaveLength(0);
-  }, 120_000);
-
-  test("past the boot window the lane enqueues up to its per-day cap, keyed per document", async () => {
-    await bench.clock.set(PAST_HOLD_AT);
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v === "0", 60_000);
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    createLogger("collector:brain-bench").error(
+      `Historical admission failure: ${JSON.stringify({
+        status: await bench.obs.status(),
+        bootstrap: await bench.obs.bootstrapStatus(),
+        checkpoints: bench.sql.prepare("SELECT * FROM knowledge_checkpoints").all(),
+        coverage: bench.sql
+          .prepare(
+            "SELECT * FROM knowledge_discovery_coverage WHERE subject_id LIKE 'rhythm-history-%'",
+          )
+          .all(),
+        gateway: readFileSync(bench.harness.getGatewayLogPath(), "utf8")
+          .split("\n")
+          .filter((line) => /WARN|ERROR|periodic|knowledge/i.test(line))
+          .slice(-40),
+      })}`,
+    );
+  });
+  test("persisted history awaits operator consent while live discovery remains independent", async () => {
+    expect(historicalAdmissions(bench)).toHaveLength(0);
+    const status = await bench.obs.bootstrapStatus();
+    expect(status.state).toBe("unstarted");
+    expect(status.liveDiscoveryIndependent).toBe(true);
+  });
+  test("consent admits newest revisions up to the daily source-work bound", async () => {
+    await bench.obs.startBootstrap();
     await waitFor(
-      "bootstrap runs to be enqueued",
-      () => (runRows(bench, "bootstrap").length > 0 ? true : null),
-      60_000,
+      () =>
+        `daily historical admission bound: ${JSON.stringify({
+          admissions: historicalAdmissions(bench),
+          counters: bench.sql.prepare("SELECT * FROM knowledge_historical_admissions").all(),
+          state: bench.sql.prepare("SELECT * FROM cognition_engine_state").all(),
+          work: bench.sql
+            .prepare(
+              "SELECT subject_id,reason,status,last_error FROM knowledge_work WHERE status IN ('pending','batched')",
+            )
+            .all(),
+          sources: bench.sql
+            .prepare(
+              "SELECT id,source_id,content_hash FROM documents WHERE id LIKE 'rhythm-history-%'",
+            )
+            .all(),
+        })}`,
+
+      () => (historicalAdmissions(bench).length === 2 ? true : null),
+      120_000,
     );
     await bench.drainUntilQuiet();
-
-    const runs = runRows(bench, "bootstrap");
-    // The backlog target and the per-day cap both bind at 2, so one pass
-    // takes exactly that many however large the batch size is.
-    expect(runs).toHaveLength(MAX_PER_DAY);
-    const takenDocId = (run: RunRow): string =>
-      (bench.runPayload(run.id) as { docId: string }).docId;
-    for (const run of runs) {
-      expect(run.dedupe_key).toBe(`bootstrap:doc:${takenDocId(run)}`);
-    }
-
-    // Every selected document belongs to the seeded history: `recent-first`
-    // took the newest candidates, which are the ones this suite planted.
-    const seedIds = new Set(await Promise.all(SEEDS.map((s) => bench.docId(s.externalId))));
-    for (const run of runs) {
-      expect(seedIds.has(takenDocId(run))).toBe(true);
-    }
-
-    // Selection marks at ENQUEUE, so a later pass can never re-select them.
-    const marked = bench.sql
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM documents WHERE bootstrap_processed_at IS NOT NULL")
-      .get()!.n;
-    expect(marked).toBeGreaterThanOrEqual(MAX_PER_DAY);
+    expect(historicalAdmissions(bench).map((w) => w.subject_id)).toEqual(ids.slice(0, 2));
+    expect(historicalAdmissions(bench).every((w) => w.status === "completed")).toBe(true);
+    expect(await bench.obs.settledRuns("bootstrap")).toHaveLength(0);
   }, 240_000);
-
-  test("the day's allowance is spent — a further pass inside it buys nothing", async () => {
-    expect(bench.markers.get(`bootstrap_enqueued:${PAST_HOLD_DAY}`)).toBe(String(MAX_PER_DAY));
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(MAX_PER_DAY));
-
-    const before = runRows(bench, "bootstrap").map((r) => r.id);
-    // Later the same local day: the pace cap is per DAY, so crossing into the
-    // next one would legitimately buy more.
-    await bench.clock.set(PAST_HOLD_AT + 6 * HOUR);
-    // The lane records its state on the way past the lifetime backstop, one
-    // step AHEAD of the pace cap it is about to hit. Clearing that marker and
-    // waiting for the lane to write it back is therefore proof that a pass
-    // really reached the cap — the day's allowance held rather than the lane
-    // having gone quiet on us.
-    bench.markers.clear("bootstrap_state");
-    await bench.markers.waitFor("bootstrap_state", (v) => v === "running", 60_000);
+  test("a further pass within the day buys no more work", async () => {
+    const before = historicalAdmissions(bench);
+    await bench.clock.advance(60 * 60_000);
+    await awaitRhythmPasses(bench);
     await bench.drainUntilQuiet();
-    expect(runRows(bench, "bootstrap").map((r) => r.id)).toEqual(before);
-    expect(bench.markers.get(`bootstrap_enqueued:${PAST_HOLD_DAY}`)).toBe(String(MAX_PER_DAY));
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(MAX_PER_DAY));
+    expect(historicalAdmissions(bench)).toEqual(before);
+    const status = await bench.obs.bootstrapStatus();
+    expect(status.state).toBe("waiting");
+    expect(status.admission?.remainingToday).toBe(0);
   }, 240_000);
-
-  test("a new local day restores the allowance and the lane takes fresh documents", async () => {
-    const before = new Set(runRows(bench, "bootstrap").map((r) => r.id));
-    const takenBefore = new Set(
-      runRows(bench, "bootstrap").map((r) => (bench.runPayload(r.id) as { docId: string }).docId),
-    );
-    const nextDay = localMidnight(PAST_HOLD_AT + DAY) + 12 * HOUR;
-
-    await bench.clock.set(nextDay);
-    await bench.markers.waitFor(
-      `bootstrap_enqueued:${bench.clock.localDay(nextDay)}`,
-      (v) => v === String(MAX_PER_DAY),
-      60_000,
+  test("a new local day restores admission room without buying covered revisions again", async () => {
+    await bench.clock.advance(DAY);
+    await waitFor(
+      "next day historical admission",
+      () => (historicalAdmissions(bench).length === 4 ? true : null),
+      120_000,
     );
     await bench.drainUntilQuiet();
-
-    const fresh = runRows(bench, "bootstrap").filter((r) => !before.has(r.id));
-    expect(fresh).toHaveLength(MAX_PER_DAY);
-    // Mark-at-enqueue means the new day's batch cannot re-select what the
-    // first one already bought — the lane advances rather than looping.
-    for (const run of fresh) {
-      const docId = (bench.runPayload(run.id) as { docId: string }).docId;
-      expect(takenBefore.has(docId)).toBe(false);
-    }
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(2 * MAX_PER_DAY));
+    expect(historicalAdmissions(bench).map((w) => w.subject_id)).toEqual(ids);
+    expect(new Set(historicalAdmissions(bench).map((w) => w.subject_id)).size).toBe(4);
   }, 240_000);
-
-  test("coverage reconciles with the runs that actually settled", async () => {
-    const coverage = await bench.obs.coverage();
-    const rows = coverage.items.filter((i) => i.workflowId === "source-bootstrap");
-    expect(rows).toHaveLength(1);
-    const row = rows[0]!;
-    expect(row.sourceId).toBe(SRC_HISTORY);
-
-    const runs = runRows(bench, "bootstrap");
-    const settled = runs.filter((r) => r.status !== "pending");
-    expect(runs).toHaveLength(2 * MAX_PER_DAY);
-    expect(settled).toHaveLength(runs.length);
-
-    // `eligible` is bumped when the lane selects a document; `processed` /
-    // `skipped` when its run settles. With every selected run settled the two
-    // sides must agree, and the derived status must say so.
-    expect(row.eligible).toBe(runs.length);
-    expect(row.processed + row.skipped).toBe(settled.length);
-    expect(row.status).toBe("settled");
-    expect(coverage.bootstrapProcessedDocs).toBeGreaterThanOrEqual(runs.length);
+  test("source-revision coverage agrees with successful source interpretations", async () => {
+    const row = (await bench.obs.coverage()).items.find(
+      (i) => i.workflowId === "knowledge-maintenance" && i.sourceId === sourceId,
+    );
+    expect(row).toMatchObject({
+      eligible: 4,
+      processed: 4,
+      skipped: 0,
+      unit: "source-revisions",
+      costAttribution: "shared-run-ledger",
+    });
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
+    expect((await bench.obs.bootstrapStatus()).corpusCompletion).toBe("not-measured");
   }, 120_000);
 });
 
@@ -777,7 +729,7 @@ describe("rhythm: bootstrap coverage", () => {
 
 describe("rhythm: synthesis noticing and the collision sweep", () => {
   let bench: BrainBench;
-  const NOTICING_MARKER = "Noticing pass card";
+  const NOTICING_MARKER = "Noticing pass observation";
   /** The day the suite's clock starts on; resolved once the bench exists. */
   let D0_DAY = "";
   let bootDayNoon = 0;
@@ -789,6 +741,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         synthesis: { enabled: true, cadenceHours: 6, maxPerDay: 1 },
         collision: { enabled: true, cadenceHours: 6, maxPerSweep: 3 },
         bootstrap: { enabled: false },
@@ -797,52 +750,80 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
         sweepsEnabled: false,
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: "Riverside Estate site visit and invoice",
+              plan: (ctx, _item, steps) => {
+                const query = "Riverside Estate site visit invoice";
+                const lookup = steps
+                  .filter((step) => step.name === "open_loop_search" && step.args?.query === query)
+                  .at(-1);
+                const found = z
+                  .object({ loops: z.array(z.object({ title: z.string() })) })
+                  .safeParse(lookup ? structuredData(lookup.result) : null);
+                // Canonical admission can offer the source again. Use the real
+                // reconciliation read rather than recreating its existing owners.
+                const existing = new Set(
+                  found.success ? found.data.loops.map((loop) => loop.title) : [],
+                );
+                return {
+                  calls: [
+                    call("open_loop_search", { query }),
+                    ...(!existing.has("Book the Riverside Estate site visit")
+                      ? [
+                          call("open_loop_create", {
+                            title: "Book the Riverside Estate site visit",
+                            description: "The visit still needs a date.",
+                            confidence: 0.9,
+                            importance: 0.8,
+                            docs: [ctx.subject],
+                          }),
+                        ]
+                      : []),
+                    ...(!existing.has("Pay the Riverside Estate deposit invoice")
+                      ? [
+                          call("open_loop_create", {
+                            title: "Pay the Riverside Estate deposit invoice",
+                            description: "The invoice on the same message is unpaid.",
+                            confidence: 0.9,
+                            importance: 0.7,
+                            docs: [ctx.subject],
+                          }),
+                        ]
+                      : []),
+                  ],
+                  finalText: "Two distinct obligations from one message.",
+                };
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
           {
             flavour: "synthesis.noticing",
+            // The boot-time pass runs before the suite's message exists and
+            // notes nothing; later passes cite that message.
             plan: (ctx) => ({
               calls: [
-                call("brief_list"),
-                call("brief_create", {
-                  kind: "info",
-                  title: `${NOTICING_MARKER} for ${ctx.subject}`,
-                  description: "A pattern worth knowing, with no clock on it.",
-                  confidence: 0.6,
-                  urgency: 0.3,
-                }),
+                call("observation_list"),
+                ...(collisionDocId
+                  ? [
+                      call("observation_note", {
+                        summary: `${NOTICING_MARKER} for ${ctx.subject}`,
+                        why: "A pattern worth knowing, with no clock on it.",
+                        citations: [collisionDocId],
+                      }),
+                    ]
+                  : []),
               ],
-              finalText: "Noticed one thing.",
+              finalText: collisionDocId ? "Noticed one thing." : "Nothing to notice yet.",
             }),
           },
-          // The collision judge deliberately writes nothing: a candidate the
-          // judge covered with a brief would be filtered out of later sweeps,
-          // which would hide the enqueue behaviour this suite asserts on.
           {
             flavour: "synthesis.collision.loops",
             plan: { calls: [], finalText: "No real relationship." },
-          },
-          {
-            flavour: "data.created",
-            docTitle: "Riverside Estate site visit and invoice",
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: "Book the Riverside Estate site visit",
-                  description: "The visit still needs a date.",
-                  confidence: 0.9,
-                  importance: 0.8,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_create", {
-                  title: "Pay the Riverside Estate deposit invoice",
-                  description: "The invoice on the same message is unpaid.",
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [ctx.subject],
-                }),
-              ],
-              finalText: "Two distinct obligations from one message.",
-            }),
           },
         ],
       },
@@ -851,7 +832,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     // captured. The first noticing run belongs to the gateway's frozen day.
     const { now } = await bench.clock.now();
     D0_DAY = bench.clock.localDay(now);
-    bootDayNoon = localMidnight(now) + 12 * HOUR;
+    bootDayNoon = localHour(now, 12);
     await waitFor(
       `boot-time noticing run for ${D0_DAY} to complete`,
       () => {
@@ -862,6 +843,9 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       },
       60_000,
     );
+    // The noticing run can enqueue observation/root maintenance after it completes.
+    // Settle that boot-time work before intentionally rewinding within its day.
+    await bench.drainUntilQuiet();
     await bench.clock.set(bootDayNoon);
     await bench.drainUntilQuiet();
 
@@ -884,7 +868,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     await bench?.destroy();
   }, 60_000);
 
-  test("the noticing pass fires on its cadence and its card lands", async () => {
+  test("the noticing pass fires on its cadence", async () => {
     const runs = runRows(bench, "synthesis").filter(
       (r) => r.dedupe_key === `synthesis:noticing:${D0_DAY}`,
     );
@@ -896,11 +880,8 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     expect(prompt).toContain(`Synthesis pass ("Noticing") for ${D0_DAY}.`);
     expect(prompt).toContain("ORIGINATE at most ONE piece of awareness");
     expect(prompt).toContain("All tracked loops (most important first):");
-
-    const briefs = await bench.obs.briefs();
-    const cards = briefs.items.filter((b) => b.title.startsWith(NOTICING_MARKER));
-    expect(cards).toHaveLength(1);
-    expect(cards[0]!.createdByRun).toBe(runs[0]!.id);
+    // This boot-time pass has nothing to cite yet; the next day's pass is
+    // where the observation is asserted.
   }, 240_000);
 
   test("the per-day cap holds a second noticing pass inside the same day", async () => {
@@ -924,7 +905,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
 
   test("crossing into a new day fires the collision sweep on the shared-document key", async () => {
     expect(loopIds).toHaveLength(2);
-    const nextNoon = localMidnight(bootDayNoon + DAY) + 12 * HOUR;
+    const nextNoon = localHour(bootDayNoon + DAY, 12);
     const nextDay = bench.clock.localDay(nextNoon);
 
     await bench.clock.set(nextNoon);
@@ -966,11 +947,19 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       `synthesis:noticing:${D0_DAY}`,
       `synthesis:noticing:${nextDay}`,
     ]);
+
+    // That pass cites the suite's message, so its observation lands.
+    const nextRun = noticing.find((r) => r.dedupe_key === `synthesis:noticing:${nextDay}`)!;
+    expect(nextRun.status).toBe("completed");
+    const noticed = await bench.obs.observationsMatching(`${NOTICING_MARKER} for ${nextDay}`);
+    expect(noticed).toHaveLength(1);
+    expect(noticed[0]!.createdByRun).toBe(nextRun.id);
+    expect(noticed[0]!.citations).toHaveLength(1);
   }, 240_000);
 
   test("a settled verdict is not re-bought while its loops stand untouched", async () => {
     const before = runRows(bench, "synthesis").map((r) => r.id);
-    const at = localMidnight(bootDayNoon + 2 * DAY) + 12 * HOUR;
+    const at = localHour(bootDayNoon + 2 * DAY, 12);
     await bench.clock.set(at);
     // A day the noticing producer is due for again: its marker reaching this
     // instant is the positive control, so the collision producer standing
@@ -982,11 +971,18 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       r.dedupe_key?.startsWith("synthesis:collision:"),
     );
     expect(collisions).toHaveLength(1);
-    // The next day's noticing pass is the only new synthesis work — and there
-    // IS one, so `every` below is a judgement on real rows.
+    // The next day buys one noticing pass. The live maintenance engine may
+    // also review owners; those runs must not be mistaken for another collision.
     const fresh = runRows(bench, "synthesis").filter((r) => !before.includes(r.id));
-    expect(fresh.length).toBeGreaterThan(0);
-    expect(fresh.every((r) => r.dedupe_key?.startsWith("synthesis:noticing:"))).toBe(true);
+    const freshNoticing = fresh.filter((r) => r.dedupe_key?.startsWith("synthesis:noticing:"));
+    expect(freshNoticing).toHaveLength(1);
+    expect(freshNoticing[0]!.dedupe_key).toBe(`synthesis:noticing:${bench.clock.localDay(at)}`);
+    for (const run of fresh.filter((r) => !freshNoticing.includes(r))) {
+      const payload = bench.runPayload(run.id) as { focus?: string; batchId?: string };
+      expect(payload.focus).toBe("knowledge-maintenance");
+      expect(payload.batchId).toEqual(expect.any(String));
+      expect(payload.batchId!.length).toBeGreaterThan(0);
+    }
   }, 240_000);
 });
 
@@ -1001,7 +997,7 @@ interface SweepDto {
   steeringPrompt: string;
   stats: {
     runs: number;
-    briefsCreated: number;
+    observationsNoted: number;
     loopsCreated: number;
     loopsTouched: number;
     annotationsCreated: number;
@@ -1012,7 +1008,12 @@ describe("rhythm: scheduled sweeps", () => {
   let bench: BrainBench;
   const SWEEP_ID = "bench-rhythm-audit";
   const ANCHOR = "10:00";
-  const ANCHOR_MS = 10 * HOUR;
+  /** The sweep's 10:00 boundary on the local day of `ms`, in wall-clock time across a DST shift. */
+  const anchorOn = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(10, 0, 0, 0);
+    return d.getTime();
+  };
   const STEERING_ONE =
     "Review the rehearsal bookings the user is carrying and surface only the ones whose date is still unsettled.";
   const STEERING_TWO =
@@ -1030,6 +1031,7 @@ describe("rhythm: scheduled sweeps", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         sweepsEnabled: true,
         bootstrap: { enabled: false },
         digest: { enabled: false },
@@ -1038,6 +1040,7 @@ describe("rhythm: scheduled sweeps", () => {
         collision: { enabled: false },
       },
       behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: refreshCurrentOwner }),
         behaviors: [
           {
             flavour: "sweep",
@@ -1065,14 +1068,12 @@ describe("rhythm: scheduled sweeps", () => {
                   confidence: 0.8,
                   claimBasis: "quoted",
                 }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: `${SWEEP_MARKER} — rehearsal date outstanding`,
-                  description: "The autumn showcase still has no rehearsal date.",
+                call("observation_list"),
+                call("observation_note", {
+                  summary: `${SWEEP_MARKER} — the autumn showcase still has no rehearsal date.`,
                   citations: [sweepDocId],
+                  claims: [{ docId: sweepDocId, quote: QUOTE }],
                   relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.85,
-                  urgency: 0.5,
                 }),
               ],
               finalText: "Audited the rehearsal bookings.",
@@ -1123,6 +1124,21 @@ describe("rhythm: scheduled sweeps", () => {
     await bench?.destroy();
   }, 60_000);
 
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = (await bench.obs.runs({ kind: "synthesis", limit: 10 })).items;
+    createLogger("collector:brain-bench").error(
+      `Scheduled sweep maintenance failure: ${JSON.stringify({
+        nodes: bench.sql.prepare("SELECT * FROM knowledge_nodes WHERE kind != 'root'").all(),
+        claims: bench.sql.prepare("SELECT * FROM knowledge_claims").all(),
+        annotations: bench.sql.prepare("SELECT * FROM doc_annotations").all(),
+        runs: await Promise.all(
+          runs.map(async (run) => ({ run, tools: await bench.obs.executedTools(run.id) })),
+        ),
+      })}`,
+    );
+  });
+
   test("a sweep that has never run seeds its phase instead of firing", async () => {
     await bench.markers.waitFor(
       `sweep_last_boundary_at:${SWEEP_ID}`,
@@ -1134,11 +1150,11 @@ describe("rhythm: scheduled sweeps", () => {
     // serialized batch; the first occurrence lands on the next anchor.
     expect(runRows(bench, "sweep")).toHaveLength(0);
     const seeded = Number(bench.markers.get(`sweep_last_boundary_at:${SWEEP_ID}`));
-    expect(seeded).toBe(bench.clock.localMidnight(D0_NOON) + ANCHOR_MS);
+    expect(seeded).toBe(anchorOn(D0_NOON));
   }, 120_000);
 
   test("crossing the anchor fires the sweep once for the day, prompt-steered", async () => {
-    const boundary = localMidnight(D0_NOON + DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + DAY);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
@@ -1174,13 +1190,13 @@ describe("rhythm: scheduled sweeps", () => {
         {
           runs: number;
           failed_runs: number;
-          briefs_created: number;
+          observations_noted: number;
           loops_created: number;
           loops_touched: number;
           annotations_created: number;
         }
       >(
-        "SELECT runs, failed_runs, briefs_created, loops_created, loops_touched, annotations_created FROM cognition_sweep_tally WHERE sweep_id = ?",
+        "SELECT runs, failed_runs, observations_noted, loops_created, loops_touched, annotations_created FROM cognition_sweep_tally WHERE sweep_id = ?",
       )
       .get(SWEEP_ID)!;
 
@@ -1189,14 +1205,16 @@ describe("rhythm: scheduled sweeps", () => {
 
     // Counted back from `created_by_run`, so the tally and the artifact stores
     // cannot disagree — assert against the stores, not against the plan.
-    const briefs = (await bench.obs.briefs()).items.filter((b) => b.createdByRun === run.id);
+    const observations = (await bench.obs.observations()).items.filter(
+      (o) => o.createdByRun === run.id,
+    );
     const loops = (await bench.obs.loops()).items.filter((l) => l.createdByRun === run.id);
     const annotations = (await bench.obs.docAnnotations(sweepDocId)).annotations;
-    expect(briefs).toHaveLength(1);
+    expect(observations).toHaveLength(1);
     expect(loops).toHaveLength(1);
     expect(annotations).toHaveLength(1);
 
-    expect(tally.briefs_created).toBe(briefs.length);
+    expect(tally.observations_noted).toBe(observations.length);
     expect(tally.loops_created).toBe(loops.length);
     expect(tally.loops_touched).toBe(1);
     expect(tally.annotations_created).toBe(annotations.length);
@@ -1205,7 +1223,7 @@ describe("rhythm: scheduled sweeps", () => {
     const dto = (await sweepList()).find((s) => s.id === SWEEP_ID)!;
     expect(dto.stats).toMatchObject({
       runs: 1,
-      briefsCreated: tally.briefs_created,
+      observationsNoted: tally.observations_noted,
       loopsCreated: tally.loops_created,
       loopsTouched: tally.loops_touched,
       annotationsCreated: tally.annotations_created,
@@ -1239,7 +1257,7 @@ describe("rhythm: scheduled sweeps", () => {
 
     // The edit lands on the NEXT occurrence, which is the whole point of
     // snapshotting rather than freezing.
-    const boundary = localMidnight(D0_NOON + 2 * DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + 2 * DAY);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
@@ -1260,7 +1278,7 @@ describe("rhythm: scheduled sweeps", () => {
     // Three anchors go by unobserved. The marker holds the BOUNDARY the sweep
     // last fired for, and only one boundary sits at or before now, so the
     // catch-up is a single occurrence — not a serialized burst of three.
-    const boundary = localMidnight(D0_NOON + 5 * DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + 5 * DAY);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
       "the catch-up occurrence to be enqueued",
@@ -1275,7 +1293,7 @@ describe("rhythm: scheduled sweeps", () => {
       `sweep:${SWEEP_ID}:${bench.clock.localDay(boundary)}`,
     ]);
     for (const offset of [3, 4]) {
-      const missed = bench.clock.localDay(localMidnight(D0_NOON + offset * DAY) + ANCHOR_MS);
+      const missed = bench.clock.localDay(anchorOn(D0_NOON + offset * DAY));
       expect(runRows(bench, "sweep").filter((r) => r.dedupe_key?.endsWith(`:${missed}`))).toEqual(
         [],
       );
@@ -1298,10 +1316,9 @@ describe("rhythm: scheduled sweeps", () => {
  * works, so a failure on the year-less twin isolates the year rule rather
  * than the pipeline.
  */
-describe("rhythm: the extracted-dates gate and year-less documents", () => {
+describe("rhythm: source discovery and year-less extracted dates", () => {
   let bench: BrainBench;
   const SRC = "synthetic:planning@example.com";
-  const GATE_PAST_HOLD_AT = localMidnight(D0_NOON + DAY) + 12 * HOUR;
   let controlDocId = "";
   let yearlessDocId = "";
 
@@ -1334,6 +1351,7 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         bootstrap: {
           enabled: true,
           direction: "recent-first",
@@ -1349,17 +1367,9 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
         collision: { enabled: false },
       },
       behaviors: {
-        behaviors: [
-          { flavour: "bootstrap", plan: { calls: [], finalText: "Read; nothing to do." } },
-        ],
+        dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
       },
     });
-    await bench.obs.startBootstrap();
-    // Wait for the consent-triggered pass at the bench's boot instant before
-    // moving virtual time. Merely issuing Start first is not enough: its
-    // periodic kick is asynchronous, so a fast clock move can still put that
-    // pass beyond the ten-minute boot grace before it stamps the hold.
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v !== undefined);
     await bench.clock.set(D0_NOON);
 
     // Outside the waker's recency window: these are backlog documents, and
@@ -1423,27 +1433,24 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
     ).toBeGreaterThan(0);
   }, 60_000);
 
-  test("the gate admits the year-ful control to the backlog lane", async () => {
-    await bench.clock.set(GATE_PAST_HOLD_AT);
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v === "0", 60_000);
-    const controlId = await bench.docId(CONTROL.externalId);
-    await waitFor(
-      "the control document to become a bootstrap candidate",
-      () =>
-        runRows(bench, "bootstrap").some((r) => r.dedupe_key === `bootstrap:doc:${controlId}`)
-          ? true
-          : null,
-      90_000,
-    );
+  test("the year-ful control receives actual source interpretation", async () => {
     await bench.drainUntilQuiet();
+    expect((await bench.obs.interpretationForSource(controlDocId)).status).toBe("completed");
   }, 180_000);
 
-  test("the gate admits the year-less twin as well", () => {
-    // The year-less date resolved against the anchor, so the still-future
-    // condition holds and the gate opens exactly as for the control.
-    expect(
-      runRows(bench, "bootstrap").some((r) => r.dedupe_key === `bootstrap:doc:${yearlessDocId}`),
-      "the year-less document never became a bootstrap candidate",
-    ).toBe(true);
+  test("the year-less twin receives the same revision coverage", async () => {
+    expect((await bench.obs.interpretationForSource(yearlessDocId)).status).toBe("completed");
+    const rows = bench.sql
+      .prepare<
+        [string],
+        { phase: string; status: string }
+      >("SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?")
+      .all(yearlessDocId);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "interpretation", status: "considered" }),
+        expect.objectContaining({ phase: "organization", status: "considered" }),
+      ]),
+    );
   }, 60_000);
 });

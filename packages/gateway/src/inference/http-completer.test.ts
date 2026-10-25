@@ -4,6 +4,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { HttpCompleter } from "./http-completer.js";
 
+// The inference URL policy resolves every hostname before a request. Answer
+// from a fixed table so the remote-endpoint cases never wait on real DNS.
+vi.mock("node:dns/promises", () => ({
+  default: {
+    lookup: async (hostname: string) =>
+      hostname === "localhost"
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "93.184.215.14", family: 4 }],
+  },
+}));
+
 const FAKE_URL = "http://localhost:55555";
 const FAKE_MODEL = "test-model";
 
@@ -495,4 +506,77 @@ describe("HttpCompleter metadata", () => {
     });
     await expect(completer.dispose()).resolves.toBeUndefined();
   });
+});
+
+describe("HttpCompleter caller cancellation", () => {
+  it("does not fetch for an already canceled caller", async () => {
+    mockFetch(() => completionResponse("unused"));
+    const signal = AbortSignal.abort(new Error("caller stopped"));
+    const completer = new HttpCompleter({ baseUrl: FAKE_URL, model: FAKE_MODEL });
+    await expect(completer.complete("invented", { signal })).rejects.toThrow("caller stopped");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["chat-completions", "responses"] as const)(
+    "cancels an active %s request",
+    async (protocol) => {
+      const controller = new AbortController();
+      let received: AbortSignal | null | undefined;
+      mockFetch(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            received = init.signal;
+            received?.addEventListener("abort", () => reject(received?.reason), { once: true });
+          }),
+      );
+      const completer = new HttpCompleter({ baseUrl: FAKE_URL, model: FAKE_MODEL, protocol });
+      const pending = expect(
+        completer.complete("invented", { signal: controller.signal }),
+      ).rejects.toThrow("caller stopped");
+      await vi.waitFor(() => expect(received).toBeDefined());
+      controller.abort(new Error("caller stopped"));
+      await pending;
+      expect(received?.aborted).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([400, 200, 429])(
+    "does not begin a retry after cancellation at HTTP %s",
+    async (status) => {
+      const controller = new AbortController();
+      mockFetch(() => {
+        controller.abort(new Error("caller stopped"));
+        return new Response(
+          JSON.stringify(
+            status === 200
+              ? { choices: [{ message: { content: "" }, finish_reason: "length" }] }
+              : { error: { message: "max_tokens is unsupported; use max_completion_tokens" } },
+          ),
+          { status, headers: { "Content-Type": "application/json", "Retry-After": "1" } },
+        );
+      });
+      const completer = new HttpCompleter({ baseUrl: FAKE_URL, model: FAKE_MODEL });
+      await expect(completer.complete("invented", { signal: controller.signal })).rejects.toThrow(
+        "caller stopped",
+      );
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+it("cancels a rate-limit backoff without issuing the next request", async () => {
+  vi.useFakeTimers();
+  mockFetch(() => new Response("{}", { status: 429, headers: { "Retry-After": "1" } }));
+  const completer = new HttpCompleter({ baseUrl: FAKE_URL, model: FAKE_MODEL });
+  const controller = new AbortController();
+  const checking = expect(
+    completer.complete("invented", { signal: controller.signal }),
+  ).rejects.toThrow("caller stopped");
+  await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+  await vi.advanceTimersByTimeAsync(10);
+  controller.abort(new Error("caller stopped"));
+  await checking;
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 });

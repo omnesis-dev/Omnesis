@@ -138,3 +138,21 @@ describe("getSyncState still reports no cursor as null", () => {
     await expect(client.getSyncState(SOURCE)).resolves.toMatchObject({ wipeEpoch: 3 });
   });
 });
+
+describe("initial source inventory survives cursor boundaries", () => {
+  const initialInventory = {
+    id: "12345678-1234-4234-8234-123456789012",
+    startedAt: "2027-01-12T12:00:00.000Z",
+  };
+  test("reads inventory through sync state after a partial cursor commit", async () => {
+    mockFetch.mockResolvedValue(json({ cursor: { page: 1 }, initialInventory }));
+    const client = new HttpGatewayClient("http://gw.example", "key");
+    await expect(client.getSyncState(SOURCE)).resolves.toMatchObject({ initialInventory });
+  });
+  test("recovers a first yielded page without inventing a provider cursor", async () => {
+    mockFetch.mockImplementation(async () => json({ cursor: null, initialInventory }));
+    const client = new HttpGatewayClient("http://gw.example", "key");
+    await expect(client.getSyncState(SOURCE)).resolves.toBeNull();
+    await expect(client.getInitialSourceInventory(SOURCE)).resolves.toEqual(initialInventory);
+  });
+});

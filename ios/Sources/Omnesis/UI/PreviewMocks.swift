@@ -1118,6 +1118,16 @@ enum PreviewMocks {
         experimental: true
     )
 
+    /// Experimental mode on a gateway that also serves Tasks — every
+    /// navigation row the menu can carry.
+    static let statusSnapshotExperimentalWithTasks = StatusSnapshot(
+        documents: statusSnapshotExperimental.documents,
+        dbSizeBytes: statusSnapshotExperimental.dbSizeBytes,
+        latestActivityBySource: nil,
+        experimental: true,
+        tasks: TasksStatus(available: true)
+    )
+
     // MARK: - Gateway dictation
 
     /// 25 MB, the gateway's audio body limit.
@@ -1162,10 +1172,9 @@ enum PreviewMocks {
         dictation: dictationStatusBlocked
     )
 
-    /// A `/status` snapshot with the Omnesis Briefs feature active —
-    /// exercises the Briefs menu entry (experimental mode on AND a
-    /// background-agent model assigned).
-    static let statusSnapshotBriefsActive = StatusSnapshot(
+    /// A `/status` snapshot from a gateway that serves Tasks — exercises the
+    /// drawer's Tasks entry. Tasks is not experimental.
+    static let statusSnapshotTasks = StatusSnapshot(
         documents: StatusSnapshot.Documents(
             total: 165_135,
             bySource: statusSnapshot.documents.bySource,
@@ -1173,217 +1182,264 @@ enum PreviewMocks {
         ),
         dbSizeBytes: 4_000_000_000,
         latestActivityBySource: nil,
-        experimental: true,
-        briefs: BriefsStatus(enabled: true, modelAssigned: true, active: true)
+        experimental: false,
+        tasks: TasksStatus(available: true, noteAgent: true)
     )
 
-    /// A `/status` snapshot where Omnesis Briefs is switched on but its
-    /// background-agent model cannot run — exercises the drawer's
-    /// needs-attention Briefs entry and the feed's model warning.
-    static let statusSnapshotBriefsNeedsAttention = StatusSnapshot(
-        documents: StatusSnapshot.Documents(
-            total: 165_135,
-            bySource: statusSnapshot.documents.bySource,
-            unitCountBySource: nil
+    // MARK: - Tasks
+
+    /// The fixed "now" every Tasks preview reads its day from, so relative
+    /// labels ("Tomorrow", "Thu 15 Oct") render the same on every run. A
+    /// Wednesday at 09:30 local time.
+    static let tasksNow: Date = {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 10
+        components.day = 14
+        components.hour = 9
+        components.minute = 30
+        return Calendar.current.date(from: components) ?? Date()
+    }()
+
+    static let taskCarried = TaskRecord(
+        id: "loop_carried_1",
+        title: "Send the signed lease renewal to Riverside Estate",
+        state: .open,
+        origin: .user,
+        scheduledFor: "2026-10-12",
+        carried: true,
+        actors: [TaskActor(id: "p_self", name: "You", isSelf: true)],
+        createdAt: "2026-10-10T08:00:00Z"
+    )
+
+    static let taskProposal = TaskRecord(
+        id: "loop_proposal_1",
+        title: "Pay the Studio Northstar invoice",
+        state: .open,
+        origin: .note,
+        scheduledFor: "2026-10-14",
+        deadline: TaskDeadline(type: .by, date: "2026-10-16"),
+        dueDay: "2026-10-16",
+        proposedChange: TaskProposedChange(
+            kind: .complete,
+            reason: "A payment confirmation for invoice 2041 arrived this morning.",
+            evidence: ["doc_invoice_receipt"],
+            proposedAt: "2026-10-14T07:10:00Z"
         ),
-        dbSizeBytes: 4_000_000_000,
-        latestActivityBySource: nil,
-        experimental: true,
-        briefs: BriefsStatus(enabled: true, modelAssigned: false, active: false)
+        documents: [
+            TaskDocument(id: "doc_invoice_2041", title: "Invoice 2041 — Studio Northstar", sourceId: "gmail:me"),
+            TaskDocument(id: "doc_invoice_receipt", title: "Payment received — invoice 2041", sourceId: "gmail:me"),
+        ],
+        createdAt: "2026-10-09T18:20:00Z"
     )
 
-    // MARK: - Briefs feed
-
-    private static func briefsIso(secondsFromNow: TimeInterval) -> String {
-        ISO8601DateFormatter().string(from: Date().addingTimeInterval(secondsFromNow))
-    }
-
-    /// Long-form brief body for the talk-back thread's context card —
-    /// exercises markdown lists + multiple paragraphs behind the
-    /// show-details fold.
-    static let briefLongBody = """
-    Entry for the **marathon** closes Friday 17 Oct at 18:00. \
-    Early-bird pricing still applies until then.
-
-    What's already lined up:
-
-    - Training plan drafted through week 8
-    - Jamie Lopez confirmed as your long-run partner on Sundays
-    - New shoes ordered, arriving Tuesday
-
-    Still open: the entry itself and the hotel for the night before. The \
-    race village opens at 06:30; bib pickup closes 30 minutes before the \
-    start.
-    """
-
-    /// A loop-kind brief: an open commitment awaiting the user, with
-    /// long-form context and citations. All content invented.
-    static let briefLoop = BriefRecord(
-        id: "brief-loop-1",
-        kind: .loop,
-        state: .unread,
-        title: "Reply to Maya about the cabin weekend",
-        description:
-        "Maya Reeves proposed dates three days ago and asked which weekend works for you — no reply yet.",
-        body: """
-        Maya suggested July 18–20 or July 25–27 for the cabin trip. Jamie Lopez \
-        said either works on the group chat, and David Lin can only make the \
-        second weekend. Your calendar is free both weekends so far.
-
-        A two-minute reply closes this out.
-        """,
-        confidence: 0.9,
-        urgency: 0.6,
-        createdAt: briefsIso(secondsFromNow: -7200),
-        eventAt: nil,
-        relevantUntil: nil,
-        citations: [
-            BriefCitation(
-                docId: "doc-brief-1",
-                title: "Cabin weekend — which dates?",
-                providerId: "google",
-                sourceId: sourceGmail.id
-            ),
-            BriefCitation(
-                docId: "doc-brief-2",
-                title: "Maya Reeves",
-                providerId: "whatsapp",
-                sourceId: sourceWhatsApp.id
-            ),
-        ]
+    static let taskWithPerson = TaskRecord(
+        id: "loop_person_1",
+        title: "Go over the marathon entry form with Maya Reeves",
+        state: .open,
+        origin: .user,
+        scheduledFor: "2026-10-14",
+        actors: [
+            TaskActor(id: "p_self", name: "You", isSelf: true),
+            TaskActor(id: "p_maya", name: "Maya Reeves"),
+        ],
+        documents: [
+            TaskDocument(id: "doc_entry_form", title: "Marathon entry form.pdf", sourceId: "google-drive:me"),
+            TaskDocument(id: "doc_entry_thread", title: "Re: Entry form questions", sourceId: "gmail:me"),
+            TaskDocument(id: "doc_training_note", title: "Training plan — weeks 1–8", sourceId: "apple-notes:local"),
+            TaskDocument(id: "doc_route_map", title: "Race route map", sourceId: "google-drive:me"),
+            TaskDocument(id: "doc_chat", title: "Maya Reeves — 2026-10-12", sourceId: "whatsapp-messages:+44…"),
+        ],
+        createdAt: "2026-10-13T20:00:00Z"
     )
 
-    /// An info-kind brief about an event starting soon (the next-hour
-    /// ranking tier) — no related loop, body context + one citation.
-    static let briefInfo = BriefRecord(
-        id: "brief-info-1",
-        kind: .info,
-        state: .unread,
-        title: "Design review with David Lin",
-        description:
-        "Video call at 3:00 PM. Last time you agreed to bring the updated onboarding flow.",
-        body: """
-        The invite came from David Lin this morning. In your last review you \
-        agreed to walk through the revised onboarding flow and the empty-state \
-        copy; the follow-up notes list both as open items.
-        """,
-        confidence: 0.8,
-        urgency: 0.9,
-        createdAt: briefsIso(secondsFromNow: -1800),
-        eventAt: briefsIso(secondsFromNow: 2700),
-        relevantUntil: briefsIso(secondsFromNow: 6300),
-        citations: [
-            BriefCitation(
-                docId: "doc-brief-3",
-                title: "Design review — agenda",
-                providerId: "google",
-                sourceId: sourceGmail.id
-            ),
-        ]
+    static let taskDueToday = TaskRecord(
+        id: "loop_due_1",
+        title: "Renew the car insurance",
+        description: "Compare the two renewal quotes before choosing.",
+        state: .open,
+        origin: .user,
+        deadline: TaskDeadline(type: .onDay, date: "2026-10-14"),
+        dueDay: "2026-10-14",
+        createdAt: "2026-09-30T10:00:00Z"
     )
 
-    /// An info-kind brief drawn from the health-trends sweep: several weeks
-    /// of wearable data read against the person's own baseline, not a
-    /// threshold. Doubles as the still used on the website's Brain page (see
-    /// `scripts/shot-website-brief.sh`), so its copy is written to be read
-    /// cold by someone who has never seen the app. All content invented.
-    static let briefHealthRecovery = BriefRecord(
-        id: "brief-health-1",
-        kind: .info,
-        state: .unread,
-        title: "Your body is asking for a lighter day",
-        description:
-        "Resting heart rate is up and HRV is down against your own baseline, after four hard sessions and a run of short nights.",
-        body: """
-        Over the last six days your resting heart rate has averaged **54 bpm** \
-        against your usual 49, and overnight HRV has fallen to **38 ms** from a \
-        typical 61. Both moved together, which points to load rather than one \
-        bad night.
-
-        - Four sessions above your normal intensity since Saturday
-        - Sleep averaging **5h 48m**, an hour under your recent norm, with deep \
-        sleep down to 42 minutes
-
-        None of this is a medical reading, but it is the pattern that usually \
-        precedes a bad week. An easy day would let it come back up.
-        """,
-        confidence: 0.86,
-        urgency: 0.55,
-        createdAt: briefsIso(secondsFromNow: -5400),
-        eventAt: nil,
-        relevantUntil: briefsIso(secondsFromNow: 86400),
-        citations: [
-            BriefCitation(
-                docId: "doc-brief-health-1",
-                title: "Resting heart rate — last 30 days",
-                providerId: "apple",
-                sourceId: sourceAppleHealth.id
-            ),
-            BriefCitation(
-                docId: "doc-brief-health-2",
-                title: "Sleep stages — last 7 nights",
-                providerId: "apple",
-                sourceId: sourceAppleHealth.id
-            ),
-        ]
+    /// A task with details but nothing for the context line: on Today, its
+    /// plan is the page itself.
+    static let taskWithDescription = TaskRecord(
+        id: "loop_described_1",
+        title: "Draft the Q4 budget review agenda",
+        description: "Start from last quarter's agenda, add the hiring plan and the office move, "
+            + "and leave ten minutes for questions at the end. Send it round before lunch.",
+        state: .open,
+        origin: .user,
+        scheduledFor: "2026-10-14",
+        createdAt: "2026-10-13T17:00:00Z"
     )
 
-    /// A read, body-less loop brief — the glance is everything (no
-    /// scroll hint, no citations), and it sorts last server-side.
-    static let briefReminder = BriefRecord(
-        id: "brief-loop-2",
-        kind: .loop,
-        state: .read,
-        title: "Invoice #204 from Stellar Sound is still unpaid",
-        description:
-        "Due last Friday. No matching bank transaction has shown up yet.",
-        body: nil,
-        confidence: 0.7,
-        urgency: 0.5,
-        createdAt: briefsIso(secondsFromNow: -86400 * 2),
-        eventAt: nil,
-        relevantUntil: nil,
-        citations: []
+    static let taskDoneToday = TaskRecord(
+        id: "loop_done_1",
+        title: "Book the Q4 budget review room",
+        state: .done,
+        origin: .user,
+        scheduledFor: "2026-10-14",
+        completionNote: "Room 4B, 2–3pm",
+        createdAt: "2026-10-13T09:00:00Z",
+        resolvedAt: "2026-10-14T08:45:00Z"
     )
 
-    /// A loop brief whose Loop-Agent-authored copy carries markdown —
-    /// **bold** inline emphasis in the description, and a bulleted list
-    /// plus a link in the long-form body. Proves brief cards render the
-    /// agent's markdown as emphasis / lists rather than literal syntax.
-    /// All content invented.
-    static let briefMarkdown = BriefRecord(
-        id: "brief-loop-md",
-        kind: .loop,
-        state: .unread,
-        title: "Confirm the venue booking for the launch party",
-        description:
-        "Studio Northstar needs your **OK by Friday** — the room hold expires over the weekend.",
-        body: """
-        A few things still need a decision before you reply:
-
-        - **Date** — they've penciled in the second Saturday; the first is already booked.
-        - **Headcount** — the quote assumes *60 guests*; confirm or adjust.
-        - **Deposit** — a 20% deposit holds the date. See the [quote](https://example.com/quote).
-
-        Once you confirm, the rest is automatic.
-        """,
-        confidence: 0.85,
-        urgency: 0.7,
-        createdAt: briefsIso(secondsFromNow: -5400),
-        eventAt: nil,
-        relevantUntil: nil,
-        citations: [
-            BriefCitation(
-                docId: "doc-brief-md",
-                title: "Studio Northstar — venue quote",
-                providerId: "google",
-                sourceId: sourceGmail.id
-            ),
-        ]
+    static let taskStruckToday = TaskRecord(
+        id: "loop_struck_1",
+        title: "Order the replacement bike light",
+        state: .dismissed,
+        origin: .user,
+        scheduledFor: "2026-10-14",
+        createdAt: "2026-10-11T09:00:00Z",
+        resolvedAt: "2026-10-14T08:50:00Z"
     )
 
-    /// The ranked feed as `GET /briefs/feed` returns it, first on top.
-    static let briefs: [BriefRecord] = [briefLoop, briefInfo, briefReminder]
+    /// Today's page: a carried task, today's tasks (one with a proposal), and
+    /// what was resolved today.
+    static let tasksToday: [TaskRecord] = [
+        taskCarried, taskProposal, taskWithPerson, taskWithDescription, taskDueToday, taskDoneToday, taskStruckToday,
+    ]
+
+    /// Today's five open tasks, the other views' totals, and two
+    /// suggestions waiting for review.
+    static let tasksTodayCounts = TaskCounts(
+        today: 5,
+        month: 10,
+        future: 3,
+        anytime: 2,
+        waiting: 1,
+        suggested: 2,
+        proposals: 1,
+        carried: 1
+    )
+
+    /// Counts with a single suggestion waiting, for the singular review line.
+    static let tasksOneSuggestionCounts = TaskCounts(today: 5, month: 10, suggested: 1)
+
+    /// The rest of the month: enough rows that the last one sits at the foot
+    /// of a phone screen, where its actions open below the fold.
+    static let tasksMonth: [TaskRecord] = [
+        TaskRecord(id: "loop_month_1", title: "Collect the framed prints from Studio Northstar", scheduledFor: "2026-10-16"),
+        TaskRecord(
+            id: "loop_month_2",
+            title: "Submit the Q4 budget review slides",
+            scheduledFor: "2026-10-19",
+            deadline: TaskDeadline(type: .by, date: "2026-10-21"),
+            dueDay: "2026-10-21"
+        ),
+        TaskRecord(id: "loop_month_3", title: "Book the heart-rate monitor fitting", scheduledFor: "2026-10-22"),
+        TaskRecord(
+            id: "loop_month_4",
+            title: "Plan the long run route with Maya Reeves",
+            scheduledFor: "2026-10-24",
+            actors: [
+                TaskActor(id: "p_self", name: "You", isSelf: true),
+                TaskActor(id: "p_maya", name: "Maya Reeves"),
+            ]
+        ),
+        TaskRecord(id: "loop_month_5", title: "Return the hired cello to Stellar Sound", scheduledFor: "2026-10-27"),
+        TaskRecord(id: "loop_month_7", title: "Order a new pair of running shoes", scheduledFor: "2026-10-28"),
+        TaskRecord(id: "loop_month_8", title: "Send the marathon entry fee", scheduledFor: "2026-10-29"),
+        TaskRecord(id: "loop_month_9", title: "Check the boiler service quote from David Lin", scheduledFor: "2026-10-30"),
+        TaskRecord(id: "loop_month_10", title: "Water the Riverside Estate allotment", scheduledFor: "2026-10-31"),
+        TaskRecord(id: "loop_month_6", title: "Renew the 42 Example Street parking permit", scheduledFor: "2026-10"),
+    ]
+
+    static let tasksSuggested: [TaskRecord] = [
+        TaskRecord(
+            id: "loop_suggest_1",
+            title: "Reply to Jamie Lopez about the venue deposit",
+            description: "Jamie asked twice whether the deposit can move to next month.",
+            state: .open,
+            origin: .brain,
+            deadline: TaskDeadline(type: .approximate, date: "2026-10-17"),
+            dueDay: "2026-10-17",
+            actors: [TaskActor(id: "p_jamie", name: "Jamie Lopez")],
+            createdAt: "2026-10-14T06:00:00Z"
+        ),
+        TaskRecord(
+            id: "loop_suggest_2",
+            title: "Renew the passport before the Lisbon trip",
+            state: .open,
+            origin: .brain,
+            scheduledFor: "2026-11",
+            createdAt: "2026-10-13T06:00:00Z"
+        ),
+    ]
+
+    /// Enough suggestions to fill a phone screen, so a long press low on the
+    /// list has room for the suggestion fan above it.
+    static let tasksSuggestedLong: [TaskRecord] = tasksSuggested + [
+        TaskRecord(id: "loop_suggest_3", title: "Confirm the Studio Northstar framing order", origin: .brain),
+        TaskRecord(
+            id: "loop_suggest_4",
+            title: "Send the boiler service dates",
+            origin: .brain,
+            actors: [TaskActor(id: "p_david", name: "David Lin")]
+        ),
+        TaskRecord(id: "loop_suggest_5", title: "Book the heart-rate monitor follow-up", origin: .brain),
+        TaskRecord(id: "loop_suggest_6", title: "Pay the Riverside Estate allotment fee", origin: .brain, scheduledFor: "2026-10"),
+        TaskRecord(id: "loop_suggest_7", title: "Return the borrowed camping tent", origin: .brain),
+    ]
+
+    static let taskHistory: [TaskEvent] = [
+        TaskEvent(
+            seq: 41,
+            at: "2026-10-14T08:00:00Z",
+            note: "Moved to today",
+            kind: "migrated",
+            surface: "tasks",
+            from: "2026-10-12",
+            to: "2026-10-14"
+        ),
+        TaskEvent(
+            seq: 37,
+            at: "2026-10-12T19:40:00Z",
+            note: "Asked to keep it for Monday",
+            kind: "edited",
+            surface: "conversation",
+            conversationId: "s_morning_brief"
+        ),
+        TaskEvent(
+            seq: 30,
+            at: "2026-10-10T08:00:00Z",
+            note: "Added from a note",
+            kind: "created",
+            surface: "note"
+        ),
+    ]
+
+    /// A history whose newest change Omnesis applied on its own, still undoable.
+    static let taskHistoryAutoApplied: [TaskEvent] = [
+        TaskEvent(
+            seq: 52,
+            at: "2026-10-14T07:10:00Z",
+            note: "The receipt says the invoice was paid in full.",
+            kind: "auto_applied",
+            surface: "brain",
+            change: "complete",
+            evidence: ["doc_receipt_1"]
+        ),
+    ] + taskHistory
+
+    /// The standing Morning brief conversation, as the conversation list
+    /// returns it: pinned, with no brief references on the summary.
+    static let morningBriefConversation = ConversationSummary(
+        sessionId: "s_morning_brief",
+        title: "Morning brief",
+        model: "claude-sonnet-4-6",
+        backend: "anthropic",
+        createdAt: "2026-09-01T07:00:00Z",
+        updatedAt: "2026-10-14T07:00:00Z",
+        messageCount: 84,
+        pinned: true,
+        unread: true,
+        origin: ConversationOrigin(kind: "daily_brief", runId: "run_morning_1")
+    )
 
     // MARK: - /index/stats
 
@@ -2507,6 +2563,64 @@ enum PreviewMocks {
     static let watchFiringOriginWatchId = "wat_marathon_deadlines"
     static let longWatchFiringOriginWatchId = "wat_northstar_rebuild"
 
+    /// The task behind a chat the operator started from Tasks.
+    static let taskConversationTaskId = "loop_northstar_lease"
+    static let taskConversationSnapshot = TaskConversationOriginSnapshot(
+        title: "Renew the studio lease",
+        state: "open",
+        due: "2026-10-23",
+        sourceCount: 3
+    )
+    /// A long title, past its due day.
+    static let taskConversationSnapshotLong = TaskConversationOriginSnapshot(
+        title: "Agree the studio lease renewal terms with the landlord's agent before the notice period on the current lease ends",
+        state: "open",
+        due: "2026-10-09",
+        sourceCount: 12
+    )
+    /// Done since, with no due day and no documents.
+    static let taskConversationSnapshotDone = TaskConversationOriginSnapshot(
+        title: "Book the Q4 budget review room",
+        state: "done",
+        sourceCount: 0
+    )
+
+    /// The origin of a chat started from that task's fan.
+    static let taskConversationOrigin = ConversationOrigin(
+        kind: "task",
+        taskId: taskConversationTaskId,
+        runId: taskConversationTaskId,
+        task: taskConversationSnapshot,
+        seedMessageCount: 0
+    )
+
+    /// A chat about a task, just started: the card and nothing said yet.
+    static let taskConversationSeed: AppStore.AgentPreviewSeed = {
+        var seed = AppStore.AgentPreviewSeed()
+        seed.sessionId = "conv_task_northstar"
+        seed.title = taskConversationSnapshot.title
+        seed.origin = taskConversationOrigin
+        seed.connected = true
+        return seed
+    }()
+
+    /// The same chat once the operator has asked something.
+    static let taskConversationAnsweredSeed: AppStore.AgentPreviewSeed = {
+        var seed = taskConversationSeed
+        seed.turns = [
+            .user(id: "u-task-1", text: "What's left before I can sign the renewal?"),
+            .assistant(AgentAssistantTurn(
+                id: "a-task-1",
+                parts: [.text(
+                    "Two things: the landlord's revised rent schedule hasn't arrived yet, "
+                        + "and the insurance certificate on file expires in November."
+                )],
+                historyCompleted: true
+            )),
+        ]
+        return seed
+    }()
+
     /// The landing: no session yet, because one is minted lazily on the first send. The
     /// new-conversation button is absent — this already is one.
     static let agentEmptyConnected = AppStore.AgentPreviewSeed(
@@ -3594,6 +3708,49 @@ enum PreviewMocks {
         argsKnown: true,
         result: agentToolSearchResults,
         durationMs: 6854
+    )
+
+    /// A wiki read while it runs: the gateway summarized the call with the
+    /// page's title, so the card names the page before it lands.
+    static let agentToolCallWikiReadRunning = AgentToolCall(
+        toolCallId: "tu_wiki_running",
+        tool: "knowledge_fetch",
+        args: JSONAny(value: ["id": "candidate_pottery", "editing": false] as [String: Any]),
+        argsSummary: "Pottery workshop",
+        argsKnown: true,
+        result: nil,
+        durationMs: nil
+    )
+
+    /// A settled wiki read: the `document.batch` shape `fetch_many` returns.
+    static let agentToolCallWikiReadComplete = AgentToolCall(
+        toolCallId: "tu_wiki_complete",
+        tool: "knowledge_fetch",
+        args: JSONAny(value: ["id": "candidate_pottery", "editing": false] as [String: Any]),
+        argsSummary: "Pottery workshop",
+        argsKnown: true,
+        result: .documentBatch(items: [
+            .document(
+                ref: AgentDocRef(
+                    documentId: "wiki-pottery",
+                    sourceType: "brain-knowledge",
+                    sourceId: "brain-knowledge",
+                    documentType: "knowledge",
+                    title: "Pottery workshop",
+                    snippet: "The pottery workshop runs on Friday evenings.",
+                    ts: 1_725_500_000_000,
+                    people: []
+                ),
+                content: """
+                ## Overview
+                The pottery workshop runs on Friday evenings at the community studio.
+                Bring clay and an apron.
+                The kiln is booked for the last week of the month.
+                """,
+                neighbors: []
+            ),
+        ]),
+        durationMs: 22
     )
 
     static let agentToolCallDocumentComplete = AgentToolCall(
@@ -4932,6 +5089,95 @@ enum PreviewMocks {
         )
     }()
 
+    /// First and last paragraphs of the reply `agentReadingAnchorSession`
+    /// ends on. The reading-anchor UI test asserts the first is on screen when
+    /// the conversation opens and the last is not.
+    static let agentReadingAnchorReplyStart = "READING-ANCHOR-REPLY-START"
+    static let agentReadingAnchorReplyEnd = "READING-ANCHOR-REPLY-END"
+
+    /// A stored conversation, as the gateway returns it on resume, that ends
+    /// on an assistant reply several screens tall: the shape the reading
+    /// anchor opens at the reply's top. Fictional content, no corpus.
+    static let agentReadingAnchorSession: CreateSessionResponse = {
+        let section = "This section of the training plan ramps mileage by ten percent "
+            + "each week, holds a cut-back week every fourth week, and keeps the long "
+            + "run under thirty percent of the weekly total."
+        let reply = ([agentReadingAnchorReplyStart]
+            + (1 ... 24).map { "Week \($0). \(section)" }
+            + [agentReadingAnchorReplyEnd])
+            .joined(separator: "\n\n")
+        var messages: [ChatMessage] = []
+        for i in 1 ... 4 {
+            messages.append(.user(parts: [.text("Quick check \(i): all good so far?")]))
+            messages.append(.assistant(parts: [.text("Yes, item \(i) is on track.")]))
+        }
+        messages.append(.user(parts: [.text("Write out the full sixteen-week plan.")]))
+        messages.append(.assistant(parts: [.text(reply)]))
+        return CreateSessionResponse(
+            sessionId: "s_reading_anchor",
+            model: "preview",
+            backend: "preview",
+            title: "Marathon plan",
+            messageCount: messages.count,
+            messages: messages
+        )
+    }()
+
+    static let agentConversationControls = AppStore.AgentPreviewSeed(
+        sessionId: "conversation-controls-preview",
+        model: "preview",
+        backend: "preview",
+        title: "Activity comparison",
+        turns: [
+            .user(id: "preview-prompt", text: "Compare my activity."),
+            .assistant(AgentAssistantTurn(
+                id: "preview-answer",
+                parts: [.text("I can compare your activity.\n\n```swift\nlet total = 42\n```")],
+                historyCompleted: true
+            )),
+        ],
+        citations: [],
+        conversations: [],
+        connected: true
+    )
+
+    static let conversationClarificationTurn = AgentTurn.assistant(AgentAssistantTurn(
+        id: "clarification-turn",
+        parts: [
+            .text("I can compare your activity."),
+            .tool(AgentToolCall(
+                toolCallId: "clarification-call", tool: "ask_clarification",
+                args: JSONAny(value: [:]), argsSummary: "Choose a period", argsKnown: true,
+                result: .unknown(kind: "structured", raw: JSONAny(value: [
+                    "kind": "structured", "resultType": "conversation.clarification",
+                    "data": [
+                        "id": "clarification-example", "question": "Which period should I compare?",
+                        "choices": [["label": "This month"], ["label": "This year"]],
+                    ],
+                ])), durationMs: 1
+            )),
+            .text("Which period should I compare? This month or this year?"),
+        ], historyCompleted: true
+    ))
+
+    static let conversationFollowupDraft = "Use this year instead, and include a short summary."
+
+    static let conversationControls = ConversationControls(
+        busy: true,
+        pendingClarification: ConversationClarification(
+            id: "clarification-example", question: "Which period should I compare?",
+            choices: [
+                .init(label: "This month", description: "Compare with the previous month"),
+                .init(label: "This year", description: "Compare with the previous year"),
+            ]
+        ),
+        queuedMessages: [
+            .init(id: "queued-example", text: "Include a short summary.", status: "queued", error: nil),
+            .init(id: "queued-second", text: "Compare the totals too.", status: "queued", error: nil),
+        ],
+        capabilities: .init(coalescedQueue: true, queueSendNow: true)
+    )
+
     static let agentBusyStreaming = AppStore.AgentPreviewSeed(
         sessionId: "s_busy",
         model: "claude-sonnet-4-6",
@@ -4980,6 +5226,17 @@ enum PreviewMocks {
         citations: [],
         conversations: agentConversations,
         conversationsNextCursor: "preview-next-page"
+    )
+
+    /// The conversation list with the Morning brief thread on top.
+    static let agentConversationsWithMorningBrief = AppStore.AgentPreviewSeed(
+        sessionId: "s_a",
+        model: "claude-sonnet-4-6",
+        backend: "anthropic",
+        title: "Wedding DJ",
+        turns: [],
+        citations: [],
+        conversations: [morningBriefConversation] + agentConversations
     )
 
     /// `agentConversationsRich`, but with a history that overflows the menu.
@@ -6892,5 +7149,404 @@ extension PreviewMocks {
         },
         paths: [], stopReasons: ["copies"], modelContext: nil
     )
+}
+#endif
+
+#if DEBUG && canImport(SwiftUI) && canImport(UIKit)
+
+// MARK: - Morning brief conversation
+
+@available(iOS 17.0, *)
+extension PreviewMocks {
+    /// Three days of the standing morning-brief conversation — Monday and Tuesday
+    /// with replies, Wednesday (today, by `tasksNow`) just in.
+    static let dailyBriefMessages: [ChatMessage] = [
+        .assistant(parts: [.text("""
+        Good morning. Two things today:
+
+        - The **Q4 budget review** moved to Thursday at 14:00.
+        - The dental practice confirmed your cleaning for Friday at 09:30.
+        """)]),
+        .user(parts: [.text("What does the budget review need from me?")]),
+        .assistant(parts: [.text("The invite asks for the updated travel line and a one-page summary of the offsite costs.")]),
+        .assistant(
+            parts: [.text(
+                "Good morning. The car insurance renewal quote arrived and it is 8% higher than last year. Nothing else needs you today."
+            )]
+        ),
+        .user(parts: [.text("Is there a cheaper option in the quote?")]),
+        .assistant(parts: [.text("Yes. Dropping the courtesy car brings it back to last year's price.")]),
+        .user(parts: [.text("Remind me on Friday to decide.")]),
+        .assistant(parts: [.text("Added a task for Friday: decide on the insurance renewal.")]),
+        .assistant(parts: [.text("""
+        Good morning. Three things today:
+
+        1. **The loan offer letter** asks for a signed reply by Friday.
+        2. The boiler service is overdue, and the engineer has a slot on Thursday morning.
+        3. The running club moved Saturday's long run to 08:00.
+        """)]),
+    ]
+
+    static let dailyBriefOrigin = ConversationOrigin(
+        kind: "daily_brief",
+        runId: "run_morning_1",
+        briefs: [
+            DailyBriefMessageRef(day: "2026-10-12", messageIndex: 0, messageId: "mb_1012", sentAt: "2026-10-12T06:01:12.000Z"),
+            DailyBriefMessageRef(day: "2026-10-13", messageIndex: 3, messageId: "mb_1013", sentAt: "2026-10-13T06:02:40.055Z"),
+            DailyBriefMessageRef(day: "2026-10-14", messageIndex: 8, messageId: "mb_1014", sentAt: "2026-10-14T06:02:40.055Z"),
+        ]
+    )
+
+    /// The conversation as the coordinator holds it once opened.
+    static let dailyBriefSeed: AppStore.AgentPreviewSeed = {
+        var seed = AppStore.AgentPreviewSeed()
+        seed.sessionId = "s_morning_brief"
+        seed.title = "Morning brief"
+        seed.turns = AgentTurnBuilder.turns(
+            from: dailyBriefMessages,
+            breakBefore: AgentCoordinator.briefTurnBreaks(origin: dailyBriefOrigin, startIndex: 0)
+        )
+        seed.origin = dailyBriefOrigin
+        seed.conversations = [morningBriefConversation]
+        seed.connected = true
+        return seed
+    }()
+
+    static let dailyBriefToday = DailyBriefItems(
+        day: "2026-10-14",
+        messageId: "mb_1014",
+        sentAt: "2026-10-14T06:02:40.055Z",
+        items: [
+            DailyBriefItem(
+                rank: 1,
+                observationId: "obs_loan",
+                summary: "The loan offer letter asks for a signed reply by Friday.",
+                sources: [DailyBriefSource(id: "doc_loan_offer", title: "Loan offer letter", sourceType: "gmail")],
+                tasks: [DailyBriefTask(id: "loop_brief_loan", title: "Sign and return the loan offer", state: "open")],
+                reaction: DailyBriefReaction(kind: .up, at: DailyBriefReaction.instant("2026-10-14T07:10:03.000Z"))
+            ),
+            DailyBriefItem(
+                rank: 2,
+                observationId: "obs_boiler",
+                summary: "The boiler service is overdue, and the engineer has a slot on Thursday morning.",
+                sources: [
+                    DailyBriefSource(id: "doc_boiler_reminder", title: "Boiler service reminder", sourceType: "gmail"),
+                    DailyBriefSource(id: "doc_engineer_slots", title: "Engineer availability this week", sourceType: "gmail"),
+                ],
+                tasks: [DailyBriefTask(id: "loop_brief_boiler", title: "Book the boiler engineer", state: "open")],
+                reaction: DailyBriefReaction(
+                    kind: .notInterested,
+                    note: "I already booked it last week",
+                    at: DailyBriefReaction.instant("2026-10-14T07:11:40.000Z")
+                )
+            ),
+            DailyBriefItem(
+                rank: 3,
+                observationId: "obs_run",
+                summary: "The running club moved Saturday's long run to 08:00.",
+                sources: [DailyBriefSource(id: "doc_club_update", title: nil, sourceType: "whatsapp")]
+            ),
+        ]
+    )
+
+    static let dailyBriefYesterday = DailyBriefItems(
+        day: "2026-10-13",
+        messageId: "mb_1013",
+        sentAt: "2026-10-13T06:02:40.055Z",
+        items: [
+            DailyBriefItem(
+                rank: 1,
+                observationId: "obs_insurance",
+                summary: "The car insurance renewal quote is 8% higher than last year.",
+                sources: [DailyBriefSource(id: "doc_insurance_quote", title: "Your renewal quote", sourceType: "gmail")],
+                tasks: [DailyBriefTask(id: "loop_brief_insurance", title: "Decide on the insurance renewal", state: "open")]
+            ),
+        ]
+    )
+
+    static let dailyBriefMonday = DailyBriefItems(
+        day: "2026-10-12",
+        messageId: "mb_1012",
+        sentAt: "2026-10-12T06:01:12.000Z",
+        items: [
+            DailyBriefItem(
+                rank: 1,
+                observationId: "obs_budget",
+                summary: "The Q4 budget review moved to Thursday at 14:00.",
+                sources: [DailyBriefSource(id: "doc_budget_invite", title: "Updated: Q4 budget review", sourceType: "gmail")],
+                tasks: [DailyBriefTask(id: "loop_brief_budget", title: "Prepare the offsite cost summary", state: "done")]
+            ),
+            DailyBriefItem(
+                rank: 2,
+                observationId: "obs_dentist",
+                summary: "The dental practice confirmed the cleaning for Friday at 09:30.",
+                sources: [DailyBriefSource(id: "doc_dentist", title: "Appointment confirmed", sourceType: "gmail")]
+            ),
+        ]
+    )
+
+    static let dailyBriefPages = [dailyBriefMonday, dailyBriefYesterday, dailyBriefToday]
+
+    /// One brief item per reaction state, for the thumbs on their own.
+    struct DailyBriefReactionState {
+        let name: String
+        let item: DailyBriefItem
+        var failure: (any Error)?
+    }
+
+    static let dailyBriefReactionStates: [DailyBriefReactionState] = [
+        DailyBriefReactionState(
+            name: "none",
+            item: DailyBriefItem(rank: 1, observationId: "obs_react_none", summary: "The gym membership renews on the 1st.")
+        ),
+        DailyBriefReactionState(
+            name: "up",
+            item: DailyBriefItem(
+                rank: 2,
+                observationId: "obs_react_up",
+                summary: "The passport renewal appointment is on Monday at 09:30.",
+                reaction: DailyBriefReaction(kind: .up, at: DailyBriefReaction.instant("2026-10-14T07:10:03.000Z"))
+            )
+        ),
+        DailyBriefReactionState(
+            name: "not-interested",
+            item: DailyBriefItem(
+                rank: 3,
+                observationId: "obs_react_not_interested",
+                summary: "The neighbourhood newsletter lists a bake sale on Saturday.",
+                reaction: DailyBriefReaction(
+                    kind: .notInterested,
+                    note: "Newsletters like this never matter to me",
+                    at: DailyBriefReaction.instant("2026-10-14T07:11:40.000Z")
+                )
+            )
+        ),
+        DailyBriefReactionState(
+            name: "factual-error",
+            item: DailyBriefItem(
+                rank: 4,
+                observationId: "obs_react_factual_error",
+                summary: "The electricity bill is due on Thursday.",
+                reaction: DailyBriefReaction(
+                    kind: .factualError,
+                    note: "It was paid by direct debit on the 3rd",
+                    at: DailyBriefReaction.instant("2026-10-14T07:12:15.000Z")
+                )
+            )
+        ),
+        DailyBriefReactionState(
+            name: "not-saved",
+            item: DailyBriefItem(rank: 5, observationId: "obs_react_not_saved", summary: "The dentist moved the check-up to Friday."),
+            failure: URLError(.cannotConnectToHost)
+        ),
+    ]
+
+    /// The tasks the brief chips point at, as the Tasks demo gateway holds them.
+    static let dailyBriefTasks: [TaskRecord] = [
+        TaskRecord(id: "loop_brief_loan", title: "Sign and return the loan offer", scheduledFor: "2026-10-14"),
+        TaskRecord(id: "loop_brief_boiler", title: "Book the boiler engineer", scheduledFor: "2026-10"),
+        TaskRecord(id: "loop_brief_insurance", title: "Decide on the insurance renewal", scheduledFor: "2026-10-16"),
+        TaskRecord(id: "loop_brief_budget", title: "Prepare the offsite cost summary", state: .done),
+    ]
+
+    /// Every day's items already in hand, read against `tasksNow`.
+    static let dailyBriefContext = DailyBriefContext(
+        loader: nil,
+        now: { tasksNow },
+        preloaded: dailyBriefPages
+    )
+
+    @MainActor static var realtimeMicrophoneStarting: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Starting microphone…"
+        session.connected = true
+        return session
+    }
+
+    @MainActor static var realtimeListening: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Listening"
+        session.connected = true
+        return session
+    }
+
+    @MainActor static var liveOverlappingSpeech: RealtimeCallSession {
+        let session = realtimeListening
+        session.isLive = true
+        session.liveCaptions = [
+            LiveVoiceCaption(
+                id: "user-start",
+                speaker: .user,
+                startMilliseconds: 100,
+                endMilliseconds: 600,
+                text: "Find the workshop notes"
+            ),
+            LiveVoiceCaption(
+                id: "assistant-ack",
+                speaker: .assistant,
+                startMilliseconds: 400,
+                endMilliseconds: 900,
+                text: "I'll check the notes."
+            ),
+            LiveVoiceCaption(
+                id: "user-detail",
+                speaker: .user,
+                startMilliseconds: 600,
+                endMilliseconds: 1200,
+                text: " and the table arrangement."
+            ),
+        ]
+        return session
+    }
+
+    static let realtimeLongCaption = (1 ... 12).map { index in
+        "Workshop section \(index). The studio has four worktables, a shelf for finished pieces, " +
+            "and a quiet corner for drawing. Set out the clay and tools before the group arrives. " +
+            "Leave the central aisle clear so everyone can move between the tables comfortably."
+    }.joined(separator: "\n\n")
+
+    @MainActor static var realtimeUserSpeaking: RealtimeCallSession {
+        let session = realtimeListening
+        try? session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        session.transcript = "How should I arrange the worktables for a pottery workshop?"
+        return session
+    }
+
+    @MainActor static var realtimeAgentSpeaking: RealtimeCallSession {
+        let session = realtimeListening
+        session.status = "Speaking"
+        session.transcript = "Arrange the worktables around a clear central aisle. Keep the tools within reach."
+        return session
+    }
+
+    @MainActor static var realtimeLongSpeech: RealtimeCallSession {
+        let session = realtimeAgentSpeaking
+        session.transcript = realtimeLongCaption
+        return session
+    }
+
+    @MainActor static var realtimeEnding: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Ending call…"
+        session.ending = true
+        return session
+    }
+
+    @MainActor static var realtimePlaybackLimited: RealtimeCallSession {
+        let session = realtimeListening
+        session.playbackNotice = "That reply was too long. Ask for a shorter answer."
+        return session
+    }
+
+    @MainActor static var realtimeWorkingStore: AppStore {
+        realtimeStore()
+    }
+
+    @MainActor static var realtimeTurnFailureStore: AppStore {
+        let store = AppStore.preview()
+        store.agent.installPreviewState(
+            sessionId: "voice-preview", model: "preview", backend: "preview", title: "Voice conversation",
+            turns: [agentAssistantTurnProviderFailure], citations: [], conversations: [], busy: false
+        )
+        return store
+    }
+
+    @MainActor static var realtimeTools: RealtimeCallSession {
+        let session = realtimeListening
+        session.status = "Thinking…"
+        session.transcript = "What meetings do I have tomorrow?"
+        return session
+    }
+
+    @MainActor private static func realtimeStore(
+        calls: [AgentToolCall] = [], messages: [ChatMessage] = []
+    )
+        -> AppStore {
+        let store = AppStore.preview()
+        store.agent.installPreviewState(
+            sessionId: "voice-preview", model: "preview", backend: "preview", title: "Voice conversation",
+            turns: [.assistant(AgentAssistantTurn(id: "voice-answer", parts: calls.map { .tool($0) }, stopReason: nil, failure: nil))],
+            citations: AgentTurnBuilder.citations(from: messages), conversations: [], busy: true
+        )
+        store.agent.installPreviewTimeline(
+            annotations: AgentTurnBuilder.trailAnnotations(from: messages),
+            recordCitations: AgentTurnBuilder.recordCitations(from: messages)
+        )
+        return store
+    }
+
+    @MainActor static var realtimeToolsStore: AppStore {
+        realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-search", tool: "search_documents", args: JSONAny(value: ["query": "tomorrow meetings"]),
+            argsSummary: "tomorrow meetings", argsKnown: true, result: nil, durationMs: nil
+        ), agentToolCallWikiReadComplete])
+    }
+
+    @MainActor static var realtimeSQLStore: AppStore {
+        let sql = "SELECT day, count(*) AS total FROM events GROUP BY day ORDER BY day"
+        return realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-sql", tool: "run_sql", args: JSONAny(value: ["sql": sql]), argsSummary: sql, argsKnown: true,
+            result: .sqlRows(
+                sql: sql, columns: ["day", "total"],
+                rows: [[JSONAny(value: "Monday"), JSONAny(value: 3)], [JSONAny(value: "Tuesday"), JSONAny(value: 5)]],
+                rowCount: 2, truncated: false, durationMs: 12, sources: [], subjects: []
+            ), durationMs: 12
+        )])
+    }
+
+    @MainActor static var realtimeBatchStore: AppStore {
+        let queries = ["project notes", "workshop schedule"]
+        return realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-batch", tool: "search_many", args: JSONAny(value: ["queries": queries.map { ["query": $0] }]),
+            argsSummary: queries.joined(separator: "; "), argsKnown: true, result: nil, durationMs: nil,
+            children: queries.enumerated().map { index, query in
+                AgentToolChild(
+                    index: index, tool: "search_documents", argsSummary: query,
+                    result: .searchResults(query: query, durationMs: 30, candidates: 0, results: [])
+                )
+            }
+        )])
+    }
+
+    @MainActor static var realtimeCitationsStore: AppStore {
+        let messages: [ChatMessage] = ["Workshop schedule", "Project checklist", "Planning notes", "Team discussion"]
+            .enumerated().flatMap { index, title -> [ChatMessage] in
+                let ref = AgentDocRef(
+                    documentId: "voice-doc-\(index)", sourceType: "notes", sourceId: "preview-notes", title: title,
+                    ts: 1_800_000_000_000 - Double(index * 86_400_000)
+                )
+                return [.assistant(parts: [.toolUse(
+                    toolCallId: "voice-cite-\(index)", tool: "annotate", args: JSONAny(value: ["documentId": ref.documentId])
+                )]), .user(parts: [.toolResult(
+                    toolCallId: "voice-cite-\(index)",
+                    result: .annotateRecorded(
+                        documentId: ref.documentId, ref: ref, quote: "Bring the project checklist to the workshop.",
+                        note: "The schedule and preparation details.", quoteAuthor: nil, quoteIsSelf: false
+                    )
+                )])]
+            }
+        return realtimeStore(messages: messages)
+    }
+
+    @MainActor static var realtimeFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Call ended"
+        session.error = URLError(.notConnectedToInternet)
+        return session
+    }
+
+    @MainActor static var realtimeCreditFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        let failure = RealtimeCallFailure(code: "quota_exhausted", fatal: true, retryable: false)
+        session.status = failure.title
+        session.error = failure
+        return session
+    }
+
+    @MainActor static var realtimeRateLimited: RealtimeCallSession {
+        let session = realtimeListening
+        session.replyFailure = RealtimeCallFailure(code: "rate_limited", fatal: false, retryable: true)
+        return session
+    }
 }
 #endif

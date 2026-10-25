@@ -65,7 +65,7 @@ class ProviderLogoLoaderTest {
     @Test fun only_chat_capabilities_offer_behavior_controls() {
         assertTrue(ModelBehaviorPresentation.supportsRole("agent"))
         assertTrue(ModelBehaviorPresentation.supportsRole("privacy-reviewer"))
-        assertTrue(ModelBehaviorPresentation.supportsRole("brief-judge"))
+        assertTrue(ModelBehaviorPresentation.supportsRole("watch-judge"))
         assertTrue(!ModelBehaviorPresentation.supportsRole("embedder"))
         assertTrue(!ModelBehaviorPresentation.supportsRole("transcriber"))
         assertTrue(!ModelBehaviorPresentation.supportsRole("ocr"))

@@ -5,14 +5,18 @@ import { buildPage } from "@omnesis/types";
 import { BadRequestError, StalePageCursorError } from "../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../http/pagination-cursor.js";
 import { decodeRunTrigger } from "./run-payload-view.js";
-import { runScopeLoopId } from "./run-payloads.js";
-import { FEED_TIER, type FeedTier } from "./ranking.js";
+import { parseCognitionSynthesisRunPayload, runScopeLoopId } from "./run-payloads.js";
 import type {
   CognitionAdminDocumentRef,
   CognitionAdminQueryService,
   RunActivityReader,
 } from "./cognition-admin-query-service.js";
-import type { BriefRow, CognitionRunRow, OpenLoopRow, RetiredLoopRow } from "./storage/types.js";
+import type {
+  CognitionRunRow,
+  ObservationRow,
+  OpenLoopRow,
+  RetiredLoopRow,
+} from "./storage/types.js";
 import type { CognitionTranscriptRef } from "./transcripts.js";
 import type { CognitionDecisionRecord } from "./storage/decisions.js";
 import type { RouteApp } from "../http/routes/types.js";
@@ -23,21 +27,13 @@ export interface CognitionAdminRouteContext {
   requireActive(): void;
   /**
    * Read-only history stays servable while the Brain is visible but not
-   * running (experimental on, no model assigned): past loops, runs, briefs
+   * running (experimental on, no model assigned): past loops, runs, observations
    * and spend are audit history, not live engine state. Hidden entirely
    * only when the feature is not visible at all.
    */
   requireVisible(): void;
   now(): number;
 }
-
-export const FEED_TIER_LABEL: Record<FeedTier, string> = {
-  [FEED_TIER.nextHour]: "next-hour",
-  [FEED_TIER.today]: "today",
-  [FEED_TIER.dueLoop]: "due-loop",
-  [FEED_TIER.otherLoop]: "other-loop",
-  [FEED_TIER.ambientInfo]: "ambient-info",
-};
 
 export const iso = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
@@ -140,36 +136,33 @@ export function loopDto(loop: OpenLoopRow) {
   };
 }
 
-export function briefSummaryDto(brief: BriefRow) {
+export function observationFullDto(
+  observation: ObservationRow,
+  citations?: CognitionAdminDocumentRef[],
+) {
   return {
-    id: brief.id,
-    kind: brief.kind,
-    state: brief.state,
-    title: brief.title,
-    createdAt: iso(brief.createdAt),
-  };
-}
-
-export function briefFullDto(brief: BriefRow, citations?: CognitionAdminDocumentRef[]) {
-  return {
-    id: brief.id,
-    createdByRun: brief.createdByRun,
-    kind: brief.kind,
-    state: brief.state,
-    title: brief.title,
-    description: brief.description,
-    body: brief.body,
-    citations: citations ?? brief.citations,
-    relatedLoopIds: brief.relatedLoopIds,
-    confidence: brief.confidence,
-    urgency: brief.urgency,
-    relevantUntil: iso(brief.relevantUntil),
-    nextShow: iso(brief.nextShow),
-    eventAt: iso(brief.eventAt),
-    userFeedback: brief.userFeedback,
-    createdAt: iso(brief.createdAt),
-    updatedAt: iso(brief.updatedAt),
-    threadConversationId: brief.threadConversationId,
+    id: observation.id,
+    createdByRun: observation.createdByRun,
+    state: observation.state,
+    closeReason: observation.closeReason,
+    summary: observation.summary,
+    why: observation.why,
+    userAuthored: observation.userAuthored,
+    windowStart: iso(observation.windowStart),
+    relevantUntil: iso(observation.relevantUntil),
+    citations: citations ?? observation.citations,
+    relatedLoopIds: observation.relatedLoopIds,
+    claims: observation.claims,
+    notedScores: observation.notedScores,
+    scores: observation.scores,
+    wouldPushAt: iso(observation.wouldPushAt),
+    shippedAt: iso(observation.shippedAt),
+    shippedConversationId: observation.shippedConversationId,
+    shippedMessageId: observation.shippedMessageId,
+    userAction: observation.userAction,
+    createdAt: iso(observation.createdAt),
+    updatedAt: iso(observation.updatedAt),
+    closedAt: iso(observation.closedAt),
   };
 }
 
@@ -202,7 +195,35 @@ export function runDto(run: CognitionRunRow, activity: RunActivityReader | undef
     nextAttemptAt: iso(run.nextAttemptAt),
     lastAttemptAt: iso(run.lastAttemptAt),
     completedAt: iso(run.completedAt),
-    usage: run.usage,
+    usage: runUsageDto(run.usage),
+    context: runContextDto(run),
+  };
+}
+
+/** Spend only; context occupancy is served beside it as `context`. */
+function runUsageDto(usage: CognitionRunRow["usage"]) {
+  if (!usage) return null;
+  const { context: _context, ...spend } = usage;
+  return spend;
+}
+
+/**
+ * How much of its model's context window a run's conversation filled, and why
+ * it handed its work to a successor if it did. Null when the backend reported
+ * no input sizes and the run did not hand off.
+ */
+function runContextDto(run: CognitionRunRow) {
+  const usage = run.usage?.context;
+  const handoffReason =
+    run.kind === "synthesis"
+      ? (parseCognitionSynthesisRunPayload(run.payload)?.handoffReason ?? null)
+      : null;
+  if (!usage && handoffReason === null) return null;
+  return {
+    peakInputTokens: usage?.peakInputTokens ?? null,
+    lastInputTokens: usage?.lastInputTokens ?? null,
+    contextWindowTokens: usage?.contextWindowTokens ?? null,
+    handoffReason,
   };
 }
 
@@ -218,6 +239,7 @@ export function decisionDto(
 ) {
   return {
     id: decision.id,
+    runId: decision.runId,
     purpose: decision.purpose,
     lane: decision.lane,
     verdict: decision.verdict,
@@ -238,6 +260,9 @@ export function decisionDto(
     createdAt: iso(decision.createdAt),
     request: parseJsonOrNull(decision.requestJson),
     response: parseJsonOrNull(decision.responseJson),
+    // The inspection endpoint serves the exact payload where one was captured
+    // and the row's own retained copy otherwise.
+    inputInspection: true,
   };
 }
 

@@ -49,18 +49,19 @@ import {
 } from "@omnesis/core";
 import {
   readConversationRetentionCandidates,
-  originUsesAnchoredThreadProfile,
   fileIdentity,
   type ConversationRetentionCandidate,
   type ConversationRetentionFile,
 } from "./conversation-retention.js";
 import type { Dir } from "node:fs";
 
+import type { ConversationControlState } from "./conversation-controls.js";
 import type { ChatMessage } from "@omnesis/agent";
 
 const log = createLogger("gateway:agent").child("store");
 
 export interface ConversationRecord {
+  controls?: ConversationControlState;
   id: string;
   callerId: string;
   model: string;
@@ -83,11 +84,9 @@ export interface ConversationRecord {
   pinned: boolean;
   /**
    * Where this conversation came from, when it did not start as a blank
-   * chat. A brief's anchored talk-back thread records its anchor and the
-   * steward run whose transcript seeded its history, so a resume can rebuild the
-   * anchored-thread session profile (steward toolset +
-   * background-agent backend) instead of the default chat one. Absent on
-   * plain conversations and on records written before origins existed.
+   * chat: a watch firing the agent opened, the standing Morning brief
+   * conversation, or a conversation the user opened about a task. Absent on plain conversations and on records written
+   * before origins existed.
    */
   origin?: ConversationOrigin;
   /**
@@ -97,6 +96,11 @@ export interface ConversationRecord {
    * the thread as a plain chat. Never persisted.
    */
   originUnrecognized?: boolean;
+  /**
+   * The seed length that unsupported origin declared, so readers keep hiding
+   * the seed transcript (a retired brief thread's Brain run). Never persisted.
+   */
+  unrecognizedSeedMessageCount?: number;
   /**
    * Permanent conversation-level failure kept outside model-visible history.
    * V1 sets this only when the selected model's context window is exhausted;
@@ -114,49 +118,67 @@ export interface ConversationRecord {
 }
 
 /**
- * Origin anchor for a conversation that did not start as a blank chat —
- * a discriminated union over the anchor kinds that exist. Which session
- * profile a kind resumes on is `usesAnchoredThreadProfile`, not the mere
- * presence of an origin.
+ * Origin anchor for a conversation that did not start as a blank chat — a
+ * discriminated union over the anchor kinds that exist. Every kind resumes
+ * on the main session profile.
  */
-export type ConversationOrigin = BriefConversationOrigin | WatchFiringConversationOrigin;
+export type ConversationOrigin =
+  | WatchFiringConversationOrigin
+  | DailyBriefConversationOrigin
+  | TaskConversationOrigin;
 
 /**
- * The origins anchored to a Cognition Steward artefact, which resume on
- * the Briefs anchored-thread profile. Distinguished at the type level so
- * a surface that only makes sense for a steward artefact — creating one,
- * or rendering its card — cannot be handed a watch-firing thread.
+ * The standing Morning brief conversation: one per gateway, pinned and
+ * undeletable. Every morning the Brain appends one assistant message to it;
+ * the user replies like in any conversation.
+ *
+ * The thread is one conversation but its working state is one day. A reply
+ * turn's model context starts at the latest brief message, and clients scope
+ * the citation timeline the same way, so the thread never needs compaction.
  */
-export type AnchoredConversationOrigin = BriefConversationOrigin;
-
-export type BriefConversationOrigin = {
-  kind: "brief";
-  briefId: string;
-  /** The steward run whose transcript seeded the thread's history. */
+export type DailyBriefConversationOrigin = {
+  kind: "daily_brief";
+  /**
+   * The morning run that sent the latest brief. Carried, like on every other
+   * origin, so a gateway that does not know this kind refuses to resume the
+   * thread rather than running it as a plain chat.
+   */
   runId: string;
-  /**
-   * Snapshot of the brief at thread creation, so clients can render the
-   * thread as "replying to this card" — and keep doing so after the brief
-   * itself expires or is deleted. UI-only: the agent's context is the
-   * folded transcript, not this snapshot. Absent on threads created
-   * before snapshots existed.
-   */
-  brief?: BriefOriginSnapshot;
-  /**
-   * How many messages at the start of the conversation are the folded
-   * transcript of the creating run (or its fallback context exchange).
-   * Clients hide this prefix and show the brief card in its place.
-   * Absent on threads created before snapshots existed.
-   */
-  seedMessageCount?: number;
+  /** The morning briefs in this thread, oldest first, most recent ones only. */
+  briefs: DailyBriefMessageRef[];
 };
+
+/** Where one morning brief sits in the thread. */
+export type DailyBriefMessageRef = {
+  /** Local day the brief was sent for (`YYYY-MM-DD`). */
+  day: string;
+  /** Index of the brief's assistant message in `messages`. */
+  messageIndex: number;
+  /** Stable id of the brief message; resolves the day's ranked items. */
+  messageId: string;
+  /**
+   * When the brief was appended (ISO 8601 UTC). Absent on references
+   * written before the thread recorded it.
+   */
+  sentAt?: string;
+};
+
+/** How many recent brief references the origin keeps. */
+export const DAILY_BRIEF_REF_LIMIT = 60;
+
+/** The latest morning brief in a daily-brief thread, or null. */
+export function latestDailyBrief(
+  origin: ConversationOrigin | undefined,
+): DailyBriefMessageRef | null {
+  if (origin?.kind !== "daily_brief") return null;
+  return origin.briefs.at(-1) ?? null;
+}
 
 /**
  * A thread the agent opened itself when one of the operator's watches
- * fired. Unlike the other origins this is not anchored to a Cognition
- * Steward artefact — it is an ordinary conversation with the ordinary
- * agent that simply happens to have been opened by the agent rather than
- * by the operator, so it resumes on the main session profile.
+ * fired. It is an ordinary conversation with the ordinary agent that simply
+ * happens to have been opened by the agent rather than by the operator, so
+ * it resumes on the main session profile.
  *
  * A client must learn this kind before the feature is shown to anyone.
  * Seed hiding is gated on the client having a context card to put in the
@@ -200,11 +222,41 @@ export type WatchFiringOriginSnapshot = {
   firedAt: number;
 };
 
-/** The brief fields a client needs to draw the card. */
-export type BriefOriginSnapshot = {
+/**
+ * A conversation the user opened about one of their tasks ("Chat about
+ * this"). It starts empty: the user's first message is the first message,
+ * and there is no hidden seed. Every turn's system prompt carries the task as
+ * it currently stands (see `TaskContextProvider` in `service.ts`).
+ */
+export type TaskConversationOrigin = {
+  kind: "task";
+  /** The task (open loop) the conversation is about. */
+  taskId: string;
+  /**
+   * The task id again, under the field name every origin carries, so a
+   * gateway that does not know this kind refuses to resume the thread
+   * instead of running it as a plain chat.
+   */
+  runId: string;
+  /**
+   * The task as it stood when the conversation was opened, for the client's
+   * context card. It is never refreshed, so the card still renders after the
+   * task changes or is deleted.
+   */
+  task?: TaskConversationOriginSnapshot;
+  /** Always 0: the conversation has no hidden seed. */
+  seedMessageCount?: number;
+};
+
+/** The task fields a client needs to draw the context card. */
+export type TaskConversationOriginSnapshot = {
   title: string;
-  description: string;
-  body: string | null;
+  /** The task's state as `GET /tasks` reports it. */
+  state: string;
+  /** The day the task is due (`YYYY-MM-DD`), when it has a deadline. */
+  due?: string;
+  /** How many of the task's linked documents could be opened. */
+  sourceCount: number;
 };
 
 export interface ConversationSummary {
@@ -322,13 +374,18 @@ export class FsConversationStore implements ConversationStore {
       // Same for `origin` — anything malformed reads as a plain chat,
       // EXCEPT an anchor-shaped origin of an unsupported kind (retired or
       // written by another gateway version): that must refuse to resume rather
-      // than silently run an anchored thread on the chat profile with
-      // its seed transcript exposed (and re-ingested as an omnesis-chat
-      // document by the first turn's corpus upsert).
+      // than silently run the thread as a plain chat with its seed
+      // transcript exposed (and re-ingested as an omnesis-chat document by
+      // the first turn's corpus upsert).
       const origin = parseOrigin(parsed.origin);
       if (origin) parsed.origin = origin;
       else {
-        if (isUnknownAnchorShape(parsed.origin)) parsed.originUnrecognized = true;
+        if (isUnknownAnchorShape(parsed.origin)) {
+          parsed.originUnrecognized = true;
+          const seed = (parsed.origin as { seedMessageCount?: unknown }).seedMessageCount;
+          if (typeof seed === "number" && Number.isInteger(seed) && seed > 0)
+            parsed.unrecognizedSeedMessageCount = seed;
+        }
         delete parsed.origin;
       }
       const terminalFailure = agentConversationTerminalFailureSchema.safeParse(
@@ -674,17 +731,15 @@ function summaryForRecord(rec: ConversationRecord): ConversationSummary {
 }
 
 /**
- * The list-row slice of an origin: just the anchor, never the embedded
- * brief snapshot or seed count. The snapshot (which carries the brief's
- * full long-form body) is consumed only from the session resume
- * response — copying it into every summary would ship N brief bodies on
- * every conversations-list fetch and re-persist them all on every
- * summary-index rewrite, for rows that render none of it.
+ * The list-row slice of an origin: just the anchor, never an embedded
+ * snapshot, seed count or brief index. Those are consumed only from the
+ * session resume response — copying them into every summary would ship
+ * them on every conversations-list fetch for rows that render none of it.
  */
 export function originAnchor(origin: ConversationOrigin): ConversationOrigin {
   switch (origin.kind) {
-    case "brief":
-      return { kind: "brief", briefId: origin.briefId, runId: origin.runId };
+    case "daily_brief":
+      return { kind: "daily_brief", runId: origin.runId, briefs: [] };
     case "watch_firing":
       return {
         kind: "watch_firing",
@@ -692,29 +747,11 @@ export function originAnchor(origin: ConversationOrigin): ConversationOrigin {
         runId: origin.runId,
         watchId: origin.watchId,
       };
+    case "task":
+      return { kind: "task", taskId: origin.taskId, runId: origin.runId };
     default:
       return assertNever(origin);
   }
-}
-
-/**
- * Whether a conversation's origin resumes on the Briefs feature's
- * anchored-thread session profile — the steward toolset, the talk-back
- * system prompt, and the background-agent backend.
- *
- * Brief threads do: they exist so the operator can act on the Cognition
- * Steward's own output, and the steward toolset
- * is what makes that possible. A watch-firing thread does not. It is an
- * ordinary conversation with the ordinary agent, and it resumes on the
- * main session profile with the full toolset and the whole corpus in
- * reach — the operator can already ask the agent anything in a thread
- * they opened themselves, and a thread is not worth less because the
- * agent spoke first.
- */
-export function usesAnchoredThreadProfile(
-  origin: ConversationOrigin,
-): origin is AnchoredConversationOrigin {
-  return originUsesAnchoredThreadProfile(origin);
 }
 
 /**
@@ -773,15 +810,38 @@ function parseOrigin(value: unknown): ConversationOrigin | undefined {
       ...(seedMessageCount !== undefined ? { seedMessageCount } : {}),
     };
   }
-  if (o.kind === "brief" && typeof o.briefId === "string") {
-    const brief = parseBriefSnapshot(o.brief);
+  if (o.kind === "task" && typeof o.taskId === "string" && o.taskId.length > 0) {
+    const task = parseTaskSnapshot(o.task);
     return {
-      kind: "brief",
-      briefId: o.briefId,
+      kind: "task",
+      taskId: o.taskId,
       runId: o.runId,
-      ...(brief ? { brief } : {}),
+      ...(task ? { task } : {}),
       ...(seedMessageCount !== undefined ? { seedMessageCount } : {}),
     };
+  }
+  if (o.kind === "daily_brief") {
+    const briefs = Array.isArray(o.briefs)
+      ? o.briefs.flatMap((ref: unknown): DailyBriefMessageRef[] => {
+          if (!ref || typeof ref !== "object") return [];
+          const r = ref as Record<string, unknown>;
+          return typeof r.day === "string" &&
+            typeof r.messageId === "string" &&
+            typeof r.messageIndex === "number" &&
+            Number.isInteger(r.messageIndex) &&
+            r.messageIndex >= 0
+            ? [
+                {
+                  day: r.day,
+                  messageIndex: r.messageIndex,
+                  messageId: r.messageId,
+                  ...(typeof r.sentAt === "string" ? { sentAt: r.sentAt } : {}),
+                },
+              ]
+            : [];
+        })
+      : [];
+    return { kind: "daily_brief", runId: o.runId, briefs };
   }
   return undefined;
 }
@@ -797,14 +857,18 @@ function parseWatchFiringSnapshot(value: unknown): WatchFiringOriginSnapshot | u
   };
 }
 
-function parseBriefSnapshot(value: unknown): BriefOriginSnapshot | undefined {
+function parseTaskSnapshot(value: unknown): TaskConversationOriginSnapshot | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const s = value as Partial<BriefOriginSnapshot>;
-  if (typeof s.title !== "string" || typeof s.description !== "string") return undefined;
+  const s = value as Record<string, unknown>;
+  if (typeof s.title !== "string" || typeof s.state !== "string") return undefined;
   return {
     title: s.title,
-    description: s.description,
-    body: typeof s.body === "string" ? s.body : null,
+    state: s.state,
+    ...(typeof s.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.due) ? { due: s.due } : {}),
+    sourceCount:
+      typeof s.sourceCount === "number" && Number.isInteger(s.sourceCount) && s.sourceCount >= 0
+        ? s.sourceCount
+        : 0,
   };
 }
 

@@ -43,8 +43,11 @@ import {
 const log = createLogger("agent:anthropic");
 const UNKNOWN_MODEL_MAX_TOKENS = 4_096;
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 256;
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
-import { serializeToolResultForModel } from "./tool-result-text.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import {
   childEventHooks,
@@ -254,11 +257,11 @@ export class AnthropicBackend implements ChatBackend {
     const tools: Tool[] = input.tools.map((h) => ({
       name: h.name,
       description: h.description,
-      input_schema: zodToJsonSchema(h.schema) as Tool["input_schema"],
+      input_schema: toolInputJsonSchema(h.schema) as Tool["input_schema"],
     }));
     const handles = new Map<string, ToolHandle>(input.tools.map((h) => [h.name, h]));
 
-    const messages: MessageParam[] = convertHistoryToAnthropic(input.history);
+    const messages: MessageParam[] = convertHistoryToAnthropic(input.history, { timeZone });
     messages.push({ role: "user", content: input.userMessage });
 
     // Start pessimistic: a stream that never emits `message_delta` (e.g. the
@@ -397,16 +400,21 @@ export class AnthropicBackend implements ChatBackend {
         log.warn(
           `request rejected for model=${this.model} iteration=${requestIteration} ${anthropicErrorMetadata(err)}`,
         );
-        // API rejected the request (rate-limit, auth, network). Surface as
-        // a typed agent.error so the portal renders an actionable message
-        // and the session shuts down cleanly.
+        // API rejected the request (rate-limit, auth, account limit, network).
+        // Surface as a typed agent.error so the portal renders an actionable
+        // message and the session shuts down cleanly.
+        const failureCode = contextExceeded
+          ? "context_window_exceeded"
+          : isAnthropicAccountLimitError(err)
+            ? "anthropic_usage_limited"
+            : "anthropic_api_error";
         const failureMessage = contextExceeded
           ? CONTEXT_WINDOW_EXCEEDED_MESSAGE
           : anthropicFailureMessage(err);
         yield wrapEvent("agent.error", {
           sessionId,
           messageId,
-          code: contextExceeded ? "context_window_exceeded" : "anthropic_api_error",
+          code: failureCode,
           message: failureMessage,
           provider: anthropicProviderFailure(err),
         });
@@ -417,7 +425,7 @@ export class AnthropicBackend implements ChatBackend {
           usage: totalUsage,
           context: contextAssessment,
           failure: {
-            code: contextExceeded ? "context_window_exceeded" : "anthropic_api_error",
+            code: failureCode,
             message: failureMessage,
             retryable: !contextExceeded,
             backend: this.name,
@@ -620,6 +628,14 @@ export class AnthropicBackend implements ChatBackend {
         outputTokens: iterationOutputTokens,
         cacheReadTokens: iterationCacheReadTokens,
       });
+      // The request's spend and input size, before any of its tool calls run.
+      if (!signal?.aborted && contextAssessment.inputTokens !== undefined)
+        yield wrapEvent("agent.usage.update", {
+          sessionId,
+          messageId,
+          usage: { ...totalUsage },
+          context: contextAssessment,
+        });
 
       // Aborting an SDK stream may either throw or end iteration normally.
       // In both cases cancellation wins over the transport-shaped outcome.
@@ -748,7 +764,7 @@ export class AnthropicBackend implements ChatBackend {
           toolResultBlocks.push({
             type: "tool_result",
             tool_use_id: r.use.id,
-            content: serializeToolResultForModel(r.result),
+            content: serializeToolResultForModel(r.result, { timeZone }),
             is_error: toolResultHasErrors(r.result) ? true : undefined,
           });
         }
@@ -917,6 +933,27 @@ function isAnthropicContextWindowError(err: unknown): boolean {
   );
 }
 
+/** Which account ceiling an Anthropic refusal names, if any. */
+function anthropicAccountLimit(err: unknown): "usage" | "credit" | null {
+  const details = anthropicErrorDetails(err);
+  if (details.status !== 400 || details.type !== "invalid_request_error") return null;
+  if (/\breached your (?:specified )?API usage limits?\b/i.test(details.message)) return "usage";
+  if (/\bcredit balance is too low\b/i.test(details.message)) return "credit";
+  return null;
+}
+
+/**
+ * Whether Anthropic refused the request because the account cannot pay for
+ * it: the operator's API usage limit is reached, or the credit balance is
+ * spent. The API reports both as a 400 `invalid_request_error`, the status of a
+ * malformed body, but the payload was never judged and the same request
+ * succeeds once a person raises the limit or tops up the account. The code
+ * this classifies to is what lets callers tell the two apart.
+ */
+export function isAnthropicAccountLimitError(err: unknown): boolean {
+  return anthropicAccountLimit(err) !== null;
+}
+
 export function anthropicErrorMetadata(err: unknown): string {
   const details = anthropicErrorDetails(err);
   return [
@@ -944,6 +981,11 @@ export function anthropicProviderFailure(err: unknown): AgentProviderFailureDeta
 
 /** Operator-facing sentence for a rejected Anthropic request. */
 export function anthropicFailureMessage(err: unknown): string {
+  const limit = anthropicAccountLimit(err);
+  if (limit === "usage")
+    return "Anthropic refused the request: the account's API usage limit is reached.";
+  if (limit === "credit")
+    return "Anthropic refused the request: the account's credit balance is too low.";
   const { status } = anthropicErrorDetails(err);
   return status === undefined
     ? "Anthropic API request failed."
@@ -1010,11 +1052,14 @@ export function supportsAdaptiveThinking(model: string): boolean {
   return false;
 }
 
-export function convertHistoryToAnthropic(history: ReadonlyArray<ChatMessage>): MessageParam[] {
+export function convertHistoryToAnthropic(
+  history: ReadonlyArray<ChatMessage>,
+  serialization: ToolResultSerializationOptions = {},
+): MessageParam[] {
   const out: MessageParam[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
-      const content: ContentBlockParam[] = msg.parts.map((p) => convertUserPart(p));
+      const content: ContentBlockParam[] = msg.parts.map((p) => convertUserPart(p, serialization));
       out.push({ role: "user", content });
     } else {
       const content: ContentBlockParam[] = [];
@@ -1032,12 +1077,15 @@ export function convertHistoryToAnthropic(history: ReadonlyArray<ChatMessage>): 
   return out;
 }
 
-function convertUserPart(part: UserPart): ContentBlockParam {
+function convertUserPart(
+  part: UserPart,
+  serialization: ToolResultSerializationOptions,
+): ContentBlockParam {
   if (part.kind === "text") return { type: "text", text: part.text };
   return {
     type: "tool_result",
     tool_use_id: part.toolCallId,
-    content: serializeToolResultForModel(part.result),
+    content: serializeToolResultForModel(part.result, serialization),
     is_error: toolResultHasErrors(part.result) ? true : undefined,
   };
 }

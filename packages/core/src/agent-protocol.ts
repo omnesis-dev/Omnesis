@@ -40,6 +40,7 @@ export const KNOWN_AGENT_ERROR_CODES = [
   "context_window_exceeded",
   "output_truncated",
   "anthropic_api_error",
+  "anthropic_usage_limited",
   "anthropic_stream_error",
   "tool_threw",
   "unknown_tool",
@@ -177,7 +178,7 @@ export type DocLoopRef = z.infer<typeof docLoopRefSchema>;
 /**
  * A compact, hint-shaped view of a durable annotation the Cognition Steward recorded
  * ABOUT a document — a prior to reground against, never a hard fact. Attached
- * inline to fetch results in experimental mode; the verbatim evidence quote is
+ * inline to search/fetch results; the verbatim evidence quote is
  * deliberately omitted from the wire shape (it lives in the source document).
  */
 export const docAnnotationHintSchema = z.object({
@@ -187,6 +188,8 @@ export const docAnnotationHintSchema = z.object({
   claim: z.string(),
   /** Recorded confidence (0-1), always below certainty. */
   confidence: z.number(),
+  /** Recorded proof state; absence means unknown, never verified. */
+  verificationState: z.enum(["unverified", "verified", "failed"]).optional(),
   /**
    * The document the claim is grounded in — the "reground before asserting"
    * pointer. Optional for wire compatibility with hints recorded before the
@@ -244,6 +247,8 @@ export const loopDetailSchema = loopSummarySchema.extend({
   involved: z.array(z.string()).optional(),
   /** Source document ids the loop rests on. */
   docIds: z.array(z.string()).optional(),
+  /** Optional bounded synthesis provenance; legacy loop results omit it. */
+  knowledgeContext: z.record(z.string(), z.unknown()).optional(),
   /** Recent ledger entries, oldest → newest. */
   ledger: z.array(z.object({ at: z.number(), note: z.string() })).optional(),
   /**
@@ -566,11 +571,19 @@ export type EventTrail = z.infer<typeof eventTrailSchema>;
 
 // ─── Tool-result discriminated union ───────────────────────────────────────
 
+const retrievalCoverageSchema = z.object({
+  status: z.enum(["catching_up", "scanned", "unknown"]),
+  corpusBoundary: z.string().nullable(),
+  publishedThrough: z.string().nullable(),
+  notice: z.string(),
+});
+
 const searchResultsResult = z.object({
   kind: z.literal("search.results"),
   query: z.string(),
   durationMs: z.number().nonnegative(),
   candidates: z.number().nonnegative().optional(),
+  coverage: retrievalCoverageSchema.optional(),
   results: z.array(docRefSchema),
 });
 
@@ -860,18 +873,6 @@ export const agentUsageSchema = z.object({
 export type AgentUsage = z.infer<typeof agentUsageSchema>;
 
 /**
- * Cumulative usage reported while a model turn is still running. Providers
- * that expose no live usage simply omit this event; `agent.message.end`
- * remains the authoritative terminal total.
- */
-export const agentUsageUpdateEvent = z.object({
-  sessionId: z.string(),
-  messageId: z.string(),
-  usage: agentUsageSchema,
-});
-export type AgentUsageUpdateEvent = z.infer<typeof agentUsageUpdateEvent>;
-
-/**
  * What Omnesis knows about the input size of the sampling request that ended
  * a turn. Measurement and limit provenance stay explicit: an absent token
  * count must never be mistaken for zero, and a configured limit must never be
@@ -889,6 +890,22 @@ export const agentContextAssessmentSchema = z.object({
   requestIteration: z.number().int().positive(),
 });
 export type AgentContextAssessment = z.infer<typeof agentContextAssessmentSchema>;
+
+/**
+ * Cumulative usage reported while a model turn is still running. Providers
+ * that expose no live usage simply omit this event; `agent.message.end`
+ * remains the authoritative terminal total. `context`, when present, is the
+ * input size of the latest model request of the turn — how much of the
+ * context window the conversation occupies now — so a caller can bound a
+ * long tool loop before the provider refuses it.
+ */
+export const agentUsageUpdateEvent = z.object({
+  sessionId: z.string(),
+  messageId: z.string(),
+  usage: agentUsageSchema,
+  context: agentContextAssessmentSchema.optional(),
+});
+export type AgentUsageUpdateEvent = z.infer<typeof agentUsageUpdateEvent>;
 
 /**
  * What the model provider itself reported about a rejected request, reduced to
@@ -1347,8 +1364,8 @@ const loopsSearchedResult = z.object({
 
 /**
  * Result of a successful interactive `fetch_loop` call (experimental) — one
- * loop's full read-only detail. `loop` is omitted when the id matched nothing
- * (a clean no-match, not an error).
+ * loop's full read-only detail. Legacy transcripts may omit `loop` for a
+ * no-match; current tools return a `loop_not_found` error instead.
  */
 const loopFetchedResult = z.object({
   kind: z.literal("loop.fetched"),
@@ -1542,6 +1559,8 @@ export const agentUserMessageEvent = z.object({
   sessionId: z.string(),
   userMessageId: z.string(),
   text: z.string(),
+  /** Durable queue receipts consumed by this user message; absent on legacy sends. */
+  submissionIds: z.array(z.string()).optional(),
 });
 
 export const agentMessageStartEvent = z.object({

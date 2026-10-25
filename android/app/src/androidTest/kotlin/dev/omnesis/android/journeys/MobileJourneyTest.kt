@@ -7,6 +7,8 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -16,6 +18,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -130,8 +133,10 @@ class MobileJourneyTest {
     fun openingASearchResultShowsTheDocument() {
         launchPaired()
         search(DOCUMENT_TITLE)
-        waitFor(searchResult(DOCUMENT_TITLE), "searching for \"$DOCUMENT_TITLE\" did not list the document")
-        compose.onAllNodes(searchResult(DOCUMENT_TITLE)).onFirst().performClick()
+        waitFor(hasScrollToNodeAction(), "the search results list never appeared")
+        // Ranking can put the matching row outside the visible viewport.
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(searchResult(DOCUMENT_TITLE))
+        compose.onAllNodes(searchResult(DOCUMENT_TITLE)).onFirst().assertIsDisplayed().performClick()
         // The result row's snippet quotes the same line, so the match must
         // come from outside the results list: from the opened document.
         waitFor(

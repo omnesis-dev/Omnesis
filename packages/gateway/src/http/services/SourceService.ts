@@ -85,7 +85,7 @@ import {
   deviceSupportsPersistedSourceContract as supportsPersistedSourceContract,
   getSourceMemberConfigContract,
 } from "../../data/repositories/SourceMemberConfigContractRepository.js";
-import { purgeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
 import { deriveDisplayStatus } from "../../sync-status.js";
 import { buildSourceNotices } from "../../source-notices.js";
 import {
@@ -107,6 +107,7 @@ import {
   SourceModeTransitionCoordinator,
   type SourceModeTransitionAdoption,
 } from "./SourceModeTransitionCoordinator.js";
+import type { LegacyOwnershipAction, LegacyOwnershipTable } from "../../analytics-db.js";
 import type { AccountDescriptor } from "@omnesis/source-sdk";
 import type { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import type {
@@ -2586,7 +2587,7 @@ export class SourceService {
       // step fails, retry sees the same ids; deleting documents first would
       // make a crash lose the only durable join to those derivatives.
       if (!stillOurs()) return;
-      await purgeCognitiveStateThroughGate(db, w, doomedDocIds);
+      await cascadeCognitiveStateThroughGate(db, w, doomedDocIds);
       if (!stillOurs()) return;
       // Bump the source epoch before the async analytics purge. Any old ingest
       // that lands after this point fails its exact-epoch check; one already in
@@ -2598,7 +2599,7 @@ export class SourceService {
       // Catch any derivative created after the first purge but before the base
       // document transaction committed. New annotation writes also reject the
       // removal tombstone; this second pass covers every other cognition arm.
-      await purgeCognitiveStateThroughGate(db, w, doomedDocIds);
+      await cascadeCognitiveStateThroughGate(db, w, doomedDocIds);
       if (!stillOurs()) return;
       await sourceDataRemoval.purgeAnalyticsForSource(id);
       // The index deletion routes through the indexer worker (see
@@ -2641,6 +2642,24 @@ export class SourceService {
 
   getById(id: string) {
     return getSource(this.deps.db, id as ReturnType<typeof SourceId>);
+  }
+
+  /** The rows of the source's shared analytics tables that no account has claimed. */
+  unattributedLegacyRows(id: SourceId): Promise<LegacyOwnershipTable[]> {
+    this.requireSource(id);
+    return this.deps.sourceDataRemoval.unattributedLegacyRows(id);
+  }
+
+  /** Claim or drop them; see `SourceDataRemovalService.settleLegacyRows`. */
+  settleLegacyRows(id: SourceId, action: LegacyOwnershipAction): Promise<LegacyOwnershipTable[]> {
+    this.requireSource(id);
+    return this.deps.sourceDataRemoval.settleLegacyRows(id, action);
+  }
+
+  private requireSource(id: SourceId): void {
+    if (!getSource(this.deps.db, id)) {
+      throw new HttpError(404, "SOURCE_NOT_FOUND", `source ${id} not found`);
+    }
   }
 
   /** Source-meta map keyed by both full sourceId and source-type. */

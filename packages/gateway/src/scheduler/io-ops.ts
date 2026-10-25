@@ -46,6 +46,8 @@ import type {
 import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { Scheduler } from "./scheduler.js";
+import type { MessageCountsQuery } from "../domain/message-counts.js";
+import type { MessageCountsBody } from "@omnesis/agent";
 import type { Priority, Task } from "./types.js";
 import type { IoOpName } from "./io-handlers.js";
 import type { ResolvedNearDupConfig } from "../near-dupes/config.js";
@@ -103,6 +105,10 @@ export interface IoGate {
    * document. The hero picture of where the Brain stands — and a full grouped
    * scan, so it lives out here beside the backlog count.
    */
+  knowledgeDiscoveryByMonth(
+    notBefore: string,
+    excludedSources?: readonly string[],
+  ): Promise<import("../brain/knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,
@@ -157,6 +163,11 @@ export interface IoGate {
     limit: number,
     opts: { experimental: boolean },
   ): Promise<LookupPersonSummary[]>;
+  /**
+   * Per-person message counts for the agent's `count_messages` tool. Walks
+   * every message document in the window; user priority, off the main loop.
+   */
+  messageCounts(query: MessageCountsQuery): Promise<MessageCountsBody>;
   /**
    * Enriched merge-candidate list for GET /people/merge-candidates. Scans the
    * whole pending set (≤5000) with union-find clustering + ranking. Read-only.
@@ -451,6 +462,11 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.countDocuments", priority: "background" },
   // Heavy budget: this one is a corpus scan by nature, so the slow-op alarm
   // should fire on a genuine outlier rather than on every call.
+  {
+    name: "io.knowledgeDiscoveryByMonth",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.bootstrapCorpusByMonth",
@@ -463,6 +479,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // (preempts background compute), heavy budget so the slow-op alarm only fires
   // on a genuine outlier.
   { name: "io.lookupPeople", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.messageCounts", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.enrichedMergeCandidates", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.mergeCandidateVisibility", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.likeSearchDocuments", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -578,12 +595,15 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.planSourceUrlRecanonicalization", [specs, cursor]),
     countDocuments: () => call("io.countDocuments", []),
     bootstrapBacklog: (recencyFloor) => call("io.bootstrapBacklog", [recencyFloor]),
+    knowledgeDiscoveryByMonth: (notBefore, excludedSources = []) =>
+      call("io.knowledgeDiscoveryByMonth", [notBefore, [...excludedSources]]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>
       call("io.conversationRetentionCandidates", [files, cutoffMs]),
     browsePeople: (query, limit, options) => call("io.browsePeople", [query, limit, options]),
     lookupPeople: (query, limit, opts) => call("io.lookupPeople", [query, limit, opts]),
+    messageCounts: (query) => call("io.messageCounts", [query]),
     enrichedMergeCandidates: (opts) => call("io.enrichedMergeCandidates", [opts]),
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),

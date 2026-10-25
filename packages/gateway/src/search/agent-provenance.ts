@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Compact, deterministic graph evidence for trusted agent search results. */
+import { instantSafeEnd } from "@omnesis/agent";
 import { GRAPH_CONTEXT_LINK_TYPES, computeContentHash } from "@omnesis/core";
+import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import {
   cognitionAuthoredDocumentTypes,
   cognitionAuthoredSqlExclusion,
@@ -112,7 +114,7 @@ const text = (s: string | null | undefined, max = 240): string | undefined =>
   s
     ? (() => {
         const clean = s.replace(/[\r\n\t]+/g, " ");
-        return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+        return clean.length > max ? `${clean.slice(0, instantSafeEnd(clean, 0, max - 1))}…` : clean;
       })()
     : undefined;
 const link = (s: string | null): string | undefined =>
@@ -209,6 +211,7 @@ export function enrichAgentSearch(
       id.length <= 256 &&
       sourceId.length <= 256 &&
       !excluded.has(id) &&
+      isKnowledgeDocumentReadable(db, id, sourceId) &&
       !sourceMatchesAnyPrefix(sourceId, hidden);
     const hiddenSql = sourcePrefixPredicate("d.source_id", hidden);
     const excludedIds = [...excluded];
@@ -224,8 +227,15 @@ export function enrichAgentSearch(
       `SELECT ${DOC_COLUMNS} FROM documents d ${DOC_JOINS} WHERE d.id = ?`,
     );
     const docs = new Map<string, Doc | undefined>();
+    // A denied projection is not a missing row eligible for stale-hit fallback.
+    const unreadable = new Set<string>();
     const get = (id: string): Doc | undefined => {
-      if (!docs.has(id)) docs.set(id, load.get(id));
+      if (!docs.has(id)) {
+        const row = load.get(id);
+        const readable = row && isKnowledgeDocumentReadable(db, id, row.source_id);
+        if (row && !readable) unreadable.add(id);
+        docs.set(id, readable ? row : undefined);
+      }
       return docs.get(id);
     };
 
@@ -237,20 +247,22 @@ export function enrichAgentSearch(
       if (
         excluded.has(hit.documentId) ||
         sourceMatchesAnyPrefix(hit.sourceId, hidden) ||
-        seenIds.has(hit.documentId)
+        seenIds.has(hit.documentId) ||
+        !isKnowledgeDocumentReadable(db, hit.documentId, hit.sourceId)
       )
         continue;
       seenIds.add(hit.documentId);
+      const current = get(hit.documentId);
+      if (unreadable.has(hit.documentId)) continue;
+      // Index metadata can lag a source move without a body/hash change.
+      // The current corpus identity must also pass the visibility boundary.
+      if (current && sourceMatchesAnyPrefix(current.source_id, hidden)) continue;
       // Do not shorten addressable IDs, or remove an otherwise valid hit just
       // because it cannot fit the optional graph projection's metadata budget.
       if (hit.documentId.length > 256 || hit.sourceId.length > 256) {
         groups.push({ hit, stale: true });
         continue;
       }
-      const current = get(hit.documentId);
-      // Index metadata can lag a source move without a body/hash change.
-      // The current corpus identity must also pass the visibility boundary.
-      if (current && sourceMatchesAnyPrefix(current.source_id, hidden)) continue;
       if (current && (current.id.length > 256 || current.source_id.length > 256)) {
         groups.push({ hit, stale: true });
         continue;
@@ -466,7 +478,7 @@ export function enrichAgentSearch(
         if (found.length > remaining) reasons.add(copyStop);
         for (const sibling of found) {
           if (copies.length >= copyBudget) break;
-          if (identityKey(sibling) !== hash) continue;
+          if (!visible(sibling.id, sibling.source_id) || identityKey(sibling) !== hash) continue;
           copies.push(copyOf(sibling));
           recordClipping(sibling);
           seeds.push(sibling);

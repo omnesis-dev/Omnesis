@@ -12,12 +12,13 @@
  * The subject is a person id, NOT a document — people merge and re-derive, so
  * there is no foreign key on `person_id` (the `open_loop_people` pattern). The
  * only document coupling is the evidence set, which drives BOTH the
- * content-change soft-invalidation and the privacy-delete hard purge.
+ * content-change soft-invalidation and the source-deletion review.
  *
  * Multi-evidence works exactly as in `annotations.ts` (read its module doc):
  * the atoms live in `person_annotation_evidence` with per-row `broken_at`
  * liveness, the parent's scalar columns mirror evidence[0] (the first LIVE
- * atom), and the servable rule is FIRST-ALIVE — an annotation is served
+ * atom), and the servable rule is FIRST-ALIVE for alternative support; synthesized claims
+ * require every support atom and invalidate when any atom breaks. An annotation is served
  * while its mirror atom's document exists, with the invalidator promoting
  * the next surviving atom into the mirror when evidence[0] breaks.
  *
@@ -25,6 +26,12 @@
  * handle, explicit `now`, single-writer in production.
  */
 
+import { createHash } from "node:crypto";
+import { containsNormalized } from "../quote-match.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
+import { resolvePersonId } from "../../domain/PeopleResolutionService.js";
+import { knowledgeSourceRevisionSql } from "../knowledge/source-revision.js";
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import {
   breakAnnotationEvidenceForDoc,
   insertAnnotationEvidenceRows,
@@ -67,7 +74,7 @@ export function createPersonAnnotationStorageTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_person_annotations_person ON person_annotations(person_id)",
   );
-  // "Which annotations cite this document" — the invalidation / privacy cascade.
+  // "Which annotations cite this document" — invalidation and source-deletion review.
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_person_annotations_evidence ON person_annotations(evidence_doc_id)",
   );
@@ -196,12 +203,151 @@ export interface CreatePersonAnnotationInput {
   additionalEvidence?: readonly AnnotationEvidenceInput[];
 }
 
+export interface PersonProfileBudget {
+  maxFacts: number;
+  maxCharacters: number;
+  /** Trusted complete-profile read receipt, never model-selected. */
+  expectedProfileFingerprint?: string;
+}
+export const DEFAULT_PERSON_PROFILE_BUDGET: PersonProfileBudget = {
+  maxFacts: 20,
+  maxCharacters: 4000,
+};
+
+/** Aggregate the entire canonical subject, including merge aliases; never a first-page cap. */
+export function getPersonProfileStats(
+  db: Db,
+  personId: string,
+): {
+  totalFacts: number;
+  totalCharacters: number;
+} {
+  return db
+    .prepare<[string], { totalFacts: number; totalCharacters: number }>(
+      `WITH ${MERGE_CLASS_CTE} SELECT COUNT(*) AS totalFacts,
+      COALESCE(SUM(length(claim_text)),0) AS totalCharacters FROM person_annotations
+      WHERE person_id IN (SELECT id FROM merge_class) AND invalidated_at IS NULL`,
+    )
+    .get(resolvePersonId(db, personId))!;
+}
+
+/** Tool-visible aggregate, using the same privacy and source-existence fence as the list. */
+export function getReadablePersonProfileStats(
+  db: Db,
+  personId: string,
+): {
+  totalFacts: number;
+  totalCharacters: number;
+} {
+  return db
+    .prepare<[string], { totalFacts: number; totalCharacters: number }>(
+      `WITH ${MERGE_CLASS_CTE} SELECT COUNT(*) AS totalFacts,
+      COALESCE(SUM(length(claim_text)),0) AS totalCharacters FROM person_annotations
+      WHERE person_id IN (SELECT id FROM merge_class) AND invalidated_at IS NULL
+      AND ${knowledgeOwnerReadPredicate(db, "person_annotations.id")}
+      AND EXISTS (SELECT 1 FROM documents WHERE documents.id=person_annotations.evidence_doc_id)`,
+    )
+    .get(resolvePersonId(db, personId))!;
+}
+
+/** Subject-local OCC token; hidden rows affect freshness without disclosing their contents. */
+export function getPersonProfileFingerprint(db: Db, personId: string): string {
+  const canonical = resolvePersonId(db, personId);
+  const rows = db
+    .prepare<[string], { id: string }>(
+      `WITH ${MERGE_CLASS_CTE} SELECT *,
+       (${knowledgeOwnerReadPredicate(db, "person_annotations.id")}
+        AND EXISTS (SELECT 1 FROM documents WHERE documents.id=person_annotations.evidence_doc_id))
+        AS profile_readable
+     FROM person_annotations
+     WHERE person_id IN (SELECT id FROM merge_class) AND invalidated_at IS NULL ORDER BY id`,
+    )
+    .all(canonical);
+  const evidence = db
+    .prepare<[string], unknown>(
+      `WITH ${MERGE_CLASS_CTE} SELECT e.* FROM person_annotation_evidence e
+     JOIN person_annotations a ON a.id=e.annotation_id
+     WHERE a.person_id IN (SELECT id FROM merge_class) AND a.invalidated_at IS NULL
+     ORDER BY e.annotation_id,e.position`,
+    )
+    .all(canonical);
+  // A surviving quote does not mean its enclosing source retained its meaning.
+  // Bind source revisions too, so an asynchronous verdict cannot replace a
+  // profile using context that changed while the judgment was in flight.
+  const hasSourceHashes = db
+    .prepare("PRAGMA table_info(documents)")
+    .all()
+    .some((column) => (column as { name: string }).name === "content_hash");
+  const sourceRevision = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_source_revisions'")
+    .get()
+    ? knowledgeSourceRevisionSql("d")
+    : "d.content_hash";
+  const sources = hasSourceHashes
+    ? db
+        .prepare<[string], unknown>(
+          `WITH ${MERGE_CLASS_CTE}, profile_sources(id) AS (
+      SELECT evidence_doc_id FROM person_annotations
+      WHERE person_id IN (SELECT id FROM merge_class) AND invalidated_at IS NULL
+      UNION SELECT e.evidence_doc_id FROM person_annotation_evidence e
+      JOIN person_annotations a ON a.id=e.annotation_id
+      WHERE a.person_id IN (SELECT id FROM merge_class) AND a.invalidated_at IS NULL
+    ) SELECT p.id,${sourceRevision} AS source_revision FROM profile_sources p
+      LEFT JOIN documents d ON d.id=p.id ORDER BY p.id`,
+        )
+        .all(canonical)
+    : [];
+  return createHash("sha256")
+    .update(JSON.stringify([canonical, rows, evidence, sources]))
+    .digest("hex");
+}
+
+export function assertPersonProfileReceipt(
+  db: Db,
+  personId: string,
+  budget: PersonProfileBudget,
+): void {
+  if (
+    budget.expectedProfileFingerprint !== undefined &&
+    budget.expectedProfileFingerprint !== getPersonProfileFingerprint(db, personId)
+  ) {
+    throw new Error("Person profile changed; reread the complete profile before reconciling");
+  }
+}
+
+export function enforcePersonProfileBudget(
+  before: ReturnType<typeof getPersonProfileStats>,
+  after: ReturnType<typeof getPersonProfileStats>,
+  budget: PersonProfileBudget,
+): void {
+  if (
+    !Number.isSafeInteger(budget.maxFacts) ||
+    budget.maxFacts < 1 ||
+    !Number.isSafeInteger(budget.maxCharacters) ||
+    budget.maxCharacters < 1
+  ) {
+    throw new Error("Invalid person profile budget");
+  }
+  if (after.totalFacts <= budget.maxFacts && after.totalCharacters <= budget.maxCharacters) return;
+  // Legacy oversized profiles may be repaired without first fitting the new budget.
+  if (
+    after.totalFacts <= before.totalFacts &&
+    after.totalCharacters <= before.totalCharacters &&
+    (after.totalFacts < before.totalFacts || after.totalCharacters < before.totalCharacters)
+  )
+    return;
+  throw new Error("Person profile budget exceeded; reconcile existing facts before adding more");
+}
+
 export function createPersonAnnotation(
   db: Db,
   input: CreatePersonAnnotationInput,
   now: number,
+  budget: PersonProfileBudget = DEFAULT_PERSON_PROFILE_BUDGET,
 ): PersonAnnotationRow {
   const txn = db.transaction((): PersonAnnotationRow => {
+    assertPersonProfileReceipt(db, input.personId, budget);
+    const before = getPersonProfileStats(db, input.personId);
     db.prepare<unknown[]>(
       `INSERT INTO person_annotations (
          id, person_id, claim_type, claim_text, evidence_doc_id, evidence_quote,
@@ -230,6 +376,7 @@ export function createPersonAnnotation(
       .prepare<[string], PersonAnnotationDbRow>("SELECT * FROM person_annotations WHERE id = ?")
       .get(input.id);
     if (!created) throw new Error(`person annotation ${input.id} vanished mid-create`);
+    enforcePersonProfileBudget(before, getPersonProfileStats(db, input.personId), budget);
     return rowToPersonAnnotation(created);
   });
   return txn();
@@ -246,10 +393,67 @@ export function listPersonAnnotationEvidence(
   return listAnnotationEvidenceRows(db, "person_annotation_evidence", annotationId);
 }
 
+/** Exact no-op detection is a fresh, privacy-fenced read, never a receipt shortcut. */
+export function findUnchangedPersonAnnotation(
+  db: Db,
+  id: string,
+  proposal: Pick<
+    CreatePersonAnnotationInput,
+    | "claimType"
+    | "claimText"
+    | "confidence"
+    | "claimBasis"
+    | "evidenceDocId"
+    | "evidenceQuote"
+    | "additionalEvidence"
+  >,
+  budget: PersonProfileBudget,
+): PersonAnnotationRow | null {
+  return db.transaction(() => {
+    const current = getPersonAnnotation(db, id);
+    if (!current || current.invalidatedAt !== null) return null;
+    assertPersonProfileReceipt(db, current.personId, budget);
+    if (
+      current.verificationState !== "verified" ||
+      current.lastVerifiedAt === null ||
+      current.evidenceDocId !== proposal.evidenceDocId ||
+      current.evidenceQuote !== proposal.evidenceQuote ||
+      current.claimType !== proposal.claimType ||
+      current.claimText !== proposal.claimText ||
+      current.confidence !== proposal.confidence ||
+      current.claimBasis !== proposal.claimBasis ||
+      !current.llmDerived
+    )
+      return null;
+    const atoms = listPersonAnnotationEvidence(db, id);
+    const proposed = [
+      { docId: proposal.evidenceDocId, quote: proposal.evidenceQuote },
+      ...(proposal.additionalEvidence ?? []),
+    ];
+    if (atoms.length !== proposed.length) return null;
+    const source = db.prepare<[string], { content: string | null }>(
+      "SELECT content FROM documents WHERE id=?",
+    );
+    for (const [index, atom] of atoms.entries()) {
+      if (
+        atom.evidenceDocId !== proposed[index]!.docId ||
+        atom.evidenceQuote !== proposed[index]!.quote
+      )
+        return null;
+      const document = source.get(atom.evidenceDocId);
+      if (!document || !containsNormalized(document.content ?? "", atom.evidenceQuote)) return null;
+    }
+    return current;
+  })();
+}
+
 /** Single annotation by id — the read the revise firewall re-check needs. */
 export function getPersonAnnotation(db: Db, id: string): PersonAnnotationRow | null {
   const row = db
-    .prepare<[string], PersonAnnotationDbRow>("SELECT * FROM person_annotations WHERE id = ?")
+    .prepare<
+      [string],
+      PersonAnnotationDbRow
+    >(`SELECT * FROM person_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "person_annotations.id")}`)
     .get(id);
   return row ? rowToPersonAnnotation(row) : null;
 }
@@ -270,7 +474,7 @@ export function listRecentLivePersonAnnotations(
   const rows = db
     .prepare<[number, number], PersonAnnotationDbRow>(
       `SELECT * FROM person_annotations
-        WHERE invalidated_at IS NULL AND created_at >= ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND invalidated_at IS NULL AND created_at >= ?
           AND (verification_state IS NULL OR verification_state = 'verified')
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
         ORDER BY created_at DESC LIMIT ?`,
@@ -312,9 +516,9 @@ const MERGE_CLASS_CTE = `RECURSIVE merge_class(id, depth) AS (
  * Only rows whose evidence doc still exists are returned: an annotation whose
  * grounding atom is gone is un-regroundable by definition, so it must not be
  * served as a prior on ANY surface (self-memory injection, the HTTP routes,
- * lookup hints). Deletion paths outside the privacy cascade (a source
- * remove/re-add that re-keys doc ids, dedup, migrations) would otherwise leave
- * a dangling claim injected forever.
+ * lookup hints). A deleted source document, or one re-keyed by a source
+ * remove/re-add, dedup or a migration, would otherwise leave a dangling claim
+ * injected forever.
  */
 export function listLivePersonAnnotationsForPerson(
   db: Db,
@@ -335,7 +539,7 @@ export function listLivePersonAnnotationsForPerson(
     .prepare<(string | number)[], PersonAnnotationDbRow>(
       `WITH ${MERGE_CLASS_CTE}
        SELECT * FROM person_annotations
-        WHERE person_id IN (SELECT id FROM merge_class)
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
           AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
           ${cursor}
@@ -343,6 +547,30 @@ export function listLivePersonAnnotationsForPerson(
     )
     .all(...params);
   return rows.map(rowToPersonAnnotation);
+}
+
+/**
+ * Live facts about `personId` (or its merge class) kept for review after the
+ * document their scalar mirror cites was deleted. They are outside the
+ * readable profile — never served, budgeted or fingerprinted — but the
+ * Brain's review must be able to read them to revise or retract them.
+ */
+export function listPersonAnnotationsUnderReview(
+  db: Db,
+  personId: string,
+  limit = 20,
+): PersonAnnotationRow[] {
+  return db
+    .prepare<[string, number], PersonAnnotationDbRow>(
+      `WITH ${MERGE_CLASS_CTE}
+       SELECT * FROM person_annotations
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
+          AND invalidated_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
+        ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?`,
+    )
+    .all(personId, limit)
+    .map(rowToPersonAnnotation);
 }
 
 /**
@@ -363,7 +591,7 @@ export function listLiveSameClaimTypePersonAnnotations(
     .prepare<unknown[], PersonAnnotationDbRow>(
       `WITH ${MERGE_CLASS_CTE}
        SELECT * FROM person_annotations
-        WHERE person_id IN (SELECT id FROM merge_class)
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
           AND claim_type = ? COLLATE NOCASE AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
           ${opts.excludeId !== undefined ? "AND id != ?" : ""}
@@ -406,39 +634,72 @@ const ID_CHUNK = 400;
  * surgical per evidence ATOM, like the doc-store sibling
  * (`invalidateAnnotationsForDoc`): an atom citing `docId` whose quote no
  * longer appears in the document's NEW content (or whose document row
- * vanished) is stamped broken; the annotation soft-invalidates only when NO
- * live atom remains. A survivor whose evidence[0] broke gets the next
+ * vanished) is stamped broken; a synthesized claim invalidates when ANY
+ * support atom breaks. Other claims invalidate when NO live atom remains. A survivor whose evidence[0] broke gets the next
  * surviving atom promoted into its scalar mirror, and every survivor is
  * re-stamped `verification_state = 'unverified'` with `last_verified_at`
  * cleared, so the re-verification sweep re-judges entailment against the
- * shifted content. The privacy purge stays blanket via
- * `cascadePersonAnnotationPrivacyDelete`. Keeps the `created_at <= now`
- * event-time guard. Idempotent.
+ * shifted content. A deliberate source deletion takes the gentler
+ * {@link reviewPersonAnnotationsForDeletedDoc} path instead. Keeps the
+ * `created_at <= now` event-time guard. Idempotent.
  */
 export function invalidatePersonAnnotationsForDoc(
   db: Db,
   docId: string,
   now: number,
 ): AnnotationInvalidationResult {
-  const txn = db.transaction((): AnnotationInvalidationResult => {
+  return regroundPersonAnnotations(db, docId, now, "content").result;
+}
+
+/**
+ * A source document was deleted: the person facts grounded in it survive.
+ * Every atom citing it is stamped broken, a survivor whose evidence[0] broke
+ * has its next live atom promoted into the scalar mirror, and every touched
+ * fact — including one left with no live grounding — is re-stamped
+ * `unverified` so it is re-judged. Nothing is invalidated here: only a
+ * reviewed decision (revise, supersede, retract) may retire a fact. Returns
+ * the ids of the annotations it touched. Idempotent.
+ */
+export function reviewPersonAnnotationsForDeletedDoc(db: Db, docId: string, now: number): string[] {
+  return regroundPersonAnnotations(db, docId, now, "deleted").touched;
+}
+
+function regroundPersonAnnotations(
+  db: Db,
+  docId: string,
+  now: number,
+  cause: "content" | "deleted",
+): { result: AnnotationInvalidationResult; touched: string[] } {
+  const txn = db.transaction((): { result: AnnotationInvalidationResult; touched: string[] } => {
+    // Index-driven from the live atoms citing the document. A deletion has no
+    // event-time guard: everything resting on the deleted document is affected.
     const candidates = db
-      .prepare<[string, number], { id: string; evidence_doc_id: string; evidence_quote: string }>(
-        `SELECT id, evidence_doc_id, evidence_quote FROM person_annotations a
-          WHERE EXISTS (
-                  SELECT 1 FROM person_annotation_evidence e
-                   WHERE e.annotation_id = a.id AND e.evidence_doc_id = ? AND e.broken_at IS NULL)
-            AND invalidated_at IS NULL AND created_at <= ?`,
+      .prepare<
+        unknown[],
+        { id: string; evidence_doc_id: string; evidence_quote: string; claim_basis: string }
+      >(
+        `SELECT DISTINCT a.id, a.evidence_doc_id, a.evidence_quote, a.claim_basis
+           FROM person_annotation_evidence e JOIN person_annotations a ON a.id = e.annotation_id
+          WHERE e.evidence_doc_id = ? AND e.broken_at IS NULL AND a.invalidated_at IS NULL
+            ${cause === "deleted" ? "" : "AND a.created_at <= ?"}`,
       )
-      .all(docId, now);
-    if (candidates.length === 0) return { invalidated: 0, flaggedUnverified: 0, promoted: 0 };
-    const doc = db
-      .prepare<[string], { content: string | null }>("SELECT content FROM documents WHERE id = ?")
-      .get(docId);
-    const content = doc?.content ?? "";
+      .all(...(cause === "deleted" ? [docId] : [docId, now]));
+    if (candidates.length === 0)
+      return { result: { invalidated: 0, flaggedUnverified: 0, promoted: 0 }, touched: [] };
+    const content =
+      cause === "deleted"
+        ? ""
+        : (db
+            .prepare<
+              [string],
+              { content: string | null }
+            >("SELECT content FROM documents WHERE id = ?")
+            .get(docId)?.content ?? "");
     const dead: string[] = [];
     const survivors: string[] = [];
     let promoted = 0;
     for (const c of candidates) {
+      const beforeCount = listPersonAnnotationEvidence(db, c.id).length;
       const remaining = breakAnnotationEvidenceForDoc(
         db,
         "person_annotation_evidence",
@@ -447,12 +708,19 @@ export function invalidatePersonAnnotationsForDoc(
         content,
         now,
       );
-      if (remaining.length === 0) {
+      if (
+        cause === "content" &&
+        (remaining.length === 0 ||
+          (c.claim_basis === "synthesized" && remaining.length < beforeCount))
+      ) {
         dead.push(c.id);
         continue;
       }
-      const head = remaining[0]!;
-      if (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote) {
+      const head = remaining[0];
+      if (
+        head &&
+        (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote)
+      ) {
         db.prepare<[string, string, string]>(
           `UPDATE person_annotations SET evidence_doc_id = ?, evidence_quote = ? WHERE id = ?`,
         ).run(head.evidenceDocId, head.evidenceQuote, c.id);
@@ -471,13 +739,16 @@ export function invalidatePersonAnnotationsForDoc(
       const batch = survivors.slice(i, i + ID_CHUNK);
       const placeholders = batch.map(() => "?").join(", ");
       // Cleared, not just aged — a previous entailment verdict no longer
-      // speaks to the shifted content, so the row leads the sweep's backlog.
+      // speaks to the shifted evidence, so the row leads the sweep's backlog.
       db.prepare<unknown[]>(
         `UPDATE person_annotations SET verification_state = 'unverified', last_verified_at = NULL
           WHERE id IN (${placeholders})`,
       ).run(...batch);
     }
-    return { invalidated: dead.length, flaggedUnverified: survivors.length, promoted };
+    return {
+      result: { invalidated: dead.length, flaggedUnverified: survivors.length, promoted },
+      touched: survivors,
+    };
   });
   return txn();
 }
@@ -499,11 +770,22 @@ export interface DueVerificationPersonAnnotation {
  */
 export function listDueVerificationPersonAnnotations(
   db: Db,
-  opts: { cutoff: number; limit: number },
+  opts: {
+    cutoff: number;
+    limit: number;
+    /** Sources excluded from the Brain: a fact resting on live evidence from one is not due. */
+    excludedSources?: readonly string[];
+  },
 ): DueVerificationPersonAnnotation[] {
+  const excluded = opts.excludedSources ?? [];
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  const fence = excluded.length
+    ? `AND NOT EXISTS (SELECT 1 FROM person_annotation_evidence e JOIN documents d ON d.id = e.evidence_doc_id
+         WHERE e.annotation_id = pa.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`
+    : "";
   return db
     .prepare<
-      [number, number],
+      unknown[],
       { id: string; last_verified_at: number | null; created_at: number; is_self: number }
     >(
       `SELECT pa.id, pa.last_verified_at, pa.created_at,
@@ -512,11 +794,12 @@ export function listDueVerificationPersonAnnotations(
          LEFT JOIN people p ON p.id = pa.person_id
         WHERE pa.invalidated_at IS NULL
           AND (pa.last_verified_at IS NULL OR pa.last_verified_at < ?)
+          ${fence}
         ORDER BY COALESCE(p.is_self, 0) DESC, COALESCE(pa.last_verified_at, 0) ASC,
                  pa.created_at ASC
         LIMIT ?`,
     )
-    .all(opts.cutoff, opts.limit)
+    .all(opts.cutoff, ...(fence ? inclusion.params : []), opts.limit)
     .map((r) => ({
       id: r.id,
       lastVerifiedAt: r.last_verified_at,
@@ -526,9 +809,10 @@ export function listDueVerificationPersonAnnotations(
 }
 
 /**
- * Privacy cascade: HARD-delete every annotation ANY of whose evidence atoms
- * (live or broken — the blanket covers everything the annotation ever
- * embedded) cites a deleted document. Child rows are purged with parents.
+ * HARD-delete every annotation ANY of whose evidence atoms (live or broken)
+ * cites one of `deletedDocIds`, with its child rows. Only the historical
+ * retired-web-documents migration uses this; a live source deletion never
+ * deletes a person fact (see {@link reviewPersonAnnotationsForDeletedDoc}).
  */
 export function cascadePersonAnnotationPrivacyDelete(
   db: Db,
@@ -593,6 +877,7 @@ export function revisePersonAnnotation(
   id: string,
   patch: UpdatePersonAnnotationPatch,
   now: number,
+  budget: PersonProfileBudget = DEFAULT_PERSON_PROFILE_BUDGET,
 ): boolean {
   const sets: string[] = [];
   const args: unknown[] = [];
@@ -627,6 +912,15 @@ export function revisePersonAnnotation(
   sets.push("updated_at = ?");
   args.push(now);
   const txn = db.transaction((): boolean => {
+    const subject = db
+      .prepare<
+        [string],
+        { person_id: string; claim_text: string }
+      >("SELECT person_id,claim_text FROM person_annotations WHERE id=?")
+      .get(id);
+    if (!subject) return false;
+    assertPersonProfileReceipt(db, subject.person_id, budget);
+    const before = getPersonProfileStats(db, subject.person_id);
     const res = db
       .prepare(
         `UPDATE person_annotations SET ${sets.join(", ")}
@@ -642,6 +936,8 @@ export function revisePersonAnnotation(
         patch.evidence,
       );
     }
+    if (patch.claimText !== undefined && patch.claimText !== subject.claim_text)
+      enforcePersonProfileBudget(before, getPersonProfileStats(db, subject.person_id), budget);
     return true;
   });
   return txn();
@@ -686,18 +982,44 @@ export function supersedePersonAnnotation(
 export function createPersonAnnotationSuperseding(
   db: Db,
   input: CreatePersonAnnotationInput,
-  supersedesId: string,
+  supersedesId: string | readonly string[],
   now: number,
+  budget: PersonProfileBudget = DEFAULT_PERSON_PROFILE_BUDGET,
 ): { annotation: PersonAnnotationRow; superseded: boolean } {
-  if (supersedesId === input.id) {
-    throw new Error(`person annotation ${input.id} cannot supersede itself`);
+  const ids = typeof supersedesId === "string" ? [supersedesId] : [...supersedesId];
+  if (ids.includes(input.id)) throw new Error("Person annotation cannot supersede itself");
+  if (!ids.length || ids.length > 128 || new Set(ids).size !== ids.length) {
+    throw new Error("Invalid person annotation supersession set");
   }
-  const txn = db.transaction(() => {
-    const annotation = createPersonAnnotation(db, input, now);
-    const superseded = supersedePersonAnnotation(db, supersedesId, input.id, now);
+  return db.transaction(() => {
+    assertPersonProfileReceipt(db, input.personId, budget);
+    const before = getPersonProfileStats(db, input.personId);
+    const canonical = resolvePersonId(db, input.personId);
+    for (const id of ids) {
+      const target = db
+        .prepare<
+          [string],
+          { person_id: string; invalidated_at: number | null }
+        >("SELECT person_id,invalidated_at FROM person_annotations WHERE id=?")
+        .get(id);
+      if (target && resolvePersonId(db, target.person_id) !== canonical) {
+        throw new Error("Person annotation supersession must stay within one person");
+      }
+      if (typeof supersedesId !== "string" && (!target || target.invalidated_at !== null)) {
+        throw new Error("Person annotation supersession changed; reread the profile");
+      }
+    }
+    // Retire first inside this transaction: the replacement budget measures the final state.
+    let superseded = true;
+    for (const id of ids)
+      superseded = supersedePersonAnnotation(db, id, input.id, now) && superseded;
+    const annotation = createPersonAnnotation(db, input, now, {
+      maxFacts: Number.MAX_SAFE_INTEGER,
+      maxCharacters: Number.MAX_SAFE_INTEGER,
+    });
+    enforcePersonProfileBudget(before, getPersonProfileStats(db, input.personId), budget);
     return { annotation, superseded };
-  });
-  return txn();
+  })();
 }
 
 /**
@@ -712,11 +1034,18 @@ export function supersedePersonAnnotationBy(
   id: string,
   supersededById: string,
   now: number,
+  budget?: PersonProfileBudget,
 ): { superseded: boolean } {
   if (id === supersededById) {
     throw new Error(`person annotation ${id} cannot supersede itself`);
   }
   const txn = db.transaction(() => {
+    const current = getPersonAnnotation(db, id);
+    if (budget) {
+      if (!current)
+        throw new Error("Person profile changed; reread the complete profile before reconciling");
+      assertPersonProfileReceipt(db, current.personId, budget);
+    }
     const successor = getPersonAnnotation(db, supersededById);
     if (successor === null || successor.invalidatedAt !== null) return { superseded: false };
     return { superseded: supersedePersonAnnotation(db, id, supersededById, now) };

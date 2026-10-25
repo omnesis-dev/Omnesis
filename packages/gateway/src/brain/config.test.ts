@@ -14,7 +14,32 @@ describe("resolveBrainSettings", () => {
   it("applies the documented defaults for an absent block", () => {
     const r = resolveBrainSettings(undefined);
     expect(r).toEqual({
-      workerConcurrency: 1,
+      knowledge: {
+        immediateThreshold: 0.8,
+        soonThreshold: 0.4,
+        soonDelayMs: 3600000,
+        routineDelayMs: 21600000,
+        recentWindowMs: 30 * 86_400_000,
+        rootMaxChars: 8000,
+        maxSeeds: 64,
+        maxVisitedPerSeed: 256,
+        maxFrontierNodes: 32,
+        maxFrontierChars: 65536,
+        cascadeBatchSize: 100,
+        discoveryBatchSize: 32,
+        bootstrapBatchSize: 64,
+        maxReviewsPerTick: 16,
+        maxReviewIntervalMs: 2592000000,
+        checkpointLeadMs: 86400000,
+        retryBackoffMs: 3600000,
+        retryBackoffCapMs: 86400000,
+        maxFailedAttempts: 5,
+        contextHandoffRatio: 0.65,
+        contextHandoffTokens: 120_000,
+        maxStalledHandoffs: 2,
+      },
+      documentReadChars: 16_384,
+      workerConcurrency: 4,
       conversationDebounceMs: 60 * 60 * 1000,
       conversationMaxDeferMs: 6 * 60 * 60 * 1000,
       documentUpdateDebounceMs: 30 * 60 * 1000,
@@ -52,8 +77,16 @@ describe("resolveBrainSettings", () => {
       annotations: { enabled: true, recordCheck: "shadow" },
       reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
       provenanceRecheck: { enabled: true },
-      judge: { enabled: true },
       mergeAdjudication: { enabled: true },
+      tasks: { autoApply: true, proposeGate: "shadow" },
+      interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
+      observations: {
+        minConsequence: 2,
+        timelyLevel: 2,
+        minTimelyConsequence: 1,
+        alreadyKnownMax: 0.6,
+        retentionDays: 90,
+      },
       bootstrap: {
         enabled: true,
         direction: "recent-first",
@@ -61,13 +94,16 @@ describe("resolveBrainSettings", () => {
         maxRunsPerDay: 200,
         maxRuns: 1000000,
         batchSize: 100,
+        horizonMs: 90 * 24 * 60 * 60 * 1000,
       },
       sweepsEnabled: true,
+      excludedSources: [],
       synthesisLookbackMs: 7 * 24 * 60 * 60 * 1000,
       primeMaxAnnotations: 12,
       annotationConfidenceCeiling: 0.9,
       annotationBasisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
       annotationConfidenceFloor: 0.25,
+      personProfileBudget: { maxFacts: 20, maxCharacters: 4000 },
     });
   });
 
@@ -163,6 +199,14 @@ describe("brain config schema", () => {
     expect(validateConfig({ brain: { nonsense: 1 } as never }).ok).toBe(false);
     expect(validateConfig({ brain: { dailyRunHour: 24 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 0 } }).ok).toBe(false);
+    expect(validateConfig({ brain: { workerConcurrency: 32 } }).ok).toBe(true);
+    expect(validateConfig({ brain: { workerConcurrency: 33 } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.99 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffTokens: 1000 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.05 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { maxStalledHandoffs: 11 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { maxStalledHandoffs: 0 } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { documentReadChars: 70_000 } }).ok).toBe(false);
   });
 
   it("accepts a background-agent assignment keyed by the capability role id", () => {
@@ -183,6 +227,10 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
   it("matches resolveBrainSettings(undefined)", () => {
     const r = resolveBrainSettings(undefined);
     expect(defAt("/brain/workerConcurrency")).toBe(r.workerConcurrency);
+    expect(defAt("/brain/documentReadChars")).toBe(r.documentReadChars);
+    expect(defAt("/brain/knowledge/contextHandoffRatio")).toBe(r.knowledge.contextHandoffRatio);
+    expect(defAt("/brain/knowledge/contextHandoffTokens")).toBe(r.knowledge.contextHandoffTokens);
+    expect(defAt("/brain/knowledge/maxStalledHandoffs")).toBe(r.knowledge.maxStalledHandoffs);
     expect(parseDuration(defAt("/brain/conversationDebounce") as string)).toBe(
       r.conversationDebounceMs,
     );
@@ -222,6 +270,10 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
       r.annotationBasisCeilings.synthesized,
     );
     expect(defAt("/brain/annotations/confidenceFloor")).toBe(r.annotationConfidenceFloor);
+    expect(defAt("/brain/annotations/personProfile/maxFacts")).toBe(r.personProfileBudget.maxFacts);
+    expect(defAt("/brain/annotations/personProfile/maxCharacters")).toBe(
+      r.personProfileBudget.maxCharacters,
+    );
     expect(defAt("/brain/reverification/enabled")).toBe(r.reverification.enabled);
     expect(defAt("/brain/reverification/intervalDays")).toBe(r.reverification.intervalDays);
     expect(defAt("/brain/reverification/maxPerSweep")).toBe(r.reverification.maxPerSweep);
@@ -239,12 +291,13 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
     expect(defAt("/brain/digest/push")).toBe(r.digest.push);
     expect(defAt("/brain/digest/hour")).toBe(r.digest.hour);
     expect(defAt("/brain/provenanceRecheck/enabled")).toBe(r.provenanceRecheck.enabled);
-    expect(defAt("/brain/judge/enabled")).toBe(r.judge.enabled);
     expect(defAt("/brain/mergeAdjudication/enabled")).toBe(r.mergeAdjudication.enabled);
     expect(defAt("/brain/sweepsEnabled")).toBe(r.sweepsEnabled);
+    expect(defAt("/brain/excludedSources")).toEqual(r.excludedSources);
     expect(defAt("/brain/bootstrap/enabled")).toBe(r.bootstrap.enabled);
     expect(defAt("/brain/bootstrap/maxRunsPerDay")).toBe(r.bootstrap.maxRunsPerDay);
     expect(defAt("/brain/bootstrap/maxRuns")).toBe(r.bootstrap.maxRuns);
+    expect(parseDuration(defAt("/brain/bootstrap/horizon") as string)).toBe(r.bootstrap.horizonMs);
   });
 });
 
@@ -301,6 +354,14 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
       synthesized: 0.4,
     });
     expect(basisTuned.annotationConfidenceFloor).toBe(0.3);
+    expect(
+      resolveBrainSettings({ annotations: { personProfile: { maxFacts: 12 } } })
+        .personProfileBudget,
+    ).toEqual({ maxFacts: 12, maxCharacters: 4000 });
+    expect(
+      resolveBrainSettings({ annotations: { personProfile: { maxCharacters: 2500 } } })
+        .personProfileBudget,
+    ).toEqual({ maxFacts: 20, maxCharacters: 2500 });
 
     // An operator turning the lane down: every producer honours an explicit
     // disable, and the tuned fields survive alongside it.
@@ -331,14 +392,12 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
     const r = resolveBrainSettings({
       digest: { enabled: false, push: false },
       provenanceRecheck: { enabled: false },
-      judge: { enabled: false },
       mergeAdjudication: { enabled: false },
       sweepsEnabled: false,
     });
     expect(r.digest.enabled).toBe(false);
     expect(r.digest.push).toBe(false);
     expect(r.provenanceRecheck.enabled).toBe(false);
-    expect(r.judge.enabled).toBe(false);
     expect(r.mergeAdjudication.enabled).toBe(false);
     expect(r.sweepsEnabled).toBe(false);
   });
@@ -353,6 +412,13 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
   it("partial synthesis overrides fall back per-field", () => {
     const r = resolveBrainSettings({ synthesis: { cadenceHours: 6 } });
     expect(r.synthesis).toEqual({ enabled: true, cadenceHours: 6, maxPerDay: 1 });
+  });
+});
+
+describe("excluded sources", () => {
+  it("resolves the configured entries, deduplicated in order", () => {
+    const r = resolveBrainSettings({ excludedSources: ["codex", "github:someone", "codex"] });
+    expect(r.excludedSources).toEqual(["codex", "github:someone"]);
   });
 });
 
@@ -372,5 +438,84 @@ describe("merge-adjudication knob", () => {
     expect(validateConfig({ brain: { mergeAdjudication: { nonsense: 1 } as never } }).ok).toBe(
       false,
     );
+  });
+});
+
+describe("task auto-apply knob", () => {
+  it("defaults on, and an explicit false makes every task change a proposal", () => {
+    expect(resolveBrainSettings(undefined).tasks.autoApply).toBe(true);
+    expect(resolveBrainSettings({ tasks: { autoApply: false } }).tasks.autoApply).toBe(false);
+  });
+
+  it("the schema accepts the block and rejects unknown keys inside it", () => {
+    expect(validateConfig({ brain: { tasks: { autoApply: false } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { tasks: { nonsense: 1 } as never } }).ok).toBe(false);
+  });
+});
+
+describe("interest knobs", () => {
+  it("the propose gate observes by default and takes the three modes", () => {
+    expect(resolveBrainSettings(undefined).tasks.proposeGate).toBe("shadow");
+    expect(resolveBrainSettings({ tasks: { proposeGate: "enforce" } }).tasks.proposeGate).toBe(
+      "enforce",
+    );
+    expect(validateConfig({ brain: { tasks: { proposeGate: "off" } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { tasks: { proposeGate: "loud" } as never } }).ok).toBe(false);
+  });
+
+  it("the ledger is on by default and can be switched off", () => {
+    expect(resolveBrainSettings(undefined).interest.enabled).toBe(true);
+    expect(resolveBrainSettings({ interest: { enabled: false } }).interest.enabled).toBe(false);
+    expect(validateConfig({ brain: { interest: { nonsense: 1 } as never } }).ok).toBe(false);
+    expect(
+      resolveBrainSettings({ interest: { lookup: { cosineFloor: 0.7 } } }).interest.lookup,
+    ).toEqual({ perPolarity: 4, cosineFloor: 0.7, overlapFloor: 0.2 });
+    expect(validateConfig({ brain: { interest: { lookup: { perPolarity: 0 } } } }).ok).toBe(false);
+  });
+});
+
+describe("knowledge maintenance configuration", () => {
+  it("keeps display defaults and runtime defaults aligned", () => {
+    expect(defAt("/brain/knowledge")).toEqual(BRAIN_DEFAULTS.knowledge);
+  });
+  it("supports deterministic compressed timing and bounds routine delay by soon delay", () => {
+    const resolved = resolveBrainSettings({
+      knowledge: {
+        soonDelay: "2ms",
+        routineDelay: "1ms",
+        maxReviewInterval: "5ms",
+        checkpointLead: "1ms",
+        recentWindowDays: 7,
+        maxSeeds: 2,
+        retryBackoff: "3ms",
+        retryBackoffCap: "2ms",
+        maxFailedAttempts: 2,
+      },
+    });
+    expect(resolved.knowledge).toMatchObject({
+      retryBackoffMs: 3,
+      retryBackoffCapMs: 3,
+      maxFailedAttempts: 2,
+      soonDelayMs: 2,
+      routineDelayMs: 2,
+      maxReviewIntervalMs: 5,
+      checkpointLeadMs: 1,
+      recentWindowMs: 7 * 86_400_000,
+      maxSeeds: 2,
+    });
+  });
+  it.each([
+    { recentWindowDays: 0 },
+    { recentWindowDays: 3651 },
+    { maxSeeds: 0 },
+    { maxFailedAttempts: 0 },
+    { maxVisitedPerSeed: 4097 },
+    { cascadeBatchSize: 1001 },
+    { rootMaxChars: 32001 },
+    { soonThreshold: 0.9 },
+    { immediateThreshold: 0.2 },
+    { enabled: true },
+  ])("rejects unsafe knowledge settings %j", (knowledge) => {
+    expect(validateConfig({ brain: { knowledge } }).ok).toBe(false);
   });
 });

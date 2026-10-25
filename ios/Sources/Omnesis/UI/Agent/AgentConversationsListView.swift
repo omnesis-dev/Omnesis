@@ -88,10 +88,14 @@ struct AgentConversationsList: View {
                                         systemImage: item.pinned ? "pin.slash" : "pin"
                                     )
                                 }
-                                Button(role: .destructive) {
-                                    Task { await store.agent.deleteConversation(id: item.sessionId) }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                                // The Morning brief conversation is a standing
+                                // thread the gateway refuses to delete.
+                                if item.isDeletable {
+                                    Button(role: .destructive) {
+                                        Task { await store.agent.deleteConversation(id: item.sessionId) }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
                                 }
                             }
                     }
@@ -182,7 +186,14 @@ extension AgentConversationsList {
             // state is announced by the row's accessibilityValue below, which
             // is where a VoiceOver user swiping the list will meet it.
             .accessibilityHidden(true)
-            if item.pinned {
+            if item.origin?.isDailyBrief == true {
+                // The standing Morning brief thread is marked by what it is
+                // rather than by its pin, which the gateway sets for it.
+                Image(systemName: "sun.horizon.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.warning)
+                    .accessibilityHidden(true)
+            } else if item.pinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)

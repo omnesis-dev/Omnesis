@@ -14,7 +14,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
-import { createBrief } from "./briefs.js";
+import { createObservation } from "./observations.js";
 import { appendOpenLoopLedger, createOpenLoop } from "./open-loops.js";
 import { countRunArtifacts, listSweepTallies, recordSweepTally } from "./sweep-tally.js";
 import type Database from "better-sqlite3";
@@ -48,7 +48,7 @@ describe("sweep tally", () => {
   test("increments accumulate across runs", () => {
     recordSweepTally(
       db,
-      { sweepId: "weekly-finances", runs: 1, promptTokens: 100, briefsCreated: 1 },
+      { sweepId: "weekly-finances", runs: 1, promptTokens: 100, observationsNoted: 1 },
       NOW,
     );
     recordSweepTally(
@@ -59,7 +59,7 @@ describe("sweep tally", () => {
     expect(tally("weekly-finances")).toMatchObject({
       runs: 2,
       promptTokens: 350,
-      briefsCreated: 1,
+      observationsNoted: 1,
       loopsCreated: 2,
       firstRunAt: NOW,
       lastRunAt: LATER,
@@ -71,29 +71,29 @@ describe("sweep tally", () => {
     expect(tally("health-trends")).toMatchObject({ runs: 0, failedRuns: 1, lastRunAt: NOW });
   });
 
-  test("a judge hold does not make a sweep look like it ran", () => {
-    // Holds are recorded mid-run, so stamping `last_run_at` on them would
+  test("a partial increment does not make a sweep look like it ran", () => {
+    // A delta that settles no run must not stamp `last_run_at`: it would
     // report a run that has not settled — and might yet fail.
-    recordSweepTally(db, { sweepId: "waiting-on-others", briefsHeld: 1 }, NOW);
+    recordSweepTally(db, { sweepId: "waiting-on-others", observationsNoted: 1 }, NOW);
     expect(tally("waiting-on-others")).toMatchObject({
       runs: 0,
-      briefsHeld: 1,
+      observationsNoted: 1,
       firstRunAt: null,
       lastRunAt: null,
     });
     recordSweepTally(db, { sweepId: "waiting-on-others", runs: 1 }, LATER);
     expect(tally("waiting-on-others")).toMatchObject({
       runs: 1,
-      briefsHeld: 1,
+      observationsNoted: 1,
       firstRunAt: LATER,
       lastRunAt: LATER,
     });
   });
 
   test("a later increment resumes the same row rather than starting a new one", () => {
-    recordSweepTally(db, { sweepId: "gone", runs: 4, briefsCreated: 3 }, NOW);
+    recordSweepTally(db, { sweepId: "gone", runs: 4, observationsNoted: 3 }, NOW);
     recordSweepTally(db, { sweepId: "gone", runs: 1 }, LATER);
-    expect(tally("gone")).toMatchObject({ runs: 5, briefsCreated: 3, firstRunAt: NOW });
+    expect(tally("gone")).toMatchObject({ runs: 5, observationsNoted: 3, firstRunAt: NOW });
   });
 
   describe("countRunArtifacts", () => {
@@ -120,15 +120,12 @@ describe("sweep tally", () => {
         },
         NOW,
       );
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brief_mine",
+          id: "obs_mine",
           createdByRun: "run_sweep",
-          kind: "info",
-          title: "Two subscriptions renew next week",
-          confidence: 0.7,
-          urgency: 0.4,
+          summary: "Two subscriptions renew next week",
         },
         NOW,
       );
@@ -138,14 +135,14 @@ describe("sweep tally", () => {
       appendOpenLoopLedger(db, "loop_theirs", { runId: "run_sweep", note: "chased again" }, NOW);
 
       expect(countRunArtifacts(db, "run_sweep")).toEqual({
-        briefsCreated: 1,
+        observationsNoted: 1,
         loopsCreated: 1,
         // Two entries on one loop is one loop touched.
         loopsTouched: 1,
         annotationsCreated: 0,
       });
       expect(countRunArtifacts(db, "run_nothing")).toEqual({
-        briefsCreated: 0,
+        observationsNoted: 0,
         loopsCreated: 0,
         loopsTouched: 0,
         annotationsCreated: 0,

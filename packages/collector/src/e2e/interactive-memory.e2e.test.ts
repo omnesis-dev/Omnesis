@@ -5,6 +5,8 @@ import "./synth-env.js";
 
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { readKnowledgeSourceEvidence } from "../../../gateway/src/brain/knowledge/source-evidence.js";
+import { parseContextualEntailment } from "../../../gateway/src/inference/contextual-entailment.js";
 
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import {
@@ -155,8 +157,15 @@ describe("interactive durable memory without the experimental Brain", () => {
         throw new Error(`No conversation evidence: ${JSON.stringify(results[0])}`);
       return data.documentId;
     };
+    const readProfile =
+      (id: string): PlannedCall =>
+      () => ({
+        name: "annotation_search",
+        args: { personId: id },
+      });
     plans.set(CREATE, [
       () => ({ name: "conversation_memory_evidence", args: {} }),
+      readProfile(selfId),
       (results) => ({
         name: "annotate_person",
         args: {
@@ -165,6 +174,7 @@ describe("interactive durable memory without the experimental Brain", () => {
           evidenceDocId: evidenceId(results),
         },
       }),
+      readProfile(personId),
       (results) => ({
         name: "annotate_person",
         args: {
@@ -181,6 +191,7 @@ describe("interactive durable memory without the experimental Brain", () => {
           evidenceDocId: evidenceId(results),
         },
       }),
+      readProfile(selfId),
       (results) => ({
         name: "annotate_person",
         args: {
@@ -212,15 +223,15 @@ describe("interactive durable memory without the experimental Brain", () => {
       `The user's self person ID is ${JSON.stringify(selfId)}`,
     );
     const results = observed.get(CREATE)!;
-    expect(results).toHaveLength(7);
+    expect(results).toHaveLength(10);
     const prepared = results[0]?.data as { documentId: string; userMessages: string[] };
     expect(prepared.userMessages).toContain(CREATE);
     expect(prepared.userMessages.join("\n")).not.toContain(ASSISTANT_ONLY);
-    for (const result of results.slice(1, 4))
+    for (const result of results.slice(1, 7))
       expect(result.kind, JSON.stringify(result)).not.toBe("error");
-    expect(results[4]).toMatchObject({ kind: "error", code: "evidence_not_found" });
-    expect(results[5]).toMatchObject({ kind: "error", code: "invalid_evidence" });
-    expect(results[6]).toMatchObject({ kind: "error", code: "invalid_evidence" });
+    expect(results[7]).toMatchObject({ kind: "error", code: "evidence_not_found" });
+    expect(results[8]).toMatchObject({ kind: "error", code: "invalid_evidence" });
+    expect(results[9]).toMatchObject({ kind: "error", code: "invalid_evidence" });
 
     const self = await annotations(harness, `/people/${selfId}/annotations`);
     const person = await annotations(harness, `/people/${personId}/annotations`);
@@ -229,6 +240,37 @@ describe("interactive durable memory without the experimental Brain", () => {
     expect(person.map((row) => row.claimText)).toEqual([PERSON_FACT]);
     expect(document.map((row) => row.claimText)).toEqual([DOCUMENT_FACT]);
     expect(self[0]?.evidenceDocId).toBe(prepared.documentId);
+    // The real writer publishes speaker authority atomically with the transcript.
+    // A former assistant reply remains historical speech, not naked source proof.
+    const speech = readKnowledgeSourceEvidence(db, prepared.documentId)!;
+    const speechFrame = JSON.parse(speech.verifierEvidence) as {
+      sources: unknown[];
+      verifiedReferences: Array<{ text: string; wholeStatementOnly: boolean }>;
+    };
+    expect(speechFrame.sources).toEqual([]);
+    const assistantSpeech = speechFrame.verifiedReferences.find((item) =>
+      item.text.includes(ASSISTANT_ONLY),
+    );
+    expect(assistantSpeech?.wholeStatementOnly).toBe(true);
+    expect(assistantSpeech?.text).toContain("recorded assistant utterance");
+    const verdict = (quote: string) =>
+      JSON.stringify({
+        contentInContext: {
+          verdict: "supported",
+          reason: "Scripted protocol check",
+          evidenceQuotes: [quote],
+        },
+        placementSupport: {
+          verdict: "not_applicable",
+          reason: "Historical speech",
+          evidenceQuotes: [],
+        },
+      });
+    expect(parseContextualEntailment(verdict(ASSISTANT_ONLY), speech.verifierEvidence)).toBeNull();
+    expect(parseContextualEntailment(verdict(assistantSpeech!.text), speech.verifierEvidence)).toBe(
+      "entailment",
+    );
+
     expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_runs").get()?.n).toBe(
       0,
     );
@@ -240,6 +282,7 @@ describe("interactive durable memory without the experimental Brain", () => {
 
     plans.set(CORRECTION, [
       () => ({ name: "conversation_memory_evidence", args: {} }),
+      readProfile(selfId),
       (items) => ({
         name: "annotate_person",
         args: {
@@ -270,18 +313,21 @@ describe("interactive durable memory without the experimental Brain", () => {
     expect(recalledSystemPrompt).toContain(CORRECTED_QUOTE);
     expect(recalledSystemPrompt).not.toContain(PREFERENCE);
 
-    // Deleting the original conversation removes its evidence and every
-    // derivative, including the superseded row's retained audit text.
+    // Deleting the original conversation removes its evidence but never the
+    // memories built on it: they stop being served, and the live one turns
+    // unverified, kept for review.
     await harness.gatewayJson(`/agent/conversations/${sessionId}`, { method: "DELETE" });
     expect(await annotations(harness, `/people/${selfId}/annotations`)).toEqual([]);
-    expect(
-      db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_annotations WHERE evidence_doc_id = ?")
-        .get(prepared.documentId)?.n,
-    ).toBe(0);
+    const kept = db
+      .prepare<
+        [string],
+        { invalidated_at: number | null; verification_state: string | null }
+      >("SELECT invalidated_at, verification_state FROM person_annotations WHERE evidence_doc_id = ?")
+      .all(prepared.documentId);
+    expect(kept).toHaveLength(2);
+    expect(kept.filter((row) => row.invalidated_at === null)).toEqual([
+      { invalidated_at: null, verification_state: "unverified" },
+    ]);
     expect(
       db
         .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id = ?")

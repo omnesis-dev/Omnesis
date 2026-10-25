@@ -26,6 +26,8 @@
  * that forgets the native clients cannot land quietly.
  */
 
+import { AGENT_TOOL_CARDS } from "./agent-tool-cards.js";
+
 /** One named example: what it is, and the exact value that goes on the wire. */
 export interface WireFixture {
   /** File name under `wire-fixtures/`, without the extension. */
@@ -315,12 +317,26 @@ export const CONTRACT_MESSAGE_FIXTURES: readonly WireFixture[] = [
 ];
 
 /** Every fixture, in the order they are written to disk. */
+/**
+ * How each agent tool call reads in a transcript. Not a message on the wire,
+ * but the same problem: three renderers that must agree, each in its own
+ * language, so each checks its copy against these bytes.
+ */
+export const AGENT_TOOL_CARD_FIXTURES: readonly WireFixture[] = [
+  {
+    name: "agent-tool-cards",
+    note: "Every conversational agent tool: whether its card dismisses, persists or is never drawn, its label, glyph and whether it scrolls a body of text.",
+    value: AGENT_TOOL_CARDS,
+  },
+];
+
 export const WIRE_FIXTURES: readonly WireFixture[] = [
   ...STATE_FIXTURES,
   ...FAILURE_FIXTURES,
   ...COVERAGE_FIXTURES,
   ...AUTH_CHALLENGE_FIXTURES,
   ...CONTRACT_MESSAGE_FIXTURES,
+  ...AGENT_TOOL_CARD_FIXTURES,
 ];
 
 /** The bytes a fixture becomes on disk — stable ordering, trailing newline. */

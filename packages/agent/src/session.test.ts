@@ -3,7 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { InferenceUrlPolicyError, type AgentEvent, type DocRef } from "@omnesis/core";
+import { z } from "zod";
+
+import {
+  InferenceUrlPolicyError,
+  type AgentEvent,
+  type DocRef,
+  type ToolResult,
+} from "@omnesis/core";
 import { AgentSession } from "./session.js";
 import { ReplayBackend, type ReplayFixture } from "./replay-backend.js";
 import type { ChatBackend, TurnInput } from "./backend.js";
@@ -38,6 +45,62 @@ function newSession(events: AgentEvent[]): {
 }
 
 describe("AgentSession", () => {
+  it("broadcasts consumed queue identities without putting them in model history", async () => {
+    const { session, captured } = newSession([]);
+    const ids = ["first-receipt", "second-receipt"];
+    const { completion } = session.send("Use a short table", { submissionIds: ids });
+    ids.push("later-receipt");
+    await completion;
+    expect(captured[0]).toEqual({
+      type: "agent.user.message",
+      payload: {
+        sessionId: "S",
+        userMessageId: "M",
+        text: "Use a short table",
+        submissionIds: ["first-receipt", "second-receipt"],
+      },
+    });
+    expect(session.historySnapshot()[0]).toEqual({
+      role: "user",
+      parts: [{ kind: "text", text: "Use a short table" }],
+    });
+  });
+
+  it("gives a turn's model note to the model only, never to history or listeners", async () => {
+    const seen: string[] = [];
+    const backend: ChatBackend = {
+      name: "recording",
+      model: "recording",
+      async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+        seen.push(input.userMessage);
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: "end_turn",
+          },
+        };
+      },
+    };
+    const session = new AgentSession({
+      sessionId: "S",
+      backend,
+      tools: [],
+      systemPrompt: "test",
+      idGen: () => "M",
+    });
+    const captured: AgentEvent[] = [];
+    session.subscribe((event) => captured.push(event));
+    await session.send("what is the observatory?", { modelNote: "Open wiki:observatory first." })
+      .completion;
+    await session.send("thanks").completion;
+
+    expect(seen).toEqual(["what is the observatory?\n\nOpen wiki:observatory first.", "thanks"]);
+    expect(JSON.stringify(session.historySnapshot())).not.toContain("wiki:observatory");
+    expect(JSON.stringify(captured)).not.toContain("wiki:observatory");
+  });
+
   it("includes an empty assistant in a live snapshot before the first delta", async () => {
     const gate = Promise.withResolvers<void>();
     const backend: ChatBackend = {
@@ -1915,6 +1978,50 @@ describe("AgentSession — what each turn carries from the session", () => {
     await session.send("what's on today");
 
     expect(seen()?.timeZone).toBe("Asia/Tokyo");
+  });
+
+  it("hands tools their arguments without the local-time annotations tool output adds", async () => {
+    const { backend, seen } = recordingBackend();
+    const received: unknown[] = [];
+    const tool = {
+      name: "save_note",
+      description: "test",
+      schema: z.object({ text: z.string() }),
+      invoke: (args: unknown) => {
+        received.push(args);
+        return Promise.resolve({ kind: "structured", resultType: "ok", data: {} } as ToolResult);
+      },
+    };
+    const session = new AgentSession({
+      sessionId: "S",
+      backend,
+      tools: [tool],
+      systemPrompt: "test",
+      timeZone: "Europe/London",
+    });
+    await session.send("note the train");
+    const offered = seen()!.tools[0]!;
+    expect(offered.name).toBe("save_note");
+    await offered.invoke(
+      {
+        text: "Train 2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London)",
+        nested: [{ at: "2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London)" }],
+      },
+      { sessionId: "S", messageId: "M" },
+    );
+    expect(received).toEqual([
+      { text: "Train 2026-10-18T17:28:00Z", nested: [{ at: "2026-10-18T17:28:00Z" }] },
+    ]);
+
+    // Without a zone nothing is annotated, so the tools are offered unchanged.
+    const plain = recordingBackend();
+    await new AgentSession({
+      sessionId: "P",
+      backend: plain.backend,
+      tools: [tool],
+      systemPrompt: "test",
+    }).send("hi");
+    expect(plain.seen()!.tools[0]).toBe(tool);
   });
 
   it("leaves the zone unset when the session was built without one", async () => {

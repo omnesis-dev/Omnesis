@@ -74,6 +74,10 @@ const FORBIDDEN_TABLES = new Set([
   "direct_audit_events",
   "direct_audit_payloads",
   "direct_audit_sessions",
+  // Exact decision requests and their privacy ancestry are operator audit data.
+  "knowledge_decision_inputs",
+  "knowledge_decision_input_subjects",
+  "knowledge_decision_privacy",
   "tokens",
   "sessions",
   "device_pairings",
@@ -137,7 +141,11 @@ const SAFE_TABLES = new Set([
   "cognition_spend",
   "cognition_spend_daily",
   "cognition_sweep_tally",
+  "cognition_synthesis_admissions",
   "conversation_read_state",
+  // Sealed role ranges for agent conversations: hashes and offsets into the
+  // copied documents, whose evidence-authority metadata names their digest.
+  "conversation_evidence_projections",
   "dev_annotations",
   "device_doctor_runs",
   "devices",
@@ -158,11 +166,62 @@ const SAFE_TABLES = new Set([
   "index_versions",
   "indexed_documents",
   "indexing_errors",
+  "live_voice_usage",
+  // The owner's reactions to morning-brief items and the interest examples
+  // the Brain's decision gates read: feedback, with nothing to redeem.
+  "interest_brief_reactions",
+  "interest_signals",
+  // Synthesis and its durable invalidation/work ledgers travel together.
+  "knowledge_batch_regions",
+  "knowledge_batches",
+  "knowledge_candidates",
+  "knowledge_candidate_sources",
+  "knowledge_candidate_decision_work",
+  "knowledge_cascade_frontier",
+  "knowledge_cascade_jobs",
+  "knowledge_changes",
+  "knowledge_checkpoints",
+  "knowledge_claims",
+  "knowledge_claim_outcomes",
+  "knowledge_conversion_deferrals",
+  "knowledge_decisions",
+  "knowledge_dependencies",
+  "knowledge_discovery_coverage",
+  "knowledge_discovery_targets",
+  "knowledge_evidence",
+  "knowledge_frontier",
+  "knowledge_historical_admissions",
+  "knowledge_links",
+  "knowledge_node_tombstones",
+  "knowledge_nodes",
+  "knowledge_operational_arcs",
+  "knowledge_organization_cohorts",
+  "knowledge_organization_members",
+  "knowledge_organization_targets",
+  "knowledge_outcome_assessments",
+  "knowledge_outcome_assessment_sources",
+  "knowledge_owner_changes",
+  "knowledge_owner_retire_guard",
+  "knowledge_owner_withdraw_guard",
+  "knowledge_owner_write_guard",
+  "knowledge_projection_cleanup",
+  "knowledge_reconciliation_revisions",
+  "knowledge_retired_loop_sources",
+  "knowledge_revision_dependencies",
+  "knowledge_revisions",
+  "knowledge_source_revisions",
+  // Monotone per-document epochs that temporal receipts in the copied
+  // knowledge rows are checked against; a clone must not restart them.
+  "knowledge_temporal_document_epochs",
+  "knowledge_temporal_epoch_reset",
+  "knowledge_work",
   "link_reconcile_state",
   "link_stats",
   "link_stats_counters",
   "merge_candidates",
   "merge_rules",
+  "morning_brief_items",
+  "morning_briefs",
   "mutable_list_revisions",
   "near_dup_df",
   "near_dup_df_meta",
@@ -171,7 +230,13 @@ const SAFE_TABLES = new Set([
   "near_dup_lsh_buckets",
   "near_dup_signatures",
   "non_identifying_emails",
+  "note_agent_meta",
+  "note_agent_runs",
   "note_entries",
+  "observation_citations",
+  "observation_outcomes",
+  "observation_related_loops",
+  "observations",
   "open_loop_docs",
   "open_loop_ledger",
   "open_loop_people",
@@ -200,6 +265,8 @@ const SAFE_TABLES = new Set([
   "schema_migrations",
   "source_document_profiles",
   "source_devices",
+  "source_inventories",
+  "source_inventory_documents",
   // A source family's declared name and glyph: product strings the
   // collector re-pushes on every boot, and useful in a clone before it does.
   "source_family_meta",
@@ -253,6 +320,13 @@ const SENSITIVE_COLUMNS = new Map([
   ["source_devices", new Set(["config_override"])],
 ]);
 const SAFE_ROW_FILTERS = new Map([
+  // A clone must assess outcomes under its own active decision policy.
+  ["knowledge_outcome_assessments", "0"],
+  ["knowledge_outcome_assessment_sources", "0"],
+  // Transaction-local owner mutation guards are never persistent authority.
+  ["knowledge_owner_write_guard", "0"],
+  ["knowledge_owner_withdraw_guard", "0"],
+  ["knowledge_owner_retire_guard", "0"],
   ["devices", `"name" <> 'bootstrap'`],
   // Reconciliation rows are time-dependent work, not canonical seed data.
   // Retain their schemas and supporting indexes so the gateway can resume
@@ -263,6 +337,8 @@ const SAFE_ROW_FILTERS = new Map([
   // Doctor runs are transient observations about one installation's hosts.
   // Preserve the table shape without cloning host-local health details.
   ["device_doctor_runs", "0"],
+  // Call-duration accounting belongs to one installation, never its clones.
+  ["live_voice_usage", "0"],
   ["snapshot_absence_cascade_outbox", "0"],
   ["snapshot_absence_deletions", "0"],
   // Replica deletion verdicts describe one installation's members disagreeing

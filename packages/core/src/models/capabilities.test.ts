@@ -45,7 +45,6 @@ describe("CAPABILITY_METADATA", () => {
     expect(bySection("cognition")).toEqual([
       "agent",
       "background-agent",
-      "brief-judge",
       "decision",
       "entailment-verifier",
       "watch-judge",

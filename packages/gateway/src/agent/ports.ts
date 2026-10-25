@@ -15,12 +15,15 @@
  * notify-only rule. It is the agent's one write surface into automations.
  */
 
+import { createHash } from "node:crypto";
 import {
+  instantSafeEnd,
   LOOKUP_PEOPLE_MAX_LIMIT,
   RecordPortError,
   SqlPortNotPermittedError,
   SqlPortOverCapError,
   UnsupportedSearchFilterError,
+  withoutCutInstantAtEnd,
 } from "@omnesis/agent";
 import {
   deriveRecordCitationFields,
@@ -28,6 +31,16 @@ import {
   parseSourceKey,
   recordReference,
 } from "@omnesis/core";
+import { readSourceEvidenceAuthority } from "../sources/evidence-authority.js";
+import { readFreshKnowledgeProjection } from "../brain/knowledge/projection-read.js";
+import {
+  readFreshKnowledgeDocumentContext,
+  knowledgePageRefForDocument,
+  readKnowledgeDocumentContext,
+  resolveKnowledgeDocumentAlias,
+} from "../brain/knowledge/document-context.js";
+import { knowledgePageReadAuthority } from "../brain/knowledge/read-authority.js";
+import { readKnowledgeSourceRevision } from "../brain/knowledge/source-revision.js";
 import { STREAM_COLUMN } from "../analytics/internal.js";
 import { ScopedSqlDeniedError } from "../analytics/sandbox-tables.js";
 import { readDocConnections } from "../brain/doc-connections.js";
@@ -139,6 +152,9 @@ export function createGatewaySearchPort(
     async search(input: SearchPortInput, signal?: AbortSignal): Promise<SearchPortResult> {
       signal?.throwIfAborted();
       const t0 = Date.now();
+      // Capture before retrieval: later publication must not bless an older result.
+      // Restricted callers must not learn global corpus activity metadata.
+      const coverage = !authorization?.restricted ? pipeline.retrievalCoverage?.() : undefined;
       const parsed = authorization?.restricted ? parseQuery(input.query) : null;
       if (parsed) rejectUnsupportedRestrictedFilters(parsed.tokens);
       const requestedFilters = parsed ? mergeFilters(parsed.filters, input.filters) : input.filters;
@@ -221,6 +237,7 @@ export function createGatewaySearchPort(
       }
       return {
         query: input.query,
+        ...(coverage ? { coverage } : {}),
         durationMs: response.timing.totalMs ?? Date.now() - t0,
         totalCandidates:
           (response.timing.bm25Candidates ?? 0) + (response.timing.vectorCandidates ?? 0) ||
@@ -317,6 +334,11 @@ function attachDocConnections(db: Db, results: DocRef[]): void {
   }
 }
 
+/** A document's first 500 characters, ending before an instant the cut would split. */
+function snippetOf(content: string): string {
+  return content.slice(0, instantSafeEnd(content, 0, 500));
+}
+
 function searchResultToDocRef(
   item: SearchResultItem,
   syncStatus: SyncStatusRegistry | undefined,
@@ -328,7 +350,8 @@ function searchResultToDocRef(
     sourceId: item.sourceId,
     documentType: item.documentType,
     title: item.title,
-    snippet: item.chunkText,
+    // A fixed-width chunk can end partway through an instant.
+    snippet: withoutCutInstantAtEnd(item.chunkText),
     ts: parseEpochMillis(item.sourceCreatedAt),
     url: item.sourceUrl,
     appUrl: item.appUrl,
@@ -412,111 +435,154 @@ export function createGatewayDocumentPort(
     maxStoredDocumentBytes?: number;
     /** Neighbours follow the graph context policy search graph context uses. */
     graphContext?: boolean;
+    /**
+     * Refuse a citation of a document this turn has not fetched. Background
+     * Brain runs only: a conversation cites what it found without re-reading.
+     */
+    requireCitationRead?: boolean;
   },
   authorization?: CorpusAuthorization,
 ): DocumentPort {
   return {
+    supportsKnowledgeAliases: true,
+    requiresCitationRead: options?.requireCitationRead === true,
+    knowledgePageRef: (documentId) => knowledgePageRefForDocument(db, documentId),
     async fetch(
       documentId: string,
       opts?: { includeNeighbors?: boolean },
     ): Promise<DocumentPortResult | null> {
-      const permitted = authorization ? permittedSourceIds(db, authorization) : null;
-      const rows =
-        options?.maxStoredDocumentBytes === undefined && !permitted
-          ? listDocumentsByIds(db, [documentId])
-          : db.transaction((id: string, maxBytes: number | undefined) => {
-              const size = db
-                .prepare<[string], { source_id: string; stored_bytes: number }>(
-                  `SELECT
+      return db.transaction(() => {
+        const resolvedId = resolveKnowledgeDocumentAlias(db, documentId);
+        if (!resolvedId) return null;
+        documentId = resolvedId;
+        const permitted = authorization ? permittedSourceIds(db, authorization) : null;
+        const rows =
+          options?.maxStoredDocumentBytes === undefined && !permitted
+            ? listDocumentsByIds(db, [documentId])
+            : db.transaction((id: string, maxBytes: number | undefined) => {
+                const size = db
+                  .prepare<[string], { source_id: string; stored_bytes: number }>(
+                    `SELECT
                      source_id,
                      length(CAST(content AS BLOB)) +
                      length(CAST(metadata AS BLOB)) +
                      length(CAST(title AS BLOB)) AS stored_bytes
                    FROM documents
                    WHERE id = ?`,
-                )
-                .get(id);
-              if (size && permitted && !permitted.has(size.source_id)) return [];
-              if (size && maxBytes !== undefined && size.stored_bytes > maxBytes) {
-                throw new Error("Document exceeds the configured read-size limit");
-              }
-              // The size check and full read share one synchronous SQLite
-              // transaction/snapshot, so a collector update cannot enlarge
-              // the body between authorization and materialization.
-              return listDocumentsByIds(db, [id]);
-            })(documentId, options?.maxStoredDocumentBytes);
-      const row = rows[0];
-      if (!row) return null;
-      const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
-      let metadata: Record<string, unknown> | undefined;
-      try {
-        metadata = JSON.parse(row.metadata) as Record<string, unknown>;
-      } catch {
-        metadata = undefined;
-      }
-      const url = typeof metadata?.sourceUrl === "string" ? metadata.sourceUrl : undefined;
-      const appUrl = typeof metadata?.appUrl === "string" ? metadata.appUrl : undefined;
-      const documentType =
-        typeof metadata?.documentType === "string" ? metadata.documentType : undefined;
-      const mimeType = extraMimeType(metadata);
-      const ref: DocRef = {
-        documentId: row.id,
-        sourceType,
-        sourceId: row.sourceId,
-        documentType,
-        title: row.title,
-        snippet: row.content.slice(0, 500),
-        ts: parseEpochMillis(row.sourceCreatedAt),
-        url,
-        appUrl,
-        mimeType,
-        unitName: unitNameFor(syncStatus, row.sourceId),
-      };
-      // Inline connections on the deep read: open loops the document is a
-      // source for, the durable annotations recorded about it (grounded priors
-      // to reground, never facts), and the temporal annotations it grounds.
-      // Only loop and temporal connections require experimental mode.
-      if (!authorization?.restricted) {
-        const conn = readDocConnections(db, row.id, {
-          annotations: true,
-          temporalAnnotations: experimentalVisible(),
-          openLoops: experimentalVisible(),
-        });
-        if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
-        if (conn.annotations.length > 0) ref.annotations = conn.annotations;
-        if (conn.temporalAnnotations.length > 0) {
-          ref.temporalAnnotations = conn.temporalAnnotations;
+                  )
+                  .get(id);
+                if (size && permitted && !permitted.has(size.source_id)) return [];
+                if (size && maxBytes !== undefined && size.stored_bytes > maxBytes) {
+                  throw new Error("Document exceeds the configured read-size limit");
+                }
+                // The size check and full read share one synchronous SQLite
+                // transaction/snapshot, so a collector update cannot enlarge
+                // the body between authorization and materialization.
+                return listDocumentsByIds(db, [id]);
+              })(documentId, options?.maxStoredDocumentBytes);
+        const freshProjection = rows[0]
+          ? null
+          : readFreshKnowledgeProjection(
+              db,
+              documentId,
+              permitted,
+              options?.maxStoredDocumentBytes,
+            );
+        const row = rows[0] ?? freshProjection?.row;
+        if (!row) return null;
+        const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
+        let metadata: Record<string, unknown> | undefined;
+        try {
+          metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+        } catch {
+          metadata = undefined;
         }
-      }
-      const result: DocumentPortResult = {
-        ref,
-        document: {
-          id: row.id,
+        const url = typeof metadata?.sourceUrl === "string" ? metadata.sourceUrl : undefined;
+        const appUrl = typeof metadata?.appUrl === "string" ? metadata.appUrl : undefined;
+        const documentType =
+          typeof metadata?.documentType === "string" ? metadata.documentType : undefined;
+        const mimeType = extraMimeType(metadata);
+        const ref: DocRef = {
+          documentId: row.id,
+          sourceType,
           sourceId: row.sourceId,
+          documentType,
+          title: row.title,
+          snippet: snippetOf(row.content),
+          ts: parseEpochMillis(row.sourceCreatedAt),
+          url,
+          appUrl,
+          mimeType,
+          unitName: unitNameFor(syncStatus, row.sourceId),
+        };
+        // Inline connections on the deep read: open loops the document is a
+        // source for, the durable annotations recorded about it (grounded priors
+        // to reground, never facts), and the temporal annotations it grounds.
+        // Only loop and temporal connections require experimental mode.
+        if (!authorization?.restricted) {
+          const conn = readDocConnections(db, row.id, {
+            annotations: true,
+            temporalAnnotations: experimentalVisible(),
+            openLoops: experimentalVisible(),
+          });
+          if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
+          if (conn.annotations.length > 0) ref.annotations = conn.annotations;
+          if (conn.temporalAnnotations.length > 0) {
+            ref.temporalAnnotations = conn.temporalAnnotations;
+          }
+        }
+        const knowledgeContext = !authorization?.restricted
+          ? freshProjection
+            ? readFreshKnowledgeDocumentContext(db, freshProjection)
+            : readKnowledgeDocumentContext(db, row.id)
+          : undefined;
+        const result: DocumentPortResult = {
+          ref,
+          document: {
+            id: row.id,
+            sourceId: row.sourceId,
+            title: row.title,
+            content: row.content,
+            sourceEvidenceAuthority: readSourceEvidenceAuthority(db, row.id, row.content),
+            metadata,
+            sourceCreatedAt: row.sourceCreatedAt,
+            updatedAt: row.updatedAt,
+            ...(!authorization?.restricted ? { knowledgeContext } : {}),
+          },
+        };
+        const pageAuthority = knowledgePageReadAuthority(db, knowledgeContext, {
           title: row.title,
           content: row.content,
           metadata,
           sourceCreatedAt: row.sourceCreatedAt,
-          updatedAt: row.updatedAt,
-        },
-      };
-      // Honor includeNeighbors: a bounded 1-hop expansion via the one
-      // shared walker — compact DocRefs, bodies dropped, ordered
-      // most-structural-first (newest within a type). `neighborsTruncated`
-      // tells the agent the set is a recency-ordered sample, not the full
-      // neighbourhood.
-      if (opts?.includeNeighbors && !authorization?.restricted) {
-        const expansion = expandOneHop(
-          db,
-          row.id,
-          options?.graphContext ? { policy: graphContextPolicy() } : {},
-        );
-        if (expansion.neighbors.length > 0) {
-          result.neighbors = expansion.neighbors.map((n) => oneHopNeighborToDocRef(n, syncStatus));
-          result.neighborsTruncated = expansion.truncated;
+        });
+        result.readSnapshot = {
+          ...(pageAuthority ? { fullPageAuthorityVersion: pageAuthority } : {}),
+          documentId: row.id,
+          version: createHash("sha256")
+            .update(JSON.stringify([readKnowledgeSourceRevision(db, row.id), result.document]))
+            .digest("hex"),
+        };
+        // Honor includeNeighbors: a bounded 1-hop expansion via the one
+        // shared walker — compact DocRefs, bodies dropped, ordered
+        // most-structural-first (newest within a type). `neighborsTruncated`
+        // tells the agent the set is a recency-ordered sample, not the full
+        // neighbourhood.
+        if (opts?.includeNeighbors && !authorization?.restricted) {
+          const expansion = expandOneHop(
+            db,
+            row.id,
+            options?.graphContext ? { policy: graphContextPolicy() } : {},
+          );
+          if (expansion.neighbors.length > 0) {
+            result.neighbors = expansion.neighbors.map((n) =>
+              oneHopNeighborToDocRef(n, syncStatus),
+            );
+            result.neighborsTruncated = expansion.truncated;
+          }
         }
-      }
-      return result;
+        return result;
+      })();
     },
   };
 }
@@ -599,7 +665,7 @@ export function createGatewayDocumentByUrlPort(
         sourceId: row.sourceId,
         documentType,
         title: row.title,
-        snippet: row.content.slice(0, 500),
+        snippet: snippetOf(row.content),
         ts: parseEpochMillis(row.sourceCreatedAt),
         url: sourceUrl,
         appUrl,

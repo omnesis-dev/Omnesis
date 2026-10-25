@@ -1,0 +1,888 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import Database from "better-sqlite3";
+import { beforeEach, afterEach, describe, it, expect } from "vitest";
+import { ANNOTATION_CONTEXT_VERIFIER } from "../annotation-verification.js";
+import { parseClaimMarkup } from "./claims.js";
+import {
+  advanceKnowledgeCascade,
+  listKnowledgeNodes,
+  listKnowledgeNodeRevisions,
+  revalidateKnowledgeNode,
+  createKnowledgeTables,
+  saveKnowledgeNode,
+  getKnowledgeNode,
+  getKnowledgeClaims,
+  getKnowledgeDependencies,
+  registerKnowledgeEvidence,
+  getKnowledgeEvidence,
+  recordKnowledgeSourceChange,
+  recordKnowledgeSourceDeletion,
+  listKnowledgeChanges,
+  knowledgeClaimFingerprint,
+} from "./storage.js";
+import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
+import { MAX_LISTED_DEPENDENCY_CONFLICTS } from "./storage-validation.js";
+import type { SaveKnowledgeNodeInput } from "./types.js";
+
+let db: Database.Database;
+beforeEach(() => {
+  db = new Database(":memory:");
+  db.pragma("foreign_keys=ON");
+  db.exec(
+    "CREATE TABLE documents(id TEXT PRIMARY KEY,content TEXT NOT NULL,content_hash TEXT NOT NULL)",
+  );
+  db.prepare("INSERT INTO documents VALUES(?,?,?)").run(
+    "schedule",
+    "The workshop starts Friday.",
+    "hash-one",
+  );
+  createKnowledgeTables(db);
+});
+afterEach(() => db.close());
+function input(
+  id = "project",
+  overrides: Partial<SaveKnowledgeNodeInput> = {},
+): SaveKnowledgeNodeInput {
+  return {
+    id,
+    kind: "wiki",
+    title: "Workshop",
+    markdown: '<claim id="date" refs="source:schedule">The workshop starts Friday.</claim>',
+    expectedRevision: 0,
+    inputVersions: { "source:schedule": "hash-one" },
+    ...overrides,
+  };
+}
+
+describe("knowledge persistence", () => {
+  it("atomically stores claims, stripped projection, dependencies and revision", () => {
+    const saved = saveKnowledgeNode(db, input(), 10);
+    expect(saved.node.revision).toBe(1);
+    expect(saved.node.plainText).toBe("The workshop starts Friday.");
+    expect(getKnowledgeClaims(db, "project")).toEqual([
+      expect.objectContaining({
+        id: "date",
+        verification: "unverified",
+        refs: ["source:schedule"],
+      }),
+    ]);
+    expect(getKnowledgeDependencies(db, "project")[0]?.inputVersion).toBe("hash-one");
+    expect(() => saveKnowledgeNode(db, input(), 11)).toThrow("Node revision changed");
+    expect(getKnowledgeNode(db, "project")?.revision).toBe(1);
+  });
+  it("rejects changed source versions and rolls back every write", () => {
+    saveKnowledgeNode(db, input(), 10);
+    db.prepare("UPDATE documents SET content_hash='hash-two'").run();
+    expect(() =>
+      saveKnowledgeNode(db, input("project", { expectedRevision: 1, title: "Changed" }), 11),
+    ).toThrow(
+      'Stale dependency version for "source:schedule" (the explicit inputVersions entry differs from the current revision). Read it and review the returned evidence in one call: knowledge_reference {"refs":["source:schedule"]}.',
+    );
+    expect(getKnowledgeNode(db, "project")?.title).toBe("Workshop");
+    expect(getKnowledgeClaims(db, "project")[0]?.text).toBe("The workshop starts Friday.");
+  });
+  it("accepts verifier attestations only for the exact text and dependency versions", () => {
+    const proposed = input();
+    const claim = parseClaimMarkup(proposed.markdown).claims[0]!;
+    proposed.claims = [
+      {
+        id: "date",
+        verification: {
+          status: "verified",
+          fingerprint: knowledgeClaimFingerprint(
+            claim,
+            proposed.inputVersions,
+            undefined,
+            knowledgeClaimContexts(proposed).get(claim.id),
+          ),
+          verifier: CONTEXTUAL_VERIFIER,
+        },
+      },
+    ];
+    saveKnowledgeNode(db, proposed, 10);
+    expect(getKnowledgeClaims(db, "project")[0]?.verification).toBe("verified");
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        {
+          ...proposed,
+          expectedRevision: 1,
+          markdown: proposed.markdown.replace("Friday", "Saturday"),
+        },
+        11,
+      ),
+    ).toThrow("Verification does not match");
+  });
+  it("maintains singleton root and enforces its budget", () => {
+    saveKnowledgeNode(db, input("root", { kind: "root" }), 10);
+    expect(() => saveKnowledgeNode(db, input("other-root", { kind: "root" }), 11)).toThrow(
+      "already has a root",
+    );
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("root", { kind: "root", expectedRevision: 1, rootMaxChars: 5 }),
+        12,
+      ),
+    ).toThrow("allowed budget is 5 characters");
+  });
+  it("validates specific claims and rejects circular support", () => {
+    saveKnowledgeNode(db, input(), 10);
+    saveKnowledgeNode(
+      db,
+      input("overview", {
+        markdown: '<claim id="summary" refs="wiki:project#claim:date">Friday workshop.</claim>',
+        inputVersions: { "wiki:project#claim:date": 1 },
+      }),
+      11,
+    );
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          expectedRevision: 1,
+          markdown: '<claim id="date" refs="wiki:overview#claim:summary">Friday workshop.</claim>',
+          inputVersions: { "wiki:overview#claim:summary": 1 },
+        }),
+        12,
+      ),
+    ).toThrow("Circular claim support");
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("bad", {
+          markdown: '<claim id="summary" refs="wiki:project#claim:missing">Friday.</claim>',
+          inputVersions: { "wiki:project#claim:missing": 1 },
+        }),
+        13,
+      ),
+    ).toThrow('Reference "wiki:project#claim:missing" is unavailable');
+  });
+  it("allows navigation cycles without creating support cycles", () => {
+    saveKnowledgeNode(db, input(), 10);
+    saveKnowledgeNode(
+      db,
+      input("other", {
+        markdown: '<claim id="link" refs="wiki:project">Related project.</claim>',
+        inputVersions: { "wiki:project": 1 },
+        claims: [{ id: "link", relations: { "wiki:project": "context" } }],
+      }),
+      11,
+    );
+    saveKnowledgeNode(
+      db,
+      input("project", {
+        expectedRevision: 1,
+        markdown: '<claim id="link" refs="wiki:other">Related project.</claim>',
+        inputVersions: { "wiki:other": 1 },
+        claims: [{ id: "link", relations: { "wiki:other": "context" } }],
+      }),
+      12,
+    );
+    expect(getKnowledgeNode(db, "project")?.revision).toBe(2);
+  });
+  it("requires canonical field existence and owner kind matching", () => {
+    saveKnowledgeNode(
+      db,
+      input("loop-projection", {
+        kind: "loop",
+        ownerId: "task",
+        canonicalFields: { state: "open" },
+      }),
+      10,
+    );
+    saveKnowledgeNode(
+      db,
+      input("project", {
+        markdown: '<claim id="task" refs="loop:task#field:state">Work remains.</claim>',
+        inputVersions: { "loop:task#field:state": 1 },
+      }),
+      11,
+    );
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("wrong", {
+          markdown: '<claim id="task" refs="wiki:task">Work remains.</claim>',
+          inputVersions: { "wiki:task": 1 },
+        }),
+        12,
+      ),
+    ).toThrow("is unavailable");
+  });
+  it("does not emit meaning changes for revision-only rewrites", () => {
+    saveKnowledgeNode(db, input(), 10);
+    const result = saveKnowledgeNode(
+      db,
+      input("project", { expectedRevision: 1, metadata: { importance: 0.8 } }),
+      11,
+    );
+    expect(result.meaningChanged).toBe(false);
+    expect(result.node.revision).toBe(2);
+    expect(result.node.meaningRevision).toBe(1);
+    expect(listKnowledgeChanges(db)).toHaveLength(1);
+  });
+});
+
+describe("source revisions and privacy", () => {
+  it("refuses reconstructed excerpts without writing evidence and accepts exact recovery", () => {
+    db.prepare("UPDATE documents SET content=? WHERE id='schedule'").run(
+      "Workshop starts Friday.\r\nBring a notebook.\r\nRegistration closes Thursday.",
+    );
+    const register = (quote: string, start?: number) =>
+      registerKnowledgeEvidence(
+        db,
+        { documentId: "schedule", contentHash: "hash-one", quote, start },
+        10,
+      );
+    for (const quote of [
+      "Workshop starts Friday.\nBring a notebook.",
+      "Workshop starts Friday. Registration closes Thursday.",
+    ]) {
+      expect(() => register(quote)).toThrow("Copy a contiguous passage exactly");
+    }
+    const exact = "Workshop starts Friday.\r\nBring a notebook.";
+    expect(() => register(exact, 1)).toThrow("Omit start unless it is the exact source offset");
+    expect(db.prepare("SELECT count(*) n FROM knowledge_evidence").get()).toEqual({ n: 0 });
+    const recovered = register(exact);
+    expect(recovered.start).toBe(0);
+    expect(recovered.end).toBe(exact.length);
+    expect(getKnowledgeEvidence(db, recovered.id)?.quote).toBe(exact);
+  });
+
+  it("binds exact quoted passages to a source revision", () => {
+    const evidence = registerKnowledgeEvidence(
+      db,
+      { documentId: "schedule", contentHash: "hash-one", quote: "starts Friday" },
+      10,
+    );
+    expect(evidence.start).toBe(13);
+    const { revision, ...storedEvidence } = evidence;
+    expect(revision).toBe("hash-one");
+    expect(getKnowledgeEvidence(db, evidence.id)).toEqual(storedEvidence);
+    const ref = `source:schedule#evidence:${evidence.id}`;
+    saveKnowledgeNode(
+      db,
+      input("project", {
+        markdown: `<claim id="date" refs="${ref}">Friday.</claim>`,
+        inputVersions: { [ref]: "hash-one" },
+      }),
+      11,
+    );
+    expect(() =>
+      registerKnowledgeEvidence(
+        db,
+        { documentId: "schedule", contentHash: "hash-one", quote: "Saturday" },
+        12,
+      ),
+    ).toThrow("does not match");
+    db.prepare("UPDATE documents SET content_hash='hash-two'").run();
+    expect(getKnowledgeEvidence(db, evidence.id)).toBeNull();
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("other", {
+          markdown: `<claim id="date" refs="${ref}">Friday.</claim>`,
+          inputVersions: { [ref]: "hash-two" },
+        }),
+        13,
+      ),
+    ).toThrow("is unavailable");
+  });
+  it("immediately invalidates transitive dependents, and repeated source events are idempotent", () => {
+    recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-one" }, 9);
+    saveKnowledgeNode(db, input(), 10);
+    saveKnowledgeNode(
+      db,
+      input("overview", {
+        markdown: '<claim id="summary" refs="wiki:project#claim:date">Friday workshop.</claim>',
+        inputVersions: { "wiki:project#claim:date": 1 },
+      }),
+      11,
+    );
+    db.prepare("UPDATE documents SET content_hash='hash-two'").run();
+    const update = recordKnowledgeSourceChange(
+      db,
+      { documentId: "schedule", contentHash: "hash-two" },
+      12,
+    );
+    expect(update.affectedNodeIds.sort()).toEqual(["project"]);
+    expect(getKnowledgeNode(db, "overview")?.validity).toBe("stale");
+    expect(getKnowledgeClaims(db, "project")[0]?.verification).toBe("stale");
+    expect(
+      recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-two" }, 13)
+        .changed,
+    ).toBe(false);
+    expect(getKnowledgeNode(db, "overview")?.revision).toBe(1);
+  });
+  it("invalidates knowledge citing a deleted source and never deletes it", () => {
+    const evidence = registerKnowledgeEvidence(
+      db,
+      { documentId: "schedule", contentHash: "hash-one", quote: "Friday" },
+      9,
+    );
+    saveKnowledgeNode(db, input(), 10);
+    saveKnowledgeNode(
+      db,
+      input("overview", {
+        markdown: '<claim id="summary" refs="wiki:project">Related workshop.</claim>',
+        inputVersions: { "wiki:project": 1 },
+        claims: [{ id: "summary", relations: { "wiki:project": "context" } }],
+      }),
+      11,
+    );
+    saveKnowledgeNode(
+      db,
+      input("digest", {
+        markdown: '<claim id="when" refs="wiki:project#claim:date">Friday workshop.</claim>',
+        inputVersions: { "wiki:project#claim:date": 1 },
+      }),
+      11,
+    );
+    const revisionsBefore = db
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM knowledge_revisions")
+      .get()!.count;
+
+    expect(recordKnowledgeSourceDeletion(db, "schedule", 12)).toEqual(["project"]);
+
+    const project = getKnowledgeNode(db, "project");
+    expect(project).toMatchObject({ revision: 2, validity: "stale" });
+    expect(project?.markdown).toContain("The workshop starts Friday.");
+    expect(getKnowledgeClaims(db, "project")[0]).toMatchObject({
+      id: "date",
+      verification: "stale",
+      refs: ["source:schedule"],
+    });
+    // A page reading the invalidated claim is stale through its support; a page
+    // that only links to it for navigation is untouched.
+    expect(getKnowledgeNode(db, "digest")).toMatchObject({ revision: 1, validity: "stale" });
+    expect(getKnowledgeNode(db, "overview")).toMatchObject({ revision: 1 });
+    expect(getKnowledgeNode(db, "overview")?.validity).not.toBe("stale");
+    expect(
+      listKnowledgeNodes(db)
+        .map((node) => node.id)
+        .sort(),
+    ).toEqual(["digest", "overview", "project"]);
+    expect(
+      db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM knowledge_revisions").get()!
+        .count,
+    ).toBe(revisionsBefore + 1);
+    expect(listKnowledgeChanges(db).map((c) => [c.kind, c.entityId])).toEqual([
+      ["node_changed", "project"],
+      ["node_changed", "overview"],
+      ["node_changed", "digest"],
+      ["node_invalidated", "project"],
+      ["source_deleted", "schedule"],
+    ]);
+
+    // The deleted source itself stays unreadable and can never be cited again.
+    expect(getKnowledgeEvidence(db, evidence.id)).toBeNull();
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("fresh", { inputVersions: { "source:schedule": "hash-one" } }),
+        13,
+      ),
+    ).toThrow("is unavailable");
+    expect(
+      recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-one" }, 14)
+        .changed,
+    ).toBe(false);
+
+    // Maintenance repairs the page by dropping the unsupported claim.
+    const repaired = saveKnowledgeNode(
+      db,
+      input("project", {
+        expectedRevision: 2,
+        markdown: '<claim id="pending" refs="">The workshop date is unconfirmed.</claim>',
+        inputVersions: {},
+        claims: [{ id: "pending", epistemicStatus: "unsupported" }],
+      }),
+      15,
+    );
+    expect(repaired.node).toMatchObject({ revision: 3 });
+    expect(getKnowledgeNode(db, "project")?.validity).not.toBe("stale");
+  });
+});
+
+describe("bounded cascade recovery", () => {
+  it("marks every dependent stale before cleanup and resumes a persisted frontier", () => {
+    for (let index = 0; index < 130; index++)
+      saveKnowledgeNode(db, input(`page-${String(index).padStart(3, "0")}`), 10);
+    const first = recordKnowledgeSourceDeletion(db, "schedule", 20);
+    expect(first.length).toBeLessThan(130);
+    expect(getKnowledgeNode(db, "page-129")).toMatchObject({ validity: "stale" });
+    expect(getKnowledgeClaims(db, "page-129")[0]?.verification).toBe("stale");
+    expect(listKnowledgeNodes(db, { limit: 500 })).toHaveLength(130);
+    const image = db.serialize();
+    db.close();
+    db = new Database(image);
+    db.pragma("foreign_keys=ON");
+    let pending = true;
+    let chunks = 0;
+    let invalidated = first.length;
+    while (pending && chunks++ < 40) {
+      const result = advanceKnowledgeCascade(db, 13, 30 + chunks);
+      expect(result.deletedNodeIds).toEqual([]);
+      invalidated += result.invalidatedNodeIds.length;
+      pending = result.pending;
+    }
+    expect(pending).toBe(false);
+    expect(invalidated).toBe(130);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_nodes").get()).toEqual({
+      count: 130,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM knowledge_claims WHERE verification='stale'").get(),
+    ).toEqual({ count: 130 });
+    expect(
+      saveKnowledgeNode(
+        db,
+        input("page-129", { expectedRevision: 2, markdown: "Workshop page.", inputVersions: {} }),
+        99,
+      ).node.revision,
+    ).toBe(3);
+  });
+  it("reports pending support loss as stale before bounded physical invalidation reaches it", () => {
+    for (let index = 0; index < 130; index++) saveKnowledgeNode(db, input(`page-${index}`), 10);
+    db.prepare("UPDATE documents SET content_hash='hash-two'").run();
+    recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-two" }, 20);
+    expect(getKnowledgeNode(db, "page-129")?.validity).toBe("stale");
+    expect(getKnowledgeClaims(db, "page-129")[0]?.verification).toBe("stale");
+  });
+});
+
+it("permits mutually linked pages when their claim support graph is acyclic", () => {
+  saveKnowledgeNode(db, input(), 10);
+  saveKnowledgeNode(
+    db,
+    input("other", {
+      markdown:
+        '<claim id="source-fact" refs="source:schedule">Friday.</claim> <claim id="related" refs="wiki:project#claim:date">Workshop date.</claim>',
+      inputVersions: { "source:schedule": "hash-one", "wiki:project#claim:date": 1 },
+    }),
+    11,
+  );
+  saveKnowledgeNode(
+    db,
+    input("project", {
+      expectedRevision: 1,
+      markdown:
+        '<claim id="date" refs="source:schedule">Friday.</claim> <claim id="related" refs="wiki:other#claim:source-fact">Workshop date.</claim>',
+      inputVersions: { "source:schedule": "hash-one", "wiki:other#claim:source-fact": 1 },
+    }),
+    12,
+  );
+  expect(getKnowledgeClaims(db, "project")).toHaveLength(2);
+});
+
+it("retains immutable revisions with claim/field/ref diffs, also after a cited source is deleted", () => {
+  saveKnowledgeNode(db, input(), 10);
+  saveKnowledgeNode(
+    db,
+    input("project", {
+      expectedRevision: 1,
+      title: "Workshop preparation",
+      canonicalFields: { phase: "planned" },
+    }),
+    11,
+  );
+  const revisions = listKnowledgeNodeRevisions(db, "project");
+  expect(revisions.map((r) => r.revision)).toEqual([2, 1]);
+  expect(revisions[0]?.diff).toMatchObject({
+    changedClaimIds: ["date"],
+    changedFieldKeys: ["phase"],
+    titleChanged: true,
+  });
+  expect(revisions[0]?.markdown).toBe(revisions[1]?.markdown);
+  expect(getKnowledgeClaims(db, "project")[0]?.meaningRevision).toBe(2);
+  expect(revisions[1]?.title).toBe("Workshop");
+  expect(listKnowledgeNodeRevisions(db, "project", { beforeRevision: 2, limit: 1 })).toHaveLength(
+    1,
+  );
+  // The current page no longer cites this source; retained history still does.
+  saveKnowledgeNode(
+    db,
+    input("project", {
+      expectedRevision: 2,
+      markdown: "Workshop reference page.",
+      inputVersions: {},
+    }),
+    12,
+  );
+  recordKnowledgeSourceDeletion(db, "schedule", 13);
+  expect(getKnowledgeNode(db, "project")).toMatchObject({ revision: 3 });
+  expect(getKnowledgeNode(db, "project")?.validity).not.toBe("stale");
+  expect(listKnowledgeNodeRevisions(db, "project").map((r) => r.revision)).toEqual([3, 2, 1]);
+});
+
+it("relevance-gate revalidation does not invent verification or propagate unchanged prose", () => {
+  const proposed = input();
+  proposed.claims = [
+    {
+      id: "date",
+      verification: {
+        status: "verified",
+        fingerprint: knowledgeClaimFingerprint(
+          parseClaimMarkup(proposed.markdown).claims[0]!,
+          proposed.inputVersions,
+          undefined,
+          knowledgeClaimContexts(proposed).get("date"),
+        ),
+        verifier: CONTEXTUAL_VERIFIER,
+      },
+    },
+  ];
+  saveKnowledgeNode(db, proposed, 10);
+  db.prepare("UPDATE documents SET content_hash='hash-two'").run();
+  recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-two" }, 11);
+  const result = revalidateKnowledgeNode(
+    db,
+    { id: "project", expectedRevision: 2, inputVersions: { "source:schedule": "hash-two" } },
+    12,
+  );
+  expect(result.meaningChanged).toBe(false);
+  expect(result.node.validity).toBe("current");
+  expect(getKnowledgeClaims(db, "project")[0]?.verification).toBe("unverified");
+});
+
+it("clears projected descendant staleness after an unchanged verified parent repair without revisiting the descendant", () => {
+  const parent = input();
+  const tagged = parseClaimMarkup(parent.markdown).claims[0]!;
+  parent.claims = [
+    {
+      id: "date",
+      verification: {
+        status: "verified",
+        fingerprint: knowledgeClaimFingerprint(
+          tagged,
+          parent.inputVersions,
+          undefined,
+          knowledgeClaimContexts(parent).get(tagged.id),
+        ),
+        verifier: CONTEXTUAL_VERIFIER,
+      },
+    },
+  ];
+  saveKnowledgeNode(db, parent, 10);
+  const child = input("overview", {
+    markdown: '<claim id="summary" refs="wiki:project#claim:date">Friday workshop.</claim>',
+    inputVersions: { "wiki:project#claim:date": 1 },
+  });
+  child.claims = [
+    {
+      id: "summary",
+      verification: {
+        status: "verified",
+        fingerprint: knowledgeClaimFingerprint(
+          parseClaimMarkup(child.markdown).claims[0]!,
+          child.inputVersions,
+          undefined,
+          knowledgeClaimContexts(child).get("summary"),
+        ),
+        verifier: CONTEXTUAL_VERIFIER,
+      },
+    },
+  ];
+  saveKnowledgeNode(db, child, 11);
+  db.prepare(
+    "UPDATE documents SET content_hash='hash-two',content='The workshop starts Friday. Bring a notebook.'",
+  ).run();
+  recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-two" }, 12);
+  expect(getKnowledgeNode(db, "overview")?.validity).toBe("stale");
+  expect(db.prepare("SELECT validity FROM knowledge_nodes WHERE id='overview'").get()).toEqual({
+    validity: "current",
+  });
+  const updatedVersions = { "source:schedule": "hash-two" };
+  const repaired = saveKnowledgeNode(
+    db,
+    {
+      ...parent,
+      expectedRevision: 2,
+      inputVersions: updatedVersions,
+      claims: [
+        {
+          id: "date",
+          verification: {
+            status: "verified",
+            fingerprint: knowledgeClaimFingerprint(
+              tagged,
+              updatedVersions,
+              undefined,
+              knowledgeClaimContexts(parent).get(tagged.id),
+            ),
+            verifier: CONTEXTUAL_VERIFIER,
+          },
+        },
+      ],
+    },
+    13,
+  );
+  expect(repaired.meaningChanged).toBe(false);
+  expect(repaired.node.meaningRevision).toBe(1);
+  expect(repaired.node.revision).toBe(3);
+  expect(getKnowledgeNode(db, "overview")).toMatchObject({ validity: "current", revision: 1 });
+  expect(getKnowledgeClaims(db, "overview")[0]?.verification).toBe("verified");
+  expect(getKnowledgeDependencies(db, "overview")[0]?.inputVersion).toBe(1);
+});
+
+it("rejects reuse of an attestation after placement changes and invalidates selected-claim dependents", () => {
+  const parent = input();
+  const claim = parseClaimMarkup(parent.markdown).claims[0]!;
+  parent.claims = [
+    {
+      id: claim.id,
+      verification: {
+        status: "verified",
+        fingerprint: knowledgeClaimFingerprint(
+          claim,
+          parent.inputVersions,
+          undefined,
+          knowledgeClaimContexts(parent).get(claim.id),
+        ),
+        verifier: CONTEXTUAL_VERIFIER,
+      },
+    },
+  ];
+  saveKnowledgeNode(db, parent, 1);
+  saveKnowledgeNode(
+    db,
+    input("dependent", {
+      markdown: '<claim id="summary" refs="wiki:project#claim:date">Workshop scheduled.</claim>',
+      inputVersions: { "wiki:project#claim:date": 1 },
+    }),
+    2,
+  );
+  expect(() =>
+    saveKnowledgeNode(db, { ...parent, expectedRevision: 1, title: "Other workshop" }, 3),
+  ).toThrow("Verification does not match");
+  const moved = { ...parent, expectedRevision: 1, title: "Other workshop", claims: undefined };
+  saveKnowledgeNode(db, moved, 4);
+  expect(getKnowledgeClaims(db, "project")[0]!.meaningRevision).toBe(2);
+  expect(getKnowledgeNode(db, "dependent")?.validity).toBe("stale");
+});
+
+it.each(["doc_annotation", "person_annotation"] as const)(
+  "rechecks %s proof policy in the dependent writer transaction",
+  (kind) => {
+    const note = input("note", { kind });
+    const noteClaim = parseClaimMarkup(note.markdown).claims[0]!;
+    note.claims = [
+      {
+        id: noteClaim.id,
+        verification: {
+          status: "verified",
+          fingerprint: knowledgeClaimFingerprint(
+            noteClaim,
+            note.inputVersions,
+            undefined,
+            knowledgeClaimContexts(note).get(noteClaim.id),
+          ),
+          verifier: ANNOTATION_CONTEXT_VERIFIER,
+        },
+      },
+    ];
+    saveKnowledgeNode(db, note, 10);
+    const observedVersion = getKnowledgeClaims(db, "note")[0]!.meaningRevision;
+    const dependent = input("dependent", {
+      markdown:
+        '<claim id="date" refs="annotation:note#claim:date">The workshop starts Friday.</claim>',
+      inputVersions: { "annotation:note#claim:date": observedVersion },
+    });
+    dependent.claims = [
+      {
+        id: "date",
+        verification: {
+          status: "verified",
+          fingerprint: knowledgeClaimFingerprint(
+            parseClaimMarkup(dependent.markdown).claims[0]!,
+            dependent.inputVersions,
+            undefined,
+            knowledgeClaimContexts(dependent).get("date"),
+          ),
+          verifier: CONTEXTUAL_VERIFIER,
+        },
+      },
+    ];
+    // The exact source version and prior offered meaning revision still match.
+    // A stale policy proof must nevertheless fail the final writer check.
+    db.prepare("UPDATE knowledge_claims SET verifier=? WHERE node_id='note'").run(
+      "annotation-context-verifier-v1",
+    );
+    expect(getKnowledgeClaims(db, "note")[0]!.meaningRevision).toBe(observedVersion);
+    expect(() => saveKnowledgeNode(db, dependent, 11)).toThrow(
+      "Claim support changed during verification",
+    );
+    expect(getKnowledgeNode(db, "dependent")).toBeNull();
+    expect(getKnowledgeClaims(db, "dependent")).toEqual([]);
+    expect(getKnowledgeDependencies(db, "dependent")).toEqual([]);
+    expect(listKnowledgeNodeRevisions(db, "dependent")).toEqual([]);
+    db.prepare("UPDATE knowledge_claims SET verifier=? WHERE node_id='note'").run(
+      ANNOTATION_CONTEXT_VERIFIER,
+    );
+    expect(saveKnowledgeNode(db, dependent, 12).node.revision).toBe(1);
+    expect(getKnowledgeClaims(db, "dependent")[0]!.verification).toBe("verified");
+  },
+);
+
+it("keeps unordered supporter references semantically stable but detects supporter changes", () => {
+  db.prepare("INSERT INTO documents VALUES(?,?,?)").run(
+    "second",
+    "The workshop starts Friday.",
+    "v2",
+  );
+  const original = input("project", {
+    markdown:
+      '<claim id="date" refs="source:schedule source:second">The workshop starts Friday.</claim>',
+    inputVersions: { "source:schedule": "hash-one", "source:second": "v2" },
+  });
+  const first = saveKnowledgeNode(db, original, 10);
+  const firstClaim = getKnowledgeClaims(db, "project")[0]!;
+  const reordered = saveKnowledgeNode(
+    db,
+    {
+      ...original,
+      expectedRevision: 1,
+      markdown: original.markdown.replace(
+        "source:schedule source:second",
+        "source:second source:schedule",
+      ),
+    },
+    20,
+  );
+  expect(reordered.node.revision).toBe(2);
+  expect(reordered.node.meaningRevision).toBe(first.node.meaningRevision);
+  expect(getKnowledgeClaims(db, "project")[0]!.meaningRevision).toBe(firstClaim.meaningRevision);
+  const changed = saveKnowledgeNode(
+    db,
+    {
+      ...original,
+      expectedRevision: 2,
+      markdown: '<claim id="date" refs="source:second">The workshop starts Friday.</claim>',
+    },
+    30,
+  );
+  expect(changed.node.meaningRevision).toBeGreaterThan(first.node.meaningRevision);
+  expect(getKnowledgeClaims(db, "project")[0]!.meaningRevision).toBe(3);
+});
+
+describe("dependency version refusals", () => {
+  const addSources = (ids: string[]) => {
+    const insert = db.prepare("INSERT INTO documents VALUES(?,?,?)");
+    for (const id of ids) insert.run(id, `Notes for ${id}.`, `hash-${id}`);
+  };
+  const refusal = (save: () => unknown) => {
+    try {
+      save();
+    } catch (error) {
+      return error as { code: string; message: string };
+    }
+    throw new Error("expected the save to be refused");
+  };
+  const claims = (refsByClaim: string[][]) =>
+    refsByClaim
+      .map(
+        (refs, i) =>
+          `<claim id="c${i}" refs="${refs.map((id) => `source:${id}`).join(" ")}">Fact ${i}.</claim>`,
+      )
+      .join("\n");
+
+  it("refuses once, naming every unread reference across claims in one read call", () => {
+    addSources(["agenda", "venue", "catering"]);
+    const error = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["schedule", "agenda"], ["venue"], ["agenda", "catering"]]),
+        }),
+        10,
+      ),
+    );
+    expect(error.code).toBe("revision_conflict");
+    expect(error.message).toContain(
+      'Dependency versions are missing or stale for 3 references; nothing was saved. Missing dependency version for "source:agenda", "source:venue", "source:catering" (not read in this run and no inputVersions entry).',
+    );
+    expect(error.message).toContain(
+      'in one call: knowledge_reference {"refs":["source:agenda","source:venue","source:catering"]}.',
+    );
+    expect(error.message).not.toContain("Stale dependency version");
+    // The guidance is given once, not once per reference.
+    expect(error.message.split("Explicit overrides are never refreshed silently")).toHaveLength(2);
+    expect(getKnowledgeNode(db, "project")).toBeNull();
+  });
+
+  it("distinguishes missing from stale explicit overrides", () => {
+    addSources(["agenda", "venue"]);
+    const error = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["schedule", "agenda"], ["venue"]]),
+          inputVersions: { "source:schedule": "hash-old", "source:venue": "hash-venue" },
+        }),
+        10,
+      ),
+    );
+    expect(error.message).toContain(
+      'Missing dependency version for "source:agenda" (not read in this run and no inputVersions entry).',
+    );
+    expect(error.message).toContain(
+      'Stale dependency version for "source:schedule" (the explicit inputVersions entry differs from the current revision).',
+    );
+    expect(error.message).toContain(
+      'knowledge_reference {"refs":["source:agenda","source:schedule"]}',
+    );
+    expect(error.message).not.toContain('"source:venue"');
+  });
+
+  it("bounds the listed references and splits the reads into valid batches", () => {
+    const ids = Array.from({ length: 40 }, (_, i) => `note${String(i).padStart(2, "0")}`);
+    addSources(ids);
+    const error = refusal(() =>
+      saveKnowledgeNode(db, input("project", { markdown: claims(ids.map((id) => [id])) }), 10),
+    );
+    expect(error.message).toContain("missing or stale for 40 references");
+    const listed = ids.slice(0, MAX_LISTED_DEPENDENCY_CONFLICTS).map((id) => `source:${id}`);
+    expect(error.message).toContain(
+      `in 2 calls: knowledge_reference ${JSON.stringify({ refs: listed.slice(0, 16) })} ; knowledge_reference ${JSON.stringify({ refs: listed.slice(16) })}.`,
+    );
+    expect(error.message).toContain(
+      "8 more conflicting references are not listed; a retry after these reads names them.",
+    );
+    expect(error.message).not.toContain(`"source:${ids[MAX_LISTED_DEPENDENCY_CONFLICTS]}"`);
+  });
+
+  it("keeps a version conflict ahead of later claim checks and earlier checks ahead of it", () => {
+    addSources(["agenda", "venue"]);
+    const later = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["agenda"], ["venue"], ["schedule"]]),
+          inputVersions: { "source:schedule": "hash-one" },
+          claims: [{ id: "c2", modality: "rumour" as never }],
+        }),
+        10,
+      ),
+    );
+    expect(later.code).toBe("revision_conflict");
+    expect(later.message).toContain('"source:agenda", "source:venue"');
+
+    const earlier = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["agenda"], ["venue"]]),
+          claims: [{ id: "c0", relations: { "source:absent": "supports" } }],
+        }),
+        10,
+      ),
+    );
+    expect(earlier).toMatchObject({
+      code: "claim_invalid",
+      message: "Claim relation names a missing reference",
+    });
+  });
+});

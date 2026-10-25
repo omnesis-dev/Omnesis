@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
+import { createLegacyBriefClaimsTables, createLegacyBriefTables } from "./legacy-brief-tables.js";
 import { LATEST_SCHEMA_VERSION } from "./migrations.js";
 import { retractAliasAssertions } from "./repositories/PersonAliasRepository.js";
 import type Database from "better-sqlite3";
@@ -59,7 +60,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192,
+  191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204,
 ];
 
 let dir: string;
@@ -126,6 +127,114 @@ function undoVocabulary(db: Db): void {
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
 }
 
+/** Undo migration 204: no interest ledger and no thumbs on brief items. */
+function undoInterest(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS interest_signals");
+  db.exec("DROP TABLE IF EXISTS interest_brief_reactions");
+}
+
+/** Undo migration 201: every decision-ledger row names a run and a document. */
+function undoDecisionAnchors(db: Db): void {
+  const columns = `id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
+    content_hash, requested_model_id, model_id, score, threshold, verdict, error, reused_from,
+    record_id, enforced, latency_ms, input_tokens, created_at, request_json, response_json`;
+  db.exec(`CREATE TABLE cognition_decisions_wound (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    subject_document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL, lane TEXT NOT NULL, rubric_version TEXT NOT NULL, content_hash TEXT,
+    requested_model_id TEXT NOT NULL, model_id TEXT, score REAL, threshold REAL NOT NULL,
+    verdict TEXT NOT NULL, error TEXT, reused_from TEXT, record_id TEXT,
+    enforced INTEGER NOT NULL DEFAULT 1, latency_ms INTEGER, input_tokens INTEGER,
+    created_at INTEGER NOT NULL, request_json TEXT, response_json TEXT
+  )`);
+  db.exec(`INSERT INTO cognition_decisions_wound (${columns}) SELECT ${columns}
+    FROM cognition_decisions
+    WHERE run_id IS NOT NULL AND document_id IS NOT NULL AND subject_document_id IS NOT NULL`);
+  db.exec("DROP TABLE cognition_decisions");
+  db.exec("ALTER TABLE cognition_decisions_wound RENAME TO cognition_decisions");
+}
+
+/** Undo migration 200: no ignored suggestions, and notes name no task. */
+function undoTaskSuggestions(db: Db): void {
+  for (const [table, column] of [
+    ["open_loops", "ignored"],
+    ["note_entries", "task_id"],
+  ] as const) {
+    const present = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .some((row) => row.name === column);
+    if (present) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+
+/** Undo migration 199: the note agent's queue did not exist yet. */
+function undoNoteAgent(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS note_agent_runs");
+  db.exec("DROP TABLE IF EXISTS note_agent_meta");
+}
+
+/** Undo migration 198: open loops without the task fields. */
+function undoTaskFields(db: Db): void {
+  db.exec("DROP INDEX IF EXISTS idx_open_loops_owned_schedule");
+  db.exec("DROP INDEX IF EXISTS idx_open_loops_suggested");
+  const loopColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
+    .all()
+    .map((row) => row.name);
+  for (const column of [
+    "origin",
+    "accepted",
+    "scheduled_for",
+    "proposed_change_json",
+    "completion_note",
+    "resolved_at",
+  ])
+    if (loopColumns.includes(column)) db.exec(`ALTER TABLE open_loops DROP COLUMN ${column}`);
+  const ledgerColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loop_ledger')")
+    .all()
+    .map((row) => row.name);
+  if (ledgerColumns.includes("event_json"))
+    db.exec("ALTER TABLE open_loop_ledger DROP COLUMN event_json");
+}
+
+/**
+ * Undo migration 197: the brief tables in the shape migrations 33, 43, 58
+ * and 89 left them. The knowledge tables are removed wholesale by
+ * {@link undoKnowledge}, so their kind constraint needs no inverse here.
+ */
+function undoObservations(db: Db): void {
+  createLegacyBriefTables(db);
+  createLegacyBriefClaimsTables(db);
+  const briefColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('briefs')")
+    .all()
+    .map((row) => row.name);
+  if (!briefColumns.includes("thread_conversation_id"))
+    db.exec("ALTER TABLE briefs ADD COLUMN thread_conversation_id TEXT");
+  if (!briefColumns.includes("read_at")) db.exec("ALTER TABLE briefs ADD COLUMN read_at INTEGER");
+}
+
+function undoKnowledge(db: Db): void {
+  const fkWasOn =
+    db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys === 1;
+  db.exec("PRAGMA foreign_keys=OFF");
+  for (const type of ["trigger", "table"] as const) {
+    const rows = db
+      .prepare<
+        [string],
+        { name: string }
+      >("SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*' OR name GLOB 'temporal_epoch_*')")
+      .all(type);
+    for (const { name } of rows)
+      db.exec(`DROP ${type.toUpperCase()} "${name.replaceAll('"', '""')}"`);
+  }
+  if (fkWasOn) db.exec("PRAGMA foreign_keys=ON");
+}
+
 /**
  * Undo what the tail added, so the database is shaped as an install that
  * stopped at {@link BEFORE_TAIL}.
@@ -136,6 +245,13 @@ function undoVocabulary(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoInterest(db);
+  undoDecisionAnchors(db);
+  undoTaskSuggestions(db);
+  undoNoteAgent(db);
+  undoTaskFields(db);
+  undoObservations(db);
+  undoKnowledge(db);
   undoVocabulary(db);
   // `sources.account` is created by the head schema as well as by the
   // migration, so leaving it in place is not neutral: the migration reads the
@@ -306,6 +422,7 @@ describe("vocabulary migration after the released schema", () => {
   test("adds evidence to schema 191 while preserving retained hints and replay keys", () => {
     const old = upgrade();
     try {
+      undoKnowledge(old);
       undoVocabularyEvidence(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 191; PRAGMA user_version = 191");
       old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
@@ -317,7 +434,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare(
@@ -358,9 +477,10 @@ describe("vocabulary migration after the released schema", () => {
     }
   });
 
-  test("upgrades schema 188 without vocabulary tables to 192", () => {
+  test("upgrades schema 188 without vocabulary tables to the head schema", () => {
     const old = upgrade();
     try {
+      undoKnowledge(old);
       undoVocabulary(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 188");
       old.exec("PRAGMA user_version = 188");
@@ -369,7 +489,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 189").get()).toEqual(
         { version: 189 },
       );
@@ -394,6 +516,7 @@ describe("vocabulary migration after the released schema", () => {
     try {
       undoVocabularyEvidence(old);
       old.exec("DROP TABLE transcription_vocabulary_state");
+      undoKnowledge(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 189");
       old.exec("PRAGMA user_version = 189");
       old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
@@ -403,7 +526,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare("SELECT algorithm_version,generation,phase FROM transcription_vocabulary_state")
@@ -421,6 +546,7 @@ describe("vocabulary migration after the released schema", () => {
     const old = upgrade();
     try {
       undoVocabularyEvidence(old);
+      undoKnowledge(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 187");
       old.exec(
         "UPDATE schema_migrations SET description = 'materialize contextual transcription vocabulary' WHERE version = 187",
@@ -436,7 +562,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare(
@@ -471,6 +599,9 @@ describe("an install several versions behind, upgrading", () => {
 
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
+      expect(
+        old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
+      ).toBeUndefined();
       expect(old.prepare("SELECT name FROM pragma_table_info('documents')").all()).not.toEqual(
         expect.arrayContaining([{ name: "vocabulary_processed_at" }]),
       );
@@ -490,6 +621,17 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
+      ).toEqual({ name: "knowledge_nodes" });
+      expect(db.prepare("SELECT name FROM pragma_table_info('knowledge_claims')").all()).toEqual(
+        expect.arrayContaining([
+          { name: "witness_refs_json" },
+          { name: "attribution" },
+          { name: "modality" },
+          { name: "epistemic_status" },
+        ]),
+      );
       expect(db.prepare("SELECT name FROM pragma_table_info('documents')").all()).toEqual(
         expect.arrayContaining([
           { name: "vocabulary_processed_at" },
@@ -504,6 +646,9 @@ describe("an install several versions behind, upgrading", () => {
           .get(),
       ).toEqual({ name: "allow_vocabulary", dflt_value: "0" });
       for (const name of [
+        "source_inventories",
+        "source_inventory_documents",
+        "knowledge_claim_outcomes",
         "transcription_vocabulary_terms",
         "transcription_vocabulary_document_terms",
         "idx_documents_vocabulary_pending",
@@ -613,6 +758,45 @@ describe("an install several versions behind, upgrading", () => {
       expect(
         db.prepare("SELECT text, page_context FROM note_entries WHERE id = 'older-note'").get(),
       ).toEqual({ text: "Compare the examples.", page_context: null });
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("briefs are retired and older loops become Brain suggestions awaiting acceptance", () => {
+    seedOlderInstall((db) => {
+      db.prepare(
+        `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
+         VALUES ('older-brief', 'run-older', 'update', 'Plan the workshop', 0.8, 0.4, 1000, 1000)`,
+      ).run();
+      db.prepare(
+        "INSERT INTO brief_citations (brief_id, position, doc_id) VALUES ('older-brief', 0, 'doc-older')",
+      ).run();
+      db.prepare(
+        `INSERT INTO open_loops (id, created_by_run, confidence, importance, title, created_at, last_update)
+         VALUES ('older-loop', 'run-older', 0.7, 0.5, 'Book the workshop room', 1000, 1000)`,
+      ).run();
+    });
+    const db = upgrade();
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('briefs', 'brief_citations', 'brief_related_loops', 'brief_claims')",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(
+        db
+          .prepare(
+            "SELECT title, origin, accepted, ignored FROM open_loops WHERE id = 'older-loop'",
+          )
+          .get(),
+      ).toEqual({ title: "Book the workshop room", origin: "brain", accepted: 0, ignored: 0 });
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name = 'note_agent_runs'").get(),
+      ).toEqual({ name: "note_agent_runs" });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
     } finally {
       (db as unknown as Database.Database).close();
     }

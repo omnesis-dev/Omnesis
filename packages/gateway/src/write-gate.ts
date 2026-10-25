@@ -1,6 +1,58 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "./realtime/live-voice-usage.js";
+import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
+import { clearMorningBriefMessageItems } from "./brain/storage/morning-brief-items.js";
+import {
+  applyBriefReaction,
+  recordInterestSignal,
+  resetInterestEmbeddingsNotFrom,
+  setInterestSignalEmbedding,
+  supersedeInterestSignals,
+  type ApplyBriefReactionInput,
+  type BriefItemReaction,
+  type InterestSignal,
+  type InterestSupersedeScope,
+  type NewInterestSignal,
+} from "./brain/storage/interest.js";
+import {
+  claimDueNote,
+  enqueueNewNotes,
+  finishNoteRun,
+  type NoteAgentRow,
+} from "./brain/note-agent/storage.js";
+import {
+  applyTaskCommand,
+  autoApplyTaskChange,
+  withdrawTaskProposal,
+  proposeTaskChange,
+  type ApplyTaskCommandOptions,
+  type AutoAppliedTaskChange,
+  type AutoApplyTaskResult,
+  type TaskCommand,
+  type TaskCommandResult,
+} from "./brain/storage/tasks.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "./brain/storage/types.js";
+import type { ConversationEvidenceProjection } from "./sources/omnesis-chat/evidence-projection.js";
+import {
+  assertPersonProfileReceipt,
+  getPersonAnnotation as getWithdrawalPersonAnnotation,
+  type PersonProfileBudget,
+} from "./brain/storage/person-annotations.js";
+import { KnowledgeStorageError } from "./brain/knowledge/types.js";
+import { withdrawKnowledgeOwner } from "./brain/knowledge/owner-withdrawal.js";
+
+import {
+  knowledgeGateFromCall,
+  directKnowledgeGate,
+  type KnowledgeWriteGate,
+} from "./brain/knowledge/writer.js";
+
 import { promoteSourceWireContract } from "./data/repositories/SourceWireContractRepository.js";
 import { replaceSourceSyncIssues } from "./data/repositories/SourceSyncIssueRepository.js";
 import type {
@@ -54,7 +106,6 @@ import {
  * extending both this interface and the WriteOps registry.
  */
 
-import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import { advanceOccWatermark } from "./data/occ-materialized.js";
 import type { PairingGenerationFence } from "./data/pairing-generation-fence.js";
 import { withPairingGenerationFence } from "./data/pairing-generation-fence.js";
@@ -121,7 +172,6 @@ import {
   upsertWithCursor,
   prepareDocumentsForWrite,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentForUser,
   deleteDocumentForRetention,
   completeDocumentRetention,
@@ -255,7 +305,6 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
-  cascadeTemporalAnnotationPrivacyDelete,
   type CreateTemporalAnnotationInput,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotation,
@@ -265,6 +314,10 @@ import {
   markDocsBootstrapProcessed,
   readmitFailedBootstrapDoc,
 } from "./brain/storage/bootstrap.js";
+import {
+  reviewBrainArtifactsForDeletedDocs,
+  type SourceDeletionReview,
+} from "./brain/source-deletion-review.js";
 import {
   recordCognitionCoverage,
   retractOrphanCognitionCoverage,
@@ -479,6 +532,7 @@ import {
   finalizeCognitionRun,
   recordSettledCognitionRun,
   cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   addToCognitionEngineCounter,
@@ -488,35 +542,30 @@ import {
   rewriteOpenLoopPeople,
   appendOpenLoopLedger,
   deleteOpenLoop,
-  createBrief,
-  updateBrief,
-  retractBriefsForResolvedLoop,
-  retireBrief,
-  markBriefRead,
-  setBriefThreadConversation,
-  restampBriefThreadConversation,
-  resurfaceDueSnoozedBriefs,
+  createObservation,
+  transitionObservation,
+  recordObservationScores,
+  recordObservationClaims,
+  expireObservations,
+  dropObservationsForResolvedLoop,
+  setObservationUserAction,
+  pruneClosedObservations,
+  replaceMorningBriefItems,
+  markMorningBriefSent,
   writeCognitionNotes,
   appendCognitionNotes,
   editCognitionNotes,
   wipeCognitionNotes,
-  dismissBriefAndEnqueueFeedback,
   createDocAnnotation,
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
-  deleteDocAnnotation,
   invalidateAnnotationsForDoc,
-  cascadeAnnotationPrivacyDelete,
-  invalidateBriefClaimsForDoc,
-  cascadeBriefClaimPrivacyDelete,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
-  deletePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
-  cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
@@ -533,15 +582,14 @@ import {
   type CreateOpenLoopInput,
   type UpdateOpenLoopInput,
   type DeleteOpenLoopResult,
-  type CreateBriefInput,
-  type UpdateBriefInput,
-  type DismissBriefInput,
-  type DismissBriefResult,
-  type MarkBriefReadResult,
+  type CreateObservationInput,
+  type ObservationTransition,
+  type PruneObservationsResult,
+  type MarkMorningBriefSentResult,
   type AppendCognitionNotesResult,
   type EditCognitionNotesResult,
   type OpenLoopRow,
-  type BriefRow,
+  type ObservationRow,
   type CreateDocAnnotationInput,
   type UpdateDocAnnotationPatch,
   type DocAnnotationRow,
@@ -658,7 +706,7 @@ import type {
   ExtractedVocabularyDocument,
 } from "./transcribe/vocabulary/types.js";
 
-export interface WriteGate {
+export interface WriteGate extends KnowledgeWriteGate {
   advanceTranscriptionVocabularyRebuild(
     settings: VocabularySettings,
   ): Promise<{ ready: boolean; worked: boolean }>;
@@ -1127,14 +1175,15 @@ export interface WriteGate {
     entries: DateExtractionResult[],
   ): Promise<{ applied: number; datesWritten: number }>;
   /**
-   * Record the worth answers the mention gate asked for, settle its
-   * judgements and push back the ones that must wait; only rows still pending
-   * at the fetched generation change.
+   * Record the worth answers the mention gate asked for and the decisions it
+   * made, settle its judgements and push back the ones that must wait; only
+   * rows still pending at the fetched generation change.
    */
   applyMentionJudgements(
     records: MentionJudgementRecord[],
     deferrals: MentionJudgementDeferral[],
     answers: WorthAnswer[],
+    decisions?: CognitionDecisionRecord[],
   ): Promise<number>;
   /** Return up to `limit` judgements made under another rubric version to the gate's queue. */
   requeueStaleMentionJudgements(rubricVersion: string, limit: number): Promise<number>;
@@ -1587,11 +1636,9 @@ export interface WriteGate {
     now: number,
   ): Promise<EnqueueCognitionRunResult>;
   /** Atomically claim due `pending` runs (bumps attempts). */
-  claimDueCognitionRuns(opts: {
-    now: number;
-    limit?: number;
-    maxAttempts?: number;
-  }): Promise<ClaimedCognitionRun[]>;
+  claimDueCognitionRuns(
+    opts: Parameters<typeof claimDueCognitionRuns>[1],
+  ): Promise<ClaimedCognitionRun[]>;
   /**
    * Settle one attempt: mark the row completed/failed and fold the
    * attempt's usage into its (day, mechanism, model) spend bucket, in
@@ -1620,8 +1667,10 @@ export interface WriteGate {
     }>,
     activeDerivationStageIds: readonly DerivationStageId[],
   ): Promise<number>;
-  /** Drop pending runs by dedupe key (decay-sweep retractions). */
+  /** Drop pending runs by dedupe key, claimed or not (sweeps' crash-residue cleanup). */
   cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  /** Withdraw never-claimed pending runs by dedupe key (decay-sweep retractions). */
+  retractUnclaimedCognitionRuns(dedupeKeys: string[]): Promise<number>;
   /**
    * Cascade-cancel a resolved/deleted loop's never-claimed
    * `schedule_agent_run` checks (linked via the payload `loopId`).
@@ -1650,6 +1699,8 @@ export interface WriteGate {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): Promise<void>;
+  /** Record a duration snapshot without fabricating token usage or a dollar cost. */
+  recordLiveVoiceUsage(input: LiveVoiceUsageSample): Promise<void>;
   /** Append one decision-model answer to the decision ledger (idempotent on id). */
   recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
   // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
@@ -1692,9 +1743,7 @@ export interface WriteGate {
    * Durable doc-annotation ops. `createDocAnnotation` persists an
    * evidence-grounded prior; `invalidateAnnotationsForDoc` re-judges the
    * priors touching a changed document against its new content — quote broke
-   * → soft-dropped, quote survived → kept live but re-stamped `unverified`;
-   * `cascadeAnnotationPrivacyDelete` hard-purges those grounded on
-   * privacy-deleted documents (always blanket).
+   * → soft-dropped, quote survived → kept live but re-stamped `unverified`.
    */
   createDocAnnotation(input: CreateDocAnnotationInput, now: number): Promise<DocAnnotationRow>;
   /**
@@ -1728,61 +1777,52 @@ export interface WriteGate {
   /** Hard-delete one prior by id (retract). False when it doesn't exist. */
   deleteDocAnnotation(id: string, now: number): Promise<boolean>;
   invalidateAnnotationsForDoc(docId: string, now: number): Promise<AnnotationInvalidationResult>;
-  cascadeAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   /**
-   * Brief-claim evidence-lifecycle ops. A claim's `evidence_quote` is the
-   * cited document's text verbatim, so the evidence document's lifecycle
-   * reaches into the claim set: `invalidateBriefClaimsForDoc` soft-drops the
-   * live claims whose quote no longer appears in the changed content;
-   * `cascadeBriefClaimPrivacyDelete` hard-purges every claim — live and
-   * invalidated — citing a privacy-deleted document (always blanket).
+   * Keep every loop, observation and annotation built on deleted documents:
+   * drop their pointers to the documents, mark them stale and queue them for
+   * the Brain's review. Never deletes an artifact.
    */
-  invalidateBriefClaimsForDoc(docId: string, now: number): Promise<number>;
-  cascadeBriefClaimPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  /**
-   * Atomically delete loops grounded on the removed documents, their briefs
-   * and mirrored corpus documents. Mirror index cleanup is queued durably.
-   */
-  cascadeOpenLoopPrivacyDelete(
+  reviewBrainArtifactsForDeletedDocs(
     deletedDocIds: readonly string[],
-  ): Promise<{ deletedLoopIds: string[]; deletedBriefIds: string[] }>;
+  ): Promise<SourceDeletionReview>;
   /**
    * Durable person-annotation ops (person-keyed sibling of the doc ones).
    * `createPersonAnnotation` persists an evidence-grounded prior about a
    * person; `revisePersonAnnotation`/`retractPersonAnnotation` edit/hard-remove
    * one (the person-annotation revise/retract tools);
    * `invalidatePersonAnnotationsForDoc` re-judges priors whose evidence doc
-   * changed (quote broke → soft-dropped, survived → kept unverified);
-   * `cascadePersonAnnotationPrivacyDelete` hard-purges those on a
-   * privacy-deleted evidence doc.
+   * changed (quote broke → soft-dropped, survived → kept unverified).
    */
   createPersonAnnotation(
     input: CreatePersonAnnotationInput,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<PersonAnnotationRow>;
   /** Atomic create-and-supersede — the person-store sibling of `createDocAnnotationSuperseding`. */
   createPersonAnnotationSuperseding(
     input: CreatePersonAnnotationInput,
-    supersedesId: string,
+    supersedesId: string | readonly string[],
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<{ annotation: PersonAnnotationRow; superseded: boolean }>;
   /** Pure belief retirement — the person-store sibling of `supersedeDocAnnotationBy`. */
   supersedePersonAnnotationBy(
     id: string,
     supersededById: string,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<{ superseded: boolean }>;
   revisePersonAnnotation(
     id: string,
     patch: UpdatePersonAnnotationPatch,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<boolean>;
-  retractPersonAnnotation(id: string, now: number): Promise<boolean>;
+  retractPersonAnnotation(id: string, now: number, budget?: PersonProfileBudget): Promise<boolean>;
   invalidatePersonAnnotationsForDoc(
     docId: string,
     now: number,
   ): Promise<AnnotationInvalidationResult>;
-  cascadePersonAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   /**
    * Conversation read state — whether an agent conversation holds something
    * the operator has not seen. Reads do not come through here: "which of
@@ -1920,8 +1960,7 @@ export interface WriteGate {
   retractOrphanCognitionCoverage(): Promise<number>;
   /**
    * Per-sweep production tallies (reporting only — see
-   * brain/storage/sweep-tally.ts). Applied at run settlement, and when the
-   * brief judge holds a card a sweep tried to ship.
+   * brain/storage/sweep-tally.ts). Applied at run settlement.
    */
   recordSweepTally(delta: SweepTallyDelta, now: number): Promise<void>;
   createTemporalAnnotation(
@@ -1952,56 +1991,93 @@ export interface WriteGate {
    * lookup once that run completes.
    */
   markTemporalAnnotationsRefilePresented(ids: readonly string[], runId: string): Promise<void>;
-  cascadeTemporalAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  /** Atomically create a brief and record its live annotation dependencies. */
-  createBrief(
-    input: CreateBriefInput,
+  /** Atomically create an observation and record its live annotation dependencies. */
+  createObservation(
+    input: CreateObservationInput,
     dependencies: ConsumptionDependencyContext,
     now: number,
-  ): Promise<ConsumptionMutationResult<BriefRow>>;
-  /** Atomically partial-update a brief and record its live dependencies. */
-  updateBrief(
+  ): Promise<ConsumptionMutationResult<ObservationRow>>;
+  /** Move an open observation to held, shipped or dropped; false when refused. */
+  transitionObservation(
     id: string,
-    input: UpdateBriefInput,
-    dependencies: ConsumptionDependencyContext,
-    now: number,
-  ): Promise<ConsumptionMutationResult<BriefRow | null>>;
-  /**
-   * Withdraw a brief from the feed, keeping its row (state `retired`, which is
-   * terminal). False when the brief doesn't exist.
-   */
-  retireBrief(id: string, now: number): Promise<boolean>;
-  /**
-   * Retract a resolved loop's still-actionable briefs — move every
-   * non-terminal brief attached to `loopId` to `dismissed_already_handled`
-   * (a terminal handled state). The loop-resolve cascade: a resolved loop
-   * never leaves a lingering, actionable brief. Idempotent. Returns the
-   * retracted brief ids.
-   */
-  retractBriefsForResolvedLoop(loopId: string, now: number): Promise<string[]>;
-  /**
-   * Dismiss a brief (user-driven, from the feed's dismiss modal): flip
-   * its `dismissed_*` state + store the free text + enqueue the async
-   * feedback run, atomically.
-   */
-  dismissBrief(input: DismissBriefInput, now: number): Promise<DismissBriefResult>;
-  /** Mark a brief seen (`unread` → `read`); idempotent on `read`. */
-  markBriefRead(id: string, now: number): Promise<MarkBriefReadResult>;
-  /** Stamp a brief's follow-up thread (once; false if already stamped). */
-  setBriefThreadConversation(id: string, conversationId: string, now: number): Promise<boolean>;
-  /** Replace a dead thread pointer (CAS on the dead id; false if it moved). */
-  restampBriefThreadConversation(
-    id: string,
-    deadConversationId: string,
-    conversationId: string,
+    transition: ObservationTransition,
     now: number,
   ): Promise<boolean>;
+  recordObservationScores(id: string, scores: ObservationScores, now: number): Promise<boolean>;
+  recordObservationClaims(
+    id: string,
+    claims: readonly ObservationClaim[],
+    now: number,
+  ): Promise<boolean>;
+  /** Drop open observations whose window ended; returns their ids. */
+  expireObservations(now: number): Promise<string[]>;
+  /** Drop a resolved loop's open observations unless another related loop is active. */
+  dropObservationsForResolvedLoop(loopId: string, now: number): Promise<string[]>;
+  setObservationUserAction(id: string, userAction: string | null, now: number): Promise<boolean>;
+  /** Apply one user task command (create, complete, migrate, strike, edit, accept, undo, …). */
+  applyTaskCommand(
+    command: TaskCommand,
+    now: number,
+    opts?: ApplyTaskCommandOptions,
+  ): Promise<TaskCommandResult>;
   /**
-   * Return every `dismissed_snoozed` brief whose user-picked `next_show`
-   * has arrived to `unread` (the durable snooze resurface, run on the
-   * rhythm tick). Returns the number resurfaced.
+   * Record one interest signal, superseding the live signals `supersede`
+   * names first, in one transaction.
    */
-  resurfaceDueSnoozedBriefs(now: number): Promise<number>;
+  recordInterestSignal(
+    signal: NewInterestSignal,
+    supersede: InterestSupersedeScope | null,
+  ): Promise<InterestSignal>;
+  /** Mark the live interest signals a scope names as superseded. */
+  supersedeInterestSignals(by: InterestSupersedeScope, now: number): Promise<number>;
+  /** Store a signal's vector, or record a failed attempt (null) and back off its next try. */
+  setInterestSignalEmbedding(
+    id: string,
+    embedding: { vector: ArrayLike<number>; model: string } | null,
+    now: number,
+  ): Promise<boolean>;
+  /** Forget vectors made by any embedder but `model`, so they are re-embedded. */
+  resetInterestEmbeddingsNotFrom(model: string): Promise<number>;
+  /** Apply the owner's thumbs on one shipped brief item: signal, row and user action, atomically. */
+  setBriefItemReaction(
+    input: ApplyBriefReactionInput,
+    now: number,
+  ): Promise<BriefItemReaction | null>;
+  /** Record a Brain proposal on one of the user's own tasks. */
+  proposeTaskChange(loopId: string, proposal: ProposedTaskChange, now: number): Promise<boolean>;
+  /** Apply a verified Brain change to one of the user's own tasks, as an undoable event. */
+  autoApplyTaskChange(
+    loopId: string,
+    change: AutoAppliedTaskChange,
+    now: number,
+  ): Promise<AutoApplyTaskResult>;
+  /** Drop a task's waiting proposal if it is still the one made at `proposedAt`. */
+  withdrawTaskProposal(loopId: string, proposedAt: number): Promise<boolean>;
+  /** Forget a redacted morning brief's items. */
+  clearMorningBriefMessageItems(messageId: string): Promise<number>;
+  /** Queue notes captured since the note agent started; returns how many. */
+  enqueueNewNotes(now: number): Promise<number>;
+  /** Claim the next settled note for the note agent, or null. */
+  claimDueNote(now: number): Promise<NoteAgentRow | null>;
+  finishNoteRun(
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof finishNoteRun>[3],
+    now: number,
+  ): Promise<void>;
+  /** Reduce closed observations older than `olderThan` to outcome records. */
+  pruneClosedObservations(olderThan: number, now: number): Promise<PruneObservationsResult>;
+  /** Replace a day's unsent morning-brief item list; false once sent. */
+  replaceMorningBriefItems(
+    day: string,
+    runId: string,
+    observationIds: readonly string[],
+  ): Promise<boolean>;
+  /** Record a sent morning brief and ship its listed observations, at most once a day. */
+  markMorningBriefSent(
+    input: { day: string; runId: string; conversationId: string; messageId: string },
+    now: number,
+  ): Promise<MarkMorningBriefSentResult>;
   /** Replace the agent-notes blob (size-capped); returns the stored content. */
   writeCognitionNotes(content: string, opts: { maxBytes: number; now: number }): Promise<string>;
   /**
@@ -2032,9 +2108,15 @@ export interface WriteGate {
    * `sourceDocId` with the supplied citation set. Type A:
    * conversations as first-class documents.
    */
+  upsertConversationDocument(
+    doc: DocumentInput,
+    projection: ConversationEvidenceProjection,
+    citations: ReadonlyArray<ConversationCitationInput>,
+  ): Promise<void>;
   upsertConversationCitations(
     sourceDocId: string,
     citations: ReadonlyArray<ConversationCitationInput>,
+    evidenceProjection?: ConversationEvidenceProjection,
   ): Promise<UpsertConversationCitationsResult>;
 
   // ── omnesis-notes ─────────────────────────────────────────────────
@@ -2157,6 +2239,8 @@ import {
   type WriterOpName,
   type WriterReturn,
 } from "./scheduler/writer-handlers.js";
+import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
+import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 /**
  * Dispatch function signature — takes an op name + positional args and
@@ -2220,8 +2304,30 @@ function canonicalizerRegistryForWrite(
     : buildSafeUrlCanonicalizerRegistry(specs);
 }
 
+const gateCalls = new WeakMap<WriteGate, WriterCallFn>();
+export function maintenanceCanonicalWriteGate(
+  gate: WriteGate,
+  fence: () => KnowledgeCanonicalFence,
+): WriteGate {
+  const call = gateCalls.get(gate);
+  if (!call) throw new Error("Maintenance requires a registered writer gate");
+  return writeGateFromCall(
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const scope = fence();
+      const result = await call("knowledge.canonicalMutation", [scope, op, args as unknown[]]);
+      if (!result.ok) throw new KnowledgeStorageError(result.code, result.message);
+      scope.owners = result.owners;
+      scope.collections = result.collections;
+      return result.value as Awaited<WriterReturn<K>>;
+    },
+  );
+}
 export function writeGateFromCall(call: WriterCallFn): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...knowledgeGateFromCall(call),
     upsertDocuments: (
       docs,
       canonicalizers,
@@ -2370,8 +2476,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     finishLinkDeclarationUpdate: () => call("links.finishDeclarationUpdate", []),
     upsertLinkResolutions: (batch) => call("links.upsertLinkResolutions", [batch]),
     applyExtractedDates: (entries) => call("db.applyExtractedDates", [entries]),
-    applyMentionJudgements: (records, deferrals, answers) =>
-      call("db.applyMentionJudgements", [records, deferrals, answers]),
+    applyMentionJudgements: (records, deferrals, answers, decisions = []) =>
+      call("db.applyMentionJudgements", [records, deferrals, answers, decisions]),
     requeueStaleMentionJudgements: (rubricVersion, limit) =>
       call("db.requeueStaleMentionJudgements", [rubricVersion, limit]),
     drainPendingEdges: (limit) => call("edges.drainPending", [limit]),
@@ -2571,9 +2677,11 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     pullForwardCognitionRuns: (entries, activeDerivationStageIds) =>
       call("cognition.pullForward", [entries, activeDerivationStageIds]),
     cancelPendingCognitionRuns: (dedupeKeys) => call("cognition.cancelPending", [dedupeKeys]),
+    retractUnclaimedCognitionRuns: (dedupeKeys) => call("cognition.retractUnclaimed", [dedupeKeys]),
     cancelScheduledRunsForLoop: (loopId) => call("cognition.cancelScheduledForLoop", [loopId]),
     setCognitionEngineState: (key, value) => call("cognition.engineStateSet", [key, value]),
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
+    recordLiveVoiceUsage: (input) => call("live.recordVoiceUsage", [input]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
       call("cognition.recordCognitionSpend", [day, mechanism, modelId, usage, opts]),
     recordCognitionDecision: (record) => call("cognition.recordDecision", [record]),
@@ -2595,18 +2703,18 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     deleteDocAnnotation: (id, now) => call("cognition.annotationDelete", [id, now]),
     invalidateAnnotationsForDoc: (docId, now) =>
       call("cognition.annotationInvalidate", [docId, now]),
-    createPersonAnnotation: (input, now) => call("cognition.personAnnotationCreate", [input, now]),
-    createPersonAnnotationSuperseding: (input, supersedesId, now) =>
-      call("cognition.personAnnotationCreateSuperseding", [input, supersedesId, now]),
-    supersedePersonAnnotationBy: (id, supersededById, now) =>
-      call("cognition.personAnnotationSupersede", [id, supersededById, now]),
-    revisePersonAnnotation: (id, patch, now) =>
-      call("cognition.personAnnotationRevise", [id, patch, now]),
-    retractPersonAnnotation: (id, now) => call("cognition.personAnnotationRetract", [id, now]),
+    createPersonAnnotation: (input, now, budget) =>
+      call("cognition.personAnnotationCreate", [input, now, budget]),
+    createPersonAnnotationSuperseding: (input, supersedesId, now, budget) =>
+      call("cognition.personAnnotationCreateSuperseding", [input, supersedesId, now, budget]),
+    supersedePersonAnnotationBy: (id, supersededById, now, budget) =>
+      call("cognition.personAnnotationSupersede", [id, supersededById, now, budget]),
+    revisePersonAnnotation: (id, patch, now, budget) =>
+      call("cognition.personAnnotationRevise", [id, patch, now, budget]),
+    retractPersonAnnotation: (id, now, budget) =>
+      call("cognition.personAnnotationRetract", [id, now, budget]),
     invalidatePersonAnnotationsForDoc: (docId, now) =>
       call("cognition.personAnnotationInvalidate", [docId, now]),
-    cascadePersonAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("cognition.personAnnotationPrivacyDelete", [deletedDocIds]),
     markConversationSeen: (conversationId) =>
       call("conversationReadState.markSeen", [conversationId]),
     recordConversationAgentContent: (conversationId, now) =>
@@ -2676,38 +2784,55 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markTemporalAnnotationsRefilePresented: async (ids, runId) => {
       await call("temporalAnnotations.refilePresented", [ids, runId]);
     },
-    cascadeTemporalAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("temporalAnnotations.privacyDelete", [deletedDocIds]),
-    cascadeAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("cognition.annotationPrivacyDelete", [deletedDocIds]),
-    invalidateBriefClaimsForDoc: (docId, now) =>
-      call("cognition.briefClaimInvalidate", [docId, now]),
-    cascadeBriefClaimPrivacyDelete: (deletedDocIds) =>
-      call("cognition.briefClaimPrivacyDelete", [deletedDocIds]),
-    cascadeOpenLoopPrivacyDelete: (deletedDocIds) =>
-      call("cognition.openLoopCascade", [deletedDocIds]),
-    createBrief: (input, dependencies, now) =>
-      call("cognition.briefCreate", [input, dependencies, now]),
-    updateBrief: (id, input, dependencies, now) =>
-      call("cognition.briefUpdate", [id, input, dependencies, now]),
-    retireBrief: (id, now) => call("cognition.briefRetire", [id, now]),
-    retractBriefsForResolvedLoop: (loopId, now) =>
-      call("cognition.briefRetractForLoop", [loopId, now]),
-    dismissBrief: (input, now) => call("cognition.briefDismiss", [input, now]),
-    markBriefRead: (id, now) => call("cognition.briefMarkRead", [id, now]),
-    setBriefThreadConversation: (id, conversationId, now) =>
-      call("cognition.briefSetThread", [id, conversationId, now]),
-    restampBriefThreadConversation: (id, deadId, conversationId, now) =>
-      call("cognition.briefRestampThread", [id, deadId, conversationId, now]),
-    resurfaceDueSnoozedBriefs: (now) => call("cognition.snoozeResurface", [now]),
+    reviewBrainArtifactsForDeletedDocs: (deletedDocIds) =>
+      call("cognition.sourceDeletionReview", [deletedDocIds]),
+    createObservation: (input, dependencies, now) =>
+      call("cognition.observationCreate", [input, dependencies, now]),
+    transitionObservation: (id, transition, now) =>
+      call("cognition.observationTransition", [id, transition, now]),
+    recordObservationScores: (id, scores, now) =>
+      call("cognition.observationScores", [id, scores, now]),
+    recordObservationClaims: (id, claims, now) =>
+      call("cognition.observationClaims", [id, claims, now]),
+    expireObservations: (now) => call("cognition.observationExpire", [now]),
+    dropObservationsForResolvedLoop: (loopId, now) =>
+      call("cognition.observationDropForLoop", [loopId, now]),
+    setObservationUserAction: (id, userAction, now) =>
+      call("cognition.observationUserAction", [id, userAction, now]),
+    applyTaskCommand: (command, now, opts) => call("cognition.taskCommand", [command, now, opts]),
+    recordInterestSignal: (signal, supersede) => call("interest.record", [signal, supersede]),
+    supersedeInterestSignals: (by, now) => call("interest.supersede", [by, now]),
+    setInterestSignalEmbedding: (id, embedding, now) =>
+      call("interest.embedding", [id, embedding, now]),
+    resetInterestEmbeddingsNotFrom: (model) => call("interest.resetEmbeddings", [model]),
+    setBriefItemReaction: (input, now) => call("interest.reaction", [input, now]),
+    enqueueNewNotes: (now) => call("noteAgent.enqueue", [now]),
+    clearMorningBriefMessageItems: (messageId) =>
+      call("cognition.morningBriefItemsClear", [messageId]),
+    claimDueNote: (now) => call("noteAgent.claim", [now]),
+    finishNoteRun: (entryId, attempt, outcome, now) =>
+      call("noteAgent.finish", [entryId, attempt, outcome, now]),
+    proposeTaskChange: (loopId, proposal, now) =>
+      call("cognition.taskPropose", [loopId, proposal, now]),
+    autoApplyTaskChange: (loopId, change, now) =>
+      call("cognition.taskAutoApply", [loopId, change, now]),
+    withdrawTaskProposal: (loopId, proposedAt) =>
+      call("cognition.taskProposalWithdraw", [loopId, proposedAt]),
+    pruneClosedObservations: (olderThan, now) =>
+      call("cognition.observationPrune", [olderThan, now]),
+    replaceMorningBriefItems: (day, runId, observationIds) =>
+      call("cognition.morningBriefItems", [day, runId, observationIds]),
+    markMorningBriefSent: (input, now) => call("cognition.morningBriefSent", [input, now]),
     writeCognitionNotes: (content, opts) => call("cognition.notesWrite", [content, opts]),
     appendCognitionNotes: (text, opts) => call("cognition.notesAppend", [text, opts]),
     editCognitionNotes: (oldText, newText, opts) =>
       call("cognition.notesEdit", [oldText, newText, opts]),
     wipeCognitionNotes: (now) => call("cognition.notesWipe", [now]),
 
-    upsertConversationCitations: (sourceDocId, citations) =>
-      call("omnesisChat.upsertConversationCitations", [sourceDocId, citations]),
+    upsertConversationDocument: (doc, projection, citations) =>
+      call("omnesisChat.upsertConversationDocument", [doc, projection, citations]),
+    upsertConversationCitations: (sourceDocId, citations, projection) =>
+      call("omnesisChat.upsertConversationCitations", [sourceDocId, citations, projection]),
 
     appendNoteEntry: (entry, audit, browserAuthority) =>
       call("notes.appendEntry", [entry, audit, browserAuthority]),
@@ -2731,6 +2856,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     nearDupGenerationSweepStep: (config) => call("nearDup.generationSweepStep", [config]),
     markNearDupDfDirty: () => call("nearDup.markDfDirty", []),
   };
+  gateCalls.set(gate, call);
+  return gate;
 }
 
 /**
@@ -2739,7 +2866,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
  * writer invariant.
  */
 export function directWriteGate(db: Db): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...directKnowledgeGate(db),
     upsertDocuments: async (
       docs,
       canonicalizers,
@@ -2939,8 +3067,8 @@ export function directWriteGate(db: Db): WriteGate {
     finishLinkDeclarationUpdate: async () => finishLinkDeclarationUpdate(db),
     upsertLinkResolutions: async (batch) => upsertLinkResolutions(db, batch),
     applyExtractedDates: async (entries) => applyExtractedDatesToDb(db, entries),
-    applyMentionJudgements: async (records, deferrals, answers) =>
-      applyMentionJudgementsToDb(db, records, deferrals, answers),
+    applyMentionJudgements: async (records, deferrals, answers, decisions = []) =>
+      applyMentionJudgementsToDb(db, records, deferrals, answers, decisions),
     requeueStaleMentionJudgements: async (rubricVersion, limit) =>
       requeueStaleMentionJudgementsInDb(db, rubricVersion, limit),
     drainPendingEdges: async (limit) => drainPendingEdges(db, { limit }),
@@ -3209,6 +3337,8 @@ export function directWriteGate(db: Db): WriteGate {
     },
     cancelPendingCognitionRuns: async (dedupeKeys) =>
       cancelPendingCognitionRunsByDedupeKeys(db, dedupeKeys),
+    retractUnclaimedCognitionRuns: async (dedupeKeys) =>
+      retractUnclaimedCognitionRunsByDedupeKeys(db, dedupeKeys),
     cancelScheduledRunsForLoop: async (loopId) => cancelScheduledRunsForLoop(db, loopId),
     setCognitionEngineState: async (key, value) => {
       setCognitionEngineState(db, key, value);
@@ -3216,6 +3346,7 @@ export function directWriteGate(db: Db): WriteGate {
     addToCognitionEngineCounter: async (key, delta) => {
       addToCognitionEngineCounter(db, key, delta);
     },
+    recordLiveVoiceUsage: (input) => Promise.resolve().then(() => recordLiveVoiceUsage(db, input)),
     recordCognitionSpend: async (day, mechanism, modelId, usage, opts) => {
       recordCognitionSpend(db, day, mechanism, modelId, usage, opts);
     },
@@ -3232,8 +3363,9 @@ export function directWriteGate(db: Db): WriteGate {
       ),
     rewriteOpenLoopPeople: async (id, actors, involved) =>
       rewriteOpenLoopPeople(db, id, actors, involved),
-    appendOpenLoopLedger: async (loopId, entry, now) =>
-      appendOpenLoopLedger(db, loopId, entry, now),
+    appendOpenLoopLedger: async (loopId, entry, now) => {
+      appendOpenLoopLedger(db, loopId, entry, now);
+    },
     // The write-gated delete records a consolidation trace (the agent-issued
     // `open_loop_delete` path); the storage default is trace-free.
     deleteOpenLoop: async (id, now) => deleteOpenLoop(db, id, { retire: true, now }),
@@ -3244,29 +3376,34 @@ export function directWriteGate(db: Db): WriteGate {
       supersedeDocAnnotationBy(db, id, supersededById, now),
     updateDocAnnotation: async (id, patch, now) => updateDocAnnotation(db, id, patch, now),
     deleteDocAnnotation: async (id, now) =>
-      retractAnnotationWithDependentRechecks(db, "doc", id, now, () => deleteDocAnnotation(db, id)),
-    invalidateAnnotationsForDoc: async (docId, now) => invalidateAnnotationsForDoc(db, docId, now),
-    cascadeAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadeAnnotationPrivacyDelete(db, deletedDocIds),
-    invalidateBriefClaimsForDoc: async (docId, now) => invalidateBriefClaimsForDoc(db, docId, now),
-    cascadeBriefClaimPrivacyDelete: async (deletedDocIds) =>
-      cascadeBriefClaimPrivacyDelete(db, deletedDocIds),
-    cascadeOpenLoopPrivacyDelete: async (deletedDocIds) =>
-      cascadeOpenLoopPrivacyDeleteWithMirrors(db, deletedDocIds),
-    createPersonAnnotation: async (input, now) => createPersonAnnotation(db, input, now),
-    createPersonAnnotationSuperseding: async (input, supersedesId, now) =>
-      createPersonAnnotationSuperseding(db, input, supersedesId, now),
-    supersedePersonAnnotationBy: async (id, supersededById, now) =>
-      supersedePersonAnnotationBy(db, id, supersededById, now),
-    revisePersonAnnotation: async (id, patch, now) => revisePersonAnnotation(db, id, patch, now),
-    retractPersonAnnotation: async (id, now) =>
-      retractAnnotationWithDependentRechecks(db, "person", id, now, () =>
-        deletePersonAnnotation(db, id),
+      retractAnnotationWithDependentRechecks(db, "doc", id, now, () =>
+        withdrawKnowledgeOwner(db, "doc_annotation", id, now),
       ),
+    invalidateAnnotationsForDoc: async (docId, now) => invalidateAnnotationsForDoc(db, docId, now),
+    reviewBrainArtifactsForDeletedDocs: async (deletedDocIds) =>
+      reviewBrainArtifactsForDeletedDocs(db, deletedDocIds, Date.now()),
+    createPersonAnnotation: async (input, now, budget) =>
+      createPersonAnnotation(db, input, now, budget),
+    createPersonAnnotationSuperseding: async (input, supersedesId, now, budget) =>
+      createPersonAnnotationSuperseding(db, input, supersedesId, now, budget),
+    supersedePersonAnnotationBy: async (id, supersededById, now, budget) =>
+      supersedePersonAnnotationBy(db, id, supersededById, now, budget),
+    revisePersonAnnotation: async (id, patch, now, budget) =>
+      revisePersonAnnotation(db, id, patch, now, budget),
+    retractPersonAnnotation: async (id, now, budget) =>
+      retractAnnotationWithDependentRechecks(db, "person", id, now, () => {
+        const owner = getWithdrawalPersonAnnotation(db, id);
+        if (budget) {
+          if (!owner)
+            throw new Error(
+              "Person profile changed; reread the complete profile before reconciling",
+            );
+          assertPersonProfileReceipt(db, owner.personId, budget);
+        }
+        return withdrawKnowledgeOwner(db, "person_annotation", id, now);
+      }),
     invalidatePersonAnnotationsForDoc: async (docId, now) =>
       invalidatePersonAnnotationsForDoc(db, docId, now),
-    cascadePersonAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadePersonAnnotationPrivacyDelete(db, deletedDocIds),
     markConversationSeen: async (conversationId) => markConversationOpened(db, conversationId),
     recordConversationAgentContent: async (conversationId, now) =>
       recordAgentMessage(db, conversationId, now),
@@ -3340,34 +3477,54 @@ export function directWriteGate(db: Db): WriteGate {
       invalidateTemporalAnnotationsForDoc(db, docId, now),
     markTemporalAnnotationsRefilePresented: async (ids, runId) =>
       markTemporalAnnotationsRefilePresented(db, ids, runId),
-    cascadeTemporalAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadeTemporalAnnotationPrivacyDelete(db, deletedDocIds),
-    createBrief: async (input, dependencies, now) =>
-      mutateWithConsumptionDependencies(db, dependencies, "brief", input.id, now, () =>
-        createBrief(db, input, now),
+    createObservation: async (input, dependencies, now) =>
+      mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
+        createObservation(db, input, now),
       ),
-    updateBrief: async (id, input, dependencies, now) =>
-      mutateWithConsumptionDependencies(db, dependencies, "brief", id, now, () =>
-        updateBrief(db, id, input, now),
-      ),
-    retireBrief: async (id, now) => retireBrief(db, id, now),
-    retractBriefsForResolvedLoop: async (loopId, now) =>
-      retractBriefsForResolvedLoop(db, loopId, now),
-    dismissBrief: async (input, now) => dismissBriefAndEnqueueFeedback(db, input, now),
-    markBriefRead: async (id, now) => markBriefRead(db, id, now),
-    setBriefThreadConversation: async (id, conversationId, now) =>
-      setBriefThreadConversation(db, id, conversationId, now),
-    restampBriefThreadConversation: async (id, deadId, conversationId, now) =>
-      restampBriefThreadConversation(db, id, deadId, conversationId, now),
-    resurfaceDueSnoozedBriefs: async (now) => resurfaceDueSnoozedBriefs(db, now),
+    transitionObservation: async (id, transition, now) =>
+      transitionObservation(db, id, transition, now),
+    recordObservationScores: async (id, scores, now) =>
+      recordObservationScores(db, id, scores, now),
+    recordObservationClaims: async (id, claims, now) =>
+      recordObservationClaims(db, id, claims, now),
+    expireObservations: async (now) => expireObservations(db, now),
+    dropObservationsForResolvedLoop: async (loopId, now) =>
+      dropObservationsForResolvedLoop(db, loopId, now),
+    setObservationUserAction: async (id, userAction, now) =>
+      setObservationUserAction(db, id, userAction, now),
+    applyTaskCommand: async (command, now, opts) => applyTaskCommand(db, command, now, opts),
+    recordInterestSignal: async (signal, supersede) => recordInterestSignal(db, signal, supersede),
+    supersedeInterestSignals: async (by, now) => supersedeInterestSignals(db, by, now),
+    setInterestSignalEmbedding: async (id, embedding, now) =>
+      setInterestSignalEmbedding(db, id, embedding, now),
+    resetInterestEmbeddingsNotFrom: async (model) => resetInterestEmbeddingsNotFrom(db, model),
+    setBriefItemReaction: async (input, now) => applyBriefReaction(db, input, now),
+    enqueueNewNotes: async (now) => enqueueNewNotes(db, now),
+    clearMorningBriefMessageItems: async (messageId) =>
+      clearMorningBriefMessageItems(db, messageId),
+    claimDueNote: async (now) => claimDueNote(db, now),
+    finishNoteRun: async (entryId, attempt, outcome, now) =>
+      finishNoteRun(db, entryId, attempt, outcome, now),
+    proposeTaskChange: async (loopId, proposal, now) =>
+      proposeTaskChange(db, loopId, proposal, now),
+    autoApplyTaskChange: async (loopId, change, now) =>
+      autoApplyTaskChange(db, loopId, change, now),
+    withdrawTaskProposal: async (loopId, proposedAt) =>
+      withdrawTaskProposal(db, loopId, proposedAt),
+    pruneClosedObservations: async (olderThan, now) => pruneClosedObservations(db, olderThan, now),
+    replaceMorningBriefItems: async (day, runId, observationIds) =>
+      replaceMorningBriefItems(db, day, runId, observationIds),
+    markMorningBriefSent: async (input, now) => markMorningBriefSent(db, input, now),
     writeCognitionNotes: async (content, opts) => writeCognitionNotes(db, content, opts),
     appendCognitionNotes: async (text, opts) => appendCognitionNotes(db, text, opts),
     editCognitionNotes: async (oldText, newText, opts) =>
       editCognitionNotes(db, oldText, newText, opts),
     wipeCognitionNotes: async (now) => wipeCognitionNotes(db, now),
 
-    upsertConversationCitations: async (sourceDocId, citations) =>
-      upsertConversationCitations(db, sourceDocId, citations),
+    upsertConversationDocument: async (doc, projection, citations) =>
+      upsertConversationDocument(db, doc, projection, citations),
+    upsertConversationCitations: async (sourceDocId, citations, projection) =>
+      upsertConversationCitations(db, sourceDocId, citations, projection),
 
     appendNoteEntry: async (entry, audit, browserAuthority) =>
       insertNoteEntry(db, entry, audit, browserAuthority),
@@ -3396,4 +3553,18 @@ export function directWriteGate(db: Db): WriteGate {
       markNearDupDfDirty(db);
     },
   };
+  gateCalls.set(
+    gate,
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const handler = (
+        writerHandlers as unknown as Record<string, (db: Db, ...args: unknown[]) => unknown>
+      )[op];
+      if (!handler) throw new Error("Unsupported direct writer operation");
+      return handler(db, ...args) as Awaited<WriterReturn<K>>;
+    },
+  );
+  return gate;
 }

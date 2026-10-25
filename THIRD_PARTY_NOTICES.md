@@ -164,7 +164,9 @@ travels with the upstream project at <https://github.com/rsms/inter>.
 ## 3. Bundled icon glyphs
 
 Source packages, the web portal and the Chrome extension bundle selected SVG glyphs from [Lucide](https://lucide.dev),
-including the generic voicemail glyph and the Astroid glyph for agentic browser search. Lucide is
+including the generic voicemail glyph, the Astroid glyph for agentic browser search,
+and the Infinity, Notepad Text, Quote, Info, Sticky Note, User and File Text glyphs
+for knowledge links and claim inspection. Lucide is
 licensed under ISC:
 
 > Copyright (c) 2026 Lucide Icons and Contributors
@@ -333,6 +335,25 @@ fetched through the gateway. SwiftDraw is licensed under **zlib**; Copyright
 license and source are at
 [SwiftDraw 0.29.0](https://github.com/swhitty/SwiftDraw/blob/0.29.0/LICENSE.txt).
 
+The iPhone app also uses **WebRTC M155**, distributed as the standalone
+**shiguredo-webrtc-build m155.8059.4.1** XCFramework. It contains WebRTC and
+its linked third-party libraries, whose respective licenses and copyright
+notices are reproduced verbatim in
+[`ios/Resources/ThirdParty/WebRTC-LICENSE.md`](ios/Resources/ThirdParty/WebRTC-LICENSE.md)
+and bundled with the iPhone app. The pinned build distribution's
+[license](ios/Resources/ThirdParty/WebRTC-Build-LICENSE.txt) and
+[notices](ios/Resources/ThirdParty/WebRTC-Build-NOTICE.md) are retained alongside it.
+This is the aggregate generated for the upstream binary, not a replacement license
+for its components. Omnesis does not modify the framework's code. Its device and
+simulator frameworks include the upstream privacy manifest.
+
+The local Swift package wrapper pins the
+[release archive](https://github.com/shiguredo-webrtc-build/webrtc-build/releases/tag/m155.8059.4.1)
+and its SHA-256 checksum. The
+[pinned build source](https://github.com/shiguredo-webrtc-build/webrtc-build/tree/2c8c64dec452ffd05057ae1463d78670619ff81a)
+identifies WebRTC commit `5bd86a2f17a35dfc986b87d058f511e45805bd1d` and
+uses WebRTC's dependency-based license generator for the iOS SDK build.
+
 ## 7. Runtime npm production dependencies
 
 The published `@omnesis/*` packages (and the Docker image, which bakes in their
@@ -344,12 +365,12 @@ de-duplicating by `name@version`. It includes optional production dependencies
 (e.g. platform-specific native binaries), so multiple platform variants of the
 same library each appear as a distinct entry.
 
-**519 distinct third-party production packages**, grouped by their declared SPDX
+**520 distinct third-party production packages**, grouped by their declared SPDX
 license expression:
 
 | Count | License (as declared in package metadata)            |
 | ----: | ---------------------------------------------------- |
-|   370 | MIT                                                  |
+|   371 | MIT                                                  |
 |    38 | Apache-2.0                                           |
 |    30 | ISC                                                  |
 |    16 | BSD-3-Clause                                         |

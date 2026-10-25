@@ -21,6 +21,7 @@ const DEFAULTS: BootstrapSettingsView = {
   maxRunsPerDay: 200,
   maxRuns: 1_000_000,
   batchSize: 100,
+  horizonMs: 90 * 86_400_000,
   recencyWindowMs: 7 * 86_400_000,
 };
 

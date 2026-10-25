@@ -13,6 +13,7 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.capture.TaskNoteKind
 import dev.omnesis.android.ui.capture.VoiceNoteUi
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -222,5 +223,94 @@ class CaptureScreenshotTest {
     @Test
     fun capture_saving_dark() = capture("capture_saving_dark", dark = true) {
         Screen(CaptureUiState(text = "Order more filament for the printer", save = SaveState.Saving))
+    }
+
+    // --- "Done + note" from a task's action fan: the same capture, completing the task ---
+
+    @Test
+    fun capture_task_note_listening_dark() = capture("capture_task_note_listening_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(text = "Paid by card", partialText = "at the front desk", speech = SpeechState.LISTENING),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "Pay the venue deposit",
+        )
+    }
+
+    @Test
+    fun capture_task_note_typing_light() = capture("capture_task_note_typing_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "Pay the venue deposit",
+        )
+    }
+
+    /** A suggestion's "Accept with note": the same capture, accepting the suggestion with the note. */
+    @Test
+    fun capture_task_accept_note_light() = capture("capture_task_accept_note_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(text = "The renewal form is in the glovebox"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "Renew the residents' parking permit",
+            completionKind = TaskNoteKind.ACCEPT,
+        )
+    }
+
+    // --- A Morning brief item's thumbs-down: the same capture, headed by what the reader is saying ---
+
+    /** "Factual error": the correction, under the item's own sentence. */
+    @Test
+    fun capture_brief_correction_light() = capture("capture_brief_correction_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(text = "The tuner comes Friday, not Thursday"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The tuner confirmed Thursday at ten.",
+            completionKind = TaskNoteKind.FACTUAL_ERROR,
+        )
+    }
+
+    @Test
+    fun capture_brief_correction_dark() = capture("capture_brief_correction_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(text = "The tuner comes Friday, not Thursday"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The tuner confirmed Thursday at ten.",
+            completionKind = TaskNoteKind.FACTUAL_ERROR,
+        )
+    }
+
+    /** "Not interested": the words are optional, so the capture opens listening with nothing said yet. */
+    @Test
+    fun capture_brief_not_interested_light() = capture("capture_brief_not_interested_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(speech = SpeechState.LISTENING),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The quarterly budget review moved to next week.",
+            completionKind = TaskNoteKind.NOT_INTERESTED,
+        )
     }
 }

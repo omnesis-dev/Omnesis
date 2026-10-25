@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Briefs scorecard kit — the measurement half of the reconcile-quality
+ * The Brain loop scorecard kit — the measurement half of the reconcile-quality
  * instrument.
  *
  * Where the reconcile e2e asserts individual behaviors, the scorecard runs
@@ -10,7 +10,7 @@
  * the reconcile-quality metrics, compared against each arc's gold:
  *
  *   duplicate_rate, resolution_recall, loop_precision, loop_recall,
- *   update_recall, silent_close_violations, briefs_per_day,
+ *   update_recall, silent_close_violations, observations_per_day,
  *   tokens_per_day, infra_failure_rate, malformed_tool_call_rate
  *   (uncorrected failures only; the raw all-failures rate is reported
  *   as malformed_tool_call_rate_raw, informational), scheduled_runs
@@ -26,18 +26,27 @@
  * function with the perfect and saboteur behavior tables.
  *
  * This module also hosts the shared harness-probe helpers (SQLite polling,
- * arc pushes) the briefs e2e suites reuse.
+ * arc pushes) the bench and reconcile e2e suites reuse.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { createLogger } from "@omnesis/core";
+import { verifiedFrontierRetries } from "./briefs-frontier-retries.js";
+import {
+  verifiedConcurrentCreateRetries,
+  verifiedCollectionCreateRetryOrdinals,
+} from "./briefs-concurrency-retries.js";
+import { BrainObs } from "./brain-bench/obs.js";
+import { readMaintenanceProgress } from "./brain-bench/maintenance-progress.js";
 import { generateArcSet, type Arc, type ArcDocument, type ArcSet } from "./briefs-arcs.js";
 import { saboteurBehaviors } from "./briefs-saboteur.js";
 import { startScriptedLoopModelServer } from "./fake-loop-model.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
-// ── shared harness-probe helpers (used by the briefs e2e suites too) ────────
+// ── shared harness-probe helpers (used by the brain e2e suites too) ────────
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -70,7 +79,7 @@ export function openHarnessDb(h: SyntheticE2EHarness): Database.Database {
 }
 
 /**
- * Model a worker killed AFTER a `data` run created its loop/brief but BEFORE
+ * Model a worker killed AFTER a `data` run created its loop/observation but BEFORE
  * it settled: insert a re-claimable pending `data` run for `docId`, its
  * payload intact and `attempts` bumped exactly as a crash leaves the row.
  * The drainer re-claims it; the agent's reconcile-before-create must adopt the
@@ -172,11 +181,45 @@ export interface CognitionRunProbeRow {
 
 export function runsForDoc(db: Database.Database, docId: string): CognitionRunProbeRow[] {
   return db
-    .prepare<
-      [string],
-      CognitionRunProbeRow
-    >("SELECT id, kind, status, payload_json, dedupe_key, usage_json FROM cognition_runs WHERE dedupe_key = ?")
-    .all(`data:doc:${docId}`);
+    .prepare<[string, string], CognitionRunProbeRow>(
+      `SELECT DISTINCT r.id,r.kind,r.status,r.payload_json,r.dedupe_key,r.usage_json
+       FROM cognition_runs r WHERE r.dedupe_key=? OR EXISTS (
+         SELECT 1 FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id
+         WHERE w.subject_kind='source' AND w.subject_id=? AND (b.run_id=r.id OR json_extract(r.payload_json,'$.batchId')=b.id)
+       ) ORDER BY r.enqueued_at,r.id`,
+    )
+    .all(`data:doc:${docId}`, docId);
+}
+
+/** Count settled original evidence work separately from catch-up and handed-off runs.
+ * A queue run may complete while its source work is deferred to another batch;
+ * that paid attempt belongs in total spend, not a second completed datum. */
+export function completedSourceRunCounts(db: Database.Database, sourceIds: Iterable<string>) {
+  const original = new Set<string>();
+  const all = new Set<string>();
+  const read = db.prepare<[string, string], { id: string; original: number }>(`
+    SELECT r.id, (r.dedupe_key=? OR EXISTS (
+      SELECT 1 FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id
+      WHERE w.subject_kind='source' AND w.subject_id=? AND w.reason='change' AND w.status='completed'
+      AND (b.run_id=r.id OR json_extract(r.payload_json,'$.batchId')=b.id)
+    )) AS original FROM cognition_runs r WHERE r.status='completed'
+  `);
+  for (const sourceId of sourceIds) {
+    const related = new Set(
+      runsForDoc(db, sourceId)
+        .filter((r) => r.status === "completed")
+        .map((r) => r.id),
+    );
+    for (const row of read.all(`data:doc:${sourceId}`, sourceId)) {
+      if (!related.has(row.id)) continue;
+      all.add(row.id);
+      if (row.original) original.add(row.id);
+    }
+  }
+  return {
+    dataRunsCompleted: original.size,
+    sourceMaintenanceRunsCompleted: all.size - original.size,
+  };
 }
 
 export function loopsWithMarker(
@@ -214,7 +257,7 @@ export async function pushArcDoc(
 /**
  * The datum mix one full arc-set delivery represents. By declaration it
  * models ONE representative day of life — the basis of the scorecard's
- * `briefs_per_day` / `tokens_per_day` reporting (criterion 13). The
+ * `observations_per_day` / `tokens_per_day` reporting (criterion 13). The
  * committed copy lives at `evals/universes/loops-test-life/daily-mix.json`;
  * callers compare it against this derivation and fail loud on drift.
  */
@@ -224,12 +267,10 @@ export interface DailyMix {
   datumsDelivered: number;
   /** Datums the waker must turn into runs (created events). */
   eligibleWakes: number;
-  /** Datums the waker must skip (bulk mail, stale/backfill data). */
+  /** Inputs with no scripted canonical outcome. Discovery may still inspect them. */
   wakerSkips: number;
   /** Agent runs a correct engine completes (wakes + one folded update run). */
   expectedRuns: number;
-  /** Simulated brief dismissals, each enqueuing one `feedback` run. */
-  feedbackRuns: number;
 }
 
 export function computeDailyMix(set: ArcSet): DailyMix {
@@ -237,9 +278,7 @@ export function computeDailyMix(set: ArcSet): DailyMix {
   let wakes = 0;
   let skips = 0;
   let updateRuns = 0;
-  let feedbackRuns = 0;
   for (const arc of set.arcs) {
-    if (arc.dismissal) feedbackRuns += 1;
     for (const step of arc.steps) {
       datums += 1;
       if (step.expectRun) wakes += 1;
@@ -258,7 +297,6 @@ export function computeDailyMix(set: ArcSet): DailyMix {
     eligibleWakes: wakes,
     wakerSkips: skips,
     expectedRuns: wakes + updateRuns,
-    feedbackRuns,
   };
 }
 
@@ -302,79 +340,6 @@ function usageOfRuns(runs: readonly CognitionRunProbeRow[]): {
 
 // ── arc delivery ────────────────────────────────────────────────────────────
 
-/**
- * The arc's dismissable brief: an active (unread/read) brief whose title
- * carries the arc's marker, else one attached to a loop whose title does —
- * the LLM lane may word the brief title freely, but the loop reliably
- * carries the marker.
- */
-function findArcBriefId(
-  db: Database.Database,
-  marker: string,
-  arcDocIds: readonly string[],
-): string | null {
-  const like = `%${marker.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-  const byTitle = db
-    .prepare<
-      [string],
-      { id: string }
-    >(`SELECT id FROM briefs WHERE state IN ('unread','read') AND title LIKE ? ESCAPE '\\' LIMIT 1`)
-    .get(like);
-  if (byTitle) return byTitle.id;
-  const byLoop = db
-    .prepare<[string], { id: string }>(
-      `SELECT b.id FROM briefs b
-         JOIN brief_related_loops brl ON brl.brief_id = b.id
-         JOIN open_loops ol ON ol.id = brl.loop_id
-        WHERE b.state IN ('unread','read') AND ol.title LIKE ? ESCAPE '\\' LIMIT 1`,
-    )
-    .get(like);
-  if (byLoop) return byLoop.id;
-  // Last resort — a freely-worded brief title with no marker: the brief
-  // citing one of the arc's own documents.
-  for (const docId of arcDocIds) {
-    const byCitation = db
-      .prepare<[string], { id: string }>(
-        `SELECT b.id FROM briefs b
-           JOIN brief_citations bc ON bc.brief_id = b.id
-          WHERE b.state IN ('unread','read') AND bc.doc_id = ? LIMIT 1`,
-      )
-      .get(docId);
-    if (byCitation) return byCitation.id;
-  }
-  return null;
-}
-
-/** Wait for the (single) completed feedback run a dismissal enqueued. */
-async function waitForCompletedFeedbackRun(
-  db: Database.Database,
-  briefId: string,
-  what: string,
-): Promise<CognitionRunProbeRow[]> {
-  const dedupeKey = `feedback:brief:${briefId}`;
-  return waitFor(
-    () =>
-      `${what} — rows at timeout: ${JSON.stringify(
-        db
-          .prepare<
-            [string],
-            Record<string, unknown>
-          >("SELECT id, kind, status, attempts, last_error FROM cognition_runs WHERE dedupe_key = ?")
-          .all(dedupeKey),
-      )}`,
-    () => {
-      const done = db
-        .prepare<[string], CognitionRunProbeRow>(
-          `SELECT id, kind, status, payload_json, dedupe_key, usage_json
-             FROM cognition_runs WHERE dedupe_key = ? AND status = 'completed'`,
-        )
-        .all(dedupeKey);
-      return done.length >= 1 ? done : null;
-    },
-    300_000,
-  );
-}
-
 async function waitForCompletedRuns(
   db: Database.Database,
   docId: string,
@@ -404,12 +369,58 @@ async function waitForCompletedRuns(
   );
 }
 
+/** Sequential quality cases wait for their canonical follow-ups and publication
+ * reconsideration. Deliberately future scheduled/decay runs are not drained. */
+async function settleScorecardMaintenance(harness: SyntheticE2EHarness, db: Database.Database) {
+  const obs = new BrainObs(harness);
+  let quietSince: number | null = null;
+  await waitFor(
+    () =>
+      `scorecard maintenance to settle: ${JSON.stringify({
+        work: db
+          .prepare(
+            "SELECT subject_id,reason,status,last_error FROM knowledge_work WHERE status IN ('pending','batched') AND due_at<=? LIMIT 20",
+          )
+          .all(Date.now() + 2000),
+        runs: db
+          .prepare(
+            "SELECT id,kind,status,attempts,last_error FROM cognition_runs WHERE status='pending' AND next_attempt_at<=? LIMIT 20",
+          )
+          .all(Date.now() + 2000),
+        progress: readMaintenanceProgress(db, Date.now() + 2000),
+      })}`,
+    async () => {
+      const pulse = await obs.pulse();
+      const now = Date.now();
+      // Include this fixture's 1s tiers and 2s debounce, not future reminders.
+      const dueRuns = db
+        .prepare<
+          [number],
+          { n: number }
+        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status='pending' AND next_attempt_at<=?")
+        .get(now + 2000)!.n;
+      const quiet =
+        dueRuns === 0 &&
+        pulse.counts.bufferedWakes === 0 &&
+        pulse.runningRuns.length === 0 &&
+        readMaintenanceProgress(db, now + 2000).pending === 0;
+      if (!quiet) {
+        quietSince = null;
+        return null;
+      }
+      quietSince ??= now;
+      return now - quietSince >= 600 ? true : null;
+    },
+    120_000,
+  );
+}
+
 /**
  * Deliver the full arc set through the harness push path, arc by arc,
  * step by step — each expected run is awaited before the next datum of
  * the same arc is pushed, so reconcile always races only where the arc
  * intends it to (the concurrent pair). Throws on any instrument-integrity
- * violation (a skipped datum waking the agent, a wake never completing):
+ * violation (a negative input creating an obligation, a run never completing):
  * the engine under the scripted backend is deterministic, so a violation
  * means the instrument is broken, not that the agent scored badly.
  */
@@ -419,17 +430,13 @@ async function deliverArcSet(
   set: ArcSet,
   opts: { guard?: ScorecardRunGuard } = {},
 ): Promise<void> {
-  const preexisting = db
-    .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'data'")
-    .get();
-  if ((preexisting?.n ?? 0) !== 0) {
-    throw new Error(
-      `instrument integrity: ${preexisting?.n} data runs exist before arc delivery — ` +
-        `the seeded universe must be pure backfill (recency gate breach?)`,
-    );
-  }
-
   const negatives: string[] = [];
+  const attributedRuns = new Set<string>();
+  const settleUsage = (key: string, runs: CognitionRunProbeRow[]): void => {
+    const unseen = runs.filter((run) => !attributedRuns.has(run.id));
+    for (const run of unseen) attributedRuns.add(run.id);
+    opts.guard?.settle(key, usageOfRuns(unseen));
+  };
   // Steps flagged `late` are held back until every arc's regular steps have
   // been delivered — the long-horizon probe: a full day of unrelated traffic
   // lands between the commitment and its resolution.
@@ -440,7 +447,10 @@ async function deliverArcSet(
   // re-statement) hinge on the agent being ABLE to find the earlier datum via
   // search_many. Without this, pushed datums stay invisible to search
   // and a search-miss would indict the instrument, not the agent.
-  const refreshIndex = (): Promise<void> => harness.refreshSearchSnapshot();
+  const refreshIndex = async (): Promise<void> => {
+    await harness.refreshSearchSnapshot();
+    await settleScorecardMaintenance(harness, db);
+  };
   const runGuarded = async (
     datumKey: string,
     push: () => Promise<void>,
@@ -449,7 +459,7 @@ async function deliverArcSet(
     await opts.guard?.reserve(datumKey);
     await push();
     const runs = await settleWait();
-    opts.guard?.settle(datumKey, usageOfRuns(runs));
+    settleUsage(datumKey, runs);
     await refreshIndex();
   };
   const deliverStep = async (step: { doc: ArcDocument; expectRun: boolean }): Promise<void> => {
@@ -496,7 +506,7 @@ async function deliverArcSet(
           1,
           `completed run for ${doc.externalId}`,
         );
-        opts.guard?.settle(`${doc.externalId}#created`, usageOfRuns(runs));
+        settleUsage(`${doc.externalId}#created`, runs);
       }
       await refreshIndex();
       continue;
@@ -527,9 +537,9 @@ async function deliverArcSet(
         2,
         `folded update run for ${doc.externalId}`,
       );
-      opts.guard?.settle(
+      settleUsage(
         `${doc.externalId}#updated`,
-        usageOfRuns(all.filter((r) => !createdRunIds.has(r.id))),
+        all.filter((r) => !createdRunIds.has(r.id)),
       );
       await refreshIndex();
       continue;
@@ -542,54 +552,6 @@ async function deliverArcSet(
       }
       await deliverStep(step);
     }
-
-    // Simulated user reaction: dismiss the arc's brief through the REAL
-    // dismissal endpoint (state flip + feedback-run enqueue in one write)
-    // and wait for the feedback run — priced like any other run.
-    if (arc.dismissal) {
-      const marker = arc.marker;
-      if (marker === null) throw new Error(`arc ${arc.id}: dismissal requires a marker`);
-      const arcDocIds = arc.steps
-        .map((step) => docIdByExternal(db, step.doc.externalId))
-        .filter((id): id is string => id !== null);
-      // The arc's data run has already completed, so its brief either exists
-      // now or never will. A model that chose not to brief the datum has NOT
-      // crashed the instrument — the dismissal is simply skipped and the
-      // arc's gold measures the consequence (an unresolved loop, a stray
-      // record) as a metric miss instead of an aborted run set.
-      const briefId = findArcBriefId(db, marker, arcDocIds);
-      if (briefId === null) {
-        process.stderr.write(
-          `scorecard: arc ${arc.id} produced no dismissable brief (marker ${marker}) — ` +
-            `skipping the ${arc.dismissal.reason} dismissal; the gold judges the end state\n`,
-        );
-        continue;
-      }
-      const datumKey = `${arc.id}#dismiss-${arc.dismissal.reason}`;
-      await opts.guard?.reserve(datumKey);
-      const res = await harness.gatewayJson<{ state?: string; error?: string }>(
-        `/briefs/${briefId}/dismiss`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            reason: arc.dismissal.reason,
-            ...(arc.dismissal.snoozeHours !== undefined
-              ? {
-                  snoozeUntil: new Date(
-                    Date.now() + arc.dismissal.snoozeHours * 3_600_000,
-                  ).toISOString(),
-                }
-              : {}),
-          }),
-        },
-      );
-      if (typeof res.state !== "string" || !res.state.startsWith("dismissed")) {
-        throw new Error(`dismissal of ${briefId} (${arc.id}) failed: ${JSON.stringify(res)}`);
-      }
-      const runs = await waitForCompletedFeedbackRun(db, briefId, `feedback run for ${arc.id}`);
-      opts.guard?.settle(datumKey, usageOfRuns(runs));
-      await refreshIndex();
-    }
   }
 
   // The held-back long-horizon steps, after every arc's regular traffic.
@@ -597,7 +559,7 @@ async function deliverArcSet(
     await deliverStep(step);
   }
 
-  // Let the queue settle, then check the waker skipped what it had to.
+  // Let current work settle, then check negative inputs created no obligations.
   // Only DUE pending rows block settling: a real-model agent legitimately
   // leaves future-dated pending rows behind (schedule_agent_run follow-ups,
   // decay status checks) — those are agent output, not unfinished delivery.
@@ -618,12 +580,27 @@ async function deliverArcSet(
   for (const externalId of negatives) {
     const docId = docIdByExternal(db, externalId);
     if (docId === null) throw new Error(`instrument integrity: ${externalId} never landed`);
-    const runs = runsForDoc(db, docId);
-    if (runs.length !== 0) {
-      throw new Error(
-        `instrument integrity: skipped datum ${externalId} woke the agent (${runs.length} runs)`,
-      );
-    }
+    await waitFor(`current interpretation of negative source ${externalId}`, () =>
+      db
+        .prepare(
+          `SELECT 1 FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id
+       WHERE d.id=? AND c.input_revision=d.content_hash AND c.phase='interpretation' AND c.status IN ('considered','gated')`,
+        )
+        .get(docId)
+        ? true
+        : null,
+    );
+    // Discovery may inspect old or bulk inputs; a negative fixture must not
+    // manufacture a canonical outcome merely because a model run occurred.
+    const mutations =
+      db
+        .prepare<
+          [string, string],
+          { n: number }
+        >("SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM observation_citations WHERE doc_id=?) AS n")
+        .get(docId, docId)?.n ?? 0;
+    if (mutations)
+      throw new Error(`instrument integrity: negative source ${externalId} created a loop`);
   }
 }
 
@@ -639,18 +616,21 @@ export interface ObservedLoop {
 
 /** The raw end-state the metrics reduce — backend-agnostic by design. */
 export interface ScorecardObservations {
+  failedActions?: Array<{ tool: string; detail?: string }>;
   loops: ObservedLoop[];
-  /** Successful `brief_create` / `open_loop_create` calls, from the decision view. */
-  briefCreates: number;
+  /** Successful `observation_note` calls, from the decision view. */
+  observationNotes: number;
   loopCreates: number;
   runsCompleted: number;
   runsFailed: number;
   /**
-   * Completed runs of kind `data` only — the slice the daily mix's
-   * `expectedRuns` predicts. Engine-initiated runs (scheduled sweeps, decay
-   * status checks) complete alongside and are deliberately excluded.
+   * Completed original source-change work (or legacy data runs), the slice
+   * predicted by the daily mix. A completed run whose work was handed off
+   * remains paid maintenance, not another successfully processed datum.
    */
   dataRunsCompleted: number;
+  /** Other completed runs touching expected sources, including deferred handoffs. */
+  sourceMaintenanceRunsCompleted?: number;
   promptTokens: number;
   completionTokens: number;
   /** externalId → document id for every arc datum. */
@@ -662,6 +642,12 @@ export interface ScorecardObservations {
   /** Mutating tool calls across all runs, and how many errored. */
   mutatingToolCalls: number;
   mutatingToolCallsFailed: number;
+  /** Proven concurrent-create CAS retries; included in the raw refused count. */
+  verifiedConcurrentCreateRetries?: number;
+  /** Observed stale-frontier retries followed by a fresh save and completed batch. */
+  verifiedFrontierRetries?: number;
+  /** Fresh same-query collection-CAS recovery ending in an identical successful create. */
+  verifiedCollectionCreateRetries?: number;
   /** Errored mutating calls never followed by a successful same-tool call
    * in the same run (see `countUncorrectedFailures`) — the gated slice. */
   mutatingToolCallsUncorrected: number;
@@ -701,23 +687,125 @@ async function collectScorecardObservations(
   );
 
   const decisions = await harness.gatewayJson<{
-    items: Array<{ actions: Array<{ tool: string; ok: boolean }> }>;
+    items: Array<{
+      runId: string;
+      attempt: number;
+      actions: Array<{ tool: string; ok: boolean; detail?: string }>;
+    }>;
   }>("/admin/brain/decisions?limit=200");
-  let briefCreates = 0;
+  const failedRuns = decisions.items.filter((row) => row.actions.some((action) => !action.ok));
+  if (failedRuns.length) {
+    const obs = new BrainObs(harness);
+    createLogger("collector:briefs-scorecard").error(
+      `Refused scorecard mutations: ${JSON.stringify(
+        await Promise.all(
+          [...new Set(failedRuns.map((row) => row.runId))].slice(0, 12).map(async (id) => ({
+            id,
+            errors: (await obs.executedTools(id)).filter((step) => step.result?.kind === "error"),
+          })),
+        ),
+      )}`,
+    );
+  }
+  let observationNotes = 0;
   let loopCreates = 0;
   let mutatingToolCalls = 0;
   let mutatingToolCallsFailed = 0;
   let mutatingToolCallsUncorrected = 0;
+  let verifiedCreateRetries = 0;
+  let verifiedFrontierRetryCount = 0;
+  let verifiedCollectionRetryCount = 0;
+  const obs = new BrainObs(harness);
   let scheduledRuns = 0;
   for (const decision of decisions.items) {
-    mutatingToolCallsUncorrected += countUncorrectedFailures(decision.actions);
+    // Only the deliberate concurrent fixture may produce an expected losing
+    // create. Search visibility alone cannot prove concurrency (ranking and
+    // result limits change); require a sole canonical winner owned by the
+    // other source's run in this explicit two-source race.
+    const permittedWinnerIds = new Set<string>();
+    for (const arc of set.arcs.filter((candidate) => candidate.kind === "concurrent")) {
+      if (!arc.marker) continue;
+      const peers = new Set(
+        arc.steps.flatMap((step) => {
+          const docId = docIdByExternal(db, step.doc.externalId);
+          return docId ? runsForDoc(db, docId).map((run) => run.id) : [];
+        }),
+      );
+      const owners = loopsWithMarker(db, arc.marker);
+      const winner = owners.length === 1 ? owners[0] : undefined;
+      if (
+        winner &&
+        typeof winner.created_by_run === "string" &&
+        peers.has(decision.runId) &&
+        peers.has(winner.created_by_run) &&
+        winner.created_by_run !== decision.runId &&
+        db
+          .prepare(
+            `SELECT 1 FROM open_loops l JOIN cognition_runs r ON r.id=?
+          WHERE l.id=? AND r.attempts=? AND r.last_attempt_at<=l.created_at`,
+          )
+          .get(decision.runId, winner.id, decision.attempt)
+      )
+        permittedWinnerIds.add(winner.id);
+    }
+    const failedCreates = decision.actions.filter(
+      (action) => !action.ok && action.tool === "open_loop_create",
+    );
+    const failedSaves = decision.actions.filter(
+      (action) => !action.ok && action.tool === "knowledge_save",
+    );
+    const steps =
+      failedCreates.length || failedSaves.length
+        ? await obs.executedTools(decision.runId, decision.attempt)
+        : [];
+    // A missing/truncated attempt cannot establish a correspondence with the
+    // decision summary: keep all its refusals in the malformed partition.
+    const verified =
+      steps.filter((step) => step.tool === "open_loop_create" && step.result?.kind === "error")
+        .length === failedCreates.length
+        ? verifiedConcurrentCreateRetries(steps, permittedWinnerIds)
+        : new Set<number>();
+    const collectionRetries =
+      steps.filter((step) => step.tool === "open_loop_create" && step.result?.kind === "error")
+        .length === failedCreates.length
+        ? verifiedCollectionCreateRetryOrdinals(steps)
+        : new Set<number>();
+    const frontierRetries =
+      steps.filter((step) => step.tool === "knowledge_save" && step.result?.kind === "error")
+        .length === failedSaves.length
+        ? verifiedFrontierRetries(steps)
+        : new Set<number>();
+    let failedSaveOrdinal = 0;
+    let failedCreateOrdinal = 0;
+    const malformedActions = decision.actions.filter((action) => {
+      if (
+        action.tool === "knowledge_save" &&
+        !action.ok &&
+        frontierRetries.has(failedSaveOrdinal++)
+      ) {
+        verifiedFrontierRetryCount += 1;
+        return false;
+      }
+      if (action.tool !== "open_loop_create" || action.ok) return true;
+      const ordinal = failedCreateOrdinal++;
+      if (verified.has(ordinal)) {
+        verifiedCreateRetries += 1;
+        return false;
+      }
+      if (collectionRetries.has(ordinal)) {
+        verifiedCollectionRetryCount += 1;
+        return false;
+      }
+      return true;
+    });
+    mutatingToolCallsUncorrected += countUncorrectedFailures(malformedActions);
     for (const action of decision.actions) {
       mutatingToolCalls += 1;
       if (!action.ok) {
         mutatingToolCallsFailed += 1;
         continue;
       }
-      if (action.tool === "brief_create") briefCreates += 1;
+      if (action.tool === "observation_note") observationNotes += 1;
       if (action.tool === "open_loop_create") loopCreates += 1;
       if (action.tool === "schedule_agent_run") scheduledRuns += 1;
     }
@@ -728,9 +816,19 @@ async function collectScorecardObservations(
   );
   const runsCompleted = runs.items.filter((r) => r.status === "completed").length;
   const runsFailed = runs.items.filter((r) => r.status === "failed").length;
-  const dataRunsCompleted = runs.items.filter(
-    (r) => r.status === "completed" && r.kind === "data",
-  ).length;
+  const expectedSourceIds = new Set(
+    set.arcs
+      .flatMap((arc) =>
+        arc.steps
+          .filter((step) => step.expectRun)
+          .map((step) => docIdByExternal(db, step.doc.externalId)),
+      )
+      .filter((id): id is string => id !== null),
+  );
+  const { dataRunsCompleted, sourceMaintenanceRunsCompleted } = completedSourceRunCounts(
+    db,
+    expectedSourceIds,
+  );
 
   const spend = await harness.gatewayJson<{
     items: Array<{ day: string; runs: number; promptTokens: number; completionTokens: number }>;
@@ -749,24 +847,15 @@ async function collectScorecardObservations(
   // Update evidence, from the DB: which runs each datum enqueued, and which
   // run ids are stamped on each loop's ledger — a later datum "landed" on a
   // loop when its run appended to that loop's ledger (or the loop cites the
-  // datum's document). The triggering doc is read from the dedupe key
-  // (`data:doc:<id>`), which survives completion — a completed run's
-  // payload is deliberately wiped (the no-prior-version-storage discard).
+  // datum's document). Current sources join durable work to their batch and
+  // continuation runs; explicit legacy recovery retains its data dedupe key.
+  // Source prose and prior revisions are not needed for this attribution.
   const runIdsByDocId = new Map<string, string[]>();
-  for (const row of db
-    .prepare<
-      [],
-      { id: string; dedupe_key: string | null }
-    >("SELECT id, dedupe_key FROM cognition_runs WHERE kind = 'data'")
-    .all()) {
-    const docId = row.dedupe_key?.startsWith("data:doc:")
-      ? row.dedupe_key.slice("data:doc:".length)
-      : null;
-    if (docId === null) continue;
-    const ids = runIdsByDocId.get(docId) ?? [];
-    ids.push(row.id);
-    runIdsByDocId.set(docId, ids);
-  }
+  for (const docId of docIdsByExternalId.values())
+    runIdsByDocId.set(
+      docId,
+      runsForDoc(db, docId).map((run) => run.id),
+    );
   const ledgerRunIdsByLoopId = new Map<string, string[]>();
   for (const row of db
     .prepare<
@@ -780,12 +869,18 @@ async function collectScorecardObservations(
   }
 
   return {
+    failedActions: decisions.items
+      .flatMap((row) =>
+        row.actions.filter((action) => !action.ok).map(({ tool, detail }) => ({ tool, detail })),
+      )
+      .slice(0, 20),
     loops: loops.items,
-    briefCreates,
+    observationNotes,
     loopCreates,
     runsCompleted,
     runsFailed,
     dataRunsCompleted,
+    sourceMaintenanceRunsCompleted,
     promptTokens,
     completionTokens,
     docIdsByExternalId,
@@ -793,6 +888,9 @@ async function collectScorecardObservations(
     ledgerRunIdsByLoopId,
     mutatingToolCalls,
     mutatingToolCallsFailed,
+    verifiedConcurrentCreateRetries: verifiedCreateRetries,
+    verifiedFrontierRetries: verifiedFrontierRetryCount,
+    verifiedCollectionCreateRetries: verifiedCollectionRetryCount,
     mutatingToolCallsUncorrected,
     scheduledRuns,
   };
@@ -809,9 +907,10 @@ export interface ScorecardMetrics {
   loopRecall: number;
   /** Relevant later datums whose run left a trace on the tracked loop. */
   updateRecall: number;
-  /** Ambiguous resolutions closed silently instead of confirm-briefed. */
+  /** Ambiguous resolutions closed silently instead of raising a confirmation. */
   silentCloseViolations: number;
-  briefsPerDay: number;
+  /** Successful `observation_note` calls per represented day (informational). */
+  observationsPerDay: number;
   tokensPerDay: number;
   infraFailureRate: number;
   /**
@@ -842,12 +941,17 @@ export interface ScorecardCounts {
   /** Later datums that must land on the tracked loop / how many did. */
   updateTargets: number;
   updatesLanded: number;
-  briefsCreated: number;
+  observationsNoted: number;
   runsCompleted: number;
   runsFailed: number;
   dataRunsCompleted: number;
+  sourceMaintenanceRunsCompleted: number;
   mutatingToolCalls: number;
   mutatingToolCallsFailed: number;
+  verifiedConcurrentCreateRetries: number;
+  verifiedFrontierRetries: number;
+  verifiedCollectionCreateRetries: number;
+  malformedToolCallsFailed: number;
   mutatingToolCallsUncorrected: number;
   scheduledRuns: number;
   promptTokens: number;
@@ -991,7 +1095,7 @@ export function computeScorecardMetrics(
     loopRecall: loopArcTargets === 0 ? 1 : loopArcsTracked / loopArcTargets,
     updateRecall: updateTargets === 0 ? 1 : updatesLanded / updateTargets,
     silentCloseViolations,
-    briefsPerDay: observations.briefCreates / representsDays,
+    observationsPerDay: observations.observationNotes / representsDays,
     tokensPerDay: (observations.promptTokens + observations.completionTokens) / representsDays,
     infraFailureRate: runsTotal === 0 ? 0 : observations.runsFailed / runsTotal,
     malformedToolCallRate:
@@ -1016,12 +1120,21 @@ export function computeScorecardMetrics(
     loopArcsTracked,
     updateTargets,
     updatesLanded,
-    briefsCreated: observations.briefCreates,
+    observationsNoted: observations.observationNotes,
     runsCompleted: observations.runsCompleted,
     runsFailed: observations.runsFailed,
     dataRunsCompleted: observations.dataRunsCompleted,
+    sourceMaintenanceRunsCompleted: observations.sourceMaintenanceRunsCompleted ?? 0,
     mutatingToolCalls: observations.mutatingToolCalls,
     mutatingToolCallsFailed: observations.mutatingToolCallsFailed,
+    verifiedConcurrentCreateRetries: observations.verifiedConcurrentCreateRetries ?? 0,
+    verifiedFrontierRetries: observations.verifiedFrontierRetries ?? 0,
+    verifiedCollectionCreateRetries: observations.verifiedCollectionCreateRetries ?? 0,
+    malformedToolCallsFailed:
+      observations.mutatingToolCallsFailed -
+      (observations.verifiedConcurrentCreateRetries ?? 0) -
+      (observations.verifiedFrontierRetries ?? 0) -
+      (observations.verifiedCollectionCreateRetries ?? 0),
     mutatingToolCallsUncorrected: observations.mutatingToolCallsUncorrected,
     scheduledRuns: observations.scheduledRuns,
     promptTokens: observations.promptTokens,
@@ -1033,7 +1146,7 @@ export function computeScorecardMetrics(
 // ── run artifacts ───────────────────────────────────────────────────────────
 
 /**
- * Dump the run's observable end-state — loops, briefs, queue runs, the
+ * Dump the run's observable end-state — loops, observations, queue runs, the
  * per-datum decision view, per-day spend, and every stored transcript —
  * into `dir` before teardown. This is the raw material for Phase Two's
  * qualitative failure analysis (the epic mandates reading what the
@@ -1048,7 +1161,7 @@ async function dumpScorecardArtifacts(harness: SyntheticE2EHarness, dir: string)
     writeFileSync(join(dir, file), `${JSON.stringify(body, null, 2)}\n`, "utf8");
   };
   await dump("/admin/brain/loops?limit=500", "loops.json");
-  await dump("/admin/brain/briefs?limit=500", "briefs.json");
+  await dump("/admin/brain/observations?limit=500", "observations.json");
   await dump("/admin/brain/runs?limit=500", "runs.json");
   await dump("/admin/brain/decisions?limit=200", "decisions.json");
   await dump("/admin/brain/spend", "spend.json");
@@ -1098,6 +1211,7 @@ export type ScorecardBackendSpec =
     };
 
 export interface ScorecardRunResult {
+  failedActions?: Array<{ tool: string; detail?: string }>;
   seed: number;
   mix: DailyMix;
   metrics: ScorecardMetrics;
@@ -1114,6 +1228,10 @@ export interface ScorecardRunResult {
  * runs guardless by default (zero tokens by construction); the instrument
  * e2e attaches a recording guard there to validate the plumbing itself.
  */
+function isPricedScorecard(backend: ScorecardBackendSpec): boolean {
+  return backend.kind === "http";
+}
+
 export async function runScorecard(opts: {
   gatewayMode: "experimental";
   backend: ScorecardBackendSpec;
@@ -1122,8 +1240,10 @@ export async function runScorecard(opts: {
   /** When set, the observable end-state is dumped here before teardown. */
   artifactsDir?: string;
 }): Promise<ScorecardRunResult> {
-  if (opts.backend.kind === "http" && !opts.guard) {
-    throw new Error("priced (http) scorecard backends require a spend guard");
+  if (isPricedScorecard(opts.backend)) {
+    throw new Error(
+      "Priced scorecard execution is unavailable: maintenance batches and continuation runs require actual-run budget reservation and usage settlement. The legacy per-document spend guard does not cover this scheduler. Use the scripted instrument lane.",
+    );
   }
   prepareScorecardEnv();
   const set = generateArcSet(opts.seed);
@@ -1132,7 +1252,6 @@ export async function runScorecard(opts: {
     opts.backend.kind === "scripted"
       ? await startScriptedLoopModelServer({
           behaviors: opts.backend.script === "saboteur" ? saboteurBehaviors(set) : set.behaviors,
-          feedbackPolicy: opts.backend.script === "saboteur" ? "saboteur" : "correct",
         })
       : null;
   const backendName = opts.backend.kind === "scripted" ? "scripted" : opts.backend.backendName;
@@ -1161,6 +1280,8 @@ export async function runScorecard(opts: {
     extraGatewayConfig: {
       brain: {
         workerConcurrency: 2,
+        bootstrap: { enabled: false },
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
         conversationDebounce: "2s",
         documentUpdateDebounce: "2s",
       },
@@ -1175,12 +1296,27 @@ export async function runScorecard(opts: {
     }
     await harness.refreshSearchSnapshot();
     db = openHarnessDb(harness);
+    await settleScorecardMaintenance(harness, db);
     await deliverArcSet(harness, db, set, opts.guard ? { guard: opts.guard } : {});
     const observations = await collectScorecardObservations(harness, db, set);
     if (opts.artifactsDir !== undefined) await dumpScorecardArtifacts(harness, opts.artifactsDir);
     const mix = computeDailyMix(set);
     const { metrics, counts } = computeScorecardMetrics(set, observations, mix.representsDays);
-    return { seed: opts.seed, mix, metrics, counts };
+    if (
+      observations.mutatingToolCallsFailed > (observations.verifiedConcurrentCreateRetries ?? 0) ||
+      observations.dataRunsCompleted !== mix.expectedRuns
+    ) {
+      // Preserve fixture evidence before teardown: a post-write CAS refusal needs
+      // the revision history as well as the final tool error to diagnose safely.
+      const diagnostics = mkdtempSync(join(tmpdir(), "omnesis-scorecard-refusals-"));
+      await db.backup(join(diagnostics, "snapshot.db"));
+      await dumpScorecardArtifacts(harness, diagnostics);
+      copyFileSync(harness.getGatewayLogPath(), join(diagnostics, "gateway.log"));
+      createLogger("collector:briefs-scorecard").error(
+        `Refusal diagnostics retained at ${diagnostics}`,
+      );
+    }
+    return { seed: opts.seed, mix, metrics, counts, failedActions: observations.failedActions };
   } finally {
     db?.close();
     await harness.destroy();

@@ -36,6 +36,7 @@ import {
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
+import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
@@ -92,6 +93,7 @@ import {
 } from "../near-dupes/NearDupDfService.js";
 import { readNearDupDfBuiltAt, readNearDupDfMeta } from "../near-dupes/meta.js";
 import { readConversationRetentionCandidates } from "../agent/conversation-retention.js";
+import { knowledgeDiscoveryByMonth } from "../brain/knowledge/discovery-timeline.js";
 import { bootstrapCorpusByMonth, countPendingBootstrap } from "../brain/storage/bootstrap.js";
 import {
   planSourceUrlRecanonicalization,
@@ -140,6 +142,8 @@ export const ioHandlers = {
   // population the backlog counts, so it rides the same worker for the same
   // reason: on a real corpus it takes seconds, and on the main handle those
   // seconds are the event loop.
+  "io.knowledgeDiscoveryByMonth": (db: Db, notBefore: string, excludedSources: string[] = []) =>
+    knowledgeDiscoveryByMonth(db, notBefore, excludedSources),
   "io.bootstrapCorpusByMonth": (db: Db, recencyFloor: string, todayIso: string) =>
     bootstrapCorpusByMonth(db, recencyFloor, todayIso),
   "io.bootstrapBacklog": (db: Db, recencyFloor: string) => ({
@@ -170,6 +174,10 @@ export const ioHandlers = {
   // in (computed main-thread) — the worker never reads env.
   "io.lookupPeople": (db: Db, query: string, limit: number, opts: { experimental: boolean }) =>
     assemblePersonLookup(db, query, limit, opts),
+
+  // Per-person message counts (agent `count_messages`). Walks every message
+  // document in the window, so it runs on a read worker at user priority.
+  "io.messageCounts": (db: Db, query: MessageCountsQuery) => countMessagesByPerson(db, query),
 
   // Enriched merge-candidate list (GET /people/merge-candidates). Scans the
   // whole pending set (≤5000) with union-find clustering + ranking; ran on the

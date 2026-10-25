@@ -18,7 +18,7 @@ import Foundation
 public final class NotificationRouter {
     /// What the next foregrounding should navigate to. HomeView flips
     /// the active section for it; the destination view (Watches,
-    /// Briefs, Privacy, Agent) consumes it on appear or on change. Nil
+    /// Privacy, Agent) consumes it on appear or on change. Nil
     /// when nothing is queued.
     public var pendingTarget: PushTarget?
 
@@ -62,8 +62,6 @@ public final class NotificationRouter {
 ///     Only the opaque approval id crosses APNs; trusted detail is fetched
 ///     after the app opens the Privacy section.
 public enum PushTarget: Equatable, Sendable {
-    /// A brief push (the morning digest) — deep-links into the Briefs feed.
-    case brief(briefId: String)
     /// A generic answer-privacy escalation. The opaque id is the only private
     /// request data allowed into the APNs payload; the app fetches detail after
     /// the user opens the trusted Privacy screen.
@@ -82,6 +80,9 @@ public enum PushTarget: Equatable, Sendable {
     /// A watch itself, with nothing marked on it: what the agent's card opens
     /// when it reports installing or rewriting one.
     case watch(watchId: String)
+    /// One task, shown in Tasks with its details open: what a task chip under
+    /// a morning brief opens. In-app only; no push carries it.
+    case task(taskId: String)
     /// A durable mobile permission alert. The affected device determines
     /// whether this phone may show its trusted local remediation snapshot.
     case sourcePermission(
@@ -98,12 +99,12 @@ extension PushTarget {
     /// particular is payload data and must stay redactable).
     public var kindName: String {
         switch self {
-        case .brief: "brief"
         case .privacyApproval: "privacy-approval"
         case .accessAuthorization: "access-authorization"
         case .agentAnswer: "agent-answer"
         case .watchFiring: "watch-firing"
         case .watch: "watch"
+        case .task: "task"
         case .sourcePermission: "source-permission"
         }
     }
@@ -119,7 +120,6 @@ extension PushTarget {
         let kind = omnesis["kind"] as? String
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
             switch kind {
-            case "brief": return .brief(briefId: targetId)
             case "privacy-approval":
                 return validPrivacyApprovalId(targetId)
                     ? .privacyApproval(approvalId: targetId) : nil
@@ -137,10 +137,6 @@ extension PushTarget {
             // No payload field is authority for the pending request. The user
             // must enter the short code before the app asks the gateway for it.
             return .accessAuthorization
-        }
-        if kind == "brief" {
-            guard let briefId = omnesis["briefId"] as? String else { return nil }
-            return .brief(briefId: briefId)
         }
         if kind == "privacy-approval" {
             guard let approvalId = omnesis["approvalId"] as? String,

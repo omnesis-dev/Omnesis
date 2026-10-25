@@ -3,7 +3,7 @@
 
 /**
  * Unified temporal Calendar E2E — the Calendar gateway contract on a
- * REAL spawned gateway with the Briefs feature active (a scripted
+ * REAL spawned gateway with the Brain active (a scripted
  * background-agent model; zero tokens — nothing here sends a model a
  * message).
  *

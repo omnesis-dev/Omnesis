@@ -12,7 +12,12 @@
  * surface — the façade re-exports `AnalyticsDb` and the legacy types only.
  */
 
-import { DuckDBDecimalValue, type DuckDBConnection } from "@duckdb/node-api";
+import {
+  DuckDBDateValue,
+  DuckDBDecimalValue,
+  DuckDBTimestampTZValue,
+  type DuckDBConnection,
+} from "@duckdb/node-api";
 import { ANALYTICS_STREAM_COLUMN } from "@omnesis/source-sdk";
 import { analyticsCatalogSchemaCodec } from "../data/json-columns.js";
 import type {
@@ -106,6 +111,30 @@ export function parseSchemaJson(raw: string, tableName: string): CatalogSchemaJs
   return parsed as unknown as CatalogSchemaJson | null;
 }
 
+/** The widest span a JS `Date` can hold, in milliseconds either side of the epoch. */
+const MAX_DATE_MS = 8_640_000_000_000_000n;
+
+/**
+ * A `TIMESTAMPTZ` as the UTC instant it names, to the microsecond:
+ * `2026-10-18T17:28:00.123456Z`. DuckDB's own spelling renders it in the
+ * session's zone with an hour-only offset (`2026-10-18 18:28:00.123456+01`),
+ * which depends on the host and which a reader of the value cannot tell apart
+ * from a wall clock. An infinite or out-of-range value keeps DuckDB's
+ * spelling.
+ */
+function utcInstantFromMicros(value: DuckDBTimestampTZValue): string {
+  const micros = value.micros;
+  let ms = micros / 1000n;
+  let sub = micros % 1000n;
+  if (sub < 0n) {
+    ms -= 1n;
+    sub += 1000n;
+  }
+  if (ms > MAX_DATE_MS || ms < -MAX_DATE_MS) return value.toString();
+  const iso = new Date(Number(ms)).toISOString();
+  return sub === 0n ? iso : `${iso.slice(0, -1)}${String(sub).padStart(3, "0")}Z`;
+}
+
 /**
  * Convert DuckDB result values to plain JS types.
  * DuckDB returns wrapper objects (DuckDBListValue, etc.) that need
@@ -116,6 +145,10 @@ export function convertDuckDBValue(val: unknown): unknown {
   if (typeof val === "bigint") return Number(val);
   if (typeof val !== "object") return val;
   if (val instanceof Date) return val.toISOString();
+  if (val instanceof DuckDBTimestampTZValue) return utcInstantFromMicros(val);
+  // A calendar day, `2026-10-18`; its wrapper would otherwise serialize as a
+  // count of days since the epoch.
+  if (val instanceof DuckDBDateValue) return val.toString();
   // DECIMAL columns come back as DuckDBDecimalValue wrappers (scaled
   // bigint + width/scale). Return the exact scale-padded decimal string
   // — converting to a JS number would reintroduce the IEEE-754 rounding

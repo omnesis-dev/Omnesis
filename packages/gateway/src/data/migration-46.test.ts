@@ -20,6 +20,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -51,6 +52,7 @@ describe("migration 46 — replace idx_people_interaction_score", () => {
     );
     expect(peopleIndexes(db)).toContain("idx_people_interaction_score");
     expect(peopleIndexes(db)).not.toContain("idx_people_interaction_recent");
+    createLegacyBriefTables(db);
     db.pragma("user_version = 45");
 
     runMigrations(db, { log: createLogger("test") });

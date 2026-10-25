@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  recordSourceInventoryPage,
+  recordSourceInventoryDocument,
+} from "./SourceInventoryRepository.js";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
@@ -13,14 +18,7 @@ import { markLinkStatsDirty, markPeopleGraphDirty, markMergeRulesDirty } from ".
 import { extractPeopleFromMetadata, type DocumentProjection } from "../document-projection.js";
 import { documentsMetadataCodec, type DocumentsMetadata } from "../json-columns.js";
 import { applyDeclaredEdges } from "../../domain/EdgeDeclarationWriter.js";
-import {
-  cascadeAnnotationPrivacyDelete,
-  cascadeOpenLoopPrivacyDelete,
-  listLoopIdsCitingDocs,
-  cascadePersonAnnotationPrivacyDelete,
-  OPEN_LOOP_PROVIDER_ID,
-  OPEN_LOOP_SOURCE_ID,
-} from "../../brain/index.js";
+import { reviewBrainArtifactsForDeletedDocs } from "../../brain/source-deletion-review.js";
 import { sourcePrefixPredicate } from "../source-addressing.js";
 import { getPendingSourcePage } from "./PendingSourcePageRepository.js";
 import {
@@ -40,7 +38,7 @@ import {
   bumpWipeEpoch,
   resetSiblingMemberCursors,
 } from "./SyncStateRepository.js";
-import { markSourceStatsDirty } from "./SourceStatsRepository.js";
+import { markSourceStatsDirty, recordSourceDocumentsDeleted } from "./SourceStatsRepository.js";
 import {
   applySnapshotAbsencePlan,
   clearDocumentAbsencesForArrivals,
@@ -103,6 +101,14 @@ export function prepareDocumentsForWrite(
   }));
 }
 
+/** The freshest document of one source; bound as `(sourceId, sourceId)`. */
+export const LATEST_ACTIVITY_SQL = `SELECT id, title, source_created_at, source_updated_at, ingested_at, updated_at
+   FROM documents
+  WHERE source_id = ?
+    AND updated_at = (SELECT MAX(updated_at) FROM documents WHERE source_id = ?)
+  ORDER BY source_updated_at DESC, id DESC
+  LIMIT 1`;
+
 /**
  * Recompute the materialized `latest_*` columns on `source_stats` for one
  * source from the rows that currently survive in `documents`, then write
@@ -113,8 +119,16 @@ export function prepareDocumentsForWrite(
  * cleared to NULL so `getLatestActivityBySource`'s `latest_doc_id IS NOT
  * NULL` filter drops the source instead of surfacing a deleted doc.
  *
- * Cheap: one `idx_documents_source_id_updated_at` seek + one PK-keyed
- * UPDATE. Runs on the writer handle inside the caller's transaction. The
+ * The lookup is written as two seeks on `idx_documents_source_id_updated_at`:
+ * the source's newest `updated_at` (a covering max seek), then the rows that
+ * carry exactly that value, tie-broken by `source_updated_at DESC, id DESC`.
+ * Asked as one `ORDER BY ... LIMIT 1`, SQLite is free to serve `source_id = ?`
+ * from another index and sort every row of the source, which reads each row
+ * through its content and makes the writer's cost proportional to the source
+ * rather than to the page. The two-seek form costs the same for any source
+ * size, and `DocumentRepository.test.ts` pins its plan.
+ *
+ * Runs on the writer handle inside the caller's transaction. The
  * UPDATE only touches an existing row — a source with no stats row yet
  * (never ingested) is a no-op, which is correct: there's nothing to
  * staleness-check.
@@ -127,7 +141,7 @@ export function prepareDocumentsForWrite(
 export function refreshLatestActivity(db: Db, sourceId: string): void {
   const latest = db
     .prepare<
-      [string],
+      [string, string],
       {
         id: string;
         title: string;
@@ -136,14 +150,8 @@ export function refreshLatestActivity(db: Db, sourceId: string): void {
         ingested_at: string;
         updated_at: string;
       }
-    >(
-      `SELECT id, title, source_created_at, source_updated_at, ingested_at, updated_at
-         FROM documents
-         WHERE source_id = ?
-         ORDER BY updated_at DESC, source_updated_at DESC, id DESC
-         LIMIT 1`,
-    )
-    .get(sourceId);
+    >(LATEST_ACTIVITY_SQL)
+    .get(sourceId, sourceId);
   db.prepare(
     `UPDATE source_stats
        SET latest_doc_id = ?,
@@ -436,7 +444,11 @@ export function upsertDocuments(
     // separately so its later chunks cannot land behind an indexer checkpoint
     // carrying the first chunk's older timestamp.
     const now = new Date().toISOString();
-    const acceptedDocuments: PreparedDocumentInput[] = [];
+    // Documents whose row this transaction inserted or modified. A re-sent,
+    // unchanged document leaves the source's count and freshest row as they
+    // were, so only these feed the per-source stats maintenance below.
+    const changedDocuments: PreparedDocumentInput[] = [];
+    const inventorySources = new Set<string>();
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
         throw new Error(
@@ -451,8 +463,20 @@ export function upsertDocuments(
           : doc.metadata.sourceUrl
             ? normalizeUrl(doc.metadata.sourceUrl, canonicalizers)
             : null;
+      const insertedId = randomUUID();
+      if (options.initialInventory && !inventorySources.has(doc.sourceId)) {
+        inventorySources.add(doc.sourceId);
+        recordSourceInventoryPage(
+          db,
+          doc.sourceId,
+          options.cursorRows?.[doc.sourceId] ?? "",
+          options.initialInventory,
+          false,
+          Date.now(),
+        );
+      }
       const stored = stmt.run({
-        id: randomUUID(),
+        id: insertedId,
         provider_id: doc.providerId,
         source_id: doc.sourceId,
         external_id: doc.externalId,
@@ -492,8 +516,18 @@ export function upsertDocuments(
           continue;
         }
       }
+      if (
+        options.initialInventory &&
+        db.prepare("SELECT 1 FROM documents WHERE id=?").get(insertedId)
+      )
+        recordSourceInventoryDocument(db, {
+          documentId: insertedId,
+          inventoryId: options.initialInventory.id,
+          revision: doc.contentHash,
+          now: Date.now(),
+        });
       acceptedDocumentCount += 1;
-      acceptedDocuments.push(doc);
+      if (stored.changes > 0) changedDocuments.push(doc);
       if (documentTemporalProjection) {
         // The document is what this transaction exists to store; its temporal
         // projections are metadata derived from it. Anything that goes wrong
@@ -553,7 +587,7 @@ export function upsertDocuments(
     } else {
       absencePlanScope = recovery.expectedScope;
     }
-    return acceptedDocuments;
+    return changedDocuments;
   });
 
   // Per-source stats maintenance. We want readers (`/portal/*`, `cli
@@ -562,8 +596,9 @@ export function upsertDocuments(
   // time ingestion marks a row dirty. Strategy:
   //
   //   1. Update `doc_count` inline via a cheap indexed `COUNT(*) WHERE
-  //      source_id = ?` — ~50ms even on 146k-row sources because
-  //      idx_documents_source covers it.
+  //      source_id = ?` over the covering `idx_documents_source_id`.
+  //      Only sources a chunk actually changed are recounted: a page of
+  //      re-sent, unchanged documents cannot move the count.
   //   2. Mark `needs_refresh = 1` so the backfill worker reconciles the
   //      heavier fields (data_size_bytes, total_units, date range) off
   //      the main thread.
@@ -572,7 +607,7 @@ export function upsertDocuments(
   const countStmt = db.prepare<[string], { count: number }>(
     "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
   );
-  /** Run the per-touched-source stats updates for one chunk's worth of docs. */
+  /** Run the per-source stats updates for the documents a chunk changed. */
   const updateStatsForChunk = (chunk: DocumentInput[]) => {
     const touched = new Set<string>();
     for (const doc of chunk) touched.add(doc.sourceId);
@@ -608,8 +643,8 @@ export function upsertDocuments(
       // columns. Necessary because we need the ACTUAL ingested_at from
       // the documents row (which the upsert preserves on UPDATE — only
       // updated_at advances), not the input doc's would-be ingested_at.
-      // Cheap — uses idx_documents_source_id_updated_at, sub-ms each,
-      // uncontended on the writable handle.
+      // Two index seeks whatever the source's size; see
+      // `refreshLatestActivity`.
       refreshLatestActivity(db, sid);
     }
   };
@@ -620,8 +655,7 @@ export function upsertDocuments(
   // unit test.
   const token = options.token;
   if (!token) {
-    const acceptedDocuments = insertMany(documents);
-    updateStatsForChunk(acceptedDocuments);
+    updateStatsForChunk(insertMany(documents));
     return {
       remaining: [],
       rejectedSourceIds: [],
@@ -648,8 +682,7 @@ export function upsertDocuments(
   while (processed < documents.length) {
     const end = nextChunkEnd(documents, processed, chunkSize);
     const chunk = documents.slice(processed, end);
-    const acceptedDocuments = insertMany(chunk);
-    updateStatsForChunk(acceptedDocuments);
+    updateStatsForChunk(insertMany(chunk));
     processed = end;
     if (processed < documents.length && token.requested()) {
       return {
@@ -706,6 +739,10 @@ function nextChunkEnd(
  * up to one full reconcile interval (1h). When `expectedWipeEpoch` is set,
  * the single writer checks it before deleting so a stale snapshot cannot
  * remove documents inserted after a source wipe.
+ *
+ * The Brain artifacts built on a deleted document survive it: in the same
+ * transaction they lose their pointer to it and are queued for review
+ * (`reviewBrainArtifactsForDeletedDocs`).
  */
 /**
  * IN-list chunk for `deleteDocuments`, sized to stay within SQLite's
@@ -745,9 +782,10 @@ export function deleteDocuments(
           { id: string }
         >(`SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`)
         .all(providerId, sourceId, streamId, ...chunk);
-      purgeDocumentAnnotations(
+      reviewBrainArtifactsForDeletedDocs(
         db,
         matches.map((row) => row.id),
+        Date.now(),
       );
       db.prepare(
         `DELETE FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`,
@@ -761,18 +799,18 @@ export function deleteDocuments(
     })();
     for (const r of rows) deletedIds.push(r.id);
   }
-  markSourceStatsDirty(db, sourceId);
-  // The heavy aggregation (`refreshSourceStatsRow`) does NOT touch the
-  // materialized latest_* columns, so a delete that removed this source's
-  // freshest doc would otherwise leave latest_doc_id pointing at a row
-  // that no longer exists — getLatestActivityBySource would surface a
-  // deleted doc. Recompute from the survivors (or clear when none remain).
-  refreshLatestActivity(db, sourceId);
-  // documents.id has ON DELETE CASCADE on document_links.source_doc_id,
-  // so the row count in `document_links` shifts with every document
-  // delete. Invalidate the materialized link_stats so the next
-  // refresh picks up the change.
   if (deletedIds.length > 0) {
+    recordSourceDocumentsDeleted(db, sourceId, deletedIds.length);
+    // The heavy aggregation (`refreshSourceStatsRow`) does NOT touch the
+    // materialized latest_* columns, so a delete that removed this source's
+    // freshest doc would otherwise leave latest_doc_id pointing at a row
+    // that no longer exists — getLatestActivityBySource would surface a
+    // deleted doc. Recompute from the survivors (or clear when none remain).
+    refreshLatestActivity(db, sourceId);
+    // documents.id has ON DELETE CASCADE on document_links.source_doc_id,
+    // so the row count in `document_links` shifts with every document
+    // delete. Invalidate the materialized link_stats so the next
+    // refresh picks up the change.
     markLinkStatsDirty(db);
     // document_people CASCADE-deletes too — interaction-score numerator
     // and denominator both shift, so every consumer-side score is stale.
@@ -782,29 +820,6 @@ export function deleteDocuments(
     markMergeRulesDirty(db);
   }
   return deletedIds;
-}
-
-/** Retract grounded loops and mirrors atomically, recording mirror index cleanup. */
-export function cascadeOpenLoopPrivacyDeleteWithMirrors(
-  db: Db,
-  deletedDocIds: readonly string[],
-): { deletedLoopIds: string[]; deletedBriefIds: string[] } {
-  return db.transaction(() => {
-    const loopIds = listLoopIdsCitingDocs(db, deletedDocIds);
-    if (loopIds.length > 0) {
-      deleteDocuments(
-        db,
-        OPEN_LOOP_PROVIDER_ID,
-        OPEN_LOOP_SOURCE_ID,
-        loopIds,
-        undefined,
-        "",
-        "",
-        true,
-      );
-    }
-    return cascadeOpenLoopPrivacyDelete(db, deletedDocIds, loopIds);
-  })();
 }
 
 /**
@@ -819,7 +834,7 @@ export function cascadeOpenLoopPrivacyDeleteWithMirrors(
 export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): string[] {
   if (documentIds.length === 0) return [];
   const deletedIds: string[] = [];
-  const sourceIds = new Set<string>();
+  const removedBySource = new Map<string, number>();
   for (let i = 0; i < documentIds.length; i += DELETE_IN_LIST_CHUNK) {
     const chunk = documentIds.slice(i, i + DELETE_IN_LIST_CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
@@ -832,21 +847,22 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
           { id: string; source_id: string }
         >(`SELECT id, source_id FROM documents WHERE id IN (${placeholders})`)
         .all(...chunk);
-      purgeDocumentAnnotations(
+      reviewBrainArtifactsForDeletedDocs(
         db,
         matches.map((row) => row.id),
+        Date.now(),
       );
       db.prepare(`DELETE FROM documents WHERE id IN (${placeholders})`).run(...chunk);
       return matches;
     })();
     for (const r of rows) {
       deletedIds.push(r.id);
-      sourceIds.add(r.source_id);
+      removedBySource.set(r.source_id, (removedBySource.get(r.source_id) ?? 0) + 1);
     }
   }
   if (deletedIds.length === 0) return [];
-  for (const sourceId of sourceIds) {
-    markSourceStatsDirty(db, sourceId);
+  for (const [sourceId, removed] of removedBySource) {
+    recordSourceDocumentsDeleted(db, sourceId, removed);
     // The materialized latest_* columns can point at a row this delete just
     // removed; recompute them from the survivors.
     refreshLatestActivity(db, sourceId);
@@ -857,14 +873,6 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
   markPeopleGraphDirty(db);
   markMergeRulesDirty(db);
   return deletedIds;
-}
-
-/** Annotations retain verbatim source text, including superseded audit rows.
- * Purge them inside the document's writer transaction so every deletion path
- * removes that text and an in-flight annotation write cannot race the purge. */
-function purgeDocumentAnnotations(db: Db, documentIds: readonly string[]): void {
-  cascadeAnnotationPrivacyDelete(db, documentIds);
-  cascadePersonAnnotationPrivacyDelete(db, documentIds);
 }
 
 /**
@@ -918,6 +926,9 @@ export function tombstoneDocuments(
  *      key so a later re-sync or re-capture can't resurrect the page. Without
  *      it only this copy goes: the source is free to bring the page back.
  *
+ * Like every deletion, it keeps the Brain artifacts built on the document
+ * (loops, Tasks, observations, annotations) and queues them for review.
+ *
  * Returns the deleted internal `document_id`s for the caller's index-side
  * cascade (`chunks` / `indexed_documents` live in a separate SQLite file).
  */
@@ -967,16 +978,6 @@ export function deleteDocumentForUser(
   if (tombstone) {
     tombstoneDocuments(db, providerId, sourceId, allExternalIds, originalDocumentIds, streamId);
   }
-  // Privacy cascade into the Briefs / Cognition Steward feature: loops and briefs
-  // derived from a privacy-deleted document are deleted with it, and the
-  // cascaded loops' mirrored `open-loop` corpus docs (external id = loop
-  // id) go too. No tombstones for those mirrors — nothing re-syncs them.
-  const cascade = cascadeOpenLoopPrivacyDelete(db, deletedIds);
-  if (cascade.deletedLoopIds.length > 0) {
-    deletedIds.push(
-      ...deleteDocuments(db, OPEN_LOOP_PROVIDER_ID, OPEN_LOOP_SOURCE_ID, cascade.deletedLoopIds),
-    );
-  }
   return deletedIds;
 }
 
@@ -984,10 +985,9 @@ export function deleteDocumentForUser(
  * Delete exactly one activity-trace document while retention is in progress.
  *
  * Unlike the user privacy delete, this does not expand attachment children.
- * Durable annotations can cite activity traces and are purged by the shared
- * document deletion primitive, including their superseded audit text. The
- * temporary tombstone closes the crash window while the index sidecar is
- * cleaned; the caller removes it immediately before unlinking the transcript.
+ * Brain artifacts citing the trace are kept and queued for review by the shared
+ * document deletion primitive, as for every deletion. The temporary tombstone
+ * closes the crash window while the index sidecar is cleaned; the caller removes it immediately before unlinking the transcript.
  */
 export function deleteDocumentForRetention(
   db: Db,
@@ -1056,6 +1056,7 @@ export function deleteAllBySource(db: Db, sourceId: string): number {
   db.prepare("DELETE FROM document_absence_scopes WHERE source_id = ?").run(sourceId);
   db.prepare("DELETE FROM document_absence_observations WHERE source_id = ?").run(sourceId);
   clearClaimsForSource(db, sourceId);
+  db.prepare("DELETE FROM source_inventories WHERE source_id = ?").run(sourceId);
   db.prepare("DELETE FROM sync_state WHERE source_id = ?").run(sourceId);
   // Projection registration follows the source's sync state (no FK — see
   // document-storage.ts).
@@ -1154,6 +1155,10 @@ export function deleteAllByStream(
       sourceId,
       streamId,
     );
+    db.prepare("DELETE FROM source_inventories WHERE source_id = ? AND cursor_row = ?").run(
+      sourceId,
+      streamId,
+    );
     bumpWipeEpoch(db, sourceId, streamId);
     markSourceStatsDirty(db, sourceId);
     // The survivors decide the source's latest activity now (see deleteDocuments).
@@ -1229,6 +1234,7 @@ export function deleteAllByProvider(db: Db, providerId: string): number {
   // latest_* would keep pointing at a now-deleted doc. Recompute clears
   // it to NULL since every doc for the source is gone.
   for (const row of affectedSources) {
+    db.prepare("DELETE FROM source_inventories WHERE source_id = ?").run(row.source_id);
     db.prepare("DELETE FROM sync_state WHERE source_id = ?").run(row.source_id);
     db.prepare("DELETE FROM document_temporal_projection_sources WHERE source_id = ?").run(
       row.source_id,
@@ -1345,7 +1351,8 @@ export function getRecentDocuments(
        ORDER BY document.source_created_at DESC, document.id DESC
        LIMIT ?`,
     )
-    .all(...params);
+    .all(...params)
+    .filter((row) => isKnowledgeDocumentReadable(db, row.id, row.source_id));
 }
 
 export function listDocuments(
@@ -1550,6 +1557,7 @@ export function listDocumentsByIds(db: Db, ids: string[]): ListedDocumentRow[] {
       )
       .all(...chunk);
     for (const row of rows) {
+      if (!isKnowledgeDocumentReadable(db, row.id, row.source_id)) continue;
       out.push({
         id: row.id,
         sourceId: row.source_id,
@@ -1612,11 +1620,13 @@ export function getDocumentSourceIds(db: Db, ids: string[]): Map<string, string>
 export interface DocumentTitleSource {
   title: string;
   sourceId: string;
+  /** The source's own creation time (`source_created_at`, ISO 8601). */
+  createdAt: string;
 }
 
 /**
- * Current `title` + `source_id` for each requested document id, as a Map
- * keyed by id. Documents that no longer exist are simply absent from the map
+ * Current `title`, `source_id` and source creation time for each requested
+ * document id, as a Map keyed by id. Documents that no longer exist are simply absent from the map
  * — the caller substitutes nulls for a stale reference (e.g. a deleted doc a
  * brief loop still links). A read-only projection over `documents(id)` (its
  * primary key), chunked under SQLite's per-statement parameter cap like
@@ -1635,10 +1645,17 @@ export function getDocumentTitlesAndSources(
     const rows = db
       .prepare<
         string[],
-        { id: string; title: string; source_id: string }
-      >(`SELECT id, title, source_id FROM documents WHERE id IN (${placeholders})`)
+        { id: string; title: string; source_id: string; source_created_at: string }
+      >(`SELECT id, title, source_id, source_created_at FROM documents WHERE id IN (${placeholders})`)
       .all(...chunk);
-    for (const row of rows) out.set(row.id, { title: row.title, sourceId: row.source_id });
+    for (const row of rows) {
+      if (isKnowledgeDocumentReadable(db, row.id, row.source_id))
+        out.set(row.id, {
+          title: row.title,
+          sourceId: row.source_id,
+          createdAt: row.source_created_at,
+        });
+    }
   }
   return out;
 }
@@ -2027,6 +2044,7 @@ export function applyReplicaOmissions(db: Db, a: ReplicaOmissionArgs): ReplicaVe
  * `POST /documents/with-cursor` HTTP route.
  */
 export interface UpsertWithCursorArgs {
+  initialInventory?: { id: string; startedAt: string };
   pendingPageId?: string;
   providerId: string;
   sourceId: string;
@@ -2279,6 +2297,7 @@ export function upsertWithCursor(
         db,
         a.documents,
         {
+          initialInventory: a.initialInventory,
           writeEpochs: a.wipeEpoch === undefined ? undefined : { [a.sourceId]: a.wipeEpoch },
           cursorRows: { [a.sourceId]: cursorRow },
           streams: { [a.sourceId]: streamId },
@@ -2411,6 +2430,15 @@ export function upsertWithCursor(
       a.wipeEpoch,
       cursorRow,
     );
+    if (a.initialInventory)
+      recordSourceInventoryPage(
+        db,
+        a.sourceId,
+        cursorRow,
+        a.initialInventory,
+        !a.hasMore,
+        Date.now(),
+      );
     if (a.pendingPageId !== undefined)
       db.prepare(
         "UPDATE pending_source_pages SET cursor_committed = 1 WHERE source_id = ? AND cursor_row = ? AND page_id = ?",
@@ -2573,6 +2601,7 @@ export function upsertWithCursorYieldable(
     {
       token,
       chunkSize,
+      initialInventory: args.initialInventory,
       writeEpochs: args.wipeEpoch === undefined ? undefined : { [args.sourceId]: args.wipeEpoch },
       cursorRows: { [args.sourceId]: args.cursorDeviceId ?? "" },
       streams: { [args.sourceId]: args.streamId ?? "" },

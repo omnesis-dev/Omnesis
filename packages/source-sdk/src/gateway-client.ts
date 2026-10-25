@@ -181,8 +181,15 @@ export interface SourceFamilyMeta {
   accentColor?: string;
 }
 
+/** Generic initial enumeration identity, resumed independently of provider cursor contents. */
+export interface InitialSourceInventory {
+  id: string;
+  startedAt: string;
+}
+
 export interface SyncState {
   sourceId: SourceId;
+  initialInventory?: InitialSourceInventory;
   cursor: SyncCursor;
   lastSyncedAt: string; // ISO 8601
   hasMeta?: boolean;
@@ -485,6 +492,8 @@ export interface GatewayClient {
 
   /** Get the last sync state for a source */
   getSyncState(sourceId: SourceId): Promise<SyncState | null>;
+  /** Resume an initial enumeration whose first cursor page was interrupted. */
+  getInitialSourceInventory?(sourceId: SourceId): Promise<InitialSourceInventory | undefined>;
   /**
    * The source's current wipe epoch, independent of whether it has a cursor.
    *
@@ -689,6 +698,7 @@ export interface GatewayClient {
    * the source's snapshot enumeration is complete.
    */
   upsertWithCursor(args: {
+    initialInventory?: InitialSourceInventory;
     providerId: ProviderId;
     sourceId: SourceId;
     documents?: DocumentInput[];

@@ -74,6 +74,8 @@ let package = Package(
                 "SearchBreadcrumbInteractionTests.swift",
                 // Drives the transport clients against a spawned live gateway.
                 "GatewayLiveE2ETests.swift",
+                // Opt-in microphone capture needs a hosted iOS audio session.
+                "RealtimeAudioCaptureDeviceTests.swift",
             ]
         ),
     ]

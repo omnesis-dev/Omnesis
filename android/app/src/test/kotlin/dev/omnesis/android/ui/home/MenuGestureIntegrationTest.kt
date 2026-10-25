@@ -5,38 +5,27 @@ package dev.omnesis.android.ui.home
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
-import androidx.compose.ui.test.filter
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
-import androidx.compose.ui.unit.LayoutDirection
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.AgentDocRef
-import dev.omnesis.android.transport.dto.BriefKindDto
-import dev.omnesis.android.transport.dto.BriefReadStateDto
-import dev.omnesis.android.transport.dto.BriefRecordDto
+import dev.omnesis.android.transport.dto.TaskDto
 import dev.omnesis.android.ui.agent.AgentChatState
 import dev.omnesis.android.ui.agent.AgentCitation
 import dev.omnesis.android.ui.agent.AgentCitationEntry
@@ -44,10 +33,10 @@ import dev.omnesis.android.ui.agent.AgentContent
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.ui.agent.AgentPart
 import dev.omnesis.android.ui.agent.AgentTurn
-import dev.omnesis.android.ui.briefs.BriefsFeedState
-import dev.omnesis.android.ui.briefs.BriefsListContent
-import java.time.Instant
-import kotlin.math.abs
+import dev.omnesis.android.ui.tasks.TaskRowActions
+import dev.omnesis.android.ui.tasks.TasksContent
+import dev.omnesis.android.ui.tasks.TasksUiState
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
@@ -65,9 +54,9 @@ class MenuGestureIntegrationTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun `right swipe over a brief row opens the menu without clearing the brief`() {
+    fun `right swipe over a task row opens the menu without touching the task`() {
         var menuOpened = false
-        var quickClearCount = 0
+        var taskActions = 0
         var hapticCount = 0
 
         compose.setContent {
@@ -82,23 +71,20 @@ class MenuGestureIntegrationTest {
                     onCommittedSwipeHaptic = { hapticCount += 1 },
                     menu = {},
                 ) {
-                    BriefsListContent(
-                        feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                        loading = false,
-                        loadError = null,
-                        onOpen = {},
-                        onQuickClear = { quickClearCount += 1 },
-                        onAsk = {},
-                        onMoreOptions = {},
-                        onRetry = {},
-                        onRefresh = {},
-                        now = Instant.parse("2026-08-20T08:00:00Z"),
+                    TasksContent(
+                        state = TasksUiState(loading = false, day = TODAY.toString(), tasks = listOf(sampleTask)),
+                        today = TODAY,
+                        actions = TaskRowActions(
+                            onTapBullet = { taskActions += 1 },
+                            onOpen = { taskActions += 1 },
+                            onFanAction = { _, _ -> taskActions += 1 },
+                        ),
                     )
                 }
             }
         }
 
-        compose.onNodeWithText(sampleBrief.title).performTouchInput {
+        compose.onNodeWithText(sampleTask.title).performTouchInput {
             swipe(
                 start = Offset(width * 0.1f, centerY),
                 end = Offset(width * 0.9f, centerY),
@@ -107,7 +93,7 @@ class MenuGestureIntegrationTest {
         }
 
         compose.waitUntil(5_000) { menuOpened }
-        assertEquals(0, quickClearCount)
+        assertEquals(0, taskActions)
         assertEquals(1, hapticCount)
     }
 
@@ -184,145 +170,10 @@ class MenuGestureIntegrationTest {
     }
 
     @Test
-    fun `brief swipe background matches the full foreground row height`() {
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                BriefsListContent(
-                    feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                    loading = false,
-                    loadError = null,
-                    onOpen = {},
-                    onQuickClear = {},
-                    onAsk = {},
-                    onMoreOptions = {},
-                    onRetry = {},
-                    onRefresh = {},
-                    now = Instant.parse("2026-08-20T08:00:00Z"),
-                )
-            }
-        }
-
-        val backgroundBounds = compose.onNodeWithTag("briefSwipeBackground")
-            .fetchSemanticsNode().boundsInRoot
-        val foregroundBounds = compose.onNodeWithTag("briefSwipeForeground")
-            .fetchSemanticsNode().boundsInRoot
-
-        assertEquals(foregroundBounds.top, backgroundBounds.top, 0.5f)
-        assertEquals(foregroundBounds.bottom, backgroundBounds.bottom, 0.5f)
-    }
-
-    @Test
-    fun `brief long press offers only ask and dictate`() {
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                BriefsListContent(
-                    feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                    loading = false,
-                    loadError = null,
-                    onOpen = {}, onQuickClear = {}, onAsk = {}, onDictate = {},
-                    onMoreOptions = {}, onRetry = {}, onRefresh = {},
-                )
-            }
-        }
-
-        compose.onNodeWithText(sampleBrief.title).performTouchInput { longClick() }
-        val menuItems = compose.onNodeWithTag("briefLongPressMenu").onChildren()
-        menuItems.filter(hasText("Ask")).assertCountEquals(1)
-        menuItems.filter(hasText("Dictate")).assertCountEquals(1)
-        menuItems.filter(hasText("More…")).assertCountEquals(0)
-    }
-
-    @Test
-    fun `covered swipe buttons are hidden while the row exposes named accessibility actions`() {
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                BriefsListContent(
-                    feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                    loading = false,
-                    loadError = null,
-                    onOpen = {}, onQuickClear = {}, onAsk = {}, onDictate = {},
-                    onMoreOptions = {}, onRetry = {}, onRefresh = {},
-                )
-            }
-        }
-
-        compose.onAllNodesWithTag("briefSwipeMore").assertCountEquals(0)
-        compose.onAllNodesWithTag("briefSwipeClear").assertCountEquals(0)
-        val actions = compose.onNodeWithText(sampleBrief.title).fetchSemanticsNode()
-            .config[SemanticsActions.CustomActions]
-            .map { it.label }
-        assertEquals(listOf("Ask", "Dictate", "More", "Got it"), actions)
-    }
-
-    @Test
-    fun `short trailing swipe reveals More without quick clearing`() {
-        var moreCount = 0
-        var quickClearCount = 0
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                BriefsListContent(
-                    feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                    loading = false,
-                    loadError = null,
-                    onOpen = {},
-                    onQuickClear = { quickClearCount += 1 },
-                    onAsk = {},
-                    onMoreOptions = { moreCount += 1 },
-                    onRetry = {}, onRefresh = {},
-                )
-            }
-        }
-
-        compose.onNodeWithText(sampleBrief.title).performTouchInput {
-            swipe(
-                start = Offset(width * 0.8f, centerY),
-                end = Offset(width * 0.45f, centerY),
-                durationMillis = 500,
-            )
-        }
-        compose.waitForIdle()
-        assertEquals(0, quickClearCount)
-        compose.onNodeWithTag("briefSwipeMore").performClick()
-        assertEquals(1, moreCount)
-        assertEquals(0, quickClearCount)
-    }
-
-    @Test
-    fun `revealing a second row closes the first row actions`() {
-        val second = sampleBrief.copy(id = "brief-2", title = "Plan the studio handover")
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                BriefsListContent(
-                    feed = BriefsFeedState().replacing(listOf(sampleBrief, second)),
-                    loading = false,
-                    loadError = null,
-                    onOpen = {}, onQuickClear = {}, onAsk = {}, onMoreOptions = {},
-                    onRetry = {}, onRefresh = {},
-                )
-            }
-        }
-
-        fun reveal(title: String) {
-            compose.onNodeWithText(title).performTouchInput {
-                swipe(
-                    start = Offset(width * 0.8f, centerY),
-                    end = Offset(width * 0.45f, centerY),
-                    durationMillis = 500,
-                )
-            }
-            compose.waitForIdle()
-        }
-
-        reveal(sampleBrief.title)
-        compose.onAllNodesWithTag("briefSwipeMore").assertCountEquals(1)
-        reveal(second.title)
-        compose.onAllNodesWithTag("briefSwipeMore").assertCountEquals(1)
-    }
-
-    @Test
-    fun `physical left swipe clears a brief in RTL without opening the menu`() {
+    fun `vertical drags over task rows scroll the list without triggering actions`() {
         var menuOpened = false
-        var quickClearCount = 0
+        var taskActions = 0
+        val target = scrollingTasks[20]
 
         compose.setContent {
             OmnesisTheme(darkTheme = false) {
@@ -335,126 +186,21 @@ class MenuGestureIntegrationTest {
                     },
                     menu = {},
                 ) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                        BriefsListContent(
-                            feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                            loading = false,
-                            loadError = null,
-                            onOpen = {},
-                            onQuickClear = { quickClearCount += 1 },
-                            onAsk = {},
-                            onMoreOptions = {},
-                            onRetry = {},
-                            onRefresh = {},
-                            now = Instant.parse("2026-08-20T08:00:00Z"),
-                        )
-                    }
-                }
-            }
-        }
-
-        compose.onNodeWithText(sampleBrief.title).performTouchInput {
-            swipe(
-                start = Offset(width * 0.9f, centerY),
-                end = Offset(width * 0.1f, centerY),
-                durationMillis = 400,
-            )
-        }
-
-        compose.waitUntil(5_000) { quickClearCount == 1 }
-        compose.waitForIdle()
-        assertFalse(menuOpened)
-    }
-
-    @Test
-    fun `short left drag settles the brief back without opening the menu`() {
-        var menuOpened = false
-        var quickClearCount = 0
-
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                var menuOpen by remember { mutableStateOf(false) }
-                MenuRevealContainer(
-                    isOpen = menuOpen,
-                    onOpenChange = {
-                        menuOpen = it
-                        menuOpened = it
-                    },
-                    menu = {},
-                ) {
-                    BriefsListContent(
-                        feed = BriefsFeedState().replacing(listOf(sampleBrief)),
-                        loading = false,
-                        loadError = null,
-                        onOpen = {},
-                        onQuickClear = { quickClearCount += 1 },
-                        onAsk = {},
-                        onMoreOptions = {},
-                        onRetry = {},
-                        onRefresh = {},
-                        now = Instant.parse("2026-08-20T08:00:00Z"),
-                    )
-                }
-            }
-        }
-
-        val originalLeft = compose.onNodeWithText(sampleBrief.title)
-            .fetchSemanticsNode().boundsInRoot.left
-
-        compose.onNodeWithText(sampleBrief.title).performTouchInput {
-            swipe(
-                start = Offset(width * 0.6f, centerY),
-                end = Offset(width * 0.5f, centerY),
-                durationMillis = 1_000,
-            )
-        }
-
-        compose.waitUntil(5_000) {
-            abs(
-                compose.onNodeWithText(sampleBrief.title)
-                    .fetchSemanticsNode().boundsInRoot.left - originalLeft,
-            ) < 1f
-        }
-        compose.onNodeWithText(sampleBrief.title).assertIsDisplayed()
-        assertEquals(0, quickClearCount)
-        assertFalse(menuOpened)
-    }
-
-    @Test
-    fun `vertical drags over brief rows scroll the feed without triggering actions`() {
-        var menuOpened = false
-        var quickClearCount = 0
-        val target = scrollingBriefs[15]
-
-        compose.setContent {
-            OmnesisTheme(darkTheme = false) {
-                var menuOpen by remember { mutableStateOf(false) }
-                MenuRevealContainer(
-                    isOpen = menuOpen,
-                    onOpenChange = {
-                        menuOpen = it
-                        menuOpened = it
-                    },
-                    menu = {},
-                ) {
-                    BriefsListContent(
-                        feed = BriefsFeedState().replacing(scrollingBriefs),
-                        loading = false,
-                        loadError = null,
-                        onOpen = {},
-                        onQuickClear = { quickClearCount += 1 },
-                        onAsk = {},
-                        onMoreOptions = {},
-                        onRetry = {},
-                        onRefresh = {},
-                        now = Instant.parse("2026-08-20T08:00:00Z"),
+                    TasksContent(
+                        state = TasksUiState(loading = false, day = TODAY.toString(), tasks = scrollingTasks),
+                        today = TODAY,
+                        actions = TaskRowActions(
+                            onTapBullet = { taskActions += 1 },
+                            onOpen = { taskActions += 1 },
+                            onFanAction = { _, _ -> taskActions += 1 },
+                        ),
                     )
                 }
             }
         }
 
         compose.onNodeWithText(target.title).assertDoesNotExist()
-        repeat(2) {
+        repeat(3) {
             compose.onRoot().performTouchInput {
                 swipe(
                     start = Offset(width * 0.5f, height * 0.85f),
@@ -465,7 +211,7 @@ class MenuGestureIntegrationTest {
         }
 
         compose.onNodeWithText(target.title).assertIsDisplayed()
-        assertEquals(0, quickClearCount)
+        assertEquals(0, taskActions)
         assertFalse(menuOpened)
     }
 
@@ -611,20 +357,16 @@ class MenuGestureIntegrationTest {
     }
 
     private companion object {
-        val sampleBrief = BriefRecordDto(
-            id = "brief-example",
-            kind = BriefKindDto.INFO,
-            state = BriefReadStateDto.UNREAD,
+        val TODAY: LocalDate = LocalDate.of(2026, 10, 12)
+
+        val sampleTask = TaskDto(
+            id = "task-example",
             title = "Review the Northstar launch checklist",
-            description = "The final checklist is ready for review.",
-            createdAt = "2026-08-20T07:00:00Z",
+            scheduledFor = "2026-10-12",
         )
 
-        val scrollingBriefs = List(24) { index ->
-            sampleBrief.copy(
-                id = "brief-scroll-example-$index",
-                title = "Invented brief item $index",
-            )
+        val scrollingTasks = List(24) { index ->
+            sampleTask.copy(id = "task-scroll-example-$index", title = "Invented task item $index")
         }
 
         val sampleCitation = AgentCitation(

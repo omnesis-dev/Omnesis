@@ -29,6 +29,7 @@ import {
   systemClock,
   type Clock,
   type ClaimedCognitionRun,
+  type CognitionRunContextUsage,
   type CognitionRunUsage,
 } from "./storage/types.js";
 import type {
@@ -74,9 +75,44 @@ function defaultCognitionSystemPrompt(): string {
   return "You are a background agent processing one queued run. Respond concisely.";
 }
 
+/**
+ * How far one run's conversation may grow. A run whose latest model request
+ * reaches the threshold ends once its in-flight tool calls finish, so a
+ * successor can continue its durable work from a fresh context.
+ */
+export interface CognitionContextBudget {
+  /** Share of the model's reported input limit the conversation may fill. */
+  ratio: number;
+  /** Threshold in input tokens when the backend reports no limit. */
+  fallbackTokens: number;
+}
+
+/** The per-request input size at which a run with this budget hands off. */
+export function contextHandoffThreshold(
+  budget: CognitionContextBudget,
+  context: AgentContextAssessment | undefined,
+): number {
+  const limit = context?.maxInputTokens ?? context?.contextWindowTokens;
+  return limit === undefined ? budget.fallbackTokens : Math.floor(limit * budget.ratio);
+}
+
+/** Why a run ended so a fresh context could continue it. */
+export type CognitionContextHandoffReason = "context_budget" | "context_window_exceeded";
+
 /** What one executed attempt produced. */
 export interface CognitionRunOutcome {
   ok: boolean;
+  /** No model attempt was bought; requeue readiness work without spending retry budget. */
+  deferredUntil?: number;
+  /** Progress already committed; yield without advancing semantic time. */
+  continuation?: boolean;
+  /** Backend enforced a tool cap, including tool-level Codex refusals. */
+  toolLimitReached?: boolean;
+  /**
+   * The conversation reached its context budget or the model's window. Work
+   * already committed stands; only a fresh context can continue the rest.
+   */
+  contextHandoff?: CognitionContextHandoffReason;
   /** Present when `ok` is false. */
   errorMessage?: string;
   /**
@@ -107,6 +143,15 @@ export interface CognitionRunDriverDeps {
    * removed mid-flight) fails the attempt softly — the queue retries.
    */
   resolveBackend: () => ChatBackend | null;
+  /** Deterministic/System One maintenance preflight, before model/backend resolution. */
+  preflight?: (run: ClaimedCognitionRun) => Promise<"complete" | "continue" | "defer" | "yield">;
+  /** Confirms a tool-requested handoff was durably recorded for this run. */
+  isRunHandedOff?: (run: ClaimedCognitionRun) => boolean;
+  /**
+   * The context budget of one run, read when it starts; null leaves the run
+   * bounded only by its backend's own limits.
+   */
+  contextBudget?: (run: ClaimedCognitionRun) => CognitionContextBudget | null;
   transcripts: FsCognitionTranscriptStore;
   log: Logger;
   /**
@@ -117,8 +162,8 @@ export interface CognitionRunDriverDeps {
   buildTools?: (run: ClaimedCognitionRun, context: CognitionRunExecutionContext) => ToolHandle[];
   /** Seam for the per-kind run prompts. Default: the generic envelope. */
   promptBuilder?: CognitionPromptBuilder;
-  /** Seam for the Cognition Steward system prompt — static across runs for the same settings. */
-  systemPrompt?: () => string;
+  /** Trusted workflow instructions precede any changing reference context. */
+  systemPrompt?: (run?: ClaimedCognitionRun) => string;
   /**
    * Post-turn completion barrier. A successful model turn is not allowed to
    * settle its queue row until this confirms every required side effect is
@@ -139,7 +184,7 @@ export class CognitionRunDriver {
     context: CognitionRunExecutionContext,
   ) => ToolHandle[];
   private readonly promptBuilder: CognitionPromptBuilder;
-  private readonly systemPrompt: () => string;
+  private readonly systemPrompt: (run?: ClaimedCognitionRun) => string;
   private readonly clock: Clock;
   /** Per-model-call prompt-cache accounting, at debug level. */
   private readonly cacheLog: Logger;
@@ -176,6 +221,40 @@ export class CognitionRunDriver {
     run: ClaimedCognitionRun,
     opts: { signal?: AbortSignal } = {},
   ): Promise<CognitionRunOutcome> {
+    if (this.deps.preflight) {
+      try {
+        const verdict = await this.deps.preflight(run);
+        if (verdict !== "continue")
+          return {
+            ok: verdict === "complete",
+            modelId: null,
+            usage: null,
+            finalText: "",
+            citations: [],
+            openedDocIds: [],
+            ...(verdict === "defer" || verdict === "yield"
+              ? {
+                  deferredUntil: this.clock() + (verdict === "yield" ? 0 : 15000),
+                  ...(verdict === "yield" ? { continuation: true } : {}),
+                  errorMessage:
+                    verdict === "yield"
+                      ? "Maintenance advanced; continuing bounded work"
+                      : "Maintenance is waiting for current inputs",
+                }
+              : {}),
+          };
+      } catch (error) {
+        return {
+          ok: false,
+          modelId: null,
+          usage: null,
+          finalText: "",
+          citations: [],
+          openedDocIds: [],
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
     // Deliberately kind-blind: every run kind — including `verification` —
     // resolves the same background-agent backend. Verification runs are agent
     // runs (they re-ground with tools), not entailment-verifier completions;
@@ -217,10 +296,10 @@ export class CognitionRunDriver {
       sessionId: `loop-agent-run-${run.id}-a${run.attempts}`,
       backend,
       tools: this.buildTools(run, { modelId: backend.model }),
-      systemPrompt: this.systemPrompt(),
+      systemPrompt: this.systemPrompt(run),
       // Stable per workflow, never per run: every run of one workflow shares
-      // the system prompt, the tool schemas and its static rules, and a
-      // provider that routes by this key keeps that prefix warm for them all.
+      // trusted instruction prefix and permission-scoped tool schemas.
+      // Changing reference context follows those instructions.
       promptCacheKey: cognitionPromptCacheKey(run),
     });
 
@@ -228,6 +307,23 @@ export class CognitionRunDriver {
     const citations = new Map<string, DocRef>();
     const usage: AgentUsage = {};
     let sawUsage = false;
+    let liveUsage: AgentUsage | undefined;
+    let toolLimitReached = false;
+    let handedOff = false;
+    const contextBudget = this.deps.contextBudget?.(run) ?? null;
+    // The latest live context reading and the largest request input seen.
+    let liveContext: AgentContextAssessment | undefined;
+    let peakInputTokens: number | undefined;
+    let contextBudgetReached = false;
+    let contextBudgetHandoff = false;
+    // Tool calls started but not yet answered. A run over its budget stops
+    // only once these settle, so the response that crossed the line still
+    // lands its writes. In-process backends then send no further request; a
+    // runtime that owns its own loop (Codex, Claude Code) may already have sent
+    // one, or report the reading after the tools ran and stop a response later.
+    const outstandingTools = new Set<string>();
+    // The documents each in-flight `fetch_many` asked for, in request order.
+    const requestedDocs = new Map<string, unknown[]>();
     let pendingText = "";
     let finalText = "";
     const openedDocIds = new Set<string>();
@@ -245,18 +341,73 @@ export class CognitionRunDriver {
           for (const ref of event.payload.added) citations.set(refKey(ref), ref);
           break;
         case "agent.tool.start": {
-          // Track which documents the run opened, so a bootstrap run that pulls
-          // an older document in to resolve an arc can mark it processed too —
-          // it never earns its own run (the cross-arc skip). Fetches arrive as a
-          // `fetch_many` batch (documents fetched in one round-trip), so every id
-          // in the batch counts as opened.
+          outstandingTools.add(event.payload.toolCallId);
           if (event.payload.tool === "fetch_many") {
-            const args = event.payload.args as
-              | { documents?: Array<{ documentId?: unknown } | null> }
-              | undefined;
-            for (const d of args?.documents ?? []) {
-              if (d && typeof d.documentId === "string") openedDocIds.add(d.documentId);
-            }
+            const args = event.payload.args as { documents?: unknown[] } | undefined;
+            requestedDocs.set(event.payload.toolCallId, args?.documents ?? []);
+          }
+          break;
+        }
+        case "agent.tool.result": {
+          outstandingTools.delete(event.payload.toolCallId);
+          // Track which documents the run read whole, so a bootstrap run that
+          // pulls an older document in to resolve an arc can mark it processed
+          // too — it never earns its own run (the cross-arc skip). A document
+          // read only in part, or not at all, keeps its own run.
+          const requested = requestedDocs.get(event.payload.toolCallId);
+          requestedDocs.delete(event.payload.toolCallId);
+          const result = event.payload.result;
+          if (requested && result.kind === "document.batch")
+            result.items.forEach((item, index) => {
+              const id = (requested[index] as { documentId?: unknown } | null)?.documentId;
+              const range = (item.kind === "document" ? item.document : null) as {
+                contentRange?: { truncated?: unknown };
+              } | null;
+              if (typeof id === "string" && range && range.contentRange?.truncated !== true)
+                openedDocIds.add(id);
+            });
+          if (
+            event.payload.result.kind === "error" &&
+            event.payload.result.code === "maintenance_handoff" &&
+            this.deps.isRunHandedOff?.(run)
+          ) {
+            handedOff = true;
+            session.cancel();
+          }
+          if (
+            event.payload.result.kind === "error" &&
+            event.payload.result.code === "tool_iteration_cap"
+          ) {
+            toolLimitReached = true;
+            // A background run cannot make progress through further refused
+            // calls. Stop inference; durable continuation is owned by the drainer.
+            session.cancel();
+          }
+          if (
+            contextBudgetReached &&
+            !toolLimitReached &&
+            !handedOff &&
+            outstandingTools.size === 0
+          ) {
+            contextBudgetHandoff = true;
+            session.cancel();
+          }
+          break;
+        }
+        case "agent.usage.update": {
+          // This protocol event is cumulative for the turn, never a delta.
+          liveUsage = { ...event.payload.usage };
+          const reading = event.payload.context;
+          if (reading) {
+            liveContext = reading;
+            const largest = reading.peakInputTokens ?? reading.inputTokens;
+            if (largest !== undefined) peakInputTokens = Math.max(peakInputTokens ?? 0, largest);
+            if (
+              contextBudget &&
+              reading.inputTokens !== undefined &&
+              reading.inputTokens >= contextHandoffThreshold(contextBudget, reading)
+            )
+              contextBudgetReached = true;
           }
           break;
         }
@@ -302,6 +453,56 @@ export class CognitionRunDriver {
       unsubscribe();
     }
 
+    if (toolLimitReached || contextBudgetHandoff) {
+      // AgentSession suppresses provider events after authoritative cancellation.
+      // Preserve the latest already-observed cumulative spend, without adding it
+      // to intermediate message totals. Unreported post-cancel spend is unknown.
+      if (liveUsage) {
+        for (const key of [
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheCreationTokens",
+        ] as const)
+          delete usage[key];
+        Object.assign(usage, liveUsage);
+        sawUsage = true;
+      }
+      ok = false;
+      failure = toolLimitReached
+        ? {
+            code: "tool_iteration_cap",
+            message: "Background run reached its tool-call budget",
+            retryable: false,
+            backend: backend.name,
+            model: backend.model,
+          }
+        : {
+            code: "context_budget",
+            message: "Background run reached its context budget",
+            retryable: false,
+            backend: backend.name,
+            model: backend.model,
+          };
+      errorMessage = failure.message;
+    }
+    // A cancelled turn carries no terminal reading; the live one stands in.
+    context ??= liveContext;
+    // Only a trusted durable handoff turns this system cancellation into success.
+    // Ordinary aborts and failed tools retain their existing failure semantics.
+    if (handedOff && this.deps.isRunHandedOff?.(run)) {
+      ok = true;
+      failure = undefined;
+      errorMessage = undefined;
+    }
+    // A trusted durable handoff succeeded; only a failed run hands its context on.
+    const contextHandoff: CognitionContextHandoffReason | undefined = ok
+      ? undefined
+      : contextBudgetHandoff && !toolLimitReached
+        ? "context_budget"
+        : failure?.code === "context_window_exceeded"
+          ? "context_window_exceeded"
+          : undefined;
     if (ok && this.deps.validateRun) {
       try {
         const validationError = await this.deps.validateRun(run, { modelId: backend.model });
@@ -315,7 +516,10 @@ export class CognitionRunDriver {
       }
     }
 
-    const runUsage = sawUsage ? toCognitionRunUsage(usage) : null;
+    const contextUsage = cognitionContextUsage(context, peakInputTokens);
+    const runUsage = sawUsage
+      ? { ...toCognitionRunUsage(usage), ...(contextUsage ? { context: contextUsage } : {}) }
+      : null;
     const finishedAt = this.clock();
     try {
       this.deps.transcripts.save({
@@ -351,6 +555,8 @@ export class CognitionRunDriver {
       ok,
       ...(errorMessage !== undefined ? { errorMessage } : {}),
       ...(failure !== undefined ? { failure } : {}),
+      ...(toolLimitReached ? { toolLimitReached: true } : {}),
+      ...(contextHandoff ? { contextHandoff } : {}),
       ...(context !== undefined ? { context } : {}),
       modelId: backend.model,
       usage: runUsage,
@@ -389,6 +595,21 @@ export function toCognitionRunUsage(u: AgentUsage): CognitionRunUsage {
     cacheReadTokens: u.cacheReadTokens ?? 0,
     cacheCreationTokens: u.cacheCreationTokens ?? 0,
   };
+}
+
+/** An attempt's context occupancy for its run record; null when nothing was reported. */
+function cognitionContextUsage(
+  context: AgentContextAssessment | undefined,
+  livePeak: number | undefined,
+): CognitionRunContextUsage | null {
+  const peak = Math.max(livePeak ?? 0, context?.peakInputTokens ?? context?.inputTokens ?? 0);
+  const window = context?.maxInputTokens ?? context?.contextWindowTokens;
+  const usage: CognitionRunContextUsage = {
+    ...(peak > 0 ? { peakInputTokens: peak } : {}),
+    ...(context?.inputTokens !== undefined ? { lastInputTokens: context.inputTokens } : {}),
+    ...(window !== undefined ? { contextWindowTokens: window } : {}),
+  };
+  return Object.keys(usage).length > 0 ? usage : null;
 }
 
 function refKey(ref: DocRef): string {

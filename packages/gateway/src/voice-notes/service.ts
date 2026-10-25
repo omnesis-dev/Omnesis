@@ -121,6 +121,7 @@ export class VoiceNoteService {
       latitude: input.latitude,
       longitude: input.longitude,
       placeName: input.placeName,
+      ...(input.fromOwner ? { fromOwner: true } : {}),
       // The day's document is published once the recording is queued, so a
       // reader that waits on pending transcriptions never sees the note
       // without it.

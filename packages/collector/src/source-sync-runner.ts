@@ -589,6 +589,15 @@ export class SourceSyncRunner {
         return;
       }
       let cursor = state?.cursor ?? null;
+      // Provider-independent provenance survives a partial page and collector restart.
+      const initialInventory =
+        state?.initialInventory ??
+        (!state
+          ? ((await this.gateway.getInitialSourceInventory?.(source.id)) ?? {
+              id: randomUUID(),
+              startedAt: new Date().toISOString(),
+            })
+          : undefined);
       // Echoed back on every cursor write so the gateway can reject this
       // sync's writes if the source is wiped (resync) while it's in flight.
       //Undefined against an older gateway → no check there.
@@ -830,6 +839,7 @@ export class SourceSyncRunner {
                   : undefined,
                 edges: result.edges,
                 hasMore: result.hasMore,
+                initialInventory,
                 cursor: result.cursor,
                 wipeEpoch,
                 // Forward the source's forward-looking consent deadline so the
@@ -970,6 +980,7 @@ export class SourceSyncRunner {
               : undefined,
             edges: result.edges,
             hasMore: result.hasMore,
+            initialInventory,
             cursor: result.cursor,
             wipeEpoch,
             // Forward the source's forward-looking consent deadline. See

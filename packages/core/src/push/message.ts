@@ -25,7 +25,6 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   message("diagnostic", z.object({}).strict()),
   message("agent-answer", z.object({ conversationId: z.string().min(1).max(256) }).strict()),
   message("conversation", z.object({ conversationId: z.string().min(1).max(256) }).strict()),
-  message("brief", z.object({ briefId: z.string().min(1).max(256) }).strict()),
   message(
     "watch",
     z
@@ -90,7 +89,6 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal("conversation"), conversationId: z.string().min(1).max(256) })
     .strict(),
-  z.object({ kind: z.literal("brief"), briefId: z.string().min(1).max(256) }).strict(),
   z
     .object({
       kind: z.literal("watch"),
@@ -137,7 +135,6 @@ export const claimedNotificationSchema = z
       "diagnostic",
       "agent-answer",
       "conversation",
-      "brief",
       "watch",
       "needs-auth",
       "source-permission",
@@ -169,8 +166,6 @@ export function notificationTargetId(message: NotificationMessage): string {
     case "agent-answer":
     case "conversation":
       return message.data.conversationId;
-    case "brief":
-      return message.data.briefId;
     case "watch":
       return message.data.watchId;
     case "needs-auth":
@@ -194,8 +189,6 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
       return { kind: message.kind, conversationId: message.data.conversationId };
     case "conversation":
       return { kind: message.kind, conversationId: message.data.conversationId };
-    case "brief":
-      return { kind: message.kind, briefId: message.data.briefId };
     case "watch":
       return {
         kind: message.kind,

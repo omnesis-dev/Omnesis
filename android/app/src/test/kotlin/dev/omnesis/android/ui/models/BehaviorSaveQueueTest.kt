@@ -57,7 +57,7 @@ class BehaviorSaveQueueTest {
         )
         val first = BehaviorSaveRequest("agent", "openrouter/reasoner-v1", ModelBehaviorValues(reasoningEffort = "low"))
         val later = first.copy(values = ModelBehaviorValues(reasoningEffort = "high"))
-        val judge = BehaviorSaveRequest("brief-judge", "openrouter/judge-v1", ModelBehaviorValues(reasoningEnabled = false))
+        val judge = BehaviorSaveRequest("watch-judge", "openrouter/judge-v1", ModelBehaviorValues(reasoningEnabled = false))
         queue.submit(first)
         runCurrent()
         queue.submit(judge)
@@ -156,7 +156,7 @@ class BehaviorSaveQueueTest {
         runCurrent()
         queue.submit(first.copy(values = ModelBehaviorValues(reasoningEffort = "high")))
         queue.submitBudget("agent", first.copy(values = ModelBehaviorValues(reasoningBudgetTokens = 512)))
-        val otherRole = BehaviorSaveRequest("brief-judge", "openrouter/judge-v1",
+        val otherRole = BehaviorSaveRequest("watch-judge", "openrouter/judge-v1",
             ModelBehaviorValues(reasoningEnabled = false))
         queue.submit(otherRole)
         firstWrite.complete(Unit)
@@ -214,7 +214,7 @@ class BehaviorSaveQueueTest {
             replace(mapOf(
                 "agent" to ModelBehaviorSettings("openrouter/reasoner-v1",
                     ModelBehaviorValues(reasoningEffort = "low")),
-                "brief-judge" to ModelBehaviorSettings("openrouter/judge-v1",
+                "watch-judge" to ModelBehaviorSettings("openrouter/judge-v1",
                     ModelBehaviorValues(reasoningEffort = "low")),
             ))
         }
@@ -235,7 +235,7 @@ class BehaviorSaveQueueTest {
                     baseline.replace(mapOf(
                         "agent" to ModelBehaviorSettings("openrouter/reasoner-v1",
                             ModelBehaviorValues(reasoningEffort = "external")),
-                        "brief-judge" to ModelBehaviorSettings("openrouter/judge-v1",
+                        "watch-judge" to ModelBehaviorSettings("openrouter/judge-v1",
                             ModelBehaviorValues(reasoningEffort = "external")),
                     ), preserveRoles = queue.protectedRoles - request.role)
                 }
@@ -244,12 +244,12 @@ class BehaviorSaveQueueTest {
         queue.submit(BehaviorSaveRequest("agent", "openrouter/reasoner-v1",
             ModelBehaviorValues(reasoningEffort = "high")))
         runCurrent()
-        queue.submit(BehaviorSaveRequest("brief-judge", "openrouter/judge-v1",
+        queue.submit(BehaviorSaveRequest("watch-judge", "openrouter/judge-v1",
             ModelBehaviorValues(reasoningEffort = "high")))
         firstWrite.complete(Unit)
         runCurrent()
 
-        assertEquals(ModelBehaviorValues(reasoningEffort = "low"), expected["brief-judge"])
+        assertEquals(ModelBehaviorValues(reasoningEffort = "low"), expected["watch-judge"])
         assertEquals(ModelBehaviorValues(reasoningEffort = "external"), baseline.expected(
             BehaviorSaveRequest("agent", "openrouter/reasoner-v1", ModelBehaviorValues()),
         ))

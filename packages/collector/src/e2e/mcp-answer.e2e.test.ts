@@ -25,6 +25,7 @@ import {
   loginPortal,
   portalJson,
   revokeAccess,
+  scrapeOAuthUserCode,
   transportFor,
   updateAccessGrant,
   type AuthorizedMcpClient,
@@ -343,8 +344,7 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
     try {
       const consent = await fetch(pending.consentUrl);
       expect(consent.status).toBe(200);
-      const userCode = (await consent.text()).match(/[A-Z2-9]{4}-[A-Z2-9]{4}/)?.[0];
-      if (!userCode) throw new Error("Anonymous consent omitted its user code.");
+      const userCode = scrapeOAuthUserCode(await consent.text());
       const portal = await loginPortal(gateway());
       const lookup = await portalJson<{ request: { approvalId: string } }>(
         harness.gatewayUrl,

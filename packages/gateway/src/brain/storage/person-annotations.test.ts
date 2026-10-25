@@ -17,6 +17,9 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import {
+  getReadablePersonProfileStats,
+  getPersonProfileStats,
+  getPersonProfileFingerprint,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotation,
@@ -85,6 +88,261 @@ describe("person annotation store", () => {
     db.close();
     cleanupDb(path);
   });
+
+  test("profile budgets reject growth, permit shrinking repairs, and atomically replace many facts", () => {
+    const evidence = insertDoc(
+      db,
+      "profile-budget",
+      "A fictional workshop coordinator prefers written agendas.",
+    );
+    const input = (id: string, text: string, personId = "per_profile") => ({
+      id,
+      personId,
+      claimType: id,
+      claimText: text,
+      evidenceDocId: evidence,
+      evidenceQuote: "prefers written agendas",
+      confidence: 0.8,
+      claimBasis: "quoted" as const,
+      createdByRun: "run_profile",
+    });
+    const large = { maxFacts: 10, maxCharacters: 1000 };
+    const small = { maxFacts: 1, maxCharacters: 20 };
+    createPersonAnnotation(db, input("pa_first", "First standing preference"), NOW, large);
+    createPersonAnnotation(db, input("pa_second", "Second standing preference"), NOW, large);
+    const before = getPersonProfileStats(db, "per_profile");
+    expect(() => createPersonAnnotation(db, input("pa_extra", "Extra"), NOW, small)).toThrow(
+      /budget/,
+    );
+    expect(getPersonProfileStats(db, "per_profile")).toEqual(before);
+    expect(
+      revisePersonAnnotation(
+        db,
+        "pa_first",
+        {
+          claimText: "First standing preference",
+          confidence: 0.7,
+        },
+        NOW,
+        small,
+      ),
+    ).toBe(true);
+    expect(getPersonProfileStats(db, "per_profile")).toEqual(before);
+    expect(
+      revisePersonAnnotation(db, "pa_first", { claimText: "First preference" }, NOW, small),
+    ).toBe(true);
+    expect(() =>
+      revisePersonAnnotation(
+        db,
+        "pa_first",
+        { claimText: "A much longer standing preference than before" },
+        NOW,
+        small,
+      ),
+    ).toThrow(/budget/);
+    const fingerprint = getPersonProfileFingerprint(db, "per_profile");
+    revisePersonAnnotation(db, "pa_second", { confidence: 0.7 }, NOW, large);
+    expect(() =>
+      createPersonAnnotationSuperseding(
+        db,
+        input("pa_stale", "Written agendas"),
+        ["pa_first", "pa_second"],
+        NOW,
+        { ...small, expectedProfileFingerprint: fingerprint },
+      ),
+    ).toThrow(/changed/);
+    expect(annoRow(db, "pa_stale")).toBeUndefined();
+    expect(() =>
+      createPersonAnnotationSuperseding(
+        db,
+        input("pa_missing", "Written agendas"),
+        ["pa_first", "missing"],
+        NOW,
+        small,
+      ),
+    ).toThrow(/reread/);
+    expect(annoRow(db, "pa_first")!.invalidated_at).toBeNull();
+    createPersonAnnotation(db, input("pa_other", "Other", "per_other"), NOW, large);
+    expect(() =>
+      createPersonAnnotationSuperseding(
+        db,
+        input("pa_cross", "Written agendas"),
+        ["pa_first", "pa_other"],
+        NOW,
+        small,
+      ),
+    ).toThrow(/one person/);
+    expect(() =>
+      createPersonAnnotationSuperseding(
+        db,
+        input("pa_long", "This replacement is still much too long for the final profile budget"),
+        ["pa_first", "pa_second"],
+        NOW,
+        small,
+      ),
+    ).toThrow(/budget/);
+    expect(annoRow(db, "pa_second")!.invalidated_at).toBeNull();
+    const result = createPersonAnnotationSuperseding(
+      db,
+      input("pa_compact", "Written agendas"),
+      ["pa_first", "pa_second"],
+      NOW,
+      small,
+    );
+    expect(result.superseded).toBe(true);
+    expect(getPersonProfileStats(db, "per_profile")).toEqual({
+      totalFacts: 1,
+      totalCharacters: 15,
+    });
+    expect(annoRow(db, "pa_first")!.superseded_by).toBe("pa_compact");
+    expect(annoRow(db, "pa_second")!.superseded_by).toBe("pa_compact");
+  });
+
+  test("profile budget and receipts span merged subjects and serialize competing creates", () => {
+    db.prepare(
+      `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at, merged_into)
+      VALUES ('per_root','Fictional root','test','2026-01-01','2026-01-01','2026-01-01','2026-01-01',NULL),
+      ('per_alias','Fictional alias','test','2026-01-01','2026-01-01','2026-01-01','2026-01-01','per_root')`,
+    ).run();
+    const evidence = insertDoc(db, "merged-profile", "Prefers written agendas.");
+    const base = {
+      personId: "per_alias",
+      claimType: "preference",
+      claimText: "Written agendas",
+      evidenceDocId: evidence,
+      evidenceQuote: "Prefers written agendas.",
+      confidence: 0.8,
+      claimBasis: "quoted" as const,
+      createdByRun: "run_merge",
+    };
+    const budget = { maxFacts: 1, maxCharacters: 40 };
+    const fingerprint = getPersonProfileFingerprint(db, "per_root");
+    createPersonAnnotation(db, { ...base, id: "pa_winner" }, NOW, {
+      ...budget,
+      expectedProfileFingerprint: fingerprint,
+    });
+    expect(getPersonProfileStats(db, "per_root")).toEqual({ totalFacts: 1, totalCharacters: 15 });
+    expect(() =>
+      createPersonAnnotation(db, { ...base, id: "pa_loser", personId: "per_root" }, NOW, {
+        ...budget,
+        expectedProfileFingerprint: fingerprint,
+      }),
+    ).toThrow(/changed/);
+    expect(() =>
+      createPersonAnnotation(db, { ...base, id: "pa_budget", personId: "per_root" }, NOW, budget),
+    ).toThrow(/budget/);
+    expect(annoRow(db, "pa_loser")).toBeUndefined();
+    createPersonAnnotationSuperseding(
+      db,
+      { ...base, id: "pa_replacement", personId: "per_root" },
+      ["pa_winner"],
+      NOW,
+      budget,
+    );
+    expect(getPersonProfileStats(db, "per_alias").totalFacts).toBe(1);
+  });
+
+  test("profile receipts reject metadata ABA even without a Knowledge owner projection", () => {
+    const evidence = insertDoc(db, "profile-source-context", "Prefers ceramic tools.");
+    const fact = {
+      id: "pa_context",
+      personId: "per_context",
+      claimType: "preference",
+      claimText: "Prefers ceramic tools.",
+      evidenceDocId: evidence,
+      evidenceQuote: "Prefers ceramic tools.",
+      confidence: 0.8,
+      claimBasis: "quoted" as const,
+      createdByRun: "run_context",
+    };
+    createPersonAnnotation(db, fact, NOW);
+    expect(db.prepare("SELECT id FROM knowledge_nodes WHERE id=?").get(fact.id)).toBeUndefined();
+    const fingerprint = getPersonProfileFingerprint(db, fact.personId);
+    const original = db
+      .prepare("SELECT title,content_hash FROM documents WHERE id=?")
+      .get(evidence) as { title: string; content_hash: string };
+    db.prepare("UPDATE documents SET title=? WHERE id=?").run("Temporary heading", evidence);
+    db.prepare("UPDATE documents SET title=? WHERE id=?").run(original.title, evidence);
+    expect(db.prepare("SELECT title,content_hash FROM documents WHERE id=?").get(evidence)).toEqual(
+      original,
+    );
+    expect(getPersonProfileFingerprint(db, fact.personId)).not.toBe(fingerprint);
+    expect(() =>
+      createPersonAnnotation(db, { ...fact, id: "pa_stale_context" }, NOW, {
+        maxFacts: 20,
+        maxCharacters: 4000,
+        expectedProfileFingerprint: fingerprint,
+      }),
+    ).toThrow(/profile changed/);
+    expect(annoRow(db, "pa_stale_context")).toBeUndefined();
+  });
+
+  test("profile receipts invalidate when a previously hidden fact becomes readable", () => {
+    const evidence = insertDoc(db, "profile-visibility", "Prefers written agendas.");
+    const fact = {
+      id: "pa_visibility",
+      personId: "per_visibility",
+      claimType: "preference",
+      claimText: "Written agendas",
+      evidenceDocId: evidence,
+      evidenceQuote: "Prefers written agendas.",
+      confidence: 0.8,
+      claimBasis: "quoted" as const,
+      createdByRun: "run_visibility",
+    };
+    createPersonAnnotation(db, fact, NOW);
+    db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES(?,?)").run(
+      fact.id,
+      NOW,
+    );
+    expect(getReadablePersonProfileStats(db, fact.personId).totalFacts).toBe(0);
+    const fingerprint = getPersonProfileFingerprint(db, fact.personId);
+    const stored = annoRow(db, fact.id);
+    db.prepare("DELETE FROM knowledge_node_tombstones WHERE id=?").run(fact.id);
+    expect(annoRow(db, fact.id)).toEqual(stored);
+    expect(getReadablePersonProfileStats(db, fact.personId).totalFacts).toBe(1);
+    expect(getPersonProfileFingerprint(db, fact.personId)).not.toBe(fingerprint);
+    expect(() =>
+      createPersonAnnotation(db, { ...fact, id: "pa_unseen" }, NOW, {
+        maxFacts: 20,
+        maxCharacters: 4000,
+        expectedProfileFingerprint: fingerprint,
+      }),
+    ).toThrow(/profile changed/);
+    expect(annoRow(db, "pa_unseen")).toBeUndefined();
+  });
+
+  test.each(["primary", "secondary"] as const)(
+    "synthesized person claims require every %s evidence atom to remain supported",
+    (position) => {
+      const first = insertDoc(db, "profile-support-a", "Coordinates the workshop.");
+      const second = insertDoc(db, "profile-support-b", "Prefers written agendas.");
+      for (const basis of ["quoted", "synthesized"] as const) {
+        createPersonAnnotation(
+          db,
+          {
+            id: `pa_${basis}`,
+            personId: "per_support",
+            claimType: basis,
+            claimText: "Coordinates the workshop and prefers written agendas.",
+            evidenceDocId: first,
+            evidenceQuote: "Coordinates the workshop.",
+            additionalEvidence: [{ docId: second, quote: "Prefers written agendas." }],
+            confidence: 0.8,
+            claimBasis: basis,
+            createdByRun: "run_support",
+          },
+          NOW,
+        );
+      }
+      const changed = position === "primary" ? first : second;
+      db.prepare("UPDATE documents SET content=? WHERE id=?").run("Changed content.", changed);
+      invalidatePersonAnnotationsForDoc(db, changed, NOW + 1);
+      expect(annoRow(db, "pa_synthesized")!.invalidated_at).toBe(NOW + 1);
+      expect(annoRow(db, "pa_quoted")!.invalidated_at).toBeNull();
+      expect(annoRow(db, "pa_quoted")!.verification_state).toBe("unverified");
+    },
+  );
 
   test("create → list-for-person → recent-live, keyed on person + evidence", () => {
     const evidence = insertDoc(db, "d1", "the platform team lead owns onboarding");

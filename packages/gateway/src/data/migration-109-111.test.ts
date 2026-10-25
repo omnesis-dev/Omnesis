@@ -160,8 +160,8 @@ describe("push queue migrations", () => {
       INSERT INTO notifications
         (id, kind, target_id, title, body, collapse_id, created_at, expires_at)
       VALUES
-        ('notification-1', 'brief', 'brief-fictional', 'Fictional brief',
-         'Invented summary.', 'brief-fictional', 1000, 2000);
+        ('notification-1', 'conversation', 'conversation-fictional', 'Fictional reply',
+         'Invented summary.', 'conversation-fictional', 1000, 2000);
       PRAGMA user_version = 111;
     `);
 
@@ -186,8 +186,8 @@ describe("push queue migrations", () => {
       INSERT INTO notifications
         (id, kind, target_id, title, body, collapse_id, created_at, expires_at)
       VALUES
-        ('notification-retry', 'brief', 'brief-fictional', 'Fictional brief',
-         'Invented summary.', 'brief-fictional', 1000, 2000);
+        ('notification-retry', 'conversation', 'conversation-fictional', 'Fictional reply',
+         'Invented summary.', 'conversation-fictional', 1000, 2000);
       INSERT INTO notification_deliveries (id, notification_id, device_id, state)
       VALUES ('delivery-retry', 'notification-retry', 'phone-retry', 'pending');
     `);

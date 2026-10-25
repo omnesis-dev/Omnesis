@@ -30,13 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Hub
-import androidx.compose.material.icons.outlined.Loop
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -150,6 +143,7 @@ fun AssistantTurn(
     isStreaming: Boolean = false,
 ) {
     val pillRuns = remember(turn.parts) { computeCitationPillRuns(turn.parts) }
+    val lastAnswerIndex = remember(turn.parts) { lastAnswerTextIndex(turn.parts) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         turn.parts.forEachIndexed { index, part ->
             when (part) {
@@ -166,14 +160,16 @@ fun AssistantTurn(
                 // an in-flight turn (no stopReason yet). The moment anything
                 // follows it — or the turn ends — it fades itself out.
                 is AgentPart.Thinking ->
-                    ThinkingBlock(
+                    if (!turn.interrupted) ThinkingBlock(
                         part.text,
                         active = turn.stopReason == null && index == turn.parts.lastIndex,
                     )
 
                 is AgentPart.Tool ->
-                    if (turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS) {
-                        ToolCard(part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument)
+                    if ((turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS || part.call.interrupted) && !isClarificationResult(part.call) && interruptedToolVisible(part.call)) {
+                        val call = part.call
+                        ToolCard(call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
+                            freeze = call.interrupted, followingAnswerText = lastAnswerIndex > index)
                     }
 
                 // A sub-agent the parent spawned via `spawn_subagent` — a
@@ -188,7 +184,7 @@ fun AssistantTurn(
                 // tool_use, never subagent), so this only affects the live
                 // just-finished turn.
                 is AgentPart.Subagent ->
-                    if (turn.stopReason == null) AgentSubAgentCard(part.card, catalog)
+                    if ((turn.stopReason == null && !turn.interrupted) || (turn.interrupted && part.card.status == "failed" && part.card.failureCode !in setOf("turn_aborted", "canceled"))) AgentSubAgentCard(part.card, catalog)
 
                 // Forward-compat: a part kind the gateway introduced after this build
                 // shipped. Production hides it entirely so an older client never shows
@@ -515,6 +511,7 @@ internal fun ToolCard(
     // no roll-in animation, no self-dismiss — instead of replaying every
     // animation at once on expand.
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
 ) {
     when {
         // A pending `annotate` at the lead slot of a contiguous run surfaces the inline
@@ -538,8 +535,7 @@ internal fun ToolCard(
         call.tool == "annotate" ||
             call.tool == "annotate_many" ||
             call.tool == "cite_record" ||
-            call.tool == "plan" ||
-            call.tool == "join_subagents" ||
+            call.tool in AgentToolCards.silentTools ||
             call.tool == "triggers_list" ||
             call.tool == "trigger_get" ||
             call.tool == "trigger_firings" -> Unit
@@ -551,9 +547,12 @@ internal fun ToolCard(
         call.tool in AGENT_AUTOMATION_TOOLS ->
             AgentWatchCard(call)
 
+        call.interrupted && call.result is AgentToolResult.ErrorResult && genuineToolFailure(call.result) -> AgentToolCallView(call)
+
         call.tool in AgentReducer.EPHEMERAL_TOOLS -> when (call.tool) {
             "search_documents" -> AgentEphemeralSearchCard(call, catalog, onFlushEphemeral, freeze = freeze)
-            "fetch_document" -> AgentEphemeralDocumentCard(call, catalog, onFlushEphemeral, freeze = freeze)
+            "fetch_document", "knowledge_fetch" ->
+                AgentEphemeralDocumentCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "run_sql" -> AgentEphemeralSqlCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "trace_connections" -> AgentEphemeralTrailCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "lookup_people" -> AgentEphemeralPeopleCard(call, onFlushEphemeral, freeze = freeze)
@@ -566,7 +565,7 @@ internal fun ToolCard(
                 AgentEphemeralTemporalCard(call, onFlushEphemeral, freeze = freeze)
             // Batch retrieval: N live per-child cards, each reusing the singular card and animating
             // on its own lifecycle. A batch parent doesn't gate, so it takes no flush handler.
-            "search_many", "fetch_many" -> AgentBatchEphemeralCards(call, catalog, freeze = freeze)
+            "search_many", "fetch_many" -> AgentBatchEphemeralCards(call, catalog, freeze = freeze, followingAnswerText = followingAnswerText)
             else -> AgentEphemeralActionCard(
                 call = call,
                 label = prettyToolName(call.tool),
@@ -666,64 +665,6 @@ private fun annotateManyCount(call: AgentToolCall): Int {
     return fromArgs ?: call.children.size.takeIf { it > 0 } ?: 1
 }
 
-private fun prettyToolName(tool: String): String = when (tool) {
-    "search_documents" -> "Search"
-    "fetch_document" -> "Open document"
-    "trace_connections" -> "Trace connections"
-    "run_sql" -> "Run SQL"
-    "search_loops" -> "Search loops"
-    "fetch_loop" -> "Open loop"
-    "list_loops" -> "List loops"
-    "entity_context" -> "Gather context"
-    "conversation_memory_evidence" -> "Prepare memory"
-    "annotation_search" -> "Search memory"
-    "annotate_durable" -> "Remember document"
-    "annotation_revise" -> "Update document memory"
-    "annotation_retract" -> "Forget document memory"
-    "annotation_supersede" -> "Replace document memory"
-    "annotate_person" -> "Remember person"
-    "person_annotation_revise" -> "Update person memory"
-    "person_annotation_retract" -> "Forget person memory"
-    "person_annotation_supersede" -> "Replace person memory"
-    "open_loop_search" -> "Search loops"
-    "open_loop_fetch" -> "Open loop"
-    "open_loop_create" -> "Create loop"
-    "open_loop_update" -> "Update loop"
-    "open_loop_delete" -> "Delete loop"
-    "open_loop_ledger_append" -> "Note on loop"
-    "brief_list" -> "List briefs"
-    "brief_fetch" -> "Open brief"
-    "brief_create" -> "Create brief"
-    "brief_update" -> "Update brief"
-    "brief_delete" -> "Withdraw brief"
-    "notes_append" -> "Append notes"
-    "notes_rewrite" -> "Rewrite notes"
-    "schedule_agent_run" -> "Schedule follow-up"
-    "temporal_query", "time_index_query" -> "Check dates"
-    "temporal_annotation_add", "time_index_add" -> "Add date note"
-    "temporal_annotation_update", "time_index_update" -> "Update date note"
-    "temporal_annotation_delete", "time_index_delete" -> "Remove date note"
-    else -> tool
-}
+private fun prettyToolName(tool: String): String = AgentToolCards.label(tool)
 
-private fun toolIcon(tool: String): ImageVector = when (tool) {
-    "search_documents" -> Icons.Outlined.Search
-    "fetch_document" -> Icons.Outlined.Description
-    "trace_connections" -> Icons.Outlined.Hub
-    "run_sql" -> Icons.Outlined.TableChart
-    "search_loops", "fetch_loop", "list_loops",
-    "open_loop_search", "open_loop_fetch", "open_loop_create", "open_loop_update",
-    "open_loop_delete", "open_loop_ledger_append" -> Icons.Outlined.Loop
-    "brief_list", "brief_fetch", "brief_create", "brief_update", "brief_delete",
-    "notes_append", "notes_rewrite" -> Icons.Outlined.Description
-    "schedule_agent_run" -> Icons.Outlined.CalendarMonth
-    "entity_context" -> Icons.Outlined.Hub
-    "conversation_memory_evidence", "annotation_search",
-    "annotate_durable", "annotation_revise", "annotation_retract",
-    "annotation_supersede", "annotate_person", "person_annotation_revise",
-    "person_annotation_retract", "person_annotation_supersede" -> Icons.Outlined.Hub
-    "temporal_query", "temporal_annotation_add", "temporal_annotation_update",
-    "temporal_annotation_delete", "time_index_query", "time_index_add",
-    "time_index_update", "time_index_delete" -> Icons.Outlined.CalendarMonth
-    else -> Icons.Outlined.Build
-}
+private fun toolIcon(tool: String): ImageVector = AgentToolCards.icon(tool)

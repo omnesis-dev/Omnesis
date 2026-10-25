@@ -3,13 +3,13 @@
 
 /**
  * The Cognition Steward's own tools — the mutating surface over open loops and
- * briefs, the agent-notes memory, and point-in-time scheduling. Built
+ * observations, the agent-notes memory, and point-in-time scheduling. Built
  * fresh per claimed run so every handle carries the run's id: creates
  * stamp `created_by_run`, ledger appends stamp the run id, and a
  * re-claimed attempt can recognise its own partial work.
  *
- * Only the Cognition Steward gets these handles (V1: only the agent mutates
- * loops/briefs). Every mutating handle declares `mutates: true`, so a
+ * Only the Cognition Steward gets these handles (only the agent mutates
+ * loops/observations in the background). Every mutating handle declares `mutates: true`, so a
  * delegated research sub-agent's tool selection (`selectSubagentTools`)
  * can never include them.
  *
@@ -32,15 +32,51 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { TEMPORAL_KINDS } from "@omnesis/core";
+import { summaryExcerpt } from "@omnesis/agent";
+import { raceAbort } from "../decision-call.js";
+import { readKnowledgeSourceRevision } from "../knowledge/source-revision.js";
+import { annotationEntailmentFailures } from "../../inference/annotation-entailment.js";
+import {
+  annotationVerificationContext,
+  annotationEvidenceFrame,
+} from "../annotation-verification.js";
+import {
+  captureOutcomeWriteFence,
+  type OutcomeWriteFence,
+} from "../storage/outcome-write-fence.js";
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
+import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
+import { documentRecordContext } from "../record-check/document-context.js";
+import {
+  outcomeProposal,
+  prepareOutcomeRecordContext,
+  type OutcomeProposal,
+} from "../record-check/outcome-context.js";
+import {
+  personRecordContext,
+  readPersonReconciliationContext,
+} from "../record-check/person-context.js";
+import { makeOutcomeAssessment, outcomeReviewBatch } from "../knowledge/outcome-assessment.js";
+import { KnowledgeStorageError } from "../knowledge/types.js";
+import {
+  captureDecisionPayloadSubjects,
+  decisionPayloadErasureGeneration,
+} from "../decision-payload.js";
 import { getOpenLoop, listOpenLoopLedger, searchOpenLoopsLexical } from "../storage/open-loops.js";
+import { getPersonNames } from "../../data/repositories/PersonRepository.js";
 import { searchRetiredLoopsLexical } from "../storage/retired-loops.js";
-import { findActiveBriefsForLoops, getBrief, listBriefs } from "../storage/briefs.js";
+import {
+  findOpenObservationsForLoops,
+  listObservations,
+  listOpenObservations,
+} from "../storage/observations.js";
 import { searchOpenLoopsByIdentity } from "../reconcile/identity-candidates.js";
 import { partitionPersonRefs, resolveLoopPersonRef } from "../person-refs.js";
 import { containsNormalizedForContent } from "../quote-match.js";
 import {
   getDocAnnotation,
   listDocAnnotationEvidence,
+  listAnnotationsUnderReviewForDoc,
   listLiveAnnotationsForDoc,
   listLiveSameClaimTypeAnnotationsForDoc,
   type AnnotationClaimBasis,
@@ -51,13 +87,16 @@ import {
 } from "../storage/annotations.js";
 import {
   getPersonAnnotation,
-  listLivePersonAnnotationsForPerson,
+  findUnchangedPersonAnnotation,
+  DEFAULT_PERSON_PROFILE_BUDGET,
+  getPersonProfileStats,
+  enforcePersonProfileBudget,
   listLiveSameClaimTypePersonAnnotations,
   listPersonAnnotationEvidence,
+  listPersonAnnotationsUnderReview,
   type PersonAnnotationRow,
   type UpdatePersonAnnotationPatch,
 } from "../storage/person-annotations.js";
-import { listLiveBriefClaims, type BriefClaimInput } from "../storage/brief-claims.js";
 import { COGNITION_NOTES_OVERFLOW_FACTOR } from "../storage/notes.js";
 import {
   getCognitionRun,
@@ -69,10 +108,10 @@ import {
   parseCognitionTimeBasedRunPayload,
   SCHEDULED_INSTRUCTION_MAX_CHARS,
   SCHEDULED_INSTRUCTION_REQUEST_MAX_CHARS,
-  type CognitionBriefLane,
 } from "../run-payloads.js";
 import { fetchSelfPersonId } from "../../domain/InteractionScoreService.js";
-import { OPEN_LOOP_DOCUMENT_TYPE } from "../open-loop-source/source-meta.js";
+import { OPEN_LOOP_DOCUMENT_TYPE, OPEN_LOOP_SOURCE_ID } from "../open-loop-source/source-meta.js";
+import { KNOWLEDGE_DOCUMENT_TYPE, KNOWLEDGE_SOURCE_ID } from "../knowledge/source-meta.js";
 import {
   expandCanonical,
   getTemporalAnnotationById,
@@ -81,7 +120,22 @@ import {
   queryTemporalAnnotationReconcileCandidates,
   type TemporalAnnotation,
 } from "../../enrichment/temporal-annotations/storage.js";
-import { runBriefJudgeGate, type BriefJudge } from "./brief-judge.js";
+import { isOwnedTask } from "../storage/types.js";
+import { readTaskAuthorship } from "../storage/tasks.js";
+import {
+  decideTaskAutoApply,
+  planTaskAutoApply,
+  taskProposalFor,
+  type TaskEvidenceVerdict,
+} from "../tasks/auto-apply.js";
+import { TASK_NOTE_HISTORY, type TaskChecks } from "../tasks/task-checks.js";
+import { isWithheldSuggestion } from "../storage/interest.js";
+import { jointContextualEvidence } from "./annotation-gate-evidence.js";
+import { assessPersonWithdrawal } from "./person-withdrawal.js";
+import { PersonProfileReads } from "./person-profile-reads.js";
+import type { TaskProposeGate, TaskProposeVerdict } from "../tasks/task-propose.js";
+import type { InterestLookup } from "../interest/engine.js";
+import type { ObservationScoringInput, ObservationScoringResult } from "../observations/noting.js";
 import type { ConsumedAnnotationRef, RunConsumptionTracker } from "./consumption.js";
 import type { IdentityCandidate } from "../reconcile/identity-candidates.js";
 import type Database from "better-sqlite3";
@@ -92,11 +146,51 @@ import type {
   TemporalPrecision,
   ToolResult,
 } from "@omnesis/core";
-import type { SearchPort, TemporalReadPort, ToolHandle } from "@omnesis/agent";
+import type { SearchPort, TemporalReadPort, ToolContext, ToolHandle } from "@omnesis/agent";
 import type { WriteGate } from "../../write-gate.js";
 import type { OpenLoopMirror } from "./mirror.js";
 import type { CheckRecord, RecordCheckInput } from "../record-check/check.js";
-import type { BriefRow, BriefState, Clock, OpenLoopRow, OpenLoopState } from "../storage/types.js";
+import type {
+  Clock,
+  ObservationRow,
+  OpenLoopRow,
+  OpenLoopState,
+  ProposedTaskChange,
+} from "../storage/types.js";
+
+// Tool-call summaries: the human words a card shows for the call — a loop's
+// title, a memory's text, a document's title — never an opaque id. Each lookup
+// is one indexed read; a missing row summarizes as nothing.
+function summaryField(args: unknown, key: string): string | undefined {
+  const value = (args as Record<string, unknown> | null)?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+function loopTitleSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? (getOpenLoop(db, id)?.title ?? "") : "";
+}
+function docAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? summaryExcerpt(getDocAnnotation(db, id)?.claimText ?? "") : "";
+}
+function personAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? summaryExcerpt(getPersonAnnotation(db, id)?.claimText ?? "") : "";
+}
+function temporalAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "annotationId");
+  return id ? summaryExcerpt(getTemporalAnnotationById(db, id)?.sentence ?? "") : "";
+}
+function documentTitleSummary(db: Database.Database, id: string): string {
+  return (
+    db
+      .prepare<[string], { title: string | null }>("SELECT title FROM documents WHERE id = ?")
+      .get(id)?.title ?? ""
+  );
+}
+function personNameSummary(db: Database.Database, id: string): string {
+  return getPersonNames(db, [id]).get(id) ?? "";
+}
 
 type Db = Database.Database;
 
@@ -108,10 +202,11 @@ export type CognitionWriteOps = Pick<
   | "updateOpenLoop"
   | "appendOpenLoopLedger"
   | "deleteOpenLoop"
-  | "createBrief"
-  | "updateBrief"
-  | "retireBrief"
-  | "retractBriefsForResolvedLoop"
+  | "createObservation"
+  | "transitionObservation"
+  | "dropObservationsForResolvedLoop"
+  | "proposeTaskChange"
+  | "autoApplyTaskChange"
   | "writeCognitionNotes"
   | "appendCognitionNotes"
   | "editCognitionNotes"
@@ -134,6 +229,7 @@ export type CognitionWriteOps = Pick<
 >;
 
 export interface CognitionToolDeps {
+  personProfileReads?: PersonProfileReads;
   /** Source-owned speaker/provenance check in addition to document quote matching. */
   validateAnnotationEvidence?: (
     documentId: string,
@@ -153,18 +249,11 @@ export interface CognitionToolDeps {
   /** The claimed run these handles execute inside. */
   runId: string;
   /**
-   * The editorial lane this run's briefs belong to ({@link cognitionBriefLane}),
-   * selecting which push-bar gates `brief_create` faces. Required, so the
-   * compiler — not a defensive default — is what stops a new caller from
-   * silently landing on a laxer bar than it meant to.
+   * Scores a new observation with the decision model before it is stored,
+   * and computes whether it would have earned a same-day push. Absent (no
+   * decision model, or unit tests) the observation is stored unscored.
    */
-  briefLane: CognitionBriefLane;
-  /**
-   * Set only on a sweep run. A judge HOLD is the one thing a sweep produced
-   * that leaves no trace in the artifact stores, so it is tallied here rather
-   * than re-derived at settle time.
-   */
-  sweepId?: string;
+  scoreObservation?: (input: ObservationScoringInput) => Promise<ObservationScoringResult>;
   /**
    * The open loop this run is itself scoped to, if any (a loop-scoped
    * `time_based` or decay check). Lets `schedule_agent_run` auto-attach a
@@ -187,7 +276,7 @@ export interface CognitionToolDeps {
   reconcileNeighborFanout?: number;
   /** Deadline-proximity window (ms) for identity reconcile (config-derived). */
   reconcileDeadlineWindowMs?: number;
-  /** Id generator for created loops/briefs/scheduled runs (tests pin it). */
+  /** Id generator for created loops/observations/scheduled runs (tests pin it). */
   idGen?: () => string;
   /** Expose the `annotate_durable` tool and accept its writes. */
   annotationsEnabled?: boolean;
@@ -204,13 +293,14 @@ export interface CognitionToolDeps {
    * below this is refused outright rather than persisted as a weak prior.
    */
   annotationConfidenceFloor?: number;
+  personProfileBudget?: { maxFacts: number; maxCharacters: number };
   /**
    * Resolve the entailment verifier for the annotation firewall, fresh per
    * call (so a model swap takes effect without rebuilding the toolset).
    * Absent, or resolving to null (role unset), the gate is skipped and
    * annotation writes behave exactly as without it.
    */
-  getEntailmentVerifier?: () => Promise<EntailCapability | null>;
+  getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
   /**
    * The record check bound to this run, consulted when a NEW annotation is
    * saved: in enforce mode its answer decides whether the write happens.
@@ -219,16 +309,32 @@ export interface CognitionToolDeps {
    */
   checkRecord?: CheckRecord;
   /**
-   * Resolve the brief judge (the push bar), read live so a config toggle or
-   * model swap takes effect on the next brief. Absent, or resolving to null
-   * (judge disabled or no backend), the gate is skipped and briefs ship
-   * unjudged — exactly as before the judge existed.
+   * Apply a Brain change to one of the user's own tasks directly, under the
+   * auto-apply policy, instead of proposing it (config `brain.tasks.autoApply`). Absent or
+   * false, every such change is a proposal.
    */
-  getBriefJudge?: () => BriefJudge | null;
+  taskAutoApply?: boolean;
+  /**
+   * Decision-model checks on writes to the user's own tasks: whether a new
+   * title still names the same task before it applies on its own, and whether
+   * a note adds anything to the task's history. Absent, neither runs.
+   */
+  taskChecks?: TaskChecks;
+  /**
+   * The gate on new suggestions (`open_loop_create`): from the owner's past
+   * reactions, whether a suggestion is adopted as their task at once, offered,
+   * or withheld. Absent, every suggestion is offered.
+   */
+  taskPropose?: TaskProposeGate;
+  /**
+   * The owner's past reactions, read by the gates on tasks. Absent, they
+   * judge without them.
+   */
+  interest?: InterestLookup;
   /**
    * Per-run surfaced-prior tracker (consumption provenance). Search results,
    * prompt-inlined priors and self-memory become candidates that a later
-   * brief/loop mutation can explicitly select as material dependencies.
+   * observation/loop mutation can explicitly select as material dependencies.
    * Absent (pure-composition unit tests) ⇒ only an explicit empty selection
    * is valid and no edges are recorded.
    */
@@ -242,9 +348,8 @@ export const COGNITION_MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   "open_loop_update",
   "open_loop_ledger_append",
   "open_loop_delete",
-  "brief_create",
-  "brief_update",
-  "brief_delete",
+  "observation_note",
+  "observation_withdraw",
   "notes_append",
   "notes_rewrite",
   "notes_edit",
@@ -264,6 +369,8 @@ export const COGNITION_MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   // here — listed so the authority filter covers it like every other verb
   // that writes durable state.
   "merge_adjudicate",
+  // Added by the runtime for the morning run alone, like merge_adjudicate.
+  "morning_brief_send",
 ]);
 
 // ── shared schema fragments ────────────────────────────────────────────────
@@ -306,36 +413,6 @@ const annotationDependenciesField = z
     "The complete set of annotation priors that materially informed THIS output mutation. " +
       "Use only ids surfaced in this run; pass [] when none did. Do not include priors merely visible in context.",
   );
-
-/**
- * One asserted claim on a brief write — the same evidence contract as
- * `annotate_durable`, applied to what the brief tells the user.
- */
-const assertedClaimSchema = z
-  .object({
-    claimText: z
-      .string()
-      .min(1)
-      .max(1000)
-      .describe(
-        "One factual, document-derived statement the brief asserts — concise, and never more than the evidence establishes.",
-      ),
-    evidenceDocId: z.string().min(1).describe("Document id the claim is grounded in."),
-    evidenceQuote: z
-      .string()
-      .min(12)
-      .max(500)
-      .describe(
-        "A VERBATIM quote (a substantive span, not a stray word) from evidenceDocId that establishes the FULL claim — not merely mentions its topic.",
-      ),
-    claimBasis: claimBasisEnum.describe(
-      "How far the claim reasons from its evidence: 'quoted' (the evidence essentially states it), 'inferred' (one licensed deduction), or 'synthesized' (assembled across sources). Confidence is capped tighter the further down this ladder.",
-    ),
-    confidence: fraction.describe("Confidence in the claim (0-1; clamped per claimBasis)."),
-  })
-  .strict();
-
-const assertedClaimsField = z.array(assertedClaimSchema).max(24);
 
 function isoToMs(iso: string): number {
   return Date.parse(iso);
@@ -385,6 +462,19 @@ function partitionLoopIds(db: Db, ids: readonly string[]): { known: string[]; dr
   return { known, dropped };
 }
 
+/**
+ * True when every cited document was written or sent by the user: each has
+ * an author or sender person marked as self.
+ */
+function citationsAuthoredBySelf(db: Db, docIds: readonly string[]): boolean {
+  if (docIds.length === 0) return false;
+  const stmt = db.prepare<[string], { one: number }>(
+    `SELECT 1 AS one FROM document_people dp JOIN people p ON p.id = dp.person_id
+      WHERE dp.document_id = ? AND dp.role IN ('author','sender') AND p.is_self = 1 LIMIT 1`,
+  );
+  return docIds.every((id) => stmt.get(id) !== undefined);
+}
+
 // ── annotation firewall helpers ────────────────────────────────────────
 
 function docExists(db: Db, id: string): boolean {
@@ -397,28 +487,43 @@ function docExists(db: Db, id: string): boolean {
 interface EvidenceDoc {
   content: string;
   contentHash: string;
-  documentType: string | null;
+  generated: boolean;
 }
 function fetchEvidenceDoc(db: Db, id: string): EvidenceDoc | null {
+  const sourceColumn = db
+    .prepare<[], { name: string }>("PRAGMA table_info(documents)")
+    .all()
+    .some((column) => column.name === "source_id")
+    ? "source_id"
+    : "NULL";
   const row = db
     .prepare<
       [string],
-      { content: string | null; content_hash: string; document_type: string | null }
-    >("SELECT content, content_hash, json_extract(metadata, '$.documentType') AS document_type FROM documents WHERE id = ?")
+      {
+        content: string | null;
+        content_hash: string;
+        document_type: string | null;
+        source_id: string | null;
+      }
+    >(
+      `SELECT content, content_hash, json_extract(metadata, '$.documentType') AS document_type, ${sourceColumn} AS source_id FROM documents WHERE id = ?`,
+    )
     .get(id);
   return row === undefined
     ? null
     : {
         content: row.content ?? "",
         contentHash: row.content_hash,
-        documentType: row.document_type,
+        generated:
+          [OPEN_LOOP_DOCUMENT_TYPE, KNOWLEDGE_DOCUMENT_TYPE].includes(row.document_type ?? "") ||
+          [OPEN_LOOP_SOURCE_ID, KNOWLEDGE_SOURCE_ID].includes(row.source_id ?? ""),
       };
 }
 
 /** The evidence firewall's quote test, memoized on the doc's content hash so a
  *  run's repeated checks against one evidence doc normalize its body once. */
 function quoteInEvidence(doc: EvidenceDoc, quote: string): boolean {
-  return containsNormalizedForContent(doc.contentHash, doc.content, quote);
+  return !doc.generated && containsNormalizedForContent(doc.contentHash, doc.content, quote);
 }
 
 /** Grounding atoms beyond the primary pair — capped so a claim stays reviewable. */
@@ -442,7 +547,7 @@ const additionalEvidenceField = z
 /**
  * The per-item cheap-SQL teeth over an annotation's ADDITIONAL evidence
  * atoms — every item is checked before any verifier call: the document must
- * exist, must be a real source (never the agent's own derived open-loop
+ * exist, must be a real source (never a generated synthesis
  * mirror), and the quote must appear in it (`quoteInEvidence`). A refusal
  * names the failing item's index so the model can fix exactly that atom and
  * re-call. Returns null when every item passes.
@@ -460,11 +565,11 @@ function vetAdditionalEvidence(
         message: `additionalEvidence[${i}]: document ${item.docId} does not exist — cite a real document id`,
       };
     }
-    if (doc.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+    if (doc.generated) {
       return {
         kind: "error",
         code: "invalid_evidence",
-        message: `additionalEvidence[${i}]: ${item.docId} is a derived open-loop record, not a source document — ground the observation on the original source`,
+        message: `additionalEvidence[${i}]: ${item.docId} is a generated synthesis record, not a source document — ground the observation on the original source`,
       };
     }
     if (!quoteInEvidence(doc, item.quote)) {
@@ -478,15 +583,18 @@ function vetAdditionalEvidence(
   return null;
 }
 
-/**
- * The entailment gate's evidence text for a multi-atom grounding: ONE gate
- * call judges the claim against ALL quotes jointly (the verifier contract is
- * evidence ⊨ claim, and a synthesized claim's atoms ground it together). A
- * single atom passes through byte-identically, so scalar-only calls are
- * unchanged.
- */
-function concatenatedGateEvidence(quotes: readonly string[]): string {
-  return quotes.length === 1 ? quotes[0]! : quotes.map((q, i) => `[${i + 1}] ${q}`).join("\n");
+/** Call only after the source-read and quote-membership firewalls pass. */
+function annotationGateEvidence(
+  db: Db,
+  atoms: readonly { docId: string; quote: string }[],
+  structured = true,
+): string {
+  return (structured ? annotationEvidenceFrame : jointContextualEvidence)(
+    atoms.map((atom) => ({
+      quote: atom.quote,
+      source: fetchEvidenceDoc(db, atom.docId)?.content ?? "",
+    })),
+  );
 }
 
 // Fallbacks when the deps carry no config-derived values — mirror
@@ -553,7 +661,11 @@ type EntailmentGateOutcome =
       state: Extract<AnnotationVerificationState, "verified" | "unverified"> | null;
       verifiedAt: number | null;
     }
-  | { kind: "refused"; verdict: "neutral" | "contradiction" };
+  | {
+      kind: "refused";
+      verdict: "neutral" | "contradiction";
+      assertions?: ReturnType<typeof annotationEntailmentFailures>;
+    };
 
 /**
  * The entailment gate: after `quoteInEvidence` proves the
@@ -565,15 +677,21 @@ type EntailmentGateOutcome =
  */
 async function runEntailmentGate(
   deps: Pick<CognitionToolDeps, "getEntailmentVerifier" | "log">,
-  input: { claim: string; evidence: string },
+  input: { claim: string; evidence: string; context?: string; assessment?: "annotation_atomic" },
   now: number,
+  callerSignal?: AbortSignal,
 ): Promise<EntailmentGateOutcome> {
+  callerSignal?.throwIfAborted();
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, AbortSignal.timeout(ENTAILMENT_GATE_TIMEOUT_MS)])
+    : AbortSignal.timeout(ENTAILMENT_GATE_TIMEOUT_MS);
   if (!deps.getEntailmentVerifier) return { kind: "pass", state: null, verifiedAt: null };
   let verifier: EntailCapability | null = null;
   let resolveFailed = false;
   try {
-    verifier = await deps.getEntailmentVerifier();
+    verifier = await raceAbort(deps.getEntailmentVerifier(signal), signal);
   } catch (err) {
+    callerSignal?.throwIfAborted();
     resolveFailed = true;
     deps.log.warn(
       `entailment verifier resolution failed — marking write unverified: ${err instanceof Error ? err.message : String(err)}`,
@@ -594,12 +712,19 @@ async function runEntailmentGate(
     // generates on the main event loop — see llama-cpp.ts — so a local judge
     // trades a few seconds of gateway latency per write until the local
     // models move off-thread.)
-    const verdict = await withDeadline(verifier.verify(input), ENTAILMENT_GATE_TIMEOUT_MS);
+    const verdict = await raceAbort(verifier.verify({ ...input, signal }), signal);
     if (verdict.label === "entailment") {
       return { kind: "pass", state: "verified", verifiedAt: now };
     }
-    return { kind: "refused", verdict: verdict.label };
+    return {
+      kind: "refused",
+      verdict: verdict.label,
+      ...(input.assessment === "annotation_atomic" && verdict.raw
+        ? { assertions: annotationEntailmentFailures(verdict.raw, input.claim) }
+        : {}),
+    };
   } catch (err) {
+    callerSignal?.throwIfAborted();
     deps.log.warn(
       `entailment verification failed — marking write unverified: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -610,35 +735,62 @@ async function runEntailmentGate(
 /** Hard ceiling on one entailment check; beyond it the gate fails open. */
 const ENTAILMENT_GATE_TIMEOUT_MS = 45_000;
 
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`entailment check timed out after ${ms}ms`)), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
+/** Capture privacy ancestry before evidence reads or asynchronous verification. */
+function captureRecordCheckPayload(
+  deps: Pick<CognitionToolDeps, "db" | "checkRecord">,
+  sourceIds: readonly string[],
+) {
+  if (!deps.checkRecord || !(deps.checkRecord.needsDocumentContext?.() ?? true)) return undefined;
+  return (
+    captureDecisionPayloadSubjects(
+      deps.db,
+      { sourceIds },
+      decisionPayloadErasureGeneration(deps.db),
+    ) ?? undefined
+  );
 }
 
-/**
- * Ask the run's record check about a new record. Returns the tool result that
- * replaces the write when the check drops it, or null to save it.
- */
+/** Ask the record check; return its refusal instead of writing a dropped record. */
 async function recordCheckRefusal(
   deps: Pick<CognitionToolDeps, "checkRecord">,
   input: RecordCheckInput,
   signal: AbortSignal | undefined,
+  onAssessment?: (assessment: { policy: string; decisionId: string }) => void,
 ): Promise<ToolResult | null> {
   if (!deps.checkRecord) return null;
   const outcome = await deps.checkRecord(input, signal);
-  if (outcome.save) return null;
+  if (outcome.save) {
+    if (outcome.assessment) onAssessment?.(outcome.assessment);
+    return null;
+  }
+  if (outcome.questionId === "profile_distillation")
+    return ok("record.not_saved", {
+      reason: `Person fact is not sufficiently distilled or distinct in the final profile (profile_distillation score ${outcome.score.toFixed(2)}, below ${outcome.threshold})`,
+      guidance:
+        "Read the complete current profile. Distill the useful person-level meaning and consolidate overlapping facts with annotate_person supersedes:[ids], preserving useful supported scope. Keep corroborating source details in evidence instead of enumerating them in profile prose. Preserve historical uncertainty; do not invent continuous dates or current status. Existing facts are unchanged. Submit a substantively corrected profile, not the same inventory reworded.",
+    });
+  if (outcome.questionId === "deadline_support")
+    return ok("record.not_saved", {
+      reason: `Outcome deadline lacks support for this exact action and temporal role (deadline_support score ${outcome.score.toFixed(2)}, below ${outcome.threshold})`,
+      guidance:
+        "Keep a useful outcome, but clear its unsupported deadline with null or retrieve evidence for the actual action due time. Preserve source precision and conditions. Expected events and monitoring times are not action deadlines; schedule review separately. Submit a substantively corrected proposal, not the same date reworded.",
+    });
+  if (outcome.questionId === "transition_integrity")
+    return ok("record.not_saved", {
+      reason: `Outcome revision has not preserved or justified changing the supported action, progress or scope (transition_integrity score ${outcome.score.toFixed(2)}, below ${outcome.threshold})`,
+      guidance:
+        "Existing content is unchanged. Re-read the current outcome and its original supporting evidence, reconcile the missing action or progress, then submit a substantively corrected revision. Do not repeat the same proposal or merely rephrase it to bypass this check.",
+    });
   return ok("record.not_saved", {
     reason:
-      `judged not to belong in the owner's life memory (score ${outcome.score.toFixed(2)}, ` +
+      (input.record.type === "doc-fact"
+        ? "judged not to add sufficient value beyond the document source"
+        : input.record.type === "person-fact"
+          ? "judged not to add useful person-specific profile context"
+          : input.record.type === "outcome"
+            ? "judged not to establish this actor, outcome or status from the evidence"
+            : "judged not to belong in the owner's life memory") +
+      ` (${outcome.questionId ? `${outcome.questionId} ` : ""}score ${outcome.score.toFixed(2)}, ` +
       `below ${outcome.threshold})`,
     guidance:
       "Not saved. Do not retry or reword this record; continue with anything else the " +
@@ -647,179 +799,21 @@ async function recordCheckRefusal(
 }
 
 /** The re-askable refusal the annotation tools return on a failed entailment check. */
-function entailmentRefusal(verdict: "neutral" | "contradiction"): ToolResult {
+function entailmentRefusal(
+  verdict: "neutral" | "contradiction",
+  assertions?: ReturnType<typeof annotationEntailmentFailures>,
+): ToolResult {
   return {
     kind: "error",
     code: "evidence_does_not_entail_claim",
     message:
       `the evidence quote does not establish the claim at its stated modality ` +
       `(verifier verdict: ${verdict}) — weaken the claim to what the quote actually ` +
-      `supports, or cite stronger evidence that establishes the full claim`,
+      `supports, or cite stronger evidence that establishes the full claim` +
+      (assertions?.length
+        ? `. Unsupported candidate assertions: ${JSON.stringify(assertions)}. Revise those assertions while preserving supported meaning; do not repeat the unchanged proposal.`
+        : ""),
   };
-}
-
-// ── asserted-claim teeth (brief_create / brief_update) ─────────────────────
-
-/** One asserted claim as the brief tools accept it (zod-validated). */
-interface AssertedClaimArg {
-  claimText: string;
-  evidenceDocId: string;
-  evidenceQuote: string;
-  claimBasis: AnnotationClaimBasis;
-  confidence: number;
-}
-
-/**
- * One failing asserted claim of a refused set: which claim (index + text),
- * why (a re-askable reason under a stable `code`), and the verifier verdict
- * when the failure came from the entailment gate.
- */
-interface AssertedClaimFailure {
-  index: number;
-  claimText: string;
-  code: string;
-  reason: string;
-  verdict?: "neutral" | "contradiction";
-}
-
-/**
- * ONE refusal for a whole vetted set, naming EVERY failing claim (index +
- * text + reason), so the agent fixes them all in a single re-call instead of
- * discovering them one refusal at a time. A single-failure refusal keeps
- * that failure's specific code; a multi-failure one carries the aggregate
- * `asserted_claims_refused`.
- */
-function assertedClaimsRefusal(failures: readonly AssertedClaimFailure[]): ToolResult {
-  const lines = failures.map((f) => {
-    const shown = f.claimText.length > 120 ? `${f.claimText.slice(0, 120)}…` : f.claimText;
-    const verdict = f.verdict !== undefined ? ` (verifier verdict: ${f.verdict})` : "";
-    return `assertedClaims[${f.index}] ("${shown}"): ${f.reason}${verdict}`;
-  });
-  return {
-    kind: "error",
-    code: failures.length === 1 ? failures[0]!.code : "asserted_claims_refused",
-    message: `${lines.join("\n")}\n— fix (or drop) each claim named above and re-call with the corrected set`,
-  };
-}
-
-/**
- * The brief-claims firewall — the same teeth annotations get, applied to
- * every asserted claim of a brief write. Cheap SQL checks run over the WHOLE
- * set first (evidence doc exists, quote appears in it, per-basis confidence
- * clamp, the persistence floor), so a routine refusal never spends a
- * verifier call; only then does the entailment gate judge each surviving
- * quote ⊨ claim (one call per claim, spend-recorded like every gate call).
- * Each stage collects EVERY failing claim and refuses once naming them all —
- * the gate stage keeps judging past a refused claim, so a refusal costs the
- * same ≤ one-call-per-claim a passing set does and a re-call never pays for
- * failures it could have been told about the first time. A claim that
- * passes with a `verified` verdict is born-verified. A configured verifier
- * that is unavailable yields an `unverified` row so callers can hold the
- * user-facing write without conflating an outage with a factual rejection;
- * with no verifier configured the stamp is null (no gate, no stamp).
- */
-async function vetAssertedClaims(
-  deps: Pick<
-    CognitionToolDeps,
-    | "db"
-    | "getEntailmentVerifier"
-    | "log"
-    | "annotationBasisCeilings"
-    | "annotationConfidenceCeiling"
-    | "annotationConfidenceFloor"
-  >,
-  claims: readonly AssertedClaimArg[],
-  now: number,
-): Promise<
-  { ok: true; rows: Array<Omit<BriefClaimInput, "id">> } | { ok: false; refusal: ToolResult }
-> {
-  const floor = deps.annotationConfidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR;
-  const clamped: number[] = [];
-  const cheapFailures: AssertedClaimFailure[] = [];
-  for (const [i, c] of claims.entries()) {
-    const { confidence } = clampConfidence(deps, c.claimBasis, c.confidence);
-    clamped.push(confidence);
-    const evidence = fetchEvidenceDoc(deps.db, c.evidenceDocId);
-    if (evidence === null) {
-      cheapFailures.push({
-        index: i,
-        claimText: c.claimText,
-        code: "not_found",
-        reason: `evidence document ${c.evidenceDocId} does not exist — cite a real document id`,
-      });
-      continue;
-    }
-    if (!quoteInEvidence(evidence, c.evidenceQuote)) {
-      cheapFailures.push({
-        index: i,
-        claimText: c.claimText,
-        code: "evidence_not_found",
-        reason: `evidenceQuote was not found in ${c.evidenceDocId} — quote the source text exactly (whitespace-insensitive; curly/straight quotes and dash variants are also normalized — other punctuation must match the source exactly)`,
-      });
-      continue;
-    }
-    // Abstention floor, mirroring the annotation path: a claim this weak
-    // after clamping is refused outright, never rendered as a ~0% assertion.
-    if (confidence < floor) {
-      cheapFailures.push({
-        index: i,
-        claimText: c.claimText,
-        code: "insufficient_confidence_to_persist",
-        reason:
-          `confidence ${confidence.toFixed(2)} (after the claim-basis ceiling) is below the ` +
-          `persistence floor ${floor.toFixed(2)} — cite stronger evidence or drop the claim`,
-      });
-    }
-  }
-  if (cheapFailures.length > 0) return { ok: false, refusal: assertedClaimsRefusal(cheapFailures) };
-  const gateFailures: AssertedClaimFailure[] = [];
-  const rows: Array<Omit<BriefClaimInput, "id">> = [];
-  for (const [i, c] of claims.entries()) {
-    const gate = await runEntailmentGate(
-      deps,
-      { claim: c.claimText, evidence: c.evidenceQuote },
-      now,
-    );
-    if (gate.kind === "refused") {
-      gateFailures.push({
-        index: i,
-        claimText: c.claimText,
-        code: "evidence_does_not_entail_claim",
-        reason:
-          "the evidence quote does not establish this claim — weaken the claim to what the " +
-          "quote actually supports, or cite stronger evidence",
-        verdict: gate.verdict,
-      });
-      continue;
-    }
-    rows.push({
-      claimText: c.claimText,
-      evidenceDocId: c.evidenceDocId,
-      evidenceQuote: c.evidenceQuote,
-      claimBasis: c.claimBasis,
-      confidence: clamped[i]!,
-      verificationState: gate.state,
-    });
-  }
-  if (gateFailures.length > 0) return { ok: false, refusal: assertedClaimsRefusal(gateFailures) };
-  return { ok: true, rows };
-}
-
-/**
- * A configured verifier that could not decide is an operational hold for a
- * user-facing Brief, not permission to publish an unchecked factual claim.
- * Null remains the intentional no-gate state and does not hold the write.
- */
-function unverifiedBriefClaimsHold(
-  rows: ReadonlyArray<Omit<BriefClaimInput, "id">>,
-): ToolResult | null {
-  const count = rows.filter((row) => row.verificationState === "unverified").length;
-  if (count === 0) return null;
-  return ok("brief.held_for_verification", {
-    reason: `${count} asserted ${count === 1 ? "claim could" : "claims could"} not be verified because the configured entailment verifier was unavailable`,
-    guidance:
-      "Not written — do not ship or retry this Brief during the current run. Keep any useful loop state, and let a later run reconsider the card after factual verification is available.",
-  });
 }
 
 /**
@@ -830,14 +824,20 @@ function unverifiedBriefClaimsHold(
  * scheduling / self-sourced entries stay legal). Returns null on pass — the
  * teeth are write-time only; no verification stamp is stored.
  */
-async function vetTemporalAnnotationEvidence(
-  deps: Pick<CognitionToolDeps, "db" | "getEntailmentVerifier" | "log">,
+function vetTemporalSourceEvidence(
+  db: Db,
   evidence: { docId: string; quote: string },
-  sentence: string,
-  now: number,
-): Promise<ToolResult | null> {
-  const doc = fetchEvidenceDoc(deps.db, evidence.docId);
+): ToolResult | null {
+  if (!isKnowledgeEvidenceReadable(db, evidence.docId))
+    return notFound("evidence document", evidence.docId);
+  const doc = fetchEvidenceDoc(db, evidence.docId);
   if (doc === null) return notFound("evidence document", evidence.docId);
+  if (doc.generated)
+    return {
+      kind: "error",
+      code: "invalid_evidence",
+      message: "Ground entries in original source evidence, not a generated synthesis record",
+    };
   if (!quoteInEvidence(doc, evidence.quote)) {
     return {
       kind: "error",
@@ -849,7 +849,37 @@ async function vetTemporalAnnotationEvidence(
         "a document-derived entry must rest on what the document actually says",
     };
   }
-  const gate = await runEntailmentGate(deps, { claim: sentence, evidence: evidence.quote }, now);
+  return null;
+}
+
+async function vetTemporalAnnotationEvidence(
+  deps: Pick<CognitionToolDeps, "db" | "getEntailmentVerifier" | "log">,
+  evidence: { docId: string; quote: string },
+  sentence: string,
+  now: number,
+  signal?: AbortSignal,
+): Promise<ToolResult | null> {
+  signal?.throwIfAborted();
+  const refusal = vetTemporalSourceEvidence(deps.db, evidence);
+  if (refusal) return refusal;
+  const revision = readKnowledgeSourceRevision(deps.db, evidence.docId);
+  const gate = await runEntailmentGate(
+    deps,
+    { claim: sentence, evidence: evidence.quote },
+    now,
+    signal,
+  );
+  signal?.throwIfAborted();
+  if (
+    !isKnowledgeEvidenceReadable(deps.db, evidence.docId) ||
+    readKnowledgeSourceRevision(deps.db, evidence.docId) !== revision
+  )
+    return {
+      kind: "error",
+      code: "revision_conflict",
+      message:
+        "Temporal source evidence changed during assessment; reread and reconcile before retrying.",
+    };
   if (gate.kind === "refused") {
     return {
       kind: "error",
@@ -861,6 +891,36 @@ async function vetTemporalAnnotationEvidence(
     };
   }
   return null;
+}
+
+/**
+ * Ask the entailment verifier whether the quoted evidence establishes the
+ * claim a task change rests on. Each quote must first be found in a
+ * readable source document; a quote that is not, a verifier that is not
+ * configured or cannot answer, all come back without an entailment verdict,
+ * which leaves the change a proposal.
+ */
+async function verifyTaskEvidence(
+  deps: Pick<CognitionToolDeps, "db" | "getEntailmentVerifier" | "log" | "clock">,
+  quotes: readonly { docId: string; quote: string }[],
+  claim: string,
+  signal?: AbortSignal,
+): Promise<{ verdict: TaskEvidenceVerdict; why?: string }> {
+  for (const quote of quotes) {
+    const refusal = vetTemporalSourceEvidence(deps.db, quote);
+    if (refusal)
+      return {
+        verdict: "unavailable",
+        why: `a quote could not be checked against ${quote.docId}: ${refusal.kind === "error" ? refusal.message : "invalid evidence"}`,
+      };
+  }
+  const evidence =
+    quotes.length === 1
+      ? quotes[0]!.quote
+      : quotes.map((q, i) => `[${i + 1}] ${q.quote}`).join("\n");
+  const gate = await runEntailmentGate(deps, { claim, evidence }, deps.clock(), signal);
+  if (gate.kind === "refused") return { verdict: gate.verdict };
+  return gate.state === "verified" ? { verdict: "entailment" } : { verdict: "unavailable" };
 }
 
 /**
@@ -922,7 +982,7 @@ function reviseConflictGuidance(supersedeTool: string): string {
 /**
  * The one-belief-invariant refusal: a same-subject, same-claimType live
  * annotation already stands in the way of a create or a claimType-changing
- * revise. Mirrors the `brief_create` loop-conflict contract — a structured
+ * revise. A structured
  * `ok` (not an error) carrying the standing candidates plus re-ask guidance.
  */
 function annotationConflictRefusal(
@@ -960,23 +1020,13 @@ const SUPERSEDE_LOST_GUIDANCE =
 
 // ── projections the model reads ────────────────────────────────────────────
 
-interface BriefSummary {
-  id: string;
-  kind: string;
-  title: string;
-  state: BriefState;
-}
-
-/** Compact summaries of the briefs attached to a loop. */
-function briefSummariesForLoop(db: Db, loopId: string): BriefSummary[] {
-  return db
-    .prepare<[string], { id: string; kind: string; title: string; state: string }>(
-      `SELECT b.id, b.kind, b.title, b.state
-       FROM briefs b JOIN brief_related_loops brl ON brl.brief_id = b.id
-       WHERE brl.loop_id = ? ORDER BY b.created_at ASC`,
-    )
-    .all(loopId)
-    .map((r) => ({ id: r.id, kind: r.kind, title: r.title, state: r.state as BriefState }));
+/** Compact summaries of the open observations attached to a loop. */
+function observationSummariesForLoop(db: Db, loopId: string) {
+  return findOpenObservationsForLoops(db, [loopId]).map((o) => ({
+    id: o.id,
+    summary: o.summary,
+    state: o.state,
+  }));
 }
 
 /**
@@ -1012,13 +1062,29 @@ function loopToModelJson(
     title: loop.title,
     description: loop.description,
     deadline: loop.deadline,
+    // The user's own task: its state, title, description and deadline change
+    // only by proposal (open_loop_update records one for the user to confirm).
+    userTask: isOwnedTask(loop),
+    // Out of the user's Tasks views, either because they chose not to keep
+    // the suggestion or because the suggestion gate withheld it before they
+    // saw it. Either way the loop is still the Brain's to maintain, and must
+    // not be re-created to put it back in front of them.
+    ...(loop.ignored
+      ? isWithheldSuggestion(db, loop.id)
+        ? { withheldByGate: true }
+        : { ignoredByUser: true }
+      : {}),
+    ...(loop.scheduledFor ? { scheduledFor: loop.scheduledFor } : {}),
+    ...(loop.proposedChange
+      ? { pendingProposal: { kind: loop.proposedChange.kind, reason: loop.proposedChange.reason } }
+      : {}),
     actors: loop.actors,
     involved: loop.involved,
     docs: loop.docs,
     blockedBy: loop.blockedBy,
     createdAt: msToIso(loop.createdAt),
     lastUpdate: msToIso(loop.lastUpdate),
-    attachedBriefs: briefSummariesForLoop(db, loop.id),
+    attachedObservations: observationSummariesForLoop(db, loop.id),
     // Linked temporal annotations (deadlines/events) via the annotation-loop
     // join. Only on read tools (fetch/search); create/update omit it to keep
     // their echoes minimal.
@@ -1045,30 +1111,6 @@ function loopToModelJson(
   };
 }
 
-function briefToModelJson(brief: BriefRow): unknown {
-  return {
-    id: brief.id,
-    createdByRun: brief.createdByRun,
-    kind: brief.kind,
-    title: brief.title,
-    description: brief.description,
-    body: brief.body,
-    citations: brief.citations,
-    confidence: brief.confidence,
-    urgency: brief.urgency,
-    relevantUntil: msToIso(brief.relevantUntil),
-    relatedLoopIds: brief.relatedLoopIds,
-    nextShow: msToIso(brief.nextShow),
-    eventAt: msToIso(brief.eventAt),
-    userFeedback: brief.userFeedback,
-    state: brief.state,
-    createdAt: msToIso(brief.createdAt),
-  };
-}
-
-/** The states `brief_list` shows — everything that can still surface. */
-const ACTIVE_BRIEF_STATES: readonly BriefState[] = ["unread", "read", "dismissed_snoozed"];
-
 /**
  * Terminal open-loop states — the loop is resolved and needs no further
  * agent-scheduled checks. Transitioning into one cascade-cancels the
@@ -1082,6 +1124,76 @@ const RESOLVED_OPEN_LOOP_STATES: ReadonlySet<OpenLoopState> = new Set(["done", "
 
 export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
   const { db, writeGate, mirror, clock, runId, log } = deps;
+  async function checkOutcome(
+    id: string,
+    previous: OutcomeProposal | null,
+    proposed: OutcomeProposal,
+    documentIds: readonly string[],
+    signal?: AbortSignal,
+    writeFence?: OutcomeWriteFence,
+    priorityDocumentIds?: readonly string[],
+  ): Promise<ToolResult | null> {
+    if (!deps.checkRecord) return null;
+    if (!documentIds.length)
+      return {
+        kind: "error",
+        code: "outcome_evidence_required",
+        message:
+          "An autonomous outcome assertion requires original source documents. Read and cite supporting evidence before creating, reviving, or materially changing this outcome.",
+      };
+    if (!(deps.checkRecord.needsDocumentContext?.() ?? true)) return null;
+    const prepared = prepareOutcomeRecordContext(db, {
+      outcomeId: id,
+      documentIds,
+      priorityDocumentIds: [...(priorityDocumentIds ?? documentIds), ...(deps.seedDocIds ?? [])],
+      previous,
+      proposed,
+      ...(previous && db.prepare("SELECT 1 FROM knowledge_nodes WHERE id=?").get(id)
+        ? { ownerId: id }
+        : {}),
+      now: clock(),
+    });
+    if (writeFence && prepared?.outcomeFence) {
+      writeFence.actorRoles = prepared.outcomeFence.actorRoles;
+      // Keep the pre-judge owner/source snapshot; add ancestry read by the judge.
+      writeFence.sources = [
+        ...new Map([
+          ...prepared.outcomeFence.sources.map((source) => [source.id, source] as const),
+          ...writeFence.sources.map((source) => [source.id, source] as const),
+        ]).values(),
+      ];
+    }
+    const reviewBatchId = outcomeReviewBatch(db, id, runId);
+    return recordCheckRefusal(
+      deps,
+      {
+        recordId: id,
+        documentId: prepared?.documentId ?? documentIds[0]!,
+        record: {
+          type: "outcome",
+          kind: previous ? "revision" : "creation",
+          text: JSON.stringify(proposed),
+        },
+        ...(prepared
+          ? { outcomeContext: prepared.context, payloadCapture: prepared.payloadCapture }
+          : {}),
+      },
+      signal,
+      writeFence
+        ? (assessment) => {
+            writeFence.assessment = makeOutcomeAssessment(
+              assessment.policy,
+              proposed,
+              writeFence.sources,
+              assessment.decisionId,
+              reviewBatchId,
+              writeFence.actorRoles,
+              prepared?.context.sources.map((source) => source.id),
+            );
+          }
+        : undefined,
+    );
+  }
   const idGen = deps.idGen ?? (() => randomUUID());
 
   // Loops this run created or updated — the per-run tracking that lets
@@ -1165,7 +1277,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "deadline — so a later message reconciles onto its loop even when the " +
       "wording is different. ALWAYS reconcile through this before creating a " +
       "loop: if a matching loop exists, update or resolve it instead of minting " +
-      "a duplicate. Each result carries its current fields, attached-brief " +
+      "a duplicate. Each result carries its current fields, attached-observation " +
       "summaries, and a `matchedBy` explaining how it matched. The result " +
       "also includes a `retired` list of past loops with the same wording " +
       "that were already resolved or removed — with their outcome, cadence, " +
@@ -1297,8 +1409,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     name: "open_loop_fetch",
     description:
       "Fetch one open loop's full JSON — every field plus the complete " +
-      "run-stamped ledger history and attached-brief summaries.",
+      "run-stamped ledger history and attached-observation summaries.",
     schema: openLoopFetchSchema,
+    summarize: (args) => loopTitleSummary(db, args),
     // eslint-disable-next-line @typescript-eslint/require-await -- sync sqlite reads behind the async ToolHandle contract
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = openLoopFetchSchema.safeParse(rawArgs);
@@ -1312,6 +1425,34 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     },
   };
 
+  /**
+   * The suggestion gate's tier for a loop about to be created. The gate fails
+   * open on its own; this guards the tool against anything else, so a
+   * suggestion is never lost to the gate. Only the run's cancellation passes.
+   */
+  async function judgeProposal(
+    loopId: string,
+    title: string,
+    description: string,
+    docIds: readonly string[],
+    ctx: ToolContext,
+  ): Promise<TaskProposeVerdict> {
+    const offered: TaskProposeVerdict = { tier: "suggest", enforced: false, reason: "" };
+    if (!deps.taskPropose) return offered;
+    try {
+      return await deps.taskPropose.judge(
+        { runId, loopId, documentId: docIds[0] ?? null, title, description },
+        ctx.abortSignal,
+      );
+    } catch (error) {
+      if (ctx.abortSignal?.aborted) throw error;
+      log.warn(
+        `Suggestion gate failed for ${loopId}; suggesting: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return offered;
+    }
+  }
+
   // ---- open_loop_create ----
   const openLoopCreateSchema = z
     .object({
@@ -1319,7 +1460,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .string()
         .min(1)
         .max(200)
-        .describe('Short imperative title, e.g. "Reply to the venue quote".'),
+        .describe(
+          "Short tracked-outcome title matching the supported action stage, responsible actor and conditions in the description; preserve waiting or uncertain status rather than implying an unconditional action.",
+        ),
       description: z
         .string()
         .max(2000)
@@ -1331,7 +1474,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .unknown()
         .optional()
         .describe(
-          'Optional deadline structure. Recommended shape: {"type": "any_time"|"by"|"approximate"|"on_day", "date"?: "YYYY-MM-DD", "note"?: string} — a due "date" lets the feed rank this loop\'s briefs as due/overdue once it arrives.',
+          'Optional action due boundary, supported for this exact action and actor; an expected event window is not an action deadline. Recommended shape: {"type": "any_time"|"by"|"approximate"|"on_day", "date"?: "YYYY-MM-DD", "note"?: string} — Preserve source precision and modality: estimates use type "approximate" with a note containing the source window and event/date anchor, and date only when supported. Do not invent HH:mm, midnight or end-of-day precision. A review time is not the deadline.',
         ),
       actors: idList
         .optional()
@@ -1357,12 +1500,19 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "prefer updating or resolving an existing loop over creating a " +
       "duplicate — but keep one loop per distinct obligation: two different " +
       "asks are two loops, even from the same person for the same trip, " +
-      "while one request naming several parts stays one loop. The loop is " +
-      "stamped with this run's id.",
+      "while one request with a single settlement normally stays one loop. " +
+      "Only separately closable material sub-outcomes warrant decomposition; " +
+      "when a meaningful parent remains, read both nodes, link child to parent " +
+      "with knowledge_link part_of, and make the parent's remaining scope explicit. " +
+      "Links provide neither evidence nor automatic closure. The loop is " +
+      "stamped with this run's id. Require evidence of a currently actionable " +
+      "outcome for the user: a historical status or unsuccessful attempt alone " +
+      "does not establish a current obligation. Missing later indexed evidence " +
+      "proves neither resolution nor non-resolution; preserve unknown current status.",
     schema: openLoopCreateSchema,
     mutates: true,
     summarize: (args) => (args as { title?: string })?.title,
-    async invoke(rawArgs): Promise<ToolResult> {
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = openLoopCreateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
@@ -1373,6 +1523,23 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       const actors = partitionPersonRefs(db, a.actors ?? []);
       const involved = partitionPersonRefs(db, a.involved ?? []);
       const id = `loop_${idGen()}`;
+      const outcomeFence = captureOutcomeWriteFence(db, id, []);
+      const refused = await checkOutcome(
+        id,
+        null,
+        {
+          title: a.title,
+          description: a.description ?? "",
+          state: "open",
+          deadline: a.deadline ?? null,
+          actors: actors.known,
+        },
+        docs.known,
+        ctx.abortSignal,
+        outcomeFence,
+      );
+      if (refused) return refused;
+      const proposal = await judgeProposal(id, a.title, a.description ?? "", docs.known, ctx);
       const persisted = await writeGate.createOpenLoop(
         {
           id,
@@ -1386,17 +1553,31 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           involved: involved.known,
           docs: docs.known,
           blockedBy: blockedBy.known,
+          ...(proposal.enforced && proposal.tier !== "suggest"
+            ? { proposal: { tier: proposal.tier, note: proposal.reason } }
+            : {}),
         },
-        dependencyContext(dependencies.refs),
+        { ...dependencyContext(dependencies.refs), outcomeFence },
         clock(),
       );
-      if (!persisted.ok) return deadDependenciesResult(persisted.dead);
+      if (!persisted.ok)
+        return persisted.conflict
+          ? {
+              kind: "error",
+              code: "revision_conflict",
+              message:
+                "Outcome or supporting evidence changed during validation. Read the current state before retrying.",
+            }
+          : deadDependenciesResult(persisted.dead);
       const loop = persisted.value;
       await mirror.refresh(id);
       mutatedLoopIds.add(id);
       log.info(`Cognition Steward run ${runId} created open loop ${id}: ${a.title}`);
       return ok("open_loop.created", {
         loop: loopToModelJson(db, loop, { ledger: false }),
+        // Only an enforced verdict is the model's business: it says whether
+        // the owner will see the loop. A recorded-only verdict is audit data.
+        ...(proposal.enforced && proposal.tier !== "suggest" ? { gate: proposal.tier } : {}),
         ...(docs.dropped.length > 0 ? { droppedDocIds: docs.dropped } : {}),
         ...(blockedBy.dropped.length > 0 ? { droppedBlockedByIds: blockedBy.dropped } : {}),
         ...(actors.dropped.length > 0 ? { droppedActors: actors.dropped } : {}),
@@ -1418,7 +1599,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .unknown()
         .optional()
         .describe(
-          "New deadline structure (same recommended shape as open_loop_create); pass null to clear.",
+          "New action due boundary (same recommended shape as open_loop_create); expected events are not action deadlines; estimates stay approximate with a note and source event/date anchor. Do not invent clock precision or replace the deadline with a review time; pass null to clear.",
         ),
       actors: idList
         .optional()
@@ -1441,6 +1622,50 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
             "further out).",
         ),
       annotationDependencies: annotationDependenciesField,
+      reason: z
+        .string()
+        .min(1)
+        .max(300)
+        .optional()
+        .describe(
+          "Why, in one sentence citing what changed. Required when the loop is one of the user's own tasks (userTask: true) and you change its state, title, description or deadline.",
+        ),
+      evidence: z
+        .object({
+          fact: z
+            .string()
+            .trim()
+            .min(1)
+            .max(500)
+            .describe(
+              "The specific fact that establishes the change, as one plain sentence (e.g. that the invoice was paid in full, or the date the form is due by).",
+            ),
+          basis: z
+            .enum(["explicit", "inferred"])
+            .describe(
+              '"explicit" when a source states the fact itself; "inferred" when you concluded it from what the sources say.',
+            ),
+          quotes: z
+            .array(
+              z
+                .object({
+                  docId: z.string().min(1),
+                  quote: z
+                    .string()
+                    .min(12)
+                    .max(500)
+                    .describe("A VERBATIM quote from that document establishing the fact."),
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(4),
+        })
+        .strict()
+        .optional()
+        .describe(
+          "For a change to the user's own task (userTask: true): the fact behind it and the verbatim quotes that establish it. A new title or description applies directly unless the user wrote that field (an addition to their description also applies). A completion or a new deadline applies directly once the quotes are verified to establish it. Striking a task, and anything else that overrides what the user wrote, is proposed for the user to confirm.",
+        ),
     })
     .strict();
   const openLoopUpdate: ToolHandle = {
@@ -1450,15 +1675,28 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "change (`docs`/`actors`/etc. replace the whole list). Bumps the " +
       "loop's last_update. Prefer this (plus open_loop_ledger_append) over " +
       "creating a new loop when the datum concerns the SAME obligation an " +
-      "existing loop tracks — a different ask that merely shares the " +
-      "person, day, or trip is its own new loop.",
+      "existing loop tracks. Clarify title/description only for the same " +
+      "outcome; a shared person, topic, or project does not establish identity. " +
+      "Never replace the completion criterion to make the old loop look done. " +
+      "Correct unsupported or misunderstood framing with a transparent ledger " +
+      "note, or dismiss/remove under the retirement rules with an explicit " +
+      "reason; a different task's completion does not " +
+      "fulfil it. Track a distinct supported action in a separate loop, " +
+      "preserving relevant context links. On the user's own task (userTask: " +
+      "true) a change to state, title, description or deadline needs `reason`. " +
+      "With `evidence` stating the fact explicitly in a source, a completion, an " +
+      "addition to the description or a stated deadline is verified and applied " +
+      "directly (the user can undo it); anything else — striking, a new title, " +
+      "rewriting what the user wrote, an inference, evidence that does not verify " +
+      "— is recorded as a proposal the user confirms or refuses. Links, people, " +
+      "importance and decay checks always apply directly.",
     schema: openLoopUpdateSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    summarize: (args) => summaryField(args, "title") ?? loopTitleSummary(db, args),
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = openLoopUpdateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
-      const { id, docs, blockedBy, deadline, ...rest } = parsed.data;
+      const { id, docs, blockedBy, deadline, evidence, ...rest } = parsed.data;
       const dependencies = selectDeclaredDependencies(rest.annotationDependencies);
       if (!dependencies.ok) return dependencies.result;
       const docsPart = docs !== undefined ? partitionDocIds(db, docs) : null;
@@ -1466,59 +1704,231 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       const actorsPart = rest.actors !== undefined ? partitionPersonRefs(db, rest.actors) : null;
       const involvedPart =
         rest.involved !== undefined ? partitionPersonRefs(db, rest.involved) : null;
+      const { existing, outcomeFence } = db.transaction(() => {
+        const existing = getOpenLoop(db, id);
+        return {
+          existing,
+          outcomeFence: captureOutcomeWriteFence(db, id, []),
+        };
+      })();
+      if (!existing) return notFound("open loop", id);
+      const userTask = isOwnedTask(existing);
+      const proposal = userTask
+        ? taskProposalFor(existing, {
+            ...(rest.state !== undefined ? { state: rest.state as OpenLoopState } : {}),
+            ...(rest.title !== undefined ? { title: rest.title } : {}),
+            ...(rest.description !== undefined ? { description: rest.description } : {}),
+            ...(deadline !== undefined ? { deadline } : {}),
+          })
+        : null;
+      if (proposal && !rest.reason)
+        return {
+          kind: "error",
+          code: "reason_required",
+          message:
+            "This loop is one of the user's own tasks: a change to it needs `reason`. Retry with `reason`, one sentence citing what changed, and `evidence` when a source states the fact behind it.",
+        };
+      const previous = outcomeProposal(existing);
+      const proposed = outcomeProposal({
+        ...existing,
+        title: rest.title ?? existing.title,
+        description: rest.description ?? existing.description,
+        state: rest.state ?? existing.state,
+        deadline: deadline === undefined ? existing.deadline : deadline,
+        actors: actorsPart?.known ?? existing.actors,
+      });
+      // Scheduling, confidence and proof-only refreshes do not create new outcome assertions.
+      const assertionChanged =
+        proposed.title !== previous.title ||
+        proposed.description !== previous.description ||
+        JSON.stringify(proposed.deadline) !== JSON.stringify(previous.deadline) ||
+        JSON.stringify([...proposed.actors].sort()) !==
+          JSON.stringify([...previous.actors].sort()) ||
+        (proposed.state !== previous.state &&
+          (["open", "done"].includes(proposed.state) ||
+            (proposed.state === "snoozed" && RESOLVED_OPEN_LOOP_STATES.has(previous.state))));
+      if (assertionChanged) {
+        const refused = await checkOutcome(
+          id,
+          previous,
+          proposed,
+          [...new Set([...(docsPart?.known ?? []), ...existing.docs])],
+          ctx.abortSignal,
+          outcomeFence,
+          [
+            ...new Set([
+              ...(docsPart?.known ?? []).filter((docId) => !existing.docs.includes(docId)),
+              ...(deps.seedDocIds ?? []),
+            ]),
+          ],
+        );
+        if (refused) return refused;
+      }
+      const appliesTaskFields = !userTask;
       const persisted = await writeGate.updateOpenLoop(
         id,
         {
-          ...(rest.state !== undefined ? { state: rest.state as OpenLoopState } : {}),
+          ...(appliesTaskFields && rest.state !== undefined
+            ? { state: rest.state as OpenLoopState }
+            : {}),
           ...(rest.confidence !== undefined ? { confidence: rest.confidence } : {}),
           ...(rest.importance !== undefined ? { importance: rest.importance } : {}),
-          ...(rest.title !== undefined ? { title: rest.title } : {}),
-          ...(rest.description !== undefined ? { description: rest.description } : {}),
-          ...(deadline !== undefined ? { deadline } : {}),
+          ...(appliesTaskFields && rest.title !== undefined ? { title: rest.title } : {}),
+          ...(appliesTaskFields && rest.description !== undefined
+            ? { description: rest.description }
+            : {}),
+          ...(appliesTaskFields && deadline !== undefined ? { deadline } : {}),
           ...(actorsPart ? { actors: actorsPart.known } : {}),
           ...(involvedPart ? { involved: involvedPart.known } : {}),
           ...(docsPart ? { docs: docsPart.known } : {}),
           ...(blockedPart ? { blockedBy: blockedPart.known } : {}),
           ...(rest.decayCheckPassed === true ? { lastDecayCheck: clock() } : {}),
         },
-        dependencyContext(dependencies.refs),
+        { ...dependencyContext(dependencies.refs), outcomeFence },
         clock(),
       );
-      if (!persisted.ok) return deadDependenciesResult(persisted.dead);
-      const updated = persisted.value;
+      if (!persisted.ok)
+        return persisted.conflict
+          ? {
+              kind: "error",
+              code: "revision_conflict",
+              message:
+                "Outcome or supporting evidence changed during validation. Read the current state before retrying.",
+            }
+          : deadDependenciesResult(persisted.dead);
+      let updated = persisted.value;
       if (!updated) return notFound("open loop", id);
+      let applied: { resolved: boolean } | null = null;
+      let notApplied: string | null = null;
+      if (proposal && rest.reason) {
+        const evidenceDocs = [
+          ...new Set([
+            ...(docsPart?.known ?? []).filter((docId) => !existing.docs.includes(docId)),
+            ...(deps.seedDocIds ?? []),
+            ...(evidence?.quotes.map((q) => q.docId) ?? []),
+          ]),
+        ];
+        const { authored, latestEventSeq } = readTaskAuthorship(db, id);
+        const plan = planTaskAutoApply({
+          enabled: deps.taskAutoApply === true,
+          loop: existing,
+          proposal,
+          authored,
+          evidence,
+        });
+        const verdict =
+          plan.eligible && plan.claim !== undefined && evidence
+            ? await verifyTaskEvidence(deps, evidence.quotes, plan.claim, ctx.abortSignal)
+            : null;
+        let decision = decideTaskAutoApply(plan, verdict?.verdict ?? null);
+        const newTitle = decision.apply ? decision.change.fields?.title : undefined;
+        if (decision.apply && newTitle !== undefined && deps.taskChecks) {
+          const same = await deps.taskChecks.sameTask(
+            {
+              runId,
+              loopId: id,
+              documentId: existing.docs[0] ?? evidenceDocs[0] ?? null,
+              before: { title: existing.title, description: existing.description },
+              after: {
+                title: newTitle,
+                description: decision.change.fields?.description ?? existing.description,
+              },
+            },
+            ctx.abortSignal,
+          );
+          if (same === "different")
+            decision = { apply: false, why: "the new title may describe a different task" };
+          else if (same === "unavailable")
+            decision = {
+              apply: false,
+              why: "whether the new title still names the same task could not be checked",
+            };
+        }
+        if (decision.apply) {
+          const result = await writeGate.autoApplyTaskChange(
+            id,
+            {
+              ...decision.change,
+              reason: rest.reason,
+              evidence: evidenceDocs,
+              runId,
+              basedOnSeq: latestEventSeq,
+            },
+            clock(),
+          );
+          if (result.applied) applied = { resolved: result.resolved };
+          else notApplied = "the task changed while the evidence was checked";
+        } else {
+          notApplied = verdict?.why ?? decision.why;
+        }
+        if (!applied)
+          await writeGate.proposeTaskChange(
+            id,
+            {
+              ...proposal,
+              reason: rest.reason,
+              evidence: evidenceDocs,
+              runId,
+              proposedAt: clock(),
+            },
+            clock(),
+          );
+        updated = getOpenLoop(db, id) ?? updated;
+      }
       await mirror.refresh(id);
       mutatedLoopIds.add(id);
       // Resolve cascade: a loop moving to a resolved state (done/dismissed)
       // (1) retracts its never-claimed scheduled checks, so an
       // already-handled loop never wakes an agent run to rediscover
       // "nothing to do" (mirrors the decay sweep's retraction of a resolved
-      // loop's decay check), and (2) retracts the loop's still-actionable
-      // briefs to a terminal handled state, so a resolved loop never leaves
-      // a lingering brief that still reads as actionable on the feed. The
-      // loop itself survives (state=done/dismissed) with its briefs kept.
-      if (rest.state !== undefined && RESOLVED_OPEN_LOOP_STATES.has(rest.state as OpenLoopState)) {
+      // loop's decay check), and (2) drops the loop's open observations,
+      // so tomorrow's brief never raises something already handled.
+      if (
+        applied?.resolved ||
+        (appliesTaskFields &&
+          rest.state !== undefined &&
+          RESOLVED_OPEN_LOOP_STATES.has(rest.state as OpenLoopState))
+      ) {
         await writeGate.cancelScheduledRunsForLoop(id);
-        const retracted = await writeGate.retractBriefsForResolvedLoop(id, clock());
-        if (retracted.length > 0) {
+        const dropped = await writeGate.dropObservationsForResolvedLoop(id, clock());
+        if (dropped.length > 0) {
           log.info(
-            `Cognition Steward run ${runId} resolved loop ${id}: retracted ${retracted.length} brief(s)`,
+            `Cognition Steward run ${runId} resolved loop ${id}: dropped ${dropped.length} observation(s)`,
           );
         }
       }
-      return ok("open_loop.updated", {
-        loop: loopToModelJson(db, updated, { ledger: false }),
-        ...(docsPart && docsPart.dropped.length > 0 ? { droppedDocIds: docsPart.dropped } : {}),
-        ...(blockedPart && blockedPart.dropped.length > 0
-          ? { droppedBlockedByIds: blockedPart.dropped }
-          : {}),
-        ...(actorsPart && actorsPart.dropped.length > 0
-          ? { droppedActors: actorsPart.dropped }
-          : {}),
-        ...(involvedPart && involvedPart.dropped.length > 0
-          ? { droppedInvolved: involvedPart.dropped }
-          : {}),
-      });
+      return ok(
+        applied
+          ? "open_loop.change_applied"
+          : proposal
+            ? "open_loop.change_proposed"
+            : "open_loop.updated",
+        {
+          loop: loopToModelJson(db, updated, { ledger: false }),
+          ...(applied
+            ? {
+                applied:
+                  "Your change was applied to the user's task and shown in its history, where the user can undo it.",
+              }
+            : proposal
+              ? {
+                  proposed:
+                    "The user's task keeps its current values; your change is shown to them to confirm or refuse.",
+                  notAppliedBecause: notApplied,
+                }
+              : {}),
+          ...(docsPart && docsPart.dropped.length > 0 ? { droppedDocIds: docsPart.dropped } : {}),
+          ...(blockedPart && blockedPart.dropped.length > 0
+            ? { droppedBlockedByIds: blockedPart.dropped }
+            : {}),
+          ...(actorsPart && actorsPart.dropped.length > 0
+            ? { droppedActors: actorsPart.dropped }
+            : {}),
+          ...(involvedPart && involvedPart.dropped.length > 0
+            ? { droppedInvolved: involvedPart.dropped }
+            : {}),
+        },
+      );
     },
   };
 
@@ -1542,12 +1952,38 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "partial work instead of duplicating it). Bumps last_update.",
     schema: ledgerAppendSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    summarize: (args) => loopTitleSummary(db, args),
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = ledgerAppendSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const { id, note } = parsed.data;
-      if (!getOpenLoop(db, id)) return notFound("open loop", id);
+      const loop = getOpenLoop(db, id);
+      if (!loop) return notFound("open loop", id);
+      // The user reads their own task's history: a note that only repeats it stays out.
+      if (deps.taskChecks && isOwnedTask(loop)) {
+        const recentNotes = listOpenLoopLedger(db, id, {
+          order: "desc",
+          limit: TASK_NOTE_HISTORY,
+        }).map((entry) => entry.note);
+        const isNew = await deps.taskChecks.noteIsNew(
+          {
+            runId,
+            loopId: id,
+            documentId: loop.docs[0] ?? deps.seedDocIds?.[0] ?? null,
+            task: { title: loop.title, description: loop.description },
+            recentNotes,
+            note,
+          },
+          ctx.abortSignal,
+        );
+        if (!isNew)
+          return ok("open_loop.ledger_unchanged", {
+            loopId: id,
+            recorded: false,
+            message:
+              "Not recorded: the task's history already says this. Nothing to retry; continue with the run.",
+          });
+      }
       await writeGate.appendOpenLoopLedger(id, { runId, note }, clock());
       await mirror.refresh(id);
       return ok("open_loop.ledger_appended", { loopId: id, runId, note });
@@ -1568,487 +2004,241 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "obligation that was actually fulfilled closes with open_loop_update " +
       'state "done" instead, so the record survives as the user\'s history ' +
       "— but a rescinded obligation was never fulfilled, so it is deleted, " +
-      "never marked done. Engine-enforced invariant: attached " +
-      "not-yet-terminally-dismissed briefs are deleted with it (a shown " +
-      "brief never points at a missing loop).",
+      "never marked done. Engine-enforced invariant: its open observations " +
+      "are deleted with it.",
     schema: openLoopDeleteSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => loopTitleSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = openLoopDeleteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const { id } = parsed.data;
+      const target = getOpenLoop(db, id);
+      if (target && isOwnedTask(target))
+        return {
+          kind: "error",
+          code: "user_task",
+          message:
+            'This loop is one of the user\'s own tasks and cannot be deleted by a run. Propose striking it instead: open_loop_update with state "dismissed" and a reason.',
+        };
       const result = await writeGate.deleteOpenLoop(id, clock());
       if (!result.deleted) return notFound("open loop", id);
       await mirror.remove([id]);
       // A deleted loop's scheduled checks would only wake a run to find
       // the loop gone — retract the never-claimed ones (same cascade the
-      // resolve path uses). The loop's still-actionable briefs need no
-      // separate retraction here: `deleteOpenLoop` enforces the deletion
-      // invariant, which already deletes the attached non-terminal briefs
-      // outright (a stronger clear than the resolve path's move-to-terminal,
-      // required because the loop no longer exists to keep them attached to).
+      // resolve path uses). Its open observations need no separate step:
+      // `deleteOpenLoop` enforces the deletion invariant and deletes them.
       await writeGate.cancelScheduledRunsForLoop(id);
       log.info(
-        `Cognition Steward run ${runId} deleted open loop ${id} (+${result.deletedBriefIds.length} attached brief(s))`,
+        `Cognition Steward run ${runId} deleted open loop ${id} (+${result.deletedObservationIds.length} observation(s))`,
       );
-      return ok("open_loop.deleted", { loopId: id, deletedBriefIds: result.deletedBriefIds });
-    },
-  };
-
-  // ---- brief_list ----
-  const briefListSchema = z.object({}).strict();
-  const briefList: ToolHandle = {
-    name: "brief_list",
-    description:
-      "List the active briefs (unread / read / snoozed) with their related " +
-      "loop ids. Check this before creating a brief so you never duplicate " +
-      "one that already exists — including loop-less info briefs.",
-    schema: briefListSchema,
-    // eslint-disable-next-line @typescript-eslint/require-await -- sync sqlite reads behind the async ToolHandle contract
-    async invoke(rawArgs): Promise<ToolResult> {
-      const parsed = briefListSchema.safeParse(rawArgs ?? {});
-      if (!parsed.success) return invalidArgs(parsed.error);
-      const briefs = listBriefs(db, { states: ACTIVE_BRIEF_STATES }).map((b) => ({
-        id: b.id,
-        kind: b.kind,
-        title: b.title,
-        description: b.description,
-        state: b.state,
-        relatedLoopIds: b.relatedLoopIds,
-        nextShow: msToIso(b.nextShow),
-        eventAt: msToIso(b.eventAt),
-        relevantUntil: msToIso(b.relevantUntil),
-      }));
-      return ok("brief.list", { briefs });
-    },
-  };
-
-  // ---- brief_fetch ----
-  const briefFetchSchema = z.object({ id: z.string().min(1).describe("Brief id.") }).strict();
-  const briefFetch: ToolHandle = {
-    name: "brief_fetch",
-    description:
-      "Fetch one brief's full JSON, including its dismissal state, any " +
-      "free-text feedback the user typed, and its live asserted claims " +
-      "(the evidence-bound statements the card makes — a brief_update " +
-      "passing assertedClaims replaces this whole set).",
-    schema: briefFetchSchema,
-    // eslint-disable-next-line @typescript-eslint/require-await -- sync sqlite reads behind the async ToolHandle contract
-    async invoke(rawArgs): Promise<ToolResult> {
-      const parsed = briefFetchSchema.safeParse(rawArgs);
-      if (!parsed.success) return invalidArgs(parsed.error);
-      const brief = getBrief(db, parsed.data.id);
-      if (!brief) return notFound("brief", parsed.data.id);
-      // Live claims ride along so a replace-set update can restate the
-      // still-true ones instead of silently dropping them.
-      const claims = listLiveBriefClaims(db, brief.id).map((c) => ({
-        claimText: c.claimText,
-        evidenceDocId: c.evidenceDocId,
-        evidenceQuote: c.evidenceQuote,
-        claimBasis: c.claimBasis,
-        confidence: c.confidence,
-        verificationState: c.verificationState,
-      }));
-      return ok("brief.fetched", {
-        ...(briefToModelJson(brief) as Record<string, unknown>),
-        assertedClaims: claims,
+      return ok("open_loop.deleted", {
+        loopId: id,
+        deletedObservationIds: result.deletedObservationIds,
       });
     },
   };
 
-  // ---- brief_create ----
-  const briefCreateSchema = z
+  // ---- observation_list ----
+  const observationListSchema = z.object({}).strict();
+  const observationList: ToolHandle = {
+    name: "observation_list",
+    description:
+      "List the observations still waiting for a morning brief, plus those shipped in the " +
+      "last three days. Read this before noting an observation so you never note the same " +
+      "thing twice; supersede an outdated one instead.",
+    schema: observationListSchema,
+
+    summarize: () => "",
+    async invoke(rawArgs): Promise<ToolResult> {
+      const parsed = observationListSchema.safeParse(rawArgs ?? {});
+      if (!parsed.success) return invalidArgs(parsed.error);
+      const view = (o: ObservationRow) => ({
+        id: o.id,
+        summary: o.summary,
+        why: o.why,
+        state: o.state,
+        relatedLoopIds: o.relatedLoopIds,
+        citations: o.citations,
+        windowStart: msToIso(o.windowStart),
+        relevantUntil: msToIso(o.relevantUntil),
+        notedAt: msToIso(o.createdAt),
+      });
+      const since = clock() - 3 * 86_400_000;
+      return ok("observation.list", {
+        observations: listOpenObservations(db).map(view),
+        recentlyShipped: listObservations(db, { states: ["shipped"], limit: 50 })
+          .filter((o) => (o.shippedAt ?? 0) >= since)
+          .map(view),
+      });
+    },
+  };
+
+  // ---- observation_note ----
+  const observationClaimSchema = z
     .object({
-      kind: z
-        .enum(["info", "loop"])
-        .describe('"loop" = attached to open loops; "info" = standalone awareness.'),
-      title: z
+      docId: z.string().min(1).describe("Cited document the quote comes from."),
+      quote: z
+        .string()
+        .min(12)
+        .max(500)
+        .describe("A VERBATIM quote from docId that establishes the observation."),
+    })
+    .strict();
+  const observationNoteSchema = z
+    .object({
+      summary: z
         .string()
         .min(1)
-        .max(200)
-        .describe(
-          "The specific thing, phrased as a person would text it. No date — " +
-            "eventAt renders the live one.",
-        ),
-      description: z
+        .max(300)
+        .describe("One plain sentence: what you observed. No greeting, no bold, no padding."),
+      why: z
         .string()
-        .max(500)
+        .max(400)
+        .default("")
+        .describe("Why it might matter to the user, in one sentence. Empty when obvious."),
+      citations: idList.min(1).describe("Original source documents the observation rests on."),
+      claims: z
+        .array(observationClaimSchema)
+        .max(8)
+        .default([])
+        .describe("Verbatim quotes that establish the observation, checked before it ships."),
+      relatedLoopIds: idList.optional().describe("Loops this observation concerns."),
+      windowStart: isoDateTime
         .optional()
-        .describe(
-          "ONE sentence carrying the whole point (<30 words). Doubles as the " +
-            "push-notification line, so it must stand alone with no other context.",
-        ),
-      body: z
-        .string()
-        .max(20000)
+        .describe("When it starts to matter (ISO 8601). Omit when it matters now."),
+      relevantUntil: isoDateTime
         .optional()
-        .describe(
-          "What the user actually reads. Open with the action or the change, " +
-            "then only what is needed to act: the number, the reference, the " +
-            "deadline mechanics, the stakes. Required whenever the card carries " +
-            "a deadline, a booking, or a named counterparty. Never a restatement " +
-            "of the description, and never a pointer to the source or to another card.",
-        ),
-      citations: idList.optional().describe("Document ids backing the brief (shown to the user)."),
-      confidence: fraction.describe(
-        "How sure you are the card is RIGHT — not how sure you are of any one " +
-          "claim (assertedClaims carry their own, capped per claimBasis). High " +
-          "when the sources say it outright, lower the further the card reasons " +
-          "from them, and low enough that you would not surface it means: do not.",
-      ),
-      urgency: fraction.describe(
-        "Anchor on the WINDOW, not on how interesting it is. 0.9 = acting today " +
-          "rather than tomorrow changes the outcome. 0.6 = this week. 0.3 = worth " +
-          "knowing, no clock.",
-      ),
-      relevantUntil: isoDateTime.optional().describe("When the brief stops being relevant."),
-      relatedLoopIds: idList.optional().describe("Open loops this brief is attached to."),
-      nextShow: isoDateTime.optional().describe("Earliest display time (default: immediately)."),
-      eventAt: isoDateTime.optional().describe("Time of the real-world event the brief concerns."),
+        .describe("When it stops mattering (ISO 8601): a deadline or the event's end."),
       supersedes: idList
         .optional()
-        .describe(
-          "Active brief id(s) this card REPLACES — they leave the feed the moment " +
-            "this one is created (history kept). Use when refreshing a card that " +
-            "already covers the same obligation.",
-        ),
-      assertedClaims: assertedClaimsField
-        .optional()
-        .describe(
-          "Every factual, document-derived statement this brief asserts, each bound " +
-            "to its evidence. Verified at write time: the quote must appear in its " +
-            "document and establish the claim, or the create is refused naming every " +
-            "failing claim. A pure awareness card asserting no document-derived " +
-            "facts may omit this.",
-        ),
-      force: z
-        .boolean()
-        .optional()
-        .describe(
-          "Create even though an active brief shares a related loop. Only set after " +
-            "reviewing the conflict candidates a first attempt returned and confirming " +
-            "this card is genuinely distinct (e.g. a multi-loop roll-up beside a " +
-            "specific card), not the same obligation restated.",
-        ),
+        .describe("Ids of open observations this one replaces; they are dropped."),
       annotationDependencies: annotationDependenciesField,
     })
     .strict();
-  const briefCreate: ToolHandle = {
-    name: "brief_create",
+  const observationNote: ToolHandle = {
+    name: "observation_note",
     description:
-      "Create a brief — the ONLY way anything you learn reaches the user. " +
-      "Check brief_list first (never duplicate an active brief). One " +
-      "obligation, ONE card: when a related loop already has an active " +
-      "brief, the create is refused and the candidates returned — " +
-      "brief_update the existing card, or re-call with supersedes:[id] to " +
-      "replace it, or force:true only if this card is genuinely distinct. " +
-      "Cite the source documents; pass each factual, document-derived " +
-      "statement the card asserts as assertedClaims (verified at write time " +
-      "against its quoted evidence); set eventAt for time-bound items and " +
-      "relevantUntil when relevance expires. Do NOT create a brief whose " +
-      "relevance has already passed. The brief is stamped with this run's id.",
-    schema: briefCreateSchema,
+      "Note something the user may want to hear in tomorrow's morning brief. Nothing you " +
+      "note reaches the user directly: the morning run rechecks every observation, ranks " +
+      "them, and decides what to say. Note only what the user probably does not already " +
+      "know and would act on. Read observation_list first and supersede rather than " +
+      "duplicate. Cite original sources; quote what establishes the observation.",
+    schema: observationNoteSchema,
     mutates: true,
-    summarize: (args) => (args as { title?: string })?.title,
+    summarize: (args) => (args as { summary?: string })?.summary,
     async invoke(rawArgs): Promise<ToolResult> {
-      const parsed = briefCreateSchema.safeParse(rawArgs);
+      const parsed = observationNoteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
       const dependencies = selectDeclaredDependencies(a.annotationDependencies);
       if (!dependencies.ok) return dependencies.result;
-      const citations = partitionDocIds(db, a.citations ?? []);
+      const now = clock();
+      const relevantUntil = a.relevantUntil === undefined ? null : isoToMs(a.relevantUntil);
+      if (relevantUntil !== null && relevantUntil <= now)
+        return {
+          kind: "error",
+          code: "invalid_args",
+          message: "relevantUntil has already passed — do not note what no longer matters",
+        };
+      const citations: string[] = [];
+      for (const docId of new Set(a.citations)) {
+        const doc = isKnowledgeEvidenceReadable(db, docId) ? fetchEvidenceDoc(db, docId) : null;
+        if (!doc) return notFound("document", docId);
+        citations.push(docId);
+      }
+      for (const claim of a.claims) {
+        if (!citations.includes(claim.docId))
+          return {
+            kind: "error",
+            code: "invalid_args",
+            message: `claim quotes ${claim.docId}, which is not among citations`,
+          };
+        const doc = fetchEvidenceDoc(db, claim.docId)!;
+        if (!quoteInEvidence(doc, claim.quote))
+          return {
+            kind: "error",
+            code: "evidence_not_found",
+            message: `quote not found in ${claim.docId} — quote the source text exactly`,
+          };
+      }
       const loops = partitionLoopIds(db, a.relatedLoopIds ?? []);
-      const supersedeIds = new Set(a.supersedes ?? []);
-      if (a.force !== true) {
-        // One-card-per-loop as a tool contract, not prompt discipline:
-        // an active card on any of this brief's loops refuses the create
-        // and returns the candidates. Two near-identical cards for one
-        // obligation is exactly the failure this guards against — the
-        // model routinely fails to match differently-worded titles.
-        //
-        // Known bound: this is a read outside the serialized write op,
-        // so two runs racing under brain.workerConcurrency > 1 can both
-        // pass and both create (default concurrency is 1; the drainer
-        // accepts the same read-then-write shape for daily batches).
-        const conflicts = findActiveBriefsForLoops(db, loops.known, clock()).filter(
-          (c) => !supersedeIds.has(c.id),
-        );
-        if (conflicts.length > 0) {
-          return ok("brief.loop_conflict_candidates", {
-            candidates: conflicts.map((c) => ({
-              id: c.id,
-              title: c.title,
-              state: c.state,
-              sharedLoopIds: c.loopIds,
-            })),
-            guidance:
-              "Not created. These active briefs already cover the same loop(s). If " +
-              "one is the SAME obligation, brief_update it — or re-call brief_create " +
-              "with supersedes:[thatId] to replace it with this fresher card. Only " +
-              "if this card is genuinely distinct (e.g. a roll-up spanning several " +
-              "loops beside a specific card), re-call with force:true.",
-          });
-        }
-      }
-      // Validate supersede targets up front: they must exist and still be
-      // active — a terminal or unknown id is reported, not silently eaten.
-      // dismissed_snoozed IS supersedable: the card is parked, not gone,
-      // and would otherwise wake up beside its replacement.
-      const supersedable: string[] = [];
-      const droppedSupersedes: string[] = [];
-      for (const sid of supersedeIds) {
-        const target = getBrief(db, sid);
-        if (target && (ACTIVE_BRIEF_STATES as readonly string[]).includes(target.state)) {
-          supersedable.push(sid);
-        } else {
-          droppedSupersedes.push(sid);
-        }
-      }
-      // The asserted-claims teeth — after every cheap refusal above (a
-      // loop-conflict refusal must never spend a verifier call), before the
-      // write. A refusal names every failing claim and is re-askable.
-      let claimRows: BriefClaimInput[] | undefined;
-      if (a.assertedClaims !== undefined) {
-        const vetted = await vetAssertedClaims(deps, a.assertedClaims, clock());
-        if (!vetted.ok) return vetted.refusal;
-        const verificationHold = unverifiedBriefClaimsHold(vetted.rows);
-        if (verificationHold !== null) return verificationHold;
-        claimRows = vetted.rows.map((r) => ({ id: `bclaim_${idGen()}`, ...r }));
-      }
-      // The push bar — the judge's ship/no-ship pass, last before persist so it
-      // runs once on the fully-validated brief (a claim-fix re-call is refused
-      // at the teeth above and never reaches the judge). A HOLD is not an error
-      // the agent should fix-and-retry: the card simply does not clear the
-      // interrupt bar, so it is not created. An absent/disabled judge means no
-      // gate; a configured judge outage also holds rather than shipping an
-      // unreviewed card.
-      const judged = await runBriefJudgeGate(deps, {
-        kind: a.kind,
-        lane: deps.briefLane,
-        title: a.title,
-        ...(a.description !== undefined ? { description: a.description } : {}),
-        ...(a.body !== undefined ? { body: a.body } : {}),
-        citationCount: citations.known.length,
-        relatedLoopCount: loops.known.length,
-        scheduledForLater: a.nextShow !== undefined && isoToMs(a.nextShow) > clock(),
-        hasEventAt: a.eventAt !== undefined,
-      });
-      if (judged.kind === "hold") {
-        if (deps.sweepId !== undefined) {
-          await writeGate.recordSweepTally({ sweepId: deps.sweepId, briefsHeld: 1 }, clock());
-        }
-        return ok("brief.held_by_judge", {
-          reason: judged.reason,
-          guidance:
-            "Not created — the configured Brief review did not authorize shipping. Keep maintaining open loops and meaningful temporal annotations as needed, but do NOT resurface this as a Brief during the current run.",
-        });
-      }
-      const id = `brief_${idGen()}`;
-      const persisted = await writeGate.createBrief(
+      const open = new Set(listOpenObservations(db).map((o) => o.id));
+      const superseded = (a.supersedes ?? []).filter((id) => open.has(id));
+      const id = `obs_${idGen()}`;
+      const userAuthored = citationsAuthoredBySelf(db, citations);
+      const windowStart = a.windowStart === undefined ? null : isoToMs(a.windowStart);
+      const noted = deps.scoreObservation
+        ? await deps.scoreObservation({
+            id,
+            summary: a.summary,
+            why: a.why,
+            userAuthored,
+            citations,
+            windowStart,
+            relevantUntil,
+            notedAt: now,
+          })
+        : { scores: null, wouldPushAt: null };
+      const result = await deps.writeGate.createObservation(
         {
           id,
           createdByRun: runId,
-          kind: a.kind,
-          title: a.title,
-          ...(a.description !== undefined ? { description: a.description } : {}),
-          ...(a.body !== undefined ? { body: a.body } : {}),
-          citations: citations.known,
-          confidence: a.confidence,
-          urgency: a.urgency,
-          ...(a.relevantUntil !== undefined ? { relevantUntil: isoToMs(a.relevantUntil) } : {}),
+          summary: a.summary,
+          why: a.why,
+          userAuthored,
+          windowStart,
+          relevantUntil,
+          citations,
           relatedLoopIds: loops.known,
-          ...(a.nextShow !== undefined ? { nextShow: isoToMs(a.nextShow) } : {}),
-          ...(a.eventAt !== undefined ? { eventAt: isoToMs(a.eventAt) } : {}),
-          ...(claimRows !== undefined ? { claims: claimRows } : {}),
+          claims: a.claims.map((c) => ({ ...c, verification: "unverified" as const })),
+          notedScores: noted.scores,
+          wouldPushAt: noted.wouldPushAt,
         },
         dependencyContext(dependencies.refs),
-        clock(),
+        now,
       );
-      if (!persisted.ok) return deadDependenciesResult(persisted.dead);
-      const brief = persisted.value;
-      // Retire the superseded cards: stamping relevantUntil = now drops
-      // them from the feed immediately (and keeps a snoozed card from
-      // resurfacing) while keeping their history — no dismissal reason
-      // is minted, because a supersede is the agent refreshing its own
-      // card, not user feedback. Deliberately AFTER the create: a crash
-      // between the two ops fails open to a temporary duplicate (caught
-      // by the next create's refusal) rather than losing the only card.
-      const superseded: string[] = [];
-      for (const sid of supersedable) {
-        await writeGate.updateBrief(
+      if (!result.ok) return deadDependenciesResult(result.dead);
+      for (const sid of superseded)
+        await deps.writeGate.transitionObservation(
           sid,
-          { relevantUntil: clock() },
-          dependencyContext([]),
-          clock(),
+          { state: "dropped", reason: "superseded" },
+          now,
         );
-        superseded.push(sid);
-      }
-      log.info(
-        `Cognition Steward run ${runId} created brief ${id}: ${a.title}` +
-          (superseded.length > 0 ? ` (supersedes ${superseded.join(", ")})` : ""),
-      );
-      return ok("brief.created", {
-        brief: briefToModelJson(brief),
-        ...(claimRows !== undefined ? { assertedClaimCount: claimRows.length } : {}),
-        ...(superseded.length > 0 ? { supersededBriefIds: superseded } : {}),
-        ...(droppedSupersedes.length > 0 ? { droppedSupersedeIds: droppedSupersedes } : {}),
-        ...(citations.dropped.length > 0 ? { droppedCitationIds: citations.dropped } : {}),
-        ...(loops.dropped.length > 0 ? { droppedRelatedLoopIds: loops.dropped } : {}),
+      return ok("observation.noted", {
+        id,
+        userAuthored,
+        superseded,
+        ...(loops.dropped.length ? { unknownLoopIds: loops.dropped } : {}),
+        ...(noted.scores ? { scores: noted.scores } : {}),
       });
     },
   };
 
-  // ---- brief_update ----
-  const briefUpdateSchema = z
+  // ---- observation_withdraw ----
+  const observationWithdrawSchema = z
     .object({
-      id: z.string().min(1),
-      title: z.string().min(1).max(200).optional().describe("Same house style as brief_create."),
-      description: z
-        .string()
-        .max(500)
-        .optional()
-        .describe("ONE sentence carrying the whole point; doubles as the push line."),
-      body: z
-        .string()
-        .max(20000)
-        .nullable()
-        .optional()
-        .describe(
-          "What the user reads — self-sufficient: the number, the reference, the " +
-            "deadline mechanics, the stakes. Never a pointer to the source or to another card.",
-        ),
-      citations: idList.optional(),
-      confidence: fraction.optional().describe("Same anchors as brief_create."),
-      urgency: fraction.optional().describe("Same anchors as brief_create."),
-      relevantUntil: isoDateTime.nullable().optional(),
-      relatedLoopIds: idList.optional(),
-      nextShow: isoDateTime.nullable().optional(),
-      eventAt: isoDateTime.nullable().optional(),
-      assertedClaims: assertedClaimsField
-        .optional()
-        .describe(
-          "REPLACES the brief's live asserted-claim set (verified at write time " +
-            "exactly like brief_create; the standing claims are retired). Omit to " +
-            "leave the claims untouched — so restate every still-true claim when " +
-            "passing this.",
-        ),
-      annotationDependencies: annotationDependenciesField,
+      id: z.string().min(1).describe("Open observation id."),
     })
     .strict();
-  const briefUpdate: ToolHandle = {
-    name: "brief_update",
+  const observationWithdraw: ToolHandle = {
+    name: "observation_withdraw",
     description:
-      "Partially update a brief's content/metadata — pass only the fields " +
-      "to change (list fields replace; pass null to clear a nullable " +
-      "field). A supplied assertedClaims replaces the live claim set. " +
-      "Dismissal state is user-driven and not editable here.",
-    schema: briefUpdateSchema,
+      "Withdraw an open observation you or another run noted, when it no longer holds or " +
+      "no longer matters. It is dropped and never shown.",
+    schema: observationWithdrawSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: () => "",
     async invoke(rawArgs): Promise<ToolResult> {
-      const parsed = briefUpdateSchema.safeParse(rawArgs);
+      const parsed = observationWithdrawSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
-      const { id, citations, relatedLoopIds, assertedClaims, ...rest } = parsed.data;
-      const dependencies = selectDeclaredDependencies(rest.annotationDependencies);
-      if (!dependencies.ok) return dependencies.result;
-      const citationsPart = citations !== undefined ? partitionDocIds(db, citations) : null;
-      const loopsPart = relatedLoopIds !== undefined ? partitionLoopIds(db, relatedLoopIds) : null;
-      const preUpdate = getBrief(db, id);
-      // Unknown brief refuses BEFORE the claims teeth — a missing target
-      // must not spend verifier calls.
-      if (!preUpdate) return notFound("brief", id);
-      // The asserted-claims teeth (same as brief_create); a supplied set
-      // atomically replaces the live one inside the update's transaction.
-      let claimRows: BriefClaimInput[] | undefined;
-      if (assertedClaims !== undefined) {
-        const vetted = await vetAssertedClaims(deps, assertedClaims, clock());
-        if (!vetted.ok) return vetted.refusal;
-        const verificationHold = unverifiedBriefClaimsHold(vetted.rows);
-        if (verificationHold !== null) return verificationHold;
-        claimRows = vetted.rows.map((r) => ({ id: `bclaim_${idGen()}`, ...r }));
-      }
-      const persisted = await writeGate.updateBrief(
-        id,
-        {
-          ...(rest.title !== undefined ? { title: rest.title } : {}),
-          ...(rest.description !== undefined ? { description: rest.description } : {}),
-          ...(rest.body !== undefined ? { body: rest.body } : {}),
-          ...(citationsPart ? { citations: citationsPart.known } : {}),
-          ...(rest.confidence !== undefined ? { confidence: rest.confidence } : {}),
-          ...(rest.urgency !== undefined ? { urgency: rest.urgency } : {}),
-          ...(rest.relevantUntil !== undefined
-            ? { relevantUntil: rest.relevantUntil === null ? null : isoToMs(rest.relevantUntil) }
-            : {}),
-          ...(loopsPart ? { relatedLoopIds: loopsPart.known } : {}),
-          ...(rest.nextShow !== undefined
-            ? { nextShow: rest.nextShow === null ? null : isoToMs(rest.nextShow) }
-            : {}),
-          ...(rest.eventAt !== undefined
-            ? { eventAt: rest.eventAt === null ? null : isoToMs(rest.eventAt) }
-            : {}),
-          ...(claimRows !== undefined ? { claims: claimRows } : {}),
-        },
-        dependencyContext(dependencies.refs),
+      const withdrawn = await deps.writeGate.transitionObservation(
+        parsed.data.id,
+        { state: "dropped", reason: "withdrawn" },
         clock(),
       );
-      if (!persisted.ok) return deadDependenciesResult(persisted.dead);
-      const updated = persisted.value;
-      if (!updated) return notFound("brief", id);
-      // A retired card (relevance expired — e.g. superseded) accepts
-      // edits but stays out of the feed; without a structured warning a
-      // scheduled refresh run would edit it and the user would never see
-      // the result.
-      const editedWhileRetired =
-        preUpdate.relevantUntil !== null &&
-        preUpdate.relevantUntil <= clock() &&
-        rest.relevantUntil === undefined;
-      return ok("brief.updated", {
-        brief: briefToModelJson(updated),
-        ...(claimRows !== undefined ? { assertedClaimCount: claimRows.length } : {}),
-        ...(editedWhileRetired
-          ? {
-              warning:
-                "This brief's relevance has expired (it may have been superseded) — it is " +
-                "NOT visible on the user's feed. Set relevantUntil to resurface it, or " +
-                "apply this update to the active card for the same loop instead.",
-            }
-          : {}),
-        ...(citationsPart && citationsPart.dropped.length > 0
-          ? { droppedCitationIds: citationsPart.dropped }
-          : {}),
-        ...(loopsPart && loopsPart.dropped.length > 0
-          ? { droppedRelatedLoopIds: loopsPart.dropped }
-          : {}),
-      });
-    },
-  };
-
-  // ---- brief_delete ----
-  // Withdraws the card rather than erasing the row. `retired` is terminal, so
-  // the brief leaves the feed and every active-brief query by the same `state`
-  // predicate the dismissals use, while the record of what was surfaced
-  // survives — the only evidence a later run has that it already raised
-  // something. The tool keeps its name because "make this card go away" is
-  // exactly the contract the model is asking for; whether the row survives is
-  // an audit concern rather than part of that contract.
-  const briefDeleteSchema = z.object({ id: z.string().min(1).describe("Brief id.") }).strict();
-  const briefDelete: ToolHandle = {
-    name: "brief_delete",
-    description:
-      "Withdraw a brief from the feed (it became irrelevant, was superseded, " +
-      "or its loop was silently closed). The related loops are untouched. The " +
-      "card stops being shown immediately; its record is kept so later runs " +
-      "can see what has already been surfaced.",
-    schema: briefDeleteSchema,
-    mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
-      const parsed = briefDeleteSchema.safeParse(rawArgs);
-      if (!parsed.success) return invalidArgs(parsed.error);
-      const retired = await writeGate.retireBrief(parsed.data.id, clock());
-      if (!retired) return notFound("brief", parsed.data.id);
-      return ok("brief.retired", { briefId: parsed.data.id });
+      if (!withdrawn) return notFound("open observation", parsed.data.id);
+      return ok("observation.withdrawn", { id: parsed.data.id });
     },
   };
 
@@ -2103,6 +2293,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "the cap. Only an append beyond twice the cap is refused.",
     schema: notesAppendSchema,
     mutates: true,
+    summarize: (args) => summaryExcerpt(summaryField(args, "text") ?? ""),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesAppendSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2156,6 +2347,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "future runs will be given. Keep only durable, still-true lessons.",
     schema: notesRewriteSchema,
     mutates: true,
+    summarize: () => "",
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesRewriteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2197,6 +2389,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "pass a longer span to disambiguate, or an empty newText to delete.",
     schema: notesEditSchema,
     mutates: true,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "newText") || summaryField(args, "oldText") || ""),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesEditSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2560,7 +2754,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .min(1)
         .optional()
         .describe(
-          "End of a range (same formats). Only for lived spans where each covered day " +
+          "Inclusive end of a range (same formats); temporal_query to is exclusive, so query beyond the final included instant or day. Only for lived spans where each covered day " +
             "matters (a trip, a visit, a closure window) — an expiry/deadline/renewal is " +
             "filed as its single lapse/due date via `when`, with the validity window in " +
             "the sentence, never as a range spanning it.",
@@ -2622,7 +2816,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
   const temporalAnnotationAdd: ToolHandle = {
     name: "temporal_annotation_add",
     description:
-      "Record a dated fact in the time index, with a one-line sentence and its " +
+      "Before writing, obtain a complete annotation-inclusive temporal_query covering the full interval and subject. Only the latest query supplies the active scope, and it must be complete; separate queries are not combined. Read then mutate within that scope, or use one complete document-filtered window for the batch. Record a dated fact in the time index, with a one-line sentence and its " +
       "source document(s). The index bar is near-exhaustive: every dated thing " +
       "a document establishes belongs here, except a date that merely times an " +
       "obligation: keep that in the loop deadline. Independently established " +
@@ -2642,11 +2836,15 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "truly distinct.",
     schema: temporalAnnotationAddSchema,
     mutates: true,
-    summarize: (args) => (args as { when?: string })?.when,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "sentence") ?? summaryField(args, "when") ?? ""),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = temporalAnnotationAddSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadCapture = a.evidence
+        ? captureRecordCheckPayload(deps, [...(a.documentIds ?? []), a.evidence.docId])
+        : undefined;
       // Document-derived entries MUST ground themselves: without a quote the
       // content-change invalidator has nothing to re-check, so the entry can
       // neither survive source edits deliberately nor be retired honestly.
@@ -2765,16 +2963,16 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           });
         }
       }
-      // The conditional teeth: declared evidence is verified (quote in doc,
-      // then quote ⊨ sentence) AFTER the cheap overlap refusal above, so a
-      // reconcile refusal never spends a verifier call. The evidence doc is
-      // folded into the entry's source links, and the quote is persisted as
-      // the entry's grounding atom — surgical invalidation checks against it
-      // when the source document's content changes.
+      ctx.abortSignal?.throwIfAborted();
+      // Cheap evidence validation precedes either paid gate. The current source
+      // generation is rechecked after value admission before verifier exposure.
       if (a.evidence !== undefined) {
-        const refusal = await vetTemporalAnnotationEvidence(deps, a.evidence, a.sentence, clock());
+        const refusal = vetTemporalSourceEvidence(db, a.evidence);
         if (refusal !== null) return refusal;
       }
+      const evidenceRevision = a.evidence
+        ? readKnowledgeSourceRevision(db, a.evidence.docId)
+        : undefined;
       const docIdInputs = [
         ...new Set([...(a.documentIds ?? []), ...(a.evidence ? [a.evidence.docId] : [])]),
       ];
@@ -2791,11 +2989,34 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
             recordId: id,
             record: { type: "timeline", kind: a.kind ?? null, text: a.sentence },
             documentId: a.evidence.docId,
+            ...(payloadCapture ? { payloadCapture } : {}),
           },
           ctx.abortSignal,
         );
         if (dropped !== null) return dropped;
       }
+      ctx.abortSignal?.throwIfAborted();
+      if (a.evidence !== undefined) {
+        if (
+          !isKnowledgeEvidenceReadable(db, a.evidence.docId) ||
+          readKnowledgeSourceRevision(db, a.evidence.docId) !== evidenceRevision
+        )
+          return {
+            kind: "error",
+            code: "revision_conflict",
+            message:
+              "Temporal source evidence changed during value assessment; reread and reconcile before retrying.",
+          };
+        const refusal = await vetTemporalAnnotationEvidence(
+          deps,
+          a.evidence,
+          a.sentence,
+          clock(),
+          ctx.abortSignal,
+        );
+        if (refusal !== null) return refusal;
+      }
+      ctx.abortSignal?.throwIfAborted();
       const annotation = await writeGate.createTemporalAnnotation(
         {
           id,
@@ -2911,7 +3132,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "fails to show; pass `evidence` whenever the edit derives from a document.",
     schema: temporalAnnotationUpdateSchema,
     mutates: true,
-    summarize: (args) => (args as { annotationId?: string })?.annotationId,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "sentence") ?? temporalAnnotationSummary(db, args)),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = temporalAnnotationUpdateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2951,6 +3173,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           a.evidence,
           a.sentence ?? standing.sentence,
           clock(),
+          ctx.abortSignal,
         );
         if (refusal !== null) return refusal;
       }
@@ -3002,6 +3225,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       if (a.evidence !== undefined) {
         patch.evidence = [{ docId: a.evidence.docId, quote: a.evidence.quote }];
       }
+      ctx.abortSignal?.throwIfAborted();
       const existed = await writeGate.updateTemporalAnnotation(a.annotationId, patch, clock());
       if (!existed) return notFound("temporal annotation", a.annotationId);
       log.info(`Cognition Steward run ${runId} updated temporal annotation ${a.annotationId}`);
@@ -3023,7 +3247,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "Deterministic temporal projections are read-only and cannot be targeted.",
     schema: temporalAnnotationDeleteSchema,
     mutates: true,
-    summarize: (args) => (args as { annotationId?: string })?.annotationId,
+    summarize: (args) => temporalAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = temporalAnnotationDeleteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3048,11 +3272,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     openLoopUpdate,
     openLoopLedgerAppend,
     openLoopDelete,
-    briefList,
-    briefFetch,
-    briefCreate,
-    briefUpdate,
-    briefDelete,
+    observationList,
+    observationNote,
+    observationWithdraw,
     notesAppend,
     notesRewrite,
     notesEdit,
@@ -3075,6 +3297,8 @@ export type AnnotationToolDeps = Pick<
   | "annotationConfidenceCeiling"
   | "annotationBasisCeilings"
   | "annotationConfidenceFloor"
+  | "personProfileBudget"
+  | "personProfileReads"
   | "getEntailmentVerifier"
   | "checkRecord"
   | "consumption"
@@ -3112,6 +3336,69 @@ async function vetAnnotationSourceEvidence(
 export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
   const { db, writeGate, clock, runId, log } = deps;
   const idGen = deps.idGen ?? (() => randomUUID());
+  const personProfiles = deps.personProfileReads ?? new PersonProfileReads(db);
+  const personBudget = deps.personProfileBudget ?? DEFAULT_PERSON_PROFILE_BUDGET;
+  function profileRefusal(error: unknown): ToolResult | null {
+    if (error instanceof KnowledgeStorageError)
+      return { kind: "error", code: error.code, message: error.message };
+    if (error instanceof Error && error.message.startsWith("Person profile changed"))
+      return {
+        kind: "error",
+        code: "revision_conflict",
+        message:
+          "The person's profile changed; reread its complete current annotation_search pages before reconciling.",
+      };
+    if (error instanceof Error && error.message.startsWith("Person profile budget exceeded"))
+      return {
+        kind: "error",
+        code: "profile_budget_exceeded",
+        message:
+          "The proposed fact exceeds the compact person-profile budget. Compare the complete profile; keep, merge, replace or omit facts by usefulness. A supported supersedes replacement can shrink a legacy oversized profile. Do not invent a replacement or pad evidence to fit.",
+      };
+    return null;
+  }
+  function readProfile<T>(
+    read: () => T,
+  ): { value: T; refusal: null } | { value: null; refusal: ToolResult } {
+    try {
+      return { value: read(), refusal: null };
+    } catch (error) {
+      const refusal = profileRefusal(error);
+      if (refusal === null) throw error;
+      return { value: null, refusal };
+    }
+  }
+  async function writeProfile<T>(
+    write: () => Promise<T>,
+  ): Promise<{ value: T; refusal: null } | { value: null; refusal: ToolResult }> {
+    try {
+      return { value: await write(), refusal: null };
+    } catch (error) {
+      const refusal = profileRefusal(error);
+      if (refusal === null) throw error;
+      return { value: null, refusal };
+    }
+  }
+  function preflightProfile(
+    personId: string,
+    predecessors: readonly PersonAnnotationRow[],
+    text: string,
+  ) {
+    return readProfile(() => {
+      const before = getPersonProfileStats(db, personId);
+      enforcePersonProfileBudget(
+        before,
+        {
+          totalFacts: before.totalFacts - predecessors.length + 1,
+          totalCharacters:
+            before.totalCharacters -
+            predecessors.reduce((sum, row) => sum + Array.from(row.claimText).length, 0) +
+            Array.from(text).length,
+        },
+        personBudget,
+      );
+    }).refusal;
+  }
 
   // ---- annotate_durable ----
   // Shared by interactive memory and the enabled background annotation layer;
@@ -3173,25 +3460,30 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "only in your own prior annotations.",
     schema: annotateDurableSchema,
     mutates: true,
-    summarize: (args) => (args as { claimType?: string })?.claimType,
+    summarize: (args) => summaryExcerpt(summaryField(args, "claimText") ?? ""),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotateDurableSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadCapture = captureRecordCheckPayload(deps, [
+        a.docId,
+        a.evidenceDocId,
+        ...(a.additionalEvidence ?? []).map((atom) => atom.docId),
+      ]);
       // Firewall 1: both the subject and the grounding atom must be real docs
       // (grounding on a document, never another annotation — no compounding).
       if (!docExists(db, a.docId)) return notFound("document", a.docId);
       const evidence = fetchEvidenceDoc(db, a.evidenceDocId);
       if (evidence === null) return notFound("evidence document", a.evidenceDocId);
       // Firewall 2: the evidence must be a real source document, never one of
-      // the agent's OWN derived open-loop mirror docs — grounding on your own
+      // generated synthesis mirror docs — grounding on your own
       // tracked state is exactly the self-reference the firewall forbids.
-      if (evidence.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+      if (evidence.generated) {
         return {
           kind: "error",
           code: "invalid_evidence",
           message:
-            "evidenceDocId is a derived open-loop record, not a source document — " +
+            "evidenceDocId is a generated synthesis record, not a source document — " +
             "ground the observation on the original source, not your own tracked state",
         };
       }
@@ -3266,32 +3558,104 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           CREATE_CONFLICT_GUIDANCE,
         );
       }
-      // Firewall 5 (the entailment gate): the evidence must ESTABLISH the
-      // claim, not merely appear in the documents — ONE call judging the
-      // claim against the CONCATENATED quotes (a multi-atom grounding is
-      // judged jointly; a scalar-only call is byte-identical to before).
-      const gate = await runEntailmentGate(
-        deps,
-        {
-          claim: a.claimText,
-          evidence: concatenatedGateEvidence([a.evidenceQuote, ...additional.map((e) => e.quote)]),
-        },
-        clock(),
+      ctx.abortSignal?.throwIfAborted();
+      const atoms = [{ docId: a.evidenceDocId, quote: a.evidenceQuote }, ...additional];
+      const sourceVersions = new Map(
+        [a.docId, ...atoms.map((atom) => atom.docId)].map((id) => [
+          id,
+          readKnowledgeSourceRevision(db, id),
+        ]),
       );
-      if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
       const id = `anno_${idGen()}`;
       if (a.supersedes === undefined) {
+        // Marginal-value checks need the subject, not merely a supporting
+        // quote. Read only safe original sources; unavailable context leaves
+        // this relevance gate open without sending source text to the model.
+        let documentContext;
+        if (
+          deps.checkRecord &&
+          (deps.checkRecord.needsDocumentContext?.() ?? true) &&
+          isKnowledgeEvidenceReadable(db, a.docId)
+        ) {
+          const subject = fetchEvidenceDoc(db, a.docId);
+          const atoms = [{ docId: a.evidenceDocId, quote: a.evidenceQuote }, ...additional];
+          const currentAtomsReadable = () =>
+            atoms.every((atom) => {
+              if (!isKnowledgeEvidenceReadable(db, atom.docId)) return false;
+              const current = fetchEvidenceDoc(db, atom.docId);
+              return current !== null && quoteInEvidence(current, atom.quote);
+            });
+          if (subject && !subject.generated && currentAtomsReadable()) {
+            const subjectRefusal = await vetAnnotationSourceEvidence(deps, [
+              { docId: a.docId, quote: subject.content },
+            ]);
+            if (
+              subjectRefusal === null &&
+              isKnowledgeEvidenceReadable(db, a.docId) &&
+              fetchEvidenceDoc(db, a.docId)?.contentHash === subject.contentHash &&
+              currentAtomsReadable()
+            ) {
+              documentContext = documentRecordContext(a.docId, subject.content, atoms);
+            }
+          }
+        }
         const dropped = await recordCheckRefusal(
           deps,
           {
             recordId: id,
             record: { type: "doc-fact", kind: a.claimType, text: a.claimText },
             documentId: a.docId,
+            ...(payloadCapture ? { payloadCapture } : {}),
+            ...(documentContext ? { documentContext } : {}),
           },
           ctx.abortSignal,
         );
         if (dropped !== null) return dropped;
       }
+      ctx.abortSignal?.throwIfAborted();
+      // The value check awaits a remote decision. Recheck authority before
+      // exposing evidence to another model, even when the eventual writer
+      // would reject the stale source snapshot.
+      const currentSourceRefusal = await vetAnnotationSourceEvidence(deps, atoms);
+      if (currentSourceRefusal) return currentSourceRefusal;
+      ctx.abortSignal?.throwIfAborted();
+      if (
+        [...sourceVersions].some(
+          ([id, version]) =>
+            !isKnowledgeEvidenceReadable(db, id) || readKnowledgeSourceRevision(db, id) !== version,
+        ) ||
+        atoms.some((atom) => {
+          const current = fetchEvidenceDoc(db, atom.docId);
+          return !current || current.generated || !quoteInEvidence(current, atom.quote);
+        })
+      ) {
+        return {
+          kind: "error",
+          code: "revision_conflict",
+          message:
+            "Annotation source evidence changed during value assessment; reread the current sources and reconcile before retrying.",
+        };
+      }
+      // Firewall 5 (the entailment gate): the evidence must ESTABLISH the
+      // claim, not merely appear in the documents — ONE call judging the
+      // claim against the CONCATENATED quotes (a multi-atom grounding is
+      // judged jointly, preserving each clause’s factual scope).
+      const gate = await runEntailmentGate(
+        deps,
+        {
+          claim: a.claimText,
+          context: annotationVerificationContext("doc_annotation"),
+          assessment: "annotation_atomic",
+          evidence: annotationGateEvidence(db, [
+            { docId: a.evidenceDocId, quote: a.evidenceQuote },
+            ...additional,
+          ]),
+        },
+        clock(),
+        ctx.abortSignal,
+      );
+      if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
+      ctx.abortSignal?.throwIfAborted();
       const input = {
         id,
         docId: a.docId,
@@ -3379,7 +3743,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "certainty. To change the grounding itself, retract and re-annotate.",
     schema: annotationReviseSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "claimText") ?? docAnnotationSummary(db, args)),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationReviseSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3456,14 +3821,18 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         deps,
         {
           claim: a.claimText ?? existing.claimText,
-          evidence:
+          context: annotationVerificationContext("doc_annotation"),
+          assessment: "annotation_atomic",
+          evidence: annotationGateEvidence(
+            db,
             atoms.length > 0
-              ? concatenatedGateEvidence(atoms.map((e) => e.evidenceQuote))
-              : existing.evidenceQuote,
+              ? atoms.map((e) => ({ docId: e.evidenceDocId, quote: e.evidenceQuote }))
+              : [{ docId: existing.evidenceDocId, quote: existing.evidenceQuote }],
+          ),
         },
         clock(),
       );
-      if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
+      if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
       const patch: UpdateDocAnnotationPatch = {};
       if (gate.state !== null) {
         patch.verificationState = gate.state;
@@ -3495,17 +3864,17 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
 
   // ---- annotation_retract ----
   const annotationRetractSchema = z
-    .object({ id: z.string().min(1).describe("The annotation id to retract (hard delete).") })
+    .object({ id: z.string().min(1).describe("The annotation id whose belief is withdrawn.") })
     .strict();
   const annotationRetract: ToolHandle = {
     name: "annotation_retract",
     description:
-      "Retract (permanently delete) a durable observation you recorded earlier " +
+      "Withdraw a durable observation you recorded earlier " +
       "when it is wrong or no longer relevant — a mistaken read, a superseded " +
-      "conclusion. Hard delete: the derived text is removed outright.",
+      "conclusion. It leaves active memory; retained synthesis is marked withdrawn and dependents require repair. Privacy deletion is a separate source-removal action.",
     schema: annotationRetractSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => docAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationRetractSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3543,7 +3912,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "annotate_durable with supersedes instead.",
     schema: annotationSupersedeSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => docAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationSupersedeSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3607,10 +3976,21 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         .optional()
         .describe("List annotations ABOUT this person — a person id or a known email."),
       limit: z.number().int().min(1).max(50).optional().describe("Max rows (default 20)."),
+      cursor: z
+        .string()
+        .min(1)
+        .max(2048)
+        .optional()
+        .describe(
+          "For a person's profile, copy the exact nextCursor from the preceding page; omit it to start a complete read.",
+        ),
     })
     .strict()
     .refine((a) => (a.docId !== undefined) !== (a.personId !== undefined), {
       message: "supply exactly one of docId or personId",
+    })
+    .refine((a) => a.cursor === undefined || a.personId !== undefined, {
+      message: "cursor is supported only for a person profile",
     });
   const annotationSearch: ToolHandle = {
     name: "annotation_search",
@@ -3619,12 +3999,23 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "document (docId) or a person (personId). Read this BEFORE recording a " +
       "new observation on the same subject: revise or supersede an existing " +
       "claim instead of duplicating or contradicting it. Each row carries its " +
-      "evidence doc id and verbatim quote — priors to re-ground, never facts.",
+      "evidence doc id and verbatim quote — priors to re-ground, never facts. " +
+      "Person results page the complete readable profile, with totals and its compact budget. " +
+      "Follow every exact nextCursor before creating, consolidating or revising a person fact; " +
+      "compare the whole profile and keep the most useful supported context, not the first page. " +
+      "Rows marked underReview lost their evidence to a deleted document: they are not priors, " +
+      "and await your decision to revise or retract them.",
     schema: annotationSearchSchema,
     mutates: false,
-    summarize: (args) =>
-      (args as { docId?: string; personId?: string })?.docId ??
-      (args as { docId?: string; personId?: string })?.personId,
+    summarize: (args) => {
+      const docId = summaryField(args, "docId");
+      const personId = summaryField(args, "personId");
+      return docId
+        ? documentTitleSummary(db, docId)
+        : personId
+          ? personNameSummary(db, personId)
+          : "";
+    },
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationSearchSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3651,8 +4042,13 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           createdAt: new Date(r.createdAt).toISOString(),
         }));
       if (a.docId !== undefined) {
-        if (!docExists(db, a.docId)) return notFound("document", a.docId);
-        const rows = listLiveAnnotationsForDoc(db, a.docId, limit);
+        // Annotations whose evidence document was deleted are kept for review:
+        // listed, marked, never counted as priors. They stay listed after
+        // their subject document itself was deleted.
+        const underReview = listAnnotationsUnderReviewForDoc(db, a.docId, limit);
+        const exists = docExists(db, a.docId);
+        if (!exists && underReview.length === 0) return notFound("document", a.docId);
+        const rows = exists ? listLiveAnnotationsForDoc(db, a.docId, limit) : [];
         // Consumption provenance: these priors are now in front of the model.
         deps.consumption?.note(
           "doc",
@@ -3660,27 +4056,43 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         );
         return ok("annotation.search_results", {
           docId: a.docId,
-          annotations: project(rows),
+          annotations: [
+            ...project(rows),
+            ...project(underReview).map((row) => ({ ...row, underReview: true })),
+          ],
         });
       }
       const personId = resolveLoopPersonRef(db, a.personId ?? "");
       if (personId === null) return notFound("person", a.personId ?? "");
-      const rows = listLivePersonAnnotationsForPerson(db, personId, limit);
+      const reading = readProfile(() =>
+        personProfiles.page(personId, limit, a.cursor, personBudget),
+      );
+      if (reading.refusal !== null) return reading.refusal;
+      const page = reading.value;
+      const rows = page.annotations;
       deps.consumption?.note(
         "person",
         rows.map((r) => r.id),
       );
-      return ok("annotation.search_results", {
-        personId,
-        annotations: project(rows),
-      });
+      // Facts whose evidence document was deleted are outside the readable
+      // profile; they are listed apart so the review can revise or retract them.
+      const underReview = listPersonAnnotationsUnderReview(db, personId, limit);
+      return ok(
+        "annotation.search_results",
+        underReview.length
+          ? {
+              ...page,
+              underReview: project(underReview).map((row) => ({ ...row, underReview: true })),
+            }
+          : page,
+      );
     },
   };
 
   // ---- annotate_person ----
   // Person-keyed sibling of annotate_durable. Same evidence firewall (real
   // evidence doc, verbatim quote, confidence ceiling, no self-grounding on a
-  // derived open-loop mirror), but the subject is a PERSON resolved to its
+  // generated synthesis mirror), but the subject is a PERSON resolved to its
   // canonical id — not a document.
   const annotatePersonSchema = z
     .object({
@@ -3716,11 +4128,19 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         "How far the claim reasons from its evidence: 'quoted' = the evidence essentially states the claim (a restatement); 'inferred' = one licensed deduction from this single source; 'synthesized' = assembled across sources — a pattern no single quote states. Confidence is capped tighter the further down this ladder the claim sits.",
       ),
       supersedes: z
-        .string()
-        .min(1)
+        .union([z.string().min(1), z.array(z.string().min(1)).min(1).max(128)])
         .optional()
         .describe(
-          "Id of a LIVE annotation on this SAME person that this claim REPLACES (an updated or corrected belief) — it is retired the moment this one persists, audit-linked to its successor.",
+          "Id or bounded array of LIVE annotations on this SAME person that this supported fact REPLACES. Read the complete profile first; replacement and all retirements commit atomically. Consolidate redundant observations into one useful grounded fact, preserving the scope established by its sources; do not combine unrelated facts merely to fit the budget.",
+        ),
+      reconciliationReason: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1000)
+        .optional()
+        .describe(
+          "For replacement, explain useful older scope retained and intentional editorial omissions (duplicate, outdated or low-value details). Do not claim separate dated observations establish a continuous period. This rationale is checked, not authority to discard useful scope.",
         ),
       additionalEvidence: additionalEvidenceField
         .optional()
@@ -3733,7 +4153,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
     name: "annotate_person",
     description:
       "Persist a durable, evidence-grounded observation about a PERSON as a " +
-      "PRIOR future runs can read (a role, a relationship, a stable preference). " +
+      "PRIOR future runs can read (a role, a relationship, a stable preference or standing responsibility). " +
+      "A one-off message or event summary merely involving the person is not person-profile context. " +
       "The evidence firewall is enforced exactly as annotate_durable: the claim " +
       "MUST quote verbatim source text from an existing document, its recorded " +
       "confidence is capped below certainty, and it cannot be grounded on your " +
@@ -3744,11 +4165,23 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "re-grounded, never facts.",
     schema: annotatePersonSchema,
     mutates: true,
-    summarize: (args) => (args as { claimType?: string })?.claimType,
+    summarize: (args) => {
+      const personId = summaryField(args, "personId");
+      const name = personId ? personNameSummary(db, personId) : "";
+      const text = summaryExcerpt(summaryField(args, "claimText") ?? "");
+      return name && text ? `${name}: ${text}` : name || text;
+    },
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotatePersonSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadGeneration = decisionPayloadErasureGeneration(db);
+      const supersedes =
+        a.supersedes === undefined
+          ? []
+          : typeof a.supersedes === "string"
+            ? [a.supersedes]
+            : [...new Set(a.supersedes)];
       // Firewall 1 (person side): the subject must resolve to a known person
       // (walks merge chains / resolves an email through aliases). Unknown → 404.
       const personId = resolveLoopPersonRef(db, a.personId);
@@ -3756,13 +4189,13 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       // Firewall 2: the grounding atom must be a real source document.
       const evidence = fetchEvidenceDoc(db, a.evidenceDocId);
       if (evidence === null) return notFound("evidence document", a.evidenceDocId);
-      // Firewall 3: never ground on a derived open-loop mirror doc.
-      if (evidence.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+      // Firewall 3: never ground on a generated synthesis mirror doc.
+      if (evidence.generated) {
         return {
           kind: "error",
           code: "invalid_evidence",
           message:
-            "evidenceDocId is a derived open-loop record, not a source document — " +
+            "evidenceDocId is a generated synthesis record, not a source document — " +
             "ground the observation on the original source, not your own tracked state",
         };
       }
@@ -3800,18 +4233,20 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       // ids: an annotation authored against a since-merged-away id still names
       // the same person, so its subject resolves through the merge chain
       // before the match.
-      if (a.supersedes !== undefined) {
-        const target = getPersonAnnotation(db, a.supersedes);
+      const predecessors: PersonAnnotationRow[] = [];
+      for (const predecessor of supersedes) {
+        const target = getPersonAnnotation(db, predecessor);
         if (target === null) {
-          return invalidSupersede(`annotation ${a.supersedes} does not exist in the person store`);
+          return invalidSupersede(`annotation ${predecessor} does not exist in the person store`);
         }
         if (target.invalidatedAt !== null) {
-          return invalidSupersede(`annotation ${a.supersedes} is no longer live`);
+          return invalidSupersede(`annotation ${predecessor} is no longer live`);
         }
+        predecessors.push(target);
         const targetCanonical = resolveLoopPersonRef(db, target.personId) ?? target.personId;
         if (targetCanonical !== personId) {
           return invalidSupersede(
-            `annotation ${a.supersedes} is about person ${targetCanonical}, not ${personId}`,
+            `annotation ${predecessor} is about person ${targetCanonical}, not ${personId}`,
           );
         }
       }
@@ -3824,9 +4259,10 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       // SQL over ALL live rows in the person's merge equivalence class
       // (case-insensitive), so a standing belief can't escape behind newer rows.
       const standing = listLiveSameClaimTypePersonAnnotations(db, personId, a.claimType, {
-        limit: CONFLICT_PROBE_LIMIT,
-        ...(a.supersedes !== undefined ? { excludeId: a.supersedes } : {}),
-      });
+        limit: CONFLICT_PROBE_LIMIT + supersedes.length,
+      })
+        .filter((row) => !supersedes.includes(row.id))
+        .slice(0, CONFLICT_PROBE_LIMIT);
       if (standing.length > 0) {
         return annotationConflictRefusal(
           "person_annotation.conflict_candidates",
@@ -3834,31 +4270,90 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           CREATE_CONFLICT_GUIDANCE,
         );
       }
+      const reading = readProfile(() => personProfiles.require(personId, personBudget));
+      if (reading.refusal !== null) return reading.refusal;
+      const profileBudget = reading.value;
+      if (supersedes.length === 1) {
+        const unchanged = readProfile(() =>
+          findUnchangedPersonAnnotation(db, supersedes[0]!, { ...a, confidence }, profileBudget),
+        );
+        if (unchanged.refusal !== null) return unchanged.refusal;
+        if (unchanged.value)
+          return ok("person_annotation.unchanged", {
+            id: unchanged.value.id,
+            personId,
+            unchanged: true,
+            guidance:
+              "This verified fact and its evidence already match. No replacement or verification refresh was written.",
+          });
+      }
+      const budgetRefusal = preflightProfile(personId, predecessors, a.claimText);
+      if (budgetRefusal !== null) return budgetRefusal;
+      const id = `panno_${idGen()}`;
+      const judging = db.transaction(() => {
+        const profile = readPersonReconciliationContext(
+          db,
+          personId,
+          supersedes,
+          supersedes.length ? "replace" : "create",
+          a.reconciliationReason,
+        );
+        const payloadCapture =
+          deps.checkRecord && (deps.checkRecord.needsDocumentContext?.() ?? true)
+            ? (captureDecisionPayloadSubjects(
+                db,
+                {
+                  sourceIds: [
+                    a.evidenceDocId,
+                    ...additional.map((atom) => atom.docId),
+                    ...profile.sourceIds,
+                  ],
+                  nodeIds: profile.nodeIds,
+                },
+                payloadGeneration,
+              ) ?? undefined)
+            : undefined;
+        return {
+          ...(payloadCapture
+            ? {
+                personContext: personRecordContext(
+                  personId,
+                  [{ docId: a.evidenceDocId, quote: a.evidenceQuote }, ...additional],
+                  profile.reconciliation,
+                ),
+              }
+            : {}),
+          ...(payloadCapture ? { payloadCapture } : {}),
+        };
+      })();
+      const dropped = await recordCheckRefusal(
+        deps,
+        {
+          recordId: id,
+          record: { type: "person-fact", kind: a.claimType, text: a.claimText },
+          documentId: a.evidenceDocId,
+          ...judging,
+        },
+        ctx.abortSignal,
+      );
+      if (dropped !== null) return dropped;
       // Firewall 6 (the entailment gate): the evidence must ESTABLISH the
       // claim — ONE call judging it against the CONCATENATED quotes (a
-      // scalar-only call is byte-identical to before).
+      // structured judgment preserves each clause’s factual scope).
       const gate = await runEntailmentGate(
         deps,
         {
           claim: a.claimText,
-          evidence: concatenatedGateEvidence([a.evidenceQuote, ...additional.map((e) => e.quote)]),
+          context: annotationVerificationContext("person_annotation"),
+          assessment: "annotation_atomic",
+          evidence: annotationGateEvidence(db, [
+            { docId: a.evidenceDocId, quote: a.evidenceQuote },
+            ...additional,
+          ]),
         },
         clock(),
       );
-      if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
-      const id = `panno_${idGen()}`;
-      if (a.supersedes === undefined) {
-        const dropped = await recordCheckRefusal(
-          deps,
-          {
-            recordId: id,
-            record: { type: "person-fact", kind: a.claimType, text: a.claimText },
-            documentId: a.evidenceDocId,
-          },
-          ctx.abortSignal,
-        );
-        if (dropped !== null) return dropped;
-      }
+      if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
       const input = {
         id,
         personId,
@@ -3879,11 +4374,18 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       let annotation: PersonAnnotationRow;
       let supersedeLost = false;
       if (a.supersedes !== undefined) {
-        const res = await writeGate.createPersonAnnotationSuperseding(input, a.supersedes, clock());
-        annotation = res.annotation;
-        supersedeLost = !res.superseded;
+        const writing = await writeProfile(() =>
+          writeGate.createPersonAnnotationSuperseding(input, a.supersedes!, clock(), profileBudget),
+        );
+        if (writing.refusal !== null) return writing.refusal;
+        annotation = writing.value.annotation;
+        supersedeLost = !writing.value.superseded;
       } else {
-        annotation = await writeGate.createPersonAnnotation(input, clock());
+        const writing = await writeProfile(() =>
+          writeGate.createPersonAnnotation(input, clock(), profileBudget),
+        );
+        if (writing.refusal !== null) return writing.refusal;
+        annotation = writing.value;
       }
       if (supersedeLost) {
         log.warn(
@@ -3902,7 +4404,11 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         confidence: annotation.confidence,
         claimBasis: annotation.claimBasis,
         ...(additional.length > 0 ? { evidenceCount: 1 + additional.length } : {}),
-        ...(a.supersedes !== undefined && !supersedeLost ? { supersededId: a.supersedes } : {}),
+        ...(a.supersedes !== undefined && !supersedeLost
+          ? typeof a.supersedes === "string"
+            ? { supersededId: a.supersedes }
+            : { supersededIds: supersedes }
+          : {}),
         ...(supersedeLost ? { supersedeLost: true, guidance: SUPERSEDE_LOST_GUIDANCE } : {}),
         ...(confidence < a.confidence ? { confidenceCappedTo: ceiling } : {}),
       });
@@ -3915,6 +4421,15 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       id: z.string().min(1).describe("Person-annotation id (panno_…)."),
       claimType: claimTypeField.optional(),
       claimText: z.string().min(1).max(1000).optional(),
+      reconciliationReason: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1000)
+        .optional()
+        .describe(
+          "Explain retained useful scope and intentional editorial omissions when revising meaning. Separate dated observations do not establish continuous duration.",
+        ),
       confidence: fraction.optional().describe("New confidence (still capped below certainty)."),
       claimBasis: claimBasisEnum
         .optional()
@@ -3933,15 +4448,17 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
     name: "person_annotation_revise",
     description:
       "Revise a person annotation you previously recorded — refine its claim " +
-      "text/type or lower its confidence. The evidence grounding is immutable; " +
-      "to re-ground on a different quote, retract and re-create.",
+      "text/type or lower its confidence. To re-verify unchanged grounding, supply only id and confidence (the current confidence is allowed). Replaying unchanged claim text does not refresh verification. The evidence grounding is immutable; " +
+      "to re-ground on different quotes, use annotate_person with supersedes after reading the complete profile. Useful older scope must survive unless its omission is a justified editorial choice.",
     schema: personAnnotationReviseSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "claimText") ?? personAnnotationSummary(db, args)),
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationReviseSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
-      const { id, ...rest } = parsed.data;
+      const { id, reconciliationReason, ...rest } = parsed.data;
+      const payloadGeneration = decisionPayloadErasureGeneration(db);
       const existing = getPersonAnnotation(db, id);
       if (existing === null) return notFound("person annotation", id);
       // Firewall re-check (as annotation_revise): the immutable grounding must
@@ -3990,6 +4507,14 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           );
         }
       }
+      const canonicalPerson = resolveLoopPersonRef(db, existing.personId) ?? existing.personId;
+      const reading = readProfile(() => personProfiles.require(canonicalPerson, personBudget));
+      if (reading.refusal !== null) return reading.refusal;
+      const profileBudget = reading.value;
+      if (rest.claimText !== undefined && rest.claimText !== existing.claimText) {
+        const budgetRefusal = preflightProfile(canonicalPerson, [existing], rest.claimText);
+        if (budgetRefusal !== null) return budgetRefusal;
+      }
       // The entailment gate re-judges the EFFECTIVE claim against the FULL
       // live evidence set, concatenated as the create gate judged it (as
       // annotation_revise); scalar-mirror fallback covers a row with no atoms.
@@ -4001,18 +4526,110 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           : [{ docId: existing.evidenceDocId, quote: existing.evidenceQuote }],
       );
       if (sourceRefusal !== null) return sourceRefusal;
+      const effective = {
+        claimType: rest.claimType ?? existing.claimType,
+        claimText: rest.claimText ?? existing.claimText,
+        confidence: clampedConfidence ?? existing.confidence,
+        claimBasis: rest.claimBasis ?? existing.claimBasis,
+        evidenceDocId: existing.evidenceDocId,
+        evidenceQuote: existing.evidenceQuote,
+        additionalEvidence: atoms
+          .slice(1)
+          .map((atom) => ({ docId: atom.evidenceDocId, quote: atom.evidenceQuote })),
+      };
+      const unchanged = readProfile(() =>
+        findUnchangedPersonAnnotation(db, id, effective, profileBudget),
+      );
+      if (unchanged.refusal !== null) return unchanged.refusal;
+      // Confidence-only revision is the existing re-verification contract:
+      // sweeps reaffirm a standing claim without inventing an editorial edit.
+      // Replaying its prose (even with confidence attached) remains a no-op.
+      const reaffirm =
+        rest.confidence !== undefined &&
+        rest.claimText === undefined &&
+        rest.claimType === undefined &&
+        rest.claimBasis === undefined &&
+        reconciliationReason === undefined;
+      if (unchanged.value && !reaffirm)
+        return ok("person_annotation.unchanged", {
+          id,
+          unchanged: true,
+          guidance:
+            "This verified fact and its evidence already match. No revision or verification refresh was written.",
+        });
+      if (
+        effective.claimText !== existing.claimText ||
+        effective.claimType !== existing.claimType
+      ) {
+        const judging = db.transaction(() => {
+          const profile = readPersonReconciliationContext(
+            db,
+            canonicalPerson,
+            [id],
+            "revise",
+            reconciliationReason,
+          );
+          const payloadCapture =
+            deps.checkRecord && (deps.checkRecord.needsDocumentContext?.() ?? true)
+              ? (captureDecisionPayloadSubjects(
+                  db,
+                  {
+                    sourceIds: [
+                      existing.evidenceDocId,
+                      ...atoms.map((atom) => atom.evidenceDocId),
+                      ...profile.sourceIds,
+                    ],
+                    nodeIds: profile.nodeIds,
+                  },
+                  payloadGeneration,
+                ) ?? undefined)
+              : undefined;
+          return {
+            ...(payloadCapture
+              ? {
+                  personContext: personRecordContext(
+                    canonicalPerson,
+                    atoms.length
+                      ? atoms.map((atom) => ({
+                          docId: atom.evidenceDocId,
+                          quote: atom.evidenceQuote,
+                        }))
+                      : [{ docId: existing.evidenceDocId, quote: existing.evidenceQuote }],
+                    profile.reconciliation,
+                  ),
+                }
+              : {}),
+            ...(payloadCapture ? { payloadCapture } : {}),
+          };
+        })();
+        const dropped = await recordCheckRefusal(
+          deps,
+          {
+            recordId: id,
+            record: { type: "person-fact", kind: effective.claimType, text: effective.claimText },
+            documentId: existing.evidenceDocId,
+            ...judging,
+          },
+          ctx.abortSignal,
+        );
+        if (dropped !== null) return dropped;
+      }
       const gate = await runEntailmentGate(
         deps,
         {
           claim: rest.claimText ?? existing.claimText,
-          evidence:
+          context: annotationVerificationContext("person_annotation"),
+          assessment: "annotation_atomic",
+          evidence: annotationGateEvidence(
+            db,
             atoms.length > 0
-              ? concatenatedGateEvidence(atoms.map((e) => e.evidenceQuote))
-              : existing.evidenceQuote,
+              ? atoms.map((atom) => ({ docId: atom.evidenceDocId, quote: atom.evidenceQuote }))
+              : [{ docId: existing.evidenceDocId, quote: existing.evidenceQuote }],
+          ),
         },
         clock(),
       );
-      if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
+      if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
       const patch: UpdatePersonAnnotationPatch = {
         ...(rest.claimType !== undefined ? { claimType: rest.claimType } : {}),
         ...(rest.claimText !== undefined ? { claimText: rest.claimText } : {}),
@@ -4026,7 +4643,11 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           ? { verificationState: gate.state, lastVerifiedAt: gate.verifiedAt }
           : { lastVerifiedAt: clock() }),
       };
-      const revised = await writeGate.revisePersonAnnotation(id, patch, clock());
+      const writing = await writeProfile(() =>
+        writeGate.revisePersonAnnotation(id, patch, clock(), profileBudget),
+      );
+      if (writing.refusal !== null) return writing.refusal;
+      const revised = writing.value;
       if (!revised) return notFound("person annotation", id);
       log.info(`Cognition Steward run ${runId} revised person annotation ${id}`);
       // Echo the post-revise row (the store returns a boolean), mirroring
@@ -4053,16 +4674,31 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
   const personAnnotationRetract: ToolHandle = {
     name: "person_annotation_retract",
     description:
-      "Retract (permanently delete) a person annotation that turned out wrong " +
-      "or was superseded. Reserve for genuine mistakes; a claim that merely " +
+      "Withdraw a person annotation that turned out wrong, was superseded, " +
+      "or does not belong in the compact person profile after explicit editorial review. Autonomous withdrawal " +
+      "requires a complete profile read and a preservation assessment; keep useful supported meaning with an atomic " +
+      "revision or annotate_person supersedes replacement, never delete first and recreate later. A claim that merely " +
       "weakened should be revised with lower confidence instead.",
     schema: personAnnotationRetractSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    summarize: (args) => personAnnotationSummary(db, args),
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationRetractSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
-      const removed = await writeGate.retractPersonAnnotation(parsed.data.id, clock());
+      const assessment = await assessPersonWithdrawal(
+        db,
+        personProfiles,
+        deps.checkRecord,
+        parsed.data.id,
+        personBudget,
+        ctx.abortSignal,
+      );
+      if (assessment.refusal) return assessment.refusal;
+      const removed = await writeGate.retractPersonAnnotation(
+        parsed.data.id,
+        clock(),
+        assessment.budget,
+      );
       if (!removed) return notFound("person annotation", parsed.data.id);
       log.info(`Cognition Steward run ${runId} retracted person annotation ${parsed.data.id}`);
       return ok("person_annotation.retracted", { id: parsed.data.id });
@@ -4095,8 +4731,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "annotate_person with supersedes instead.",
     schema: personAnnotationSupersedeSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    summarize: (args) => personAnnotationSummary(db, args),
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationSupersedeSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
@@ -4124,10 +4760,20 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           `annotation ${a.supersededBy} is about person ${successorCanonical}, not ${targetCanonical}`,
         );
       }
+      const assessment = await assessPersonWithdrawal(
+        db,
+        personProfiles,
+        deps.checkRecord,
+        a.id,
+        personBudget,
+        ctx.abortSignal,
+      );
+      if (assessment.refusal) return assessment.refusal;
       const { superseded } = await writeGate.supersedePersonAnnotationBy(
         a.id,
         a.supersededBy,
         clock(),
+        assessment.budget,
       );
       if (!superseded) {
         log.warn(

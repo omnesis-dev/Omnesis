@@ -15,6 +15,7 @@
  * transcripts (see `transcripts.ts`).
  */
 
+import { KNOWLEDGE_MUTATING_TOOLS } from "./knowledge/tools.js";
 import { COGNITION_MUTATING_TOOL_NAMES } from "./steward/tools.js";
 import {
   parseCognitionDailyRunPayload,
@@ -61,6 +62,8 @@ export interface CognitionRunDecision {
   subject: string | null;
   /** The triggering document id for `data` runs (the per-datum filter key). */
   docId: string | null;
+  /** Batch source identities; a synthesis run is not a single datum run. */
+  docIds?: string[];
   /** Mutating tool calls, in order. Empty = the agent decided to do nothing. */
   actions: CognitionDecisionAction[];
   /** Count of non-mutating tool calls (search, open, trail, …). */
@@ -91,6 +94,27 @@ function describeAction(tool: string, args: unknown): string {
   const id = argString(args, "id");
   const label = title ? `"${truncate(title, 60)}"` : (id ?? "");
   switch (tool) {
+    case "knowledge_save": {
+      const node = args && typeof args === "object" ? (args as Record<string, unknown>).node : null;
+      return `save ${argString(node, "kind") ?? "synthesis"} ${argString(node, "title") ?? argString(node, "id") ?? ""}`.trim();
+    }
+    case "knowledge_edit": {
+      const node = args && typeof args === "object" ? (args as Record<string, unknown>).node : null;
+      const edits =
+        node && typeof node === "object" ? (node as Record<string, unknown>).edits : null;
+      const ops = Array.isArray(edits)
+        ? [...new Set(edits.map((edit) => argString(edit, "op")).filter((op) => op !== null))]
+        : [];
+      return `edit ${argString(node, "title") ?? argString(node, "id") ?? "page"}${ops.length ? ` (${ops.join(", ")})` : ""}`;
+    }
+    case "knowledge_retire":
+      return `retire wiki ${argString(args, "id") ?? "page"}`;
+    case "knowledge_propose_page":
+      return `propose wiki ${label}`.trim();
+    case "knowledge_candidate_decide":
+      return `candidate ${id ?? ""} ${argString(args, "status") ?? ""}`.trim();
+    case "knowledge_link":
+      return `link ${argString(args, "fromId") ?? ""} → ${argString(args, "toId") ?? ""}`.trim();
     case "open_loop_create":
       return `create loop ${label}`.trim();
     case "open_loop_update": {
@@ -103,12 +127,14 @@ function describeAction(tool: string, args: unknown): string {
     }
     case "open_loop_delete":
       return `delete loop ${id ?? ""}`.trim();
-    case "brief_create":
-      return `create brief ${label}`.trim();
-    case "brief_update":
-      return `update brief ${id ?? ""}`.trim();
-    case "brief_delete":
-      return `withdraw brief ${id ?? ""}`.trim();
+    case "observation_note": {
+      const summary = argString(args, "summary");
+      return `note observation${summary ? ` "${truncate(summary, 60)}"` : ""}`;
+    }
+    case "observation_withdraw":
+      return `withdraw observation ${id ?? ""}`.trim();
+    case "morning_brief_send":
+      return "send the morning brief";
     case "notes_append":
       return "append agent notes";
     case "notes_rewrite":
@@ -158,6 +184,8 @@ export function describeRunSubject(kind: CognitionRunKind, payload: unknown): st
     case "synthesis": {
       const s = parseCognitionSynthesisRunPayload(payload);
       if (!s) return null;
+      if (s.focus === "knowledge-maintenance")
+        return `knowledge maintenance batch ${s.batchId ?? "unknown"}`;
       if (s.focus === "collision") {
         return `collision judge: ${
           [...(s.loopIds ?? []), ...(s.temporalAnnotationIds ?? [])].join(", ") || "(no members)"
@@ -217,7 +245,16 @@ export function summarizeCognitionTranscript(t: CognitionRunTranscript): Cogniti
       const payload = event.payload as { toolCallId?: string; tool?: string; args?: unknown };
       const tool = typeof payload?.tool === "string" ? payload.tool : "";
       if (!tool) continue;
-      if (COGNITION_MUTATING_TOOL_NAMES.has(tool)) {
+      if (
+        [
+          "knowledge_next_frontier",
+          "knowledge_discovery_complete",
+          "knowledge_temporal_context",
+          "knowledge_evidence",
+        ].includes(tool)
+      )
+        continue;
+      if (COGNITION_MUTATING_TOOL_NAMES.has(tool) || KNOWLEDGE_MUTATING_TOOLS.has(tool)) {
         const index =
           actions.push({ tool, detail: describeAction(tool, payload.args), ok: true }) - 1;
         if (typeof payload.toolCallId === "string") actionByCallId.set(payload.toolCallId, index);

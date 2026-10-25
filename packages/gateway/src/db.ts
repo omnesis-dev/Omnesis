@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
+import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 type Db = Database.Database;
+import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
 import { runSchemaSetup } from "./data/schema.js";
 import { runDowngradeCompatCheck, runMigrations } from "./data/migrations.js";
 import { openEncryptedSqlite } from "./sqlite-encryption.js";
@@ -26,7 +28,6 @@ export {
   upsertWithCursor,
   upsertWithCursorYieldable,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentsByIds,
   DELETE_IN_LIST_CHUNK,
   deleteDocumentForUser,
@@ -220,6 +221,10 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   runSchemaSetup(db);
   runDowngradeCompatCheck(db); // Per-source cursor reset on downgrade
   runMigrations(db);
+  // Cross-table triggers must follow historical table rebuilds, whose renames
+  // would otherwise rewrite their references to temporary migration tables.
+  db.transaction(() => installTemporalDocumentEpochs(db))();
+  db.transaction(() => installConversationEvidence(db))();
 
   return db;
 }

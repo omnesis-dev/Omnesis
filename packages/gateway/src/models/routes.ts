@@ -80,10 +80,9 @@ export const CAPABILITY_TO_CATALOG: Partial<Record<CapabilityRole, ModelRole>> =
   transcriber: "transcribe",
   "background-agent": "agent",
   "watch-judge": "agent",
-  // The brief judge and the entailment verifier take the same agent-class
-  // models as every other chat role (the portal already offers them there) —
-  // without a mapping the activate endpoint rejects their capability.
-  "brief-judge": "agent",
+  // The entailment verifier takes the same agent-class models as every other
+  // chat role (the portal already offers them there) — without a mapping the
+  // activate endpoint rejects its capability.
   "entailment-verifier": "agent",
 };
 
@@ -139,7 +138,6 @@ const REASONING_ROLES = new Set<CapabilityRole>([
   "background-agent",
   "watch-judge",
   "entailment-verifier",
-  "brief-judge",
 ]);
 
 const codexRuntimeUpdateBodySchema = z.strictObject({

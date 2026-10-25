@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { experimentalEnabled, MAX_TIME_ZONE_SHIFT_MS } from "@omnesis/core";
+import { knowledgeOwnerReadPredicate } from "../../brain/knowledge/storage-fence.js";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID } from "./source-meta.js";
 import type Database from "better-sqlite3";
@@ -91,7 +92,7 @@ export class NotesProvenanceService {
         .prepare<[string], NotesDayProvenance["loops"][number]>(
           `SELECT l.id, l.title, l.state AS status FROM open_loops l
          JOIN open_loop_docs d ON d.loop_id = l.id
-         WHERE d.doc_id = ? ORDER BY l.last_update DESC, l.id`,
+         WHERE d.doc_id = ? AND ${knowledgeOwnerReadPredicate(this.db, "l.id")} ORDER BY l.last_update DESC, l.id`,
         )
         .all(document.id);
     }

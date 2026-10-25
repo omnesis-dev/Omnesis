@@ -40,6 +40,14 @@ enum MenuReveal {
     /// the screen that belongs to one gesture only.
     static let gestureFraction: CGFloat = 0.8
 
+    /// Width of the leading strip that is always the menu's. Elsewhere a
+    /// view that moves sideways under the finger — the Tasks pager turning
+    /// back a page, a wide table scrolling — takes a rightward drag ahead of
+    /// the reveal; a drag that begins this close to the leading edge reveals
+    /// the menu over it instead, the way a thumb reaches for it from any
+    /// screen. Interactive back navigation still outranks it.
+    static let edgeWidth: CGFloat = 28
+
     /// Corner radius the app's leading corners reach at full travel, matching
     /// the display's own. A constant rather than a measurement: the true
     /// display radius is exposed only through private API, which this app will
@@ -191,6 +199,13 @@ enum MenuReveal {
             return .undetermined
         }
         return .horizontal
+    }
+
+    /// Whether a touch that went down at `startX` (in the container's
+    /// coordinates) belongs to the menu ahead of a horizontal scroller under
+    /// it: only while the menu is closed, and only from the leading edge.
+    static func claimsEdge(startX: CGFloat, isOpen: Bool) -> Bool {
+        !isOpen && startX <= edgeWidth
     }
 
     /// Where a released drag settles: a decisive flick decides on direction

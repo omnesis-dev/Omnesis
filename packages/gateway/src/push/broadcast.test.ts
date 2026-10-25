@@ -12,7 +12,6 @@ import { DeviceId, type DeviceRecord } from "@omnesis/types";
 import { APNS_WAKE_JSON, FCM_WAKE_DATA } from "@omnesis/core/push";
 import { sendAgentAnswerPush } from "../agent/answer-push.js";
 import { ConversationNotifier } from "../agent/conversation-notifier.js";
-import { sendDigestPush } from "../brain/digest-push.js";
 import { PrivacyApprovalNotifier } from "../privacy/approval-notifier.js";
 import { createAccessTables } from "../access/store.js";
 import {
@@ -188,11 +187,11 @@ describe("PushBroadcaster", () => {
       now: () => 900,
     });
     const message: NotificationMessage = {
-      kind: "brief",
-      title: "Fictional brief",
+      kind: "conversation",
+      title: "Fictional update",
       body: "An invented summary is ready.",
-      data: { briefId: "brief-relay-switch" },
-      collapseId: "brief:relay-switch",
+      data: { conversationId: "conversation-relay-switch" },
+      collapseId: "conversation:relay-switch",
     };
 
     await expect(broadcaster.publish(message)).resolves.toEqual([
@@ -262,11 +261,11 @@ describe("PushBroadcaster", () => {
     });
 
     const results = await broadcaster.publish({
-      kind: "brief",
+      kind: "conversation",
       title: "Morning brief",
       body: "A fictional summary is ready.",
-      data: { briefId: "brief-example" },
-      collapseId: "brief",
+      data: { conversationId: "conversation-example" },
+      collapseId: "conversation:example",
     });
 
     expect(results.map((result) => [result.transport, result.ok])).toEqual([
@@ -386,11 +385,6 @@ describe("PushBroadcaster", () => {
         title: "Conversation update",
         body: "A fictional message arrived.",
       });
-      await sendDigestPush(
-        { publisher: broadcaster },
-        { id: "brief-fictional", title: "Fictional brief", description: "Invented summary." },
-        "2099-01-01",
-      );
       await new NotifyRunner(broadcaster).run({
         watchId: "watch-fictional",
         watchName: "Fictional watch",
@@ -455,7 +449,7 @@ describe("PushBroadcaster", () => {
       });
       await new PrivacyApprovalNotifier(broadcaster).notify("approval-fictional");
 
-      expect(apnsBodies).toEqual(Array(6).fill(APNS_WAKE_JSON));
+      expect(apnsBodies).toEqual(Array(5).fill(APNS_WAKE_JSON));
       const exactFcmBytes = JSON.stringify({
         message: {
           token: "fcm-byte-token",
@@ -463,12 +457,11 @@ describe("PushBroadcaster", () => {
           android: { priority: "high" },
         },
       });
-      expect(fcmBodies).toEqual(Array(6).fill(exactFcmBytes));
+      expect(fcmBodies).toEqual(Array(5).fill(exactFcmBytes));
       const carrierBytes = [...apnsBodies, ...fcmBodies].join("\n");
       for (const privateText of [
         "A fictional answer.",
         "A fictional message arrived.",
-        "Invented summary.",
         "An invented condition matched.",
         "source-fictional",
         "approval-fictional",

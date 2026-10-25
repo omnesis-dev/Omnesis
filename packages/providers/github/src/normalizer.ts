@@ -66,9 +66,14 @@ export function parseNoreplyEmail(email: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
-/** UTC `YYYY-MM-DD HH:MM` from an ISO timestamp — deterministic, locale-free. */
+/**
+ * The UTC instant to the minute, `YYYY-MM-DDTHH:MMZ` — deterministic and
+ * locale-free, and an instant a reader can place in their own zone, where a
+ * bare `YYYY-MM-DD HH:MM` would read as a local clock.
+ */
 function ts(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? iso : `${at.toISOString().slice(0, 16)}Z`;
 }
 
 // ---------------------------------------------------------------------------

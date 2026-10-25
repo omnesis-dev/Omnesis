@@ -7,11 +7,17 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { createDatabase } from "../../db.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
-import { notesCompactionRunDedupeKey, SCHEDULED_INSTRUCTION_MAX_CHARS } from "../run-payloads.js";
+import {
+  dailySourceRunDedupeKey,
+  digestRunDedupeKey,
+  notesCompactionRunDedupeKey,
+  SCHEDULED_INSTRUCTION_MAX_CHARS,
+} from "../run-payloads.js";
 import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import {
   cancelScheduledRunsForLoop,
   claimDueCognitionRuns,
+  isParallelKnowledgeRun,
   completeCognitionRun,
   countPendingCognitionRuns,
   enqueueCognitionRun,
@@ -59,6 +65,341 @@ describe("steward run queue", () => {
     cleanupDb(path);
   });
 
+  function maintenanceRun(id: string) {
+    enqueueCognitionRun(
+      db,
+      {
+        id,
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: `batch-${id}` },
+      },
+      100,
+    );
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,'fp','routine','pending',100,100)",
+    ).run(`batch-${id}`, id);
+    db.prepare("INSERT INTO knowledge_batch_regions VALUES(?,?)").run(
+      `batch-${id}`,
+      `source:${id}`,
+    );
+  }
+
+  function populatedRootRun(id: string) {
+    maintenanceRun(id);
+    db.exec(
+      "INSERT OR IGNORE INTO knowledge_nodes VALUES('navigation-root','root',NULL,'Overview','Current context','Current context',1,1,'hash','current','{}','{}',100,100)",
+    );
+    db.prepare("INSERT INTO knowledge_batch_regions VALUES(?, 'navigation-root')").run(
+      `batch-${id}`,
+    );
+    db.prepare("UPDATE knowledge_batches SET tier='soon' WHERE run_id=?").run(id);
+  }
+
+  function organizationRun(id: string) {
+    maintenanceRun(id);
+    db.prepare(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.organizationCohortId',?) WHERE id=?",
+    ).run(`cohort-${id}`, id);
+    db.prepare(
+      `INSERT INTO knowledge_organization_cohorts
+      (id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at)
+      VALUES(?,?,'fp','test','pending',100,100,100)`,
+    ).run(`cohort-${id}`, `batch-${id}`);
+  }
+
+  test("bound maintenance tiers pass historical backlog while reactions remain first", () => {
+    for (let index = 0; index < 256; index++) maintenanceRun(`history-${index}`);
+    maintenanceRun("soon");
+    maintenanceRun("immediate");
+    db.exec("UPDATE knowledge_batches SET tier='soon' WHERE run_id='soon'");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='immediate'");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id IN ('soon','immediate')");
+    enqueueCognitionRun(db, { id: "feedback", kind: "feedback", payload: {} }, 102);
+    enqueueCognitionRun(db, { id: "data", kind: "data", payload: {} }, 102);
+    organizationRun("organization");
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 5 }).map((run) => run.id)).toEqual([
+      "feedback",
+      "data",
+      "organization",
+      "immediate",
+      "soon",
+    ]);
+  });
+
+  test.each(["initial", "populated"] as const)(
+    "preferred %s root work advances under a continuously replenished immediate backlog",
+    (rootKind) => {
+      maintenanceRun("routine");
+      maintenanceRun("soon");
+      db.exec("UPDATE knowledge_batches SET tier='soon' WHERE run_id='soon'");
+      organizationRun("organization-first");
+      let time = 200;
+      let serial = 0;
+      const take = () => {
+        // Keep an urgent first-pass inventory backlog present at every claim.
+        for (let index = 0; index < 4; index++) {
+          const id = `immediate-${serial++}`;
+          maintenanceRun(id);
+          db.prepare("UPDATE knowledge_batches SET tier='immediate' WHERE run_id=?").run(id);
+        }
+        const run = claimDueCognitionRuns(db, { now: time++, limit: 1 })[0]!;
+        completeCognitionRun(db, run.id, { usage: null, now: time });
+        return run.id;
+      };
+      expect(take()).toBe("organization-first");
+      if (rootKind === "populated") populatedRootRun("root");
+      else {
+        maintenanceRun("root");
+        db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='root'");
+        db.exec(
+          "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.schedulingClass','initial-root') WHERE id='root'",
+        );
+      }
+      db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='root'");
+      for (let index = 0; index < 3; index++) expect(take()).toMatch(/^immediate-/);
+      expect(take()).toBe("root");
+      db.exec("UPDATE knowledge_batches SET status='completed' WHERE run_id='root'");
+      organizationRun("organization-next");
+      for (let index = 0; index < 3; index++) expect(take()).toMatch(/^immediate-/);
+      expect(take()).toBe("organization-next");
+      // Outside the preferred slot, normal maintenance urgency is unchanged.
+      db.exec("UPDATE cognition_runs SET status='completed' WHERE id LIKE 'immediate-%'");
+      expect(claimDueCognitionRuns(db, { now: time, limit: 2 }).map((run) => run.id)).toEqual([
+        "soon",
+        "routine",
+      ]);
+    },
+  );
+
+  test("continued populated root keeps consumed-slot history and exclusive admission", () => {
+    populatedRootRun("predecessor");
+    const first = claimDueCognitionRuns(db, { now: 200, limit: 1 })[0]!;
+    completeCognitionRun(db, first.id, { usage: null, now: 200 });
+    enqueueCognitionRun(
+      db,
+      {
+        id: "successor",
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch-predecessor",
+          continuedFromRunId: "predecessor",
+        },
+      },
+      100,
+    );
+    db.exec(
+      "UPDATE knowledge_batches SET run_id='successor',tier='immediate' WHERE id='batch-predecessor'",
+    );
+    for (let index = 0; index < 4; index++) {
+      maintenanceRun(`immediate-${index}`);
+      db.prepare("UPDATE knowledge_batches SET tier='immediate' WHERE run_id=?").run(
+        `immediate-${index}`,
+      );
+    }
+    for (let index = 0; index < 3; index++) {
+      const ordinary = claimDueCognitionRuns(db, { now: 201 + index, limit: 1 })[0]!;
+      expect(ordinary.id).toMatch(/^immediate-/);
+      completeCognitionRun(db, ordinary.id, { usage: null, now: 201 + index });
+    }
+    expect(claimDueCognitionRuns(db, { now: 204, limit: 1, parallelOnly: true })).toEqual([]);
+    expect(getCognitionRun(db, "successor")?.attempts).toBe(0);
+    expect(claimDueCognitionRuns(db, { now: 204, limit: 1 })[0]!.id).toBe("successor");
+  });
+
+  test("root preference requires active batch ownership and respects retry deadlines", () => {
+    maintenanceRun("ordinary");
+    populatedRootRun("root");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=300 WHERE id='root'");
+    expect(claimDueCognitionRuns(db, { now: 200, limit: 1 })[0]!.id).toBe("ordinary");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='root'");
+    db.exec("UPDATE knowledge_batches SET run_id='foreign' WHERE id='batch-root'");
+    expect(claimDueCognitionRuns(db, { now: 201, limit: 1 })[0]!.id).toBe("ordinary");
+    db.exec("UPDATE knowledge_batches SET run_id='root',status='completed' WHERE id='batch-root'");
+    expect(claimDueCognitionRuns(db, { now: 202, limit: 1 })[0]!.id).toBe("ordinary");
+  });
+
+  test("completed organization retains bounded preference while its repair batch remains active", () => {
+    maintenanceRun("history");
+    organizationRun("organization");
+    db.exec("UPDATE knowledge_organization_cohorts SET status='completed'");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='organization'");
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 1 })[0]!.id).toBe("organization");
+  });
+
+  test("organization and initial root share the bounded synthesis preference", () => {
+    for (let index = 0; index < 5; index++) maintenanceRun(`history-${index}`);
+    organizationRun("organization");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='organization'");
+    const take = (now: number) => {
+      const run = claimDueCognitionRuns(db, { now, limit: 1 })[0]!;
+      completeCognitionRun(db, run.id, { usage: null, now });
+      return run.id;
+    };
+    expect(take(102)).toBe("organization");
+    maintenanceRun("root");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='root'");
+    db.exec(
+      "UPDATE cognition_runs SET next_attempt_at=101,payload_json=json_set(payload_json,'$.schedulingClass','initial-root') WHERE id='root'",
+    );
+    for (let index = 0; index < 3; index++) expect(take(103 + index)).toMatch(/^history-/);
+    expect(take(106)).toBe("root");
+  });
+
+  test("a maintenance tier or cohort must belong to this active run", () => {
+    maintenanceRun("older");
+    for (const id of ["wrong-run", "finished", "unknown-tier", "forged-cohort"]) {
+      maintenanceRun(id);
+      db.prepare("UPDATE cognition_runs SET next_attempt_at=101 WHERE id=?").run(id);
+    }
+    db.exec(
+      "UPDATE knowledge_batches SET tier='immediate',run_id='other' WHERE run_id='wrong-run'",
+    );
+    db.exec(
+      "UPDATE knowledge_batches SET tier='immediate',status='completed' WHERE run_id='finished'",
+    );
+    db.exec("UPDATE knowledge_batches SET tier='urgent' WHERE run_id='unknown-tier'");
+    db.exec(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.organizationCohortId','missing') WHERE id='forged-cohort'",
+    );
+    // A real cohort belonging to a different batch is not this run's authority.
+    db.exec(`INSERT INTO knowledge_organization_cohorts
+      (id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at)
+      VALUES('missing','batch-finished','fp','test','pending',100,100,100)`);
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 1 })[0]!.id).toBe("older");
+  });
+
+  test("promoted maintenance respects backoff, attempts, exclusions and exclusive heads", () => {
+    maintenanceRun("history");
+    maintenanceRun("immediate");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='immediate'");
+    db.exec("DELETE FROM knowledge_batch_regions WHERE batch_id='batch-immediate'");
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
+    expect(getCognitionRun(db, "history")?.attempts).toBe(0);
+    db.exec("UPDATE cognition_runs SET next_attempt_at=200 WHERE id='immediate'");
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1 })[0]!.id).toBe("history");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=100,attempts=3 WHERE id='immediate'");
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, maxAttempts: 3, excludeIds: ["history"] }),
+    ).toEqual([]);
+  });
+
+  test("claim excludes active and visited pending rows without spending their attempts", () => {
+    maintenanceRun("a");
+    maintenanceRun("b");
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true }).map((r) => r.id),
+    ).toEqual(["a"]);
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true, excludeIds: ["a"] }).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["b"]);
+    expect(claimDueCognitionRuns(db, { now: 100, excludeIds: ["a", "b"] })).toEqual([]);
+    expect(getCognitionRun(db, "a")?.attempts).toBe(1);
+    expect(getCognitionRun(db, "b")?.attempts).toBe(1);
+  });
+
+  test("a morning-brief-only claim admits the day's brief and leaves every other run untouched", () => {
+    maintenanceRun("maintenance");
+    enqueueCognitionRun(
+      db,
+      { id: "reaction", kind: "data", payload: { docId: "doc_1", event: "created", datumAt: 100 } },
+      100,
+    );
+    enqueueCognitionRun(
+      db,
+      {
+        id: "source-review",
+        kind: "daily",
+        payload: { sourceId: "src_1", dateFrom: "2026-07-02", dateTo: "2026-07-03" },
+        dedupeKey: dailySourceRunDedupeKey("src_1", "2026-07-03"),
+      },
+      100,
+    );
+    expect(claimDueCognitionRuns(db, { now: 100, morningBriefOnly: true })).toEqual([]);
+
+    enqueueCognitionRun(
+      db,
+      {
+        id: "brief",
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-03" },
+        dedupeKey: digestRunDedupeKey("2026-07-03"),
+      },
+      100,
+    );
+    expect(
+      claimDueCognitionRuns(db, { now: 100, morningBriefOnly: true }).map((r) => r.id),
+    ).toEqual(["brief"]);
+    for (const id of ["maintenance", "reaction", "source-review"])
+      expect(getCognitionRun(db, id)?.attempts, id).toBe(0);
+  });
+
+  test("completed bound batches can settle without becoming a serial barrier", () => {
+    populatedRootRun("finished");
+    maintenanceRun("later");
+    db.exec("UPDATE knowledge_batches SET status='completed' WHERE run_id='finished'");
+    db.exec("DELETE FROM knowledge_batch_regions WHERE batch_id='batch-finished'");
+    expect(isParallelKnowledgeRun(db, "finished")).toBe(true);
+    expect(claimDueCognitionRuns(db, { now: 100, parallelOnly: true, limit: 1 })[0]?.id).toBe(
+      "finished",
+    );
+    expect(
+      claimDueCognitionRuns(db, {
+        now: 100,
+        parallelOnly: true,
+        limit: 1,
+        excludeIds: ["finished"],
+      })[0]?.id,
+    ).toBe("later");
+  });
+
+  test.each(["wrong-owner", "missing", "changed-payload"] as const)(
+    "terminal housekeeping does not trust %s batch identity",
+    (mode) => {
+      populatedRootRun("finished");
+      db.exec("UPDATE knowledge_batches SET status='completed' WHERE run_id='finished'");
+      if (mode === "wrong-owner")
+        db.exec("UPDATE knowledge_batches SET run_id='another-run' WHERE id='batch-finished'");
+      if (mode === "missing") db.exec("DELETE FROM knowledge_batches WHERE id='batch-finished'");
+      if (mode === "changed-payload")
+        db.exec(
+          "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.batchId','another-batch') WHERE id='finished'",
+        );
+      expect(isParallelKnowledgeRun(db, "finished")).toBe(false);
+      expect(claimDueCognitionRuns(db, { now: 100, parallelOnly: true })).toEqual([]);
+      expect(getCognitionRun(db, "finished")?.attempts).toBe(0);
+    },
+  );
+
+  test("parallel admission waits for an exclusive head instead of skipping its priority", () => {
+    maintenanceRun("parallel");
+    enqueueCognitionRun(db, { id: "reaction", kind: "data", payload: {} }, 100);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
+    expect(getCognitionRun(db, "reaction")?.attempts).toBe(0);
+    expect(getCognitionRun(db, "parallel")?.attempts).toBe(0);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1 }).map((r) => r.id)).toEqual([
+      "reaction",
+    ]);
+  });
+
+  test("parallel authority requires a matching batch and excludes live root regions", () => {
+    maintenanceRun("parallel");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(true);
+    db.exec("UPDATE knowledge_batches SET run_id='someone-else'");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(false);
+    db.exec("UPDATE knowledge_batches SET run_id='parallel',status='completed'");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(true);
+    db.exec("UPDATE knowledge_batches SET status='pending'");
+    db.exec(
+      "INSERT INTO knowledge_nodes VALUES('root','root',NULL,'Root','','',1,1,'hash','current','{}','{}',100,100)",
+    );
+    db.exec("INSERT INTO knowledge_batch_regions VALUES('batch-parallel','root')");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(false);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
+  });
+
   test("readiness and schedule CAS are evaluated in the same write", () => {
     db.prepare(
       `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
@@ -88,6 +429,13 @@ describe("steward run queue", () => {
     ).toBe(false);
     expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(3_000);
 
+    // An empty required-stage set is ready independently of document removal.
+    expect(pullForwardReadyCognitionRun(db, "run-race", "doc-race", 2_000, 2_000, 3_000, [])).toBe(
+      true,
+    );
+    expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(2_000);
+    db.prepare("UPDATE cognition_runs SET next_attempt_at = 3000 WHERE id = ?").run("run-race");
+
     db.prepare("DELETE FROM documents WHERE id = ?").run("doc-race");
     expect(
       pullForwardReadyCognitionRun(
@@ -101,15 +449,6 @@ describe("steward run queue", () => {
       ),
     ).toBe(true);
     expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(2_000);
-
-    db.prepare("UPDATE cognition_runs SET next_attempt_at = 3000 WHERE id = ?").run("run-race");
-    db.prepare(
-      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
-       VALUES ('doc-race', 'google', 'drive:maya@example.com', 'ext-race', 'Example', '', 'hash', '{}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
-    ).run();
-    expect(pullForwardReadyCognitionRun(db, "run-race", "doc-race", 2_000, 2_000, 3_000, [])).toBe(
-      true,
-    );
   });
 
   describe("attribution is written when a run settles", () => {
@@ -181,6 +520,114 @@ describe("steward run queue", () => {
     });
     // Still pending on disk (no claimed status) — a crash re-claims it later.
     expect(getCognitionRun(db, "run_1")?.status).toBe("pending");
+  });
+
+  test("initial root preference preserves reactive precedence, backoff and synthesis fairness", () => {
+    const rootPayload = {
+      focus: "knowledge-maintenance",
+      batchId: "batch-root",
+      schedulingClass: "initial-root",
+    };
+    for (let i = 0; i < 5; i++)
+      enqueueCognitionRun(
+        db,
+        { id: `ordinary-${i}`, kind: "synthesis", payload: { focus: "noticing" } },
+        100 + i,
+      );
+    enqueueCognitionRun(
+      db,
+      { id: "root", kind: "synthesis", payload: rootPayload, notBefore: 200 },
+      150,
+    );
+    enqueueCognitionRun(db, { id: "reactive", kind: "data", payload: { docId: "fictional" } }, 190);
+    const take = (time: number) => {
+      const item = claimDueCognitionRuns(db, { now: time, limit: 1 })[0]!;
+      completeCognitionRun(db, item.id, { usage: null, now: time });
+      return item.id;
+    };
+    expect(take(199)).toBe("reactive");
+    expect(take(200)).toBe("root");
+    enqueueCognitionRun(
+      db,
+      { id: "root-again", kind: "synthesis", payload: rootPayload, notBefore: 205 },
+      201,
+    );
+    expect(take(201)).toBe("ordinary-0");
+    expect(take(202)).toBe("ordinary-1");
+    expect(take(203)).toBe("ordinary-2");
+    expect(take(204)).toBe("ordinary-3"); // preferred work is still not due
+    expect(take(205)).toBe("root-again");
+  });
+
+  test("a multi-run claim gives only one root the preferred slot", () => {
+    enqueueCognitionRun(
+      db,
+      { id: "older-ordinary", kind: "synthesis", payload: { focus: "noticing" } },
+      1,
+    );
+    for (const id of ["root-a", "root-b"])
+      enqueueCognitionRun(
+        db,
+        {
+          id,
+          kind: "synthesis",
+          payload: {
+            focus: "knowledge-maintenance",
+            batchId: id,
+            schedulingClass: "initial-root",
+          },
+        },
+        2,
+      );
+    expect(claimDueCognitionRuns(db, { now: 3, limit: 2 }).map((run) => run.id)).toEqual([
+      "root-a",
+      "older-ordinary",
+    ]);
+  });
+
+  test("same-clock admissions preserve the exact four-slot root cadence", () => {
+    for (let i = 0; i < 4; i++)
+      enqueueCognitionRun(
+        db,
+        { id: `z-ordinary-${i}`, kind: "synthesis", payload: { focus: "noticing" } },
+        1,
+      );
+    const payload = {
+      focus: "knowledge-maintenance",
+      batchId: "batch",
+      schedulingClass: "initial-root",
+    };
+    enqueueCognitionRun(db, { id: "a-root", kind: "synthesis", payload }, 2);
+    const first = claimDueCognitionRuns(db, { now: 10, limit: 4 });
+    expect(first[0]!.id).toBe("a-root");
+    for (const row of first) completeCognitionRun(db, row.id, { usage: null, now: 10 });
+    enqueueCognitionRun(db, { id: "another-root", kind: "synthesis", payload }, 3);
+    expect(claimDueCognitionRuns(db, { now: 10, limit: 1 })[0]!.id).toBe("another-root");
+  });
+
+  test("an initial-root failure keeps its retry delay", () => {
+    enqueueCognitionRun(
+      db,
+      {
+        id: "root-retry",
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "root-batch",
+          schedulingClass: "initial-root",
+        },
+      },
+      100,
+    );
+    expect(claimDueCognitionRuns(db, { now: 100 })).toHaveLength(1);
+    failCognitionRun(db, "root-retry", {
+      errorMessage: "transient",
+      terminal: false,
+      nextAttemptAt: 6000,
+      now: 101,
+    });
+    expect(claimDueCognitionRuns(db, { now: 5999 })).toHaveLength(0);
+    expect(claimDueCognitionRuns(db, { now: 6000 })).toHaveLength(1);
   });
 
   test("a scheduled run is invisible until notBefore passes", () => {

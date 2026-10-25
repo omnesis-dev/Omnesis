@@ -52,7 +52,7 @@ describe("WatchFiringContextCard", () => {
 
   it("links the whole fired card to the owning watch", () => {
     const host = card("subscription/example");
-    const link = host.querySelector("a.agent-brief-card-link");
+    const link = host.querySelector("a.agent-context-card-link");
 
     expect(link?.getAttribute("href")).toBe("/portal/watches/subscription%2Fexample");
     expect(link?.getAttribute("aria-label")).toBeNull();
@@ -89,7 +89,7 @@ describe("WatchFiringContextCard", () => {
   it("keeps legacy origins without a watch id readable and noninteractive", () => {
     const host = card();
 
-    expect(host.querySelector(".agent-brief-card")).not.toBeNull();
+    expect(host.querySelector(".agent-context-card")).not.toBeNull();
     expect(host.querySelector("a")).toBeNull();
     expect(host.textContent).not.toContain("View watch");
   });

@@ -160,6 +160,7 @@ func bounded(_ timeout: Duration = .seconds(5), _ operation: @escaping @MainActo
     }
 }
 
+@MainActor
 func eventually(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while !condition() {

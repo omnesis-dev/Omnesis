@@ -83,6 +83,18 @@ export interface NoteEntry {
    * there was no fix, or a fix but no geocode (offline at capture time).
    */
   placeName: string | null;
+  /**
+   * Captured by one of the owner's own clients (an admin-scoped portal, app or
+   * CLI), as opposed to an external agent or the browser extension. Only these
+   * notes are read by the note agent. Written at capture; not read back.
+   */
+  fromOwner?: boolean;
+  /**
+   * The task (open loop id) the note is about, when it was written while
+   * accepting a suggestion from the Tasks view; the note agent applies it to
+   * that task.
+   */
+  taskId?: string;
 }
 
 export function createNoteEntriesTables(db: Db): void {
@@ -103,7 +115,9 @@ export function createNoteEntriesTables(db: Db): void {
       received_at TEXT,
       capture_context TEXT,
       page_context TEXT,
-      transcribed_at TEXT
+      transcribed_at TEXT,
+      from_owner INTEGER NOT NULL DEFAULT 0,
+      task_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_note_entries_day ON note_entries(day);
     CREATE INDEX IF NOT EXISTS idx_note_entries_captured_at ON note_entries(captured_at);
@@ -130,6 +144,9 @@ export function createNoteEntriesTables(db: Db): void {
   if (!columns.has("received_at")) db.exec("ALTER TABLE note_entries ADD COLUMN received_at TEXT");
   if (!columns.has("transcribed_at"))
     db.exec("ALTER TABLE note_entries ADD COLUMN transcribed_at TEXT");
+  if (!columns.has("from_owner"))
+    db.exec("ALTER TABLE note_entries ADD COLUMN from_owner INTEGER NOT NULL DEFAULT 0");
+  if (!columns.has("task_id")) db.exec("ALTER TABLE note_entries ADD COLUMN task_id TEXT");
 }
 
 interface NoteEntryRow {
@@ -149,6 +166,7 @@ interface NoteEntryRow {
   captured_utc_offset_seconds: number | null;
   received_at: string | null;
   transcribed_at: string | null;
+  task_id: string | null;
 }
 
 function rowToEntry(row: NoteEntryRow): NoteEntry {
@@ -171,6 +189,7 @@ function rowToEntry(row: NoteEntryRow): NoteEntry {
     capturedUtcOffsetSeconds: row.captured_utc_offset_seconds,
     receivedAt: row.received_at,
     ...(row.transcribed_at ? { transcribedAt: row.transcribed_at } : {}),
+    ...(row.task_id ? { taskId: row.task_id } : {}),
   };
 }
 
@@ -232,8 +251,9 @@ export function insertNoteEntry(
     .prepare(
       `INSERT OR IGNORE INTO note_entries
          (id, day, captured_at, updated_at, text, surface, device_id, latitude, longitude, place_name,
-          captured_time_zone_id, captured_utc_offset_seconds, received_at, capture_context, page_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          captured_time_zone_id, captured_utc_offset_seconds, received_at, capture_context, page_context,
+          from_owner, task_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.id,
@@ -251,6 +271,8 @@ export function insertNoteEntry(
       entry.receivedAt,
       entry.captureContext ? JSON.stringify(entry.captureContext) : null,
       entry.page ? JSON.stringify(entry.page) : null,
+      entry.fromOwner ? 1 : 0,
+      entry.taskId ?? null,
     );
   return result.changes > 0;
 }
@@ -319,15 +341,24 @@ export function updateBrowserNoteEntry(db: Db, input: BrowserNoteEditInput): Bro
     const text = `${input.text.trim()}${entry.page ? browserNoteContext(entry.page) : ""}`;
     if (text.length > 8192) throw new Error("BrowserNoteTextTooLong");
     updateNoteEntryText(db, entry.id, text, now);
-    const documentId =
-      db
-        .prepare<
-          [string],
-          { id: string }
-        >("SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?")
-        .get(entry.day)?.id ?? null;
-    return { outcome: "updated", entry: getNoteEntry(db, entry.id)!, documentId };
+    return {
+      outcome: "updated",
+      entry: getNoteEntry(db, entry.id)!,
+      documentId: notesDayDocumentId(db, entry.day),
+    };
   })();
+}
+
+/** The id of a day's projected notes document, or null before it is projected. */
+export function notesDayDocumentId(db: Db, day: string): string | null {
+  return (
+    db
+      .prepare<
+        [string],
+        { id: string }
+      >("SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?")
+      .get(day)?.id ?? null
+  );
 }
 
 export interface BrowserPageNote {

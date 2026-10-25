@@ -202,6 +202,8 @@ export class Indexer {
     updated: number;
     skipped: number;
     errors: number;
+    /** Fully scanned input boundary, not proof every document embedded successfully. */
+    scannedThrough?: string;
   }> {
     const watermark = getWatermark(this.db, "last_updated_at");
     // UUID pagination can pass a write before its transaction commits. Hold
@@ -530,7 +532,13 @@ export class Indexer {
       );
     }
 
-    return { indexed, updated, skipped, errors };
+    return {
+      indexed,
+      updated,
+      skipped,
+      errors,
+      ...(!this.stopping && committedBoundary ? { scannedThrough: committedBoundary } : {}),
+    };
   }
 
   /**

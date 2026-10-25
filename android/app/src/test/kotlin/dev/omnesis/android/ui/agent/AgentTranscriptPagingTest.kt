@@ -6,9 +6,9 @@ package dev.omnesis.android.ui.agent
 import dev.omnesis.android.transport.dto.AssistantPart
 import dev.omnesis.android.transport.dto.AgentTrailRecord
 import dev.omnesis.android.transport.dto.ChatMessage
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.UserPart
+import dev.omnesis.android.transport.dto.WatchFiringOriginSnapshot
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -73,8 +73,9 @@ class AgentTranscriptPagingTest {
             ChatMessage.User(listOf(UserPart.Text("Visible follow-up"))),
         )
         val origin = ConversationOrigin(
-            kind = "brief",
-            brief = BriefOriginSnapshot(title = "Invented brief", description = "Why it matters."),
+            kind = "watch_firing",
+            watchId = "watch_example",
+            watch = WatchFiringOriginSnapshot(name = "Invented watch", condition = "Something changes", firedAt = 1L),
             seedMessageCount = 2,
         )
 
@@ -84,7 +85,7 @@ class AgentTranscriptPagingTest {
         )
         assertEquals(
             messages,
-            visibleConversationMessages(messages, origin.copy(brief = null)),
+            visibleConversationMessages(messages, origin.copy(watch = null)),
         )
         assertEquals(
             messages,
@@ -98,8 +99,8 @@ class AgentTranscriptPagingTest {
             ChatMessage.User(listOf(UserPart.Text("Already visible"))),
         )
         val origin = ConversationOrigin(
-            kind = "brief",
-            brief = BriefOriginSnapshot(title = "Invented brief", description = "Why it matters."),
+            kind = "watch_firing",
+            watch = WatchFiringOriginSnapshot(name = "Invented watch", condition = "Something changes", firedAt = 1L),
             seedMessageCount = 1,
         )
 

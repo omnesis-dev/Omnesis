@@ -16,14 +16,15 @@
  * id); this class owns the loader bookkeeping and the write itself.
  *
  * Inside `runUpsert`: load the freshest transcript, render dialogue-only
- * markdown + harvested citations, upsert the document, look up the
- * gateway-assigned doc id, replace the citation edge set. Runs per
+ * markdown, source-owned authority and harvested citations, then publish them
+ * atomically through the writer. Runs per
  * session are serialized by the runner so concurrent enqueues / flushes
  * never produce two concurrent writes targeting the same conversation.
  */
 
 import { createHash } from "node:crypto";
 
+import { conversationEvidenceProjection } from "./evidence-projection.js";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput, type PersonMention } from "@omnesis/types";
 
@@ -39,20 +40,8 @@ const log = createLogger("gateway:omnesis-chat").child("upsert");
 /** Default per-session debounce window. */
 export const DEFAULT_DEBOUNCE_MS = 30_000;
 
-/** Backoff between the first and the retry lookupDocId call. */
-const LOOKUP_RETRY_DELAY_MS = 50;
-
 export interface ConversationUpserterDeps {
   writeGate: WriteGate;
-  /**
-   * Returns the gateway-assigned `documents.id` for the freshly
-   * upserted conversation. The writer commits on a worker thread; this
-   * read runs on the main thread, so a brand-new row can briefly be
-   * invisible to the read handle between commit and WAL frame
-   * publication. `runUpsert` retries once after a short delay before
-   * giving up on the citation write.
-   */
-  lookupDocId?: (providerId: string, sourceId: string, externalId: string) => string | null;
   /** Override the debounce window. Tests pass 0 for synchronous flushes. */
   debounceMs?: number;
   /** Pluggable timer for unit tests. */
@@ -64,11 +53,6 @@ export interface ConversationUpserterDeps {
 
 export class ConversationUpserter {
   private readonly writeGate: WriteGate;
-  private readonly lookupDocId: (
-    providerId: string,
-    sourceId: string,
-    externalId: string,
-  ) => string | null;
   /** Debounce + per-key serialization machinery. */
   private readonly runner: KeyedDebouncedRunner;
   /**
@@ -80,7 +64,6 @@ export class ConversationUpserter {
 
   constructor(deps: ConversationUpserterDeps) {
     this.writeGate = deps.writeGate;
-    this.lookupDocId = deps.lookupDocId ?? (() => null);
     this.runner = new KeyedDebouncedRunner({
       debounceMs: deps.debounceMs ?? DEFAULT_DEBOUNCE_MS,
       scheduler: deps.scheduler,
@@ -164,34 +147,12 @@ export class ConversationUpserter {
     const record = await loader();
     if (!record) return; // deleted between enqueue and run
     const doc = buildDocumentInput(record);
-    await this.writeGate.upsertDocuments([doc]);
-
-    const docId = await this.lookupDocIdWithRetry(doc.providerId, doc.sourceId, doc.externalId);
-    if (!docId) {
-      log.warn(`could not look up docId for conversation ${sessionId} after upsert`);
-      return;
-    }
-    const { citations } = renderConversation(record);
-    const citationInputs = renderedCitationsToInputs(citations);
-    await this.writeGate.upsertConversationCitations(docId, citationInputs);
-  }
-
-  /**
-   * The read handle and the writer worker hold separate SQLite
-   * connections; a freshly-committed row needs the WAL frame to be
-   * visible to the reader. In practice the first read sees the row,
-   * but a single retry after a short delay covers the rare miss
-   * without making the citation-write path unbounded.
-   */
-  private async lookupDocIdWithRetry(
-    providerId: string,
-    sourceId: string,
-    externalId: string,
-  ): Promise<string | null> {
-    const first = this.lookupDocId(providerId, sourceId, externalId);
-    if (first) return first;
-    await new Promise((r) => setTimeout(r, LOOKUP_RETRY_DELAY_MS));
-    return this.lookupDocId(providerId, sourceId, externalId);
+    const rendered = renderConversation(record);
+    await this.writeGate.upsertConversationDocument(
+      doc,
+      conversationEvidenceProjection(rendered),
+      renderedCitationsToInputs(rendered.citations),
+    );
   }
 }
 

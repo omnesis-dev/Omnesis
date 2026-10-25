@@ -27,8 +27,9 @@ describe("Codex runtime compatibility", () => {
   it("accepts the draining and tested minors but names only the exact target as tested", () => {
     expect(isSupportedCodexCliVersion("0.142.9")).toBe(true);
     expect(isSupportedCodexCliVersion("0.151.7")).toBe(true);
+    expect(isSupportedCodexCliVersion("0.163.7")).toBe(true);
     expect(isSupportedCodexCliVersion("0.150.0")).toBe(false);
-    expect(isTestedCodexCliVersion("0.151.0")).toBe(true);
-    expect(isTestedCodexCliVersion("0.151.1")).toBe(false);
+    expect(isTestedCodexCliVersion("0.163.0")).toBe(true);
+    expect(isTestedCodexCliVersion("0.163.1")).toBe(false);
   });
 });

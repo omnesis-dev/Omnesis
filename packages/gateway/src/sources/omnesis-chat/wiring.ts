@@ -230,12 +230,8 @@ export async function deleteOmnesisChatConversation(
 export async function bootOmnesisChat(deps: OmnesisChatBootDeps): Promise<OmnesisChatRuntime> {
   await seedOmnesisChatSourceMeta(deps.writeGate);
 
-  const lookupDocId = (providerId: string, sourceId: string, externalId: string) =>
-    findConversationDocId(deps.readDb, providerId, sourceId, externalId);
-
   const upserter = new ConversationUpserter({
     writeGate: deps.writeGate,
-    lookupDocId,
     debounceMs: deps.debounceMs,
     scheduler: deps.scheduler,
   });
@@ -247,7 +243,6 @@ export async function bootOmnesisChat(deps: OmnesisChatBootDeps): Promise<Omnesi
     writeGate: deps.writeGate,
     hasFlag: () => hasBackfillFlag(deps.conversationsDir),
     setFlag: () => writeBackfillFlag(deps.conversationsDir),
-    lookupDocId,
   }).catch((err) => log.warn(`backfill threw: ${(err as Error).message ?? err}`));
 
   return {

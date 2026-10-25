@@ -21,6 +21,14 @@
  * unit-testable without the server.
  */
 
+import {
+  createVoiceSession,
+  voiceTranscriptModelNote,
+  withVoiceMutationAdmission,
+  type VoiceAgentSession,
+  type ConversationTurnReceipt,
+} from "./voice-session.js";
+export type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import { createHash } from "node:crypto";
 
 import {
@@ -28,12 +36,14 @@ import {
   createLogger,
   InferenceUrlPolicyError,
   experimentalVisible,
+  hostTimeZone,
   makeEvent,
   type AgentConversationTerminalFailure,
   type AgentEvent,
   type AgentMessageEndEvent,
   type AgentProviderFailureDetail,
   type AgentTerminalFailure,
+  type ToolResult,
   type AgentUsage,
   type CapabilityRole,
   type RateLimitPatience,
@@ -41,6 +51,7 @@ import {
 } from "@omnesis/core";
 import {
   AgentSession,
+  CitationReads,
   buildBuiltinTools,
   CITATION_TOOL_NAMES,
   selectDocumentCitationTools,
@@ -61,6 +72,10 @@ import {
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
+import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withTodaysTasks } from "./temporal-with-tasks.js";
+import { normalizeAnswerProse } from "./answer-prose.js";
+import { CITATION_GROUNDING } from "./citation-grounding.js";
 import {
   buildConversationMemoryEvidenceTool,
   type ConversationMemoryEvidence,
@@ -87,11 +102,23 @@ import {
 } from "./spend-recorder.js";
 import { slimPersistedHistory } from "./persist-slim.js";
 import {
+  ConversationControls,
+  restoreConversationControls,
+  type ConversationControlState,
+  type SubmissionInput,
+  type ConversationSubmission,
+  submissionInputSchema,
+} from "./conversation-controls.js";
+import {
+  clipTitle,
   deriveTitle,
   originAnchor,
-  usesAnchoredThreadProfile,
-  type AnchoredConversationOrigin,
+  latestDailyBrief,
+  DAILY_BRIEF_REF_LIMIT,
   type ConversationOrigin,
+  type DailyBriefConversationOrigin,
+  type TaskConversationOrigin,
+  type TaskConversationOriginSnapshot,
   type WatchFiringConversationOrigin,
   type ConversationRecord,
   type ConversationStore,
@@ -190,6 +217,11 @@ export interface AgentServiceDeps {
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
   /**
+   * A model-only note for a conversation turn whose message names maintained
+   * pages, telling the agent to open them first; empty when none is named.
+   */
+  namedPagesNote?: (message: string) => string;
+  /**
    * Sub-agent orchestration config. When omitted, the `spawn_subagent`
    * tool is not wired — a plain agent with no nesting. When present, the
    * service builds a {@link SubagentService} and exposes the subagent port to
@@ -234,9 +266,10 @@ export interface AgentServiceDeps {
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
   /** Fail-closed model boundary for externally authorized Answer runs. */
-  externalAnswerScope?: (
-    authorization: CorpusAuthorization,
-  ) => Promise<{ tools: readonly ToolHandle[]; systemPrompt: string }>;
+  externalAnswerScope?: (authorization: CorpusAuthorization) => Promise<{
+    tools: readonly ToolHandle[];
+    systemPrompt: string;
+  }>;
   /**
    * Optional broadcast hook. The gateway wires this to the WS server's
    * admin-scope broadcaster so future hello-authenticated clients (iOS)
@@ -345,6 +378,14 @@ export interface AgentServiceDeps {
  * (currently only `agent.resync`) that carries no resumable position.
  */
 export type AgentEventListener = (seq: number, event: WsEvent) => void;
+export interface RealtimeAgentSession {
+  sessionId: string;
+  context: ReturnType<AgentSession["modelContextSnapshot"]>;
+  run(text: string, backend: ChatBackend, signal: AbortSignal): Promise<void>;
+  subscribe(listener: (event: AgentEvent) => void): () => void;
+  cancel(): void;
+  close(): Promise<void>;
+}
 
 export interface CreateSessionResult {
   sessionId: string;
@@ -458,20 +499,42 @@ export interface AnswerCandidateTrace {
 }
 
 /**
- * How the service builds a session for an anchored thread — a conversation
- * that replies to a brief the Cognition Steward made. Injected by the Briefs
- * feature when it is active; absent (or a null backend) means such conversations cannot
- * be resumed — the profile owns the steward toolset, the talk-back
- * system prompt, and the background-agent backend the thread runs on (same
- * model as the run that created the anchor, so its cached prefix keeps
- * paying off). Both callbacks receive the origin so the toolset's audit
- * run id follows the brief anchor.
+ * What the Morning brief conversation adds to a reply turn's system prompt:
+ * the latest brief's ranked items and how to act on what the user says about
+ * them. Installed by the Brain; absent, the thread still works as an
+ * ordinary chat over its last day.
  */
-export interface AnchoredThreadProfile {
-  buildTools(origin: AnchoredConversationOrigin): ToolHandle[];
-  systemPrompt(origin: AnchoredConversationOrigin): Promise<string> | string;
-  resolveBackend(): ChatBackend | null;
-}
+export type DailyBriefContextProvider = (latest: { day: string; messageId: string }) => string;
+
+/**
+ * What a conversation about a task adds to the system prompt of every turn:
+ * the task as it stands when the turn starts, its history and its linked
+ * documents. Absent, the conversation runs as an ordinary chat.
+ */
+export type TaskContextProvider = (origin: TaskConversationOrigin) => string;
+
+/**
+ * Builds the task tools a conversation gets, stamped with that conversation
+ * so each change records where the user asked for it.
+ */
+export type TaskToolsProvider = (
+  conversationId: string,
+  context: {
+    /** The conversation's origin kind (`daily_brief`, …); undefined for a plain conversation. */
+    originKind?: string;
+  },
+) => ToolHandle[];
+
+/**
+ * The run's own loop writes, withheld from a conversation: there the user's
+ * word is the authority, and the task tools apply it directly.
+ */
+const RUN_LOOP_WRITE_TOOLS = new Set([
+  "open_loop_create",
+  "open_loop_update",
+  "open_loop_delete",
+  "open_loop_ledger_append",
+]);
 
 /**
  * How a TOP-LEVEL interactive session gains write access to the cognitive
@@ -484,19 +547,6 @@ export interface AnchoredThreadProfile {
  */
 export interface InteractiveWriteProfile {
   buildOwnTools(runId: string): ToolHandle[];
-}
-
-/** Input for {@link AgentService.createAnchoredThread}. */
-export interface CreateAnchoredThreadInput {
-  /** Fixed conversation title (the brief's title) — never re-derived. */
-  title: string;
-  /**
-   * The thread's origin anchor, snapshot included, WITHOUT `seedMessageCount`
-   * — the service stamps that from `initialHistory.length`.
-   */
-  origin: AnchoredConversationOrigin;
-  /** Seed history — the folded transcript of the run that made the brief. */
-  initialHistory: ChatMessage[];
 }
 
 export interface ConversationListOptions {
@@ -543,9 +593,9 @@ const ANSWER_CITATIONS_PROMPT = `
 
 # Citations on the answer surface
 
-After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. ${CITATION_GROUNDING} Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released. Omit notes. You may cite a synthesis page directly without opening every underlying source.
 
-Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
+Use returned structured citations only; do not invent inline citation markers or search-result identifiers. Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
 const FIRING_EVIDENCE_ANSWER_PROMPT = `
 
@@ -782,22 +832,32 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+/** The fixed title of the standing Morning brief conversation. */
+export const MORNING_BRIEF_TITLE = "Morning brief";
+
+/** What a morning brief reads after a source it drew on was deleted. */
+export const MORNING_BRIEF_REDACTED_TEXT =
+  "This morning brief was removed because a source it drew on was deleted.";
+
+/** Caller the Morning brief conversation is created under; any operator caller resumes it. */
+export const MORNING_BRIEF_CALLER_ID = "brain:morning-brief";
+
 /** Bookkeeping for one live in-memory session held by {@link AgentService}. */
 interface LiveSessionEntry {
+  /** Controls safe for unrelated transcript saves; tentative mutations never escape their transaction. */
+  committedControls?: ConversationControlState;
   session: AgentSession;
   callerId: CallerId;
   lastActive: number;
   timer: ReturnType<typeof setTimeout> | null;
   /**
-   * Prompt profile the session's system prompt was built for. `null`
-   * for anchored threads, whose prompts are owned by their own surfaces
-   * and never switch. A live resume
+   * Prompt profile the session's system prompt was built for. A live resume
    * that requests a different profile swaps the session onto the
    * requested profile's prompt so follow-up turns speak the surface
    * the caller is actually on (a voice conversation tapped open in
    * the app, a Siri follow-up into an app-resumed conversation).
    */
-  promptProfile: "interactive" | "voice" | null;
+  promptProfile: "interactive" | "voice";
   /**
    * Profile switch requested while a turn was in flight. The prompt
    * is resolved at resume time (the thunk is async); the swap itself
@@ -815,13 +875,14 @@ interface LiveSessionEntry {
     model: string;
     backend: string;
     pinned: boolean;
+    controls?: ConversationControlState;
     /** Permanent context-exhaustion state, persisted outside model-visible history. */
     terminalFailure?: AgentConversationTerminalFailure;
     /** Durable marker for a partial latest answer, outside model-visible history. */
     lastTurnFailure?: AgentTerminalFailure;
-    /** Present on brief-anchored threads; mirrored into every save. */
+    /** Present on agent-opened threads; mirrored into every save. */
     origin?: ConversationOrigin;
-    /** Fixed title (anchored threads); absent = derive from messages. */
+    /** Fixed title (agent-opened threads); absent = derive from messages. */
     fixedTitle?: string;
     /**
      * The creator of this turn has already told the operator about what it
@@ -835,17 +896,21 @@ interface LiveSessionEntry {
 }
 
 export class AgentService {
+  private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  private readonly citationReads = new CitationReads();
+  private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
   private readonly documentPort: DocumentPort;
   private readonly searchRecordPort: ToolPorts["record"];
   private readonly systemPrompt:
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
   private readonly externalAnswerScope:
-    | ((
-        authorization: CorpusAuthorization,
-      ) => Promise<{ tools: readonly ToolHandle[]; systemPrompt: string }>)
+    | ((authorization: CorpusAuthorization) => Promise<{
+        tools: readonly ToolHandle[];
+        systemPrompt: string;
+      }>)
     | undefined;
   private readonly broadcastEvent: ((event: WsEvent) => void) | undefined;
   private readonly sessionIdGen: () => string;
@@ -916,6 +981,17 @@ export class AgentService {
   private readonly sessionRateLimitPatience = new Map<string, RateLimitPatience>();
   /** Per-caller event listeners (SSE clients). Outer key = callerId. */
   private readonly listeners = new Map<CallerId, Set<AgentEventListener>>();
+  private readonly realtimeOwners = new Map<string, symbol>();
+  private readonly voiceOwners = new Map<string, symbol>();
+  private readonly voiceSubmissionIds = new Map<string, Set<string>>();
+  private readonly voiceMutationBatches = new Map<
+    string,
+    {
+      messageId?: string;
+      admissionRevision: number;
+    }
+  >();
+  private readonly sessionObservers = new Map<string, Set<(event: AgentEvent) => void>>();
   /** Destructive or metadata mutations that must exclude resumes and in-flight turns. */
   private readonly answerDeleteLocks = new Set<string>();
   /** Sessions running the out-of-band Deep Research orchestration loop. */
@@ -948,15 +1024,26 @@ export class AgentService {
   /** Prevents terminal callbacks from accepting fresh work during teardown. */
   private disposing = false;
 
-  /**
-   * Set while the Briefs feature is active; cleared when it quiesces. See
-   * {@link AnchoredThreadProfile}.
-   */
-  private anchoredThreadProfile: AnchoredThreadProfile | null = null;
+  private dailyBriefContext: DailyBriefContextProvider | null = null;
 
-  setAnchoredThreadProfile(profile: AnchoredThreadProfile | null): void {
-    this.anchoredThreadProfile = profile;
+  setDailyBriefContextProvider(provider: DailyBriefContextProvider | null): void {
+    this.dailyBriefContext = provider;
   }
+
+  private taskContext: TaskContextProvider | null = null;
+
+  setTaskContextProvider(provider: TaskContextProvider | null): void {
+    this.taskContext = provider;
+  }
+
+  private taskTools: TaskToolsProvider | null = null;
+
+  setTaskToolsProvider(provider: TaskToolsProvider | null): void {
+    this.taskTools = provider;
+  }
+
+  /** Serializes finding or creating the one Morning brief conversation. */
+  private dailyBriefConversationTail: Promise<unknown> = Promise.resolve();
 
   private interactiveMemoryProfile: InteractiveWriteProfile | null = null;
 
@@ -972,6 +1059,43 @@ export class AgentService {
   }
 
   constructor(deps: AgentServiceDeps) {
+    this.controls = new ConversationControls({
+      state: (id) => {
+        const entry = this.requireSession(id);
+        const state = (entry.meta.controls ??= { submissions: [] });
+        entry.committedControls ??= structuredClone(state);
+        return state;
+      },
+      persist: async (id) => {
+        const entry = this.requireSession(id);
+        if (!this.store)
+          throw new AgentError("agent_unavailable", "Conversation storage is unavailable.");
+        await this.persistConversation(
+          id,
+          entry.callerId,
+          entry.meta,
+          undefined,
+          false,
+          structuredClone(entry.meta.controls),
+        );
+      },
+      busy: (id) => {
+        const entry = this.requireSession(id);
+        return (
+          entry.session.busy ||
+          this.deepResearchActive.has(id) ||
+          this.realtimeOwners.has(id) ||
+          this.activeTurnCompletions.has(id)
+        );
+      },
+      available: (id) =>
+        !this.disposing && this.sessions.has(id) && !this.answerDeleteLocks.has(id),
+      cancel: (id) => {
+        this.cancelSession(this.requireSession(id).callerId, id);
+      },
+      start: (id, submission, submissionIds) =>
+        this.runSubmittedTurn(id, submission, submissionIds),
+    });
     this.backendFactory = deps.backendFactory;
     this.planStore = new PlanStore();
     // Build the sub-agent orchestrator + port BEFORE the tools, so the
@@ -1021,7 +1145,9 @@ export class AgentService {
         ...(deps.subagents.deepResearch ? { caps: deps.subagents.deepResearch } : {}),
       });
     }
+    this.namedPagesNote = deps.namedPagesNote;
     this.tools = buildBuiltinTools({
+      citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
       planStore: this.planStore,
       experimental: experimentalVisible(),
@@ -1131,21 +1257,28 @@ export class AgentService {
   ): Promise<CreateSessionResult> {
     const resumeFromId = opts.resumeFromId;
     if (!resumeFromId) return this.createSessionUnlocked(callerId, opts);
+    return this.withResumeGate(resumeFromId, () => this.createSessionUnlocked(callerId, opts));
+  }
 
-    const previous = this.resumeCreationTails.get(resumeFromId) ?? Promise.resolve();
+  /**
+   * Run `fn` while no other resume of conversation `id` can start: resumes,
+   * and the morning brief's append, take turns.
+   */
+  private async withResumeGate<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.resumeCreationTails.get(id) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = previous.then(() => gate);
-    this.resumeCreationTails.set(resumeFromId, tail);
+    this.resumeCreationTails.set(id, tail);
     await previous;
     try {
-      return await this.createSessionUnlocked(callerId, opts);
+      return await fn();
     } finally {
       release();
-      if (this.resumeCreationTails.get(resumeFromId) === tail) {
-        this.resumeCreationTails.delete(resumeFromId);
+      if (this.resumeCreationTails.get(id) === tail) {
+        this.resumeCreationTails.delete(id);
       }
     }
   }
@@ -1161,6 +1294,11 @@ export class AgentService {
       }
       const live = this.sessions.get(opts.resumeFromId);
       if (live) {
+        if (this.realtimeOwners.has(opts.resumeFromId) || this.voiceOwners.has(opts.resumeFromId)) {
+          if (opts.profile !== undefined && opts.profile !== live.promptProfile)
+            throw new AgentError("session_busy", "conversation is in a voice call");
+          return this.liveSessionSnapshot(opts.resumeFromId, live);
+        }
         // Conversations are shared across admin callers — the resumer
         // takes over ownership so the per-caller cap accounting tracks
         // the current holder. Subsequent send/cancel through this
@@ -1174,10 +1312,8 @@ export class AgentService {
         // open in the app must stop speaking TTS prose, and a Siri
         // follow-up into an app-resumed conversation must start. No
         // profile requested ⇒ the session keeps its current profile.
-        // Anchored threads (promptProfile null) own their prompts and
-        // never switch.
         const requested = opts.profile;
-        if (requested !== undefined && live.promptProfile !== null) {
+        if (requested !== undefined) {
           if (requested === live.promptProfile) {
             // The latest resume's explicit profile wins over an earlier,
             // not-yet-applied switch request.
@@ -1205,28 +1341,7 @@ export class AgentService {
         // parent text/tool events have already passed on SSE. Include a
         // defensive view of those uncommitted segments in this resume response;
         // persistence continues to read canonical historySnapshot().
-        const messages = [...live.session.liveHistorySnapshot()];
-        const activeReplay = this.activeTurnReplays.get(opts.resumeFromId);
-        return {
-          sessionId: opts.resumeFromId,
-          model: live.session.model,
-          backend: live.session.backendName,
-          title: live.meta.fixedTitle ?? deriveTitle(messages),
-          // A live session can have a turn in flight — report it so a
-          // reconnecting client doesn't drop the in-flight state.
-          busy: live.session.busy || this.deepResearchActive.has(opts.resumeFromId),
-          messageCount: messages.length,
-          messages,
-          ...(live.meta.terminalFailure ? { terminalFailure: live.meta.terminalFailure } : {}),
-          ...(live.meta.lastTurnFailure ? { lastTurnFailure: live.meta.lastTurnFailure } : {}),
-          ...(live.meta.origin ? { origin: live.meta.origin } : {}),
-          ...((live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) &&
-          activeReplay &&
-          (this.deepResearchActive.has(opts.resumeFromId) || activeReplay.events.length > 0)
-            ? { replayEvents: [...activeReplay.events] }
-            : {}),
-          eventCursor: this.nextSeq - 1,
-        };
+        return this.liveSessionSnapshot(opts.resumeFromId, live);
       }
     }
 
@@ -1248,7 +1363,14 @@ export class AgentService {
     for (const [id, entry] of this.sessions) {
       if (entry.callerId !== callerId) continue;
       perCaller++;
-      if (entry.session.busy || this.deepResearchActive.has(id)) continue;
+      if (
+        entry.session.busy ||
+        this.deepResearchActive.has(id) ||
+        this.realtimeOwners.has(id) ||
+        this.voiceOwners.has(id) ||
+        this.controls.active(id)
+      )
+        continue;
       if (!oldestIdle || entry.lastActive < oldestIdle.lastActive) {
         oldestIdle = { id, lastActive: entry.lastActive };
       }
@@ -1279,6 +1401,7 @@ export class AgentService {
     let resumedOrigin: ConversationOrigin | undefined;
     let resumedTerminalFailure: AgentConversationTerminalFailure | undefined;
     let resumedLastTurnFailure: AgentTerminalFailure | undefined;
+    let resumedControls: ConversationControlState | undefined;
 
     if (opts.resumeFromId) {
       // Resume from disk — any admin caller can pick up any prior
@@ -1305,6 +1428,7 @@ export class AgentService {
       resumedOrigin = normalized.origin;
       resumedTerminalFailure = normalized.terminalFailure;
       resumedLastTurnFailure = normalized.lastTurnFailure;
+      resumedControls = restoreConversationControls(normalized.controls);
     } else {
       sessionId = this.sessionIdGen();
       createdAt = new Date().toISOString();
@@ -1316,37 +1440,9 @@ export class AgentService {
     let backend: ChatBackend;
     let systemPrompt: string;
     let tools: readonly ToolHandle[];
-    // The switchable chat profile — stays null for anchored threads,
-    // whose prompts never switch.
-    let chatProfile: "interactive" | "voice" | null = null;
-    if (resumedOrigin && usesAnchoredThreadProfile(resumedOrigin)) {
-      // A brief talk-back thread runs on
-      // the Briefs feature's session profile — the steward toolset (so
-      // the agent can act on loops, briefs, and temporal annotations
-      // mid-conversation), the talk-back system prompt, and the
-      // background-agent backend. Without the feature active there is
-      // nothing safe to run it on.
-      //
-      // A watch-firing thread takes the `else` branch instead: it is an
-      // ordinary conversation and resumes on the main session profile.
-      const profile = this.anchoredThreadProfile;
-      if (!profile) {
-        throw new AgentError(
-          "anchored_thread_unavailable",
-          "this conversation is an anchored agent thread, and the Briefs feature is not active",
-        );
-      }
-      const threadBackend = profile.resolveBackend();
-      if (!threadBackend) {
-        throw new AgentError(
-          "anchored_thread_unavailable",
-          "no background-agent model is assigned for anchored threads",
-        );
-      }
-      backend = threadBackend;
-      systemPrompt = await profile.systemPrompt(resumedOrigin);
-      tools = profile.buildTools(resumedOrigin);
-    } else {
+    // The switchable chat profile: interactive or voice.
+    let chatProfile: "interactive" | "voice";
+    {
       // The main session always runs on the `agent` role. The factory only
       // returns null for an unassigned role; `agent` is guaranteed non-null
       // whenever the harness is enabled (the lifecycle never builds an
@@ -1358,6 +1454,9 @@ export class AgentService {
       backend = agentBackend;
       chatProfile = opts.profile ?? "interactive";
       systemPrompt = await this.resolveChatPrompt(chatProfile, promptContext);
+      const latestBrief = latestDailyBrief(resumedOrigin);
+      if (latestBrief && this.dailyBriefContext)
+        systemPrompt = `${systemPrompt}\n\n${this.dailyBriefContext(latestBrief)}`;
       tools = opts.unattended
         ? // An unattended turn reads the corpus with nobody watching the
           // stream, and the documents it was pointed at can be authored by
@@ -1368,14 +1467,21 @@ export class AgentService {
           // rather than relying on the model to decline. A human resuming
           // the thread later gets the ordinary toolset back.
           selectSubagentTools(this.tools)
-        : this.buildInteractiveTools(sessionId, chatProfile);
+        : this.buildInteractiveTools(sessionId, chatProfile, resumedOrigin?.kind);
     }
     const session = new AgentSession({
       sessionId,
       backend,
       tools: [...tools],
       systemPrompt,
+      systemPromptSection: () => this.originPromptSection(sessionId),
       initialHistory,
+      ...(resumedOrigin?.kind === "daily_brief"
+        ? {
+            historyView: (history: ReadonlyArray<ChatMessage>) =>
+              this.dailyBriefView(sessionId, history),
+          }
+        : {}),
       timeZone: opts.timeZone,
       caller: opts.caller,
     });
@@ -1386,6 +1492,7 @@ export class AgentService {
       pinned: resumedPinned,
       ...(resumedTerminalFailure ? { terminalFailure: resumedTerminalFailure } : {}),
       ...(resumedLastTurnFailure ? { lastTurnFailure: resumedLastTurnFailure } : {}),
+      ...(resumedControls ? { controls: resumedControls } : {}),
       ...(resumedOrigin ? { origin: resumedOrigin, fixedTitle: resumedTitle } : {}),
     };
     this.attachSessionEvents(sessionId, session);
@@ -1400,6 +1507,7 @@ export class AgentService {
     log.info(
       `session ${sessionId} ${opts.resumeFromId ? "resumed" : "created"} for caller ${callerId} (${backend.name}/${backend.model})`,
     );
+    this.controls.kick(sessionId);
     const messages = initialHistory ? [...initialHistory] : [];
     return {
       sessionId,
@@ -1414,6 +1522,51 @@ export class AgentService {
       ...(resumedLastTurnFailure ? { lastTurnFailure: resumedLastTurnFailure } : {}),
       ...(resumedOrigin ? { origin: resumedOrigin } : {}),
     };
+  }
+
+  /** Canonical live transcript and SSE cursor shared by normal resume and voice observers. */
+  private liveSessionSnapshot(sessionId: string, live: LiveSessionEntry): CreateSessionResult {
+    const messages = [...live.session.liveHistorySnapshot()];
+    const activeReplay = this.activeTurnReplays.get(sessionId);
+    return {
+      sessionId: sessionId,
+      model: live.session.model,
+      backend: live.session.backendName,
+      title: live.meta.fixedTitle ?? deriveTitle(messages),
+      // A live session can have a turn in flight — report it so a
+      // reconnecting client doesn't drop the in-flight state.
+      busy: live.session.busy || this.deepResearchActive.has(sessionId),
+      messageCount: messages.length,
+      messages,
+      ...(live.meta.terminalFailure ? { terminalFailure: live.meta.terminalFailure } : {}),
+      ...(live.meta.lastTurnFailure ? { lastTurnFailure: live.meta.lastTurnFailure } : {}),
+      ...(live.meta.origin ? { origin: live.meta.origin } : {}),
+      ...((live.session.busy || this.deepResearchActive.has(sessionId)) &&
+      activeReplay &&
+      (this.deepResearchActive.has(sessionId) || activeReplay.events.length > 0)
+        ? { replayEvents: [...activeReplay.events] }
+        : {}),
+      eventCursor: this.nextSeq - 1,
+    };
+  }
+
+  /**
+   * The system-prompt section a session's origin adds to each turn, built
+   * when the turn starts so it reflects the current state. Only a
+   * conversation about a task has one. A failure to build it leaves the turn
+   * with the plain prompt rather than failing the user's message.
+   */
+  private originPromptSection(sessionId: string): string {
+    const origin = this.sessions.get(sessionId)?.meta.origin;
+    if (origin?.kind !== "task" || !this.taskContext) return "";
+    try {
+      return this.taskContext(origin);
+    } catch (err) {
+      log.warn(
+        `task context for ${origin.taskId} in ${sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return "";
+    }
   }
 
   /**
@@ -1451,12 +1604,12 @@ export class AgentService {
 
   /**
    * Tool set for a top-level interactive (or voice) session. Such a session
-   * (never a sub-agent, never an anchored thread) gains the Cognition Steward's own
+   * (never a sub-agent) gains the Cognition Steward's own
    * annotation tools in every mode and broader MUTATING tools in experimental
    * mode, so facts the user provides
    * mid-conversation are written straight into the substrate. The handles are
    * stamped with an interactive-origin run id so the audit trail says where a
-   * write came from (the analogue of the talkback_ stamp). this.tools already
+   * write came from. this.tools already
    * carries the read registry (search/fetch/people/sql/loop-read/…), so
    * buildOwnTools returns only the write surface — no read-tool duplication.
    * Sub-agents are built from this.tools via selectSubagentTools, never this
@@ -1465,13 +1618,16 @@ export class AgentService {
   private buildInteractiveTools(
     sessionId: string,
     profile: "interactive" | "voice",
+    originKind?: string,
   ): readonly ToolHandle[] {
     const memory = this.interactiveMemoryProfile?.buildOwnTools(`interactive_${sessionId}`) ?? [];
     if (this.interactiveMemoryProfile && this.ensureConversationEvidence && this.store) {
       memory.push(
         buildConversationMemoryEvidenceTool(async () => {
           const live = this.sessions.get(sessionId);
-          if (!live || live.meta.origin) return null;
+          // A watch-firing thread opens on a hidden briefing, which is not
+          // the user's words; every other conversation is.
+          if (!live || live.meta.origin?.kind === "watch_firing") return null;
           await this.persistConversation(sessionId, live.callerId, live.meta, undefined, false);
           return this.ensureConversationEvidence!(sessionId);
         }),
@@ -1479,21 +1635,60 @@ export class AgentService {
     }
     const experimental =
       this.interactiveWriteProfile && experimentalVisible()
-        ? this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`)
+        ? adaptInteractiveKnowledgeReads(
+            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`).filter(
+              (tool) =>
+                !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
+                // Conversations read maintained pages; only the Brain writes them.
+                !(tool.name.startsWith("knowledge_") && tool.mutates === true),
+            ),
+            this.tools,
+            this.documentPort.supportsKnowledgeAliases === true,
+            this.documentPort.knowledgePageRef?.bind(this.documentPort),
+          )
         : [];
+    const taskTools =
+      this.taskTools?.(sessionId, originKind === undefined ? {} : { originKind }) ?? [];
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = [
+    const base = withTodaysTasks([
       ...this.tools,
+      ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
-    ];
+      ...taskTools,
+    ]);
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
     // reopening a voice conversation in the app shows no Timeline.
-    return profile === "voice" ? selectNonCitationTools(base) : base;
+    const tools = profile === "voice" ? selectNonCitationTools(base) : base;
+    return tools.map((handle) =>
+      withVoiceMutationAdmission(handle, (ctx, invoke) => {
+        const batch = this.voiceMutationBatches.get(sessionId);
+        if (!batch) return invoke();
+        return this.controls.admitOperation(sessionId, () => {
+          const stopped: ToolResult = {
+            kind: "error",
+            code: "canceled",
+            message: "The voice request was superseded before this action started.",
+          };
+          if (
+            this.voiceMutationBatches.get(sessionId) !== batch ||
+            batch.messageId !== ctx.messageId ||
+            ctx.abortSignal?.aborted
+          )
+            return Promise.resolve(stopped);
+          const newerInput = this.controls.admissionRevision(sessionId) !== batch.admissionRevision;
+          if (newerInput) {
+            this.requireSession(sessionId).session.cancel("system");
+            return Promise.resolve(stopped);
+          }
+          return invoke();
+        });
+      }),
+    );
   }
 
   /**
@@ -1501,8 +1696,31 @@ export class AgentService {
    * AgentSession object — both at session create and when a profile swap
    * replaces the underlying session.
    */
+  /** Internal canonical observers follow the conversation across idle profile swaps. */
+  private observeSession(sessionId: string, listener: (event: AgentEvent) => void): () => void {
+    let observers = this.sessionObservers.get(sessionId);
+    if (!observers) {
+      observers = new Set();
+      this.sessionObservers.set(sessionId, observers);
+    }
+    observers.add(listener);
+    return () => {
+      observers.delete(listener);
+      if (observers.size === 0) this.sessionObservers.delete(sessionId);
+    };
+  }
+
   private attachSessionEvents(sessionId: string, session: AgentSession): void {
     session.subscribe((event) => {
+      // Replay fixtures emit tool results without invoking the live tool handle.
+      if (
+        session.backendName === "replay" &&
+        event.type === "agent.tool.result" &&
+        event.payload.result.kind === "structured" &&
+        event.payload.result.resultType === "conversation.clarification"
+      ) {
+        this.controls.observeClarification(sessionId, event.payload.result.data);
+      }
       if (event.type === "agent.message.end") {
         const live = this.sessions.get(sessionId);
         if (live) {
@@ -1551,6 +1769,13 @@ export class AgentService {
       // and an iOS app on the same conversation couldn't both see the
       // turn — only the most recent resumer did.
       this.emit(wsEvent);
+      for (const observer of this.sessionObservers.get(sessionId) ?? []) {
+        try {
+          observer(event);
+        } catch {
+          log.warn("canonical session observer failed");
+        }
+      }
       // Optional broad WS fan-out for hello-authenticated clients (iOS
       // uses SSE today, but the legacy WS-broadcast hook stays in place
       // for any future device transport that wants it).
@@ -1584,8 +1809,9 @@ export class AgentService {
     const session = new AgentSession({
       sessionId,
       backend,
-      tools: [...this.buildInteractiveTools(sessionId, profile)],
+      tools: [...this.buildInteractiveTools(sessionId, profile, entry.meta.origin?.kind)],
       systemPrompt,
+      systemPromptSection: () => this.originPromptSection(sessionId),
       initialHistory: entry.session.historySnapshot(),
       timeZone: entry.session.timeZone,
       caller: entry.session.caller,
@@ -1666,7 +1892,7 @@ export class AgentService {
 
   /**
    * Return one older, complete-turn page of the visible transcript. Live
-   * history wins over the last persisted turn snapshot; anchored seed messages
+   * history wins over the last persisted turn snapshot; hidden seed messages
    * are removed here so every client consumes the exact same visible indices.
    */
   async listConversationMessages(
@@ -1697,6 +1923,7 @@ export class AgentService {
         record.origin,
         options.limit,
         options.before,
+        record.unrecognizedSeedMessageCount,
       ),
       model: record.model,
       backend: record.backend,
@@ -1706,26 +1933,37 @@ export class AgentService {
     };
   }
 
-  /** Permanently remove a stored conversation. */
-  /**
-   * True when a conversation exists as a live session or a stored record.
-   * The talk-back opener uses this to spot a brief's dead thread pointer
-   * (the user deleted the thread's conversation) and mint a replacement.
-   */
-  async conversationExists(id: string): Promise<boolean> {
-    if (this.sessions.has(id)) return true;
-    if (!this.store) return false;
-    return (await this.store.load(id)) !== null;
-  }
-
+  /** Permanently remove a stored conversation. The Morning brief conversation is permanent. */
   async deleteConversation(id: string): Promise<boolean> {
+    if (this.realtimeOwners.has(id) || this.voiceOwners.has(id))
+      throw new AgentError("session_busy", "conversation is in a voice call");
     if (!this.store) return false;
     if (
       this.answerDeleteLocks.has(id) ||
       this.activeTurnReplays.has(id) ||
       this.deepResearchActive.has(id) ||
       this.resumeCreationTails.has(id) ||
-      this.conversationPersistenceCounts.has(id)
+      this.conversationPersistenceCounts.has(id) ||
+      this.controls.active(id)
+    ) {
+      throw new AgentError(
+        "session_busy",
+        "conversation is still processing or deletion is already in progress",
+      );
+    }
+    // A live session carries its origin; only a stored one is read, and a
+    // stored one has no session to evict, so the read delays nothing.
+    const live = this.sessions.get(id);
+    const origin = live ? live.meta.origin : (await this.store.load(id))?.origin;
+    if (origin?.kind === "daily_brief")
+      throw new AgentError(
+        "conversation_permanent",
+        "the Morning brief conversation cannot be deleted",
+      );
+    if (
+      this.answerDeleteLocks.has(id) ||
+      this.resumeCreationTails.has(id) ||
+      this.sessions.get(id) !== live
     ) {
       throw new AgentError(
         "session_busy",
@@ -1843,52 +2081,6 @@ export class AgentService {
   }
 
   /**
-   * Create (and persist immediately) an anchored thread conversation,
-   * seeded with the creating run's folded transcript. No live session is
-   * started — the first resume builds one on the anchored-thread profile.
-   * The record is written before anything references it, so a crash
-   * between "thread created" and "anchor row stamped" leaves only an
-   * orphan conversation, never a dangling pointer.
-   */
-  async createAnchoredThread(
-    callerId: CallerId,
-    input: CreateAnchoredThreadInput,
-  ): Promise<string> {
-    if (!this.store) {
-      throw new AgentError("anchored_thread_unavailable", "no conversation store configured");
-    }
-    const profile = this.anchoredThreadProfile;
-    if (!profile) {
-      throw new AgentError("anchored_thread_unavailable", "the Briefs feature is not active");
-    }
-    const backend = profile.resolveBackend();
-    if (!backend) {
-      throw new AgentError(
-        "anchored_thread_unavailable",
-        "no background-agent model is assigned for anchored threads",
-      );
-    }
-    const id = this.sessionIdGen();
-    const now = new Date().toISOString();
-    const record: ConversationRecord = {
-      id,
-      callerId,
-      model: backend.model,
-      backend: backend.name,
-      createdAt: now,
-      updatedAt: now,
-      title: input.title,
-      pinned: false,
-      origin: { ...input.origin, seedMessageCount: input.initialHistory.length },
-      messages: slimPersistedHistory(input.initialHistory),
-    };
-    await this.saveConversationRecord(record);
-    const anchor = `brief ${input.origin.briefId}`;
-    log.info(`anchored thread ${id} created for ${anchor} (run ${input.origin.runId})`);
-    return id;
-  }
-
-  /**
    * Pin or unpin a conversation. Updates a live in-memory session's meta
    * (so a subsequent turn-end save preserves the flag) and the persisted
    * record. Returns false only when neither a live session nor a stored
@@ -1909,6 +2101,234 @@ export class AgentService {
     } finally {
       this.answerDeleteLocks.delete(id);
     }
+  }
+
+  /**
+   * Append the day's morning brief to the standing Morning brief
+   * conversation, creating that conversation on first use.
+   *
+   * The brief is a system-authored assistant message: no turn runs and no
+   * prompt is hidden. A live session on the thread is evicted first so the
+   * next reply resumes from the stored record, which now ends with the
+   * brief; a session mid-turn refuses, and the morning run retries later.
+   * The thread's origin records where each brief sits, which is what scopes
+   * a reply's model context to the latest day.
+   */
+  async appendMorningBrief(input: {
+    day: string;
+    runId: string;
+    text: string;
+    notify: boolean;
+  }): Promise<{ conversationId: string; messageId: string }> {
+    if (!this.store) {
+      throw new AgentError("agent_unconfigured", "no conversation store configured");
+    }
+    const run = this.dailyBriefConversationTail.then(() => this.appendMorningBriefUnlocked(input));
+    this.dailyBriefConversationTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async appendMorningBriefUnlocked(input: {
+    day: string;
+    runId: string;
+    text: string;
+    notify: boolean;
+  }): Promise<{ conversationId: string; messageId: string }> {
+    const existing = (await this.store!.list()).find(
+      (summary) => summary.origin?.kind === "daily_brief",
+    );
+    const id = existing?.id ?? this.sessionIdGen();
+    const written = await this.withResumeGate(id, () =>
+      this.writeMorningBrief(id, existing !== undefined, `mb_${crypto.randomUUID()}`, input),
+    );
+    const messageId = written.messageId;
+    if (!written.appended) return { conversationId: id, messageId };
+    try {
+      const arrival = await this.readState?.agentContentArrived(id, { messageId });
+      if (input.notify && arrival?.notify)
+        this.notifyConversationUnread(id, MORNING_BRIEF_TITLE, input.text);
+    } catch (err) {
+      log.warn(`read-state update failed for the morning brief: ${(err as Error).message ?? err}`);
+    }
+    log.info(`morning brief for ${input.day} appended to conversation ${id}`);
+    return { conversationId: id, messageId };
+  }
+
+  private async writeMorningBrief(
+    id: string,
+    exists: boolean,
+    messageId: string,
+    input: { day: string; runId: string; text: string },
+  ): Promise<{ messageId: string; appended: boolean }> {
+    const store = this.store!;
+    // A day already in the thread is never appended again: a morning run that
+    // stopped between appending and recording the send finds its message here.
+    const stored = exists ? await store.load(id) : null;
+    const already =
+      stored?.origin?.kind === "daily_brief"
+        ? stored.origin.briefs.find((ref) => ref.day === input.day)
+        : undefined;
+    if (already) return { messageId: already.messageId, appended: false };
+    const live = this.sessions.get(id);
+    if (live) {
+      if (live.session.busy || this.conversationPersistenceCounts.has(id)) {
+        throw new AgentError(
+          "session_busy",
+          "the Morning brief conversation is in the middle of a turn",
+        );
+      }
+      await this.evictSession(id);
+    }
+    const now = new Date().toISOString();
+    await this.enqueueConversationMutation(id, async () => {
+      const record = exists ? await store.load(id) : null;
+      const messages: ChatMessage[] = [
+        ...(record?.messages ?? []),
+        { role: "assistant", parts: [{ kind: "text", text: input.text }] },
+      ];
+      const priorBriefs = record?.origin?.kind === "daily_brief" ? record.origin.briefs : [];
+      const origin: DailyBriefConversationOrigin = {
+        kind: "daily_brief",
+        runId: input.runId,
+        briefs: [
+          ...priorBriefs,
+          { day: input.day, messageIndex: messages.length - 1, messageId, sentAt: now },
+        ].slice(-DAILY_BRIEF_REF_LIMIT),
+      };
+      const backend = record ? null : this.backendFactory("agent");
+      // A new day is a fresh model context, so an earlier context-exhaustion
+      // lock no longer applies; the thread is never left read-only.
+      await store.save({
+        id,
+        callerId: record?.callerId ?? MORNING_BRIEF_CALLER_ID,
+        model: record?.model ?? backend?.model ?? "",
+        backend: record?.backend ?? backend?.name ?? "",
+        createdAt: record?.createdAt ?? now,
+        updatedAt: now,
+        title: MORNING_BRIEF_TITLE,
+        pinned: record ? record.pinned : true,
+        origin,
+        messages,
+      });
+    });
+    return { messageId, appended: true };
+  }
+
+  /**
+   * Replace one morning brief's text with a notice, because a source it drew
+   * on was deleted. The stored transcript and the conversation's searchable
+   * copy both lose the text; the thread and the brief's place in it stay.
+   * Returns false when the brief is not in the thread.
+   */
+  async redactMorningBrief(conversationId: string, messageId: string): Promise<boolean> {
+    if (!this.store) return false;
+    const store = this.store;
+    const redacted = await this.withResumeGate(conversationId, async () => {
+      const live = this.sessions.get(conversationId);
+      if (live) {
+        if (live.session.busy || this.conversationPersistenceCounts.has(conversationId))
+          throw new AgentError("session_busy", "the Morning brief conversation is in a turn");
+        await this.evictSession(conversationId);
+      }
+      return this.enqueueConversationMutation(conversationId, async () => {
+        const record = await store.load(conversationId);
+        if (record?.origin?.kind !== "daily_brief") return false;
+        const ref = record.origin.briefs.find((brief) => brief.messageId === messageId);
+        const message = ref ? record.messages[ref.messageIndex] : undefined;
+        if (!ref || !message || message.role !== "assistant") return false;
+        const messages = [...record.messages];
+        messages[ref.messageIndex] = {
+          role: "assistant",
+          parts: [{ kind: "text", text: MORNING_BRIEF_REDACTED_TEXT }],
+        };
+        await store.save({ ...record, messages, updatedAt: new Date().toISOString() });
+        return true;
+      });
+    });
+    if (redacted) {
+      try {
+        this.onTurnComplete?.(conversationId);
+      } catch (err) {
+        log.warn(
+          `re-indexing ${conversationId} after a redaction failed: ${(err as Error).message ?? err}`,
+        );
+      }
+      log.info(`morning brief ${messageId} redacted after a source it cited was deleted`);
+    }
+    return redacted;
+  }
+
+  /**
+   * The Morning brief conversation's model view: the latest brief and what
+   * followed it. The brief is a system-authored assistant message, so a
+   * short user line introduces it — providers expect a conversation to open
+   * on a user message.
+   */
+  private dailyBriefView(sessionId: string, history: ReadonlyArray<ChatMessage>): ChatMessage[] {
+    const latest = latestDailyBrief(this.sessions.get(sessionId)?.meta.origin);
+    if (!latest) return [...history];
+    // The recorded index is where the brief was appended; should the history
+    // no longer reach it, the latest assistant message stands in rather than
+    // the whole thread.
+    const start =
+      latest.messageIndex < history.length
+        ? latest.messageIndex
+        : Math.max(0, history.map((m) => m.role).lastIndexOf("assistant"));
+    return [
+      { role: "user", parts: [{ kind: "text", text: `(This morning's brief, ${latest.day}.)` }] },
+      ...history.slice(start),
+    ];
+  }
+
+  /**
+   * Open a new, empty conversation about one of the user's tasks. The record
+   * is written straight to the store, as the Morning brief conversation is,
+   * so the client's resume builds the live session in the client's own time
+   * zone. The title is the task's; the origin carries the task snapshot the
+   * client's context card draws. Every call opens a new conversation.
+   */
+  async openTaskConversation(
+    callerId: CallerId,
+    input: { taskId: string; snapshot: TaskConversationOriginSnapshot },
+  ): Promise<ConversationSummary> {
+    const store = this.store;
+    if (!store) throw new AgentError("agent_unconfigured", "no conversation store configured");
+    const backend = this.backendFactory("agent");
+    if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
+    const id = this.sessionIdGen();
+    const now = new Date().toISOString();
+    const origin: TaskConversationOrigin = {
+      kind: "task",
+      taskId: input.taskId,
+      runId: input.taskId,
+      task: input.snapshot,
+      seedMessageCount: 0,
+    };
+    const record: ConversationRecord = {
+      id,
+      callerId,
+      model: backend.model,
+      backend: backend.name,
+      createdAt: now,
+      updatedAt: now,
+      title: clipTitle(input.snapshot.title.replace(/\s+/g, " ").trim()),
+      pinned: false,
+      origin,
+      messages: [],
+    };
+    await this.enqueueConversationMutation(id, () => store.save(record));
+    log.info(`conversation ${id} opened about task ${input.taskId}`);
+    return {
+      id,
+      title: record.title,
+      model: record.model,
+      backend: record.backend,
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      pinned: false,
+      origin,
+    };
   }
 
   /**
@@ -2107,8 +2527,22 @@ export class AgentService {
     callerId: CallerId,
     sessionId: string,
     text: string,
-    opts: { deepResearch?: boolean; notifyAfterMs?: number } = {},
+    opts: {
+      deepResearch?: boolean;
+      notifyAfterMs?: number;
+      acceptedSubmission?: boolean;
+      spokenContext?: string;
+      submissionIds?: string[];
+    } = {},
   ): { messageId: string; userMessageId: string } {
+    if (
+      this.realtimeOwners.has(sessionId) ||
+      (this.voiceOwners.has(sessionId) && !opts.acceptedSubmission)
+    )
+      throw new AgentError("session_busy", "conversation is in a voice call");
+    if (!opts.acceptedSubmission && this.controls.active(sessionId)) {
+      throw new AgentError("session_busy", "a queued message is being accepted or started");
+    }
     if (this.disposing) {
       throw new AgentError("session_busy", "agent service is shutting down");
     }
@@ -2127,6 +2561,10 @@ export class AgentService {
     if (this.deepResearchActive.has(sessionId)) {
       throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
     }
+    if (entry.session.busy) {
+      throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
+    }
+    const answeredClarificationId = entry.meta.controls?.pendingClarification?.id;
     // A profile switch requested while a turn was in flight applies now,
     // before this turn starts, so the reply speaks the surface the caller
     // resumed on. Still-busy sessions keep the swap pending (the send
@@ -2151,16 +2589,40 @@ export class AgentService {
       if (entry.session.busy) {
         throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
       }
-      return this.runDeepResearch(sessionId, text);
+      const result = this.runDeepResearch(sessionId, text, opts.submissionIds);
+      this.clearAnsweredClarification(entry, answeredClarificationId);
+      return result;
     }
     if (opts.notifyAfterMs !== undefined && this.notifyAnswer) {
-      return this.startMessageWithSlowAnswerPush(callerId, sessionId, text, opts.notifyAfterMs);
+      const result = this.startMessageWithSlowAnswerPush(
+        callerId,
+        sessionId,
+        text,
+        opts.notifyAfterMs,
+        opts.submissionIds,
+      );
+      this.clearAnsweredClarification(entry, answeredClarificationId);
+      return result;
     }
-    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text);
+    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text, {
+      submissionIds: opts.submissionIds,
+      ...(opts.spokenContext ? { modelNote: voiceTranscriptModelNote(opts.spokenContext) } : {}),
+    });
     // The streaming command returns immediately; event subscribers receive the
     // terminal error while this catch prevents an unhandled rejection.
     void completion.catch(() => {});
+    this.clearAnsweredClarification(entry, answeredClarificationId);
     return { messageId, userMessageId };
+  }
+
+  private clearAnsweredClarification(entry: LiveSessionEntry, id: string | undefined): void {
+    if (!id) return;
+    // A successfully started legacy message answers the question without a submission envelope.
+    // The ordinary turn's save must carry this accepted transition, never resurrect the question.
+    if (entry.meta.controls?.pendingClarification?.id === id)
+      delete entry.meta.controls.pendingClarification;
+    if (entry.committedControls?.pendingClarification?.id === id)
+      delete entry.committedControls.pendingClarification;
   }
 
   /**
@@ -2187,6 +2649,7 @@ export class AgentService {
     sessionId: string,
     text: string,
     notifyAfterMs: number,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const entry = this.requireSession(sessionId);
     const acceptedAt = Date.now();
@@ -2218,7 +2681,7 @@ export class AgentService {
     const entryForBudget = this.sessions.get(sessionId);
     if (entryForBudget) entryForBudget.meta.notificationSatisfied = true;
     try {
-      started = this.startMessage(callerId, sessionId, text);
+      started = this.startMessage(callerId, sessionId, text, { submissionIds });
     } catch (err) {
       unsubscribe();
       if (entryForBudget) delete entryForBudget.meta.notificationSatisfied;
@@ -2408,6 +2871,10 @@ export class AgentService {
         ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`
         : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`,
       initialHistory,
+      // The prompt's default zone: tool results then carry each instant's
+      // local time beside it, so the model reads clock times instead of
+      // converting UTC by hand.
+      timeZone: hostTimeZone(),
       // An Answer is a task: its caller waits on the task, not on each token,
       // so a quota that resets in a minute should delay it rather than fail it.
       rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE,
@@ -2526,7 +2993,7 @@ export class AgentService {
     }
     assertSuccessfulAnswerTerminal(terminal);
     if (completionFailure) throw completionFailure;
-    const answer = text.trim().length > 0 ? text : earlierText;
+    const answer = normalizeAnswerProse(text.trim().length > 0 ? text : earlierText);
     if (answer.trim().length === 0) {
       throw new AgentError("answer_empty", "the agent returned an empty answer");
     }
@@ -2578,8 +3045,30 @@ export class AgentService {
       signal?: AbortSignal;
       /** Spend bucket for this turn; defaults to ordinary interactive chat. */
       spendMechanism?: string;
+      modelNote?: string;
+      submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
+    return this.startSessionTurn(callerId, sessionId, text, opts);
+  }
+
+  private startSessionTurn(
+    callerId: CallerId,
+    sessionId: string,
+    text: string,
+    opts: {
+      recordSpend?: boolean;
+      signal?: AbortSignal;
+      spendMechanism?: string;
+      modelNote?: string;
+      backend?: ChatBackend;
+      owner?: symbol;
+      submissionIds?: string[];
+    } = {},
+  ): { messageId: string; userMessageId: string; completion: Promise<void> } {
+    const owner = this.realtimeOwners.get(sessionId);
+    if (owner && owner !== opts.owner)
+      throw new AgentError("session_busy", "conversation is in a voice call");
     if (this.answerDeleteLocks.has(sessionId)) {
       throw new AgentError("session_busy", "conversation already has a deletion in progress");
     }
@@ -2590,6 +3079,8 @@ export class AgentService {
     // Any admin caller can drive a shared conversation. Ownership only feeds
     // cap accounting and persistence telemetry.
     entry.callerId = callerId;
+    entry.meta.model = opts.backend?.model ?? entry.session.model;
+    entry.meta.backend = opts.backend?.name ?? entry.session.backendName;
     // User-message content can carry secrets and PII; log only its length at
     // INFO. DEBUG remains an explicit operator opt-in.
     log.info(`session ${sessionId} user> (${text.length} chars)`);
@@ -2604,21 +3095,22 @@ export class AgentService {
     let turnUsage: AgentUsage | null = null;
     let turnStopReason: string | undefined;
     let turnRejected = false;
-    const unsubscribeSpend = this.recordSpend
-      ? entry.session.subscribe((event) => {
-          if (event.type !== "agent.message.end") return;
-          turnStopReason = event.payload.stopReason;
-          const u = event.payload.usage;
-          if (!u) return;
-          turnUsage = {
-            inputTokens: (turnUsage?.inputTokens ?? 0) + (u.inputTokens ?? 0),
-            outputTokens: (turnUsage?.outputTokens ?? 0) + (u.outputTokens ?? 0),
-            cacheReadTokens: (turnUsage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0),
-            cacheCreationTokens:
-              (turnUsage?.cacheCreationTokens ?? 0) + (u.cacheCreationTokens ?? 0),
-          };
-        })
-      : undefined;
+    const unsubscribeSpend =
+      this.recordSpend && opts.recordSpend !== false
+        ? entry.session.subscribe((event) => {
+            if (event.type !== "agent.message.end") return;
+            turnStopReason = event.payload.stopReason;
+            const u = event.payload.usage;
+            if (!u) return;
+            turnUsage = {
+              inputTokens: (turnUsage?.inputTokens ?? 0) + (u.inputTokens ?? 0),
+              outputTokens: (turnUsage?.outputTokens ?? 0) + (u.outputTokens ?? 0),
+              cacheReadTokens: (turnUsage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0),
+              cacheCreationTokens:
+                (turnUsage?.cacheCreationTokens ?? 0) + (u.cacheCreationTokens ?? 0),
+            };
+          })
+        : undefined;
 
     const replayGeneration = this.nextActiveTurnReplayGeneration++;
     this.activeTurnReplays.set(sessionId, {
@@ -2628,7 +3120,22 @@ export class AgentService {
     });
     let started: ReturnType<AgentSession["send"]>;
     try {
-      started = entry.session.send(text, { signal: opts.signal });
+      // A hint only: a failure to name pages must never fail the user's send.
+      let modelNote = opts.modelNote ?? "";
+      try {
+        const namedNote = this.namedPagesNote?.(text) ?? "";
+        if (namedNote) modelNote = [modelNote, namedNote].filter(Boolean).join("\n\n");
+      } catch (err) {
+        log.warn(
+          `named pages note failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      started = entry.session.send(text, {
+        signal: opts.signal,
+        ...(opts.backend ? { backend: opts.backend } : {}),
+        submissionIds: opts.submissionIds,
+        ...(modelNote ? { modelNote } : {}),
+      });
     } catch (err) {
       if (this.activeTurnReplays.get(sessionId)?.generation === replayGeneration) {
         this.activeTurnReplays.delete(sessionId);
@@ -2672,7 +3179,7 @@ export class AgentService {
         try {
           this.recordSpend({
             mechanism: opts.spendMechanism ?? INTERACTIVE_SPEND_MECHANISM,
-            modelId: entry.session.model,
+            modelId: opts.backend?.model ?? entry.session.model,
             usage: turnUsage,
             completed: !turnRejected && turnStopReason !== "canceled" && turnStopReason !== "error",
           });
@@ -2693,6 +3200,7 @@ export class AgentService {
       const current = this.activeTurnCompletions.get(sessionId);
       current?.delete(settled);
       if (current?.size === 0) this.activeTurnCompletions.delete(sessionId);
+      this.controls.kick(sessionId);
     };
     void settled.then(forgetCompletion, forgetCompletion);
     this.touch(sessionId);
@@ -2721,14 +3229,13 @@ export class AgentService {
     }
     try {
       await this.persistConversation(sessionId, live.callerId, live.meta, arrivingMessageId);
-      // No origin-anchored conversation writes back into the corpus.
-      // Brief threads are seeded by the Cognition Steward's own run
-      // transcript, which is already the corpus's. A
-      // watch-firing thread is held back for a different reason: a watch
+      // A watch-firing thread does not write back into the corpus: a watch
       // that matches documents would match the conversation it just
       // produced about them, firing again on its own output. The cost is
-      // that replies typed in these threads are not searchable later.
-      if (live.meta.origin) return;
+      // that replies typed there are not searchable later. The Morning brief
+      // conversation is indexed like any chat, so what the user says about
+      // their mornings is evidence for the preferences they state there.
+      if (live.meta.origin?.kind === "watch_firing") return;
       try {
         this.onTurnComplete?.(sessionId);
       } catch (err) {
@@ -2780,6 +3287,7 @@ export class AgentService {
   private runDeepResearch(
     sessionId: string,
     text: string,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const messageId = `dr_${crypto.randomUUID()}`;
     const userMessageId = `dr_${crypto.randomUUID()}`;
@@ -2885,7 +3393,14 @@ export class AgentService {
       rawEmit(makeEvent("agent.message.end", terminal));
     };
 
-    rawEmit(makeEvent("agent.user.message", { sessionId, userMessageId, text }));
+    rawEmit(
+      makeEvent("agent.user.message", {
+        sessionId,
+        userMessageId,
+        text,
+        ...(submissionIds?.length ? { submissionIds: [...submissionIds] } : {}),
+      }),
+    );
     rawEmit(makeEvent("agent.message.start", { sessionId, messageId, role: "assistant" }));
 
     const operation = (async () => {
@@ -2960,6 +3475,7 @@ export class AgentService {
       }
     })();
     operation.then(settleRun, settleRun);
+    void operation.finally(() => this.controls.kick(sessionId)).catch(() => {});
 
     this.touch(sessionId);
     return { messageId, userMessageId };
@@ -2985,14 +3501,19 @@ export class AgentService {
     // Read once: the parent could be evicted during the prompt await, and a
     // second lookup would then hand the finalizer a prompt and a tool set built
     // in different zones.
-    const parentZone = this.sessions.get(input.sessionId)?.session.timeZone;
+    const parent = this.sessions.get(input.sessionId);
+    const parentZone = parent?.session.timeZone;
+    const parentProfile = parent?.promptProfile ?? "voice";
+    const finalPrompt = await this.resolveChatPrompt(parentProfile, { timeZone: parentZone });
     const finalizer = new AgentSession({
       // Keep the parent session id in tool context, so normal annotate_many
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,
       backend,
-      tools: [...this.buildInteractiveTools(input.sessionId, "interactive")],
-      systemPrompt: await this.resolveChatPrompt("interactive", { timeZone: parentZone }),
+      tools: [
+        ...this.buildInteractiveTools(input.sessionId, parentProfile, parent?.meta.origin?.kind),
+      ],
+      systemPrompt: finalPrompt,
       timeZone: parentZone,
     });
     let terminal: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
@@ -3040,6 +3561,341 @@ export class AgentService {
       unsubscribe();
       await finalizer.dispose();
     }
+  }
+
+  /** Lease configured-agent conversation work; media detach never cancels accepted submissions. */
+  async openVoiceSession(
+    callerId: CallerId,
+    options: { conversationId?: string; timeZone?: string; authorized?: () => boolean } = {},
+  ): Promise<VoiceAgentSession> {
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+    const { sessionId, entry, owner } = await this.withResumeGate(
+      options.conversationId ?? "__voice_create__",
+      async () => {
+        if (options.authorized?.() === false)
+          throw new AgentError("forbidden", "voice authority was revoked");
+        const created = await this.createSessionUnlocked(callerId, {
+          profile: "interactive",
+          caller: { kind: "operator" },
+          timeZone: options.timeZone,
+          ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
+        });
+        const sessionId = created.sessionId;
+        const entry = this.requireSession(sessionId);
+        if (options.authorized?.() === false)
+          throw new AgentError("forbidden", "voice authority was revoked");
+        if (
+          this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId) ||
+          this.answerDeleteLocks.has(sessionId)
+        )
+          throw new AgentError("session_busy", "conversation is already in a voice call");
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const owner = Symbol("configured-voice");
+        this.voiceOwners.set(sessionId, owner);
+        this.touch(sessionId);
+        return { sessionId, entry, owner };
+      },
+    );
+    const attached = () => !this.disposing && this.voiceOwners.get(sessionId) === owner;
+    const active = () => attached() && options.authorized?.() !== false;
+    return createVoiceSession({
+      sessionId,
+      model: entry.session.model,
+      backend: entry.session.backendName,
+      history: () => entry.session.historySnapshot(),
+      visibleHistory: () =>
+        paginateVisibleConversationMessages(
+          entry.session.historySnapshot(),
+          entry.meta.origin,
+          Number.MAX_SAFE_INTEGER,
+        ).messages,
+      active,
+      attached,
+      closedError: () => new AgentError("session_busy", "voice call ended"),
+      subscribe: (listener) => this.observeSession(sessionId, listener),
+      accept: async (input, admit, accepted, appendToPending) => {
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const { stream, ...message } = input;
+        const submission = submissionInputSchema.parse({ ...message, mode: "queue" });
+        if (stream) submission.text = input.text;
+        try {
+          const result = await this.controls.submit(sessionId, submission, callerId, {
+            admit,
+            ...(stream ? { appendToPending } : {}),
+            accepted: (actualId) => {
+              let ids = this.voiceSubmissionIds.get(sessionId);
+              if (!ids) {
+                ids = new Set();
+                this.voiceSubmissionIds.set(sessionId, ids);
+              }
+              ids.add(actualId);
+              accepted(actualId);
+            },
+            answerPendingClarification: true,
+          });
+          this.touch(sessionId);
+          return result.submission.id;
+        } catch (error) {
+          this.forgetSettledVoiceSubmissions(sessionId);
+          throw error;
+        }
+      },
+      wait: async (id) => {
+        try {
+          return await this.controls.waitForResult(sessionId, id);
+        } finally {
+          this.forgetSettledVoiceSubmissions(sessionId);
+        }
+      },
+      cancel: async (ids) => {
+        try {
+          await this.controls.cancelSubmitted(sessionId, ids);
+        } finally {
+          this.forgetSettledVoiceSubmissions(sessionId);
+        }
+      },
+      release: () => {
+        if (this.voiceOwners.get(sessionId) !== owner) return;
+        this.voiceOwners.delete(sessionId);
+        this.controls.kick(sessionId);
+      },
+    });
+  }
+
+  private forgetSettledVoiceSubmissions(sessionId: string): void {
+    const ids = this.voiceSubmissionIds.get(sessionId);
+    if (!ids) return;
+    const state = this.sessions.get(sessionId)?.meta.controls;
+    for (const id of ids) {
+      const item = state?.submissions.find((candidate) => candidate.id === id);
+      if (!item || item.status === "completed" || item.status === "failed") ids.delete(id);
+    }
+    if (ids.size === 0) this.voiceSubmissionIds.delete(sessionId);
+  }
+
+  private async runSubmittedTurn(
+    id: string,
+    submission: ConversationSubmission,
+    submissionIds: string[],
+  ): Promise<ConversationTurnReceipt | void> {
+    const entry = this.requireSession(id);
+    const historyStart = entry.session.historySnapshot().length;
+    const voiceOrigin =
+      submissionIds.some((key) => this.voiceSubmissionIds.get(id)?.has(key)) ||
+      submission.spokenContext !== undefined;
+    const mutationBatch: { messageId?: string; admissionRevision: number } | undefined = voiceOrigin
+      ? {
+          admissionRevision: this.controls.admissionRevision(id),
+        }
+      : undefined;
+    if (mutationBatch) this.voiceMutationBatches.set(id, mutationBatch);
+    let messageId: string | undefined;
+    let terminal: AgentMessageEndEvent | undefined;
+    const unsubscribe = this.observeSession(id, (event) => {
+      if (event.type === "agent.message.end" && event.payload.messageId === messageId)
+        terminal = event.payload;
+    });
+    try {
+      const started = this.sendMessage(submission.callerId ?? entry.callerId, id, submission.text, {
+        deepResearch: submission.deepResearch,
+        spokenContext: submission.spokenContext,
+        acceptedSubmission: true,
+        submissionIds,
+      });
+      messageId = started.messageId;
+      if (mutationBatch) mutationBatch.messageId = messageId;
+      const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
+      const research = this.deepResearchRuns.get(id);
+      if (research) completions.push(research.completion);
+      await Promise.all(completions);
+      if (!terminal) {
+        if (entry.meta.lastTurnFailure) throw new Error("The submitted turn failed.");
+        return;
+      }
+      return {
+        messageId,
+        historyStart,
+        historyEnd: entry.session.historySnapshot().length,
+        stopReason: terminal.stopReason,
+        ...(terminal.failure ? { failure: terminal.failure } : {}),
+      };
+    } finally {
+      unsubscribe();
+      if (mutationBatch && this.voiceMutationBatches.get(id) === mutationBatch)
+        this.voiceMutationBatches.delete(id);
+      for (const key of submissionIds) this.voiceSubmissionIds.get(id)?.delete(key);
+      this.forgetSettledVoiceSubmissions(id);
+    }
+  }
+
+  /** Lease the ordinary interactive session for a transport-owned model backend. */
+  async openRealtimeSession(
+    callerId: CallerId,
+    options: { conversationId?: string; timeZone?: string; missingConversationPolicy?: "create" },
+  ): Promise<RealtimeAgentSession> {
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+    const sessionOptions: CreateSessionOptions = {
+      profile: "interactive",
+      caller: { kind: "operator" },
+      timeZone: options.timeZone,
+    };
+    const { sessionId, entry, owner } = await this.withResumeGate(
+      options.conversationId ?? "__realtime_create__",
+      async () => {
+        let created: CreateSessionResult;
+        try {
+          created = await this.createSessionUnlocked(callerId, {
+            ...sessionOptions,
+            ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
+          });
+        } catch (error) {
+          if (
+            options.missingConversationPolicy !== "create" ||
+            !options.conversationId ||
+            !(error instanceof AgentError) ||
+            error.code !== "session_not_found"
+          )
+            throw error;
+          created = await this.createSessionUnlocked(callerId, sessionOptions);
+        }
+        const sessionId = created.sessionId;
+        const entry = this.requireSession(sessionId);
+        if (
+          entry.session.busy ||
+          this.deepResearchActive.has(sessionId) ||
+          this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId) ||
+          this.controls.active(sessionId) ||
+          this.activeTurnCompletions.has(sessionId) ||
+          entry.meta.controls?.submissions.some((submission) => submission.status === "queued")
+        )
+          throw new AgentError("session_busy", "conversation is busy");
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const owner = Symbol("realtime");
+        this.realtimeOwners.set(sessionId, owner);
+        return { sessionId, entry, owner };
+      },
+    );
+    let closed = false;
+    let voiceContextFailure: string | undefined;
+    let cancellationGeneration = 0;
+    let active: Promise<void> | undefined;
+    const unsubscribeFailure = entry.session.subscribe((event) => {
+      if (
+        event.type === "agent.message.end" &&
+        event.payload.failure?.code === "provider_error" &&
+        event.payload.failure.provider?.code === "context_window_exceeded"
+      )
+        voiceContextFailure = event.payload.failure.message;
+    });
+    let resolveReleased!: () => void;
+    const released = new Promise<void>((resolve) => {
+      resolveReleased = resolve;
+    });
+    const release = () => {
+      unsubscribeFailure();
+      resolveReleased();
+      if (this.realtimeOwners.get(sessionId) === owner) {
+        this.realtimeOwners.delete(sessionId);
+        this.controls.kick(sessionId);
+      }
+    };
+    return {
+      sessionId,
+      context: entry.session.modelContextSnapshot(),
+      subscribe: (listener) => entry.session.subscribe(listener),
+      run: async (text, backend, signal) => {
+        if (closed || signal.aborted || this.disposing)
+          throw new AgentError("session_busy", "voice call ended");
+        const generation = cancellationGeneration;
+        let completion: Promise<void> | undefined;
+        await this.controls.startTurn(sessionId, () => {
+          // A barge-in or hangup while awaiting durable controls must not start late work.
+          if (closed || signal.aborted || this.disposing || generation !== cancellationGeneration)
+            return;
+          if (voiceContextFailure)
+            throw new AgentError("context_window_exceeded", voiceContextFailure);
+          if (entry.meta.terminalFailure)
+            throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+          this.touch(sessionId);
+          const answeredClarificationId = entry.meta.controls?.pendingClarification?.id;
+          active = this.startSessionTurn(callerId, sessionId, text, {
+            backend,
+            signal,
+            owner,
+            spendMechanism: "realtime-voice",
+            recordSpend: false,
+          }).completion;
+          completion = active;
+          this.clearAnsweredClarification(entry, answeredClarificationId);
+        });
+        return completion;
+      },
+      cancel: () => {
+        cancellationGeneration += 1;
+        if (!closed) entry.session.cancel("user");
+      },
+      close: () => {
+        if (closed) return released;
+        closed = true;
+        if (!entry.session.busy) {
+          release();
+          return released;
+        }
+        const unsubscribe = entry.session.subscribe((event) => {
+          if (event.type !== "agent.message.end") return;
+          unsubscribe();
+          release();
+        });
+        entry.session.cancel("system");
+        if (active)
+          void active
+            .finally(() => {
+              unsubscribe();
+              release();
+            })
+            .catch(() => {});
+        return released;
+      },
+    };
+  }
+
+  conversationControls(sessionId: string) {
+    return this.controls.snapshot(sessionId);
+  }
+
+  async submitMessage(callerId: CallerId, sessionId: string, input: SubmissionInput) {
+    if (this.realtimeOwners.has(sessionId) && input.mode === "interrupt")
+      throw new AgentError("session_busy", "End the voice call before sending a message now.");
+    const entry = this.requireSession(sessionId);
+    if (this.disposing || this.answerDeleteLocks.has(sessionId)) {
+      throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
+    }
+    if (entry.meta.terminalFailure)
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    entry.callerId = callerId;
+    this.touch(sessionId);
+    return this.controls.submit(sessionId, input, callerId);
+  }
+
+  async sendQueuedNow(callerId: CallerId, sessionId: string, submissionIds: string[]) {
+    if (this.realtimeOwners.has(sessionId))
+      throw new AgentError(
+        "session_busy",
+        "End the voice call before sending queued messages now.",
+      );
+    const entry = this.requireSession(sessionId);
+    if (this.disposing || this.answerDeleteLocks.has(sessionId))
+      throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
+    if (entry.meta.terminalFailure)
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    entry.callerId = callerId;
+    this.touch(sessionId);
+    return this.controls.sendNow(sessionId, submissionIds);
   }
 
   cancelSession(callerId: CallerId, sessionId: string): { ok: true } {
@@ -3213,6 +4069,7 @@ export class AgentService {
       model: string;
       backend: string;
       pinned: boolean;
+      controls?: ConversationControlState;
       terminalFailure?: AgentConversationTerminalFailure;
       lastTurnFailure?: AgentTerminalFailure;
       origin?: ConversationOrigin;
@@ -3221,12 +4078,18 @@ export class AgentService {
     },
     arrivingMessageId?: string,
     notify = true,
+    controlsWrite?: ConversationControlState,
   ): Promise<void> {
     if (!this.store) return;
     const entry = this.sessions.get(sessionId);
     if (!entry) return; // evicted between event and persist — drop.
     const messages = slimPersistedHistory(entry.session.historySnapshot());
-    if (messages.length === 0) return; // nothing worth saving yet.
+    if (
+      messages.length === 0 &&
+      !meta.controls?.submissions.length &&
+      !meta.controls?.pendingClarification
+    )
+      return;
     const record: ConversationRecord = {
       id: sessionId,
       callerId,
@@ -3240,12 +4103,13 @@ export class AgentService {
       // Carry the live pin flag through so a turn-end save preserves a
       // pin that was toggled while the session was in memory.
       pinned: meta.pinned,
+      ...(meta.controls ? { controls: structuredClone(meta.controls) } : {}),
       ...(meta.terminalFailure ? { terminalFailure: meta.terminalFailure } : {}),
       ...(meta.lastTurnFailure ? { lastTurnFailure: meta.lastTurnFailure } : {}),
       ...(meta.origin ? { origin: meta.origin } : {}),
       messages,
     };
-    await this.saveConversationRecord(record);
+    await this.saveConversationRecord(record, controlsWrite);
     if (!notify) return;
     // Every turn that runs on a live session passes through here, whoever
     // started it, so this is the one place that has to ask whether the
@@ -3256,11 +4120,6 @@ export class AgentService {
     // the operator's own message — leaves nothing to read, and the
     // conversation stays as it was. Asking whether the agent has *ever* spoken
     // here would answer yes for every conversation that has had one reply.
-    //
-    // (A thread created wholesale from an existing transcript —
-    // `createAnchoredThread` — writes its record directly and is deliberately
-    // not covered: the operator is looking at the artefact it was spawned
-    // from.)
     const last = messages[messages.length - 1];
     if (last !== undefined && endsWithAgentContent(messages)) {
       try {
@@ -3314,9 +4173,22 @@ export class AgentService {
     }
   }
 
-  private async saveConversationRecord(record: ConversationRecord): Promise<void> {
+  private async saveConversationRecord(
+    record: ConversationRecord,
+    controlsWrite?: ConversationControlState,
+  ): Promise<void> {
     if (!this.store) return;
-    await this.enqueueConversationMutation(record.id, () => this.store!.save(record));
+    await this.enqueueConversationMutation(record.id, async () => {
+      const entry = this.sessions.get(record.id);
+      // Resolve inside the persistence tail: a transcript captured before an acceptance
+      // must not overwrite it, and a failed control proposal must never leak through it.
+      const controls = controlsWrite ?? entry?.committedControls;
+      await this.store!.save({
+        ...record,
+        ...(controls ? { controls: structuredClone(controls) } : {}),
+      });
+      if (controlsWrite && entry) entry.committedControls = structuredClone(controlsWrite);
+    });
   }
 
   /** Serialize every durable mutation for one conversation in acceptance order. */
@@ -3379,7 +4251,13 @@ export class AgentService {
     // model mid-response and the client would never see the rest. Reschedule
     // the eviction for one more idle window; the touch() inside the session's
     // subscriber will keep pushing it out as long as events keep arriving.
-    if (entry.session.busy || this.deepResearchActive.has(sessionId)) {
+    if (
+      entry.session.busy ||
+      this.deepResearchActive.has(sessionId) ||
+      this.realtimeOwners.has(sessionId) ||
+      this.voiceOwners.has(sessionId) ||
+      this.controls.active(sessionId)
+    ) {
       // The caller may be the original idle-timer firing (in which case
       // `entry.timer` already cleared itself via setTimeout's natural
       // lifecycle) OR `evictForCaller` invoking us out of band. In the
@@ -3416,6 +4294,9 @@ export class AgentService {
    */
   async dispose(): Promise<void> {
     this.disposing = true;
+    this.voiceOwners.clear();
+    this.voiceSubmissionIds.clear();
+    this.voiceMutationBatches.clear();
     // Cancel every live child sub-agent first so a long child turn
     // doesn't keep the loop alive past SIGTERM.
     for (const [, set] of this.childSessions) {
@@ -3464,7 +4345,10 @@ export class AgentService {
         ...turnSettlements.map((settlement) => settlement.catch(() => {})),
       ]);
     }
+    if (this.controls.hasWork) await this.controls.settle();
+    this.controls.rejectWaitingResults();
     this.sessions.clear();
+    this.sessionObservers.clear();
     this.deepResearchRuns.clear();
     this.deepResearchAborts.clear();
     this.deepResearchActive.clear();
@@ -3504,11 +4388,14 @@ export function paginateVisibleConversationMessages(
   origin: ConversationOrigin | undefined,
   limit: number,
   before?: number,
+  /** Seed of an origin this gateway no longer recognizes; hidden all the same. */
+  unrecognizedSeed = 0,
 ): Omit<
   ConversationMessagePage,
   "model" | "backend" | "origin" | "terminalFailure" | "lastTurnFailure"
 > {
-  const seedMessageCount = Math.min(messages.length, Math.max(0, origin?.seedMessageCount ?? 0));
+  const seed = origin?.kind === "watch_firing" ? (origin.seedMessageCount ?? 0) : unrecognizedSeed;
+  const seedMessageCount = Math.min(messages.length, Math.max(0, seed));
   const visible = messages.slice(seedMessageCount);
   const safeLimit = Math.max(0, Math.floor(limit));
   const end = Math.min(
@@ -3694,6 +4581,7 @@ export const VETTED_ANSWER_FAILURE_CODES = new Set([
   "http_protocol_mismatch",
   "http_stream_error",
   "anthropic_api_error",
+  "anthropic_usage_limited",
   "anthropic_stream_error",
   "codex_binary_missing",
   "codex_unsupported_version",

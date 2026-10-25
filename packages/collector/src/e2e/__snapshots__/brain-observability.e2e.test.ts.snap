@@ -1,40 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`Brain Bench — the golden snapshot > one datum-intake arc leaves exactly the state the golden records 1`] = `
+exports[`Brain Bench — the golden snapshot > one source-interpretation arc leaves exactly the state the golden records 1`] = `
 {
-  "briefs": [
-    {
-      "body": null,
-      "citations": [
-        "doc#2",
-      ],
-      "claims": [
-        {
-          "claimBasis": "quoted",
-          "claimText": "The hall booking's final balance falls due fourteen days before the date.",
-          "confidence": 0.9,
-          "evidenceDoc": "doc#2",
-          "evidenceQuote": "The final balance for the hall booking is due fourteen days before the date.",
-          "live": true,
-          "verificationState": null,
-        },
-      ],
-      "confidence": 0.9,
-      "createdByRun": "run#1",
-      "description": "The final balance is due fourteen days before the date.",
-      "eventAtSet": false,
-      "id": "brief#1",
-      "kind": "loop",
-      "nextShowSet": false,
-      "relatedLoops": [
-        "loop#1",
-      ],
-      "state": "unread",
-      "title": "Hall booking balance is coming due",
-      "urgency": 0.5,
-      "userFeedback": null,
-    },
-  ],
   "consumptionEdges": [],
   "docAnnotations": [
     {
@@ -82,13 +49,41 @@ exports[`Brain Bench — the golden snapshot > one datum-intake arc leaves exact
     },
   ],
   "notes": null,
+  "observations": [
+    {
+      "citations": [
+        "doc#2",
+      ],
+      "claims": [
+        {
+          "doc": "doc#2",
+          "quote": "The final balance for the hall booking is due fourteen days before the date.",
+          "verification": "unverified",
+        },
+      ],
+      "closeReason": null,
+      "createdAt": "T+0",
+      "createdByRun": "run#1",
+      "id": "obs#1",
+      "relatedLoops": [
+        "loop#1",
+      ],
+      "relevantUntilSet": false,
+      "state": "live",
+      "summary": "The hall booking balance is coming due.",
+      "userAuthored": false,
+      "why": "The final balance is due fourteen days before the date.",
+      "windowStartSet": false,
+      "wouldPush": false,
+    },
+  ],
   "personAnnotations": [],
   "retiredLoops": [],
   "runs": [
     {
       "attempts": 1,
-      "dedupeKey": "data:doc:doc#2",
-      "kind": "data",
+      "dedupeKey": null,
+      "kind": "synthesis",
       "status": "completed",
     },
     {

@@ -42,8 +42,11 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
-import { serializeToolResultForModel } from "./tool-result-text.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
 import { isOpenAIApiEndpoint, modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
   childEventHooks,
@@ -195,6 +198,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
       input.history,
       input.userMessage,
       input.systemPrompt,
+      { timeZone },
     );
 
     const totalUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
@@ -641,6 +645,13 @@ export class OpenAIResponsesBackend implements ChatBackend {
         outputTokens: iterationUsage.output,
         cacheReadTokens: iterationUsage.cachedInput,
       });
+      if (iterationUsage.input > 0 && !signal?.aborted)
+        yield wrapEvent("agent.usage.update", {
+          sessionId,
+          messageId,
+          usage: { ...totalUsage },
+          context: contextAssessment,
+        });
 
       if (signal?.aborted) {
         yield wrapEvent("agent.message.end", {
@@ -821,7 +832,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
         nextItems.push({
           type: "function_call_output",
           call_id: r.call.callId,
-          output: serializeToolResultForModel(r.result),
+          output: serializeToolResultForModel(r.result, { timeZone }),
         });
       }
 
@@ -1021,6 +1032,7 @@ export function convertHistoryToResponsesInput(
   history: ReadonlyArray<ChatMessage>,
   userMessage: string,
   systemPrompt: string,
+  serialization: ToolResultSerializationOptions = {},
 ): { instructions: string; input: ResponsesInputItem[] } {
   const items: ResponsesInputItem[] = [];
 
@@ -1034,7 +1046,7 @@ export function convertHistoryToResponsesInput(
           items.push({
             type: "function_call_output",
             call_id: part.toolCallId,
-            output: serializeToolResultForModel(part.result),
+            output: serializeToolResultForModel(part.result, serialization),
           });
         }
       }
@@ -1072,7 +1084,7 @@ export function convertToolsToResponses(tools: ReadonlyArray<ToolHandle>): Respo
     type: "function" as const,
     name: h.name,
     description: h.description,
-    parameters: zodToJsonSchema(h.schema) as Record<string, unknown>,
+    parameters: toolInputJsonSchema(h.schema) as Record<string, unknown>,
   }));
 }
 

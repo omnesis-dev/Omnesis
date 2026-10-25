@@ -1,0 +1,327 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+
+/* The Morning brief conversation, read by day (components/agent/brief-thread.js).
+   Theme-neutral: every colour is a token from style.css. */
+
+.brief-day {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* A thin rule with the day centred on it. */
+.brief-day-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.brief-day-sep::before,
+.brief-day-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-light);
+}
+.brief-day-label {
+  flex: 0 0 auto;
+  padding: 0 2px;
+}
+.brief-day-toggle {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.brief-day-toggle:hover {
+  color: var(--text-primary);
+}
+
+/* An earlier day, folded to one line. */
+.brief-day-folded {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.brief-day-folded:hover {
+  border-color: var(--border);
+  color: var(--text-primary);
+  background: var(--overlay-hover);
+}
+
+.brief-sun {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+.brief-chevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+/* Above the brief's text. */
+.brief-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.brief-header-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.brief-header-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Based on N things", under the brief. */
+.brief-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+.brief-footer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.brief-footer-toggle:hover {
+  color: var(--text-primary);
+}
+.brief-footer.open .brief-footer-toggle .brief-chevron {
+  transform: rotate(90deg);
+}
+.brief-footer-error {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.brief-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+.brief-retry:hover {
+  text-decoration: underline;
+}
+
+.brief-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.brief-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.brief-item-rank {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.brief-item-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.brief-item-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+.brief-item-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Source and task chips share one pill shape. */
+.brief-chip,
+.doc-chip.brief-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-decoration: none;
+}
+.brief-chip:hover,
+.doc-chip.brief-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.brief-task-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.brief-task-chip.resolved .doc-chip-title {
+  text-decoration: line-through;
+}
+
+/* Thumbs under each item. Quiet until hovered or pressed. */
+.brief-item-reactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 22px;
+}
+.brief-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.brief-thumb:hover {
+  color: var(--text-primary);
+  background: var(--overlay-hover);
+}
+.brief-thumb[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.brief-thumb-label {
+  margin-left: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.brief-thumb-error {
+  margin-left: 4px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* The "Not useful?" dialog. */
+.brief-reaction-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.brief-reaction-choices {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.brief-reaction-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+.brief-reaction-option:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.brief-reaction-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.brief-reaction-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.brief-reaction-text strong {
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+.brief-reaction-text small {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.brief-reaction-note-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.brief-reaction-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.brief-reaction-note:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.brief-reaction-remove {
+  margin-right: auto;
+}

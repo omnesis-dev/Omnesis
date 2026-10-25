@@ -38,7 +38,6 @@ describe("deriveDevTarget", () => {
     const cases: Array<[string, string]> = [
       ["loops", "open_loop"],
       ["runs", "agent_run"],
-      ["briefs", "brief"],
     ];
     for (const [tab, type] of cases) {
       expect(

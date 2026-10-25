@@ -14,7 +14,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createOpenLoop, updateOpenLoop, appendOpenLoopLedger } from "../storage/open-loops.js";
-import { createBrief } from "../storage/briefs.js";
+import { createObservation } from "../storage/observations.js";
 import { createDocAnnotation } from "../storage/annotations.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
 import { resolveBrainSettings, type ResolvedBrainSettings } from "../config.js";
@@ -190,21 +190,14 @@ describe("delta-prime builders", () => {
     expect(prime).not.toContain("-END");
   });
 
-  test("recent decisions list in-window loop touches and brief creations, capped", () => {
+  test("recent decisions list in-window loop touches and noted observations, capped", () => {
     const doc = insertDoc("r1", "source-x");
     // A loop touched inside the window (created there).
     seedLoop({ id: "loop_recent", title: "Touched this window", docs: [doc], at: NOW - DAY });
-    // A brief created inside the window.
-    createBrief(
+    // An observation noted inside the window.
+    createObservation(
       db,
-      {
-        id: "brief_recent",
-        createdByRun: "run_prior",
-        kind: "info",
-        title: "Fresh awareness brief",
-        confidence: 0.5,
-        urgency: 0.5,
-      },
+      { id: "obs_recent", createdByRun: "run_prior", summary: "Fresh awareness observation" },
       NOW - DAY,
     );
     // A loop touched OUTSIDE the window (30 days ago) — not a recent decision.
@@ -219,7 +212,7 @@ describe("delta-prime builders", () => {
     });
     expect(prime).toContain("Recent decisions in this window:");
     expect(prime).toContain("updated loop [loop_recent]");
-    expect(prime).toContain("created info brief [brief_recent]");
+    expect(prime).toContain('noted observation [obs_recent] "Fresh awareness observation"');
     // loop_old was touched before the window — it is not a recent DECISION,
     // though it still appears in the tracked-loops section for the source.
     expect(prime).not.toContain("updated loop [loop_old]");

@@ -9,7 +9,7 @@ import dev.omnesis.android.transport.dto.ModelControlInfo
 /** Short capability-card summary of catalog-backed controls and saved values. */
 internal object ModelBehaviorPresentation {
     private val BEHAVIOR_ROLES = setOf(
-        "agent", "privacy-reviewer", "background-agent", "watch-judge", "entailment-verifier", "brief-judge",
+        "agent", "privacy-reviewer", "background-agent", "watch-judge", "entailment-verifier",
     )
 
     fun supportsRole(role: String): Boolean = role in BEHAVIOR_ROLES

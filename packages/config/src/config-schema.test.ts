@@ -13,6 +13,61 @@ import {
   type OmnesisConfig,
 } from "./config-schema.js";
 
+describe("validateConfig — compact person profiles", () => {
+  test("accepts a bounded profile budget independently of annotation automation", () => {
+    const result = validateConfig({
+      brain: {
+        annotations: { enabled: false, personProfile: { maxFacts: 12, maxCharacters: 2500 } },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.config.brain?.annotations?.personProfile).toEqual({
+        maxFacts: 12,
+        maxCharacters: 2500,
+      });
+  });
+
+  test.each([
+    { maxFacts: 0 },
+    { maxFacts: 101 },
+    { maxFacts: 1.5 },
+    { maxCharacters: 499 },
+    { maxCharacters: 20001 },
+    { unknown: true },
+  ])("rejects invalid profile budgets %j", (personProfile) => {
+    expect(validateConfig({ brain: { annotations: { personProfile } } }).ok).toBe(false);
+  });
+});
+
+describe("validateConfig — brain.excludedSources", () => {
+  test("accepts source types and exact source ids, installed or not", () => {
+    const result = validateConfig({
+      brain: { excludedSources: ["codex", "github:jamie-lopez", "not-installed-yet"] },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.config.brain?.excludedSources).toEqual([
+        "codex",
+        "github:jamie-lopez",
+        "not-installed-yet",
+      ]);
+  });
+
+  test.each([
+    [["Codex"]],
+    [[""]],
+    [["codex:"]],
+    [[":account"]],
+    [["gmail:a:b"]],
+    [["two words"]],
+    [[42]],
+    ["codex"],
+  ])("rejects %j", (excludedSources) => {
+    expect(validateConfig({ brain: { excludedSources } }).ok).toBe(false);
+  });
+});
+
 describe("validateConfig — transcriptionVocabulary", () => {
   test("accepts disabling hints independently of the transcriber assignment", () => {
     const result = validateConfig({
@@ -1258,16 +1313,38 @@ describe("validateConfig — stripUnknownKeys (lenient load)", () => {
 describe("Codex inference capacity", () => {
   test("accepts bounded independent capacity and disabled interactive pooling", () => {
     const result = validateConfig({
-      inference: { codex: { interactivePoolSize: 0, inferencePoolSize: 3 } },
+      inference: {
+        codex: { interactivePoolSize: 0, inferencePoolSize: 3, backgroundPoolSize: 32 },
+      },
     });
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.config.inference?.codex).toEqual({
         interactivePoolSize: 0,
         inferencePoolSize: 3,
+        backgroundPoolSize: 32,
       });
   });
+  test.each([1000, 300000, 3600000])(
+    "accepts Codex model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      const result = validateConfig({ inference: { codex: { turnIdleTimeoutMs } } });
+      expect(result.ok).toBe(true);
+      if (result.ok)
+        expect(result.config.inference?.codex?.turnIdleTimeoutMs).toBe(turnIdleTimeoutMs);
+    },
+  );
+  test.each([0, 999, 1000.5, 3600001, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects Codex model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      expect(validateConfig({ inference: { codex: { turnIdleTimeoutMs } } }).ok).toBe(false);
+    },
+  );
   test.each([
+    { backgroundPoolSize: 0 },
+    { backgroundPoolSize: -1 },
+    { backgroundPoolSize: 1.5 },
+    { backgroundPoolSize: 33 },
     { inferencePoolSize: 0 },
     { inferencePoolSize: -1 },
     { inferencePoolSize: 1.5 },

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Briefs reconcile-quality E2E — the permanent regression net for the
+ * Brain reconcile-quality E2E — the permanent regression net for the
  * make-or-break algorithm.
  *
  * A real spawned gateway runs the whole engine end-to-end on the
@@ -18,11 +18,12 @@
  *  - inert-when-off, the (experimental unset, model assigned) prong,
  *    end-to-end on a spawned gateway (the other prong — experimental on,
  *    no model — is covered by cli.e2e.test.ts + the feature-gate units);
- *  - backfill immunity: seeding the whole universe enqueues zero data runs;
+ *  - historical context does not manufacture canonical obligations;
  *  - a scripted run creates a REAL open-loop row + its mirror document
  *    (the spec's mandated scripted-backend assert);
  *  - reconcile: a later resolving datum closes the tracked loop instead
- *    of minting a duplicate; ambiguous resolutions attach a confirm brief;
+ *    of minting a duplicate; ambiguous resolutions note a confirmation
+ *    observation;
  *  - near-duplicate bait stays its own loop;
  *  - the diff engine: two rapid edits fold into ONE updated run whose
  *    prompt carries a diff spanning both edits; settled payloads are
@@ -36,7 +37,12 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
+import Database from "better-sqlite3";
+import { enqueueKnowledgeWork } from "../../../gateway/src/brain/knowledge/work.js";
+import { knowledgeSourceRevisionSql } from "../../../gateway/src/brain/knowledge/source-revision.js";
+import { BrainObs } from "./brain-bench/obs.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import {
   arcById,
@@ -57,10 +63,9 @@ import {
   waitFor,
 } from "./briefs-scorecard.js";
 import { startScriptedLoopModelServer, type ScriptedLoopModelServer } from "./fake-loop-model.js";
-import type Database from "better-sqlite3";
 
 // Compress the engine cadences (read by the spawned gateway from its env,
-// which inherits ours). Durations like debounce come from the `briefs`
+// which inherits ours). Durations like debounce come from the `brain`
 // config block instead — see `extraGatewayConfig` below.
 process.env.OMNESIS_COGNITION_WAKER_INTERVAL_MS = "100";
 process.env.OMNESIS_COGNITION_WAKER_IDLE_MS = "200";
@@ -71,22 +76,42 @@ process.env.OMNESIS_COGNITION_DRAIN_START_DELAY_MS = "500";
 
 const ARCS = generateArcSet(FROZEN_ARC_SEED);
 // Point-in-time surfacing arcs — computed at module load so the scheduled
-// day is genuinely in the future (the dated brief is hidden until then).
+// day is genuinely in the future (the dated observation's window opens then).
 const DATED = generateDatedReminderArcs(Date.now());
 // The same-thread reconcile arc (identity-based reconcile candidates).
 const THREAD = generateThreadReconcileArc();
 
-interface FeedResponse {
-  briefs: Array<{
-    id: string;
-    kind: string;
-    title: string;
-    state: string;
-    citations: Array<{ docId: string; title: string }>;
-  }>;
+interface ObservationRow {
+  id: string;
+  summary: string;
+  state: string;
+  window_start: number | null;
+  relevant_until: number | null;
 }
 
-describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
+/** Observations whose summary carries an arc marker, oldest first. */
+function observationsWithMarker(db: Database.Database, marker: string): ObservationRow[] {
+  return db
+    .prepare<[string], ObservationRow>(
+      `SELECT id, summary, state, window_start, relevant_until FROM observations
+        WHERE instr(summary, ?) > 0 ORDER BY created_at, id`,
+    )
+    .all(marker);
+}
+
+/** The documents an observation cites, in order. */
+function observationCitations(db: Database.Database, id: string): string[] {
+  return db
+    .prepare<[string], { doc_id: string }>(
+      "SELECT doc_id FROM observation_citations WHERE observation_id = ? ORDER BY position",
+    )
+    .all(id)
+    .map((row) => row.doc_id);
+}
+
+const isOpen = (o: ObservationRow): boolean => o.state === "live" || o.state === "held";
+
+describe("Brain inert-when-off (experimental unset, model assigned)", () => {
   let harness: SyntheticE2EHarness;
   let server: ScriptedLoopModelServer;
 
@@ -110,12 +135,12 @@ describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
 
   test("routes 404, /status says inactive, and an eligible datum enqueues nothing", async () => {
     const status = (await harness.gatewayJson("/status")) as {
-      briefs: { active: boolean; modelAssigned: boolean };
+      brain: { active: boolean; modelAssigned: boolean };
     };
-    expect(status.briefs.modelAssigned).toBe(true);
-    expect(status.briefs.active).toBe(false);
+    expect(status.brain.modelAssigned).toBe(true);
+    expect(status.brain.active).toBe(false);
 
-    for (const path of ["/briefs/feed", "/admin/brain/loops", "/admin/brain/runs"]) {
+    for (const path of ["/admin/brain/observations", "/admin/brain/loops", "/admin/brain/runs"]) {
       const res = await fetch(`${harness.gatewayUrl}${path}`, {
         headers: { Authorization: `Bearer ${harness.apiKey}` },
       });
@@ -138,10 +163,105 @@ describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
   }, 60_000);
 });
 
-describe("Briefs reconcile quality on loops-test-life (scripted backend)", () => {
+describe("Conversation debounce without historical discovery", () => {
+  test("conversation updates debounce into a single run", async () => {
+    const server = await startScriptedLoopModelServer({ behaviors: ARCS.behaviors });
+    const harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      universe: "loops-test-life",
+      embedderBackend: "fake",
+      extraInference: {
+        backends: { scripted: { type: "http", url: server.url } },
+        assignments: { "background-agent": `scripted/${server.modelId}` },
+      },
+      extraGatewayConfig: {
+        brain: {
+          workerConcurrency: 2,
+          // Historical admission intentionally bypasses live-edit debounce.
+          bootstrap: { enabled: false },
+          knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+          conversationDebounce: "2s",
+          documentUpdateDebounce: "2s",
+        },
+      },
+    });
+    let db: Database.Database | undefined;
+    try {
+      await harness.start();
+      db = openHarnessDb(harness);
+      await harness.pushDocument({
+        externalId: "arc-conversation",
+        documentType: "conversation",
+        title: "Group chat: camping",
+        content: "first message",
+      });
+      await sleep(150);
+      await harness.pushDocument({
+        externalId: "arc-conversation",
+        documentType: "conversation",
+        title: "Group chat: camping",
+        content: "first message\nsecond message",
+      });
+      const docId = await waitFor("conversation document row", () =>
+        docIdByExternal(db!, "arc-conversation"),
+      );
+      await waitFor("debounced conversation work completed", () => {
+        const runs = runsForDoc(db!, docId);
+        const pending = db!
+          .prepare(
+            "SELECT 1 FROM knowledge_work WHERE subject_kind='source' AND subject_id=? AND status IN ('pending','batched') LIMIT 1",
+          )
+          .get(docId);
+        return runs.some((run) => run.status === "completed") && !pending ? true : null;
+      });
+      const runs = runsForDoc(db, docId);
+      expect(runs).toHaveLength(1);
+      const tools = await new BrainObs(harness).executedTools(runs[0]!.id);
+      expect(tools).toContainEqual(
+        expect.objectContaining({
+          tool: "fetch_many",
+          result: expect.objectContaining({
+            kind: "document.batch",
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                document: expect.objectContaining({
+                  id: docId,
+                  content: "first message\nsecond message",
+                }),
+              }),
+            ]),
+          }),
+        }),
+      );
+    } finally {
+      db?.close();
+      await harness.destroy();
+      await server.close();
+    }
+  }, 90_000);
+});
+
+describe("Brain reconcile quality on loops-test-life (scripted backend)", () => {
   let harness: SyntheticE2EHarness;
   let server: ScriptedLoopModelServer;
   let db: Database.Database;
+
+  // A successful turn may only hand contested work back to the queue. Wait
+  // for the source work itself to complete before asserting its side effects.
+  function completedSourceRuns(docId: string) {
+    return runsForDoc(db, docId).filter(
+      (run) =>
+        run.status === "completed" &&
+        db
+          .prepare(
+            `SELECT 1 FROM knowledge_work w
+             JOIN knowledge_batches batch ON batch.id=w.batch_id
+             WHERE w.subject_kind='source' AND w.subject_id=? AND w.status='completed'
+             AND batch.run_id=?`,
+          )
+          .get(docId, run.id),
+    );
+  }
 
   beforeAll(async () => {
     // Merge the dated-reminder arc behaviors (keyed by unique titles) so the
@@ -159,9 +279,19 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       },
       extraGatewayConfig: {
         brain: {
-          // Criterion 4's N>=2 case: claim two runs per tick; non-daily
-          // runs must serialize regardless.
+          // Same-commitment arrivals reconcile safely with two workers.
           workerConcurrency: 2,
+          bootstrap: {
+            enabled: true,
+            maxRuns: 256,
+            maxRunsPerDay: 256,
+            backlogTarget: 32,
+            batchSize: 32,
+            // The universe's fixed dates lie beyond the default history
+            // horizon; this suite reads the whole ambient corpus.
+            horizon: "100y",
+          },
+          knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
           conversationDebounce: "2s",
           documentUpdateDebounce: "2s",
         },
@@ -181,23 +311,84 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     await server?.close();
   }, 30_000);
 
-  test("backfill immunity: the seeded universe enqueues zero data runs", async () => {
-    const status = (await harness.gatewayJson("/status")) as { briefs: { active: boolean } };
-    expect(status.briefs.active).toBe(true);
-    // Not vacuous: the ambient corpus really landed (every fixture dated
-    // past the recency window, so each upsert was a backfill datum the
-    // waker had to consciously skip).
-    const docs = db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM documents").get();
-    expect(docs?.n ?? 0).toBeGreaterThanOrEqual(10);
-    // Waker start delay is 300ms; give it a couple of drain ticks.
-    await sleep(1_500);
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !db || !harness) return;
+    const obs = new BrainObs(harness);
+    const runs = db
+      .prepare<
+        [],
+        { id: string }
+      >("SELECT id FROM cognition_runs WHERE kind='synthesis' ORDER BY enqueued_at DESC LIMIT 12")
+      .all();
+    createLogger("collector:brain-bench").error(
+      `Loop reconciliation failure: ${JSON.stringify({
+        test: task.name,
+        coverage: db
+          .prepare(
+            "SELECT phase,status,COUNT(*) AS n FROM knowledge_discovery_coverage GROUP BY phase,status",
+          )
+          .all(),
+        work: db
+          .prepare(
+            "SELECT subject_id,reason,status,batch_id,last_error FROM knowledge_work WHERE status IN ('pending','batched') LIMIT 64",
+          )
+          .all(),
+        runs: db
+          .prepare(
+            "SELECT id,kind,status,attempts,last_error FROM cognition_runs ORDER BY enqueued_at DESC LIMIT 24",
+          )
+          .all(),
+        loops: db.prepare("SELECT id,title,state FROM open_loops").all(),
+        tools: await Promise.all(
+          runs.map(async (run) => ({ id: run.id, tools: await obs.executedTools(run.id) })),
+        ),
+      })}`,
+    );
+  });
+
+  test("ambient historical discovery does not invent canonical obligations", async () => {
+    const status = (await harness.gatewayJson("/status")) as { brain: { active: boolean } };
+    expect(status.brain.active).toBe(true);
+    // Historical discovery is operator-started; enabling its budget alone does
+    // not authorize scanning the already synced ambient corpus.
+    await new BrainObs(harness).startBootstrap();
+    // The ambient corpus really landed; discovery may inspect historical
+    // evidence without manufacturing an obligation.
+    const ambient = db
+      .prepare<
+        [string],
+        { id: string }
+      >("SELECT id FROM documents WHERE source_id IN (SELECT value FROM json_each(?)) ORDER BY id LIMIT 257")
+      .all(JSON.stringify(harness.getSourceIds()));
+    expect(ambient.length).toBeGreaterThanOrEqual(10);
+    expect(ambient.length).toBeLessThanOrEqual(256);
+    const ids = JSON.stringify(ambient.map((row) => row.id));
+    await waitFor(
+      "captured ambient sources interpreted at their current revisions",
+      () => {
+        const pending = db
+          .prepare<[string], { n: number }>(
+            `SELECT COUNT(*) AS n FROM documents d
+        WHERE d.id IN (SELECT value FROM json_each(?)) AND NOT EXISTS (
+          SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id
+          AND c.input_revision=${knowledgeSourceRevisionSql("d")} AND c.phase='interpretation' AND c.status='considered'
+        )`,
+          )
+          .get(ids);
+        return pending?.n === 0 ? true : null;
+      },
+      55_000,
+    );
     const row = db
-      .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'data'")
+      .prepare<
+        [],
+        { n: number }
+      >("SELECT (SELECT COUNT(*) FROM open_loops) + (SELECT COUNT(*) FROM observations) AS n")
       .get();
     expect(row?.n).toBe(0);
   }, 60_000);
 
-  test("a scripted run creates a real open loop, its mirror document, and an awareness brief", async () => {
+  test("a scripted run creates a real open loop, its mirror document, and an observation", async () => {
     const arc = arcById(ARCS, "invoice");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[0]!.doc);
@@ -211,7 +402,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     // Stamped with the run that created it — the exact completed data run.
     const docId = docIdByExternal(db, arc.steps[0]!.doc.externalId)!;
     const run = await waitFor(`completed run for ${docId}`, () => {
-      const rows = runsForDoc(db, docId).filter((r) => r.status === "completed");
+      const rows = completedSourceRuns(docId);
       return rows.length > 0 ? rows[0]! : null;
     });
     expect(loop.created_by_run).toBe(run.id);
@@ -219,27 +410,31 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     // The searchable mirror document exists (external_id = loop id).
     expect(docIdByExternal(db, loop.id)).not.toBeNull();
 
-    // The awareness brief is live on the feed, citing the source email.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    const entry = feed.briefs.find((b) => b.title.includes(marker));
-    expect(entry, `brief for ${marker} on the feed`).toBeDefined();
-    expect(entry!.kind).toBe("loop");
-    expect(entry!.citations.map((c) => c.docId)).toContain(docId);
+    // The observation waits for the morning brief, citing the source email
+    // and attached to the loop.
+    const noted = observationsWithMarker(db, marker);
+    expect(noted, `observation for ${marker}`).toHaveLength(1);
+    expect(noted[0]!.state).toBe("live");
+    expect(observationCitations(db, noted[0]!.id)).toContain(docId);
+    const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
+      observations: Array<{ id: string }>;
+    };
+    expect(detail.observations.map((o) => o.id)).toEqual([noted[0]!.id]);
   }, 90_000);
 
-  test("a resolving datum closes the tracked loop instead of minting a duplicate (silent close + brief cleanup)", async () => {
+  test("a resolving datum closes the tracked loop instead of minting a duplicate (its observation drops)", async () => {
     const arc = arcById(ARCS, "invoice");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[1]!.doc);
 
     // Gate on the resolution RUN settling, not on the loop state: the
-    // state flips to done one tool round before the brief cleanup and
-    // ledger note land, and asserting mid-run is a race.
+    // state flips to done one tool round before the ledger note lands, and
+    // asserting mid-run is a race.
     const resolutionDocId = await waitFor(`document row for ${arc.steps[1]!.doc.externalId}`, () =>
       docIdByExternal(db, arc.steps[1]!.doc.externalId),
     );
     await waitFor(`completed resolution run for ${marker}`, () => {
-      const done = runsForDoc(db, resolutionDocId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(resolutionDocId);
       return done.length >= 1 ? true : null;
     });
     expect(loopsWithMarker(db, marker).some((l) => l.state === "done")).toBe(true);
@@ -248,9 +443,17 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const hits = loopsWithMarker(db, marker);
     expect(hits).toHaveLength(1);
 
-    // Silent close removed the awareness brief from the feed.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    // Closing the loop dropped its observation as superseded: it never ships.
+    const noted = observationsWithMarker(db, marker);
+    expect(noted.filter(isOpen)).toEqual([]);
+    expect(
+      db
+        .prepare<
+          [string],
+          { close_reason: string | null }
+        >("SELECT close_reason FROM observations WHERE id = ?")
+        .get(noted[0]!.id)?.close_reason,
+    ).toBe("superseded");
 
     // The resolution run stamped the ledger; the loop was created by a
     // DIFFERENT run (run-id stamping across the arc).
@@ -274,13 +477,18 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
     expect(loopsWithMarker(db, marker)).toHaveLength(1);
 
+    const twinDocId = docIdByExternal(db, twin.steps[0]!.doc.externalId)!;
+    await waitFor(`completed interpretation for ${marker}`, () =>
+      completedSourceRuns(twinDocId).length > 0 ? true : null,
+    );
+
     // The resolved first-invoice loop was not resurrected or touched.
     const first = loopsWithMarker(db, arcById(ARCS, "invoice").marker!);
     expect(first).toHaveLength(1);
     expect(first[0]!.state).toBe("done");
   }, 90_000);
 
-  test("criterion 5: a worker killed after its first create re-claims to exactly one loop and one brief", async () => {
+  test("criterion 5: a worker killed after its first create re-claims to exactly one loop and one observation", async () => {
     const twin = arcById(ARCS, "invoice-twin");
     const marker = twin.marker!;
     let docId = docIdByExternal(db, twin.steps[0]!.doc.externalId);
@@ -296,7 +504,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
     await waitFor(`settled initial data run for ${marker}`, () => {
       const rows = runsForDoc(db, docId);
-      return rows.some((r) => r.status === "completed") && rows.every((r) => r.status !== "pending")
+      return completedSourceRuns(docId).length > 0 && rows.every((r) => r.status !== "pending")
         ? true
         : null;
     });
@@ -309,7 +517,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const createsBefore = createsFor();
     const completedBefore = runsForDoc(db, docId).filter((r) => r.status === "completed").length;
 
-    // The crash: the create attempt's loop + brief landed durably but the run
+    // The crash: the create attempt's loop + observation landed durably but the run
     // never settled, so a re-claimable pending run for the same datum reappears.
     enqueueCrashedDataRun(harness, {
       runId: `run_crash_c5_${Date.now()}`,
@@ -325,15 +533,14 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       return done > completedBefore ? true : null;
     });
 
-    // EXACTLY one loop and one brief — the re-attempt duplicated neither, and
-    // emitted no second open_loop_create.
+    // EXACTLY one loop and one observation — the re-attempt duplicated
+    // neither, and emitted no second open_loop_create.
     expect(loopsWithMarker(db, marker)).toHaveLength(1);
     expect(createsFor()).toBe(createsBefore);
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.filter((b) => b.title.includes(marker))).toHaveLength(1);
+    expect(observationsWithMarker(db, marker).filter(isOpen)).toHaveLength(1);
   }, 90_000);
 
-  test("an ambiguous fulfilment attaches a confirmation brief and leaves the loop open", async () => {
+  test("an ambiguous fulfilment notes a confirmation observation and leaves the loop open", async () => {
     const arc = arcById(ARCS, "request");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[0]!.doc);
@@ -345,7 +552,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       docIdByExternal(db, arc.steps[0]!.doc.externalId),
     );
     await waitFor(`completed request run for ${marker}`, () => {
-      const done = runsForDoc(db, requestDocId).filter((run) => run.status === "completed");
+      const done = completedSourceRuns(requestDocId);
       return done.length >= 1 ? true : null;
     });
 
@@ -354,22 +561,95 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       docIdByExternal(db, arc.steps[1]!.doc.externalId),
     );
     await waitFor(`completed ambiguous-fulfilment run for ${marker}`, () => {
-      const done = runsForDoc(db, fulfilmentDocId).filter((run) => run.status === "completed");
+      const done = completedSourceRuns(fulfilmentDocId);
       return done.length >= 1 ? true : null;
     });
 
-    const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
-      briefs: Array<{ state: string; title: string }>;
-    };
-    const active = detail.briefs.filter(
-      (brief) => brief.state === "unread" || brief.state === "read",
-    );
-    expect(active).toHaveLength(1);
+    // Initial interpretation can hand work to another run before it commits.
+    // Count successful writes across every source run and attempt, rather than
+    // model emissions that may have received a control-flow refusal.
+    const obs = new BrainObs(harness);
+    const committedConfirmationNotes = async () =>
+      (await Promise.all(runsForDoc(db, fulfilmentDocId).map((run) => obs.executedTools(run.id))))
+        .flat()
+        .filter(
+          (step) =>
+            step.tool === "observation_note" &&
+            step.result?.kind === "structured" &&
+            step.result.resultType === "observation.noted",
+        );
+    const notesBeforeReview = await committedConfirmationNotes();
+    expect(notesBeforeReview).toHaveLength(1);
+    expect(notesBeforeReview[0]!.result?.data?.id).toEqual(expect.any(String));
     const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
     if (fulfilmentAction.kind !== "resolve") {
       throw new Error("request arc fulfilment step must be a resolution");
     }
-    expect(active[0]!.title).toBe(fulfilmentAction.confirmBriefTitle);
+    expect(notesBeforeReview[0]!.args.summary).toBe(fulfilmentAction.confirmObservation);
+    expect(notesBeforeReview[0]!.args.citations).toContain(fulfilmentDocId);
+
+    // Reoffer the already interpreted source explicitly. A repeated frontier
+    // must adopt the current confirmation, without another observation write.
+    let reviewId: string;
+    const writer = new Database(harness.getDbPath(), { fileMustExist: true });
+    writer.pragma("busy_timeout = 10000");
+    try {
+      reviewId = writer
+        .transaction(() => {
+          const now = Date.now();
+          const source = writer
+            .prepare<
+              [string],
+              { revision: string }
+            >(`SELECT ${knowledgeSourceRevisionSql("d")} AS revision FROM documents d WHERE d.id=?`)
+            .get(fulfilmentDocId)!;
+          return enqueueKnowledgeWork(
+            writer,
+            {
+              id: `confirmation-review-${fulfilmentDocId}`,
+              subjectId: fulfilmentDocId,
+              subjectKind: "source",
+              reason: "review",
+              inputRevision: String(source.revision),
+              tier: "immediate",
+              dueAt: now,
+            },
+            now,
+          ).id;
+        })
+        .immediate();
+    } finally {
+      writer.close();
+    }
+    // Frontier completion settles the work before the model turn is finalized.
+    // Observe the exact review's run, rather than only its completed work receipt.
+    const completedReview = await waitFor("completed confirmation source review", () => {
+      const review = db
+        .prepare<[string, string], { runId: string }>(
+          `SELECT batch.run_id AS runId FROM knowledge_work work
+           JOIN knowledge_batches batch ON batch.id=work.batch_id
+           JOIN cognition_runs run ON run.id=batch.run_id
+           WHERE work.id=? AND work.subject_kind='source' AND work.subject_id=?
+           AND work.status='completed' AND run.status='completed'`,
+        )
+        .get(reviewId, fulfilmentDocId);
+      return review && completedSourceRuns(fulfilmentDocId).length >= 2 ? review : null;
+    });
+    expect(completedSourceRuns(fulfilmentDocId).length).toBeGreaterThanOrEqual(2);
+    expect(completedSourceRuns(fulfilmentDocId).map((run) => run.id)).toContain(
+      completedReview.runId,
+    );
+    // A review must retain the exact same single committed confirmation.
+    expect(await committedConfirmationNotes()).toEqual(notesBeforeReview);
+
+    const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
+      observations: Array<{ state: string; summary: string; closeReason: string | null }>;
+    };
+    // The confirmation superseded the request's observation: one open item.
+    const active = detail.observations.filter((o) => o.state === "live" || o.state === "held");
+    expect(active).toHaveLength(1);
+    expect(detail.observations.filter((o) => o.closeReason === "superseded")).toHaveLength(1);
+    expect(active[0]!.summary).toBe(fulfilmentAction.confirmObservation);
 
     // Still exactly one loop, still open — ambiguity never closes silently.
     const hits = loopsWithMarker(db, marker);
@@ -377,7 +657,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(hits[0]!.state).toBe("open");
   }, 90_000);
 
-  test("a dated to-do surfaces on its scheduled day: brief held until nextShow + a re-verify run tied to the loop", async () => {
+  test("a dated to-do is windowed on its scheduled day: observation window + a re-verify run tied to the loop", async () => {
     const arc = DATED.dated;
     const marker = arc.marker!;
     const taskDoc = arc.steps[0]!.doc;
@@ -390,33 +670,29 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
     expect(loop.state).toBe("open");
 
-    // ...and the data run that built it has fully settled (loop + brief +
+    // ...and the data run that built it has fully settled (loop + observation +
     // scheduled run all landed).
     const taskDocId = docIdByExternal(db, taskDoc.externalId)!;
     await waitFor(`completed run for ${taskDoc.externalId}`, () => {
-      const done = runsForDoc(db, taskDocId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(taskDocId);
       return done.length > 0 ? true : null;
     });
 
-    // The brief is attached to the loop and HELD until the scheduled-day
-    // morning (nextShow), with eventAt on the day.
-    const brief = db
+    // The observation is attached to the loop and matters from the
+    // scheduled-day morning (windowStart) until the appointed time.
+    const noted = db
       .prepare<
         [string],
-        { id: string; next_show: number | null; event_at: number | null; title: string }
+        { id: string; window_start: number | null; relevant_until: number | null }
       >(
-        `SELECT b.id, b.next_show, b.event_at, b.title
-           FROM briefs b JOIN brief_related_loops brl ON brl.brief_id = b.id
-          WHERE brl.loop_id = ?`,
+        `SELECT o.id, o.window_start, o.relevant_until
+           FROM observations o JOIN observation_related_loops rl ON rl.observation_id = o.id
+          WHERE rl.loop_id = ?`,
       )
       .get(loop.id);
-    expect(brief, "dated brief attached to the loop").toBeDefined();
-    expect(brief!.next_show).toBe(Date.parse(DATED.nextShowIso));
-    expect(brief!.event_at).toBe(Date.parse(DATED.eventAtIso));
-
-    // Hidden until its day: not on today's feed.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    expect(noted, "dated observation attached to the loop").toBeDefined();
+    expect(noted!.window_start).toBe(Date.parse(DATED.windowStartIso));
+    expect(noted!.relevant_until).toBe(Date.parse(DATED.relevantUntilIso));
 
     // A re-verify run is scheduled for that day, tied to the loop via loopId
     // (never claimed today — its next_attempt_at is in the future), so
@@ -438,20 +714,21 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(run!.next_attempt_at).toBeGreaterThan(Date.now());
 
     // Completing the task early resolves the loop; its cascade retracts the
-    // never-fired scheduled run and cleans up the held brief.
+    // never-fired scheduled run and drops the windowed observation.
     await pushArcDoc(harness, arc.steps[1]!.doc);
     const doneDocId = await waitFor(`document row for ${arc.steps[1]!.doc.externalId}`, () =>
       docIdByExternal(db, arc.steps[1]!.doc.externalId),
     );
     await waitFor(`completed resolution run for ${marker}`, () => {
-      const done = runsForDoc(db, doneDocId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(doneDocId);
       return done.length > 0 ? true : null;
     });
     expect(loopsWithMarker(db, marker).some((l) => l.state === "done")).toBe(true);
     expect(scheduledRun(), "scheduled run cascade-retracted on resolve").toBeUndefined();
+    expect(observationsWithMarker(db, marker).filter(isOpen)).toEqual([]);
   }, 90_000);
 
-  test("an undated to-do is read but never auto-briefed (dated-only scope)", async () => {
+  test("an undated to-do is read but never noted (dated-only scope)", async () => {
     const arc = DATED.undated;
     const marker = arc.marker!;
     const doc = arc.steps[0]!.doc;
@@ -460,24 +737,24 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       docIdByExternal(db, doc.externalId),
     );
     await waitFor(`completed run for ${doc.externalId}`, () => {
-      const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(docId);
       return done.length > 0 ? true : null;
     });
 
-    // No natural moment to resurface → no loop, no brief, nothing on the feed.
+    // No natural moment to resurface → no loop and no observation.
     expect(loopsWithMarker(db, marker)).toHaveLength(0);
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    expect(observationsWithMarker(db, marker)).toHaveLength(0);
 
-    // The transcript confirms the agent fetched it, then declined to brief.
+    // The transcript confirms the agent fetched it, then declined to note it.
     const calls = server.calls.filter((c) => c.docId === docId);
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const call of calls) {
-      if (call.emitted.kind === "tool") expect(call.emitted.name).toBe("fetch_many");
+      if (call.emitted.kind === "tool")
+        expect(["fetch_many", "knowledge_discovery_complete"]).toContain(call.emitted.name);
     }
   }, 90_000);
 
-  test("rapid edits to an updatable document fold into one run whose diff spans both edits; no prior version outlives the settle", async () => {
+  test("rapid edits fold into one current-source interpretation; no prior version outlives the settle", async () => {
     const arc = arcById(ARCS, "doc-edit");
     const doc = arc.steps[0]!.doc;
     const [rev1, rev2] = ARCS.docEditRevisions;
@@ -487,7 +764,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       docIdByExternal(db, doc.externalId),
     );
     await waitFor(`created run for ${doc.externalId}`, () => {
-      const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(docId);
       return done.length >= 1 ? true : null;
     });
 
@@ -507,21 +784,27 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
           server.calls.filter((c) => c.docId === docId).map((c) => c.emitted),
         )}`,
       () => {
-        const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
+        const done = completedSourceRuns(docId);
         return done.length >= 2 ? true : null;
       },
     );
     const runs = runsForDoc(db, docId);
     expect(runs).toHaveLength(2);
 
-    // The updated run's prompt carried a diff spanning BOTH edits.
-    const updatedCall = server.calls.find(
-      (c) => c.docId === docId && c.event === "updated" && c.prompt.includes("<diff>"),
-    );
-    expect(updatedCall, "model saw an updated-run prompt with a diff").toBeDefined();
-    expect(updatedCall!.prompt).toContain("rev-alpha");
-    expect(updatedCall!.prompt).toContain("rev-beta");
-
+    // Current maintenance delivers the latest exact source snapshot, rather
+    // than the retired data-run diff envelope. Its interpretation coverage
+    // must match the final semantic source revision after the folded edits.
+    expect(
+      db
+        .prepare(
+          `SELECT 1 FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id
+      WHERE d.id=? AND c.phase='interpretation' AND c.input_revision=${knowledgeSourceRevisionSql("d")} AND c.status='considered'`,
+        )
+        .get(docId),
+    ).toBeDefined();
+    expect(db.prepare("SELECT content FROM documents WHERE id=?").get(docId)).toMatchObject({
+      content: rev2,
+    });
     // No prior version outlives the queue row: settling strips the fold
     // snapshot + diff text; the reference-shaped rest is retained.
     for (const run of runs) {
@@ -530,7 +813,10 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       expect(run.payload_json).not.toContain("diff");
       expect(run.payload_json).not.toContain("rev-alpha");
       expect(run.payload_json).not.toContain("rev-beta");
-      expect(JSON.parse(run.payload_json as string)).toMatchObject({ docId });
+      expect(JSON.parse(run.payload_json as string)).toMatchObject({
+        focus: "knowledge-maintenance",
+        batchId: expect.any(String),
+      });
     }
   }, 90_000);
 
@@ -553,20 +839,26 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       },
     ]);
 
-    // Both runs complete...
+    const completedBySource = new Map<string, string[]>();
+    // Both source interpretations complete, including any contention handoff.
     for (const doc of [a, b]) {
       const docId = await waitFor(`document row for ${doc.externalId}`, () =>
         docIdByExternal(db, doc.externalId),
       );
       await waitFor(`completed run for ${doc.externalId}`, () => {
-        const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
-        return done.length >= 1 ? true : null;
+        const settled = completedSourceRuns(docId);
+        if (!settled.length) return null;
+        completedBySource.set(
+          docId,
+          settled.map((run) => run.id),
+        );
+        return true;
       });
     }
 
-    // ...but exactly ONE loop exists: the second run's reconcile saw the
-    // first run's loop (queue serialization + fresh-reads overlay) and
-    // adopted it with a ledger note instead of creating.
+    // ...but exactly ONE loop exists: the losing run's reconciliation saw the
+    // winning run's loop and routes its source to that exact canonical owner.
+    // An adoption needs no redundant ledger mutation.
     expect(loopsWithMarker(db, marker)).toHaveLength(1);
     const creates = server.calls.filter(
       (c) =>
@@ -574,17 +866,83 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
         c.emitted.name === "open_loop_create" &&
         String((c.emitted.args as { title?: unknown }).title ?? "").includes(marker),
     );
-    expect(creates).toHaveLength(1);
-    const adopts = server.calls.filter(
-      (c) =>
-        c.emitted.kind === "tool" &&
-        c.emitted.name === "open_loop_ledger_append" &&
-        String((c.emitted.args as { note?: unknown }).note ?? "").includes("adopted"),
-    );
-    expect(adopts.length).toBeGreaterThanOrEqual(1);
+    expect(creates.length).toBeGreaterThanOrEqual(1);
+    const winner = loopsWithMarker(db, marker)[0]!;
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM observation_related_loops WHERE observation_id IN (SELECT id FROM observations WHERE state IN ('live','held')) AND loop_id=?",
+        )
+        .get(winner.id),
+    ).toEqual({ n: 1 });
+    const obs = new BrainObs(harness);
+    const adoptedBy = new Set<string>();
+    for (const [sourceId, runs] of completedBySource) {
+      for (const runId of runs) {
+        if (runId === winner.created_by_run) continue;
+        const attempts = new Set(
+          (await obs.transcripts({ runId })).items.map((row) => row.attempt),
+        );
+        for (const attempt of attempts) {
+          const steps = await obs.executedTools(runId, attempt);
+          const fetched = steps.findIndex(
+            (step) =>
+              step.tool === "open_loop_fetch" &&
+              step.args.id === winner.id &&
+              step.result?.kind === "structured" &&
+              step.result.data?.id === winner.id &&
+              step.result.data?.title === winner.title,
+          );
+          if (fetched < 0) continue;
+          for (let index = fetched + 1; index < steps.length; index++) {
+            const step = steps[index]!;
+            if (
+              step.tool !== "knowledge_discovery_complete" ||
+              step.args.id !== `source:${sourceId}` ||
+              step.result?.kind !== "structured" ||
+              !Array.isArray(step.args.targets) ||
+              !step.args.targets.includes(winner.id)
+            )
+              continue;
+            const offered = steps
+              .slice(0, index)
+              .reverse()
+              .flatMap((prior) => {
+                const items =
+                  prior.tool === "knowledge_next_frontier" && prior.result?.kind === "structured"
+                    ? prior.result.data?.items
+                    : undefined;
+                return Array.isArray(items) ? items : [];
+              })
+              .find((item) => item?.id === step.args.id);
+            if (
+              !offered ||
+              typeof offered.inputFingerprint !== "string" ||
+              offered.inputFingerprint !== step.args.inputFingerprint
+            )
+              continue;
+            const sourceRevision = offered.source?.sourceRevision ?? offered.source?.contentHash;
+            expect(typeof sourceRevision).toBe("string");
+            expect(
+              db
+                .prepare(
+                  `SELECT 1 FROM knowledge_discovery_targets
+              WHERE source_id=? AND source_revision=? AND node_id=?`,
+                )
+                .get(sourceId, sourceRevision, winner.id),
+            ).toBeDefined();
+            adoptedBy.add(runId);
+          }
+        }
+      }
+    }
+    expect(
+      adoptedBy.size,
+      "a non-creator must freshly read the winner and complete its offered source against that owner",
+    ).toBeGreaterThanOrEqual(1);
   }, 90_000);
 
-  test("waker heuristics: bulk mail, stale data, and web ephemera never wake the agent", async () => {
+  test("bulk mail, old reference material and web ephemera create no obligations", async () => {
     const bulk = arcById(ARCS, "distractor-bulk").steps[0]!.doc;
     const stale = arcById(ARCS, "distractor-stale").steps[0]!.doc;
     await pushArcDoc(harness, bulk);
@@ -600,7 +958,23 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     for (const externalId of [bulk.externalId, stale.externalId, "arc-distractor-webpage"]) {
       const docId = docIdByExternal(db, externalId);
       expect(docId, externalId).not.toBeNull();
-      expect(runsForDoc(db, docId!), externalId).toHaveLength(0);
+      await waitFor(`current negative-source interpretation ${externalId}`, () =>
+        db
+          .prepare(
+            `SELECT 1 FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id
+         WHERE d.id=? AND c.input_revision=${knowledgeSourceRevisionSql("d")} AND c.phase='interpretation' AND c.status IN ('considered','gated')`,
+          )
+          .get(docId)
+          ? true
+          : null,
+      );
+      expect(
+        db
+          .prepare(
+            "SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM observation_citations WHERE doc_id=?) AS n",
+          )
+          .get(docId, docId),
+      ).toEqual({ n: 0 });
     }
   }, 60_000);
 
@@ -609,8 +983,8 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const loopsBefore = (
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM open_loops").get() ?? { n: 0 }
     ).n;
-    const briefsBefore = (
-      db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get() ?? { n: 0 }
+    const observationsBefore = (
+      db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM observations").get() ?? { n: 0 }
     ).n;
 
     await pushArcDoc(harness, boring);
@@ -618,7 +992,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       docIdByExternal(db, boring.externalId),
     );
     await waitFor(`completed run for ${boring.externalId}`, () => {
-      const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
+      const done = completedSourceRuns(docId);
       return done.length >= 1 ? true : null;
     });
 
@@ -626,67 +1000,43 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       loops: (
         db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM open_loops").get() ?? { n: 0 }
       ).n,
-      briefs: (db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get() ?? { n: 0 })
-        .n,
+      observations: (
+        db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM observations").get() ?? { n: 0 }
+      ).n,
     };
     expect(after.loops).toBe(loopsBefore);
-    expect(after.briefs).toBe(briefsBefore);
+    expect(after.observations).toBe(observationsBefore);
 
     // The scripted transcript confirms: fetch, then done — no mutations.
     const calls = server.calls.filter((c) => c.docId === docId);
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const call of calls) {
       if (call.emitted.kind === "tool") {
-        expect(call.emitted.name).toBe("fetch_many");
+        expect(["fetch_many", "knowledge_discovery_complete"]).toContain(call.emitted.name);
       }
     }
   }, 90_000);
 
-  test("conversation updates debounce into a single run", async () => {
-    await harness.pushDocument({
-      externalId: "arc-conversation",
-      documentType: "conversation",
-      title: "Group chat: camping",
-      content: "first message",
-    });
-    await sleep(150);
-    await harness.pushDocument({
-      externalId: "arc-conversation",
-      documentType: "conversation",
-      title: "Group chat: camping",
-      content: "first message\nsecond message",
-    });
-
-    const docId = await waitFor("conversation document row", () =>
-      docIdByExternal(db, "arc-conversation"),
-    );
-    await waitFor("debounced conversation run", () => {
-      const done = runsForDoc(db, docId).filter((r) => r.status === "completed");
-      return done.length >= 1 ? true : null;
-    });
-    expect(runsForDoc(db, docId)).toHaveLength(1);
-  }, 90_000);
-
   test("a bare same-thread confirmation reconciles onto its loop via identity (no duplicate)", async () => {
-    // Graph-based reconcile candidates: the confirmation's wording shares no
-    // marker or token with the loop the request opened, so lexical + semantic
-    // reconcile both miss it — only the shared-thread identity signal links it
-    // back. Both messages are pushed as backfill (the waker skips stale data),
-    // so we drive the two data runs manually, in order, AFTER the resolved
-    // part-of-thread edge exists — exercising identity reconcile race-free.
+    // The confirmation has no lexical marker: the actual thread edge must
+    // let current maintenance adopt the already tracked obligation.
     const [requestDoc, confirmDoc] = [THREAD.arc.steps[0]!.doc, THREAD.arc.steps[1]!.doc];
-    // Backdate both so the waker's recency gate skips them (no auto runs).
-    const stale = { sourceAgeDays: 30 };
-    await pushArcDoc(harness, { ...requestDoc, ...stale });
-    await pushArcDoc(harness, { ...confirmDoc, ...stale });
-
+    await pushArcDoc(harness, requestDoc);
     const reqDocId = await waitFor(`request doc row ${requestDoc.externalId}`, () =>
       docIdByExternal(db, requestDoc.externalId),
     );
-    const confDocId = await waitFor(`confirmation doc row ${confirmDoc.externalId}`, () =>
+    const loop = await waitFor(
+      `open loop for ${THREAD.marker}`,
+      () => loopsWithMarker(db, THREAD.marker)[0] ?? null,
+    );
+    await waitFor("request interpretation completed", () =>
+      completedSourceRuns(reqDocId).length > 0 ? true : null,
+    );
+    const creatingRun = loop.created_by_run;
+    await pushArcDoc(harness, confirmDoc);
+    const confDocId = await waitFor("confirmation document", () =>
       docIdByExternal(db, confirmDoc.externalId),
     );
-
     // Link extraction resolves the two messages into a part-of-thread edge.
     await waitFor("resolved part-of-thread edge between the two thread messages", () => {
       const row = db
@@ -699,44 +1049,21 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       return (row?.c ?? 0) > 0 ? true : null;
     });
 
-    // Backfill data never woke the agent — the two runs below are ours alone.
-    expect(runsForDoc(db, reqDocId)).toHaveLength(0);
-    expect(runsForDoc(db, confDocId)).toHaveLength(0);
-
-    // Run 1: the booking request opens the tracked loop.
-    enqueueCrashedDataRun(harness, {
-      runId: `run_thread_req_${Date.now()}`,
-      docId: reqDocId,
-      datumAt: Date.now(),
-      now: Date.now(),
-    });
-    const loop = await waitFor(`open loop for ${THREAD.marker}`, () => {
-      const hits = loopsWithMarker(db, THREAD.marker);
-      return hits.length > 0 ? hits[0]! : null;
-    });
-    await waitFor("request run completed", () =>
-      runsForDoc(db, reqDocId).some((r) => r.status === "completed") ? true : null,
-    );
-    expect(loopsWithMarker(db, THREAD.marker)).toHaveLength(1);
-    const creatingRun = loop.created_by_run;
-
-    // Run 2: the bare same-thread confirmation. Its query is drawn from the
-    // reply's own words and misses the loop lexically/semantically — identity
-    // is the only path that can reconcile.
-    enqueueCrashedDataRun(harness, {
-      runId: `run_thread_conf_${Date.now()}`,
-      docId: confDocId,
-      datumAt: Date.now(),
-      now: Date.now(),
-    });
     await waitFor("confirmation run completed", () =>
-      runsForDoc(db, confDocId).some((r) => r.status === "completed") ? true : null,
+      completedSourceRuns(confDocId).length > 0 ? true : null,
     );
 
     // Reconciled, not duplicated: still exactly one loop, now closed, and the
     // confirmation run did NOT create it — it adopted the existing loop.
     const hits = loopsWithMarker(db, THREAD.marker);
-    expect(hits).toHaveLength(1);
+    expect(
+      hits,
+      JSON.stringify(
+        server.calls
+          .filter((c) => c.docId === reqDocId || c.docId === confDocId)
+          .map((c) => ({ runId: c.runId, docId: c.docId, emitted: c.emitted })),
+      ),
+    ).toHaveLength(1);
     expect(hits[0]!.state).toBe("done");
     expect(hits[0]!.created_by_run).toBe(creatingRun);
 
@@ -783,8 +1110,8 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     // suite enqueues is one the vocabulary is supposed to recognise.
     expect(mechanisms).not.toContain("unrecognized");
 
-    // Datum intake is the suite's dominant lane and must be named as itself.
-    expect(mechanisms).toContain("datum-intake");
+    // Current source intake attributes paid work to maintenance.
+    expect(mechanisms).toContain("knowledge-maintenance");
 
     // A `daily` row resolved to a specific procedure rather than the kind —
     // the split's whole point, and `daily` is the kind that multiplexes.

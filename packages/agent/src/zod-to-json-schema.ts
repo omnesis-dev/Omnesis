@@ -3,14 +3,12 @@
 
 /**
  * Minimal zod → JSON schema converter, scoped to the shapes the tool
- * registry actually uses (objects with string/number/boolean/enum/array/
- * optional/describe).
+ * registry uses, including nested unions and string-key records. Record key
+ * restrictions and cross-field refinements remain enforced by server validation.
  *
- * We don't pull in `zod-to-json-schema` because the surface we need is
- * ~80 lines and the dep would pull in a few hundred KB of features (refs,
- * unions, recursive schemas, etc.) we don't use. Tool schemas should be
- * flat object shapes; if a future tool needs anything fancier, expand
- * this converter rather than hide a dep behind a single use.
+ * We don't pull in `zod-to-json-schema` because this small surface does not
+ * need references or recursive schemas.
+ * Expand supported shapes here when tool contracts need them.
  */
 
 import { z } from "zod";
@@ -26,6 +24,10 @@ interface JsonSchema {
   maximum?: number;
   minLength?: number;
   maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
+  anyOf?: JsonSchema[];
+  additionalProperties?: JsonSchema | boolean;
 }
 
 type ZodObjectShape = Record<string, z.ZodTypeAny>;
@@ -42,11 +44,61 @@ interface ZodDef {
   values?: readonly unknown[];
   entries?: Record<string, unknown>;
   element?: z.ZodTypeAny;
+  options?: readonly z.ZodTypeAny[];
+  value?: unknown;
+  valueType?: z.ZodTypeAny;
+  catchall?: z.ZodTypeAny;
+  unknownKeys?: string;
 }
 
 export function zodToJsonSchema(schema: z.ZodType): JsonSchema {
   const def = unwrap(schema);
   return def;
+}
+
+/**
+ * A tool's input schema as model providers accept it: an object at the root.
+ *
+ * Providers refuse `anyOf` at the top of a tool's input schema, so a tool
+ * whose arguments take one of several object shapes is advertised as one
+ * object carrying every shape's fields, required only where every shape
+ * requires them. The tool's own zod schema still decides which shape a call
+ * used, and refuses a call that mixes them.
+ */
+/**
+ * One field's schema where two shapes both carry it: the same schema stays,
+ * two enums (a discriminator's literals) combine, and anything else is left
+ * unconstrained so neither shape is advertised as impossible.
+ */
+function mergeFieldSchemas(a: JsonSchema, b: JsonSchema): JsonSchema {
+  if (JSON.stringify(a) === JSON.stringify(b)) return a;
+  if (a.enum && b.enum && a.type === b.type)
+    return { ...a, enum: [...new Set([...a.enum, ...b.enum])] };
+  const description = a.description ?? b.description;
+  return description ? { description } : {};
+}
+
+export function toolInputJsonSchema(schema: z.ZodType): JsonSchema {
+  const root = zodToJsonSchema(schema);
+  if (root.type !== undefined || !root.anyOf) return root;
+  const shapes = root.anyOf;
+  if (!shapes.every((shape) => shape.type === "object")) return root;
+  const properties: Record<string, JsonSchema> = {};
+  for (const shape of shapes)
+    for (const [key, value] of Object.entries(shape.properties ?? {})) {
+      const seen = properties[key];
+      properties[key] = seen === undefined ? value : mergeFieldSchemas(seen, value);
+    }
+  const required = (shapes[0]?.required ?? []).filter((key) =>
+    shapes.every((shape) => shape.required?.includes(key)),
+  );
+  return {
+    type: "object",
+    ...(root.description ? { description: root.description } : {}),
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    additionalProperties: false,
+  };
 }
 
 function defOf(schema: z.ZodType): ZodDef {
@@ -83,7 +135,12 @@ function convert(schema: z.ZodType): JsonSchema {
   if (kind === "ZodOptional" || kind === "optional")
     return unwrap(def.innerType ?? (schema as z.ZodOptional<z.ZodTypeAny>).unwrap());
   if (kind === "ZodNullable" || kind === "nullable")
-    return unwrap(def.innerType ?? (schema as z.ZodNullable<z.ZodTypeAny>).unwrap());
+    return {
+      anyOf: [
+        unwrap(def.innerType ?? (schema as z.ZodNullable<z.ZodTypeAny>).unwrap()),
+        { type: "null" },
+      ],
+    };
   if (kind === "ZodDefault" || kind === "default")
     return unwrap(def.innerType ?? (schema as z.ZodDefault<z.ZodTypeAny>).removeDefault());
   // `.refine()` / `.transform()` / `.superRefine()` wrap the schema in a
@@ -134,15 +191,45 @@ function convert(schema: z.ZodType): JsonSchema {
     return out;
   }
   if (schema instanceof z.ZodBoolean) return { type: "boolean" };
+  if (kind === "ZodNull" || kind === "null") return { type: "null" };
+  if (kind === "ZodLiteral" || kind === "literal") {
+    const values = def.values ?? [def.value];
+    if (values.some((value) => value === undefined || typeof value === "bigint")) return {};
+    const types = new Set(values.map((value) => (value === null ? "null" : typeof value)));
+    return { ...(types.size === 1 ? { type: [...types][0] } : {}), enum: [...values] };
+  }
+  if (kind === "ZodUnion" || kind === "ZodDiscriminatedUnion" || kind === "union")
+    return { anyOf: (def.options ?? []).map(unwrap) };
+  if (kind === "ZodRecord" || kind === "record")
+    return { type: "object", additionalProperties: def.valueType ? unwrap(def.valueType) : {} };
   if (schema instanceof z.ZodEnum) {
     const values = def.values ?? Object.values(def.entries ?? {});
     return { type: "string", enum: [...values] };
   }
   if (schema instanceof z.ZodArray) {
-    return {
+    const out: JsonSchema = {
       type: "array",
       items: unwrap(def.element ?? (schema as z.ZodArray<z.ZodTypeAny>).element),
     };
+    for (const c of def.checks ?? []) {
+      const check = checkDef(c);
+      if (check.check === "min_length" && typeof check.minimum === "number")
+        out.minItems = check.minimum;
+      if (check.check === "max_length" && typeof check.maximum === "number")
+        out.maxItems = check.maximum;
+      if (check.check === "length_equals" && typeof check.length === "number")
+        out.minItems = out.maxItems = check.length;
+    }
+    // Zod v3 stores array bounds outside its checks collection.
+    const bounds = def as ZodDef & {
+      minLength?: { value: number };
+      maxLength?: { value: number };
+      exactLength?: { value: number };
+    };
+    if (bounds.minLength) out.minItems = bounds.minLength.value;
+    if (bounds.maxLength) out.maxItems = bounds.maxLength.value;
+    if (bounds.exactLength) out.minItems = out.maxItems = bounds.exactLength.value;
+    return out;
   }
   if (schema instanceof z.ZodObject) {
     const shape = (schema as unknown as { shape: ZodObjectShape }).shape;
@@ -154,6 +241,8 @@ function convert(schema: z.ZodType): JsonSchema {
       if (!isOptional(value)) required.push(k);
     }
     const out: JsonSchema = { type: "object", properties };
+    if (def.unknownKeys === "strict" || (def.catchall && kindOf(def.catchall) === "never"))
+      out.additionalProperties = false;
     if (required.length > 0) out.required = required;
     return out;
   }
@@ -163,12 +252,9 @@ function convert(schema: z.ZodType): JsonSchema {
 
 function isOptional(schema: z.ZodTypeAny): boolean {
   const kind = kindOf(schema);
+  if (kind === "ZodNullable" || kind === "nullable")
+    return isOptional(defOf(schema).innerType ?? (schema as z.ZodNullable<z.ZodTypeAny>).unwrap());
   return (
-    kind === "ZodOptional" ||
-    kind === "optional" ||
-    kind === "ZodDefault" ||
-    kind === "default" ||
-    kind === "ZodNullable" ||
-    kind === "nullable"
+    kind === "ZodOptional" || kind === "optional" || kind === "ZodDefault" || kind === "default"
   );
 }

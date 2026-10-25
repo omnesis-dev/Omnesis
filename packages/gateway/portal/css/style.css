@@ -1,3 +1,11 @@
+@import url("knowledge-connections.css");
+@import url("debug-operations.css");
+@import url("./debug-navigation.css");
+@import url("debug-shell.css");
+@import url("knowledge.css");
+@import url("knowledge-maintenance.css");
+@import url("tasks.css");
+@import url("brief-thread.css");
 @import url("../js/shared/agent-ui/styles.css");
 
 /* Omnesis Portal — Dark Theme Design System */
@@ -739,7 +747,7 @@ a:hover { text-decoration: underline; }
   .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 8px; }
 }
 
-/* ============================================================
+/* =====================================================
    Agent access — Settings / Access, and the Connect an agent
    dialog. The `.access-policies` rules further down style the
    Settings / Policies tab, which shares this vocabulary.
@@ -5475,7 +5483,7 @@ p.devices-pair-expiry {
   color: #fff;
 }
 
-/* ============================================================
+/* =====================================================
    Config view
    ============================================================ */
 
@@ -11496,6 +11504,25 @@ div.source-activity-popover-link:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* The decision model's three observation judgements, side by side. */
+.cognition-date-input {
+  margin-left: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.cognition-observation-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Detail field rows. */
 .cognition-field {
   display: grid;
@@ -11586,7 +11613,7 @@ div.source-activity-popover-link:hover {
   color: var(--text-secondary);
 }
 
-/* Inline sub-entity rows in a detail pane (a loop's briefs / checks). */
+/* Inline sub-entity rows in a detail pane (a loop's observations / checks). */
 .cognition-inline-row {
   display: flex;
   gap: 10px;
@@ -11685,52 +11712,6 @@ div.source-activity-popover-link:hover {
   padding: 10px 14px;
   font-size: 13px;
   margin-bottom: 16px;
-}
-
-/* "Running now" strip. */
-.cognition-running-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.cognition-running-strip-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid rgba(63, 185, 80, 0.35);
-  background: rgba(63, 185, 80, 0.07);
-  border-radius: 8px;
-  padding: 9px 14px;
-  text-decoration: none;
-  color: inherit;
-  min-width: 0;
-}
-.cognition-running-strip-row:hover {
-  text-decoration: none;
-  background: rgba(63, 185, 80, 0.12);
-}
-.cognition-running-strip-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--success);
-  flex-shrink: 0;
-}
-.cognition-running-strip-trigger {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cognition-running-strip-time {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 /* Transcript viewer. */
@@ -15712,10 +15693,10 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   50%      { opacity: 0.55; transform: scale(0.85); }
 }
 
-/* ─── Brief talk-back context card ──────────────────────────────────
-   The brief a thread replies to, pinned above the conversation. Reads
-   as an artifact (bordered, filled card), not a chat bubble. */
-.agent-brief-card {
+/* ─── Conversation context card ─────────────────────────────────────
+   What opened a thread (a watch firing), pinned above the conversation.
+   Reads as an artifact (bordered, filled card), not a chat bubble. */
+.agent-context-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -15725,22 +15706,22 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   flex-direction: column;
   gap: 8px;
 }
-.agent-brief-card-link {
+.agent-context-card-link {
   color: inherit;
   cursor: pointer;
   text-decoration: none;
   transition: background 0.15s, border-color 0.15s;
 }
-.agent-brief-card-link:hover {
+.agent-context-card-link:hover {
   background: var(--bg-tertiary);
   border-color: var(--accent);
   text-decoration: none;
 }
-.agent-brief-card-link:focus-visible {
+.agent-context-card-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.agent-brief-card-kicker {
+.agent-context-card-kicker {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -15750,46 +15731,25 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   text-transform: uppercase;
   color: var(--accent);
 }
-.agent-brief-card-open {
+.agent-context-card-open {
   margin-left: auto;
   font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
 }
-.agent-brief-card-title {
+.agent-context-card-title {
   font-size: 17px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.3;
 }
-.agent-brief-card-description {
+.agent-context-card-description {
   font-size: 13.5px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
-.agent-brief-card-description p,
-.agent-brief-card-body p {
+.agent-context-card-description p {
   margin: 0 0 6px;
-}
-.agent-brief-card-body {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.55;
-  border-top: 1px solid var(--border-light);
-  padding-top: 10px;
-}
-.agent-brief-card-toggle {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  cursor: pointer;
-}
-.agent-brief-card-toggle:hover {
-  color: var(--accent-hover);
 }
 
 /* ─── Graph debugger view ───────────────────────────────────────────── */
@@ -18190,6 +18150,80 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Decision card: one judgement by the decision model, everywhere ───────── */
+.decision-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.decision-card--compact {
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.decision-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+summary.decision-card-head {
+  cursor: pointer;
+  list-style-position: outside;
+}
+.decision-card--compact[open] > summary.decision-card-head {
+  margin-bottom: 6px;
+}
+.decision-icon {
+  flex: none;
+  color: var(--accent);
+}
+.decision-card-title {
+  color: var(--text-primary);
+}
+.decision-card-score {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.decision-card-sentence {
+  margin: 6px 0 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.decision-card-error {
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.decision-card-when {
+  margin-left: auto;
+  font-size: 12px;
+}
+.decision-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+}
+.decision-verdict--pass { color: var(--success); }
+.decision-verdict--skip { color: var(--type-event); }
+.decision-verdict--warn { color: var(--warning); }
+.decision-verdict--neutral { color: var(--text-secondary); }
+.decision-list > h3 {
+  font-size: 13px;
+  margin: 12px 0 6px;
+}
+
 /* ── Tell Omnesis (quick capture) ─────────────────────────────────────────── */
 /* The typed sibling of the mobile capture screens: one composer, one button.
    The left-aligned column bounds both the composer and the notes for reading. */
@@ -18460,6 +18494,91 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   font-size: 12px;
 }
 
+/* The note agent's receipt under a Tell Omnesis note. */
+.capture-agent-hint {
+  margin: -6px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.note-agent {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.note-agent-reading,
+.note-agent-failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.note-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: note-agent-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes note-agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-agent-dot { animation: none; }
+}
+
+.note-agent-receipt {
+  border-left-color: var(--accent);
+}
+
+.note-agent-text {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.note-agent-changes {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-agent-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note-agent-change.undone > a,
+.note-agent-change.undone > span:first-child {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.note-agent-undo {
+  padding: 1px 8px;
+}
+
+.note-agent-undone {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.note-agent-error {
+  margin-top: 4px;
+  color: var(--danger);
+}
+
 /* A voice note whose gateway transcript is still to come. */
 .note-item-transcribing {
   margin-top: 4px;
@@ -18710,3 +18829,86 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
 
 /* Inline twin of the conversation waiting indicator. */
 .privacy-progress-dots { display: inline-flex; vertical-align: middle; padding: 0 4px; }
+
+/* Read-only synthesis inspector; preserve generated text without executing markup. */
+.knowledge-prose { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.knowledge-claim { border-left: 2px solid var(--border-light); padding-left: 12px; margin: 16px 0; }
+.knowledge-inspector > details { margin: 12px 0; }
+.knowledge-inspector .cognition-row { display: block; }
+.knowledge-inspector .cognition-row[aria-current="page"] { background: var(--bg-secondary); }
+
+/* Current-revision discovery coverage shares the historical chart geometry. */
+.kh-chart { gap: 4px; height: 132px; }
+.kh-col { min-width: 16px; border-radius: 4px; }
+.kh-col .tl-stack { border-radius: 4px; }
+.kh-col:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+.kh-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 16px; font-size: .8rem; color: var(--text-secondary); }
+.kh-footer > span { max-width: 70ch; }
+
+/* ───── Cognition → Interest (views/cognition-interest.js) ───────────────── */
+.cognition-interest-probe { margin-bottom: 20px; }
+.cognition-interest-probe-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.cognition-interest-probe-input:focus { outline: none; border-color: var(--accent); }
+.cognition-interest-probe-result { display: grid; gap: 10px; margin-top: 4px; }
+.cognition-interest-probe-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.cognition-interest-examples { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
+.cognition-interest-example-text { color: var(--text-primary); }
+.cognition-interest-table td.cognition-interest-text { max-width: 480px; white-space: pre-line; overflow-wrap: anywhere; }
+.cognition-interest-table tr.cognition-interest-superseded td { opacity: 0.55; }
+.cognition-interest-backlog { color: var(--warning); }
+.cognition-interest-withheld { margin-bottom: 20px; }
+.cognition-interest-withheld-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cognition-interest-withheld-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+.cognition-interest-withheld-body { min-width: 0; display: grid; gap: 2px; font-size: 13px; }
+.cognition-interest-withheld-title { color: var(--text-primary); font-weight: 500; }
+.cognition-interest-offer { flex: 0 0 auto; }
+
+.agent-composer-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.agent-composer-actions button, .agent-clarification button { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text-primary); background: var(--bg-secondary); cursor: pointer; }
+.agent-composer-actions .agent-composer-submit { background: var(--accent); color: white; }
+.agent-composer:has(.agent-composer-actions) { padding-bottom: 10px; }
+.agent-clarification { margin: 12px 0; }
+.agent-clarification p { margin: 0 0 8px; }
+.agent-clarification-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.agent-clarification-choices button { text-align: left; background: transparent; max-width: 100%; overflow-wrap: anywhere; }
+.agent-clarification-choices strong { font-weight: 500; }
+.agent-clarification-choices span { font-size: 12px; color: var(--text-secondary); margin-left: 6px; }
+.agent-clarification button:disabled { opacity: 0.55; cursor: default; }
+.agent-message-queue { padding: 10px 0; }
+.agent-message-queue small, .agent-queued-message small { color: var(--text-secondary); }
+.agent-queued-message { margin: 12px 0; }
+.agent-queued-message .agent-msg-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-queued-message small { align-self: flex-end; font-size: 12px; }
+.agent-message-actions { min-width: 0; outline-offset: 3px; }
+.agent-message-menu { position: fixed; z-index: 1000; min-width: 192px; }
+.agent-edit-notice { font-size: 12px; color: var(--text-secondary); margin-top: 10px; }
+.agent-edit-notice button { margin-left: 8px; }
+.agent-edit-notice button, .agent-message-queue button { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; }
+@media (max-width: 1100px) {
+  .agent-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .agent-cite { max-height: 30vh; padding-left: 0; border-top: 1px solid var(--border); }
+}
+
+.agent-queued-send-now { border: 0; background: transparent; color: var(--accent); font: inherit; padding: 4px 2px; min-height: 28px; cursor: pointer; }
+.agent-queued-send-now:hover { text-decoration: underline; }
+.agent-queued-send-now:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.agent-queued-send-now:disabled { opacity: .55; cursor: default; }

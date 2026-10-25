@@ -30,13 +30,13 @@
 
     <meta
       name="description"
-      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
+      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/apps" />
     <meta property="og:title" content="Mobile apps — Omnesis Docs" />
     <meta
       property="og:description"
-      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
+      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -64,8 +64,6 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/brain">Omnesis Brain</a></li>
-            <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
@@ -136,6 +134,7 @@
                 <li><a href="#getting-the-apps">Getting the apps</a></li>
                 <li><a href="#pairing">Pairing</a></li>
                 <li><a href="#one-design-two-platforms">Finding your way around</a></li>
+                <li><a href="#tasks">Tasks</a></li>
                 <li><a href="#phone-only-sources">Phone-only sources</a></li>
                 <li><a href="#voice-and-quick-capture">Voice &amp; quick capture</a></li>
                 <li><a href="#gateway-dictation">Gateway dictation</a></li>
@@ -160,10 +159,10 @@
         <h1>Mobile apps</h1>
         <p class="docs-lead">
           Omnesis has native iOS and Android apps. Each is two things at once: a full client for
-          your gateway — chat, search, people, devices — and the runtime for sources whose data only
-          exists on the phone. This page covers getting an app onto your phone, pairing it, the
-          phone-only sources, voice and quick capture, and what to do when phone data does not
-          arrive. It assumes a running gateway (see <a href="/docs/install">Install</a>).
+          your gateway — chat, search, tasks, people, devices — and the runtime for sources whose
+          data only exists on the phone. This page covers getting an app onto your phone, pairing
+          it, Tasks, the phone-only sources, voice and quick capture, and what to do when phone data
+          does not arrive. It assumes a running gateway (see <a href="/docs/install">Install</a>).
         </p>
 
         <h2 id="getting-the-apps">Getting the apps</h2>
@@ -438,10 +437,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         </p>
         <p>
           Both apps open on <a href="/docs/agent">the agent</a> chat. The menu reaches Search,
-          Sources, People, Tell Omnesis and Audit, lists recent conversations, and carries Settings
-          and a new conversation at its foot. Swipe right, or use the menu button, and the screen
-          you are on slides aside to uncover it; tap the strip still showing to come back. There is
-          no tab bar.
+          Tasks, Sources, People, Tell Omnesis and Audit, lists recent conversations, and carries
+          Settings and a new conversation at its foot. Swipe right (on the iPhone Tasks screen, from
+          the left edge), or use the menu button, and the screen you are on slides aside to uncover
+          it; tap the strip still showing to come back. There is no tab bar.
         </p>
         <p>
           In a completed agent answer, tap the copy icon beside a value or after the last line of a
@@ -466,6 +465,105 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           unreachable the app is offline. Notification text also stays on the gateway: Apple's and
           Google's push services carry a fixed, content-free wake, and the app fetches the text over
           its paired connection. See <a href="/docs/notifications">Notifications</a>.
+        </p>
+
+        <h2 id="tasks">Tasks</h2>
+        <p>
+          <strong>Tasks</strong> is a list of things you mean to do, kept the way a bullet journal
+          keeps them. It is in the apps' menu and at <code>/portal/tasks</code> in the portal, and
+          works on every gateway with no model assigned. Each task has a planned time, separate from
+          any real deadline: a day, a month, or <em>someday</em> for no particular time. Planning a
+          task for Friday does not make Friday its due date.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>View</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Today</td>
+                <td>
+                  Tasks carried over from an earlier day or month first, marked as carried; then
+                  tasks planned for today, and unplanned tasks whose deadline is today or past; then
+                  tasks you completed or struck today.
+                </td>
+              </tr>
+              <tr>
+                <td>Month</td>
+                <td>
+                  Tasks planned for this month, or for a later day in it, and unplanned tasks due
+                  later this month.
+                </td>
+              </tr>
+              <tr>
+                <td>Future</td>
+                <td>Tasks planned or due in a later month, and tasks planned for someday.</td>
+              </tr>
+              <tr>
+                <td>Anytime</td>
+                <td>Tasks with no planned time and no deadline.</td>
+              </tr>
+              <tr>
+                <td>Waiting</td>
+                <td>Tasks that wait on someone else, or on another task.</td>
+              </tr>
+              <tr>
+                <td>Done</td>
+                <td>Completed and struck tasks, newest first.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Each view's tab shows how many open tasks it holds, and the menu's <strong>Tasks</strong>
+          entry shows today's. On iPhone, swipe left or right across the list to move to the next or
+          previous view; a swipe that starts at the left edge of the screen opens the menu instead.
+          To add a task, tell Omnesis: the microphone button at the top right of Tasks opens a
+          <a href="#voice-and-quick-capture">Tell Omnesis note</a>. A note such as "call the garage
+          on Friday" adds a task, and "I won't repaint the fence after all" strikes it. A task that
+          came from your documents lists them under its title, each with its source's icon; tap one
+          to open the document. A task planned for an earlier day stays on Today until you complete,
+          move or strike it; nothing drops off on its own.
+        </p>
+        <p>
+          Tap a task's circle to complete it. On iPhone, touch and hold anywhere on the task for its
+          other actions, which fan out above and to the left of your finger. Keep holding, slide
+          onto one and let go; letting go anywhere else changes nothing. Rest on
+          <strong>Other month</strong> to see the months. With VoiceOver, the same actions are in
+          the task's actions rotor.
+        </p>
+        <ul>
+          <li>
+            <strong>Done</strong>, or <strong>Done + note</strong> to say how it ended, by voice or
+            typing as with a Tell Omnesis note;
+          </li>
+          <li>
+            <strong>Tomorrow</strong>, <strong>Next month</strong>, or <strong>Other month</strong>
+            for any later month, to move it;
+          </li>
+          <li><strong>Cancel task</strong>, for a task you no longer intend to do;</li>
+          <li>
+            <strong>Chat about this</strong>, to start a conversation with
+            <a href="/docs/agent#chat-about-a-task">the agent</a> about the task.
+          </li>
+        </ul>
+        <p>
+          Tap the task itself for its details: edit its title, description, planned time and
+          deadline, and see its history, every change and where it was made. In the portal and on
+          Android, tapping the task opens these actions beneath it instead, with
+          <strong>Next week</strong> (the coming Monday) as a further move, and
+          <strong>Chat about this</strong> to the right of <strong>History</strong>.
+        </p>
+        <p>
+          Every change shows a one-line receipt with <strong>Undo</strong>. Undo reverses the latest
+          change to that task; an earlier change cannot be undone once the task has changed again. A
+          task can also change from a conversation with <a href="/docs/agent#tasks">the agent</a> or
+          from a <a href="#voice-and-quick-capture">Tell Omnesis note</a>; its history records
+          which.
         </p>
 
         <h2 id="phone-only-sources">Phone-only sources</h2>
@@ -679,6 +777,28 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <a href="/docs/sources#omnesis-itself">Sources</a>.
         </p>
         <p>
+          With a model assigned to the <code>background-agent</code> role (under
+          <strong>Settings → Models</strong>), Omnesis also reads each note you capture from your
+          own clients: the portal, the apps and the CLI. Notes that external agents add through
+          <a href="/docs/connect">MCP, OpenClaw or Hermes</a>, and notes taken in the browser
+          extension, are saved and searchable but never acted on. A few seconds after a note stops
+          changing, one bounded agent turn acts on it: it adds the tasks the note asks for (“remind
+          me to renew the passport next month”), completes, moves, strikes or edits the task a note
+          reports progress on (“paid the plumber”), remembers facts you state about yourself or
+          people you know, and answers a question the note asks. A request that needs watching over
+          time, such as “tell me when the parcel ships”, is beyond one note; the reply says so
+          plainly. A voice note waits for the gateway's transcript, for up to 30 minutes, before it
+          is read.
+        </p>
+        <p>
+          What the turn did appears under the note on the <strong>Tell Omnesis</strong> page as a
+          short receipt, with <strong>Undo</strong> beside each task change. Reading a note sends no
+          notification. Reading starts the first time a <code>background-agent</code> model is
+          assigned; notes captured before then are never read. If the model is later unassigned,
+          notes captured in the meantime are read once a model is assigned again.
+          <code>GET /status</code> reports whether notes are read as <code>tasks.noteAgent</code>.
+        </p>
+        <p>
           Notes are grouped by capture day, with a <strong>View combined note</strong> link to the
           day's searchable document. Expand <strong>Related to this day</strong> below the notes to
           see the dates they mention, each labelled <strong>Date mention</strong> with its kind,
@@ -736,9 +856,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
           recognizer. With gateway dictation on, they also send the recording with the note, and
-          your gateway's <strong>Transcriber</strong> model — the same local Whisper model that
-          transcribes voice notes from your sources — transcribes it again and replaces the phone's
-          text with its own. It applies to Tell Omnesis only:
+          your gateway's <strong>Transcriber</strong> — the same model that transcribes voice notes
+          from your sources — transcribes it again and replaces the phone's text with its own. It
+          applies to Tell Omnesis only:
         </p>
         <ul>
           <li>
@@ -749,8 +869,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <li>the Apple Watch's Note complication and the watch app's Dictate.</li>
         </ul>
         <p>
-          Agent conversations, replies to briefs, Ask Omnesis, Siri, Shortcuts and assistant
-          requests that already carry their words keep the phone's or the system's recognition.
+          Agent conversations, Ask Omnesis, Siri, Shortcuts and assistant requests that already
+          carry their words keep the phone's or the system's recognition.
         </p>
 
         <h3 id="gateway-dictation-turning-on">Turning it on and off</h3>
@@ -780,12 +900,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
 
         <p>
           When <code>inference.transcriptionVocabulary.enabled</code> is explicitly set to
-          <code>true</code>, personal vocabulary hints can improve both gateway Whisper and the
-          apps' on-device recognition, including voice questions to the agent and notes captured
-          with gateway dictation off. This setting is disabled by default. The apps fetch hints in
-          the background, keep them in memory for offline use for up to 24 hours, and refresh them
-          opportunistically after 30 minutes when returning to the foreground or refreshing gateway
-          status. Starting a recording never waits for hints. See
+          <code>true</code>, personal vocabulary hints can improve both the gateway's transcriber
+          and the apps' on-device recognition, including voice questions to the agent and notes
+          captured with gateway dictation off. This setting is disabled by default. The apps fetch
+          hints in the background, keep them in memory for offline use for up to 24 hours, and
+          refresh them opportunistically after 30 minutes when returning to the foreground or
+          refreshing gateway status. Starting a recording never waits for hints. See
           <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
         </p>
         <p>

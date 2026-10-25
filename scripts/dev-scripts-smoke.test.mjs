@@ -1410,6 +1410,17 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
     expect(code).toBe(1);
     expect(out).toContain("simulator destination contains an unsafe selector");
   });
+
+  it("rejects unknown signing modes before opening ssh", async () => {
+    const { code, out } = await runIosSnapshot([], {
+      extraEnv: {
+        OMNESIS_EPIC_MACOS_HOST: "unused",
+        OMNESIS_IOS_SNAPSHOT_SIGNING: "adhoc;false",
+      },
+    });
+    expect(code).toBe(1);
+    expect(out).toContain("OMNESIS_IOS_SNAPSHOT_SIGNING must be disabled or adhoc");
+  });
 });
 
 describe("scripts/android-render.sh macOS-host bridge guards (C20)", () => {
@@ -1761,8 +1772,8 @@ describe("release.yml verification permissions", () => {
       ],
       [
         "images",
-        "Build ${{ needs.verify.outputs.armed == 'true' && 'and push' || '(no push — not armed)' }}",
-        "needs.verify.outputs.armed == 'true'",
+        "Build ${{ needs.verify.outputs.images_armed == 'true' && 'and push' || '(no push — not armed)' }}",
+        "needs.verify.outputs.images_armed == 'true'",
       ],
     ]) {
       const steps = workflow.jobs[jobName].steps;
@@ -1893,6 +1904,15 @@ describe("full-validation workflow topology", () => {
     });
     expect(workflow.on.workflow_dispatch).toBeUndefined();
     expect(workflow.concurrency).toBeUndefined();
+  });
+
+  it("selects a supported Node runtime before topology fixture dependency resolution", () => {
+    const steps = workflows["topology-e2e"].jobs.topology.steps;
+    const setupIndex = steps.findIndex((step) => step.uses?.startsWith("actions/setup-node@"));
+    const laneIndex = steps.findIndex((step) => step.name === "lane [topology]");
+    expect(setupIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeLessThan(laneIndex);
+    expect(steps[setupIndex].with["node-version"]).toBe("24");
   });
 
   it("pins every target checkout and verifies its resolved revision", () => {
@@ -2245,6 +2265,26 @@ describe("full-validation workflow topology", () => {
     ).toEqual([]);
   });
 
+  it("allows bounded package publication bodies in both smoke registries", async () => {
+    const { parse } = await import("yaml");
+    for (const filename of ["install-smoke.yml", "release.yml"]) {
+      const workflow = parse(readFileSync(join(repoRoot, ".github/workflows", filename), "utf8"));
+      const steps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
+      const writeConfig = steps.find((step) => step.run?.includes("<< 'VERDACCIO_CONF'"));
+      const document = writeConfig.run.match(/<< 'VERDACCIO_CONF'\n([\s\S]*?)\nVERDACCIO_CONF/);
+      expect(document, filename).not.toBeNull();
+      const config = parse(document[1]);
+      expect(config.max_body_size, filename).toBe("50mb");
+      // A package near 8 MiB exceeds the registry's default 10 MB JSON cap
+      // once encoded; the smoke registry must allow the publish envelope.
+      const publishBytes = Math.ceil((8 * 1024 * 1024) / 3) * 4 + 64 * 1024;
+      expect(publishBytes).toBeGreaterThan(10 * 1024 * 1024);
+      expect(publishBytes).toBeLessThan(50 * 1024 * 1024);
+      expect(config.packages["@omnesis/*"].publish).toBe("$all");
+      expect(config.packages["**"].publish).toBeUndefined();
+    }
+  });
+
   it("keeps source-install state isolated without discarding the runner npm cache", () => {
     const steps = workflows["install-smoke"].jobs.source.steps;
     const fixture = steps.find((step) => step.name === "Create exact-revision source remote");
@@ -2476,8 +2516,9 @@ describe("external-harness conformance workflow", () => {
   });
 
   it("pins both upstream harnesses and installs Hermes from its locked exact commit", () => {
-    expect(integrationPackage.devDependencies.openclaw).toBe("2026.9.2");
-    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.9.2");
+    const openclawVersion = integrationPackage.devDependencies.openclaw;
+    expect(openclawVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(packageLock.packages["node_modules/openclaw"].version).toBe(openclawVersion);
     expect(workflow.env.HERMES_REPOSITORY).toBe("https://github.com/NousResearch/hermes-agent.git");
     expect(workflow.env.HERMES_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
 
@@ -3319,6 +3360,7 @@ describe("ios/Package.swift sim-less logic target (C11)", () => {
     "GatewayErrorViewTests.swift",
     "AdminCoordinatorReconnectTests.swift",
     "GatewayLiveE2ETests.swift",
+    "RealtimeAudioCaptureDeviceTests.swift",
   ];
 
   it("excludes the UIKit/live tests from the SwiftPM OmnesisTests target", () => {

@@ -64,8 +64,6 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/brain">Omnesis Brain</a></li>
-            <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
@@ -317,10 +315,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           skips them).
         </p>
         <p>
-          The same report is in the portal under <strong>Debug → Doctor</strong>. A collector's own
-          report covers its configuration, source access, disk, process, keyring and service; run it
-          from <strong>Settings → Devices</strong> by expanding the collector and choosing
-          <strong>Run</strong> under <strong>Health</strong>, or <strong>Run health checks</strong>
+          The same report is in the portal under <strong>Debug → System → Health</strong>. A
+          collector's own report covers its configuration, source access, disk, process, keyring and
+          service; run it from <strong>Settings → Devices</strong> by expanding the collector and
+          choosing <strong>Run</strong> under <strong>Health</strong>, or
+          <strong>Run health checks</strong>
           for every collector at once.
         </p>
         <p>
@@ -344,15 +343,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <h3 id="calendar">Reading the calendar</h3>
         <p>
-          <strong>Debug → Calendar</strong> combines structured dates supplied by sources (<strong
-            >Source record</strong
-          >), interpretations recorded by the agent (<strong>Agent interpretation</strong>), and
-          date expressions found in document text (<strong>Date mention</strong>). Source records
-          and agent interpretations form the agenda under Timed, All day &amp; due, and Activities
-          &amp; visits, with up to four entries per row within each day’s category. Narrower screens
-          show fewer columns. Date mentions are grouped by document in a collapsed section, with
-          possible deadline mentions counted separately. A date mention does not establish that an
-          event happened or that an obligation belongs to you.
+          <strong>Debug → Knowledge → Timeline</strong> combines structured dates supplied by
+          sources (<strong>Source record</strong>), interpretations recorded by the agent (<strong
+            >Agent interpretation</strong
+          >), and date expressions found in document text (<strong>Date mention</strong>). Source
+          records and agent interpretations form the agenda under Timed, All day &amp; due, and
+          Activities &amp; visits, with up to four entries per row within each day’s category.
+          Narrower screens show fewer columns. Date mentions are grouped by document in a collapsed
+          section, with possible deadline mentions counted separately. A date mention does not
+          establish that an event happened or that an obligation belongs to you.
         </p>
         <p>
           Filter by origin; this choice is remembered in your browser. <strong>Upcoming</strong>
@@ -519,6 +518,17 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
+                <td><code>background-agent</code></td>
+                <td>
+                  Reads each note you capture with Tell Omnesis from the portal, the apps or the CLI
+                  and acts on it: adds or updates tasks, remembers stated facts, answers a question
+                  (see
+                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
+                  takes the same chat models as <code>agent</code> and is never assigned
+                  automatically. Without it, notes are saved and indexed but not acted on.
+                </td>
+              </tr>
+              <tr>
                 <td><code>privacy-reviewer</code></td>
                 <td>
                   Reviews every Answer result (<code>/answer</code> and MCP Answer) against your
@@ -608,7 +618,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             setting is off also asks for confirmation before saving the assignment. The permission
             applies to all configured remote inference backends on this gateway. Depending on their
             roles, they receive messages, conversation context, relevant Omnesis data, tool results,
-            document chunks, search queries, or images.
+            document chunks, search queries, images, or recorded audio.
           </p>
         </div>
         <p>
@@ -693,12 +703,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           builds in bounded background batches; transcription does not wait for a full build. When
           an extraction update requires a rebuild, the gateway temporarily supplies no hints while
           it clears the old dictionary, then repopulates it incrementally. Evidence and spelling
-          refreshes enroll bounded pages without clearing the available dictionary. Gateway Whisper
-          uses these hints locally. Paired mobile apps with bulk corpus read access can also fetch a
-          small dictionary for on-device speech recognition, independently of the gateway dictation
-          setting. Apps keep hints in memory, refresh due hints in the background on foreground or
-          status activity after 30 minutes, and stop using them after 24 hours without a successful
-          refresh. Recording never waits for a dictionary request. Setting the flag to
+          refreshes enroll bounded pages without clearing the available dictionary. The gateway's
+          local Whisper model uses these hints, and so does an HTTP transcription backend on the
+          gateway's own machine; a transcription backend on another machine never receives them.
+          Paired mobile apps with bulk corpus read access can also fetch a small dictionary for
+          on-device speech recognition, independently of the gateway dictation setting. Apps keep
+          hints in memory, refresh due hints in the background on foreground or status activity
+          after 30 minutes, and stop using them after 24 hours without a successful refresh.
+          Recording never waits for a dictionary request. Setting the flag to
           <code>false</code> stops vocabulary computation and hint lookup; connected apps clear
           cached hints when they observe the change. Pairing changes also clear the cache. Switching
           the flag back on resumes the backlog. Vocabulary entries may remain after their source
@@ -708,7 +720,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           The local engine depends on the role. The <code>embedder</code> runs a GGUF model in the
           gateway through node-llama-cpp, on the GPU through Metal on Apple Silicon. The
           <code>transcriber</code> runs whisper.cpp in a separate process, so a crash in the native
-          code cannot take the gateway down. The <code>ocr</code> role has three local runtimes:
+          code cannot take the gateway down; it uses the GPU through Metal on Apple Silicon and the
+          CPU elsewhere. The <code>ocr</code> role has three local runtimes:
           <code>apple-vision</code> (macOS, with the Swift toolchain installed),
           <code>tesseract</code> (with the <code>tesseract</code> binary installed), and
           <code>gguf</code>, a llama.cpp vision model you supply, run through
@@ -721,6 +734,40 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           GGUF model; to keep it on your machine, point it at a local OpenAI-compatible server such
           as Ollama, llama-server or vLLM.
         </p>
+        <p>
+          To transcribe on an NVIDIA or other GPU, run an OpenAI-compatible transcription server on
+          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, or vLLM
+          serving a Whisper model. Add it as a backend and assign the <code>transcriber</code> role
+          to <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and
+          sends it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV
+          file. A server on another machine needs remote inference enabled. Whichever engine runs
+          it, one recording gets up to 30 minutes, which a long recording on a CPU can need, and the
+          gateway stops the work when the collector that asked stops waiting.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >whisper-server -m ggml-large-v3-turbo.bin --inference-path
+                /v1/audio/transcriptions</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend add whisper-gpu http://127.0.0.1:8080</span>
+            </p>
+            <p class="tight t-ok">✔ Backend whisper-gpu added (http://127.0.0.1:8080)</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis model assign transcriber whisper-gpu/whisper-large-v3-turbo</span
+              >
+            </p>
+            <p class="tight t-ok">✔ Assigned transcriber = whisper-gpu/whisper-large-v3-turbo</p>
+          </div>
+        </div>
         <p>
           <code>omnesis model assign</code> covers every role, so the terminal and the portal's
           <strong>Settings → Models</strong> tab configure the same set. Assigning
@@ -950,16 +997,28 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           When <code>OMNESIS_CODEX_COMMAND</code> points at your own Codex executable, Omnesis
           treats the runtime as externally managed: update it yourself, restart the gateway, then
-          refresh the model list.
+          refresh the model list. If the operating system denies starting the runtime, check execute
+          permissions and directory access for the configured executable.
         </p>
         <p>
-          Codex runs three interactive turns at once by default and two other inference calls, and
-          queues the rest. Tune this with <code>inference.codex.interactivePoolSize</code> and
+          Codex reserves separate capacity for three interactive turns, four background turns, and
+          two inference calls by default, and queues the rest. Tune this with
+          <code>inference.codex.interactivePoolSize</code>,
+          <code>inference.codex.backgroundPoolSize</code> (1–32), and
           <code>inference.codex.inferencePoolSize</code> (or the
-          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code> and
+          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code>,
+          <code>OMNESIS_CODEX_BACKGROUND_POOL_SIZE</code>, and
           <code>OMNESIS_CODEX_INFERENCE_POOL_SIZE</code> environment variables, which win) and
           restart the gateway. More slots use more memory, and every process shares the same ChatGPT
           allowance.
+        </p>
+
+        <p>
+          A Codex turn that receives no model-stream activity for five minutes is interrupted,
+          releasing its runtime slot. Time spent executing Omnesis tools is excluded. Set
+          <code>inference.codex.turnIdleTimeoutMs</code> (1000–3600000 milliseconds), or
+          <code>OMNESIS_CODEX_TURN_IDLE_TIMEOUT_MS</code> to override it, and restart the gateway.
+          This limits silence rather than the total duration of an active turn.
         </p>
 
         <h3 id="claude-code">Claude Code runtime and capacity</h3>
@@ -1165,8 +1224,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>omnesis sources debug &lt;id&gt;</code> shows a source's sync position and counts,
           <code>omnesis sources reauth &lt;provider&gt;:&lt;account&gt;</code> signs an account in
           again, and <code>omnesis sources resync &lt;id&gt;</code> rebuilds a source's data from
-          the start; use resync only when that is needed. Pages captured by the browser extension
-          cannot be resynced, because nothing holds their past copies to fetch again. See
+          the start; use resync only when that is needed.
+          <code>omnesis sources legacy-rows &lt;id&gt;</code> lists, claims or drops the rows of a
+          shared analytics table that no account has claimed. Pages captured by the browser
+          extension cannot be resynced, because nothing holds their past copies to fetch again. See
           <a href="/docs/sources#managing-sources">Managing sources</a> for every source action.
         </p>
         <p>

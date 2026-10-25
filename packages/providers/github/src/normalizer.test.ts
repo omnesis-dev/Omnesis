@@ -134,8 +134,8 @@ describe("threadToDocument", () => {
     expect(doc.metadata.rollingAggregate).toBe(true);
     expect(doc.metadata.tags).toEqual(["bug", "sync"]);
     expect(doc.title).toBe("Sync cursor drops watermark on retry · acme/widgets#12");
-    expect(doc.content).toContain("**@maya-reeves** (2026-03-12 18:40)");
-    expect(doc.content).toContain("**@jlopez-dev** (2026-03-13 08:15)");
+    expect(doc.content).toContain("**@maya-reeves** (2026-03-12T18:40Z)");
+    expect(doc.content).toContain("**@jlopez-dev** (2026-03-13T08:15Z)");
     expect(doc.sourceCreatedAt).toBe("2026-03-12T18:40:00Z");
     expect(doc.sourceUpdatedAt).toBe("2026-03-13T08:15:00Z");
   });

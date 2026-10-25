@@ -30,3 +30,8 @@ describe("IoOps registry coverage", () => {
     }
   });
 });
+
+test("discovery monthly scan is a background IO task with a matching reader", () => {
+  expect(IoOps.get("io.knowledgeDiscoveryByMonth")?.runner).toBe("io");
+  expect(typeof ioHandlers["io.knowledgeDiscoveryByMonth"]).toBe("function");
+});

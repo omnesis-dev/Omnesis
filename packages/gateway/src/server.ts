@@ -43,7 +43,9 @@ import { SchedulerQueueFullError, type SchedulerMetricsSnapshot } from "./schedu
 import { resolveRuntimeSettings } from "./runtime-settings.js";
 import { type SyncStatusRegistry } from "./sync-status.js";
 import { createCollectorDeviceResolver } from "./collector-device-resolver.js";
-import { mountBriefsRoutes } from "./brain/http.js";
+import { mountLoopRoutes } from "./brain/http.js";
+import { mountTaskRoutes } from "./brain/tasks/http.js";
+import { getNoteRuns } from "./brain/note-agent/storage.js";
 import { mountBrainAdminRoutes } from "./brain/admin-http.js";
 import { mountCognitionRoutes } from "./http/routes/cognition.js";
 import { mountTemporalRoutes } from "./http/routes/temporal.js";
@@ -66,7 +68,7 @@ import { EventService } from "./http/services/EventService.js";
 import { DocumentService } from "./http/services/DocumentService.js";
 import { SourceDataRemovalService } from "./http/services/SourceDataRemovalService.js";
 import { AnalyticsSourceModeTransitionAdoption } from "./http/services/AnalyticsSourceModeTransitionAdoption.js";
-import { purgeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { PersonService } from "./http/services/PersonService.js";
 import { AnalyticsService } from "./http/services/AnalyticsService.js";
 import { StatusCache } from "./http/services/StatusCache.js";
@@ -405,13 +407,15 @@ export function createServer(
      * is not mounted and `/status` advertises it inactive.
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
+    getNoteAgentActive?: () => boolean;
+    /** The cascades that follow a task change (loop mirror, scheduled checks, observations). */
+    taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
     onVoiceNoteService?: (service: import("./voice-notes/index.js").VoiceNoteService) => void;
-    getBriefTalkback?: () =>
-      | import("./brain/talkback/talkback-service.js").BriefTalkbackPort
-      | null;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
+    /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
+    interest?: import("./brain/interest/engine.js").InterestEngine;
     /**
      * The Cognition Steward drainer's live-run registry, shared by the composition
      * root so `/admin/brain/runs` can flag the run executing right now.
@@ -747,7 +751,7 @@ export function createServer(
     indexWriteGate,
     analyticsDb: opts?.analyticsDb,
     sourceWriteEpochFence,
-    purgeAnnotationsFor: (documentIds) => purgeCognitiveStateThroughGate(db, w, documentIds),
+    cascadeCognitionFor: (documentIds) => cascadeCognitiveStateThroughGate(db, w, documentIds),
   });
   const documentService = new DocumentService({
     db,
@@ -1242,6 +1246,7 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getNoteAgentActive: opts?.getNoteAgentActive,
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
@@ -1685,6 +1690,7 @@ export function createServer(
         searchPipeline: opts?.searchPipeline,
         getDecision: opts?.getDecision ?? (() => null),
         recordDecisionSpend: opts?.recordFindDecisionSpend,
+        recordDecision: (record) => w.recordCognitionDecision(record),
         getAgentService: () => opts?.agentRouteDeps?.agentService ?? opts?.agentService ?? null,
       }),
     }),
@@ -1712,6 +1718,7 @@ export function createServer(
     provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
+    noteAgentRuns: (noteIds) => getNoteRuns(db, noteIds),
   });
 
   // Voice notes: Tell Omnesis captures that arrive with their
@@ -1755,13 +1762,21 @@ export function createServer(
   opts?.onAgentConversationsRuntime?.(agentConversationsRuntime);
   mountAgentMessagesRoutes(app, { runtime: agentConversationsRuntime });
 
-  // /briefs/* + /loops* (experimental; feed/triage survive a parked background model).
-  mountBriefsRoutes(app, {
+  // /loops* (experimental; reads survive a parked background model).
+  mountLoopRoutes(app, {
     db,
-    writeGate: w,
     getStatus: opts?.getBriefsStatus,
     clock: opts?.briefsClock,
-    getTalkback: opts?.getBriefTalkback,
+  });
+
+  // /tasks* — the user's tasks. Available on every install.
+  mountTaskRoutes(app, {
+    db,
+    writeGate: w,
+    clock: opts?.briefsClock,
+    effects: opts?.taskEffects,
+    notes: getOmnesisNotesRuntime,
+    conversations: () => agentDeps.agentService ?? null,
   });
 
   // /temporal/* — the time index the portal's Calendar reads. Not gated on
@@ -1782,6 +1797,7 @@ export function createServer(
     transcriptsDir: opts?.configDir ? cognitionTranscriptsDir(opts.configDir) : undefined,
     clock: opts?.briefsClock,
     activity: opts?.cognitionActivity,
+    interest: opts?.interest,
     sweeps: opts?.sweeps,
     getSweepsEnabled: opts?.getSweepsEnabled,
     getBootstrapSettings: opts?.getBootstrapSettings,

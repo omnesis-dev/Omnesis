@@ -6,10 +6,11 @@
  *
  * - Resolves the `transcriber` assignment lazily and caches the loaded
  *   capability, reloading (and disposing the old one) when the assignment
- *   changes — so switching the Whisper model from the portal takes effect on
+ *   changes — so switching the transcriber from the portal takes effect on
  *   the next transcription without a gateway restart.
- * - Serializes transcriptions: Whisper is CPU/GPU-heavy, so running one at a
- *   time avoids thrashing the model runner under concurrent voice notes.
+ * - Serializes transcriptions: speech recognition is CPU/GPU-heavy, so running
+ *   one at a time avoids thrashing the model runner under concurrent voice
+ *   notes. A queued transcription whose caller stopped waiting is skipped.
  *
  * Callers are the `/inference/transcribe` route (source audio from the
  * collector) and the voice-note queue (Tell Omnesis recordings); each owns its
@@ -17,6 +18,7 @@
  * infra.
  */
 
+import { createHash } from "node:crypto";
 import { createLogger, assertNever } from "@omnesis/core";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
@@ -33,15 +35,25 @@ const log = createLogger("gateway:transcribe");
 /** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
-/** Stable signature for a resolved assignment, to detect config changes. */
-function signatureOf(resolved: ResolvedAssignment): string {
+/**
+ * Stable signature for a resolved assignment, to detect config changes. The
+ * http arm folds in everything a backend edit can change under the same
+ * backendKey — url, path prefix, the egress flag and an API-key fingerprint —
+ * so moving or re-keying a transcription server reloads the transcriber.
+ */
+function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): string {
   switch (resolved.kind) {
     case "local":
       return `local:${resolved.catalogId}:${resolved.modelPath}:${resolved.available}`;
     case "replay":
       return `replay:${resolved.fixture ?? ""}`;
-    case "http":
-      return `http:${resolved.backendKey}:${resolved.model}:${resolved.available}`;
+    case "http": {
+      const keyPrint = createHash("sha256")
+        .update(apiKey ?? "")
+        .digest("hex")
+        .slice(0, 8);
+      return `http:${resolved.backendKey}:${resolved.url}:${resolved.apiPathPrefix ?? ""}:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}:${keyPrint}`;
+    }
     case "anthropic":
       return `anthropic:${resolved.catalogId}:${resolved.available}`;
     case "codex":
@@ -71,8 +83,9 @@ const LOCAL_RUNTIME_MISSING =
 
 /**
  * Readiness of a resolved assignment by what `loadTranscriberFromResolved`
- * accepts, before the local runtime is considered: transcription is local-only,
- * so a remote backend never counts.
+ * accepts, before the local runtime is considered. An HTTP backend is ready
+ * when its probe found it reachable; the inference URL policy has already
+ * refused one the operator has not allowed.
  */
 export function assignmentReadiness(resolved: ResolvedAssignment): TranscriberReadiness {
   switch (resolved.kind) {
@@ -83,11 +96,24 @@ export function assignmentReadiness(resolved: ResolvedAssignment): TranscriberRe
     case "replay":
       return { runnable: true };
     case "http":
+      if (!resolved.model) {
+        return { runnable: false, reason: "The transcription backend assignment has no model." };
+      }
+      return resolved.available
+        ? { runnable: true }
+        : {
+            runnable: false,
+            reason: resolved.reason ?? "The transcription backend is not reachable.",
+          };
     case "anthropic":
     case "codex":
     case "claude-code":
     case "typesafe":
-      return { runnable: false, reason: "Transcription runs on local models only." };
+      return {
+        runnable: false,
+        reason:
+          "This backend offers no transcription model. Assign a local Whisper model or an HTTP transcription backend.",
+      };
     case "disabled":
       return { runnable: false, reason: "No transcriber model is assigned." };
     case "unresolved":
@@ -124,7 +150,10 @@ export class TranscribeService {
 
   private async ensureCapability(): Promise<TranscribeCapability | null> {
     const resolved = this.resolveAssignment();
-    const signature = signatureOf(resolved);
+    const signature = signatureOf(
+      resolved,
+      resolved.kind === "http" ? this.deps.getBackendApiKey?.(resolved.backendKey) : undefined,
+    );
     if (this.current && this.current.signature === signature) {
       return this.current.capability;
     }
@@ -202,6 +231,8 @@ export class TranscribeService {
       minTimeoutMs?: number;
       context?: TranscriptionContext;
       allowVocabulary?: boolean;
+      /** Aborted when the caller stops waiting; queued work it covers is skipped. */
+      signal?: AbortSignal;
     },
   ): Promise<TranscriptionResult | null> {
     // Resolve/load the capability AND run the transcription inside the same
@@ -210,6 +241,13 @@ export class TranscribeService {
     // fence guarantees no earlier-queued transcription is still running on the
     // old worker when it's torn down.
     return this.serialize(async () => {
+      // A caller that gave up while this waited in the queue gets nothing from
+      // running it; skipping it keeps the transcriber free for work someone
+      // still wants.
+      if (opts?.signal?.aborted) {
+        log.info("Skipped a queued transcription whose caller stopped waiting");
+        return null;
+      }
       const capability = await this.ensureCapability();
       if (!capability) return null;
       try {
@@ -234,6 +272,7 @@ export class TranscribeService {
         return await capability.transcribe(audio, mimeType, {
           ...(opts?.language ? { language: opts.language } : {}),
           ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
+          ...(opts?.signal ? { signal: opts.signal } : {}),
           ...(vocabulary && this.vocabulary?.enabled()
             ? {
                 vocabulary,
@@ -242,6 +281,10 @@ export class TranscribeService {
             : {}),
         });
       } catch (err) {
+        if (opts?.signal?.aborted) {
+          log.info("Stopped a transcription whose caller stopped waiting");
+          return null;
+        }
         log.warn(
           `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,
         );

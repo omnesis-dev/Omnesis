@@ -36,6 +36,7 @@ import { promisify } from "node:util";
 import {
   createLogger,
   readPackageVersion,
+  type AgentContextAssessment,
   type AgentEvent,
   type Logger,
   type ToolResult,
@@ -52,10 +53,11 @@ import {
   type ToolHandle,
   type TurnInput,
 } from "./backend.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("agent:claude-code");
@@ -554,7 +556,10 @@ class ClaudeCodeTurn {
   private canceled = false;
   private toolCalls = 0;
   private usage: Usage = {};
+  /** Per-request usage keyed by API message id, summed for live progress. */
+  private readonly requestUsage = new Map<string, Usage>();
   private contextInputTokens: number | undefined;
+  private peakContextInputTokens: number | undefined;
   /** Error the CLI attached to an assistant message (`authentication_failed`, …). */
   private apiError: string | undefined;
   private startupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -630,7 +635,10 @@ class ClaudeCodeTurn {
         return;
       }
       case "tool_progress":
-        this.violation("Claude Code reported progress on a tool Omnesis does not run.");
+        // The CLI reports progress on any long-running call, Omnesis' own
+        // included; only progress on a call Omnesis did not run is foreign.
+        if (!this.omnesisToolUseIds.has(progressCallId(message)))
+          this.violation("Claude Code reported progress on a tool Omnesis does not run.");
         return;
       case "user":
         this.checkToolResults(message);
@@ -755,8 +763,37 @@ class ClaudeCodeTurn {
         (numberField(usage, "input_tokens") ?? 0) +
         (numberField(usage, "cache_read_input_tokens") ?? 0) +
         (numberField(usage, "cache_creation_input_tokens") ?? 0);
-      if (context > 0) this.contextInputTokens = context;
+      if (context > 0) {
+        this.contextInputTokens = context;
+        this.peakContextInputTokens = Math.max(this.peakContextInputTokens ?? 0, context);
+      }
+      // One API request can surface as several assistant messages sharing an
+      // id and its usage, so live progress sums distinct requests.
+      const requestId = stringField(body, "id");
+      if (requestId && context > 0) {
+        this.requestUsage.set(requestId, parseClaudeCodeUsage(usage));
+        const live: Usage = {};
+        for (const request of this.requestUsage.values())
+          for (const key of ["inputTokens", "outputTokens", "cacheReadTokens"] as const)
+            if (request[key] !== undefined) live[key] = (live[key] ?? 0) + request[key];
+        this.queue.push(
+          wrapEvent("agent.usage.update", { ...this.ids, usage: live, context: this.context() }),
+        );
+      }
     }
+  }
+
+  /** The latest request's input size, as far as the CLI reported it. */
+  private context(): AgentContextAssessment {
+    const inputTokens = this.contextInputTokens;
+    return {
+      ...(inputTokens === undefined
+        ? {}
+        : { inputTokens, peakInputTokens: this.peakContextInputTokens ?? inputTokens }),
+      measurement: inputTokens === undefined ? "unknown" : "provider_reported",
+      limitSource: "unknown",
+      requestIteration: Math.max(1, this.requestUsage.size),
+    };
   }
 
   /**
@@ -868,7 +905,9 @@ class ClaudeCodeTurn {
     const tool = stringField(params, "name") ?? "";
     const meta = asRecord(params?._meta);
     const callId = stringField(meta, "claudecode/toolUseId") ?? `claude_code_${randomUUID()}`;
-    const rawArgs = params?.arguments ?? {};
+    // Validated as the tool will receive them: without the local-time
+    // annotations the model may have copied from tool output.
+    const rawArgs = stripLocalTimeAnnotationsDeep(params?.arguments ?? {});
     if (this.completed) {
       return mcpToolResult({ kind: "error", code: "stale_tool_call", message: "turn has ended" });
     }
@@ -937,7 +976,7 @@ class ClaudeCodeTurn {
     this.queue.push(
       wrapEvent("agent.tool.result", { ...base, result, durationMs: Date.now() - start }),
     );
-    return mcpToolResult(result);
+    return mcpToolResult(result, this.opts.input.timeZone);
   }
 
   onExit(code: number | null, sig: NodeJS.Signals | null): void {
@@ -993,18 +1032,12 @@ class ClaudeCodeTurn {
     this.completed = true;
     clearTimeout(this.startupTimer);
     clearTimeout(this.idleTimer);
-    const inputTokens = this.contextInputTokens;
     this.queue.push(
       wrapEvent("agent.message.end", {
         ...this.ids,
         stopReason,
         usage: Object.keys(this.usage).length > 0 ? this.usage : undefined,
-        context: {
-          ...(inputTokens === undefined ? {} : { inputTokens, peakInputTokens: inputTokens }),
-          measurement: inputTokens === undefined ? "unknown" : "provider_reported",
-          limitSource: "unknown",
-          requestIteration: 1,
-        },
+        context: this.context(),
         ...(failure
           ? {
               failure: {
@@ -1392,14 +1425,19 @@ export function convertToolsToMcp(
   return tools.map((h) => ({
     name: h.name,
     description: h.description,
-    inputSchema: zodToJsonSchema(h.schema),
+    inputSchema: toolInputJsonSchema(h.schema),
   }));
 }
 
 /** The turn's user message: the replayed transcript, plus inline images. */
 export function claudeCodeUserContent(input: TurnInput): Array<Record<string, unknown>> {
   return [
-    { type: "text", text: renderTranscriptUserInput(input.history, input.userMessage) },
+    {
+      type: "text",
+      text: renderTranscriptUserInput(input.history, input.userMessage, {
+        timeZone: input.timeZone,
+      }),
+    },
     ...(input.images ?? []).flatMap(({ url }): Array<Record<string, unknown>> => {
       const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
       if (match) {
@@ -1412,9 +1450,9 @@ export function claudeCodeUserContent(input: TurnInput): Array<Record<string, un
   ];
 }
 
-function mcpToolResult(result: ToolResult): Record<string, unknown> {
+function mcpToolResult(result: ToolResult, timeZone?: string): Record<string, unknown> {
   return {
-    content: [{ type: "text", text: serializeToolResultForModel(result) }],
+    content: [{ type: "text", text: serializeToolResultForModel(result, { timeZone }) }],
     isError: toolResultHasErrors(result),
   };
 }
@@ -1591,6 +1629,16 @@ function sessionLoadedItsOwn(response: Record<string, unknown> | null): string |
     if (!Array.isArray(value) || value.length > 0) return key;
   }
   return null;
+}
+
+/**
+ * The tool call a `tool_progress` message reports on. The CLI's heartbeat for
+ * a call running past 30 seconds carries the call's id suffixed
+ * `-heartbeat-<n>`, so it is read back to the call it belongs to.
+ */
+function progressCallId(message: Record<string, unknown>): string {
+  const id = stringField(message, "tool_use_id") ?? "";
+  return message.heartbeat === true ? id.replace(/-heartbeat-\d+$/, "") : id;
 }
 
 function stringField(

@@ -142,6 +142,42 @@
           "unit": "ms"
         }
       }
+    },
+    "ephemeral-post-text-min-visible-ms": {
+      "description": "Minimum visibility before dismissal when nonblank assistant text follows a tool result.",
+      "canonicalMs": 167,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "ephemeral-post-text-fade-ms": {
+      "description": "Fade-out duration when nonblank assistant text follows a tool result.",
+      "canonicalMs": 100,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
     }
   }
 }

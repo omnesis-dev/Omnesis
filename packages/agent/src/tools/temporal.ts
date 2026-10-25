@@ -13,7 +13,6 @@
  */
 
 import { z } from "zod";
-
 import {
   ACCEPTED_TEMPORAL_KINDS,
   canonicalTemporalKind,
@@ -23,6 +22,8 @@ import {
   TEMPORAL_ORIGINS,
   TEMPORAL_STATUSES,
 } from "@omnesis/core";
+import { cappedLimit } from "./limit.js";
+
 import type { TemporalKind, TemporalOrigin, ToolResult } from "@omnesis/core";
 
 import type { ToolContext, ToolHandle } from "../backend.js";
@@ -89,7 +90,7 @@ const temporalQueryArgsSchema = z
     sourceIds: z.array(z.string().min(1)).min(1).optional(),
     documentIds: z.array(z.string().min(1)).min(1).optional(),
     entityIds: z.array(z.string().min(1)).min(1).optional(),
-    limit: z.number().int().min(1).max(TEMPORAL_QUERY_MAX_LIMIT).optional(),
+    limit: cappedLimit(TEMPORAL_QUERY_MAX_LIMIT).optional(),
     cursor: z.string().min(1).optional().describe("Opaque cursor returned by the prior page."),
   })
   .strict();

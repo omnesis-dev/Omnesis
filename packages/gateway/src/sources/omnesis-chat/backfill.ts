@@ -8,7 +8,7 @@
  * records a completion flag in `gateway_meta` so subsequent boots are
  * no-ops.
  *
- * The flag is keyed `omnesis-chat:backfill-complete:v1` — bumping the
+ * The flag is keyed `omnesis-chat:backfill-complete:v2` — bumping the
  * suffix in a future change forces a re-backfill (e.g. if the
  * rendering rules change). Idempotent at the row level too: a partial
  * backfill that crashes mid-way leaves committed conversation docs
@@ -24,6 +24,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { conversationEvidenceProjection } from "./evidence-projection.js";
 import { createLogger } from "@omnesis/core";
 
 import { buildDocumentInput, renderedCitationsToInputs } from "./upsert.js";
@@ -33,7 +34,7 @@ import type { WriteGate } from "../../write-gate.js";
 
 const log = createLogger("gateway:omnesis-chat").child("backfill");
 
-export const BACKFILL_FLAG_KEY = "omnesis-chat:backfill-complete:v1";
+export const BACKFILL_FLAG_KEY = "omnesis-chat:backfill-complete:v2";
 
 export interface BackfillDeps {
   /** Directory containing `<id>.json` transcripts. */
@@ -47,13 +48,6 @@ export interface BackfillDeps {
   hasFlag: () => boolean;
   /** Persists the backfill flag once the sweep completes cleanly. */
   setFlag: () => void;
-  /**
-   * Same lookup the live upserter uses — resolves the gateway-assigned
-   * `documents.id` for a (providerId, sourceId, externalId) triple. The
-   * backfill needs it for the per-conversation citation write that
-   * follows the doc upsert.
-   */
-  lookupDocId: (providerId: string, sourceId: string, externalId: string) => string | null;
 }
 
 export interface BackfillResult {
@@ -107,15 +101,12 @@ export async function runConversationBackfill(deps: BackfillDeps): Promise<Backf
         continue;
       }
       const doc = buildDocumentInput(record);
-      await deps.writeGate.upsertDocuments([doc]);
-      const docId = deps.lookupDocId(doc.providerId, doc.sourceId, doc.externalId);
-      if (docId) {
-        const { citations } = renderConversation(record);
-        await deps.writeGate.upsertConversationCitations(
-          docId,
-          renderedCitationsToInputs(citations),
-        );
-      }
+      const rendered = renderConversation(record);
+      await deps.writeGate.upsertConversationDocument(
+        doc,
+        conversationEvidenceProjection(rendered),
+        renderedCitationsToInputs(rendered.citations),
+      );
       upserted++;
     } catch (err) {
       failed++;

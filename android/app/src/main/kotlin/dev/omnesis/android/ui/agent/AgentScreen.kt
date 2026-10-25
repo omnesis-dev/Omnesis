@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +64,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,7 +91,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
@@ -96,6 +102,7 @@ import dev.omnesis.android.transport.dto.AgentDocRef
 import dev.omnesis.android.transport.dto.AgentPlanItem
 import dev.omnesis.android.transport.dto.AgentToolResult
 import dev.omnesis.android.transport.dto.ConversationSummary
+import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.LandingBackdrop
 import dev.omnesis.android.ui.common.OmnesisMarkGlyph
@@ -104,6 +111,7 @@ import dev.omnesis.android.ui.common.LANDING_MARK_CENTRE_Y
 import dev.omnesis.android.ui.common.landingPalette
 import dev.omnesis.android.ui.common.ListPagingFooter
 import dev.omnesis.android.ui.common.rememberPrependPagingAnchor
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @Composable
@@ -113,6 +121,7 @@ fun AgentScreen(
     onOpenWatch: ((String) -> Unit)? = null,
     onOpenSettings: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
     vm: AgentViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -149,6 +158,24 @@ fun AgentScreen(
         onOpenModels = onOpenModels,
         experimental = experimental,
         onLoadOlderMessages = vm::loadOlderMessages,
+        onOpenTask = onOpenTask,
+        dailyBrief = remember(vm) {
+            DailyBriefContext(
+                loader = DailyBriefItemsLoader { id, day -> vm.dailyBriefItems(id, day) },
+                reactions = DailyBriefReactionSender { id, day, observationId, reaction, note ->
+                    vm.reactToBriefItem(id, day, observationId, reaction, note)
+                },
+                noteCapture = { capture, onClose -> DailyBriefNoteCapture(capture, onClose) },
+            )
+        },
+        onDraftChanged = vm::updateDraft,
+        onDraftSubmitted = vm::finishDraftSubmission,
+        onCancelPromptEdit = vm::cancelPromptEdit,
+        onAnswerClarification = vm::answerClarification,
+        onRetrySubmission = vm::retrySubmission,
+        onEditPendingSubmission = vm::editPendingSubmission,
+        onEditPrompt = vm::editPrompt,
+        onSendQueuedNow = vm::sendQueuedNow,
     )
 }
 
@@ -174,6 +201,16 @@ fun AgentContent(
     onTogglePin: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteConversation: (String) -> Unit = {},
     onDismissConversationActionError: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
+    dailyBrief: DailyBriefContext = DailyBriefContext(),
+    onDraftChanged: (String, String?) -> Unit = { _, _ -> },
+    onDraftSubmitted: () -> Unit = {},
+    onCancelPromptEdit: () -> Unit = {},
+    onAnswerClarification: (String) -> Unit = {},
+    onRetrySubmission: (String) -> Unit = {},
+    onEditPendingSubmission: (String) -> Unit = {},
+    onEditPrompt: (String) -> Unit = {},
+    onSendQueuedNow: (List<String>) -> Unit = {},
 ) {
     var showCitations by remember { mutableStateOf(false) }
     var conversationMenuOpen by remember(state.sessionId) {
@@ -188,9 +225,12 @@ fun AgentContent(
     // The reference drawer surfaces only annotate-recorded citations — never the
     // merged Deep Research set (that lives in the report-artifact card) — so it stays
     // untouched during a Deep Research run, matching iOS + the portal.
-    val drawerCitations = AgentReducer.drawerCitations(state.chat)
-    val hasReferences = drawerCitations.isNotEmpty() ||
-        state.chat.records.isNotEmpty()
+    // The Morning brief conversation's timeline is the latest day's; every other thread's is
+    // the whole conversation.
+    val scope = state.timelineScope
+    val drawerCitations = AgentReducer.drawerCitations(state.chat).let { scope?.citations(it) ?: it }
+    val drawerRecords = state.chat.records.let { scope?.records(it) ?: it }
+    val hasReferences = drawerCitations.isNotEmpty() || drawerRecords.isNotEmpty()
     // Which branch of the `when` below owns the surface: the landing screen, or something
     // with content in it. Read by the top fade strip, which has nothing to dissolve on the
     // landing screen. Kept in step with that `when`.
@@ -249,6 +289,14 @@ fun AgentContent(
                         // not answer.
                         ReadOnlyConversationCard(state.liveSessionMissingReason, onRetryLiveSession)
                     } else {
+                        ConversationControlsPanel(state, onAnswerClarification, onRetrySubmission, onEditPendingSubmission)
+                        if (state.composer.editingPrompt) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Edited prompt · sends as a new message", style = MaterialTheme.typography.labelSmall,
+                                    color = OmTheme.colors.textSecondary, modifier = Modifier.weight(1f))
+                                androidx.compose.material3.TextButton(onClick = onCancelPromptEdit) { Text("Cancel edit") }
+                            }
+                        }
                         AgentComposer(
                             busy = busy,
                             enabled = enabled,
@@ -258,9 +306,17 @@ fun AgentContent(
                             // A send the gateway never accepted (failed mint, local Stop, refused POST)
                             // hands its text back here so the composer restores it instead of dropping it.
                             pendingRestore = state.sendRejectedText,
+                            pendingRestoreCommandId = state.sendRejectedCommandId,
                             onRestoreConsumed = onAckSendRejected,
-                            requestFocus = state.sessionId == null,
+                            requestFocus = state.sessionId == null || state.composer.editingPrompt ||
+                                awaitsFirstMessage(state),
                             composerGeneration = state.composerGeneration,
+                            idlePlaceholder = DailyBriefCopy.composerPrompt(state.conversationOrigin),
+                            initialText = state.composer.text,
+                            initialArmedCommand = SlashCommand.byId(state.composer.commandId),
+                            onDraftChanged = onDraftChanged,
+                            onDraftSubmitted = onDraftSubmitted,
+                            allowFollowUps = state.controlsAvailable,
                         )
                     }
                 }
@@ -341,6 +397,8 @@ fun AgentContent(
                     val barInset = with(LocalDensity.current) { barHeightPx.toDp() }
                     Transcript(
                         state = state,
+                        onEditPrompt = onEditPrompt,
+                        onSendQueuedNow = onSendQueuedNow,
                         catalog = catalog,
                         onFlushEphemeral = onFlushEphemeral,
                         onOpenDocument = onOpenDocument,
@@ -348,6 +406,8 @@ fun AgentContent(
                         modifier = Modifier.fillMaxSize(),
                         bottomInset = (barInset + 16.dp).coerceAtLeast(72.dp),
                         onLoadOlderMessages = onLoadOlderMessages,
+                        onOpenTask = onOpenTask,
+                        dailyBrief = dailyBrief,
                     )
                     Column(
                         Modifier
@@ -410,10 +470,12 @@ fun AgentContent(
                             }
                         }
                         state.sessionId?.let { conversationId ->
-                            val pinned = state.conversations
-                                .firstOrNull { it.sessionId == conversationId }
-                                ?.pinned
-                                ?: state.activeConversationPinned
+                            val summary = state.conversations.firstOrNull { it.sessionId == conversationId }
+                            val pinned = summary?.pinned ?: state.activeConversationPinned
+                            // The Morning brief conversation is permanent; the gateway refuses
+                            // to delete it, so the menu does not offer to.
+                            val deletable = state.conversationOrigin?.isDailyBrief != true &&
+                                summary?.deletable != false
                             ConversationActionsMenu(
                                 expanded = conversationMenuOpen,
                                 pinned = pinned,
@@ -424,9 +486,13 @@ fun AgentContent(
                                     conversationMenuOpen = false
                                     onTogglePin(conversationId, !pinned)
                                 },
-                                onDelete = {
-                                    conversationMenuOpen = false
-                                    pendingDeleteId = conversationId
+                                onDelete = if (deletable) {
+                                    {
+                                        conversationMenuOpen = false
+                                        pendingDeleteId = conversationId
+                                    }
+                                } else {
+                                    null
                                 },
                             )
                         }
@@ -445,7 +511,7 @@ fun AgentContent(
                 onClose = { showCitations = false },
                 onOpen = { showCitations = true },
                 onOpenDocument = { showCitations = false; onOpenDocument(it) },
-                records = state.chat.records,
+                records = drawerRecords,
             )
         }
     }
@@ -482,7 +548,8 @@ private fun ConversationActionsMenu(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
-    onDelete: () -> Unit,
+    /** Null when the conversation cannot be deleted, which leaves the item out. */
+    onDelete: (() -> Unit)?,
 ) {
     val colors = OmTheme.colors
     Box {
@@ -504,13 +571,15 @@ private fun ConversationActionsMenu(
                 leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
                 onClick = onTogglePin,
             )
-            DropdownMenuItem(
-                text = { Text("Delete this chat", color = colors.danger) },
-                leadingIcon = {
-                    Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger)
-                },
-                onClick = onDelete,
-            )
+            if (onDelete != null) {
+                DropdownMenuItem(
+                    text = { Text("Delete this chat", color = colors.danger) },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger)
+                    },
+                    onClick = onDelete,
+                )
+            }
         }
     }
 }
@@ -719,6 +788,11 @@ private fun agentWorkingRevision(turns: List<AgentTurn>): Int {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Modifier.transcriptKeyboardDismissal(): Modifier {
+    // Previews, screenshots and the Robolectric interaction tests have no keyboard to drive, and
+    // the platform never hands them an insets-animation controller: `imeNestedScroll` would keep
+    // requesting one and swallow every backward scroll meanwhile, so a semantics "scroll
+    // backward" there never moves the list.
+    if (LocalInspectionMode.current) return this
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return imeNestedScroll()
 
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -735,6 +809,8 @@ private fun Modifier.transcriptKeyboardDismissal(): Modifier {
 @Composable
 private fun Transcript(
     state: AgentCoordinator.UiState,
+    onEditPrompt: (String) -> Unit,
+    onSendQueuedNow: (List<String>) -> Unit,
     catalog: SourceCatalog,
     onFlushEphemeral: (String) -> Unit,
     onOpenDocument: (String) -> Unit,
@@ -742,6 +818,8 @@ private fun Transcript(
     modifier: Modifier = Modifier,
     bottomInset: Dp = 140.dp,
     onLoadOlderMessages: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
+    dailyBrief: DailyBriefContext = DailyBriefContext(),
 ) {
     val turns = state.chat.turns
     // An anchored thread pins its origin card above the pagination sentinel, so the number of
@@ -749,12 +827,52 @@ private fun Transcript(
     // initial scroll position and the prepend anchor — counts from here.
     val originCard = state.conversationOrigin.takeIf { hasContextCard(it) }
     val leadingItemCount = if (originCard != null) 2 else 1
-    // Start on the newest turn so a newly opened transcript does not mistake initial
-    // composition for a user reaching the older-history boundary. An anchored thread nobody has
-    // replied to yet has no turns at all, and its card is the whole screen — so that one starts
-    // at the top rather than one row past it.
+
+    // The Morning brief conversation groups its turns by day under each brief; every other
+    // conversation lists them as bubbles.
+    val briefOrigin = state.conversationOrigin?.takeIf { it.isDailyBrief }
+    val briefConversationId = state.sessionId.takeIf { briefOrigin != null }
+    val brief = briefConversationId?.let { id ->
+        rememberDailyBriefHolder(id, dailyBrief.loader, dailyBrief.preloaded, dailyBrief.reactions)
+            .also { holder -> if (holder.view.latestId == null) holder.observeLatest(briefOrigin?.latestDailyBrief) }
+    }
+    LaunchedEffect(brief, briefOrigin?.latestDailyBrief) { brief?.observeLatest(briefOrigin?.latestDailyBrief) }
+    val briefRows = if (brief != null && briefOrigin != null) {
+        DailyBriefRow.of(DailyBriefTranscript.of(turns, briefOrigin.briefs), brief.view)
+    } else {
+        null
+    }
+    val rowKeys = briefRows?.map { it.key } ?: turns.map { it.id }
+
+    // A finished reply opens at its own top (TranscriptReadingAnchor); anything else opens on
+    // the newest row and follows the bottom from there. Opening on a late row also keeps initial
+    // composition from being mistaken for a reader reaching the older-history boundary. An
+    // anchored thread nobody has replied to yet has no turns at all, and its card is the whole
+    // screen — so that one starts at the top rather than one row past it.
+    val foreground = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value
+        .isAtLeast(Lifecycle.State.STARTED)
+    fun anchorRowIndex(turnId: String): Int? {
+        val row = if (briefRows != null) {
+            TranscriptReadingAnchor.briefRowIndex(briefRows, turnId)
+        } else {
+            turns.indexOfFirst { it.id == turnId }.takeIf { it >= 0 }
+        }
+        return row?.plus(leadingItemCount)
+    }
+    val opening = remember {
+        TranscriptReadingAnchor.step(turns, state.chat.busy, foreground, TranscriptReadingAnchor.Memory())
+    }
+    val openingIndex = (opening.placement as? TranscriptReadingAnchor.Placement.Reply)?.let { anchorRowIndex(it.turnId) }
+    var anchorMemory by remember { mutableStateOf(opening.memory) }
+    // True while the reader sits at the top of a reply with more of it below: bottom-following
+    // stays off until they reach the end themselves.
+    var holdingAnchor by remember { mutableStateOf(openingIndex != null) }
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = if (turns.isEmpty()) 0 else turns.size + leadingItemCount - 1,
+        initialFirstVisibleItemIndex = when {
+            openingIndex != null -> openingIndex
+            turns.isEmpty() -> 0
+            else -> rowKeys.size + leadingItemCount - 1
+        },
     )
     val scope = rememberCoroutineScope()
     val prependAnchor = rememberPrependPagingAnchor()
@@ -778,14 +896,49 @@ private fun Transcript(
             lastVisible >= total - 2
         }
     }
+    val followingBottom = stickToBottom && (!holdingAnchor || inInspection)
 
-    // Follow streaming content only while stuck. Re-keys on turn count and the trailing
-    // assistant's part count so each streamed part nudges the view down.
+    // One effect places the transcript after every change, so a reply being placed and the
+    // bottom-follow never race. A reload (the app returning to the foreground) can bring a reply
+    // the reader has not been placed on; it is placed like an opening one. A send or a busy agent
+    // hands the transcript back to bottom-following, which follows while stuck to the bottom and
+    // not held at a reply's top: once per new turn, streamed part or queued message.
     val lastAssistantParts = (turns.lastOrNull() as? AgentTurn.Assistant)?.parts?.size ?: 0
-    LaunchedEffect(turns.size, lastAssistantParts) {
-        if (stickToBottom && !inInspection) {
-            listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+    val followKey = Triple(turns.size, lastAssistantParts, queuedConversationText(state.visibleQueuedMessages))
+    var followedKey by remember { mutableStateOf<Any?>(null) }
+    LaunchedEffect(turns.lastOrNull(), state.chat.busy, foreground, followKey) {
+        val step = TranscriptReadingAnchor.step(turns, state.chat.busy, foreground, anchorMemory)
+        anchorMemory = step.memory
+        val contentChanged = followKey != followedKey
+        followedKey = followKey
+        when (val placement = step.placement) {
+            is TranscriptReadingAnchor.Placement.Reply -> {
+                val index = anchorRowIndex(placement.turnId)
+                if (index != null && !inInspection) {
+                    listState.scrollToItem(index)
+                    holdingAnchor = listState.canScrollForward
+                }
+                return@LaunchedEffect
+            }
+            TranscriptReadingAnchor.Placement.FollowBottom -> holdingAnchor = false
+            TranscriptReadingAnchor.Placement.Keep -> Unit
         }
+        if (contentChanged && stickToBottom && !holdingAnchor && !inInspection) {
+            // Outside this effect, so the next streamed token does not cut the scroll short, and a
+            // frame on, so the list has laid out the rows that just arrived.
+            scope.launch {
+                withFrameNanos { }
+                val last = listState.layoutInfo.totalItemsCount - 1
+                if (last >= 0) listState.animateScrollToItem(last)
+            }
+        }
+    }
+    // The hold ends once the reader reaches the end of the transcript, which is at once when
+    // the reply fits on screen.
+    LaunchedEffect(holdingAnchor) {
+        if (!holdingAnchor) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && !listState.canScrollForward }.first { it }
+        holdingAnchor = false
     }
 
     LaunchedEffect(state.transcriptPrependVersion) {
@@ -793,9 +946,47 @@ private fun Transcript(
             prependAnchor.restore(
                 completedVersion = state.transcriptPrependVersion,
                 listState = listState,
-                orderedKeys = turns.map { it.id },
+                orderedKeys = rowKeys,
                 leadingItemCount = leadingItemCount,
             )
+        }
+    }
+
+    /** Open or fold an earlier day; an opened day is brought up to its separator. */
+    fun toggleDay(ref: DailyBriefMessageRef) {
+        val holder = brief ?: return
+        val opening = !holder.view.isOpen(ref)
+        holder.toggleDay(ref)
+        if (!opening) return
+        scope.launch {
+            withFrameNanos { }
+            val index = DailyBriefRow.of(DailyBriefTranscript.of(state.chat.turns, briefOrigin?.briefs.orEmpty()), holder.view)
+                .indexOfFirst { it.key == DailyBriefRow.separatorKey(ref) }
+            if (index >= 0) listState.animateScrollToItem(index + leadingItemCount)
+        }
+    }
+
+    @Composable
+    fun Bubble(turn: AgentTurn) {
+        when (turn) {
+            is AgentTurn.User -> ConversationMessageActions(
+                text = turn.text,
+                actionLabel = "Edit and resend",
+                alignMenuEnd = true,
+                onAction = if (state.canCompose) ({ onEditPrompt(turn.text) }) else null,
+            ) { UserBubble(turn.text) }
+            is AgentTurn.Assistant -> {
+                val presented = clarificationPresentation(turn, state.controls.pendingClarification?.id.takeIf { state.terminalFailure == null && state.liveSessionMissingReason == null })
+                ConversationMessageActions(
+                    text = turn.parts.filterIsInstance<AgentPart.Text>().joinToString("\n\n") { it.text },
+                ) {
+                    AssistantTurn(
+                        presented, catalog, onFlushEphemeral, onOpenDocument,
+                        citations = state.chat.citations,
+                        isStreaming = state.chat.isTurnStreaming(turn),
+                    )
+                }
+            }
         }
     }
 
@@ -827,7 +1018,7 @@ private fun Transcript(
         ) {
             if (originCard != null) {
                 item(key = "transcript-origin") {
-                    ConversationOriginCard(originCard, onOpenWatch = onOpenWatch)
+                    ConversationOriginCard(originCard, onOpenWatch = onOpenWatch, onOpenTask = onOpenTask)
                 }
             }
             item(key = "transcript-pagination") {
@@ -841,22 +1032,32 @@ private fun Transcript(
                             prependAnchor.capture(
                                 currentVersion = state.transcriptPrependVersion,
                                 listState = listState,
-                                eligibleKeys = turns.mapTo(hashSetOf()) { it.id },
+                                eligibleKeys = rowKeys.toHashSet(),
                             )
                             onLoadOlderMessages()
                         },
                     )
                 }
             }
-            items(turns, key = { it.id }) { turn ->
-                when (turn) {
-                    is AgentTurn.User -> UserBubble(turn.text)
-                    is AgentTurn.Assistant -> AssistantTurn(
-                        turn, catalog, onFlushEphemeral, onOpenDocument,
-                        citations = state.chat.citations,
-                        isStreaming = state.chat.isTurnStreaming(turn),
+            if (briefRows != null && brief != null && briefConversationId != null) {
+                items(briefRows, key = { it.key }, contentType = { it::class }) { row ->
+                    DailyBriefRowContent(
+                        row = row,
+                        holder = brief,
+                        context = dailyBrief,
+                        catalog = catalog,
+                        onToggleDay = ::toggleDay,
+                        onRetry = { day -> scope.launch { brief.retry(day) } },
+                        onOpenDocument = onOpenDocument,
+                        onOpenTask = onOpenTask,
+                        bubble = { Bubble(it) },
                     )
                 }
+            } else {
+                items(turns, key = { it.id }) { turn -> Bubble(turn) }
+            }
+            if (state.visibleQueuedMessages.any { it.status == "queued" }) {
+                item(key = "queued-messages") { QueuedConversationBubble(state, onSendQueuedNow) }
             }
             // The item is added only once the dots have actually revealed (a genuine quiet gap),
             // so a hidden/debouncing indicator never leaves an empty inter-item slot.
@@ -865,11 +1066,12 @@ private fun Transcript(
             }
         }
 
-        // Floating scroll-to-bottom chevron, centred above the composer. Shown only when
-        // the user has scrolled away from the bottom; tapping it re-arms the stick flag
-        // by jumping to the last item. Mirrors the iOS scrollToBottom chevron.
+        // Floating scroll-to-bottom chevron, centred above the composer. Shown whenever the
+        // transcript is not following the bottom — scrolled away, or held at a reply's top;
+        // tapping it re-arms the stick flag by jumping to the end of the last item. Mirrors the
+        // iOS scrollToBottom chevron.
         AnimatedVisibility(
-            visible = !stickToBottom,
+            visible = !followingBottom,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 96.dp),
@@ -879,7 +1081,13 @@ private fun Transcript(
             GlassCircleButton(
                 onClick = {
                     scope.launch {
+                        holdingAnchor = false
                         listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                        // A last item taller than the viewport is shown to its end, not its top.
+                        val info = listState.layoutInfo
+                        val last = info.visibleItemsInfo.lastOrNull() ?: return@launch
+                        val overflow = last.offset + last.size - (info.viewportEndOffset - info.afterContentPadding)
+                        if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
                     }
                 },
                 contentDescription = "Scroll to latest",

@@ -3,14 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
-import {
-  createBrief,
-  createDocAnnotation,
-  createOpenLoop,
-  createPersonAnnotation,
-} from "../brain/index.js";
+import { createDocAnnotation, createOpenLoop, createPersonAnnotation } from "../brain/index.js";
 import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/storage.js";
 import { runSchemaSetup } from "./schema.js";
+import { createLegacyBriefClaimsTables, createLegacyBriefTables } from "./legacy-brief-tables.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from "./migrations.js";
 import type { Db } from "./types.js";
 
@@ -25,6 +21,51 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
 });
+
+/** The chain as it stood before migration 197 retired the brief tables. */
+const BEFORE_OBSERVATIONS = MIGRATIONS.filter((migration) => migration.version < 197);
+
+/**
+ * A brief as an install between migrations 58 and 196 stored it: the row, its
+ * citations and related loops, and one evidence-bound claim.
+ */
+function seedLegacyBrief(input: {
+  id: string;
+  createdByRun: string;
+  title: string;
+  citations: string[];
+  relatedLoopIds: string[];
+  claim: { id: string; claimText: string; evidenceDocId: string; evidenceQuote: string };
+}): void {
+  createLegacyBriefTables(db);
+  createLegacyBriefClaimsTables(db);
+  db.prepare(
+    `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
+     VALUES (?, ?, 'loop', ?, 0.8, 0.5, 1, 1)`,
+  ).run(input.id, input.createdByRun, input.title);
+  input.citations.forEach((docId, position) =>
+    db
+      .prepare("INSERT INTO brief_citations (brief_id, position, doc_id) VALUES (?, ?, ?)")
+      .run(input.id, position, docId),
+  );
+  for (const loopId of input.relatedLoopIds)
+    db.prepare("INSERT INTO brief_related_loops (brief_id, loop_id) VALUES (?, ?)").run(
+      input.id,
+      loopId,
+    );
+  db.prepare(
+    `INSERT INTO brief_claims
+       (id, brief_id, claim_text, evidence_doc_id, evidence_quote, claim_basis, confidence,
+        verification_state, created_at)
+     VALUES (?, ?, ?, ?, ?, 'quoted', 0.8, 'verified', 1)`,
+  ).run(
+    input.claim.id,
+    input.id,
+    input.claim.claimText,
+    input.claim.evidenceDocId,
+    input.claim.evidenceQuote,
+  );
+}
 
 function tableExists(name: string): boolean {
   return (
@@ -211,56 +252,32 @@ describe("migration 70", () => {
       "system",
       "extension-loop",
     );
-    createBrief(
-      db,
-      {
-        id: "derived-brief",
-        createdByRun: "run-derived",
-        kind: "loop",
-        title: "Private page follow-up",
-        citations: ["extension-page", "fetched-page"],
-        relatedLoopIds: ["derived-loop"],
-        confidence: 0.8,
-        urgency: 0.5,
-        claims: [
-          {
-            id: "derived-claim",
-            claimText: "The private page needs review.",
-            evidenceDocId: "fetched-page",
-            evidenceQuote: "Body fetched-page",
-            claimBasis: "quoted",
-            confidence: 0.8,
-            verificationState: "verified",
-          },
-        ],
+    seedLegacyBrief({
+      id: "derived-brief",
+      createdByRun: "run-derived",
+      title: "Private page follow-up",
+      citations: ["extension-page", "fetched-page"],
+      relatedLoopIds: ["derived-loop"],
+      claim: {
+        id: "derived-claim",
+        claimText: "The private page needs review.",
+        evidenceDocId: "fetched-page",
+        evidenceQuote: "Body fetched-page",
       },
-      1,
-    );
-    createBrief(
-      db,
-      {
-        id: "extension-brief",
-        createdByRun: "run-extension",
-        kind: "loop",
-        title: "Saved page follow-up",
-        citations: ["extension-page"],
-        relatedLoopIds: ["extension-loop"],
-        confidence: 0.8,
-        urgency: 0.5,
-        claims: [
-          {
-            id: "extension-claim",
-            claimText: "The saved page needs review.",
-            evidenceDocId: "extension-page",
-            evidenceQuote: "Body extension-page",
-            claimBasis: "quoted",
-            confidence: 0.8,
-            verificationState: "verified",
-          },
-        ],
+    });
+    seedLegacyBrief({
+      id: "extension-brief",
+      createdByRun: "run-extension",
+      title: "Saved page follow-up",
+      citations: ["extension-page"],
+      relatedLoopIds: ["extension-loop"],
+      claim: {
+        id: "extension-claim",
+        claimText: "The saved page needs review.",
+        evidenceDocId: "extension-page",
+        evidenceQuote: "Body extension-page",
       },
-      1,
-    );
+    });
     createDocAnnotation(
       db,
       {
@@ -376,9 +393,9 @@ describe("migration 70", () => {
     ).toEqual(["extension-doc-annotation"]);
 
     db.pragma("user_version = 70");
-    runMigrations(db);
+    runMigrations(db, { migrations: BEFORE_OBSERVATIONS });
 
-    expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
+    expect(db.pragma("user_version", { simple: true })).toBe(196);
     expect(
       db
         .prepare<[], { id: string }>("SELECT id FROM documents ORDER BY id")
@@ -462,6 +479,19 @@ describe("migration 70", () => {
     expect(tableExists("crawl_queue")).toBe(false);
     expect(tableExists("crawl_domain_stats")).toBe(false);
     expect(tableExists("crawl_state")).toBe(false);
+
+    // Migration 197 later retires the surviving brief and its claim with the
+    // brief tables; the other retained outputs carry through to head.
+    runMigrations(db);
+    expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
+    expect(tableExists("briefs")).toBe(false);
+    expect(tableExists("brief_claims")).toBe(false);
+    expect(
+      db
+        .prepare<[], { id: string }>("SELECT id FROM open_loops ORDER BY id")
+        .all()
+        .map((row) => row.id),
+    ).toEqual(["extension-loop"]);
   });
 
   test("dirties statistics when only old extension metadata needed cleanup", () => {
@@ -477,6 +507,7 @@ describe("migration 70", () => {
        VALUES ('web', 1, 999, 0, 0)`,
     ).run();
 
+    createLegacyBriefTables(db);
     db.pragma("user_version = 69");
     runMigrations(db);
 

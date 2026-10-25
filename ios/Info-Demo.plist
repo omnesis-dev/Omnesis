@@ -33,11 +33,9 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>294</string>
+	<string>331</string>
 	<key>OmnesisDemoBuild</key>
 	<true/>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>MinimumOSVersion</key>

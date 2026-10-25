@@ -7,10 +7,9 @@ name: release
 # Every pushed tag gets a GitHub Release carrying its changelog section: a
 # source install builds from the tag, so the release page is the announcement.
 #
-# Package and image distribution is armed separately from the trigger. Until
-# the repository variable OMNESIS_RELEASE_PUBLISH is set to `1`, those steps
-# run in dry-run: packages are packed and proven against a local registry
-# rather than published, and images are built rather than pushed.
+# npm distribution is armed separately with OMNESIS_RELEASE_PUBLISH=1.
+# Release images publish by default; OMNESIS_IMAGE_PUBLISH=0 explicitly
+# disables image publication for release-pipeline rehearsals.
 on:
   push:
     tags:
@@ -36,8 +35,8 @@ env:
   # Publication destination and authorization are independent from arming.
   # An unset destination preserves the public npm registry as the default.
   PACKAGE_REGISTRY: ${{ vars.OMNESIS_RELEASE_REGISTRY || 'https://registry.npmjs.org' }}
-  # The package and image arming switch. Anything other than the exact string
-  # `1` leaves the npm publish and the image push in dry-run.
+  # The npm arming switch. Image publication has its own explicit rehearsal
+  # opt-out, OMNESIS_IMAGE_PUBLISH=0.
   ARMED: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
 
 jobs:
@@ -53,6 +52,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
       armed: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
+      images_armed: ${{ vars.OMNESIS_IMAGE_PUBLISH != '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +60,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -106,9 +106,9 @@ jobs:
       - name: Report the arming state
         run: |
           if [ "$ARMED" = "true" ]; then
-            echo "::notice::Package and image publication is ARMED — this run publishes them."
+            echo "::notice::npm publication is ARMED."
           else
-            echo "::notice::Package and image publication is NOT armed (repository variable OMNESIS_RELEASE_PUBLISH != 1); they are a dry run. The GitHub Release is still created."
+            echo "::notice::npm publication is NOT armed; packages use a local registry rehearsal. Images publish unless OMNESIS_IMAGE_PUBLISH=0."
           fi
 
   # ------------------------------------------------------------------
@@ -137,7 +137,7 @@ jobs:
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -151,6 +151,8 @@ jobs:
         run: |
           cat > /tmp/verdaccio-release-${{ github.run_id }}.yml << 'VERDACCIO_CONF'
           storage: /verdaccio/storage
+          # npm publish embeds the tarball as base64 in a JSON document.
+          max_body_size: 50mb
           auth:
             htpasswd:
               file: /verdaccio/htpasswd
@@ -234,7 +236,7 @@ jobs:
 
       - name: Configure the publication registry
         if: needs.verify.outputs.armed == 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: ${{ env.PACKAGE_REGISTRY }}
@@ -301,7 +303,7 @@ jobs:
           echo "Publication is not armed; the staged graph was packed and verified against a"
           echo "local registry, and nothing was sent to the configured package registry."
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-artifacts
           path: |
@@ -342,6 +344,8 @@ jobs:
         include:
           - image: gateway
             target: gateway-runtime
+          - image: combined
+            target: combined-runtime
           - image: collector
             target: collector-runtime
           - image: updater
@@ -361,7 +365,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        if: needs.verify.outputs.armed == 'true'
+        if: needs.verify.outputs.images_armed == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
@@ -379,8 +383,21 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
             type=sha
 
+      # Boot both architectures before any tag for this image is published.
+      # Buildx retains the tested layers for the multi-platform export below.
+      - name: Test release images on both architectures
+        env:
+          IMAGE_TARGET: ${{ matrix.target }}
+          IMAGE_ROLE: ${{ matrix.image }}
+        run: |
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/$arch" --load \
+              --target "$IMAGE_TARGET" --tag "omnesis-release-check:$arch" .
+            scripts/docker/image-smoke.sh "omnesis-release-check:$arch" "$IMAGE_ROLE"
+          done
+
       - name: Re-attest remote tag before image publication
-        if: needs.verify.outputs.armed == 'true'
+        if: needs.verify.outputs.images_armed == 'true'
         env:
           REPOSITORY_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
@@ -395,15 +412,29 @@ jobs:
             exit 1
           }
 
-      - name: Build ${{ needs.verify.outputs.armed == 'true' && 'and push' || '(no push — not armed)' }}
+      - name: Build ${{ needs.verify.outputs.images_armed == 'true' && 'and push' || '(no push — not armed)' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ needs.verify.outputs.armed == 'true' }}
+          push: ${{ needs.verify.outputs.images_armed == 'true' }}
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify anonymous release pull access
+        if: needs.verify.outputs.images_armed == 'true'
+        env:
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+        run: |
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf "$anonymous_config"' EXIT
+          if ! DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$IMAGE_REPOSITORY:${RELEASE_TAG#v}" >/dev/null; then
+            echo "::error::The published image is not anonymously readable. Make its GHCR package public before completing the release."
+            exit 1
+          fi
 
   # ------------------------------------------------------------------
   # github-release — the release notes are the changelog section the
@@ -428,11 +459,11 @@ jobs:
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-artifacts
           path: release

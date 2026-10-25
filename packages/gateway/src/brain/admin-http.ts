@@ -6,7 +6,8 @@
  *
  * Resource-specific route registration lives in:
  * - `admin-http-loop-routes.ts`
- * - `admin-http-brief-routes.ts`
+ * - `admin-http-observation-routes.ts`
+ * - `admin-http-interest-routes.ts`
  * - `admin-http-run-routes.ts`
  * - `admin-http-transcript-routes.ts`
  * - `admin-http-list-routes.ts`
@@ -18,7 +19,10 @@
  */
 
 import { NotFoundError } from "../http/errors.js";
-import { mountCognitionBriefAdminRoutes } from "./admin-http-brief-routes.js";
+import { KnowledgeQueryService } from "./knowledge/query-service.js";
+import { mountKnowledgeAdminRoutes } from "./knowledge/admin-routes.js";
+import { mountCognitionInterestAdminRoutes } from "./admin-http-interest-routes.js";
+import { mountCognitionObservationAdminRoutes } from "./admin-http-observation-routes.js";
 import { mountCognitionListAdminRoutes } from "./admin-http-list-routes.js";
 import { mountCognitionLoopAdminRoutes } from "./admin-http-loop-routes.js";
 import { mountCognitionRunAdminRoutes } from "./admin-http-run-routes.js";
@@ -30,11 +34,11 @@ import type {
   BootstrapBacklog,
   BootstrapTimelineReader,
   BootstrapTimeline,
-  BootstrapTimelineProbe,
   BootstrapBacklogReader,
   BootstrapSettingsView,
 } from "./bootstrap-status.js";
 import type { RunActivityReader } from "./cognition-admin-query-service.js";
+import type { InterestEngine } from "./interest/engine.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type { SweepService } from "./sweeps/service.js";
 import type { RouteApp } from "../http/routes/types.js";
@@ -65,6 +69,8 @@ export interface MountBrainAdminRoutesOpts {
     wipeCognitionNotes(now: number): Promise<void>;
   };
   activity?: RunActivityReader | undefined;
+  /** The interest ledger behind `/admin/brain/interest*`. Omitted, those routes are not mounted. */
+  interest?: InterestEngine | undefined;
   transcriptsDir?: string | undefined;
   clock?: (() => number) | undefined;
   getStatus?: (() => BriefsFeatureStatus) | undefined;
@@ -116,6 +122,7 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
     now(),
   );
   const context = { app, query, requireActive, requireVisible, now };
+  mountKnowledgeAdminRoutes(app, new KnowledgeQueryService(opts.db), requireVisible);
 
   // One probe per mount, so the cache is shared across every caller rather
   // than per-request — two portal tabs must not each pay for the scan.
@@ -143,6 +150,22 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
         )
       : undefined;
 
+  const knowledgeTimelineProbe =
+    getSettings && io?.knowledgeDiscoveryByMonth
+      ? new CachedScanProbe(
+          () => {
+            const settings = getSettings();
+            return query.knowledgeDiscoveryTimeline(io, {
+              now,
+              horizonMs: settings.horizonMs,
+              excludedSources: settings.excludedSources ?? [],
+            });
+          },
+          BOOTSTRAP_TIMELINE_TTL_MS,
+          now,
+        )
+      : undefined;
+
   mountCognitionListAdminRoutes(context, {
     clock: opts.clock,
     writeGate: opts.writeGate,
@@ -150,12 +173,19 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
     getBudgetSettings: opts.getBudgetSettings,
     backlogProbe,
     timelineProbe,
+    knowledgeTimelineProbe,
     startBootstrap: opts.startBootstrap,
   });
   mountCognitionLoopAdminRoutes(context);
   mountCognitionRunAdminRoutes(context);
   mountCognitionTranscriptAdminRoutes(context);
-  mountCognitionBriefAdminRoutes(context);
+  mountCognitionObservationAdminRoutes(context);
+  if (opts.interest)
+    mountCognitionInterestAdminRoutes(context, {
+      db: opts.db,
+      interest: opts.interest,
+      clock: now,
+    });
   if (opts.sweeps) {
     mountCognitionSweepAdminRoutes(context, {
       db: opts.db,

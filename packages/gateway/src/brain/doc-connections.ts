@@ -13,7 +13,10 @@
  * this one function.
  */
 
-import { listTemporalAnnotationsForDoc } from "../enrichment/temporal-annotations/storage.js";
+import {
+  canonicalWithUtcInstants,
+  listTemporalAnnotationsForDoc,
+} from "../enrichment/temporal-annotations/storage.js";
 import { listLoopsForDoc } from "./storage/open-loops.js";
 import { listLiveAnnotationsForDoc } from "./storage/annotations.js";
 import type Database from "better-sqlite3";
@@ -50,6 +53,7 @@ export function readDocConnections(
         claimType: a.claimType,
         claim: a.claimText,
         confidence: a.confidence,
+        verificationState: a.verificationState ?? "unverified",
         evidenceDocId: a.evidenceDocId,
       }))
     : [];
@@ -57,7 +61,7 @@ export function readDocConnections(
     ? listTemporalAnnotationsForDoc(db, docId).map((e) => ({
         annotationId: e.id,
         sentence: e.sentence,
-        ...(e.canonical ? { when: e.canonical } : {}),
+        ...(e.canonical ? { when: canonicalWithUtcInstants(e.canonical) } : {}),
         ...(e.kind ? { kind: e.kind } : {}),
       }))
     : [];

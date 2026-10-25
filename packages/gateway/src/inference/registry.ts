@@ -142,7 +142,6 @@ const ROLE_TO_CATALOG_ROLE = {
   "background-agent": undefined,
   "watch-judge": undefined,
   "entailment-verifier": undefined,
-  "brief-judge": undefined,
   decision: undefined,
 } as const;
 
@@ -201,7 +200,6 @@ const CLOUD_CAPABLE_ROLES = new Set<CapabilityRole>([
   "background-agent",
   "watch-judge",
   "entailment-verifier",
-  "brief-judge",
 ]);
 
 function asNativeOcrRuntime(value: string): OcrNativeRuntime | undefined {
@@ -761,8 +759,7 @@ export class InferenceRegistry {
         role === "privacy-reviewer" ||
         role === "background-agent" ||
         role === "watch-judge" ||
-        role === "entailment-verifier" ||
-        role === "brief-judge"
+        role === "entailment-verifier"
       ) {
         const res = await post("/chat/completions", {
           model,

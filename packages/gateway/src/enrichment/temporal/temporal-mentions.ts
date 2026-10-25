@@ -36,6 +36,7 @@
  * text no longer mentions, and it reappears once the recognizer has re-read it.
  */
 
+import { instantSafeEnd } from "@omnesis/agent";
 import { cognitionAuthoredSqlExclusion } from "../../brain/cognition-authored.js";
 import { judgedNotWorthSql } from "../dates/mention-judgements.js";
 import { MENTION_MAX_SPAN_DAYS } from "../dates/mention-bounds.js";
@@ -209,7 +210,7 @@ const NOT_A_MONTH = `(x.resolved_start IS NOT NULL AND x.resolved_end IS NOT NUL
 
 function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  return flat.length > max ? `${flat.slice(0, instantSafeEnd(flat, 0, max - 1))}…` : flat;
 }
 
 function labelOf(row: MentionRow): string {

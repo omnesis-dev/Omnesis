@@ -39,7 +39,7 @@ import {
   readCognitionDecaySweptVersion,
 } from "../storage/engine-state.js";
 import { listDecayCandidateLoops, type DecayCandidateLoop } from "../storage/open-loops.js";
-import { deadlineDueDay } from "../ranking.js";
+import { deadlineDueDay } from "../deadlines.js";
 import { listPendingCognitionDedupeKeys } from "../storage/run-queue.js";
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";
@@ -120,7 +120,7 @@ export interface DecaySweepWriteOps {
     input: EnqueueCognitionRunInput,
     now: number,
   ): Promise<EnqueueCognitionRunResult>;
-  cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  retractUnclaimedCognitionRuns(dedupeKeys: string[]): Promise<number>;
   setCognitionEngineState(key: string, value: string): Promise<void>;
 }
 
@@ -170,15 +170,16 @@ export async function runDecaySweepPass(deps: DecaySweepDeps): Promise<DecaySwee
     scheduled += 1;
   }
 
-  // Retract pending checks for loops that are no longer open (closed,
-  // deleted, privacy-cascaded) — the run would only burn a model call to
-  // discover there is nothing to check.
+  // Retract pending checks for loops that are no longer open (closed or
+  // deleted) — the run would only burn a model call to
+  // discover there is nothing to check. A check already claimed is left to
+  // settle: it may be the very run that closed its loop.
   const eligibleKeys = new Set(loops.map((l) => decayCheckRunDedupeKey(l.id)));
   const staleKeys = listPendingCognitionDedupeKeys(deps.db, DECAY_CHECK_DEDUPE_PREFIX).filter(
     (key) => !eligibleKeys.has(key),
   );
   const cancelled =
-    staleKeys.length > 0 ? await deps.writeGate.cancelPendingCognitionRuns(staleKeys) : 0;
+    staleKeys.length > 0 ? await deps.writeGate.retractUnclaimedCognitionRuns(staleKeys) : 0;
 
   await deps.writeGate.setCognitionEngineState(
     COGNITION_DECAY_SWEPT_VERSION_KEY,

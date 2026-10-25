@@ -35,9 +35,14 @@ RUN cd /src \
 #   lane-b  one commit later
 #   lane-c  a release whose gateway exits as it starts, to prove the rollback
 #   lane-d  one commit after lane-b, to interrupt while it builds
+# Automatic gc is off: a checkout this size passes git's loose-object
+# threshold, and a commit would then pack in the background while the
+# working repository is being removed.
 RUN git config --global user.name "Omnesis lane" \
   && git config --global user.email lane@example.com \
   && git config --global init.defaultBranch main \
+  && git config --global gc.auto 0 \
+  && git config --global maintenance.auto false \
   && mkdir /srv/work \
   && (cd /src && tar --exclude=node_modules -cf - .) | tar -xf - -C /srv/work \
   && cd /srv/work \

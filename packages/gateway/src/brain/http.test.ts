@@ -2,14 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level coverage for the /briefs surface: GET /briefs/feed (the
- * ranked feed with resolved citations), POST /briefs/:id/read (the
- * per-brief seen signal), POST /briefs/:id/dismiss, the unified temporal
- * window plus legacy annotation-only reads, and the `/loops*` reads. The suite
- * asserts the disabled-feature gate, parked-agent access for the feed and
- * triage routes, the auth scope, and each response contract;
- * the dismissal additionally proves the state flip + pending feedback
- * run land durably before the response returns.
+ * HTTP-level coverage for the `/loops*` reads and the unified temporal
+ * window plus annotation reads. The suite asserts the disabled-feature
+ * gate, the auth scope, and each response contract, and that the retired
+ * brief routes are not mounted.
  */
 
 import { existsSync, unlinkSync } from "node:fs";
@@ -24,7 +20,6 @@ import {
   insertTemporalAnnotation,
   type CreateTemporalAnnotationInput,
 } from "../enrichment/temporal-annotations/storage.js";
-import { createBrief, getBrief, type CreateBriefInput } from "./storage/briefs.js";
 import {
   appendOpenLoopLedger,
   createOpenLoop,
@@ -54,61 +49,6 @@ function cleanupDb(path: string) {
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
   return createToken(db, dev.id, scopes).token;
-}
-
-function seedBrief(over: Partial<CreateBriefInput> = {}): string {
-  const id = over.id ?? `brf_${randomUUID()}`;
-  createBrief(
-    db,
-    {
-      id,
-      createdByRun: "run_seed",
-      kind: "loop",
-      title: "Confirm the marathon entry went through",
-      description: "The entry form looked submitted.",
-      confidence: 0.7,
-      urgency: 0.5,
-      ...over,
-    },
-    1000,
-  );
-  return id;
-}
-
-function dismiss(id: string, body: unknown, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/${id}/dismiss`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-function feed(token = ADMIN_TOKEN) {
-  return app.request("/briefs/feed", { headers: { authorization: `Bearer ${token}` } });
-}
-
-function feedPage(query: string, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/feed?${query}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-}
-
-function count(token = ADMIN_TOKEN) {
-  return app.request("/briefs/count", { headers: { authorization: `Bearer ${token}` } });
-}
-
-function markRead(id: string, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/${id}/read`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-  });
-}
-
-async function feedIds(): Promise<string[]> {
-  const res = await feed();
-  expect(res.status).toBe(200);
-  const body = (await res.json()) as { briefs: { id: string }[] };
-  return body.briefs.map((b) => b.id);
 }
 
 function seedDoc(id: string, title: string): void {
@@ -215,23 +155,6 @@ function canonicalTemporalAnnotationDetail(
   );
 }
 
-/** An open loop whose deadline day passed long ago — due in any timezone. */
-function seedDueLoop(id: string, state: "open" | "done" = "open"): void {
-  createOpenLoop(
-    db,
-    {
-      id,
-      createdByRun: "run_seed",
-      title: "Send back the signed rental form",
-      confidence: 0.8,
-      importance: 0.6,
-      state,
-      deadline: { type: "by", date: "2000-01-02" },
-    },
-    1000,
-  );
-}
-
 beforeEach(() => {
   dbPath = `/tmp/omnesis-briefs-http-${randomUUID()}.db`;
   db = createDatabase(dbPath);
@@ -250,404 +173,6 @@ afterEach(() => {
   statusCache.stop();
   db.close();
   cleanupDb(dbPath);
-});
-
-describe("POST /briefs/:id/dismiss", () => {
-  test("dismisses: flips the state durably and enqueues the feedback run before responding", async () => {
-    const id = seedBrief();
-    const res = await dismiss(id, { reason: "already_handled", feedback: "paid it yesterday" });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; state: string; feedbackRunId: string };
-    expect(body.ok).toBe(true);
-    expect(body.state).toBe("dismissed_already_handled");
-
-    const brief = getBrief(db, id)!;
-    expect(brief.state).toBe("dismissed_already_handled");
-    expect(brief.userFeedback).toBe("paid it yesterday");
-    const run = db
-      .prepare<
-        [string],
-        { kind: string; status: string; payload_json: string }
-      >("SELECT kind, status, payload_json FROM cognition_runs WHERE id = ?")
-      .get(body.feedbackRunId);
-    expect(run).toMatchObject({ kind: "feedback", status: "pending" });
-    expect(JSON.parse(run!.payload_json)).toEqual({ briefId: id });
-  });
-
-  test("a snooze forwards the ISO snoozeUntil into the feedback payload as unix ms", async () => {
-    const id = seedBrief();
-    const res = await dismiss(id, { reason: "snoozed", snoozeUntil: "2026-07-03T09:00:00.000Z" });
-    expect(res.status).toBe(200);
-    const { feedbackRunId } = (await res.json()) as { feedbackRunId: string };
-    const run = db
-      .prepare<
-        [string],
-        { payload_json: string }
-      >("SELECT payload_json FROM cognition_runs WHERE id = ?")
-      .get(feedbackRunId)!;
-    expect(JSON.parse(run.payload_json)).toEqual({
-      briefId: id,
-      snoozeUntil: Date.parse("2026-07-03T09:00:00.000Z"),
-    });
-  });
-
-  test("an agent-decided snooze queues its decision while the background model is parked", async () => {
-    const id = seedBrief();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    const res = await dismiss(id, { reason: "snoozed" });
-    expect(res.status).toBe(200);
-    const { feedbackRunId } = (await res.json()) as { feedbackRunId: string };
-    expect(getBrief(db, id)?.state).toBe("dismissed_snoozed");
-    expect(
-      db
-        .prepare<[string], { status: string }>("SELECT status FROM cognition_runs WHERE id = ?")
-        .get(feedbackRunId),
-    ).toEqual({ status: "pending" });
-  });
-
-  test("remains available without a runnable model and 404s when experimental mode is off", async () => {
-    const id = seedBrief();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    const parked = await dismiss(id, { reason: "wrong" });
-    expect(parked.status).toBe(200);
-    const { feedbackRunId } = (await parked.json()) as { feedbackRunId: string };
-    expect(getBrief(db, id)?.state).toBe("dismissed_wrong");
-    expect(
-      db
-        .prepare<[string], { status: string }>("SELECT status FROM cognition_runs WHERE id = ?")
-        .get(feedbackRunId),
-    ).toEqual({ status: "pending" });
-
-    const disabledId = seedBrief();
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await dismiss(disabledId, { reason: "wrong" })).status).toBe(404);
-    // No getter wired at all (a gateway built without the feature bag).
-    const bare = createServer(db, dbPath, {});
-    const res = await bare.request(`/briefs/${disabledId}/dismiss`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ reason: "wrong" }),
-    });
-    expect(res.status).toBe(404);
-    expect(getBrief(db, disabledId)?.state).toBe("unread"); // nothing flipped
-  });
-
-  test("unknown brief → 404; terminal brief → 409; reason/kind mismatch → 400", async () => {
-    expect((await dismiss("brf_missing", { reason: "wrong" })).status).toBe(404);
-
-    const terminalId = seedBrief();
-    await dismiss(terminalId, { reason: "wrong" });
-    expect((await dismiss(terminalId, { reason: "not_relevant" })).status).toBe(409);
-
-    const infoId = seedBrief({ kind: "info" });
-    expect((await dismiss(infoId, { reason: "already_handled" })).status).toBe(400);
-  });
-
-  test("body validation: unknown reason and malformed snoozeUntil are 400s", async () => {
-    const id = seedBrief();
-    expect((await dismiss(id, { reason: "meh" })).status).toBe(400);
-    expect((await dismiss(id, { reason: "snoozed", snoozeUntil: "someday" })).status).toBe(400);
-    expect(getBrief(db, id)?.state).toBe("unread");
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    const id = seedBrief();
-    expect((await dismiss(id, { reason: "wrong" }, READ_TOKEN)).status).toBe(403);
-    const res = await app.request(`/briefs/${id}/dismiss`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reason: "wrong" }),
-    });
-    expect(res.status).toBe(401);
-  });
-});
-
-describe("GET /briefs/feed", () => {
-  test("serves historical briefs without a runnable model and 404s when disabled", async () => {
-    seedBrief();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    const parked = await feed();
-    expect(parked.status).toBe(200);
-    const parkedBody = (await parked.json()) as { briefs: Array<{ title: string }> };
-    expect(parkedBody.briefs).toEqual([
-      expect.objectContaining({ title: "Confirm the marathon entry went through" }),
-    ]);
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await feed()).status).toBe(404);
-    const bare = createServer(db, dbPath, {});
-    const res = await bare.request("/briefs/feed", {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    expect((await feed(READ_TOKEN)).status).toBe(403);
-    expect((await app.request("/briefs/feed")).status).toBe(401);
-  });
-
-  test("an empty feed is an empty array — the 'no briefs to show' state", async () => {
-    const res = await feed();
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      briefs: [],
-      pageInfo: { hasMore: false, limit: 30 },
-    });
-  });
-
-  test("paginates the full semantic rank with an opaque cursor", async () => {
-    const now = Date.now();
-    seedBrief({ id: "brf_ambient", kind: "info", urgency: 0.2 });
-    seedBrief({ id: "brf_next", kind: "info", eventAt: now + 20 * 60 * 1000 });
-    seedBrief({ id: "brf_loop", kind: "loop", urgency: 0.8 });
-    seedBrief({ id: "brf_read", kind: "info", urgency: 1 });
-    expect((await markRead("brf_read")).status).toBe(200);
-
-    const first = await feedPage("limit=2");
-    expect(first.status).toBe(200);
-    const firstBody = (await first.json()) as {
-      briefs: Array<{ id: string }>;
-      pageInfo: { hasMore: boolean; limit: number; nextCursor?: string };
-    };
-    expect(firstBody.briefs.map((brief) => brief.id)).toEqual(["brf_next", "brf_loop"]);
-    expect(firstBody.pageInfo).toMatchObject({ hasMore: true, limit: 2 });
-    expect(firstBody.pageInfo.nextCursor).toEqual(expect.any(String));
-
-    const second = await feedPage(
-      `limit=2&cursor=${encodeURIComponent(firstBody.pageInfo.nextCursor!)}`,
-    );
-    expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as {
-      briefs: Array<{ id: string }>;
-      pageInfo: { hasMore: boolean; limit: number; nextCursor?: string };
-    };
-    expect(secondBody.briefs.map((brief) => brief.id)).toEqual(["brf_ambient", "brf_read"]);
-    expect(secondBody.pageInfo).toEqual({ hasMore: false, limit: 2 });
-    expect((await feedPage("limit=2&cursor=not-a-cursor")).status).toBe(400);
-  });
-
-  test("a page-boundary brief marked read mid-walk is returned exactly once", async () => {
-    for (const id of ["brf_a", "brf_b", "brf_c", "brf_d", "brf_e"]) {
-      seedBrief({ id, kind: "info", urgency: 0.5 });
-    }
-
-    const seen: string[] = [];
-    const first = await feedPage("limit=2");
-    const firstBody = (await first.json()) as {
-      briefs: Array<{ id: string }>;
-      pageInfo: { hasMore: boolean; nextCursor?: string };
-    };
-    seen.push(...firstBody.briefs.map((brief) => brief.id));
-    expect(seen).toEqual(["brf_a", "brf_b"]);
-    expect(firstBody.pageInfo.hasMore).toBe(true);
-
-    // The cursor's read high-water keeps this already-returned boundary row in
-    // its original unread group for the rest of the walk. Without it, moving
-    // to the read group would make the row eligible again on a later page.
-    expect((await markRead("brf_b")).status).toBe(200);
-    let cursor = firstBody.pageInfo.nextCursor;
-    while (cursor) {
-      const response = await feedPage(`limit=2&cursor=${encodeURIComponent(cursor)}`);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        briefs: Array<{ id: string }>;
-        pageInfo: { hasMore: boolean; nextCursor?: string };
-      };
-      seen.push(...body.briefs.map((brief) => brief.id));
-      cursor = body.pageInfo.nextCursor;
-      if (!body.pageInfo.hasMore) break;
-    }
-
-    expect(seen).toEqual(["brf_a", "brf_b", "brf_c", "brf_d", "brf_e"]);
-    expect(new Set(seen)).toHaveLength(seen.length);
-  });
-
-  test("ranks tiers end-to-end: next-hour event, due loop, other loop, ambient info; read last", async () => {
-    const now = Date.now();
-    seedBrief({ id: "brf_ambient", kind: "info", urgency: 0.99, confidence: 0.99 });
-    seedBrief({ id: "brf_next_hour", kind: "info", eventAt: now + 30 * 60 * 1000 });
-    seedDueLoop("olp_due");
-    seedBrief({ id: "brf_due_loop", kind: "loop", relatedLoopIds: ["olp_due"] });
-    // A resolved loop's past deadline no longer summons a due reminder.
-    seedDueLoop("olp_done", "done");
-    seedBrief({ id: "brf_done_loop", kind: "loop", relatedLoopIds: ["olp_done"] });
-    seedBrief({ id: "brf_read_ambient", kind: "info" });
-    expect((await markRead("brf_read_ambient")).status).toBe(200);
-
-    expect(await feedIds()).toEqual([
-      "brf_next_hour",
-      "brf_due_loop",
-      "brf_done_loop",
-      "brf_ambient",
-      "brf_read_ambient",
-    ]);
-  });
-
-  test("shows only unread/read with next_show null-or-past and relevance unexpired", async () => {
-    const now = Date.now();
-    seedBrief({ id: "brf_in" });
-    seedBrief({ id: "brf_show_past", nextShow: now - 1000 });
-    seedBrief({ id: "brf_show_future", nextShow: now + 60_000 });
-    seedBrief({ id: "brf_expired", relevantUntil: now - 1000 });
-    seedBrief({ id: "brf_snoozed" });
-    await dismiss("brf_snoozed", { reason: "snoozed" });
-    seedBrief({ id: "brf_terminal" });
-    await dismiss("brf_terminal", { reason: "wrong" });
-
-    expect((await feedIds()).sort()).toEqual(["brf_in", "brf_show_past"]);
-  });
-
-  test("serializes the brief with ISO timestamps and resolved citations, dangling ones dropped", async () => {
-    const now = Date.now();
-    seedDoc("doc_quote", "Quote from the venue");
-    seedDoc("doc_thread", "Thread about the booking");
-    seedBrief({
-      id: "brf_1",
-      kind: "info",
-      body: "Longer context…",
-      citations: ["doc_quote", "doc_vanished", "doc_thread"],
-      eventAt: now + 30 * 60 * 1000,
-      relevantUntil: now + 60 * 60 * 1000,
-    });
-
-    const res = await feed();
-    const { briefs } = (await res.json()) as { briefs: Record<string, unknown>[] };
-    expect(briefs).toHaveLength(1);
-    const b = briefs[0]!;
-    expect(b).toMatchObject({
-      id: "brf_1",
-      kind: "info",
-      state: "unread",
-      title: "Confirm the marathon entry went through",
-      description: "The entry form looked submitted.",
-      body: "Longer context…",
-      confidence: 0.7,
-      urgency: 0.5,
-      createdAt: new Date(1000).toISOString(),
-      eventAt: new Date(now + 30 * 60 * 1000).toISOString(),
-      relevantUntil: new Date(now + 60 * 60 * 1000).toISOString(),
-    });
-    expect(b.citations).toEqual([
-      {
-        docId: "doc_quote",
-        title: "Quote from the venue",
-        providerId: "test-provider",
-        sourceId: "test-source",
-      },
-      {
-        docId: "doc_thread",
-        title: "Thread about the booking",
-        providerId: "test-provider",
-        sourceId: "test-source",
-      },
-    ]);
-  });
-});
-
-describe("POST /briefs/:id/thread", () => {
-  function openThreadReq(id: string, token = ADMIN_TOKEN) {
-    return app.request(`/briefs/${id}/thread`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}` },
-    });
-  }
-
-  test("404s when no talkback port is wired (feature booted without it)", async () => {
-    const id = seedBrief();
-    const res = await openThreadReq(id);
-    expect(res.status).toBe(404);
-  });
-
-  test("opens a thread through the port and returns its conversation id", async () => {
-    const opened: string[] = [];
-    app = createServer(db, dbPath, {
-      getBriefsStatus: () => status,
-      getBriefTalkback: () => ({
-        // eslint-disable-next-line @typescript-eslint/require-await
-        async openThread(callerId, briefId) {
-          opened.push(`${callerId}:${briefId}`);
-          return { conversationId: "s_thread_1", created: true };
-        },
-      }),
-    });
-    const id = seedBrief();
-    const res = await openThreadReq(id);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ conversationId: "s_thread_1", created: true });
-    expect(opened).toHaveLength(1);
-    expect(opened[0]).toContain(`:${id}`);
-  });
-
-  test("maps unknown-brief and unavailable errors to 404/409, and 404s when inactive", async () => {
-    const { BriefNotFoundError, TalkbackUnavailableError } =
-      await import("./talkback/talkback-service.js");
-    app = createServer(db, dbPath, {
-      getBriefsStatus: () => status,
-      getBriefTalkback: () => ({
-        // eslint-disable-next-line @typescript-eslint/require-await
-        async openThread(_callerId, briefId) {
-          if (briefId === "brief_missing") throw new BriefNotFoundError("nope");
-          throw new TalkbackUnavailableError("agent harness disabled");
-        },
-      }),
-    });
-    expect((await openThreadReq("brief_missing")).status).toBe(404);
-    expect((await openThreadReq("brief_other")).status).toBe(409);
-    // Pin the gate with the 409 id — a missing id 404s either way.
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    expect((await openThreadReq("brief_other")).status).toBe(404);
-  });
-});
-
-describe("GET /briefs/count", () => {
-  test("counts historical briefs without a runnable model and 404s when disabled", async () => {
-    seedBrief();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    const parked = await count();
-    expect(parked.status).toBe(200);
-    expect(await parked.json()).toEqual({ unread: 1 });
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await count()).status).toBe(404);
-    const bare = createServer(db, dbPath, {});
-    const res = await bare.request("/briefs/count", {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    expect((await count(READ_TOKEN)).status).toBe(403);
-    expect((await app.request("/briefs/count")).status).toBe(401);
-  });
-
-  test("zero when there are no briefs", async () => {
-    const res = await count();
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ unread: 0 });
-  });
-
-  test("counts only showable UNREAD briefs — the drawer badge's subset", async () => {
-    const now = Date.now();
-    // Counted: unread, showable now.
-    seedBrief({ id: "brf_in" });
-    seedBrief({ id: "brf_show_past", nextShow: now - 1000 });
-    // Not counted: read (already seen).
-    seedBrief({ id: "brf_read" });
-    expect((await markRead("brf_read")).status).toBe(200);
-    // Not counted: snoozed / not-yet-due / expired / terminally dismissed.
-    seedBrief({ id: "brf_show_future", nextShow: now + 60_000 });
-    seedBrief({ id: "brf_expired", relevantUntil: now - 1000 });
-    seedBrief({ id: "brf_snoozed" });
-    await dismiss("brf_snoozed", { reason: "snoozed" });
-    seedBrief({ id: "brf_terminal" });
-    await dismiss("brf_terminal", { reason: "wrong" });
-
-    const res = await count();
-    expect(res.status).toBe(200);
-    // brf_in + brf_show_past only — exactly the feed's showable subset
-    // narrowed to unread (read ones excluded).
-    expect(await res.json()).toEqual({ unread: 2 });
-  });
 });
 
 describe("GET /loops", () => {
@@ -922,45 +447,6 @@ describe("GET /loops/:id", () => {
   });
 });
 
-describe("POST /briefs/:id/read", () => {
-  test("flips unread → read durably; idempotent on repeat", async () => {
-    const id = seedBrief();
-    const res = await markRead(id);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, state: "read" });
-    expect(getBrief(db, id)?.state).toBe("read");
-    const again = await markRead(id);
-    expect(again.status).toBe(200);
-    expect(await again.json()).toEqual({ ok: true, state: "read" });
-  });
-
-  test("unknown brief → 404; dismissed brief → 409", async () => {
-    expect((await markRead("brf_missing")).status).toBe(404);
-    const id = seedBrief();
-    await dismiss(id, { reason: "wrong" });
-    expect((await markRead(id)).status).toBe(409);
-    expect(getBrief(db, id)?.state).toBe("dismissed_wrong");
-  });
-
-  test("works without a runnable model and 404s when experimental mode is off", async () => {
-    const id = seedBrief();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    expect((await markRead(id)).status).toBe(200);
-    expect(getBrief(db, id)?.state).toBe("read");
-
-    const disabledId = seedBrief();
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await markRead(disabledId)).status).toBe(404);
-    expect(getBrief(db, disabledId)?.state).toBe("unread");
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    const id = seedBrief();
-    expect((await markRead(id, READ_TOKEN)).status).toBe(403);
-    expect((await app.request(`/briefs/${id}/read`, { method: "POST" })).status).toBe(401);
-  });
-});
-
 describe("GET /temporal/window", () => {
   const temporalQs = `${WINDOW_QS}&timeZone=Europe%2FLondon`;
 
@@ -1139,6 +625,23 @@ describe("removed temporal-annotation talkback routes", () => {
       const response = await app.request(route, {
         method: "POST",
         headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      expect(response.status).toBe(404);
+    }
+  });
+});
+
+describe("removed brief routes", () => {
+  test("the brief feed, count, read, dismiss and thread endpoints are absent", async () => {
+    const headers = { authorization: `Bearer ${ADMIN_TOKEN}` };
+    for (const route of ["/briefs/feed", "/briefs/count"]) {
+      expect((await app.request(route, { headers })).status).toBe(404);
+    }
+    for (const action of ["read", "dismiss", "thread"]) {
+      const response = await app.request(`/briefs/brf_missing/${action}`, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ reason: "wrong" }),
       });
       expect(response.status).toBe(404);
     }

@@ -29,9 +29,10 @@
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "bonjour-service": "^1.4.4",
-    "libphonenumber-js": "^1.13.13",
+    "libphonenumber-js": "^1.13.15",
     "turndown": "^7",
-    "zod": "^4.6.5"
+    "undici": "^8.12.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/turndown": "^5"

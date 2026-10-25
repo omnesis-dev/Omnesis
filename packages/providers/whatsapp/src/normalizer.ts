@@ -309,6 +309,7 @@ function resolveOneToOnePartyName(
 
 /**
  * Format a timestamp as HH:MM for display in chat content.
+ * See #406 — planned: write clock times with a zone.
  */
 function formatTime(timestamp: number): string {
   const d = new Date(timestamp * 1000);

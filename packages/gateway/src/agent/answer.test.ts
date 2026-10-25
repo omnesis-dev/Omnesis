@@ -76,7 +76,10 @@ class CitingBackend implements ChatBackend {
   readonly model = "citing";
   readonly turns: TurnInput[] = [];
 
-  constructor(private readonly documentIds: readonly string[]) {}
+  constructor(
+    private readonly documentIds: readonly string[],
+    private readonly answer = "The budget review is on Tuesday.",
+  ) {}
 
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     this.turns.push(input);
@@ -97,7 +100,7 @@ class CitingBackend implements ChatBackend {
     }
     yield {
       type: "agent.text.delta",
-      payload: { sessionId, messageId, delta: "The budget review is on Tuesday." },
+      payload: { sessionId, messageId, delta: this.answer },
     };
     yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
   }
@@ -489,7 +492,11 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
         } as unknown as Awaited<ReturnType<DocumentPort["fetch"]>>;
       },
     };
-    const backend = new CitingBackend(["doc_budget", "doc_budget", "doc_missing"]);
+    const inventedMarker = "\uE200cite\uE202invented-marker-id\uE201";
+    const backend = new CitingBackend(
+      ["doc_budget", "doc_budget", "doc_missing"],
+      `The budget review is on Tuesday. ${inventedMarker}`,
+    );
     const service = new AgentService({
       backendFactory: () => backend,
       ports: { search: stubSearch, document: citedDocument },
@@ -502,6 +509,7 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     const result = await service.generateReadOnlyAnswerCandidate("When is the review?", []);
 
     expect(result.answer).toBe("The budget review is on Tuesday.");
+    expect(JSON.stringify(result.trace)).toContain(inventedMarker);
     expect(result.citations).toEqual([
       {
         documentId: "doc_budget",
@@ -512,6 +520,18 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
       },
     ]);
     expect(backend.turns[0]?.systemPrompt).toContain("Citations on the answer surface");
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "do not invent inline citation markers or search-result identifiers",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "exact supporting source version you inspected",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "You may cite a maintained synthesis you read",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "qualify or omit a claim its cited evidence cannot support",
+    );
     await service.dispose();
   });
 
@@ -716,7 +736,16 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     // hands either path a mutating or network-reaching tool has to redden
     // here.
     await service.generateReadOnlyAnswerCandidate("An ordinary question.", []);
-    expect(backend.turns[0]?.tools).toEqual(backend.turns[1]?.tools);
+    // Each session wraps its tools for its time zone, so compare what the
+    // model is offered rather than the wrapper objects.
+    const offered = (turn: (typeof backend.turns)[number] | undefined) =>
+      turn?.tools.map(({ name, description, schema, mutates }) => ({
+        name,
+        description,
+        schema,
+        mutates,
+      }));
+    expect(offered(backend.turns[0])).toEqual(offered(backend.turns[1]));
     expect(backend.turns[0]?.tools.length).toBeGreaterThan(0);
     expect(backend.turns[0]?.userMessage).toContain("doc_fictional_signal");
     expect(backend.turns[0]?.userMessage).toContain("The rehearsal moved to Thursday.");
@@ -1166,5 +1195,27 @@ describe("the gates a conversation's own turns wait behind", () => {
     releaseDelete();
     await expect(deletion).resolves.toBe(true);
     await service.dispose();
+  });
+});
+
+// The candidate the agent writes is what it returns: no second model checks or
+// rewrites it before the privacy reviewer sees it.
+describe("Answer candidate", () => {
+  it("is the agent's own reply, produced in one model turn", async () => {
+    const backend = new RecordingBackend();
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+    });
+    try {
+      const candidate = await service.generateReadOnlyAnswerCandidate(
+        "Which calibration is complete?",
+      );
+      expect(candidate.answer).toContain("Reply to");
+      expect(backend.turns).toHaveLength(1);
+    } finally {
+      await service.dispose();
+    }
   });
 });

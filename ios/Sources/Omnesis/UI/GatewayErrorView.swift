@@ -178,6 +178,7 @@ struct GatewayErrorView: View {
         case agentNotConfigured
         case server(status: Int, body: String)
         case unknown(String)
+        case voice(RealtimeCallFailure)
 
         var symbol: String {
             switch self {
@@ -185,7 +186,7 @@ struct GatewayErrorView: View {
             case .certificate: "lock.trianglebadge.exclamationmark"
             case .unauthorized, .forbidden: "lock.shield"
             case .agentNotConfigured: "sparkles"
-            case .server, .unknown: "exclamationmark.triangle"
+            case .server, .unknown, .voice: "exclamationmark.triangle"
             }
         }
 
@@ -194,7 +195,7 @@ struct GatewayErrorView: View {
             case .gatewayUnreachable: Theme.textMuted
             case .certificate: Theme.warning
             case .agentNotConfigured: Theme.accent
-            case .unauthorized, .forbidden, .server, .unknown: Theme.warning
+            case .unauthorized, .forbidden, .server, .unknown, .voice: Theme.warning
             }
         }
 
@@ -207,6 +208,7 @@ struct GatewayErrorView: View {
             case .agentNotConfigured: "Set up your agent"
             case .server: "Gateway error"
             case .unknown: "Something went wrong"
+            case .voice(let failure): failure.title
             }
         }
 
@@ -229,6 +231,8 @@ struct GatewayErrorView: View {
                 message.isEmpty
                     ? "Something went wrong trying to \(context). Retry, or open Settings to repair the connection."
                     : message
+            case .voice(let failure):
+                failure.errorDescription ?? "The voice conversation could not continue."
             }
         }
 
@@ -267,6 +271,7 @@ struct GatewayErrorView: View {
     /// pass `nil`.
     static func classify(_ error: Error?) -> Kind {
         guard let error else { return .gatewayUnreachable }
+        if let failure = error as? RealtimeCallFailure { return .voice(failure) }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .serverCertificateUntrusted, .serverCertificateHasBadDate,

@@ -6,7 +6,7 @@
  *
  * One optional Markdown file in the gateway's config directory, read into the
  * system prompt of every agent run: the conversational agent, its sub-agents,
- * and the background agent that maintains loops and briefs.
+ * and the background agent that maintains loops and observations.
  *
  * This page is deliberately thinner than the privacy-policy editor next door.
  * That one carries version history, a diff and an "affected access" confirm

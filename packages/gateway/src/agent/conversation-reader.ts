@@ -56,6 +56,7 @@ export class StoredConversationReader implements ConversationReader {
         record.origin,
         options.limit,
         options.before,
+        record.unrecognizedSeedMessageCount,
       ),
       model: record.model,
       backend: record.backend,

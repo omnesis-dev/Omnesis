@@ -166,6 +166,21 @@ describe("VoiceNoteService", () => {
     },
   );
 
+  test("a voice note keeps whether the owner's own client captured it", async () => {
+    const owned = voiceNote({ fromOwner: true });
+    const other = voiceNote();
+    await service.accept(owned);
+    await service.accept(other);
+    const fromOwner = (id: string) =>
+      (
+        db.prepare("SELECT from_owner FROM note_entries WHERE id = ?").get(id) as {
+          from_owner: number;
+        }
+      ).from_owner;
+    expect(fromOwner(owned.id)).toBe(1);
+    expect(fromOwner(other.id)).toBe(0);
+  });
+
   test("the day document is published only once the recording is queued", async () => {
     const input = voiceNote();
     const queuedAtPublish: boolean[] = [];

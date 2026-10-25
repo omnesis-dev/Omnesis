@@ -153,7 +153,7 @@ describe("sync tombstone cascade outbox", () => {
       else cognition.mockRejectedValueOnce(failure);
       const ops = {
         deleteIndex: index,
-        purgeCognition: cognition,
+        cascadeCognition: cognition,
         acknowledge: async (id: number, part: "index" | "cognition") => {
           acknowledgeAbsenceCascade(db, id, part);
         },

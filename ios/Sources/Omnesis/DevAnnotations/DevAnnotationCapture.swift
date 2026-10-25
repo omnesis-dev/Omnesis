@@ -122,7 +122,7 @@ private struct DeveloperAnnotationCaptureModifier: ViewModifier {
 /// including a detail sheet already on screen. Presenting the composer as a
 /// SwiftUI `.sheet` from the app root fails whenever a detail screen is itself
 /// sheet-presented (UIKit can't present a second sheet from an ancestor), so
-/// shake-to-annotate over a loop / brief / calendar sheet would no-op. A
+/// shake-to-annotate over a loop / task / calendar sheet would no-op. A
 /// dedicated window sidesteps the presentation hierarchy entirely.
 @MainActor
 enum DevAnnotationOverlay {

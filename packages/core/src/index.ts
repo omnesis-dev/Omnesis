@@ -809,6 +809,7 @@ export type {
   TranscriptionVocabulary,
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
+export { MAX_TRANSCRIPTION_MS } from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 
@@ -1045,6 +1046,12 @@ export type {
   AgentProviderFailureDetail,
   Citation,
 } from "./agent-protocol.js";
+export {
+  AGENT_TOOL_CARDS,
+  type AgentToolCard,
+  type AgentToolIcon,
+  type AgentToolPresentation,
+} from "./agent-tool-cards.js";
 
 // Terminal UX primitives: inline images + OSC 8 hyperlinks, iTerm2-only.
 // Every function returns a string that can be concatenated into normal
@@ -1105,8 +1112,11 @@ export {
   assertInferenceUrlAllowed,
   classifyInferenceIp,
   fetchWithInferenceUrlPolicy,
+  fetchAllowingSlowResponse,
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
+  RateLimitRetryBudget,
+  abortableRateLimitSleep,
   retryRateLimitedRequest,
 } from "./models/index.js";
 
@@ -1268,3 +1278,5 @@ export {
 
 export { browserUrlIdentity } from "./url-normalize.js";
 export type { BrowserUrlIdentitySpec } from "./url-normalize.js";
+
+export { oauthCallbackHost } from "./oauth-callback-host.js";

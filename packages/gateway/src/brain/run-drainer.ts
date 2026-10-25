@@ -10,13 +10,10 @@
  * pruning is owned by the gateway-wide activity-retention task so it remains
  * active even when this experimental feature is disabled.
  *
- * Concurrency contract: the per-tick claim size is the configured
- * worker concurrency N (default 1, read live), but **non-`daily` runs
- * are serialized regardless of N** — reconcile-before-create is
- * read-then-write, and two concurrent runs over related datums could
- * both mint a loop. A tick therefore runs its claimed `daily` batch
- * runs in parallel first (per-source batches touch disjoint data),
- * then the rest strictly one at a time.
+ * Region-fenced knowledge maintenance shares a bounded worker pool. Root and
+ * legacy runs execute exclusively. One coordinator claims each run at most
+ * once per tick, refills freed slots, and awaits every admitted task before
+ * returning, including after abort or admission failure.
  *
  * `isEnabled` is read live on every tick (the Briefs feature gate:
  * experimental mode AND an assigned background-agent model). The task is
@@ -24,15 +21,19 @@
  * removing the model starts/parks runs without a restart or re-registration.
  */
 
+import { randomUUID } from "node:crypto";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { agentFailureScope } from "@omnesis/agent";
 import { QueueTracker } from "../background-jobs/trackers.js";
 import { periodicJob } from "../background-jobs/scheduler-job.js";
 import { runWithPriority } from "../priority.js";
 import { documentDerivationState, derivationStageLabels } from "../domain/DocumentDerivation.js";
+import { knowledgeContinuationProgress } from "./knowledge/continuation.js";
 import {
   countPendingCognitionRuns,
   DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
   getCognitionRun,
+  isParallelKnowledgeRun,
 } from "./storage/run-queue.js";
 import {
   breakerIsOpen,
@@ -51,13 +52,11 @@ import {
 } from "./storage/engine-state.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import { countRunArtifacts } from "./storage/sweep-tally.js";
-import { newestBriefForRun } from "./storage/briefs.js";
 import { cognitiveWorkflowIdForRun, cognitiveWorkflowVersion } from "./cognition/workflows.js";
 import { documentSourceId } from "./storage/coverage.js";
 import {
   parseCognitionBootstrapRunPayload,
   parseCognitionDataRunPayload,
-  parseCognitionDigestRunPayload,
   parseCognitionSweepRunPayload,
 } from "./run-payloads.js";
 import { systemClock, type Clock, type ClaimedCognitionRun } from "./storage/types.js";
@@ -69,7 +68,7 @@ import type { Scheduler } from "../scheduler/scheduler.js";
 import type { PeriodicTask, TaskOutcome } from "../scheduler/types.js";
 import type { WriteGate } from "../write-gate.js";
 import type { CognitionRunActivity } from "./run-activity.js";
-import type { CognitionRunDriver } from "./run-driver.js";
+import type { CognitionRunDriver, CognitionRunOutcome } from "./run-driver.js";
 import type { WorthGate } from "./worth-gate/gate.js";
 import type { FsCognitionTranscriptStore } from "./transcripts.js";
 
@@ -109,15 +108,6 @@ export function cognitionRunBackoffMs(
 
 export interface CognitionDrainerOpts {
   db: Db;
-  /**
-   * The digest push tier, wired when the Briefs feature is active and
-   * APNs is available. Read live per completion — the knob flips without
-   * a restart.
-   */
-  digestPush?: {
-    getEnabled: () => boolean;
-    send: (brief: import("./storage/types.js").BriefRow, day: string) => Promise<void>;
-  };
   writeGate: WriteGate;
   driver: CognitionRunDriver;
   transcripts: FsCognitionTranscriptStore;
@@ -127,7 +117,8 @@ export interface CognitionDrainerOpts {
   /**
    * The day's spend ceiling, re-read per tick. Exhausted parks the drain: a
    * parked run resumes tomorrow, where failing it would burn its attempt
-   * budget and eventually strand it in the terminal state.
+   * budget and eventually strand it in the terminal state. The day's morning
+   * brief is exempt — it is still claimed while every other run stays parked.
    */
   getBudgetVerdict: () => CognitionBudgetVerdict;
   /**
@@ -142,8 +133,14 @@ export interface CognitionDrainerOpts {
    * every claimed run executes.
    */
   worthGate?: WorthGate;
-  /** Live worker concurrency N (non-`daily` runs serialize regardless). */
+  /** Live maintenance worker cap (1–32); unfenced and root work stays exclusive. */
   getWorkerConcurrency: () => number;
+  /**
+   * Live count of consecutive context handoffs a maintenance batch may take
+   * without settling an input before it fails the ordinary way. Absent, a
+   * context handoff continues only after progress.
+   */
+  getMaxStalledHandoffs?: () => number;
   /**
    * Live quiet window (ms) to re-open when an in-flight fold resurrects a
    * `data` run — the debounce a resurrected hot thread must re-clear before it
@@ -389,7 +386,8 @@ export function createCognitionDrainerTasks(
       );
     }
     if (gated) return gated;
-    let outcome;
+    let outcome: CognitionRunOutcome;
+    const progress = knowledgeContinuationProgress(opts.db, run);
     opts.activity?.start(run.id, clock());
     try {
       outcome = await opts.driver.execute(run, { signal });
@@ -414,6 +412,58 @@ export function createCognitionDrainerTasks(
     // profiles, and a model-assignment decision is made per workflow. Derived
     // from the CLAIMED payload, before settle wipes its transient fields.
     const mechanism = cognitiveWorkflowIdForRun(run.kind, run.payload);
+    const handoffReason = outcome.ok
+      ? undefined
+      : outcome.failure?.code === "tool_iteration_cap" || outcome.toolLimitReached
+        ? ("tool_iteration_cap" as const)
+        : outcome.contextHandoff;
+    if (progress && handoffReason) {
+      const successorId = `cog_${randomUUID()}`;
+      if (
+        await opts.writeGate["knowledge.continueRun"]({
+          progress,
+          successorId,
+          reason: handoffReason,
+          maxStalledHandoffs: opts.getMaxStalledHandoffs?.() ?? 0,
+          settlement: {
+            runId: run.id,
+            now,
+            day,
+            mechanism,
+            modelId: outcome.modelId,
+            usage: outcome.usage,
+            claimedPayloadJson: run.payloadJson,
+          },
+        })
+      ) {
+        const context = outcome.usage?.context;
+        log.info(
+          handoffReason === "tool_iteration_cap"
+            ? `knowledge run ${run.id} reached its tool limit after durable progress; continuing in ${successorId}`
+            : `knowledge run ${run.id} handed off at ${context?.lastInputTokens ?? "?"} input tokens (peak ${context?.peakInputTokens ?? "?"}, window ${context?.contextWindowTokens ?? "unknown"}, ${handoffReason}); continuing in ${successorId}`,
+        );
+        return "completed";
+      }
+    }
+    if (outcome.deferredUntil !== undefined) {
+      await opts.writeGate.finalizeCognitionRun({
+        runId: run.id,
+        now,
+        day,
+        mechanism,
+        modelId: null,
+        usage: null,
+        claimedPayloadJson: run.payloadJson,
+        outcome: {
+          kind: "failed",
+          errorMessage: outcome.errorMessage ?? "Awaiting maintenance inputs",
+          terminal: false,
+          nextAttemptAt: outcome.continuation ? now : Math.max(now + 1000, outcome.deferredUntil),
+          refundAttempt: true,
+        },
+      });
+      return "retry";
+    }
     // A `data` run that folded in-flight re-enters its debounce window on
     // resurrect (not fires immediately); other kinds have no debounce and
     // re-fire ASAP. Read live so a config reload is picked up.
@@ -502,17 +552,6 @@ export function createCognitionDrainerTasks(
       }
       await recordCoverage("processed");
       await recordSweepTally(false);
-      // The push tier: a completed digest run that minted its card sends
-      // the day's one notification. Never throws (sendDigestPush's
-      // contract); a push failure must not fail the run.
-      if (opts.digestPush) {
-        const digest = parseCognitionDigestRunPayload(run.payload);
-        if (digest && opts.digestPush.getEnabled()) {
-          const brief = newestBriefForRun(opts.db, run.id);
-          if (brief) await opts.digestPush.send(brief, digest.date);
-          else log.info(`digest run ${run.id} completed without a brief — no push`);
-        }
-      }
       await foldIntoBreaker({ providerScoped: false }, now);
       return "completed";
     }
@@ -598,6 +637,7 @@ export function createCognitionDrainerTasks(
     return terminal ? "failed" : "retry";
   }
 
+  let drainRunning = false;
   const drainTask: PeriodicTask<unknown, IdleResult> = {
     name: "cognition.drain",
     runner: "main",
@@ -606,8 +646,8 @@ export function createCognitionDrainerTasks(
     idlePeriodMs: opts.drainIdleMs ?? envInt("OMNESIS_COGNITION_DRAIN_IDLE_MS") ?? 30_000,
     startDelayMs:
       opts.drainStartDelayMs ?? envInt("OMNESIS_COGNITION_DRAIN_START_DELAY_MS") ?? 8_000,
-    // A tick awaits up to N full agent runs; a healthy run can take
-    // minutes of model round-trips. Budget generously.
+    // Admission rounds yield to the event loop; the scheduler budget bounds
+    // renewal. Admitted runs must still finish or abort before this task returns.
     latencyBudgetMs: 10 * 60_000,
     initialArgs: undefined,
     isIdle: isIdleResult,
@@ -617,12 +657,12 @@ export function createCognitionDrainerTasks(
       // The day's ceiling, checked before claiming rather than before
       // executing: an already-claimed run has burned an attempt, so parking at
       // the claim boundary leaves the queue exactly where it was. Read fresh so
-      // raising the limit resumes work without a restart.
+      // raising the limit resumes work without a restart. While it is spent the
+      // drain still claims the morning brief: background maintenance can spend
+      // the day's budget before the brief is due, and the brief is one run a
+      // day, so exempting it bounds the overrun while the user still gets it.
       const budget = opts.getBudgetVerdict();
-      if (budget.exhausted) {
-        log.info(`cognition paused — ${budget.reason}`);
-        return { kind: "done", value: { idle: true } };
-      }
+      if (budget.exhausted) log.info(`cognition paused — ${budget.reason}`);
       // Checked at the same boundary as the budget, and for the same reason:
       // an already-claimed run has burned an attempt, so declining to claim is
       // the only pause that leaves the queue exactly where it was.
@@ -632,36 +672,113 @@ export function createCognitionDrainerTasks(
         );
         return { kind: "done", value: { idle: true } };
       }
+      if (drainRunning) return { kind: "done", value: { idle: true } };
+      drainRunning = true;
+      const active = new Map<string, { parallel: boolean; task: Promise<void> }>();
+      const visited = new Set<string>();
+      const outcomes: Array<"completed" | "retry" | "failed"> = [];
+      let admissionError: unknown;
+      let failedAdmission = false;
+      let wakeAdmission: (() => void) | undefined;
+      const waitForArrival = (): Promise<void> =>
+        new Promise((resolve) => {
+          // The planner may enqueue work while every admitted run is still busy.
+          // Poll only vacant capacity, and cancel the timer on completion/abort.
+          const wake = (): void => {
+            clearTimeout(timer);
+            ctx.signal.removeEventListener("abort", wake);
+            if (wakeAdmission === wake) wakeAdmission = undefined;
+            resolve();
+          };
+          const timer = setTimeout(wake, 250);
+          wakeAdmission = wake;
+          ctx.signal.addEventListener("abort", wake, { once: true });
+          if (ctx.signal.aborted) wake();
+        });
       try {
-        const limit = Math.max(1, opts.getWorkerConcurrency());
-        const claimed = await runWithPriority("background", () =>
-          opts.writeGate.claimDueCognitionRuns({ now: clock(), limit, maxAttempts }),
-        );
-        if (claimed.length === 0) return { kind: "done", value: { idle: true } };
-        reportUnreadyDataRuns(opts.db, claimed, log);
-
-        // Per-source daily batches may use the full N in parallel (they
-        // touch disjoint data); everything else — including the digest,
-        // which reconciles against the whole brief store — runs strictly
-        // one at a time (see the module docstring). ctx.signal aborts
-        // in-flight model turns on scheduler dispose.
-        const isParallelDaily = (r: ClaimedCognitionRun): boolean =>
-          r.kind === "daily" && parseCognitionDigestRunPayload(r.payload) === null;
-        const daily = claimed.filter(isParallelDaily);
-        const serial = claimed.filter((r) => !isParallelDaily(r));
-        const outcomes = await Promise.all(daily.map((r) => processOne(r, ctx.signal)));
-        for (const run of serial) outcomes.push(await processOne(run, ctx.signal));
-
-        tracker.recordTick(outcomes.filter((o) => o !== "retry").length);
-        tracker.setRemaining(safeCount(opts.db, maxAttempts, log));
-        log.info(
-          `steward drain: claimed=${claimed.length} completed=${outcomes.filter((o) => o === "completed").length} failed=${outcomes.filter((o) => o === "failed").length} retrying=${outcomes.filter((o) => o === "retry").length}`,
-        );
-        return { kind: "done", value: { idle: false } };
-      } catch (err) {
-        log.warn(`steward drain failed: ${err instanceof Error ? err.message : String(err)}`);
-        return { kind: "done", value: { idle: false } };
+        const configured = opts.getWorkerConcurrency();
+        const limit = Number.isFinite(configured)
+          ? Math.max(1, Math.min(32, Math.trunc(configured)))
+          : 4;
+        // Renew bounded rounds while the scheduler permits work. A total-count
+        // cutoff strands free slots behind the slowest admitted sibling. Keep
+        // visited IDs across rounds so immediate retries cannot monopolize them.
+        const roundLimit = limit * 4;
+        let roundAdmissions = 0;
+        while (true) {
+          if (roundAdmissions === roundLimit) {
+            await yieldToEventLoop();
+            roundAdmissions = 0;
+          }
+          if (
+            ctx.signal.aborted ||
+            ctx.shouldYield() ||
+            failedAdmission ||
+            !opts.isEnabled() ||
+            breakerIsOpen(breaker, clock())
+          )
+            break;
+          const morningBriefOnly = opts.getBudgetVerdict().exhausted;
+          if (active.size >= limit || [...active.values()].some((entry) => !entry.parallel)) {
+            await Promise.race([...active.values()].map((entry) => entry.task));
+            continue;
+          }
+          const claimed = await runWithPriority("background", () =>
+            opts.writeGate.claimDueCognitionRuns({
+              now: clock(),
+              limit: 1,
+              maxAttempts,
+              excludeIds: [...new Set([...visited, ...active.keys()])],
+              parallelOnly: active.size > 0,
+              ...(morningBriefOnly ? { morningBriefOnly } : {}),
+            }),
+          );
+          const run = claimed[0];
+          if (!run) {
+            if (active.size === 0) break;
+            await waitForArrival();
+            continue;
+          }
+          visited.add(run.id);
+          roundAdmissions++;
+          reportUnreadyDataRuns(opts.db, claimed, log);
+          const parallel = isParallelKnowledgeRun(opts.db, run.id);
+          // A batch can lose parallel eligibility while its writer claim returns.
+          if (!parallel && active.size > 0)
+            await Promise.allSettled([...active.values()].map((entry) => entry.task));
+          const task = processOne(run, ctx.signal)
+            .then((outcome) => {
+              outcomes.push(outcome);
+            })
+            .catch((error: unknown) => {
+              admissionError = error;
+              failedAdmission = true;
+            })
+            .finally(() => {
+              active.delete(run.id);
+              wakeAdmission?.();
+            });
+          active.set(run.id, { parallel, task });
+        }
+      } catch (error) {
+        admissionError = error;
+        failedAdmission = true;
+      } finally {
+        // Never return a scheduler context while one of its admitted runs lives.
+        await Promise.allSettled([...active.values()].map((entry) => entry.task));
+        drainRunning = false;
       }
+      if (failedAdmission)
+        log.warn(
+          `steward drain failed: ${admissionError instanceof Error ? admissionError.message : String(admissionError)}`,
+        );
+      tracker.recordTick(outcomes.filter((outcome) => outcome !== "retry").length);
+      tracker.setRemaining(safeCount(opts.db, maxAttempts, log));
+      if (visited.size)
+        log.info(
+          `steward drain: claimed=${visited.size} completed=${outcomes.filter((o) => o === "completed").length} failed=${outcomes.filter((o) => o === "failed").length} retrying=${outcomes.filter((o) => o === "retry").length}`,
+        );
+      return { kind: "done", value: { idle: visited.size === 0 && !failedAdmission } };
     },
   };
 

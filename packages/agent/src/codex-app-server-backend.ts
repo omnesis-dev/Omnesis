@@ -26,12 +26,15 @@ import { promisify } from "node:util";
 import {
   createLogger,
   readPackageVersion,
+  type AgentContextAssessment,
   type AgentEvent,
   type Logger,
   type ToolResult,
 } from "@omnesis/core";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import {
@@ -152,6 +155,8 @@ export interface CodexAppServerRuntimeOptions {
   versionArgs?: readonly string[];
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
+  /** Maximum silence between meaningful model events, excluding pending tool work. */
+  turnIdleTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
 }
@@ -200,6 +205,7 @@ export class CodexAppServerRuntime {
   private readonly versionArgs: readonly string[];
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly turnIdleTimeoutMs: number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: Logger;
 
@@ -219,6 +225,9 @@ export class CodexAppServerRuntime {
     this.versionArgs = opts.versionArgs ?? DEFAULT_CODEX_VERSION_ARGS;
     this.startupTimeoutMs = opts.startupTimeoutMs ?? 10_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 120_000;
+    this.turnIdleTimeoutMs = opts.turnIdleTimeoutMs ?? 300_000;
+    if (!Number.isSafeInteger(this.turnIdleTimeoutMs) || this.turnIdleTimeoutMs <= 0)
+      throw new Error("Codex turn idle timeout must be a positive integer");
     this.env = opts.env ?? process.env;
     this.log = opts.logger ?? log;
   }
@@ -336,6 +345,8 @@ export class CodexAppServerRuntime {
       handles,
       queue,
       usage: {},
+      progressUsage: {},
+      contextReadings: 0,
       completed: false,
       answer: input.finalAnswerOnly ? { deltas: "", phased: false } : undefined,
       toolCalls: 0,
@@ -343,6 +354,9 @@ export class CodexAppServerRuntime {
       maxToolIterations,
       signal,
       heldForTurnId: [],
+      client,
+      pendingTools: new Set(),
+      progressItems: new Set(),
     };
 
     const abort = (): void => {
@@ -397,7 +411,12 @@ export class CodexAppServerRuntime {
         {
           threadId,
           input: [
-            { type: "text", text: renderTranscriptUserInput(input.history, input.userMessage) },
+            {
+              type: "text",
+              text: renderTranscriptUserInput(input.history, input.userMessage, {
+                timeZone: input.timeZone,
+              }),
+            },
             ...(input.images ?? []).map(({ url }) => ({ type: "image", url })),
           ],
           approvalPolicy: "never",
@@ -413,6 +432,7 @@ export class CodexAppServerRuntime {
       turnId = parsedTurnId;
       state.turnId = turnId;
       this.releaseHeldMessages(state);
+      this.armIdleWatchdog(state);
 
       while (true) {
         const next = await queue.shift();
@@ -454,8 +474,14 @@ export class CodexAppServerRuntime {
       }
     } finally {
       signal?.removeEventListener("abort", abort);
+      state.completed = true;
+      clearTimeout(state.idleTimer);
       // A turn that never learned its id judges anything still held as foreign.
       this.releaseHeldMessages(state);
+      // Never hand the runtime/pool lease onward while an admitted mutation or
+      // this turn's timed-out child is still alive. Cancellation is not rollback.
+      await Promise.allSettled([...state.pendingTools]);
+      await state.idleCleanup;
       if (this.activeTurn === state) this.activeTurn = null;
       queue.close();
     }
@@ -463,10 +489,13 @@ export class CodexAppServerRuntime {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    const active = this.activeTurn;
     this.completeActiveTurn("canceled");
     const starting = this.startingClient;
     const client = this.client;
     this.client = null;
+    await Promise.allSettled([...(active?.pendingTools ?? [])]);
+    await active?.idleCleanup;
     if (starting) {
       try {
         const started = await starting;
@@ -549,9 +578,15 @@ export class CodexAppServerRuntime {
       env: buildCodexEnv(this.env, this.codexHome),
       requestTimeoutMs: this.requestTimeoutMs,
       log: this.log,
-      onNotification: (method, params) => this.handleNotification(method, params),
-      onServerRequest: (method, params) => this.handleServerRequest(method, params),
-      onExit: (code, sig) => this.handleClientExit(code, sig),
+      onNotification: (method, params) => {
+        if (this.client === client) this.handleNotification(method, params);
+      },
+      onServerRequest: (method, params) => {
+        if (this.client !== client)
+          return Promise.reject(new Error("Codex client is no longer active"));
+        return this.handleServerRequest(method, params);
+      },
+      onExit: (code, sig) => this.handleClientExit(client, code, sig),
     });
     client.start();
     this.client = client;
@@ -624,9 +659,6 @@ export class CodexAppServerRuntime {
   private async handleToolCall(params: unknown): Promise<unknown> {
     const state = this.activeTurn;
     const p = asRecord(params);
-    const callId = stringField(p, "callId") ?? "codex_tool_call";
-    const tool = stringField(p, "tool") ?? "";
-    const rawArgs = p?.arguments ?? {};
 
     if (state && this.holdUntilTurnId(state, params)) {
       return new Promise((resolve) => {
@@ -634,7 +666,7 @@ export class CodexAppServerRuntime {
       });
     }
 
-    if (!state || !this.acceptTurnScopedParams(state, params)) {
+    if (!state || state.completed || !this.acceptTurnScopedParams(state, params)) {
       return {
         success: false,
         contentItems: [
@@ -650,6 +682,26 @@ export class CodexAppServerRuntime {
       };
     }
 
+    clearTimeout(state.idleTimer);
+    const pending = this.invokeToolCall(state, p);
+    state.pendingTools.add(pending);
+    try {
+      return await pending;
+    } finally {
+      state.pendingTools.delete(pending);
+      this.armIdleWatchdog(state);
+    }
+  }
+
+  private async invokeToolCall(
+    state: ActiveCodexTurn,
+    p: Record<string, unknown> | null,
+  ): Promise<unknown> {
+    const callId = stringField(p, "callId") ?? "codex_tool_call";
+    const tool = stringField(p, "tool") ?? "";
+    // Validated as the tool will receive them: without the local-time
+    // annotations the model may have copied from tool output.
+    const rawArgs = stripLocalTimeAnnotationsDeep(p?.arguments ?? {});
     state.toolCalls += 1;
     const handle = state.handles.get(tool);
     const parsedArgs = handle ? handle.schema.safeParse(rawArgs) : null;
@@ -731,13 +783,18 @@ export class CodexAppServerRuntime {
 
     return {
       success: !toolResultHasErrors(result),
-      contentItems: [{ type: "inputText", text: serializeToolResultForModel(result) }],
+      contentItems: [
+        {
+          type: "inputText",
+          text: serializeToolResultForModel(result, { timeZone: state.timeZone }),
+        },
+      ],
     };
   }
 
   private handleNotification(method: string, params: unknown): void {
     const state = this.activeTurn;
-    if (!state) return;
+    if (!state || state.completed) return;
     if (this.holdUntilTurnId(state, params)) {
       state.heldForTurnId?.push(() => this.handleNotification(method, params));
       return;
@@ -747,6 +804,7 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const delta = stringField(p, "delta");
+      if (delta) this.armIdleWatchdog(state);
       if (state.answer) {
         state.answer.deltas += delta ?? "";
         return;
@@ -767,6 +825,7 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const delta = stringField(p, "delta");
+      if (delta) this.armIdleWatchdog(state);
       if (delta) {
         state.queue.push(
           wrapEvent("agent.thinking.delta", {
@@ -782,15 +841,34 @@ export class CodexAppServerRuntime {
     if (method === "thread/tokenUsage/updated") {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
-      state.usage = parseCodexUsage(p?.tokenUsage);
+      const usage = parseCodexUsage(p?.tokenUsage);
+      if (
+        (["inputTokens", "outputTokens", "cacheReadTokens"] as const).some(
+          (key) => (usage[key] ?? 0) > (state.progressUsage[key] ?? 0),
+        )
+      )
+        this.armIdleWatchdog(state);
+      for (const key of ["inputTokens", "outputTokens", "cacheReadTokens"] as const)
+        state.progressUsage[key] = Math.max(state.progressUsage[key] ?? 0, usage[key] ?? 0);
+      state.usage = usage;
       const contextInputTokens = parseCodexContextInputTokens(p?.tokenUsage);
-      if (contextInputTokens !== undefined) state.contextInputTokens = contextInputTokens;
+      if (contextInputTokens !== undefined) {
+        state.contextInputTokens = contextInputTokens;
+        state.peakContextInputTokens = Math.max(
+          state.peakContextInputTokens ?? 0,
+          contextInputTokens,
+        );
+        state.contextReadings += 1;
+      }
+      const contextWindowTokens = parseCodexContextWindowTokens(p?.tokenUsage);
+      if (contextWindowTokens !== undefined) state.contextWindowTokens = contextWindowTokens;
       if (Object.keys(state.usage).length > 0) {
         state.queue.push(
           wrapEvent("agent.usage.update", {
             sessionId: state.sessionId,
             messageId: state.messageId,
             usage: state.usage,
+            ...(contextInputTokens === undefined ? {} : { context: codexContextAssessment(state) }),
           }),
         );
       }
@@ -805,11 +883,8 @@ export class CodexAppServerRuntime {
       if (status === "failed") {
         const error = asRecord(turn?.error);
         this.failActiveTurn(
-          "codex_turn_failed",
-          friendlyCodexErrorMessage(
-            stringField(error, "message") ?? "Codex turn failed",
-            this.codexHome,
-          ),
+          codexErrorCode(error),
+          friendlyCodexErrorMessage(error, this.codexHome),
         );
       } else if (
         status !== "interrupted" &&
@@ -827,11 +902,8 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const error = asRecord(p?.error);
-      const message = stringField(error, "message") ?? "Codex runtime error";
-      this.failActiveTurn(
-        codexErrorCode(message),
-        friendlyCodexErrorMessage(message, this.codexHome),
-      );
+      if (p?.willRetry === true) return;
+      this.failActiveTurn(codexErrorCode(error), friendlyCodexErrorMessage(error, this.codexHome));
       return;
     }
 
@@ -839,6 +911,18 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const item = asRecord(asRecord(params)?.item);
       const itemType = stringField(item, "type");
+      const itemId = stringField(item, "id");
+      if (
+        itemId &&
+        itemType &&
+        ["agentMessage", "reasoning", "dynamicToolCall"].includes(itemType)
+      ) {
+        const progress = `${method}:${itemId}`;
+        if (!state.progressItems.has(progress)) {
+          state.progressItems.add(progress);
+          this.armIdleWatchdog(state);
+        }
+      }
       if (state.answer && itemType === "agentMessage") {
         const phase = stringField(item, "phase");
         if (phase) state.answer.phased = true;
@@ -866,7 +950,30 @@ export class CodexAppServerRuntime {
     }
   }
 
-  private handleClientExit(code: number | null, sig: NodeJS.Signals | null): void {
+  private armIdleWatchdog(state: ActiveCodexTurn): void {
+    clearTimeout(state.idleTimer);
+    if (this.activeTurn !== state || state.completed || !state.turnId || state.pendingTools.size)
+      return;
+    state.idleTimer = setTimeout(() => {
+      if (this.activeTurn !== state || state.completed || state.pendingTools.size) return;
+      this.failActiveTurn(
+        "codex_turn_idle_timeout",
+        "Codex stopped making progress while waiting for model output. The idle runtime was stopped; this turn was not replayed.",
+      );
+      if (this.client === state.client) this.client = null;
+      state.idleCleanup = state.client.dispose();
+    }, this.turnIdleTimeoutMs);
+  }
+
+  private handleClientExit(
+    client: CodexJsonRpcClient,
+    code: number | null,
+    sig: NodeJS.Signals | null,
+  ): void {
+    // An idle exit must also invalidate reuse. A late exit from a disposed
+    // predecessor must never clear its replacement or fail the replacement's turn.
+    if (this.client !== client) return;
+    this.client = null;
     if (!this.activeTurn || this.activeTurn.completed) return;
     this.failActiveTurn(
       "codex_process_exited",
@@ -924,6 +1031,7 @@ export class CodexAppServerRuntime {
     const state = this.activeTurn;
     if (!state || state.completed) return;
     state.completed = true;
+    clearTimeout(state.idleTimer);
     if (stopReason === "end_turn" && state.answer) {
       const text = state.answer.final ?? state.answer.unphased ?? state.answer.deltas;
       if (text)
@@ -935,24 +1043,13 @@ export class CodexAppServerRuntime {
           }),
         );
     }
-    const inputTokens = state.contextInputTokens;
     state.queue.push(
       wrapEvent("agent.message.end", {
         sessionId: state.sessionId,
         messageId: state.messageId,
         stopReason,
         usage: Object.keys(state.usage).length > 0 ? state.usage : undefined,
-        context: {
-          ...(inputTokens === undefined
-            ? {}
-            : {
-                inputTokens,
-                peakInputTokens: inputTokens,
-              }),
-          measurement: inputTokens === undefined ? "unknown" : "provider_reported",
-          limitSource: "unknown",
-          requestIteration: 1,
-        },
+        context: codexContextAssessment(state),
         ...(failure
           ? {
               failure: {
@@ -995,6 +1092,7 @@ export class CodexAppServerBackend implements ChatBackend {
         versionArgs: opts.versionArgs,
         startupTimeoutMs: opts.startupTimeoutMs,
         requestTimeoutMs: opts.requestTimeoutMs,
+        turnIdleTimeoutMs: opts.turnIdleTimeoutMs,
         env: opts.env,
         logger: opts.logger,
       });
@@ -1034,7 +1132,7 @@ export function convertToolsToCodexDynamicTools(
     type: "function",
     name: h.name,
     description: h.description,
-    inputSchema: zodToJsonSchema(h.schema) as Record<string, unknown>,
+    inputSchema: toolInputJsonSchema(h.schema) as Record<string, unknown>,
   }));
 }
 
@@ -1133,6 +1231,8 @@ export async function assertSupportedCodexRuntime(opts: {
     );
     stdout = `${result.stdout}${result.stderr}`;
   } catch (err) {
+    const permissionFailure = codexSpawnPermissionFailure(err);
+    if (permissionFailure) throw permissionFailure;
     const e = err as ExecFileException;
     if (e.code === "ENOENT") {
       throw new Error(
@@ -1168,8 +1268,15 @@ interface ActiveCodexTurn {
   handles: Map<string, ToolHandle>;
   queue: AsyncQueue<AgentEvent>;
   usage: AgentEndUsage;
+  progressUsage: AgentEndUsage;
   /** The input size of the turn's latest model request, cached input included. */
   contextInputTokens?: number;
+  /** The largest such input seen during the turn. */
+  peakContextInputTokens?: number;
+  /** The model's context window, when Codex reports it. */
+  contextWindowTokens?: number;
+  /** How many model requests have reported their input size. */
+  contextReadings: number;
   completed: boolean;
   answer?: { deltas: string; phased: boolean; final?: string; unphased?: string };
   toolCalls: number;
@@ -1178,6 +1285,11 @@ interface ActiveCodexTurn {
   signal?: AbortSignal;
   /** Turn-scoped messages received before `turn/start` returned the turn id; null once released. */
   heldForTurnId: Array<() => void> | null;
+  client: CodexJsonRpcClient;
+  pendingTools: Set<Promise<unknown>>;
+  progressItems: Set<string>;
+  idleTimer?: ReturnType<typeof setTimeout>;
+  idleCleanup?: Promise<void>;
 }
 
 type AgentEndUsage = {
@@ -1205,6 +1317,7 @@ interface PendingRequest {
 class CodexJsonRpcClient {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
+  private exited = false;
   private pending = new Map<RequestId, PendingRequest>();
   private disposed = false;
 
@@ -1231,8 +1344,7 @@ class CodexJsonRpcClient {
       windowsHide: true,
     });
 
-    const stdout = createInterface({ input: this.proc.stdout });
-    stdout.on("line", (line) => this.handleLine(line));
+    readJsonRpcLines(this.proc.stdout, (line) => this.handleLine(line));
     const stderr = createInterface({ input: this.proc.stderr });
     stderr.on("line", (line) => {
       const trimmed = line.trim();
@@ -1240,10 +1352,15 @@ class CodexJsonRpcClient {
     });
 
     this.proc.once("error", (err) => {
-      this.rejectAll(new Error(`Codex app-server failed to start: ${err.message}`));
+      this.exited = true;
+      this.rejectAll(
+        codexSpawnPermissionFailure(err) ??
+          new Error(`Codex app-server failed to start: ${err.message}`),
+      );
       this.opts.onExit(null, null);
     });
     this.proc.once("exit", (code, sig) => {
+      this.exited = true;
       if (!this.disposed) {
         this.rejectAll(new Error(`Codex app-server exited (${sig ?? code ?? "unknown"})`));
         this.opts.onExit(code, sig);
@@ -1257,6 +1374,7 @@ class CodexJsonRpcClient {
     timeoutMs = this.opts.requestTimeoutMs,
   ): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error("Codex app-server disposed"));
+    if (this.exited) return Promise.reject(new Error("Codex app-server exited"));
     const id = this.nextId++;
     const message = { method, id, params };
     return new Promise((resolve, reject) => {
@@ -1285,12 +1403,14 @@ class CodexJsonRpcClient {
     this.proc = null;
     this.rejectAll(new Error("Codex app-server disposed"));
     if (!proc) return;
+    // A spawn failure emits error/close without exit and never owns a live PID.
+    if (proc.pid === undefined) return;
     if (proc.exitCode !== null || proc.signalCode !== null) return;
 
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
         proc.kill("SIGKILL");
-        resolve();
+        // Keep waiting for the actual exit before the runtime can be reused.
       }, 2_000);
       proc.once("exit", () => {
         clearTimeout(killTimer);
@@ -1304,7 +1424,7 @@ class CodexJsonRpcClient {
     if (!this.proc || !this.proc.stdin.writable) {
       throw new Error("Codex app-server stdin is not writable");
     }
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+    this.proc.stdin.write(encodeJsonRpcLine(message));
   }
 
   private handleLine(line: string): void {
@@ -1454,6 +1574,29 @@ export function parseCodexContextInputTokens(value: unknown): number | undefined
   return counts ? numberField(counts, "inputTokens") : undefined;
 }
 
+/** The model context window Codex reports beside its token counts, when it does. */
+export function parseCodexContextWindowTokens(value: unknown): number | undefined {
+  const usage = asRecord(value);
+  const window = usage ? numberField(usage, "modelContextWindow") : undefined;
+  return window !== undefined && Number.isSafeInteger(window) && window > 0 ? window : undefined;
+}
+
+/** The turn's context-window reading in the shared assessment shape. */
+function codexContextAssessment(state: ActiveCodexTurn): AgentContextAssessment {
+  const inputTokens = state.contextInputTokens;
+  return {
+    ...(inputTokens === undefined
+      ? {}
+      : { inputTokens, peakInputTokens: state.peakContextInputTokens ?? inputTokens }),
+    ...(state.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: state.contextWindowTokens }),
+    measurement: inputTokens === undefined ? "unknown" : "provider_reported",
+    limitSource: state.contextWindowTokens === undefined ? "unknown" : "provider",
+    requestIteration: Math.max(1, state.contextReadings),
+  };
+}
+
 function isNativeCodexNotification(method: string): boolean {
   return (
     method.startsWith("item/commandExecution/") ||
@@ -1466,8 +1609,94 @@ function isNativeCodexNotification(method: string): boolean {
   );
 }
 
+class CodexSpawnPermissionError extends Error {
+  constructor() {
+    super(
+      "The operating system denied starting the Codex runtime. Check execute permissions and directory access for the configured executable.",
+    );
+  }
+}
+
+/** Called only at OS process-launch boundaries, never on provider error payloads. */
+function codexSpawnPermissionFailure(err: unknown): CodexSpawnPermissionError | null {
+  const code = asRecord(err)?.code;
+  return code === "EACCES" || code === "EPERM" ? new CodexSpawnPermissionError() : null;
+}
+
+/** Preserve only known protocol categories; raw provider details may contain private data. */
+function structuredCodexFailure(err: unknown): { code: string; message: string } | null {
+  if (err instanceof CodexSpawnPermissionError)
+    return { code: "codex_permission_denied", message: err.message };
+  const info = asRecord(err)?.codexErrorInfo;
+  const categories: Record<string, { code: string; message: string }> = {
+    contextWindowExceeded: {
+      code: "context_window_exceeded",
+      message: CONTEXT_WINDOW_EXCEEDED_MESSAGE,
+    },
+    usageLimitExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a usage or rate limit.",
+    },
+    rateLimitExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a usage or rate limit.",
+    },
+    sessionBudgetExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a session budget limit.",
+    },
+    unauthorized: {
+      code: "codex_not_authenticated",
+      message: "Codex authentication failed. Check the Codex backend login.",
+    },
+    serverOverloaded: {
+      code: "codex_server_error",
+      message: "Codex reported an overloaded server.",
+    },
+    internalServerError: {
+      code: "codex_server_error",
+      message: "Codex reported an internal server error.",
+    },
+  };
+  if (typeof info === "string") return Object.hasOwn(categories, info) ? categories[info]! : null;
+  const variants = asRecord(info);
+  for (const [variant, code, message] of [
+    [
+      "httpConnectionFailed",
+      "codex_connection_failed",
+      "Codex could not connect to its upstream service.",
+    ],
+    [
+      "responseStreamConnectionFailed",
+      "codex_connection_failed",
+      "Codex could not open its response stream.",
+    ],
+    ["responseStreamDisconnected", "codex_stream_disconnected", "Codex lost its response stream."],
+    [
+      "responseTooManyFailedAttempts",
+      "codex_retry_exhausted",
+      "Codex exhausted its upstream retry attempts.",
+    ],
+  ] as const) {
+    if (!variants || !Object.hasOwn(variants, variant)) continue;
+    const status = asRecord(variants[variant])?.httpStatusCode;
+    if (status === 401 || status === 403) return categories.unauthorized!;
+    if (status === 429) return categories.rateLimitExceeded!;
+    return { code, message };
+  }
+  return null;
+}
+
+function codexErrorText(err: unknown): string {
+  return err instanceof Error
+    ? err.message
+    : (stringField(asRecord(err), "message") ?? String(err));
+}
+
 function codexErrorCode(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  const structured = structuredCodexFailure(err);
+  if (structured) return structured.code;
+  const msg = codexErrorText(err);
   if (isCodexContextWindowError(msg)) return "context_window_exceeded";
   if (/not found|ENOENT/i.test(msg)) return "codex_binary_missing";
   if (/unsupported codex cli version/i.test(msg)) return "codex_unsupported_version";
@@ -1478,7 +1707,9 @@ function codexErrorCode(err: unknown): string {
 }
 
 function friendlyCodexErrorMessage(err: unknown, codexHome: string): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  const structured = structuredCodexFailure(err);
+  if (structured) return structured.message;
+  const msg = codexErrorText(err);
   if (isCodexContextWindowError(msg)) return CONTEXT_WINDOW_EXCEEDED_MESSAGE;
   if (/not found|ENOENT/i.test(msg)) {
     return "Codex CLI was not found. Install or configure a supported Codex CLI runtime.";

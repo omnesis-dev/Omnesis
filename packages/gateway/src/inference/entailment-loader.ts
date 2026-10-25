@@ -33,9 +33,31 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveAnthropicApiKey } from "../model-credentials.js";
 import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
+import { prepareAnswerWitnessRequest, parseAnswerWitnessVerdict } from "./answer-entailment.js";
+import {
+  annotationEntailmentPrompt,
+  assessAnnotationEntailment,
+  AnnotationAssessmentError,
+  ANNOTATION_VERDICT_MAX_TOKENS,
+  uncoveredClaimWords,
+} from "./annotation-entailment.js";
 import { loadCompletionFromResolved, type LoadCompletionDeps } from "./completion-loader.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
+import { AgentTurnCompleter } from "./agent-turn-completer.js";
 import { HttpCompleter, type HttpCompletion } from "./http-completer.js";
+
+import {
+  CONTEXTUAL_VERDICT_MAX_TOKENS,
+  CONTEXTUAL_EVIDENCE_MAX_BYTES,
+  ContextualAssessmentError,
+} from "./contextual-entailment.js";
+
+import {
+  prepareContextualWitnessRequest,
+  parseContextualWitnessVerdict,
+  contextualSchemaIssues,
+  contextualWitnessFailure,
+} from "./contextual-segments.js";
 
 const log = createLogger("inference:entailment");
 
@@ -45,6 +67,9 @@ export type EntailmentPromptStyle = "judge" | "minicheck";
 export interface EntailmentUsage {
   promptTokens: number;
   completionTokens: number;
+  /** Reported subsets of total prompt tokens; absent is unknown, not zero. */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   modelId: string;
 }
 
@@ -69,16 +94,19 @@ function judgePrompt(input: { claim: string; evidence: string }): string {
   return [
     "You are a strict entailment judge. Decide whether the evidence quote establishes the claim.",
     "",
-    `Evidence quote: ${input.evidence}`,
-    `Claim: ${input.claim}`,
-    "",
     "Answer with exactly one word — ENTAILMENT, NEUTRAL, or CONTRADICTION.",
     "ENTAILMENT only if the quote establishes the claim at its stated modality.",
+    "For a compound claim, every factual clause and implied factual premise must be supported; one supported clause does not establish the whole claim. Otherwise answer NEUTRAL.",
+    "A historical event, unsuccessful attempt, or past status does not establish that the condition persists now, remains unresolved, or creates a current obligation. Missing later evidence establishes neither resolution nor non-resolution; such a claim is NEUTRAL without support for its stated time and status.",
+    "Advice or a recommendation does not excuse an unsupported factual premise. Separate what someone could do from claims that they still must act or that a condition will persist until they act; unsupported premises make the compound claim NEUTRAL.",
     "A quote that merely mentions the claim's topic is NEUTRAL.",
     "A quote showing a request, estimate, application, or intention where the claim asserts possession or completion is NEUTRAL.",
     "First- or second-person language supports a claim about a named person only when the quote itself identifies that person as the speaker or addressee; a bare ‘I’ or ‘you’ is otherwise NEUTRAL.",
     'A claim whose exhaustive or negative scope ("only", "no", "none", "never", "nothing else", "all") is not itself established by the quote is NEUTRAL — a quote listing what IS included does not license an "only" or "nothing else" claim about what it does not show.',
     "CONTRADICTION only if the quote establishes the claim is false.",
+    "",
+    `Evidence quote: ${input.evidence}`,
+    `Claim: ${input.claim}`,
   ].join("\n");
 }
 
@@ -150,7 +178,7 @@ export interface EntailmentCompleter {
   readonly modelId: string;
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number },
+    opts?: { maxTokens?: number; temperature?: number; signal?: AbortSignal },
   ): Promise<HttpCompletion>;
   dispose(): Promise<void> | void;
 }
@@ -159,9 +187,20 @@ export interface LlmJudgeEntailmentVerifierDeps {
   completer: EntailmentCompleter;
   /** Read live per call so a config change takes effect without a reload. */
   getPromptStyle: () => EntailmentPromptStyle;
-  /** Cost-accounting sink; fired once per verify call with the decoded usage (zeros when the transport reports none). */
+  /** Cost-accounting sink; fired for each completed inference attempt with the decoded usage (zeros when the transport reports none). */
   recordUsage?: (usage: EntailmentUsage) => void;
 }
+
+/** Repair for spans that left claim words uncovered; none when every word is covered. */
+function uncoveredWordsRepair(missing: readonly string[]): string | undefined {
+  return missing.length
+    ? `A prior response left these words of the claim outside every assertion's spans: ${missing.map((word) => JSON.stringify(word)).join(", ")}. Decompose the unchanged claim again so the spans together cover each of them, and reassess every assertion from the unchanged input below; do not preserve any prior verdict.`
+    : undefined;
+}
+
+/** Repair for a supported verdict whose evidence quotes are missing or not authorized witnesses. */
+const WITNESS_REPAIR =
+  "A prior response gave a supported verdict whose evidenceQuotes were missing or were not exact authorized witnesses. For selected_quote frames only selectedQuotes are witnesses; whole_source authorizes its actual source fields; verifiedReferences authorize their text. Surrounding text, titles, metadata, framing and the proposed claim are never witnesses. Reassess every assertion and the placement from the unchanged input below: quote only exact substrings of authorized witnesses, character for character, and return unsupported wherever no authorized witness states it. Do not preserve any prior verdict.";
 
 /**
  * EntailCapability over a text completer: render the configured prompt style,
@@ -172,25 +211,133 @@ export interface LlmJudgeEntailmentVerifierDeps {
 export class LlmJudgeEntailmentVerifier implements EntailCapability {
   constructor(private readonly deps: LlmJudgeEntailmentVerifierDeps) {}
 
-  async verify(input: { claim: string; evidence: string }): Promise<EntailVerdict> {
+  async verify(input: {
+    claim: string;
+    evidence: string;
+    context?: string;
+    assessment?: "annotation_atomic" | "answer_segments";
+    signal?: AbortSignal;
+  }): Promise<EntailVerdict> {
+    input.signal?.throwIfAborted();
+    const { claim, evidence, context } = input;
     const style = this.deps.getPromptStyle();
-    const prompt = style === "minicheck" ? minicheckPrompt(input) : judgePrompt(input);
-    const { text, usage } = await this.deps.completer.complete(prompt, {
-      maxTokens: VERDICT_MAX_TOKENS,
-      temperature: 0,
-    });
-    this.deps.recordUsage?.({
-      promptTokens: usage?.promptTokens ?? 0,
-      completionTokens: usage?.completionTokens ?? 0,
-      modelId: this.deps.completer.modelId,
-    });
-    const label = style === "minicheck" ? parseMinicheckLabel(text) : parseJudgeLabel(text);
-    if (label === null) {
+    const atomic = input.assessment === "annotation_atomic";
+    const answer = input.assessment === "answer_segments";
+    const contextual = input.context !== undefined || atomic || answer;
+    if (contextual && Buffer.byteLength(input.evidence) > CONTEXTUAL_EVIDENCE_MAX_BYTES)
+      throw new Error(
+        "Contextual verifier evidence exceeds its bounded input budget; verification unavailable",
+      );
+    if (contextual && style === "minicheck") {
+      throw new Error(
+        "MiniCheck cannot verify interpretation context; contextual verifier unavailable",
+      );
+    }
+    const answerRequest = answer
+      ? prepareAnswerWitnessRequest({ claim, evidence, context })
+      : undefined;
+    const contextualRequest =
+      contextual && !answer && !atomic
+        ? prepareContextualWitnessRequest({ claim, evidence, context: context! })
+        : undefined;
+    const prompt = answerRequest
+      ? answerRequest.prompt
+      : atomic
+        ? annotationEntailmentPrompt({ claim, evidence, context })
+        : contextual
+          ? contextualRequest!.prompt
+          : style === "minicheck"
+            ? minicheckPrompt(input)
+            : judgePrompt(input);
+    let attemptPrompt = prompt;
+    for (let attempt = 0; ; attempt++) {
+      input.signal?.throwIfAborted();
+      const { text, usage } = await this.deps.completer.complete(attemptPrompt, {
+        maxTokens: atomic
+          ? ANNOTATION_VERDICT_MAX_TOKENS
+          : contextual
+            ? CONTEXTUAL_VERDICT_MAX_TOKENS
+            : VERDICT_MAX_TOKENS,
+        temperature: 0,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      // Completed inference is billed even when cancellation arrived in flight.
+      this.deps.recordUsage?.({
+        promptTokens: usage?.promptTokens ?? 0,
+        completionTokens: usage?.completionTokens ?? 0,
+        modelId: this.deps.completer.modelId,
+        ...(usage?.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+        ...(usage?.cacheCreationTokens !== undefined
+          ? { cacheCreationTokens: usage.cacheCreationTokens }
+          : {}),
+      });
+      input.signal?.throwIfAborted();
+      const annotation = atomic ? assessAnnotationEntailment(text, claim, evidence) : undefined;
+      const label = answerRequest
+        ? parseAnswerWitnessVerdict(text, answerRequest)
+        : atomic
+          ? annotation && "label" in annotation
+            ? annotation.label
+            : null
+          : contextual
+            ? parseContextualWitnessVerdict(text, contextualRequest!)
+            : style === "minicheck"
+              ? parseMinicheckLabel(text)
+              : parseJudgeLabel(text);
+      if (label !== null) return { label, raw: text.trim() };
+      if (annotation && "failure" in annotation) {
+        // Atomic annotations get one repair call for a gap the engine can name
+        // exactly: claim words the spans left uncovered, or a supported verdict
+        // whose quotes are not authorized witnesses. The repaired response is
+        // held to the same checks; any other malformed output stays unverified.
+        const repair =
+          attempt !== 0
+            ? undefined
+            : annotation.failure === "coverage"
+              ? uncoveredWordsRepair(uncoveredClaimWords(text, claim))
+              : annotation.failure === "witness_outside_authority" ||
+                  annotation.failure === "positive_witness_missing"
+                ? WITNESS_REPAIR
+                : undefined;
+        if (repair) {
+          attemptPrompt = [repair, prompt].join("\n\n");
+          continue;
+        }
+        throw new AnnotationAssessmentError(
+          annotation.failure,
+          this.deps.completer.modelId,
+          annotation.witnessMiss,
+        );
+      }
+      if (contextual) {
+        const category = answerRequest
+          ? "assessment_schema"
+          : contextualWitnessFailure(text, contextualRequest!);
+        if (attempt === 0) {
+          // A protocol failure is not a semantic verdict. Rejudge the identical
+          // input once; never salvage invalid witnesses or ask to retain a label.
+          attemptPrompt = [
+            `A prior response failed protocol validation (${category}). Re-evaluate both assessments from the unchanged input below; do not preserve any prior verdict.`,
+            answerRequest || contextualRequest
+              ? "Return the exact request witnessSet and required JSON schema. Positive evidenceSegments must name only supplied authorized IDs, interpreted with all surrounding qualifications. Never invent IDs or preserve the previous verdict. If support is absent return unsupported."
+              : "Return the required JSON schema. Positive evidenceQuotes must be exact authorized source witnesses: selected_quote permits only selectedQuotes; whole_source permits its authorized source fields. Framing, limitations, interpretation constraints, instructions and candidate prose are not factual witnesses. If support is absent, return unsupported rather than inventing or rewriting a quote.",
+            prompt,
+          ].join("\n\n");
+          input.signal?.throwIfAborted();
+          continue;
+        }
+        throw new ContextualAssessmentError(
+          category,
+          this.deps.completer.modelId,
+          category === "assessment_schema" && contextualRequest
+            ? contextualSchemaIssues(text, contextualRequest)
+            : [],
+        );
+      }
       throw new Error(
         `entailment verifier returned no parseable ${style === "minicheck" ? "Yes/No" : "label"} (model=${this.deps.completer.modelId}, ${text.length} chars)`,
       );
     }
-    return { label, raw: text.trim() };
   }
 
   dispose(): Promise<void> | void {
@@ -230,12 +377,24 @@ function anthropicEntailmentCompleter(modelId: string, apiKey: string): Entailme
         messages: [{ role: "user" as const, content: prompt }],
       };
       const response = await sampling.send(opts?.temperature ?? 0, (temperature) =>
-        client.messages.create(temperature === undefined ? request : { ...request, temperature }),
+        client.messages.create(
+          temperature === undefined ? request : { ...request, temperature },
+          opts?.signal ? { signal: opts.signal } : undefined,
+        ),
       );
       return {
         text: responseText(response),
         usage: {
-          promptTokens: response.usage.input_tokens,
+          promptTokens:
+            response.usage.input_tokens +
+            (response.usage.cache_read_input_tokens ?? 0) +
+            (response.usage.cache_creation_input_tokens ?? 0),
+          ...(response.usage.cache_read_input_tokens != null
+            ? { cacheReadTokens: response.usage.cache_read_input_tokens }
+            : {}),
+          ...(response.usage.cache_creation_input_tokens != null
+            ? { cacheCreationTokens: response.usage.cache_creation_input_tokens }
+            : {}),
           completionTokens: response.usage.output_tokens,
         },
       };
@@ -340,10 +499,10 @@ export async function loadEntailmentFromResolved(
     case "codex":
     case "claude-code": {
       const completer = loadCompletionFromResolved(resolved, deps);
-      if (!completer) return null;
+      if (!(completer instanceof AgentTurnCompleter)) return null;
       return build({
         modelId: completer.modelId,
-        complete: (prompt, opts) => completer.completeWithUsage!(prompt, opts),
+        complete: (prompt, opts) => completer.completeWithUsageSettled(prompt, opts),
         dispose: () => completer.dispose(),
       });
     }

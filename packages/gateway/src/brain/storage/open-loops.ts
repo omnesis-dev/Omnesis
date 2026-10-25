@@ -3,8 +3,8 @@
 
 /**
  * Open-loop repository — CRUD over `open_loops` + `open_loop_docs` +
- * `open_loop_ledger`, the loop-deletion invariant, and the privacy-delete
- * cascade.
+ * `open_loop_ledger`, the loop-deletion invariant, and what a source
+ * deletion does to the loops built on it.
  *
  * Same conventions as the other `data/repositories` modules: plain
  * functions over a better-sqlite3 handle, mutations take an explicit
@@ -14,25 +14,39 @@
  * Two deletion rules live here:
  *
  *  - **Deletion invariant** (engine-enforced, not agent discretion):
- *    deleting a loop by any path deletes its attached NON-terminal
- *    briefs, so a showable brief's `related_loop_ids` never dangle.
- *    Terminal-dismissed briefs are never shown again, so they survive
- *    with the edge removed.
+ *    deleting a loop by any path deletes its attached OPEN observations,
+ *    so an observation awaiting the morning brief never names a missing
+ *    loop. Closed observations survive with the edge removed.
  *
- *  - **Privacy-delete cascade**: privacy-deleting a source document
- *    deletes every loop and brief derived from it (conservative: any
- *    loop whose `docs[]` — and any brief whose `citations[]` — contains
- *    the deleted document, plus ALL briefs attached to a cascaded loop,
- *    terminal included; derived agent text may embed the source
- *    content). The caller (the document privacy-delete path) then
- *    deletes the loops' mirrored corpus documents by external id.
+ *  - **Source deletion**: deleting a source document never deletes a loop.
+ *    The loop loses its pointer to the document, records the deletion in
+ *    its ledger and is queued for review (`reviewOpenLoopsForDeletedDocs`);
+ *    only a reviewed decision may then close or delete it.
  */
 
-import { deleteBriefsAttachedToLoops, findActiveBriefsForLoops } from "./briefs.js";
+import {
+  isKnowledgeOwnerReadable,
+  knowledgeOwnerReadPredicate,
+} from "../knowledge/storage-fence.js";
+import {
+  deleteObservationsAttachedToLoops,
+  deleteObservationsCitingDocs,
+  findOpenObservationsForLoops,
+} from "./observations.js";
 import { bumpCognitionDecayDirty } from "./engine-state.js";
+import { deleteInterestSignalsFor } from "./interest.js";
 import { retireLoop } from "./retired-loops.js";
 import type Database from "better-sqlite3";
-import type { OpenLoopLedgerEntry, OpenLoopRow, OpenLoopState } from "./types.js";
+import type {
+  TaskSnapshot,
+  OpenLoopLedgerEntry,
+  OpenLoopRow,
+  OpenLoopState,
+  ProposedTaskChange,
+  TaskEvent,
+  TaskOrigin,
+  TaskSchedule,
+} from "./types.js";
 
 type Db = Database.Database;
 
@@ -52,6 +66,13 @@ interface OpenLoopDbRow {
   last_update: number;
   last_decay_check: number | null;
   decay_check_count: number;
+  origin: string;
+  accepted: number;
+  ignored: number;
+  scheduled_for: string | null;
+  proposed_change_json: string | null;
+  completion_note: string | null;
+  resolved_at: number | null;
 }
 
 function rowToOpenLoop(r: OpenLoopDbRow, docs: string[]): OpenLoopRow {
@@ -72,6 +93,16 @@ function rowToOpenLoop(r: OpenLoopDbRow, docs: string[]): OpenLoopRow {
     lastUpdate: r.last_update,
     lastDecayCheck: r.last_decay_check,
     decayCheckCount: r.decay_check_count,
+    origin: r.origin as TaskOrigin,
+    accepted: r.accepted === 1,
+    ignored: r.ignored === 1,
+    scheduledFor: r.scheduled_for,
+    proposedChange:
+      r.proposed_change_json === null
+        ? null
+        : (JSON.parse(r.proposed_change_json) as ProposedTaskChange),
+    completionNote: r.completion_note,
+    resolvedAt: r.resolved_at,
   };
 }
 
@@ -122,6 +153,7 @@ export interface LoopPeople {
 }
 
 export function loopPeople(db: Db, loopId: string): LoopPeople {
+  if (!isKnowledgeOwnerReadable(db, loopId)) return { actors: [], involved: [] };
   const rows = db
     .prepare<
       [string],
@@ -147,15 +179,27 @@ export interface CreateOpenLoopInput {
   involved?: string[];
   docs?: string[];
   blockedBy?: string[];
+  /** Defaults to `brain`: a suggestion until the user accepts it. */
+  origin?: TaskOrigin;
+  scheduledFor?: TaskSchedule | null;
+  /**
+   * The interest gate's enforced verdict on a Brain suggestion: `adopt` makes
+   * it the user's task at once, `withhold` keeps it out of the Tasks views.
+   * Either is recorded as an undoable ledger event whose `before` is the
+   * plain suggestion the user would otherwise have seen.
+   */
+  proposal?: { tier: "adopt" | "withhold"; note: string };
 }
 
 export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number): OpenLoopRow {
+  const origin = input.origin ?? "brain";
+  const proposal = origin === "brain" ? input.proposal : undefined;
   db.prepare<unknown[]>(
     `INSERT INTO open_loops (
        id, created_by_run, state, confidence, importance, title, description,
        deadline_json, actors_json, involved_json, blocked_by_json,
-       created_at, last_update
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       created_at, last_update, origin, accepted, scheduled_for
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.createdByRun,
@@ -170,16 +214,59 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
     JSON.stringify(input.blockedBy ?? []),
     now,
     now,
+    origin,
+    origin === "brain" ? 0 : 1,
+    input.scheduledFor ?? null,
   );
   replaceLoopDocs(db, input.id, input.docs ?? []);
   replaceLoopPeople(db, input.id, input.actors ?? [], input.involved ?? []);
   bumpCognitionDecayDirty(db);
+  if (proposal) {
+    const suggestion = getOpenLoop(db, input.id);
+    if (!suggestion) throw new Error(`open loop ${input.id} vanished mid-create`);
+    updateOpenLoop(
+      db,
+      input.id,
+      proposal.tier === "adopt" ? { accepted: true, ignored: false } : { ignored: true },
+      now,
+    );
+    appendOpenLoopLedger(
+      db,
+      input.id,
+      {
+        runId: input.createdByRun,
+        note: proposal.note,
+        event: {
+          kind: proposal.tier === "adopt" ? "auto_accepted" : "withheld",
+          surface: "brain",
+          before: taskSnapshot(suggestion),
+        },
+      },
+      now,
+    );
+  }
   const created = getOpenLoop(db, input.id);
   if (!created) throw new Error(`open loop ${input.id} vanished mid-create`);
   return created;
 }
 
+/** The task fields a change can touch, as a ledger event records them before the change. */
+export function taskSnapshot(loop: OpenLoopRow): TaskSnapshot {
+  return {
+    state: loop.state,
+    title: loop.title,
+    description: loop.description,
+    deadline: loop.deadline,
+    scheduledFor: loop.scheduledFor,
+    accepted: loop.accepted,
+    ignored: loop.ignored,
+    completionNote: loop.completionNote,
+    proposedChange: loop.proposedChange,
+  };
+}
+
 export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
+  if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db.prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?").get(id);
   if (!row) return null;
   return rowToOpenLoop(row, loopDocs(db, id));
@@ -193,6 +280,7 @@ export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
  * would do.
  */
 export function getActiveLoopTitle(db: Db, id: string): string | null {
+  if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db
     .prepare<
       [string],
@@ -257,23 +345,22 @@ export function listLoopsForPerson(db: Db, personId: string): OpenLoopRow[] {
 }
 
 /**
- * Active (open | snoozed) loops the Cognition Steward grouped with `loopId` onto a
- * shared feed card that is *still live* — a curated "related work" cluster.
- * The grouping is only honored through a brief that would still (re)appear on
- * the feed ({@link findActiveBriefsForLoops}); a dismissed or expired card no
- * longer relates its loops. Bounded (a brief relates few loops), excludes the
- * loop itself, most-recently-updated first. `now` scopes brief relevance.
+ * Active (open | snoozed) loops an agent grouped with `loopId` through an
+ * observation still awaiting the morning brief — a curated "related work"
+ * cluster. A shipped or dropped observation no longer relates its loops.
+ * Bounded (an observation relates few loops), excludes the loop itself,
+ * most-recently-updated first.
  */
-export function listRelatedLoops(db: Db, loopId: string, now: number): OpenLoopRow[] {
-  const briefIds = findActiveBriefsForLoops(db, [loopId], now).map((b) => b.id);
-  if (briefIds.length === 0) return [];
-  const placeholders = briefIds.map(() => "?").join(",");
+export function listRelatedLoops(db: Db, loopId: string): OpenLoopRow[] {
+  const observationIds = findOpenObservationsForLoops(db, [loopId]).map((o) => o.id);
+  if (observationIds.length === 0) return [];
+  const placeholders = observationIds.map(() => "?").join(",");
   const ids = db
     .prepare<[...string[], string], { loop_id: string }>(
-      `SELECT DISTINCT loop_id FROM brief_related_loops
-        WHERE brief_id IN (${placeholders}) AND loop_id != ?`,
+      `SELECT DISTINCT loop_id FROM observation_related_loops
+        WHERE observation_id IN (${placeholders}) AND loop_id != ?`,
     )
-    .all(...briefIds, loopId)
+    .all(...observationIds, loopId)
     .map((r) => r.loop_id);
   const loops: OpenLoopRow[] = [];
   for (const id of ids) {
@@ -298,7 +385,7 @@ export interface ListOpenLoopsOptions {
    * low-importance loop is what gets dropped at the limit, never a stale-but-
    * important one.
    */
-  orderBy?: "recency" | "importance";
+  orderBy?: "recency" | "importance" | "importance-stable";
 }
 
 const ACTIVE_LOOP_PAGE_STATES: readonly OpenLoopState[] = ["open", "snoozed"];
@@ -357,8 +444,8 @@ export function searchOpenLoopsLexical(
   params.push(options.limit ?? 8);
   const rows = db
     .prepare<(string | number)[], OpenLoopDbRow>(
-      `SELECT * FROM (SELECT *, (${tokenCase}) AS matched_tokens FROM open_loops)
-        WHERE matched_tokens > 0
+      `SELECT * FROM (SELECT *, (${tokenCase}) AS matched_tokens FROM open_loops) candidates
+        WHERE matched_tokens > 0 AND ${knowledgeOwnerReadPredicate(db, "candidates.id")}
         ORDER BY matched_tokens DESC, last_update DESC LIMIT ?`,
     )
     .all(...params);
@@ -367,9 +454,10 @@ export function searchOpenLoopsLexical(
 
 /** Loops ordered by most-recently-updated first. */
 export function listOpenLoops(db: Db, options: ListOpenLoopsOptions = {}): OpenLoopRow[] {
-  const conditions: string[] = [];
+  const conditions: string[] = [knowledgeOwnerReadPredicate(db, "open_loops.id")];
   const params: (string | number)[] = [];
-  const importanceOrder = options.orderBy === "importance";
+  const importanceOrder =
+    options.orderBy === "importance" || options.orderBy === "importance-stable";
   let pageIndex = importanceOrder ? "idx_open_loops_importance_page" : "idx_open_loops_update_page";
   if (options.states && options.states.length > 0) {
     if (hasExactlyStates(options.states, ACTIVE_LOOP_PAGE_STATES)) {
@@ -407,9 +495,12 @@ export function listOpenLoops(db: Db, options: ListOpenLoopsOptions = {}): OpenL
     );
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const orderBy = importanceOrder
-    ? "importance DESC, last_update DESC, id DESC"
-    : "last_update DESC, id DESC";
+  const orderBy =
+    options.orderBy === "importance-stable"
+      ? "importance DESC, id DESC"
+      : importanceOrder
+        ? "importance DESC, last_update DESC, id DESC"
+        : "last_update DESC, id DESC";
   params.push(options.limit ?? 100);
   const rows = db
     .prepare<(string | number)[], OpenLoopDbRow>(
@@ -443,6 +534,11 @@ export interface UpdateOpenLoopInput {
   docs?: string[];
   blockedBy?: string[];
   lastDecayCheck?: number;
+  accepted?: boolean;
+  ignored?: boolean;
+  scheduledFor?: TaskSchedule | null;
+  proposedChange?: ProposedTaskChange | null;
+  completionNote?: string | null;
 }
 
 /**
@@ -492,6 +588,15 @@ export function updateOpenLoop(
   if (existing.state === "open" && (input.state === "done" || input.state === "dismissed")) {
     retireLoop(db, rowToOpenLoop(existing, loopDocs(db, id)), input.state, now);
   }
+  // A resolved loop that comes back (reopened, or its resolution undone) is
+  // live again: its retirement trace would otherwise read as a settled
+  // occurrence and count toward its own recurrence.
+  if (
+    (existing.state === "done" || existing.state === "dismissed") &&
+    (input.state === "open" || input.state === "snoozed")
+  ) {
+    db.prepare<[string]>("DELETE FROM retired_loops WHERE id = ?").run(id);
+  }
 
   const sets: string[] = ["last_update = ?"];
   const params: (string | number | null)[] = [now];
@@ -516,6 +621,17 @@ export function updateOpenLoop(
   if (input.involved !== undefined) push("involved_json", JSON.stringify(input.involved));
   if (input.blockedBy !== undefined) push("blocked_by_json", JSON.stringify(input.blockedBy));
   if (input.lastDecayCheck !== undefined) push("last_decay_check", input.lastDecayCheck);
+  if (input.accepted !== undefined) push("accepted", input.accepted ? 1 : 0);
+  if (input.ignored !== undefined) push("ignored", input.ignored ? 1 : 0);
+  if (input.scheduledFor !== undefined) push("scheduled_for", input.scheduledFor);
+  if (input.proposedChange !== undefined)
+    push(
+      "proposed_change_json",
+      input.proposedChange === null ? null : JSON.stringify(input.proposedChange),
+    );
+  if (input.completionNote !== undefined) push("completion_note", input.completionNote);
+  if (input.state !== undefined && input.state !== existing.state)
+    push("resolved_at", input.state === "done" || input.state === "dismissed" ? now : null);
 
   params.push(id);
   db.prepare<(string | number | null)[]>(
@@ -542,12 +658,17 @@ export function updateOpenLoop(
 export function appendOpenLoopLedger(
   db: Db,
   loopId: string,
-  entry: { runId: string; note: string },
+  entry: { runId: string; note: string; event?: TaskEvent },
   now: number,
-): void {
-  db.prepare<[string, string, number, string]>(
-    "INSERT INTO open_loop_ledger (loop_id, run_id, at, note) VALUES (?, ?, ?, ?)",
-  ).run(loopId, entry.runId, now, entry.note);
+): number {
+  const seq = Number(
+    db
+      .prepare<
+        [string, string, number, string, string | null]
+      >("INSERT INTO open_loop_ledger (loop_id, run_id, at, note, event_json) VALUES (?, ?, ?, ?, ?)")
+      .run(loopId, entry.runId, now, entry.note, entry.event ? JSON.stringify(entry.event) : null)
+      .lastInsertRowid,
+  );
   // A ledger append bumps `last_update` (the loop was touched) but must NOT
   // reset the decay back-off counter. A decay-check KEEP records its
   // investigation notes through this path before stamping the verdict with
@@ -560,6 +681,7 @@ export function appendOpenLoopLedger(
     loopId,
   );
   bumpCognitionDecayDirty(db);
+  return seq;
 }
 
 /** Ledger entries oldest → newest. */
@@ -568,6 +690,7 @@ export function listOpenLoopLedger(
   loopId: string,
   options: { limit?: number; beforeSeq?: number; order?: "asc" | "desc" } = {},
 ): OpenLoopLedgerEntry[] {
+  if (!isKnowledgeOwnerReadable(db, loopId)) return [];
   const order = options.order === "desc" ? "DESC" : "ASC";
   const comparator = order === "DESC" ? "<" : ">";
   const cursor = options.beforeSeq === undefined ? "" : `AND seq ${comparator} ?`;
@@ -578,21 +701,35 @@ export function listOpenLoopLedger(
   return db
     .prepare<
       (string | number)[],
-      { seq: number; loop_id: string; run_id: string; at: number; note: string }
+      {
+        seq: number;
+        loop_id: string;
+        run_id: string;
+        at: number;
+        note: string;
+        event_json: string | null;
+      }
     >(
       `SELECT * FROM open_loop_ledger
         WHERE loop_id = ? ${cursor}
         ORDER BY seq ${order} ${limit}`,
     )
     .all(...params)
-    .map((r) => ({ seq: r.seq, loopId: r.loop_id, runId: r.run_id, at: r.at, note: r.note }));
+    .map((r) => ({
+      seq: r.seq,
+      loopId: r.loop_id,
+      runId: r.run_id,
+      at: r.at,
+      note: r.note,
+      event: r.event_json ? (JSON.parse(r.event_json) as TaskEvent) : null,
+    }));
 }
 
 export interface DeleteOpenLoopResult {
   /** False when the loop didn't exist. */
   deleted: boolean;
-  /** Ids of attached non-terminal briefs deleted by the invariant. */
-  deletedBriefIds: string[];
+  /** Ids of attached open observations deleted by the invariant. */
+  deletedObservationIds: string[];
 }
 
 /**
@@ -600,8 +737,7 @@ export interface DeleteOpenLoopResult {
  *
  * `retire` records a consolidation trace before the delete — the write-gated
  * `open_loop_delete` path sets it so an agent-issued delete leaves a
- * recurrence trace; direct/internal deletes (and the privacy cascade, which
- * has its own path) do not. `now` (unix ms) timestamps that trace; a retiring
+ * recurrence trace; direct/internal deletes do not. `now` (unix ms) timestamps that trace; a retiring
  * caller passes its cognition clock, so the trace — and the cadence arithmetic
  * keyed off `retired_at` — holds under an injected clock. The wall-clock
  * default exists for the trace-free internal paths only.
@@ -612,8 +748,8 @@ export interface DeleteOpenLoopOptions {
 }
 
 /**
- * Delete a loop, enforcing the deletion invariant: attached non-terminal
- * briefs are deleted with it; terminal-dismissed briefs survive with the
+ * Delete a loop, enforcing the deletion invariant: attached open
+ * observations are deleted with it; closed observations survive with the
  * edge removed. Ledger and doc-edge rows go via FK cascade.
  *
  * With `{ retire: true }`, a consolidation trace is appended BEFORE the
@@ -630,43 +766,47 @@ export function deleteOpenLoop(
   id: string,
   opts: DeleteOpenLoopOptions = {},
 ): DeleteOpenLoopResult {
-  const existing = db
-    .prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?")
-    .get(id);
-  if (!existing) return { deleted: false, deletedBriefIds: [] };
-  if (opts.retire) {
-    const outcome = existing.decay_check_count > 0 ? "decayed" : "deleted";
-    retireLoop(db, rowToOpenLoop(existing, loopDocs(db, id)), outcome, opts.now ?? Date.now());
-  }
-  const deletedBriefIds = deleteBriefsAttachedToLoops(db, [id], { includeTerminal: false });
-  db.prepare<[string]>("DELETE FROM open_loops WHERE id = ?").run(id);
-  bumpCognitionDecayDirty(db);
-  return { deleted: true, deletedBriefIds };
+  const knowledgeRetirement = !!db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_owner_retire_guard'",
+    )
+    .get();
+  return db.transaction(() => {
+    const existing = db
+      .prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?")
+      .get(id);
+    if (!existing) return { deleted: false, deletedObservationIds: [] };
+    if (opts.retire && knowledgeRetirement) {
+      db.prepare("INSERT OR IGNORE INTO knowledge_owner_retire_guard(owner_id) VALUES(?)").run(id);
+      db.prepare(
+        "INSERT OR IGNORE INTO knowledge_retired_loop_sources(loop_id,document_id) SELECT loop_id,doc_id FROM open_loop_docs WHERE loop_id=?",
+      ).run(id);
+    }
+    if (opts.retire) {
+      const outcome = existing.decay_check_count > 0 ? "decayed" : "deleted";
+      retireLoop(db, rowToOpenLoop(existing, loopDocs(db, id)), outcome, opts.now ?? Date.now());
+    }
+    const deletedObservationIds = deleteObservationsAttachedToLoops(db, [id], {
+      includeClosed: false,
+    });
+    db.prepare<[string]>("DELETE FROM observation_related_loops WHERE loop_id = ?").run(id);
+    // A retired loop's reactions stay as history; a purged one takes them along.
+    if (!opts.retire) deleteInterestSignalsFor(db, { loopId: id });
+    db.prepare<[string]>("DELETE FROM open_loops WHERE id = ?").run(id);
+    if (knowledgeRetirement)
+      db.prepare("DELETE FROM knowledge_owner_retire_guard WHERE owner_id=?").run(id);
+    bumpCognitionDecayDirty(db);
+    return { deleted: true, deletedObservationIds };
+  })();
 }
 
 export interface OpenLoopPrivacyCascadeResult {
   /** Loops deleted because their docs[] contained a deleted document. */
   deletedLoopIds: string[];
-  /** Briefs deleted (cited a deleted document, or attached to a deleted loop). */
-  deletedBriefIds: string[];
+  /** Observations deleted (cited a deleted document, or attached to a deleted loop). */
+  deletedObservationIds: string[];
 }
 
-/**
- * Privacy-delete cascade. Given the internal ids of privacy-deleted
- * corpus documents, deletes every derived loop and brief. The caller
- * must then delete the cascaded loops' mirrored corpus documents (the
- * returned `deletedLoopIds` are their external ids) and cascade the
- * search index for them.
- *
- * All-states deletion here (terminal briefs included): a privacy delete
- * is about purging derived content, not feed behavior.
- *
- * **Privacy invariant:** this path NEVER writes a `retired_loops`
- * consolidation trace. A retirement trace snapshots the loop's title and
- * description — derived content a privacy delete exists to purge — so leaving
- * one behind would leak exactly what was deleted. The direct `DELETE` below
- * (never `deleteOpenLoop`, which can retire) keeps that guarantee structural.
- */
 /**
  * Whether any open loop exists — the cheap guard the delete cascade reads so
  * an install that never enabled the Brain pays nothing for the check.
@@ -677,47 +817,74 @@ export function hasAnyOpenLoops(db: Db): boolean {
   );
 }
 
-/** Loop identities remain readable until the loop cascade commits. */
-export function listLoopIdsCitingDocs(db: Db, documentIds: readonly string[]): string[] {
-  if (documentIds.length === 0) return [];
-  return db
+/** The ledger run id that marks an entry the gateway wrote for a source deletion. */
+export const SOURCE_DELETION_LEDGER_RUN_ID = "source-deletion";
+
+/**
+ * Source documents were deleted: every loop citing one is kept, exactly as it
+ * stands in the journal. Only the pointer to the deleted document is removed
+ * (it can never be read again), and a ledger entry records which document went
+ * so the review that follows knows what changed. The entry does not move the
+ * loop's `last_update`: nothing the owner did or the world reported touched it.
+ * Returns the ids of the loops that lost a document. Idempotent: a repeated
+ * call finds no pointer left to remove.
+ */
+export function reviewOpenLoopsForDeletedDocs(
+  db: Db,
+  deletedDocIds: readonly string[],
+  now: number,
+): string[] {
+  if (deletedDocIds.length === 0) return [];
+  const rows = db
+    .prepare<[string], { loop_id: string; doc_id: string }>(
+      `SELECT loop_id, doc_id FROM open_loop_docs
+        WHERE doc_id IN (SELECT value FROM json_each(?)) ORDER BY loop_id, doc_id`,
+    )
+    .all(JSON.stringify(deletedDocIds));
+  if (rows.length === 0) return [];
+  const unlink = db.prepare<[string, string]>(
+    "DELETE FROM open_loop_docs WHERE loop_id = ? AND doc_id = ?",
+  );
+  const note = db.prepare<[string, string, number, string]>(
+    "INSERT INTO open_loop_ledger (loop_id, run_id, at, note) VALUES (?, ?, ?, ?)",
+  );
+  for (const row of rows) {
+    unlink.run(row.loop_id, row.doc_id);
+    note.run(
+      row.loop_id,
+      SOURCE_DELETION_LEDGER_RUN_ID,
+      now,
+      `Source document ${row.doc_id} was deleted. The loop is kept and queued for review.`,
+    );
+  }
+  return [...new Set(rows.map((row) => row.loop_id))];
+}
+
+/**
+ * Delete every loop citing one of `deletedDocIds`, with the observations
+ * citing them or attached to those loops. Only the historical
+ * retired-web-documents migration uses this; a live source deletion never
+ * deletes a loop (see {@link reviewOpenLoopsForDeletedDocs}). The caller
+ * deletes the loops' mirrored corpus documents (the returned `deletedLoopIds`
+ * are their external ids). It never writes a `retired_loops` trace.
+ */
+export function cascadeOpenLoopPrivacyDelete(
+  db: Db,
+  deletedDocIds: readonly string[],
+): OpenLoopPrivacyCascadeResult {
+  if (deletedDocIds.length === 0) return { deletedLoopIds: [], deletedObservationIds: [] };
+
+  const loopIds = db
     .prepare<[string], { loop_id: string }>(
       `SELECT DISTINCT loop_id FROM open_loop_docs
        WHERE doc_id IN (SELECT value FROM json_each(?))`,
     )
-    .all(JSON.stringify(documentIds))
+    .all(JSON.stringify(deletedDocIds))
     .map((row) => row.loop_id);
-}
-
-export function cascadeOpenLoopPrivacyDelete(
-  db: Db,
-  deletedDocIds: readonly string[],
-  knownLoopIds?: readonly string[],
-): OpenLoopPrivacyCascadeResult {
-  if (deletedDocIds.length === 0) return { deletedLoopIds: [], deletedBriefIds: [] };
-
-  const placeholders = deletedDocIds.map(() => "?").join(", ");
-  const loopIds = knownLoopIds ? [...knownLoopIds] : listLoopIdsCitingDocs(db, deletedDocIds);
-
-  const briefIdSet = new Set<string>();
-  // Briefs directly citing a deleted document.
-  for (const r of db
-    .prepare<
-      string[],
-      { brief_id: string }
-    >(`SELECT DISTINCT brief_id FROM brief_citations WHERE doc_id IN (${placeholders})`)
-    .all(...deletedDocIds)) {
-    briefIdSet.add(r.brief_id);
-  }
-  // Briefs attached to a cascaded loop (terminal included).
+  const observationIds = new Set(deleteObservationsCitingDocs(db, deletedDocIds));
   if (loopIds.length > 0) {
-    for (const id of deleteBriefsAttachedToLoops(db, loopIds, { includeTerminal: true })) {
-      briefIdSet.add(id);
-    }
-  }
-  // Delete the directly-citing briefs (the attached ones are already gone).
-  for (const briefId of briefIdSet) {
-    db.prepare<[string]>("DELETE FROM briefs WHERE id = ?").run(briefId);
+    for (const id of deleteObservationsAttachedToLoops(db, loopIds, { includeClosed: true }))
+      observationIds.add(id);
   }
   if (loopIds.length > 0) {
     const loopPlaceholders = loopIds.map(() => "?").join(", ");
@@ -726,7 +893,7 @@ export function cascadeOpenLoopPrivacyDelete(
     );
     bumpCognitionDecayDirty(db);
   }
-  return { deletedLoopIds: loopIds, deletedBriefIds: [...briefIdSet] };
+  return { deletedLoopIds: loopIds, deletedObservationIds: [...observationIds] };
 }
 
 /**
@@ -734,7 +901,8 @@ export function cascadeOpenLoopPrivacyDelete(
  * scheduling computation needs. Snoozed / done / dismissed loops are
  * deliberately excluded — decay exists to retire loops going stale
  * without the user's attention; a non-open state was itself a deliberate
- * verdict.
+ * verdict. The user's own tasks never decay: they stay until the user
+ * completes, moves or strikes them.
  */
 export interface DecayCandidateLoop {
   id: string;
@@ -761,7 +929,8 @@ export function listDecayCandidateLoops(db: Db): DecayCandidateLoop[] {
       }
     >(
       `SELECT id, last_update, last_decay_check, decay_check_count, importance, deadline_json
-       FROM open_loops WHERE state = 'open' ORDER BY last_update ASC`,
+       FROM open_loops WHERE state = 'open' AND origin = 'brain' AND accepted = 0
+       ORDER BY last_update ASC`,
     )
     .all()
     .map((r) => ({

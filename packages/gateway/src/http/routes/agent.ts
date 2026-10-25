@@ -36,7 +36,7 @@ import { z } from "zod";
 import { UNATTRIBUTED_CALLER } from "@omnesis/agent";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { answerBody } from "../schemas/index.js";
+import { answerBody, briefItemReactionBody } from "../schemas/index.js";
 import {
   BadGatewayError,
   BadRequestError,
@@ -73,10 +73,13 @@ import type { CorpusAuthorization } from "../../access/corpus-authorization.js";
 import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
 import type { ToolCaller } from "@omnesis/agent";
 import type { ConversationReader } from "../../agent/conversation-reader.js";
+import type { DailyBriefDetailReader } from "../../agent/daily-brief-detail.js";
+import type { BriefItemReactor } from "../../brain/observations/brief-reactions.js";
 import type { AnswerService } from "../../privacy/answer-service.js";
 import type { PrivacyReviewer } from "../../privacy/reviewer.js";
 import type { PrivacyAdminService } from "../../privacy/admin-service.js";
-import type { AuthContext, RouteApp } from "./types.js";
+import type { AppEnv, AuthContext, RouteApp } from "./types.js";
+import type { Context } from "hono";
 
 // Heartbeat interval for the SSE stream. Just below most proxy idle timeouts
 // (60s typical) so the connection stays warm. Hand-tuned to "infrequent but
@@ -85,6 +88,12 @@ import type { AuthContext, RouteApp } from "./types.js";
 const SSE_HEARTBEAT_MS = 25_000;
 
 const log = createLogger("gateway:http").child("routes:agent");
+
+import {
+  submissionInputSchema,
+  sendQueuedInputSchema,
+  ConversationControlError,
+} from "../../agent/conversation-controls.js";
 
 const messageBody = z.object({
   text: z.string().min(1).max(10_000),
@@ -168,6 +177,16 @@ const agentBodyLimit = bodyLimit({
   },
 });
 
+const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A real `YYYY-MM-DD` calendar day. */
+function isCalendarDay(value: string | undefined): value is string {
+  const m = value ? DAY_RE.exec(value) : null;
+  if (!m) return false;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return date.toISOString().slice(0, 10) === value;
+}
+
 export interface AgentRoutesDeps {
   /** Undefined when the agent harness isn't enabled; inference and mutation routes 503. */
   agentService?: AgentService;
@@ -180,6 +199,16 @@ export interface AgentRoutesDeps {
   deviceAnswerScope?: (deviceId: string, tokenId: string) => DeviceAnswerScope;
   /** Durable conversation reads remain available when inference is unavailable. */
   conversationReader?: ConversationReader;
+  /**
+   * What a morning brief in the Morning brief conversation was based on.
+   * Supplied where the Brain runs; absent, a brief reads as based on nothing.
+   */
+  dailyBriefDetail?: DailyBriefDetailReader;
+  /**
+   * Thumbs on a shipped brief item. Supplied where the Brain runs; absent, the
+   * reaction route is not mounted.
+   */
+  briefItemReaction?: BriefItemReactor;
   /**
    * Per-conversation read state, so the list can say which conversations hold
    * something the operator has not seen and any surface can say it has been
@@ -626,6 +655,73 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     });
   });
 
+  // The brief the Morning brief conversation sent on a day: the message it
+  // is in the conversation, resolved from the route's conversation and day.
+  async function resolveSentBrief(
+    c: Context<AppEnv>,
+  ): Promise<{ day: string; messageId: string; sentAt?: string }> {
+    const service = requireConversationReader();
+    callerOf(c);
+    const id = c.req.param("id");
+    const day = c.req.param("day");
+    if (!id) throw new BadRequestError("conversation id required");
+    if (!isCalendarDay(day)) throw new BadRequestError("day must be YYYY-MM-DD");
+    const rec = await service.loadConversation(id);
+    if (!rec) throw new NotFoundError(`no conversation ${id}`);
+    if (rec.origin?.kind !== "daily_brief")
+      throw new NotFoundError(`conversation ${id} is not the Morning brief conversation`);
+    const ref = rec.origin.briefs.find((brief) => brief.day === day);
+    if (!ref) throw new NotFoundError(`no morning brief was sent on ${day}`);
+    return { day, messageId: ref.messageId, ...(ref.sentAt ? { sentAt: ref.sentAt } : {}) };
+  }
+
+  // What one morning brief in the Morning brief conversation was based on:
+  // the observations it shipped, in its order, with their sources and tasks.
+  app.get("/agent/conversations/:id/briefs/:day", scope.admin(), async (c) => {
+    const ref = await resolveSentBrief(c);
+    const { day } = ref;
+    const detail = deps.dailyBriefDetail?.({ day, messageId: ref.messageId }) ?? {
+      sentAt: null,
+      items: [],
+    };
+    const sentAt = detail.sentAt ?? ref.sentAt;
+    return c.json({
+      day,
+      messageId: ref.messageId,
+      ...(sentAt ? { sentAt } : {}),
+      items: detail.items,
+    });
+  });
+
+  // The owner's thumbs on one item of a sent brief. The reactor arrives with
+  // the Brain, after these routes are mounted, so its absence is checked per
+  // request: without it the route does not exist.
+  app.put(
+    "/agent/conversations/:id/briefs/:day/items/:observationId/reaction",
+    scope.admin(),
+    validateJson(briefItemReactionBody),
+    async (c) => {
+      const react = deps.briefItemReaction;
+      if (!react) throw new NotFoundError("brief item reactions are not available");
+      const ref = await resolveSentBrief(c);
+      const observationId = c.req.param("observationId");
+      if (!observationId) throw new BadRequestError("observation id required");
+      const body = c.req.valid("json") as z.infer<typeof briefItemReactionBody>;
+      const result = await react({
+        day: ref.day,
+        messageId: ref.messageId,
+        observationId,
+        reaction: body.reaction,
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      });
+      if (!result.ok) {
+        if (result.reason === "not_an_item") throw new NotFoundError(result.message);
+        throw new ServiceUnavailableError(result.message);
+      }
+      return c.json(result.reaction);
+    },
+  );
+
   app.patch(
     "/agent/conversations/:id",
     scope.admin(),
@@ -722,6 +818,53 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
         return c.json(result);
       } catch (err) {
         throw mapAgentError(err);
+      }
+    },
+  );
+
+  app.get("/agent/sessions/:id/controls", scope.admin(), (c) => {
+    callerOf(c);
+    try {
+      return c.json(requireService().conversationControls(c.req.param("id")));
+    } catch (error) {
+      throw mapAgentError(error);
+    }
+  });
+
+  app.post(
+    "/agent/sessions/:id/submissions",
+    scope.admin(),
+    agentBodyLimit,
+    validateJson(submissionInputSchema),
+    async (c) => {
+      try {
+        return c.json(
+          await requireService().submitMessage(callerOf(c), c.req.param("id"), c.req.valid("json")),
+          202,
+        );
+      } catch (error) {
+        throw mapAgentError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/agent/sessions/:id/queue/send-now",
+    scope.admin(),
+    agentBodyLimit,
+    validateJson(sendQueuedInputSchema),
+    async (c) => {
+      try {
+        return c.json(
+          await requireService().sendQueuedNow(
+            callerOf(c),
+            c.req.param("id"),
+            c.req.valid("json").submissionIds,
+          ),
+          202,
+        );
+      } catch (error) {
+        throw mapAgentError(error);
       }
     },
   );
@@ -883,6 +1026,8 @@ function parseTranscriptLimit(raw: string | undefined, minimum: 0 | 1): number |
 }
 
 function mapAgentError(err: unknown): Error {
+  if (err instanceof ConversationControlError)
+    return new HttpError(409, "CONVERSATION_CONFLICT", err.message);
   if (err instanceof AgentError) {
     if (err.code === "session_not_found") return new NotFoundError(err.message);
     if (err.code === "forbidden") return new ForbiddenError(err.message);
@@ -932,7 +1077,8 @@ export function mapAnswerError(err: unknown): Error {
   }
   if (err instanceof AgentError) {
     if (err.code === "session_not_found") return new NotFoundError(err.message);
-    if (err.code === "session_busy") return new ConflictError(err.message);
+    if (err.code === "session_busy" || err.code === "conversation_permanent")
+      return new ConflictError(err.message);
     if (err.code.startsWith("answer_")) return new BadGatewayError(err.message);
   }
   return mapAgentError(err);

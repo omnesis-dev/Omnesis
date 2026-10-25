@@ -669,6 +669,8 @@
         "website/blog/chrome-agentic-search.html",
         "website/blog/contextual-voice-vocabulary.html",
         "website/blog/index.html",
+        "website/blog/omnesis-graph.html",
+        "website/blog/people-merge.html",
         "website/brain.html",
         "website/browser-extension-privacy-policy.html",
         "website/docs/agent.html",
@@ -688,8 +690,7 @@
         "website/docs/updating.html",
         "website/index.html",
         "website/mobile-privacy-policy.html",
-        "website/privacy.html",
-        "website/vision.html"
+        "website/privacy.html"
       ],
       "reason": "public support address"
     },
@@ -971,6 +972,11 @@
       "reason": "reviewed existing fixture"
     },
     {
+      "value": "kma@google.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
       "value": "legal@employer.com",
       "paths": ["packages/collector/src/attachments/helpers.test.ts"],
       "reason": "reviewed existing fixture"
@@ -1010,12 +1016,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1271,7 +1277,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1305,6 +1311,11 @@
       "value": "notifications@github.com",
       "paths": ["packages/near-dupes/src/filters/edge-gate.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "olesen@me.QueensU.CA",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "other-real-person@gmail.com",
@@ -1345,6 +1356,16 @@
       "value": "phone@icloud.com",
       "paths": ["packages/providers/apple/src/contacts.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "pommier@modartt.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
+      "value": "provos@citi.umich.edu",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "random@spam.com",
@@ -1452,7 +1473,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1468,6 +1489,11 @@
       "value": "spam@vendor.com",
       "paths": ["packages/gateway/src/people.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "steveu@coppice.org",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
     },
     {
       "value": "team.jamesbond@x.com",
@@ -1678,6 +1704,11 @@
       "reason": "reviewed existing fixture"
     },
     {
+      "value": "Wilco.Dijkstra@ntlworld.com",
+      "paths": ["ios/Resources/ThirdParty/WebRTC-LICENSE.md"],
+      "reason": "Public upstream copyright attribution retained verbatim in the pinned WebRTC aggregate license."
+    },
+    {
       "value": "work@co.com",
       "paths": ["packages/providers/browser-history/src/index.test.ts"],
       "reason": "reviewed existing fixture"
@@ -1751,7 +1782,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1792,7 +1823,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -1881,7 +1912,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -3902,7 +3933,6 @@
         "ios/Tests/OmnesisTests/AgentBatchToolsTests.swift",
         "ios/Tests/OmnesisTests/AgentCoordinatorSeenTests.swift",
         "ios/Tests/OmnesisTests/AnalyticsProjectionSpecTests.swift",
-        "ios/Tests/OmnesisTests/BriefsStatusDecodeTests.swift",
         "ios/Tests/OmnesisTests/ConversationUnreadDecodeTests.swift",
         "ios/Tests/OmnesisTests/ProviderFailureDetailTests.swift",
         "ios/Tests/OmnesisTests/SiriAskContinuityTests.swift",
@@ -4075,7 +4105,6 @@
         "packages/collector/src/e2e/brain-bench/snapshot.ts",
         "packages/collector/src/e2e/brain-bench/verdict-servers.ts",
         "packages/collector/src/e2e/brain-bootstrap.e2e.test.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-cassette.e2e.test.ts",
         "packages/collector/src/e2e/brain-engine.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
@@ -4338,7 +4367,6 @@
         "packages/gateway/portal/js/views/cognition-bootstrap-render.test.ts",
         "packages/gateway/portal/js/views/cognition-bootstrap.js",
         "packages/gateway/portal/js/views/cognition-bootstrap.test.ts",
-        "packages/gateway/portal/js/views/cognition-briefclaims.test.ts",
         "packages/gateway/portal/js/views/calendar-loading.test.ts",
         "packages/gateway/portal/js/views/calendar.test.ts",
         "packages/gateway/portal/js/views/cognition-calibration.test.ts",
@@ -4402,7 +4430,6 @@
         "packages/gateway/src/agent/ports.test.ts",
         "packages/gateway/src/agent/record-port.test.ts",
         "packages/gateway/src/agent/replay-factory.test.ts",
-        "packages/gateway/src/agent/service-anchored-thread.test.ts",
         "packages/gateway/src/agent/service-caller.test.ts",
         "packages/gateway/src/agent/service-caps.test.ts",
         "packages/gateway/src/agent/service-generic-subagent.test.ts",
@@ -4440,7 +4467,6 @@
         "packages/gateway/src/brain/bootstrap-status.ts",
         "packages/gateway/src/brain/bootstrap-window.test.ts",
         "packages/gateway/src/brain/bootstrap-window.ts",
-        "packages/gateway/src/brain/brief-claim-invalidator.test.ts",
         "packages/gateway/src/brain/calibration.test.ts",
         "packages/gateway/src/brain/clock-discipline.test.ts",
         "packages/gateway/src/brain/cognition-authored.test.ts",
@@ -4450,23 +4476,19 @@
         "packages/gateway/src/brain/cognitive-state-cascade.test.ts",
         "packages/gateway/src/brain/config.test.ts",
         "packages/gateway/src/brain/decision-view.test.ts",
-        "packages/gateway/src/brain/digest-push.test.ts",
         "packages/gateway/src/brain/doc-connections.test.ts",
         "packages/gateway/src/brain/feature-gate.test.ts",
-        "packages/gateway/src/brain/feed-contract.test.ts",
-        "packages/gateway/src/brain/feedback.test.ts",
         "packages/gateway/src/brain/http.test.ts",
         "packages/gateway/src/brain/interactive-loop-port.test.ts",
         "packages/gateway/src/brain/merge-adjudication.test.ts",
         "packages/gateway/src/brain/open-loop-source/document-projection.test.ts",
-        "packages/gateway/src/brain/open-loop-source/privacy-cascade.test.ts",
+        "packages/gateway/src/brain/open-loop-source/document-delete.test.ts",
         "packages/gateway/src/brain/open-loop-source/source-meta.test.ts",
         "packages/gateway/src/brain/person-refs.test.ts",
         "packages/gateway/src/brain/person-refs.ts",
         "packages/gateway/src/brain/provider-breaker.test.ts",
         "packages/gateway/src/brain/provider-breaker.ts",
         "packages/gateway/src/brain/quote-match.test.ts",
-        "packages/gateway/src/brain/ranking.test.ts",
         "packages/gateway/src/brain/reconcile/collision-candidates.test.ts",
         "packages/gateway/src/brain/reconcile/identity-candidates.test.ts",
         "packages/gateway/src/brain/rhythm/bootstrap-enqueuer.test.ts",
@@ -4485,8 +4507,6 @@
         "packages/gateway/src/brain/run-payloads.test.ts",
         "packages/gateway/src/brain/self-memory.test.ts",
         "packages/gateway/src/brain/steward/background-lookup-priority.test.ts",
-        "packages/gateway/src/brain/steward/brief-judge.test.ts",
-        "packages/gateway/src/brain/steward/brief-judge.ts",
         "packages/gateway/src/brain/steward/delta-prime.test.ts",
         "packages/gateway/src/brain/steward/digest-horizon.test.ts",
         "packages/gateway/src/brain/steward/grounding-teeth.test.ts",
@@ -4496,8 +4516,6 @@
         "packages/gateway/src/brain/steward/tools.test.ts",
         "packages/gateway/src/brain/storage/annotations.test.ts",
         "packages/gateway/src/brain/storage/bootstrap.test.ts",
-        "packages/gateway/src/brain/storage/brief-claims.test.ts",
-        "packages/gateway/src/brain/storage/briefs.test.ts",
         "packages/gateway/src/brain/storage/consumption-edges.test.ts",
         "packages/gateway/src/brain/storage/coverage.test.ts",
         "packages/gateway/src/brain/storage/engine-state.test.ts",
@@ -4513,9 +4531,6 @@
         "packages/gateway/src/brain/sweeps/anchor.test.ts",
         "packages/gateway/src/brain/sweeps/file-format.test.ts",
         "packages/gateway/src/brain/sweeps/service.test.ts",
-        "packages/gateway/src/brain/talkback/talkback-prompt.test.ts",
-        "packages/gateway/src/brain/talkback/talkback-service.test.ts",
-        "packages/gateway/src/brain/talkback/transcript-history.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.test.ts",
         "packages/gateway/src/brain/transcripts.test.ts",
@@ -5438,7 +5453,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -5767,7 +5782,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -6047,8 +6062,6 @@
       "paths": [
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
-        "packages/collector/src/e2e/brain-bootstrap.e2e.test.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-engine.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
@@ -6056,12 +6069,10 @@
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -6261,7 +6272,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -6276,7 +6287,6 @@
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-bench/README.md",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
@@ -6285,11 +6295,6 @@
         "packages/gateway/src/brain/steward/tools.test.ts"
       ],
       "reason": "invented loops-test-life fixture (Briefs epic, fully fictional)"
-    },
-    {
-      "value": "Cedar Row Supplies",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
     },
     {
       "value": "Central Group",
@@ -7075,7 +7080,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -7227,11 +7232,6 @@
       "value": "Felix Reyes",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed existing fixture"
-    },
-    {
-      "value": "Fenwick Hall",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented venue for the bootstrap bench (fully fictional)"
     },
     {
       "value": "Ferndale Holdings",
@@ -7473,14 +7473,13 @@
       "value": "Grove Supplies",
       "paths": [
         "packages/collector/src/e2e/brain-bench/README.md",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-cassette.e2e.test.ts",
         "packages/collector/src/e2e/brain-engine.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -7547,11 +7546,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Harbourline Studios",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
-    },
-    {
       "value": "Has Phone",
       "paths": ["packages/providers/apple/src/contacts.test.ts"],
       "reason": "reviewed existing fixture"
@@ -7594,7 +7588,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -7651,7 +7645,6 @@
       "paths": [
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-cassette.e2e.test.ts",
         "packages/collector/src/e2e/brain-engine.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
@@ -7659,12 +7652,11 @@
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -7904,7 +7896,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -7940,12 +7932,14 @@
     {
       "value": "Jamie Lopez",
       "paths": [
-        "packages/collector/src/e2e/interactive-memory.e2e.test.ts",
+        "evals/universes/graph-search/cast.json",
+        "evals/universes/graph-search/sources/whatsapp-messages/messages.json",
         "evals/universes/japan-trip/cast.json",
         "evals/universes/japan-trip/sources/gmail/messages.json",
         "evals/universes/japan-trip/sources/google-drive/files.json",
         "evals/universes/japan-trip/sources/whatsapp-messages/messages.json",
         "evals/universes/loops-test-life/cast.json",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "evals/universes/whatsapp-backfill/cast.json",
         "evals/universes/whatsapp-backfill/sources/whatsapp-messages/fake-corpus.json",
         "extension/src/capture/extract.test.ts",
@@ -7956,7 +7950,10 @@
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-bench/docs.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
+        "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
         "packages/collector/src/e2e/identity-resolution.e2e.test.ts",
+        "packages/collector/src/e2e/interactive-memory.e2e.test.ts",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/collector/src/e2e/restart-durability.e2e.test.ts",
         "packages/core/src/people-utils.test.ts",
         "packages/gateway/portal/js/lib/watch-dag.test.ts",
@@ -7966,6 +7963,7 @@
         "packages/gateway/src/bootstrap/upgrade-placeholder-canonical-names.test.ts",
         "packages/gateway/src/brain/http.test.ts",
         "packages/gateway/src/brain/merge-adjudication.test.ts",
+        "packages/gateway/src/brain/note-agent/note-agent.test.ts",
         "packages/gateway/src/brain/person-refs.test.ts",
         "packages/gateway/src/brain/rhythm/reverification-sweep.test.ts",
         "packages/gateway/src/brain/steward/tools.test.ts",
@@ -7974,14 +7972,20 @@
         "packages/gateway/src/data/list-revisions.test.ts",
         "packages/gateway/src/data/prune-invalid-email-aliases.test.ts",
         "packages/gateway/src/domain/SharedAddressDemotion.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
         "packages/gateway/src/merge-candidates.test.ts",
         "packages/gateway/src/merge-rules.test.ts",
         "packages/gateway/src/people.test.ts",
         "packages/gateway/src/privacy/answer-diff.test.ts",
+        "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/gateway/src/scheduler/runners/io.test.ts",
+        "packages/gateway/src/search/agent-provenance.test.ts",
+        "packages/gateway/src/search/provenance-model-context.test.ts",
         "packages/gateway/src/search/search-worker-docid-filter.test.ts",
         "packages/gateway/src/search/search-worker-finalize.test.ts",
         "packages/gateway/src/search/search-worker-parity.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts",
         "packages/gateway/src/watch/engine-host.test.ts",
         "packages/gateway/src/watch/ontology.test.ts",
         "packages/gateway/src/watch/preflight.test.ts",
@@ -7994,29 +7998,18 @@
         "packages/providers/github/src/threads.test.ts",
         "packages/providers/google/src/contacts.test.ts",
         "packages/providers/google/src/document-event-profiles.test.ts",
+        "packages/providers/maildir/src/message.test.ts",
+        "packages/providers/maildir/src/source.test.ts",
         "packages/providers/outlook/src/document-event-profiles.test.ts",
         "packages/providers/outlook/src/onedrive.test.ts",
         "packages/providers/outlook/src/outlook-calendar.test.ts",
+        "packages/providers/strava/src/enrichment.test.ts",
         "packages/providers/whatsapp/src/communities.test.ts",
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/providers/whatsapp/src/history-seal.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
-        "packages/watch/src/compiler/prompt.test.ts",
-        "packages/gateway/src/privacy/reviewer.test.ts",
-        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
-        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
-        "packages/providers/maildir/src/message.test.ts",
-        "packages/providers/maildir/src/source.test.ts",
-        "evals/universes/graph-search/cast.json",
-        "evals/universes/graph-search/sources/whatsapp-messages/messages.json",
-        "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
-        "packages/gateway/src/search/agent-provenance.test.ts",
-        "packages/gateway/src/search/provenance-model-context.test.ts",
-        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
-        "packages/providers/strava/src/enrichment.test.ts",
-        "packages/gateway/src/transcribe/vocabulary/identity.test.ts",
-        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
+        "packages/watch/src/compiler/prompt.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8206,7 +8199,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -8225,16 +8218,6 @@
       "value": "Kayak Storage Rack",
       "paths": ["packages/collector/src/e2e/search-quality.e2e.test.ts"],
       "reason": "reviewed: invented document title in the search-quality judged corpus, not corpus data"
-    },
-    {
-      "value": "Kestrel Instruments",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
-    },
-    {
-      "value": "Kestrel Yard",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented venue for the bootstrap bench (fully fictional)"
     },
     {
       "value": "Kickoff Meeting",
@@ -8369,7 +8352,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -8378,7 +8361,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -8563,6 +8546,8 @@
       "value": "Maya Reeves",
       "paths": [
         "packages/gateway/src/brain/record-check/record-check.test.ts",
+        "packages/collector/src/e2e/brain-person-profile.e2e.test.ts",
+        "packages/gateway/src/brain/steward/person-profile-reconciliation.test.ts",
         "evals/universes/default/cast.json",
         "evals/universes/japan-trip/cast.json",
         "evals/universes/japan-trip/sources/gmail/messages.json",
@@ -8608,7 +8593,6 @@
         "packages/gateway/src/brain/__fixtures__/briefs-feed-contract.json",
         "packages/gateway/src/brain/admin-http.test.ts",
         "packages/gateway/src/brain/calibration.test.ts",
-        "packages/gateway/src/brain/feed-contract.test.ts",
         "packages/gateway/src/brain/http.test.ts",
         "packages/gateway/src/brain/interactive-loop-port.test.ts",
         "packages/gateway/src/brain/interactive-memory.test.ts",
@@ -8897,7 +8881,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -9069,7 +9053,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -9199,7 +9183,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -9236,11 +9220,6 @@
       "value": "Omnesis Brain",
       "paths": ["packages/collector/src/e2e/cli.e2e.test.ts"],
       "reason": "product feature name in a CLI error assertion, not a person"
-    },
-    {
-      "value": "Omnesis Briefs",
-      "paths": ["ios/Sources/Omnesis/UI/PreviewMocks.swift"],
-      "reason": "product feature name in an invented preview fixture, not a person"
     },
     {
       "value": "Omnesis Gateway",
@@ -9347,7 +9326,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -9392,7 +9371,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -9401,7 +9380,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -9877,11 +9856,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Reeves Family",
-      "paths": ["packages/collector/src/attachments/pdf-text-joiner.test.ts"],
-      "reason": "reviewed existing fixture"
-    },
-    {
       "value": "Reeves Maya",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "invented fixture (reserved-style example data)"
@@ -9912,7 +9886,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Ren\u00e9e Vance",
+      "value": "Renée Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -10021,7 +9995,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -10074,14 +10048,13 @@
         "packages/collector/src/attachments/fixtures/gen-pkpass-fixtures.mjs",
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
         "packages/core/src/models/decision-cassette.test.ts",
         "packages/gateway/src/agent/record-port.test.ts",
+        "packages/gateway/src/brain/admin-http-observation-routes.test.ts",
         "packages/gateway/src/http/routes/subscriptions.test.ts",
         "packages/gateway/src/sources/omnesis-notes/upsert.test.ts",
         "packages/providers/outlook/src/outlook-calendar.test.ts",
@@ -10135,7 +10108,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -10177,12 +10150,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -10229,18 +10202,20 @@
     {
       "value": "Sarah Mendez",
       "paths": [
+        "evals/universes/graph-search/cast.json",
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/core/src/people-utils.test.ts",
         "packages/gateway/src/agent/person-port.test.ts",
+        "packages/gateway/src/brain/steward/task-proposals.test.ts",
+        "packages/gateway/src/brain/tasks/tools.test.ts",
         "packages/gateway/src/domain/SharedAddressDemotion.test.ts",
         "packages/gateway/src/merge-candidates.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts",
         "packages/gateway/src/watch/ontology.test.ts",
         "packages/gateway/src/workers/indexer-worker-boot.test.ts",
-        "packages/providers/outlook/src/onedrive.test.ts",
-        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/source.test.ts",
-        "evals/universes/graph-search/cast.json",
-        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
+        "packages/providers/outlook/src/onedrive.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10487,7 +10462,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -10495,7 +10470,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -10523,7 +10498,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -10587,10 +10562,7 @@
         "packages/agent/src/__fixtures__/tool-result-contract.json",
         "packages/agent/src/tools/cite-record.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
-        "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
         "packages/collector/src/e2e/briefs-cli.e2e.test.ts",
         "packages/collector/src/e2e/browser-capture.e2e.test.ts",
         "packages/collector/src/e2e/plaid.e2e.test.ts",
@@ -10673,9 +10645,6 @@
     {
       "value": "Studio Northstar",
       "paths": [
-        "packages/collector/src/e2e/brain-record-check.e2e.test.ts",
-        "packages/gateway/portal/js/views/cognition-decisions.test.ts",
-        "packages/gateway/src/brain/record-check/record-check.test.ts",
         "evals/universes/default/agent-demos/temporal-recall.jsonl",
         "evals/universes/default/sources/core-location-visits/visits.json",
         "evals/universes/default/sources/onedrive/items.json",
@@ -10696,9 +10665,9 @@
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
+        "packages/collector/src/e2e/brain-record-check.e2e.test.ts",
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
         "packages/collector/src/e2e/japan-trip-deep-research.e2e.test.ts",
@@ -10712,7 +10681,8 @@
         "packages/gateway/src/agent/record-port.test.ts",
         "packages/gateway/src/agent/sql-port.test.ts",
         "packages/gateway/src/brain/__fixtures__/briefs-feed-contract.json",
-        "packages/gateway/src/brain/feed-contract.test.ts",
+        "packages/gateway/src/brain/record-check/record-check.test.ts",
+        "packages/gateway/src/brain/steward/digest-inputs.test.ts",
         "packages/gateway/src/brain/steward/runtime.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
         "packages/gateway/src/inference/decision/typesafe-client.test.ts",
@@ -11043,22 +11013,17 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
-    },
-    {
-      "value": "The Briefs",
-      "paths": ["evals/universes/loops-test-life/universe.json"],
-      "reason": "invented loops-test-life fixture (Briefs epic, fully fictional)"
+      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -11163,11 +11128,8 @@
     },
     {
       "value": "The Riverside Estate",
-      "paths": [
-        "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
-        "packages/collector/src/e2e/brain-verification.e2e.test.ts"
-      ],
-      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
+      "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
+      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -11203,7 +11165,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -11340,7 +11302,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -11502,7 +11464,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -11640,11 +11602,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Your Cedar Grove",
-      "paths": ["packages/collector/src/e2e/brain-rhythm.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
-    },
-    {
       "value": "Your Japan",
       "paths": [
         "evals/universes/japan-trip/agent-demos/japan-trip-spend.jsonl",
@@ -11694,7 +11651,6 @@
       "paths": [
         "packages/collector/src/e2e/brain-bench/bench.ts",
         "packages/collector/src/e2e/brain-bench/decision-server.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts"
       ],
       "reason": "invented worth-gate fixture"
@@ -11708,8 +11664,7 @@
       "value": "Stellar Outfitters",
       "paths": [
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
-        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts"
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
       ],
       "reason": "invented worth-gate fixture"
     },
@@ -11900,7 +11855,10 @@
     },
     {
       "value": "Stellar Sound",
-      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "paths": [
+        "packages/gateway/portal/js/lib/tasks-model.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/extract.test.ts"
+      ],
       "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
     },
     {
@@ -12103,6 +12061,137 @@
       "value": "Switch Agent",
       "paths": ["packages/gateway/portal/js/views/claude-code-ui.test.ts"],
       "reason": "UI label, not a person"
+    },
+    {
+      "value": "Example Hall",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/scenario.json"],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Workshop Friday",
+      "paths": [
+        "packages/gateway/src/brain/knowledge/owner-adapters.test.ts",
+        "packages/gateway/src/brain/knowledge/projection.test.ts",
+        "packages/gateway/src/brain/knowledge/service.test.ts",
+        "packages/gateway/src/brain/knowledge/tools.test.ts",
+        "packages/gateway/src/data/migration-193.test.ts"
+      ],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Workshop Saturday",
+      "paths": [
+        "packages/gateway/src/brain/knowledge/service.test.ts",
+        "packages/gateway/src/data/migration-193.test.ts"
+      ],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Progressive Brain",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "Brain Bench",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "System One",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "packages/gateway/portal/js/lib/tasks-model.test.ts",
+        "packages/gateway/portal/js/views/cognition-knowledge.test.ts",
+        "packages/gateway/src/brain/knowledge/library.test.ts",
+        "packages/gateway/src/brain/steward/observation-tools.test.ts",
+        "packages/gateway/src/brain/tasks/http.test.ts"
+      ],
+      "reason": "Invented person fixture for canonical subject links and merged identity display; no corpus provenance."
+    },
+    {
+      "value": "About Maya Reeves",
+      "paths": ["packages/gateway/portal/js/views/cognition-knowledge.test.ts"],
+      "reason": "UI assertion combining the About label with an invented person fixture."
+    },
+    {
+      "value": "About Workshop",
+      "paths": ["packages/gateway/portal/js/views/cognition-knowledge.test.ts"],
+      "reason": "Static UI assertion for an invented workshop document title, not a person."
+    },
+    {
+      "value": "The Brain",
+      "paths": [
+        "evals/universes/loops-test-life/universe.json",
+        "packages/gateway/src/brain/steward/task-proposals.test.ts"
+      ],
+      "reason": "Universe display label naming the product feature, not a person."
+    },
+    {
+      "value": "Invalid Library",
+      "paths": ["packages/gateway/src/brain/knowledge/library.test.ts"],
+      "reason": "Test-case label for an invalid knowledge library input, not a person."
+    },
+    {
+      "value": "Around Tue",
+      "paths": ["packages/gateway/portal/js/lib/tasks-model.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Due Fri",
+      "paths": ["packages/gateway/portal/js/lib/tasks-model.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Due Sat",
+      "paths": ["packages/gateway/portal/js/lib/tasks-model.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Struck Fri",
+      "paths": ["packages/gateway/portal/js/lib/tasks-model.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "The Morning",
+      "paths": [
+        "packages/gateway/src/agent/service-daily-brief.test.ts",
+        "packages/gateway/src/brain/observations/brief-thread-context.test.ts"
+      ],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Call Riverside Estate",
+      "paths": ["packages/gateway/src/brain/steward/task-proposals.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Email Riverside Estate",
+      "paths": ["packages/gateway/src/brain/steward/task-proposals.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "No Brain",
+      "paths": ["packages/gateway/src/brain/tasks/http.test.ts"],
+      "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Test Suite",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestNodeType enum value, not a person's name."
+    },
+    {
+      "value": "Test Case",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestNodeType enum value, not a person's name."
+    },
+    {
+      "value": "Expected Failure",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestResult enum value, not a person's name."
     }
   ],
   "secretFixtures": [

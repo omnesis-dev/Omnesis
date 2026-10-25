@@ -63,4 +63,10 @@ describe("citation-verifier quote check (trust feature)", () => {
     expect(report.allPresent).toBe(false);
     expect(report.results[0]?.present).toBe(false);
   });
+
+  it("matches a quote copied with the local-time annotations tool output adds", () => {
+    const doc = "Train leaves 2026-10-18T17:28:00Z from platform 4.";
+    const copied = "leaves 2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London) from platform 4";
+    expect(verifyQuotes(doc, [copied]).allPresent).toBe(true);
+  });
 });

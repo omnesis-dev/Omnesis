@@ -11,12 +11,17 @@
  * `background-agent` inference assignment — so a bench run exercises the
  * same code path an operator's gateway does.
  *
- * Three things are scriptable:
+ * Four things are scriptable:
  *  - the steward's mind: the puppet model (`puppet.ts`) decides each turn
- *    from the run prompt and a behavior table, emitting real tool calls;
- *  - the two gate roles: `entailment-verifier` and `brief-judge` get
- *    verdict servers, so annotation and brief gates can be driven into
- *    their REJECT and configured-outage arms;
+ *    from the run prompt and a behavior table, emitting real tool calls —
+ *    cognition runs and note-agent turns alike;
+ *  - the interactive agent: the conversation puppet
+ *    (`conversation-puppet.ts`) answers conversation turns, the Morning
+ *    brief thread included, through the real agent service and toolset;
+ *  - the gate roles: `entailment-verifier` gets a verdict server and
+ *    `decision` a scripted System One, so the annotation gate, the morning
+ *    recheck and the worth gate can be driven into their REJECT and
+ *    outage arms;
  *  - time: with `clock: "virtual"` the gateway's cognition clock is driven
  *    by `POST /admin/brain/clock`, so day boundaries, decay windows and
  *    budget resets are crossed deliberately rather than waited out.
@@ -37,9 +42,15 @@ import {
   startVerdictServer,
   type VerdictServer,
   type EntailmentPolicy,
-  type JudgePolicy,
 } from "./verdict-servers.js";
+import {
+  startConversationPuppet,
+  type ConversationBehavior,
+  type ConversationPuppetServer,
+} from "./conversation-puppet.js";
 import { BrainObs } from "./obs.js";
+import { checkpointInitialInventory, type InitialInventoryReport } from "./history.js";
+import { readMaintenanceProgress } from "./maintenance-progress.js";
 import {
   startDecisionServer,
   type DecisionServer,
@@ -90,7 +101,6 @@ const QUIET_PROACTIVE_LANE: Record<string, unknown> = {
   digest: { enabled: false, push: false },
   reverification: { enabled: false },
   provenanceRecheck: { enabled: false },
-  judge: { enabled: false },
   sweepsEnabled: false,
 };
 
@@ -99,10 +109,10 @@ export interface BrainBenchOptions {
   extraInference?: SyntheticHarnessOptions["extraInference"];
   /**
    * Synthetic universe supplying the ambient corpus. Defaults to
-   * `loops-test-life` — the Cognition Steward's own test life, whose
-   * fixtures are all dated outside the waker's recency window, so boot
-   * enqueues zero data runs and every run a bench observes is one it
-   * deliberately caused.
+   * `loops-test-life` — the Cognition Steward's fictional ambient corpus.
+   * Its source arrivals also pass through maintenance discovery. Scenarios
+   * match their own evidence explicitly; use initialInventory for a corpus
+   * that was already present before cognition started.
    */
   universe?: string;
   /**
@@ -116,12 +126,18 @@ export interface BrainBenchOptions {
    * Directory of `background-agent` replay cassettes to serve INSTEAD of
    * the puppet — a `.jsonl` + `.meta.json` pair per scenario, as built by
    * `scripts/record-brain-scenario.mjs`. Mutually exclusive with `behaviors`.
+   * The note agent runs on the same role, so its turns replay from here too.
    */
   cassetteDir?: string;
+  /**
+   * The interactive `agent` role. `"replay"` serves the `agent`-role
+   * cassettes of `cassetteDir` (one fixture directory, scenarios split by
+   * their `.meta.json` role); a behavior list starts the conversation
+   * puppet. Omitted → the role is unassigned and conversations cannot run.
+   */
+  agent?: "replay" | { behaviors: readonly ConversationBehavior[] };
   /** Entailment-gate verdicts. Omitted → the role is intentionally unassigned. */
   entailment?: EntailmentPolicy;
-  /** Brief-judge verdicts. Omitted → the role is intentionally unassigned. */
-  judge?: JudgePolicy;
   /**
    * Scripted decision model. Starts a System One stand-in
    * (`decision-server.ts`) and assigns the `decision` role to
@@ -155,12 +171,19 @@ export interface BrainBenchOptions {
    * for that.
    */
   extraGatewayConfig?: Record<string, unknown>;
+  /**
+   * The gateway log file's level. The harness keeps it at `warn`; a test that
+   * asserts on an info line (`harness.getGatewayLogPath()`) raises it.
+   */
+  gatewayLogLevel?: "info" | "debug";
   /** Wire the deterministic fake embedder (needed for semantic reconcile paths). */
   embedder?: boolean;
-  /** Wire the fake APNs server (needed to assert digest / brief pushes). */
+  /** Wire the fake APNs server (needed to assert morning brief notifications). */
   apns?: boolean;
   /** Sync every universe source at boot so the ambient corpus lands. Defaults to true. */
   syncSources?: boolean;
+  /** Existing indexed context predating inventory-aware ingestion; no fabricated coverage. */
+  initialInventory?: "pre-existing";
 }
 
 /** A queue row seeded directly, for a state no enqueuer produces. */
@@ -201,35 +224,43 @@ export class BrainBench {
   readonly harness: SyntheticE2EHarness;
   readonly obs: BrainObs;
   private readonly puppetServer: PuppetModelServer | null;
+  private readonly conversationServer: ConversationPuppetServer | null;
   private readonly entailmentServer: VerdictServer | null;
-  private readonly judgeServer: VerdictServer | null;
   private readonly decisionServer: DecisionServer | null;
   private readonly virtualClock: boolean;
+  readonly initialInventory: InitialInventoryReport | null;
   private db: Database.Database | null = null;
 
   private constructor(init: {
     harness: SyntheticE2EHarness;
     puppet: PuppetModelServer | null;
+    conversation: ConversationPuppetServer | null;
     entailment: VerdictServer | null;
-    judge: VerdictServer | null;
     decision: DecisionServer | null;
     virtualClock: boolean;
+    initialInventory: InitialInventoryReport | null;
   }) {
     this.harness = init.harness;
     this.puppetServer = init.puppet;
+    this.conversationServer = init.conversation;
     this.entailmentServer = init.entailment;
-    this.judgeServer = init.judge;
     this.decisionServer = init.decision;
     this.virtualClock = init.virtualClock;
+    this.initialInventory = init.initialInventory;
     this.obs = new BrainObs(init.harness);
   }
 
   static async start(opts: BrainBenchOptions): Promise<BrainBench> {
+    if (opts.initialInventory && (!opts.experimental || opts.syncSources === false))
+      throw new Error("Pre-existing inventory requires experimental cognition and source sync");
     if (opts.behaviors && opts.cassetteDir) {
       throw new Error("BrainBench: `behaviors` and `cassetteDir` are mutually exclusive");
     }
     if (opts.decision && opts.decisionBackend) {
       throw new Error("BrainBench: `decision` and `decisionBackend` are mutually exclusive");
+    }
+    if (opts.agent === "replay" && !opts.cassetteDir) {
+      throw new Error('BrainBench: `agent: "replay"` serves the cassettes of `cassetteDir`');
     }
     const virtualClock = opts.clock === "virtual";
     if (virtualClock) process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK = "1";
@@ -255,11 +286,13 @@ export class BrainBench {
       assignments["entailment-verifier"] = `entailment/${entailment.modelId}`;
     }
 
-    let judge: VerdictServer | null = null;
-    if (opts.judge) {
-      judge = await startVerdictServer({ role: "judge", policy: opts.judge });
-      backends.judge = { type: "http", url: judge.url };
-      assignments["brief-judge"] = `judge/${judge.modelId}`;
+    let conversation: ConversationPuppetServer | null = null;
+    if (opts.agent === "replay") {
+      assignments.agent = "replay";
+    } else if (opts.agent) {
+      conversation = await startConversationPuppet({ behaviors: opts.agent.behaviors });
+      backends.conversation = { type: "http", url: conversation.url };
+      assignments.agent = `conversation/${conversation.modelId}`;
     }
 
     let decision: DecisionServer | null = null;
@@ -269,7 +302,7 @@ export class BrainBench {
     }
 
     const harness = new SyntheticE2EHarness({
-      gatewayMode: opts.experimental ? "experimental" : "stable",
+      gatewayMode: opts.experimental && !opts.initialInventory ? "experimental" : "stable",
       universe: opts.universe ?? "loops-test-life",
       ...(opts.embedder ? { embedderBackend: "fake" as const } : {}),
       ...(opts.apns ? { apnsBackend: "fake" as const } : {}),
@@ -277,7 +310,12 @@ export class BrainBench {
       // TypeSafe is an off-host provider, so its assignment resolves only with
       // remote inference allowed; the URL policy still admits the loopback
       // stand-in either way.
-      ...(decision ? { extraGatewayEnv: { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } } : {}),
+      extraGatewayEnv: {
+        ...(decision ? { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } : {}),
+        // Replayed conversation turns are paced for demos by default.
+        ...(opts.agent === "replay" ? { OMNESIS_AGENT_REPLAY_IMMEDIATE: "1" } : {}),
+        ...(opts.gatewayLogLevel ? { OMNESIS_LOG_LEVEL: opts.gatewayLogLevel } : {}),
+      },
       extraInference: {
         ...opts.extraInference,
         ...(decision ? { allowRemoteInference: true, typesafeUrl: decision.endpoint } : {}),
@@ -297,21 +335,58 @@ export class BrainBench {
           // done yet. Suites that pin the barrier's own behaviour override it.
           derivationBarrier: "2s",
           ...QUIET_PROACTIVE_LANE,
-          ...(opts.judge ? { judge: { enabled: true } } : {}),
           ...(opts.brain ?? {}),
         },
       },
     });
-    await harness.start();
+    try {
+      await harness.start();
 
-    if (opts.syncSources !== false) {
-      for (const id of harness.getSourceIds()) {
-        await harness.triggerSyncAndWait(id, 60_000);
+      if (opts.syncSources !== false) {
+        for (const id of harness.getSourceIds()) {
+          await harness.triggerSyncAndWait(id, 60_000);
+        }
+        await harness.refreshSearchSnapshot();
       }
-      await harness.refreshSearchSnapshot();
-    }
 
-    return new BrainBench({ harness, puppet, entailment, judge, decision, virtualClock });
+      let initialInventory: InitialInventoryReport | null = null;
+      if (opts.initialInventory) {
+        await harness.restartGateway({
+          gatewayMode: "experimental",
+          whileStopped: () => {
+            const db = new Database(harness.getDbPath(), { fileMustExist: true });
+            try {
+              initialInventory = checkpointInitialInventory(db);
+            } finally {
+              db.close();
+            }
+          },
+        });
+      }
+      return new BrainBench({
+        harness,
+        puppet,
+        conversation,
+        entailment,
+        decision,
+        virtualClock,
+        initialInventory,
+      });
+    } catch (error) {
+      // A rejected offline fixture boundary must not orphan its gateway or servers.
+      await new BrainBench({
+        harness,
+        puppet,
+        conversation,
+        entailment,
+        decision,
+        virtualClock,
+        initialInventory: null,
+      })
+        .destroy()
+        .catch(() => {});
+      throw error;
+    }
   }
 
   // ── stimulus ──────────────────────────────────────────────────────────────
@@ -433,9 +508,9 @@ export class BrainBench {
   /**
    * Wait until the cognition queue is empty and nothing is executing.
    *
-   * Progress-based, not a fixed sleep: the deadline extends whenever a run
-   * settles, and the failure names the queue's actual contents — so a
-   * genuinely stalled engine fails loudly instead of passing as "quiet".
+   * A fixed overall deadline bounds the wait. Run settlement or a change in
+   * durable pending work resets the stall timer. Failures report actual queue
+   * and maintenance contents rather than treating unfinished work as quiet.
    */
   async drainUntilQuiet(
     opts: { timeoutMs?: number; stallMs?: number; includeUpcoming?: boolean } = {},
@@ -450,6 +525,7 @@ export class BrainBench {
     const includeUpcoming = opts.includeUpcoming ?? true;
     const hardDeadline = Date.now() + timeoutMs;
     let lastSettled = -1;
+    let lastMaintenanceSignature: string | null = null;
     let lastProgressAt = Date.now();
 
     for (;;) {
@@ -460,6 +536,13 @@ export class BrainBench {
         lastProgressAt = Date.now();
       }
       const debounced = includeUpcoming ? await this.debouncedRunCount() : 0;
+      const maintenanceProgress = await this.pendingKnowledgeProgress(includeUpcoming);
+      const maintenance = maintenanceProgress.pending;
+      // Durable intake and bounded cascades can advance before an agent run exists.
+      if (maintenanceProgress.signature !== lastMaintenanceSignature) {
+        lastMaintenanceSignature = maintenanceProgress.signature;
+        lastProgressAt = Date.now();
+      }
       // A pushed document sits in the waker's buffer, not the queue, until the
       // waker's next background tick — and a busy gateway (the boot sync's
       // derivation work, say) can hold that tick back past the confirmation
@@ -469,7 +552,8 @@ export class BrainBench {
         pulse.counts.queuedRuns === 0 &&
         pulse.counts.bufferedWakes === 0 &&
         pulse.runningRuns.length === 0 &&
-        debounced === 0;
+        debounced === 0 &&
+        maintenance === 0;
       if (idle) {
         // One more settle interval, so a run enqueued by the run that just
         // finished (feedback, notes compaction, scheduled follow-ups) is
@@ -477,11 +561,13 @@ export class BrainBench {
         await sleep(600);
         const confirm = await this.obs.pulse();
         const stillDebounced = includeUpcoming ? await this.debouncedRunCount() : 0;
+        const stillMaintenance = await this.pendingKnowledgeCount(includeUpcoming);
         if (
           confirm.counts.queuedRuns === 0 &&
           confirm.counts.bufferedWakes === 0 &&
           confirm.runningRuns.length === 0 &&
-          stillDebounced === 0
+          stillDebounced === 0 &&
+          stillMaintenance === 0
         ) {
           return;
         }
@@ -493,12 +579,64 @@ export class BrainBench {
         const detail = runs.items
           .map((r) => `${r.kind}/${r.status} attempts=${r.attempts} ${r.lastError ?? ""}`)
           .join("; ");
+        const buffers = this.sql
+          .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'")
+          .get()
+          ? JSON.stringify({
+              work: this.sql
+                .prepare(
+                  "SELECT subject_id,reason,status,tier,due_at,last_error FROM knowledge_work WHERE status IN ('pending','batched') LIMIT 20",
+                )
+                .all(),
+              changes: this.sql.prepare("SELECT * FROM knowledge_changes LIMIT 20").all(),
+              owners: this.sql.prepare("SELECT * FROM knowledge_owner_changes LIMIT 20").all(),
+              cascades: this.sql.prepare("SELECT * FROM knowledge_cascade_jobs LIMIT 20").all(),
+              cleanup: this.sql
+                .prepare("SELECT * FROM knowledge_projection_cleanup LIMIT 20")
+                .all(),
+            })
+          : "{}";
+        const refusals = await Promise.all(
+          runs.items
+            .filter((run) => run.status === "pending" && run.attempts > 0)
+            .slice(0, 6)
+            .map(async (run) => ({
+              runId: run.id,
+              tools: (await this.obs.executedTools(run.id))
+                .filter((step) => step.result?.kind === "error")
+                .slice(-6)
+                .map((step) => ({
+                  tool: step.tool,
+                  code: step.result?.code,
+                  message: step.result?.message,
+                })),
+            })),
+        );
         throw new Error(
-          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, bufferedWakes=${pulse.counts.bufferedWakes}, running=${pulse.runningRuns.length}, debounced=${debounced}, failed24h=${pulse.counts.failedRuns24h}): ${detail}`,
+          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, bufferedWakes=${pulse.counts.bufferedWakes}, running=${pulse.runningRuns.length}, debounced=${debounced}, maintenance=${maintenance}, failed24h=${pulse.counts.failedRuns24h}): ${detail}; buffers=${buffers}; refusals=${JSON.stringify(refusals)}`,
         );
       }
       await sleep(250);
     }
+  }
+
+  /** Engine buffers precede cognition-run enqueue and must participate in settle probes. */
+  private async pendingKnowledgeCount(includeUpcoming: boolean): Promise<number> {
+    return (await this.pendingKnowledgeProgress(includeUpcoming)).pending;
+  }
+
+  private async pendingKnowledgeProgress(includeUpcoming: boolean) {
+    const status = await this.obs.status();
+    if (!status.experimental || !status.brain.active) return { pending: 0, signature: "inactive" };
+    if (
+      !this.sql
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'")
+        .get()
+    )
+      return { pending: 0, signature: "absent" };
+    const { now } = await this.clock.now();
+    const horizon = now + (includeUpcoming ? 15_000 : 0);
+    return readMaintenanceProgress(this.sql, horizon);
   }
 
   /**
@@ -551,12 +689,16 @@ export class BrainBench {
    * rhythm marker. Several states the bench must cover (a run whose candidate
    * settled, an attempts-exhausted row) are unreachable through the enqueuers
    * by construction, and this is the only way to arrange them.
+   *
+   * `fn` runs in one IMMEDIATE transaction. A deferred one that reads before
+   * it writes fails with SQLITE_BUSY, without waiting out the busy timeout,
+   * when the gateway's writer commits in between.
    */
   withWriteHandle<T>(fn: (db: Database.Database) => T): T {
     const db = new Database(this.harness.getDbPath(), { fileMustExist: true });
     db.pragma("busy_timeout = 10000");
     try {
-      return fn(db);
+      return db.transaction(() => fn(db)).immediate();
     } finally {
       db.close();
     }
@@ -722,16 +864,16 @@ export class BrainBench {
     return this.entailmentServer.calls;
   }
 
-  /** Every brief-judge verdict served, in order. */
-  get judgeCalls() {
-    if (!this.judgeServer) throw new Error("BrainBench: no brief judge is running");
-    return this.judgeServer.calls;
+  /** Open or close a provider outage on the configured entailment verifier. */
+  refuseEntailmentWith(status: number | null, message?: string): void {
+    if (!this.entailmentServer) throw new Error("BrainBench: no entailment verifier is running");
+    this.entailmentServer.refuseWith(status, message);
   }
 
-  /** Open or close a provider outage on the configured Brief judge. */
-  refuseJudgeWith(status: number | null, message?: string): void {
-    if (!this.judgeServer) throw new Error("BrainBench: no brief judge is running");
-    this.judgeServer.refuseWith(status, message);
+  /** Every conversation turn the conversation puppet served, in order. */
+  get conversationCalls() {
+    if (!this.conversationServer) throw new Error("BrainBench: no conversation puppet is running");
+    return this.conversationServer.calls;
   }
 
   /** The scripted decision model, for assertions on what the worth gate asked. */
@@ -745,8 +887,8 @@ export class BrainBench {
     this.db = null;
     await this.harness?.destroy();
     await this.puppetServer?.close();
+    await this.conversationServer?.close();
     await this.entailmentServer?.close();
-    await this.judgeServer?.close();
     await this.decisionServer?.close();
   }
 }

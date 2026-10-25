@@ -23,6 +23,8 @@ const gapi = vi.hoisted(() => ({
   getToken: vi.fn(),
   setCredentials: vi.fn(),
   getProfile: vi.fn(),
+  revokeCredentials: vi.fn(),
+  removeAllListeners: vi.fn(),
 }));
 
 vi.mock("googleapis", () => ({
@@ -33,6 +35,8 @@ vi.mock("googleapis", () => ({
           generateAuthUrl: gapi.generateAuthUrl,
           getToken: gapi.getToken,
           setCredentials: gapi.setCredentials,
+          revokeCredentials: gapi.revokeCredentials,
+          removeAllListeners: gapi.removeAllListeners,
           on: vi.fn(),
           credentials: {},
         };
@@ -42,7 +46,8 @@ vi.mock("googleapis", () => ({
   },
 }));
 
-import { authenticateWith, parseOAuthCallbackUrl, SCOPES } from "./provider.js";
+import { authenticateWith, GoogleProvider, parseOAuthCallbackUrl, SCOPES } from "./provider.js";
+import googleProvider from "./index.js";
 import type { AddressInfo } from "node:net";
 import type {
   AskableChallenge,
@@ -79,7 +84,7 @@ async function configDirWithClient(port: number): Promise<string> {
 /** A port nothing is listening on. */
 async function freePort(): Promise<number> {
   const probe = createServer();
-  await new Promise<void>((ready) => probe.listen(0, ready));
+  await new Promise<void>((ready) => probe.listen(0, "127.0.0.1", ready));
   const { port } = probe.address() as AddressInfo;
   await new Promise<void>((closed) => probe.close(() => closed()));
   return port;
@@ -88,7 +93,7 @@ async function freePort(): Promise<number> {
 /** A port something else already holds, and the way to give it back. */
 async function occupiedPort(): Promise<{ port: number; release: () => Promise<void> }> {
   const squatter = createServer();
-  await new Promise<void>((ready) => squatter.listen(0, ready));
+  await new Promise<void>((ready) => squatter.listen(0, "127.0.0.1", ready));
   const { port } = squatter.address() as AddressInfo;
   return {
     port,
@@ -184,7 +189,34 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("Google context lifecycle", () => {
+  test("unused context cleanup releases the client without revoking its authorization", async () => {
+    const provider = new GoogleProvider(ACCOUNT, await configDirWithClient(8000));
+    await provider.initialize();
+    await googleProvider.disposeContext!({
+      provider,
+      auth: provider.getAuth(),
+      accountId: ACCOUNT,
+    });
+    expect(gapi.revokeCredentials).not.toHaveBeenCalled();
+    expect(gapi.removeAllListeners).toHaveBeenCalledWith("tokens");
+    expect(() => provider.getAuth()).toThrow("Google provider not initialized");
+    provider.dispose();
+    expect(gapi.revokeCredentials).not.toHaveBeenCalled();
+  });
+
+  test("explicit disconnection still revokes authorization and releases the client", async () => {
+    const provider = new GoogleProvider(ACCOUNT, await configDirWithClient(8000));
+    await provider.initialize();
+    await provider.disconnect();
+    expect(gapi.revokeCredentials).toHaveBeenCalledOnce();
+    expect(gapi.removeAllListeners).toHaveBeenCalledWith("tokens");
+    expect(() => provider.getAuth()).toThrow("Google provider not initialized");
+  });
 });
 
 describe("parseOAuthCallbackUrl", () => {
@@ -235,38 +267,42 @@ describe("parseOAuthCallbackUrl", () => {
 });
 
 describe("Google authenticate", () => {
-  test("the browser's redirect is caught on the port the flow is already holding", async () => {
-    const port = await freePort();
-    const configDir = await configDirWithClient(port);
-    let browserSaw = "";
-    const { session, shown, asked } = scriptedSession({
-      configDir,
-      // Answering the instant the redirect is shown is the whole point: an
-      // operator already signed in completes Google's consent in under a
-      // second, and a listener bound afterwards would never see it.
-      answer: async (challenge) => {
-        browserSaw = await completeInBrowser(challenge, port, { code: "browser-code" });
-        return await new Promise<never>(() => {});
-      },
-    });
+  test.each([undefined, "0.0.0.0"])(
+    "the browser redirect reaches the held listener (bind override: %s)",
+    async (bindHost) => {
+      vi.stubEnv("OMNESIS_OAUTH_CALLBACK_HOST", bindHost);
+      const port = await freePort();
+      const configDir = await configDirWithClient(port);
+      let browserSaw = "";
+      const { session, shown, asked } = scriptedSession({
+        configDir,
+        // Answering the instant the redirect is shown is the whole point: an
+        // operator already signed in completes Google's consent in under a
+        // second, and a listener bound afterwards would never see it.
+        answer: async (challenge) => {
+          browserSaw = await completeInBrowser(challenge, port, { code: "browser-code" });
+          return await new Promise<never>(() => {});
+        },
+      });
 
-    const result = await authenticateWith(session, {});
+      const result = await authenticateWith(session, {});
 
-    expect(browserSaw).toBe("Authentication successful! You can close this tab.");
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
-    expect(shown.map((c) => c.kind)).toContain("wait");
-    expect(gapi.getToken).toHaveBeenCalledWith("browser-code");
-    expect(result.accounts).toEqual([
-      { accountId: ACCOUNT, state: { status: "connected", scopes: SCOPES } },
-    ]);
-    expect(result.notices).toBeUndefined();
+      expect(browserSaw).toBe("Authentication successful! You can close this tab.");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
+      expect(shown.map((c) => c.kind)).toContain("wait");
+      expect(gapi.getToken).toHaveBeenCalledWith("browser-code");
+      expect(result.accounts).toEqual([
+        { accountId: ACCOUNT, state: { status: "connected", scopes: SCOPES } },
+      ]);
+      expect(result.notices).toBeUndefined();
 
-    const saved = JSON.parse(
-      await readFile(join(configDir, "google", ACCOUNT, "tokens.json"), "utf-8"),
-    );
-    expect(saved.refresh_token).toBe("refresh-token");
-  });
+      const saved = JSON.parse(
+        await readFile(join(configDir, "google", ACCOUNT, "tokens.json"), "utf-8"),
+      );
+      expect(saved.refresh_token).toBe("refresh-token");
+    },
+  );
 
   test("a code brought back by hand finishes the same flow", async () => {
     // The browser is on another machine, so nothing reaches the loopback

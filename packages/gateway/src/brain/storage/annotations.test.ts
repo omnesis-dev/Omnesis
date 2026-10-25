@@ -15,6 +15,9 @@ import { randomUUID, createHash } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
+import { annotationEvidenceFrame } from "../annotation-verification.js";
+import { withPersonProfileRead } from "../person-profile-test-tools.js";
+import { deleteDocumentsByIds } from "../../data/repositories/DocumentRepository.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { createOpenLoopMirror } from "../steward/mirror.js";
@@ -578,7 +581,7 @@ describe("annotate_durable firewall", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
 
   test("absent unless annotations are enabled; listed as a mutating tool", () => {
@@ -1122,7 +1125,7 @@ describe("annotation_revise / annotation_retract", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   async function seedAnnotation(confidence = 0.5): Promise<string> {
     const subject = insertDoc(db, "d1", "subject body");
@@ -1307,7 +1310,7 @@ describe("annotate_person firewall", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   function insertPerson(id: string): void {
     db.prepare(
@@ -1520,7 +1523,7 @@ describe("annotation_search", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
 
   test("gated on annotations; read-only (not in the mutating set)", () => {
@@ -1557,6 +1560,35 @@ describe("annotation_search", () => {
     expect(body.data.annotations).toHaveLength(1);
     expect(body.data.annotations[0]?.evidenceDocId).toBe(evidence);
     expect(body.data.annotations[0]?.evidenceQuote).toBe("deposit is due friday");
+  });
+
+  test("lists annotations kept for review after their documents were deleted, marked and not as priors", async () => {
+    const subject = insertDoc(db, "d1", "subject body");
+    const evidence = insertDoc(db, "d2", "the venue deposit is due friday");
+    createDocAnnotation(
+      db,
+      {
+        id: "anno_review",
+        docId: subject,
+        claimType: "commitment-status",
+        claimText: "deposit not yet paid",
+        evidenceDocId: evidence,
+        evidenceQuote: "deposit is due friday",
+        confidence: 0.6,
+        claimBasis: "quoted",
+        createdByRun: "r1",
+      },
+      NOW,
+    );
+    deleteDocumentsByIds(db, [evidence, subject]);
+    const t = tool(buildTools(), "annotation_search");
+    const res = await t.invoke({ docId: subject }, CTX);
+    expect(res).toMatchObject({
+      kind: "structured",
+      data: { annotations: [{ id: "anno_review", underReview: true }] },
+    });
+    // Nothing kept for review about an unknown document: still not found.
+    expect(await t.invoke({ docId: "no-such-doc" }, CTX)).toMatchObject({ kind: "error" });
   });
 
   test("lists a person's live priors, resolving id or email to the canonical", async () => {
@@ -1636,8 +1668,8 @@ describe("entailment gate (firewall 5)", () => {
   /** A fake verifier returning a fixed verdict, recording what it was asked. */
   function fakeVerifier(
     label: "entailment" | "neutral" | "contradiction",
-  ): EntailCapability & { calls: Array<{ claim: string; evidence: string }> } {
-    const calls: Array<{ claim: string; evidence: string }> = [];
+  ): EntailCapability & { calls: Array<Parameters<EntailCapability["verify"]>[0]> } {
+    const calls: Array<Parameters<EntailCapability["verify"]>[0]> = [];
     return {
       calls,
       // eslint-disable-next-line @typescript-eslint/require-await
@@ -1676,7 +1708,7 @@ describe("entailment gate (firewall 5)", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   function insertPerson(id: string): void {
     db.prepare(
@@ -1717,7 +1749,18 @@ describe("entailment gate (firewall 5)", () => {
     expect(row.lastVerifiedAt).toBe(NOW);
     // The gate judged the claim against the QUOTE, not the whole document.
     expect(verifier.calls).toEqual([
-      { claim: "the deposit was sent", evidence: "we sent the deposit this morning" },
+      {
+        assessment: "annotation_atomic",
+        signal: expect.any(AbortSignal),
+        claim: "the deposit was sent",
+        evidence: annotationEvidenceFrame([
+          { quote: "we sent the deposit this morning", source: "we sent the deposit this morning" },
+        ]),
+        context: JSON.stringify({
+          kind: "document annotation",
+          interpretation: "A synthesized factual note; no additional factual context is supplied.",
+        }),
+      },
     ]);
   });
 
@@ -1739,6 +1782,36 @@ describe("entailment gate (firewall 5)", () => {
       expect(listRecentLiveAnnotations(db, { sinceMs: 0, limit: 10 })).toHaveLength(0);
     },
   );
+
+  test("compound annotation refusal uses contextual assessment and never persists partial support", async () => {
+    const text = "The first robotic arm was calibrated. Calibration of the second arm is planned.";
+    const evidence = insertDoc(db, "robot-controls", text);
+    const verifier: EntailCapability = {
+      dispose() {},
+      verify: (input) => {
+        expect(JSON.parse(input.context!)).toMatchObject({ kind: "document annotation" });
+        expect(input.claim).toBe("Both robotic arms were calibrated.");
+        expect(JSON.parse(input.evidence).sources[0]).toMatchObject({
+          selectedQuotes: [text],
+          text,
+        });
+        return Promise.resolve({ label: "neutral" });
+      },
+    };
+    const result = await tool(
+      buildTools(async () => verifier),
+      "annotate_durable",
+    ).invoke(
+      {
+        ...annotateArgs(evidence, evidence),
+        claimText: "Both robotic arms were calibrated.",
+        evidenceQuote: text,
+      },
+      CTX,
+    );
+    expect(result).toMatchObject({ kind: "error", code: "evidence_does_not_entail_claim" });
+    expect(listLiveAnnotationsForDoc(db, evidence)).toHaveLength(0);
+  });
 
   test("throwing verifier → fail-open: persists with verification_state=unverified", async () => {
     const { subject, evidence } = seedDocs();
@@ -1792,11 +1865,15 @@ describe("entailment gate (firewall 5)", () => {
       claimBasis: "quoted",
     };
 
+    const personVerifier = fakeVerifier("entailment");
     const ok = await tool(
-      buildTools(async () => fakeVerifier("entailment")),
+      buildTools(async () => personVerifier),
       "annotate_person",
     ).invoke(args, CTX);
     expect(ok.kind).toBe("structured");
+    expect(JSON.parse(personVerifier.calls[0]!.context!)).toMatchObject({
+      kind: "person annotation",
+    });
     const row = listLivePersonAnnotationsForPerson(db, "per_a")[0]!;
     expect(row.verificationState).toBe("verified");
     expect(row.lastVerifiedAt).toBe(NOW);
@@ -1928,7 +2005,16 @@ describe("entailment gate (firewall 5)", () => {
     expect(refused.kind).toBe("error");
     if (refused.kind === "error") expect(refused.code).toBe("evidence_does_not_entail_claim");
     expect(neutral.calls[0]!.claim).toBe("the deposit cleared and the booking is final");
-    expect(neutral.calls[0]!.evidence).toBe("we sent the deposit this morning");
+    expect(JSON.parse(neutral.calls[0]!.evidence)).toMatchObject({
+      sources: [
+        {
+          authority: "selected_quote",
+          text: "we sent the deposit this morning",
+          selectedQuotes: ["we sent the deposit this morning"],
+          truncated: false,
+        },
+      ],
+    });
     expect(getDocAnnotation(db, "anno_1")!.claimText).toBe("the deposit was sent");
 
     // A confidence-only revise re-judges the STANDING claim and re-stamps.
@@ -2097,7 +2183,7 @@ describe("annotation supersession + reconcile-before-create", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   function insertPerson(id: string, mergedInto: string | null = null): void {
     db.prepare(
@@ -2504,7 +2590,7 @@ describe("annotation supersede tools + probe hardening", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   function insertPerson(id: string, mergedInto: string | null = null): void {
     db.prepare(
@@ -3093,21 +3179,21 @@ describe("multi-evidence grounding", () => {
   });
 
   test("person store: create children, promote-on-break, evidence replace, retract cleanup", () => {
-    const evA = insertDoc(db, "d2", "handles the quarterly budget review");
-    const evB = insertDoc(db, "d3", "she prepared the quarterly budget deck again");
+    const evA = insertDoc(db, "d2", "Maya coordinates observatory outreach");
+    const evB = insertDoc(db, "d3", "Maya coordinates observatory outreach each season");
     createPersonAnnotation(
       db,
       {
         id: "panno_m1",
         personId: "per_1",
         claimType: "role",
-        claimText: "owns the quarterly budget process",
+        claimText: "Maya coordinates observatory outreach",
         evidenceDocId: evA,
-        evidenceQuote: "handles the quarterly budget review",
+        evidenceQuote: "Maya coordinates observatory outreach",
         confidence: 0.5,
-        claimBasis: "synthesized",
+        claimBasis: "quoted",
         createdByRun: "run_m",
-        additionalEvidence: [{ docId: evB, quote: "prepared the quarterly budget deck" }],
+        additionalEvidence: [{ docId: evB, quote: "Maya coordinates observatory outreach" }],
       },
       NOW,
     );
@@ -3115,7 +3201,8 @@ describe("multi-evidence grounding", () => {
       evA,
       evB,
     ]);
-    // Partial break → the surviving atom is promoted into the mirror.
+    // Either source independently states the whole atomic claim; a surviving
+    // alternative can be promoted. Joint synthesized support is tested separately.
     insertDoc(db, "d2", "left the finance rotation");
     const r = invalidatePersonAnnotationsForDoc(db, evA, NOW + 1000);
     expect(r).toEqual({ invalidated: 0, flaggedUnverified: 1, promoted: 1 });
@@ -3127,13 +3214,13 @@ describe("multi-evidence grounding", () => {
       revisePersonAnnotation(
         db,
         "panno_m1",
-        { evidence: [{ docId: evB, quote: "quarterly budget deck again" }] },
+        { evidence: [{ docId: evB, quote: "Maya coordinates observatory outreach each season" }] },
         NOW + 2000,
       ),
     ).toBe(true);
     expect(
       db.prepare<[], { q: string }>("SELECT evidence_quote AS q FROM person_annotations").get()!.q,
-    ).toBe("quarterly budget deck again");
+    ).toBe("Maya coordinates observatory outreach each season");
     // Retract removes the child rows with the parent.
     expect(deletePersonAnnotation(db, "panno_m1")).toBe(true);
     expect(
@@ -3143,24 +3230,24 @@ describe("multi-evidence grounding", () => {
   });
 
   test("person store: promotion skips a dead-doc atom; the mirror lands on the first servable atom", () => {
-    const evA = insertDoc(db, "d2", "handles the quarterly budget review");
-    const evB = insertDoc(db, "d3", "she prepared the quarterly budget deck again");
-    const evC = insertDoc(db, "d4", "owns the budget calendar for the quarter");
+    const evA = insertDoc(db, "d2", "Maya coordinates observatory outreach");
+    const evB = insertDoc(db, "d3", "Maya coordinates observatory outreach each season");
+    const evC = insertDoc(db, "d4", "Confirmed: Maya coordinates observatory outreach");
     createPersonAnnotation(
       db,
       {
         id: "panno_m2",
         personId: "per_1",
         claimType: "role",
-        claimText: "owns the quarterly budget process",
+        claimText: "Maya coordinates observatory outreach",
         evidenceDocId: evA,
-        evidenceQuote: "handles the quarterly budget review",
+        evidenceQuote: "Maya coordinates observatory outreach",
         confidence: 0.5,
-        claimBasis: "synthesized",
+        claimBasis: "quoted",
         createdByRun: "run_m",
         additionalEvidence: [
-          { docId: evB, quote: "prepared the quarterly budget deck" },
-          { docId: evC, quote: "owns the budget calendar" },
+          { docId: evB, quote: "Maya coordinates observatory outreach" },
+          { docId: evC, quote: "Maya coordinates observatory outreach" },
         ],
       },
       NOW,

@@ -12,6 +12,7 @@
  * the gateway and the CLI. Tests can compose handles directly.
  */
 
+import { CitationReads } from "./citation-reads.js";
 import { createAnnotateManyTool } from "./annotate-many.js";
 import { createCiteRecordTool } from "./cite-record.js";
 import { createSpawnSubagentTool } from "./spawn-subagent.js";
@@ -21,6 +22,7 @@ import { createSearchManyTool } from "./search-many.js";
 import { createFetchManyTool } from "./fetch-many.js";
 import { createLookupDocumentByUrlTool } from "./lookup-document-by-url.js";
 import { createLookupPeopleTool } from "./lookup-people.js";
+import { createCountMessagesTool } from "./count-messages.js";
 import { createPlanTool, PlanStore } from "./plan.js";
 import { createRunSqlTool } from "./run-sql.js";
 import {
@@ -39,9 +41,16 @@ import type { ToolHandle } from "../backend.js";
 import type { ToolPorts } from "./types.js";
 
 export interface BuiltinToolsOptions {
+  /** The documents each turn has read, for a port that requires a read before a citation. */
+  citationReads?: CitationReads;
   ports: ToolPorts;
   /** Default limit for search_documents (default: 8). */
   defaultSearchLimit?: number;
+  /**
+   * Body characters `fetch_many` returns per document when a call names no
+   * range. Unset returns whole bodies, as the interactive agent reads them.
+   */
+  documentReadChars?: number;
   /**
    * Whether the gateway runs in experimental mode. Gates every tool whose
    * feature is hidden behind the experimental flag on the other clients: the
@@ -84,10 +93,19 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
       defaultLimit: opts.defaultSearchLimit,
     }),
   );
-  tools.push(createFetchManyTool({ port: opts.ports.document }));
+  const citationReads = opts.citationReads ?? new CitationReads();
+  tools.push(
+    createFetchManyTool({
+      port: opts.ports.document,
+      citationReads,
+      ...(opts.documentReadChars === undefined
+        ? {}
+        : { defaultMaxContentChars: opts.documentReadChars }),
+    }),
+  );
   // `annotate_many` shares the document port with `fetch_many` — each child
   // loads the doc body to obtain the canonical ref for the citation card.
-  tools.push(createAnnotateManyTool({ port: opts.ports.document }));
+  tools.push(createAnnotateManyTool({ port: opts.ports.document, citationReads }));
   tools.push(createPlanTool({ store: opts.planStore ?? new PlanStore() }));
   if (opts.ports.trail) {
     tools.push(createTraceConnectionsTool({ port: opts.ports.trail }));
@@ -103,6 +121,12 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
   }
   if (opts.ports.person) {
     tools.push(createLookupPeopleTool({ port: opts.ports.person }));
+  }
+  // Read-only per-person message counts. A wired port is the gate; callers
+  // whose grant is restricted to some sources are never given one, because the
+  // port reads every source.
+  if (opts.ports.messageCounts) {
+    tools.push(createCountMessagesTool({ port: opts.ports.messageCounts }));
   }
   if (opts.ports.documentByUrl) {
     tools.push(createLookupDocumentByUrlTool({ port: opts.ports.documentByUrl }));
@@ -203,6 +227,7 @@ export const GENERIC_SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "trace_connections",
   "run_sql",
   "lookup_people",
+  "count_messages",
   "annotate_many",
   "search_loops",
   "fetch_loop",

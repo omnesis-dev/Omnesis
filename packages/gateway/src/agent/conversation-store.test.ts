@@ -9,15 +9,18 @@ import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
-import { originUsesAnchoredThreadProfile } from "./conversation-retention.js";
+import { originIsPermanent } from "./conversation-retention.js";
+import { paginateVisibleConversationMessages } from "./service.js";
 
 import type { ChatMessage } from "@omnesis/agent";
 
-describe("anchored-thread retention classification", () => {
-  it("reserves the non-expiring profile for brief threads only", () => {
-    expect(originUsesAnchoredThreadProfile({ kind: "brief" })).toBe(true);
-    expect(originUsesAnchoredThreadProfile({ kind: "temporal_annotation" })).toBe(false);
-    expect(originUsesAnchoredThreadProfile({ kind: "time_index_entry" })).toBe(false);
+describe("permanent-origin retention classification", () => {
+  it("keeps only the Morning brief conversation out of retention", () => {
+    expect(originIsPermanent({ kind: "daily_brief", runId: "run_1", briefs: [] })).toBe(true);
+    expect(originIsPermanent({ kind: "watch_firing", firingId: "f", runId: "r" })).toBe(false);
+    expect(originIsPermanent({ kind: "brief", runId: "run_1" })).toBe(false);
+    expect(originIsPermanent(null)).toBe(false);
+    expect(originIsPermanent(["daily_brief"])).toBe(false);
   });
 });
 
@@ -277,6 +280,37 @@ describe("FsConversationStore", () => {
     ]);
   });
 
+  it("keeps a retired anchored thread's seed hidden from its readers", async () => {
+    const d = tmpDir();
+    dirs.push(d);
+    mkdirSync(join(d, "conversations"), { recursive: true });
+    const seed: ChatMessage[] = [
+      { role: "user", parts: [{ kind: "text", text: "Background run prompt" }] },
+      { role: "assistant", parts: [{ kind: "text", text: "Background run notes" }] },
+    ];
+    await writeFile(
+      join(d, "conversations", "retired.json"),
+      JSON.stringify({
+        ...rec({ id: "retired" }),
+        origin: { kind: "brief", runId: "run_1", seedMessageCount: seed.length },
+        messages: [...seed, { role: "user", parts: [{ kind: "text", text: "A reply" }] }],
+      }),
+      "utf8",
+    );
+    const loaded = await new FsConversationStore(join(d, "conversations")).load("retired");
+    expect(loaded?.originUnrecognized).toBe(true);
+    expect(loaded?.unrecognizedSeedMessageCount).toBe(2);
+    const page = paginateVisibleConversationMessages(
+      loaded!.messages,
+      loaded!.origin,
+      50,
+      undefined,
+      loaded!.unrecognizedSeedMessageCount,
+    );
+    expect(page.messageCount).toBe(1);
+    expect(JSON.stringify(page.messages)).not.toContain("Background run");
+  });
+
   it("rebuilds the summary index when a transcript is missing from it", async () => {
     const d = tmpDir();
     dirs.push(d);
@@ -299,7 +333,7 @@ describe("FsConversationStore", () => {
     expect(await s.load("s_one")).toBeNull();
   });
 
-  it("retention discovery is bounded and excludes fresh, pinned, and anchored records", async () => {
+  it("retention discovery is bounded and excludes fresh, pinned, and Morning brief records", async () => {
     const s = fresh();
     await s.save(rec({ id: "old", updatedAt: "2026-01-01T00:00:00.000Z" }));
     await s.save(
@@ -313,9 +347,9 @@ describe("FsConversationStore", () => {
     await s.save(rec({ id: "pinned", updatedAt: "2026-01-01T00:00:00.000Z", pinned: true }));
     await s.save(
       rec({
-        id: "anchored",
+        id: "morning-brief",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        origin: { kind: "brief", briefId: "brief_example", runId: "run_example" },
+        origin: { kind: "daily_brief", runId: "run_example", briefs: [] },
       }),
     );
     const page = await s.listRetentionCandidates(Date.parse("2026-02-01T00:00:00.000Z"), 10);
@@ -434,15 +468,17 @@ describe("conversation origin", () => {
     return new FsConversationStore(join(d, "conversations"));
   }
   const origin = {
-    kind: "brief",
-    briefId: "brief_1",
+    kind: "daily_brief",
     runId: "run_1",
-    brief: {
-      title: "Return the borrowed projector",
-      description: "The projector goes back to the AV desk this week.",
-      body: "Borrowed for the demo on 2026-07-02; the AV desk closes at 17:00.",
-    },
-    seedMessageCount: 2,
+    briefs: [
+      { day: "2026-07-01", messageIndex: 0, messageId: "msg_brief_1" },
+      {
+        day: "2026-07-02",
+        messageIndex: 2,
+        messageId: "msg_brief_2",
+        sentAt: "2026-07-02T06:02:40.055Z",
+      },
+    ],
   } as const;
 
   it("round-trips through save/load, the summary list, and the rebuilt index", async () => {
@@ -454,16 +490,16 @@ describe("conversation origin", () => {
       backend: "b",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:05.000Z",
-      title: "Return the borrowed projector",
+      title: "Morning brief",
       pinned: false,
-      origin,
+      origin: { ...origin, briefs: [...origin.briefs] },
       messages: [{ role: "user", parts: [{ kind: "text", text: "ctx" }] }],
     });
     expect((await s.load("s_thread"))!.origin).toEqual(origin);
-    // Summaries carry ONLY the anchor — never the embedded brief
-    // snapshot (its long-form body would otherwise ship in every list
-    // row and be re-persisted on every index rewrite).
-    const anchor = { kind: "brief", briefId: "brief_1", runId: "run_1" };
+    // Summaries carry ONLY the anchor — never the brief index, which
+    // would otherwise ship in every list row and be re-persisted on every
+    // index rewrite.
+    const anchor = { kind: "daily_brief", runId: "run_1", briefs: [] };
     expect((await s.list()).find((c) => c.id === "s_thread")!.origin).toEqual(anchor);
     // A second store instance rebuilds the summary index from files —
     // the anchor must survive that path too.
@@ -489,13 +525,13 @@ describe("conversation origin", () => {
       string,
       unknown
     >;
-    raw.origin = { kind: "unknown-kind", briefId: 42 };
+    raw.origin = { kind: "unknown-kind", runId: 42 };
     await writeFile(join(dir, "s_bad.json"), JSON.stringify(raw), "utf8");
     const loaded = await s.load("s_bad");
     expect(loaded!.origin).toBeUndefined();
   });
 
-  it("malformed snapshot extras are dropped while the anchor survives", async () => {
+  it("malformed brief references are dropped while the anchor survives", async () => {
     const s = fresh2();
     const dir = (s as unknown as { dir: string }).dir;
     await s.save({
@@ -507,25 +543,159 @@ describe("conversation origin", () => {
       updatedAt: "2026-01-01T00:00:05.000Z",
       title: "t",
       pinned: false,
-      origin: { kind: "brief", briefId: "brief_1", runId: "run_1" },
+      origin: { kind: "daily_brief", runId: "run_1", briefs: [] },
       messages: [{ role: "user", parts: [{ kind: "text", text: "x" }] }],
     });
     const raw = JSON.parse(await readFile(join(dir, "s_partial.json"), "utf8")) as Record<
       string,
       unknown
     >;
-    // A snapshot missing its required strings and a negative seed count
-    // must both read as absent — not poison the whole origin.
+    // Each malformed reference reads as absent — none poisons the origin.
     raw.origin = {
-      kind: "brief",
-      briefId: "brief_1",
+      kind: "daily_brief",
       runId: "run_1",
-      brief: { title: 42 },
-      seedMessageCount: -3,
+      briefs: [
+        { day: "2026-07-01", messageIndex: 0, messageId: "msg_ok" },
+        { day: "2026-07-02", messageIndex: -1, messageId: "msg_negative" },
+        { day: 42, messageIndex: 1, messageId: "msg_bad_day" },
+        { day: "2026-07-03", messageIndex: 1.5, messageId: "msg_fraction" },
+        "not-a-ref",
+        // A reference with a malformed send time keeps its place without one.
+        { day: "2026-07-04", messageIndex: 2, messageId: "msg_bad_sent", sentAt: 7 },
+      ],
     };
     await writeFile(join(dir, "s_partial.json"), JSON.stringify(raw), "utf8");
     const loaded = await s.load("s_partial");
-    expect(loaded!.origin).toEqual({ kind: "brief", briefId: "brief_1", runId: "run_1" });
+    expect(loaded!.origin).toEqual({
+      kind: "daily_brief",
+      runId: "run_1",
+      briefs: [
+        { day: "2026-07-01", messageIndex: 0, messageId: "msg_ok" },
+        { day: "2026-07-04", messageIndex: 2, messageId: "msg_bad_sent" },
+      ],
+    });
+  });
+
+  it("malformed watch-firing extras are dropped while the anchor survives", async () => {
+    const s = fresh2();
+    const dir = (s as unknown as { dir: string }).dir;
+    await s.save({
+      id: "s_watch",
+      callerId: "token:A",
+      model: "m",
+      backend: "b",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z",
+      title: "t",
+      pinned: false,
+      messages: [{ role: "user", parts: [{ kind: "text", text: "x" }] }],
+    });
+    const raw = JSON.parse(await readFile(join(dir, "s_watch.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    // A snapshot missing its required strings and a negative seed count
+    // must both read as absent — not poison the whole origin.
+    raw.origin = {
+      kind: "watch_firing",
+      firingId: "firing_1",
+      runId: "firing_1",
+      watchId: "watch_1",
+      watch: { name: 42 },
+      seedMessageCount: -3,
+    };
+    await writeFile(join(dir, "s_watch.json"), JSON.stringify(raw), "utf8");
+    const loaded = await s.load("s_watch");
+    expect(loaded!.origin).toEqual({
+      kind: "watch_firing",
+      firingId: "firing_1",
+      runId: "firing_1",
+      watchId: "watch_1",
+    });
+  });
+});
+
+describe("task conversation origin", () => {
+  const dirs3: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs3.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  function fresh3(): FsConversationStore {
+    const d = mkdtempSync(join(tmpdir(), "omnesis-convo-task-origin-test-"));
+    dirs3.push(d);
+    return new FsConversationStore(join(d, "conversations"));
+  }
+  const base = {
+    callerId: "token:A",
+    model: "m",
+    backend: "b",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:05.000Z",
+    title: "Renew the studio lease",
+    pinned: false,
+    messages: [],
+  };
+  const origin = {
+    kind: "task",
+    taskId: "loop_lease",
+    runId: "loop_lease",
+    task: {
+      title: "Renew the studio lease",
+      state: "open",
+      due: "2026-03-20",
+      sourceCount: 3,
+    },
+    seedMessageCount: 0,
+  } as const;
+
+  async function loadRaw(s: FsConversationStore, id: string, rawOrigin: unknown) {
+    const dir = (s as unknown as { dir: string }).dir;
+    await s.save({ ...base, id });
+    const raw = JSON.parse(await readFile(join(dir, `${id}.json`), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    raw.origin = rawOrigin;
+    await writeFile(join(dir, `${id}.json`), JSON.stringify(raw), "utf8");
+    return s.load(id);
+  }
+
+  it("round-trips with its snapshot; list rows carry the anchor only", async () => {
+    const s = fresh3();
+    await s.save({ ...base, id: "s_task", origin: { ...origin, task: { ...origin.task } } });
+    expect((await s.load("s_task"))!.origin).toEqual(origin);
+    const anchor = { kind: "task", taskId: "loop_lease", runId: "loop_lease" };
+    expect((await s.list()).find((c) => c.id === "s_task")!.origin).toEqual(anchor);
+    const rebuilt = new FsConversationStore((s as unknown as { dir: string }).dir);
+    expect((await rebuilt.list()).find((c) => c.id === "s_task")!.origin).toEqual(anchor);
+  });
+
+  it("a snapshot without its title or state is dropped while the anchor survives", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_bad", {
+      kind: "task",
+      taskId: "loop_lease",
+      runId: "loop_lease",
+      task: { title: 42, state: "open" },
+    });
+    expect(loaded!.origin).toEqual({ kind: "task", taskId: "loop_lease", runId: "loop_lease" });
+    expect(loaded!.originUnrecognized).toBeUndefined();
+  });
+
+  it("malformed optional snapshot fields read as absent", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_partial", {
+      ...origin,
+      task: { title: "Renew the lease", state: "open", due: "next week", sourceCount: -1 },
+    });
+    expect(loaded!.origin).toEqual({
+      ...origin,
+      task: { title: "Renew the lease", state: "open", sourceCount: 0 },
+    });
+  });
+
+  it("an origin without a task id is refused rather than run as a plain chat", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_no_id", { kind: "task", runId: "loop_lease" });
+    expect(loaded!.origin).toBeUndefined();
+    expect(loaded!.originUnrecognized).toBe(true);
   });
 });
 

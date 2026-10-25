@@ -49,7 +49,6 @@ describe("notification messages", () => {
     { kind: "diagnostic", data: {}, targetId: "app" },
     { kind: "agent-answer", data: { conversationId: "conv_answer" }, targetId: "conv_answer" },
     { kind: "conversation", data: { conversationId: "conv_update" }, targetId: "conv_update" },
-    { kind: "brief", data: { briefId: "brf_daily" }, targetId: "brf_daily" },
     {
       kind: "watch",
       data: { watchId: "watch_orders", firingKey: "fire_1" },
@@ -137,8 +136,17 @@ describe("notification messages", () => {
         kind: "brief",
         title: "Fictional notification",
         body: "Body",
-        data: { conversationId: "wrong-shape" },
+        data: { briefId: "brief-fictional" },
         collapseId: "brief:fictional",
+      }),
+    ).toThrow();
+    expect(() =>
+      notificationMessageSchema.parse({
+        kind: "watch",
+        title: "Fictional notification",
+        body: "Body",
+        data: { conversationId: "wrong-shape" },
+        collapseId: "watch:fictional",
       }),
     ).toThrow();
   });

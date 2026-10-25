@@ -28,7 +28,7 @@
 
 import { z } from "zod";
 
-import { UNATTRIBUTED_CALLER } from "../backend.js";
+import { summaryExcerpt, UNATTRIBUTED_CALLER } from "../backend.js";
 import { WatchPortError, type WatchPort, type WatchPortResult } from "./types.js";
 import type { ToolResult } from "@omnesis/core";
 
@@ -101,6 +101,13 @@ export const watchUpdateArgsSchema = z
   })
   .strict();
 export type WatchUpdateArgs = z.infer<typeof watchUpdateArgsSchema>;
+
+/** A watch call's card text: its one-line caption, else the request it states. */
+function watchSummary(args: unknown): string {
+  const a = (args ?? {}) as { summary?: unknown; request?: unknown };
+  const text = typeof a.summary === "string" && a.summary ? a.summary : a.request;
+  return typeof text === "string" ? summaryExcerpt(text) : "";
+}
 
 export const watchDeleteArgsSchema = z.object({ watchId: watchIdField }).strict();
 export const watchGetArgsSchema = z.object({ watchId: watchIdField }).strict();
@@ -186,8 +193,8 @@ export function createWatchCreateTool(deps: WatchToolDeps): ToolHandle {
       "can't be expressed — explain that plainly instead of retrying the same " +
       "phrasing. A `timed_out` error is worth one retry.",
     schema: watchCreateArgsSchema,
-    summarize(): string {
-      return "create";
+    summarize(args: unknown): string {
+      return watchSummary(args);
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = parseArgs(watchCreateArgsSchema, rawArgs);
@@ -218,10 +225,8 @@ export function createWatchUpdateTool(deps: WatchToolDeps): ToolHandle {
       "anything that has already happened. Returns the same `interpretation` " +
       "as `watch_create`; relay it.",
     schema: watchUpdateArgsSchema,
-    summarize(args: unknown): string | undefined {
-      if (!args || typeof args !== "object") return undefined;
-      const id = (args as { watchId?: unknown }).watchId;
-      return typeof id === "string" ? `update ${id}` : "update";
+    summarize(args: unknown): string {
+      return watchSummary(args);
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = parseArgs(watchUpdateArgsSchema, rawArgs);
@@ -250,10 +255,8 @@ export function createWatchDeleteTool(deps: WatchToolDeps): ToolHandle {
       "— the condition would have to be described again to bring it back — so " +
       "confirm which watch is meant when more than one could fit.",
     schema: watchDeleteArgsSchema,
-    summarize(args: unknown): string | undefined {
-      if (!args || typeof args !== "object") return undefined;
-      const id = (args as { watchId?: unknown }).watchId;
-      return typeof id === "string" ? `delete ${id}` : "delete";
+    summarize(): string {
+      return "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = parseArgs(watchDeleteArgsSchema, rawArgs);
@@ -285,7 +288,7 @@ export function createWatchesListTool(deps: WatchToolDeps): ToolHandle {
       "asked for are not listed here.",
     schema: watchesListArgsSchema,
     summarize(): string {
-      return "list";
+      return "";
     },
     async invoke(_rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       try {
@@ -307,10 +310,8 @@ export function createWatchGetTool(deps: WatchToolDeps): ToolHandle {
       "working?' — a watch that has never fired is either waiting or " +
       "mis-stated, and the condition shown here is what tells the two apart.",
     schema: watchGetArgsSchema,
-    summarize(args: unknown): string | undefined {
-      if (!args || typeof args !== "object") return undefined;
-      const id = (args as { watchId?: unknown }).watchId;
-      return typeof id === "string" ? `get ${id}` : "get";
+    summarize(): string {
+      return "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = parseArgs(watchGetArgsSchema, rawArgs);
@@ -353,10 +354,8 @@ export function createWatchProbeTool(deps: WatchToolDeps): ToolHandle {
       "of silence. It stores nothing and asks no model, so a node with a judge " +
       "reports what would have reached the model rather than what it would say.",
     schema: watchGetArgsSchema,
-    summarize(args: unknown): string | undefined {
-      if (!args || typeof args !== "object") return undefined;
-      const id = (args as { watchId?: unknown }).watchId;
-      return typeof id === "string" ? `probe ${id}` : "probe";
+    summarize(): string {
+      return "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = parseArgs(watchGetArgsSchema, rawArgs);

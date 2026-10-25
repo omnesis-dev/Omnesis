@@ -755,7 +755,6 @@ describe("AgentLifecycle", () => {
         assignments: {
           "background-agent": "codex/gpt-5.4",
           "entailment-verifier": "codex/gpt-5.4",
-          "brief-judge": "codex/gpt-5.4",
           "privacy-reviewer": "codex/gpt-5.4",
         },
       },
@@ -782,7 +781,6 @@ describe("AgentLifecycle", () => {
     expect(laneFor("privacy-reviewer")).toBe("inference");
 
     expect(laneFor("entailment-verifier")).toBe("inference");
-    expect(laneFor("brief-judge")).toBe("inference");
   });
 
   test("routes Claude Code roles to the correct lane with the saved effort", () => {

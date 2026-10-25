@@ -47,7 +47,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,14 +97,11 @@ import dev.omnesis.android.ui.common.Loadable
 fun ModelsScreen(
     connection: ConnectionState,
     onBack: () -> Unit,
-    initialPickerRole: String? = null,
-    onInitialPickerConsumed: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenBackends: () -> Unit = {},
     vm: ModelsViewModel = hiltViewModel(),
 ) {
     BackHandler(onBack = onBack)
-    InitialPickerEffect(initialPickerRole, vm::openPicker, onInitialPickerConsumed)
     val state by vm.state.collectAsStateWithLifecycle()
     val system by vm.system.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
@@ -143,20 +139,6 @@ fun ModelsScreen(
         behaviorEpoch = behaviorEpoch,
         onDismissNotice = vm::dismissNotice,
     ) }
-}
-
-@Composable
-internal fun InitialPickerEffect(
-    role: String?,
-    onOpen: (String) -> Unit,
-    onConsumed: () -> Unit,
-) {
-    LaunchedEffect(role) {
-        role?.let {
-            onOpen(it)
-            onConsumed()
-        }
-    }
 }
 
 /**
@@ -1233,14 +1215,6 @@ private fun sampleCapabilities() = listOf(
         "entailment-verifier",
         "Entailment verifier",
         "Checks that a memory claim is supported by its quoted evidence before it persists.",
-        "shield-check",
-        experimental = true,
-        section = "cognition",
-    ),
-    CapabilityMeta(
-        "brief-judge",
-        "Brief judge",
-        "Decides whether a candidate brief is worth interrupting you for.",
         "shield-check",
         experimental = true,
         section = "cognition",

@@ -10,8 +10,11 @@
  */
 
 import { describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { arcById, generateArcSet, FROZEN_ARC_SEED, type ArcSet } from "./briefs-arcs.js";
 import {
+  runScorecard,
+  completedSourceRunCounts,
   attributeLoops,
   computeDailyMix,
   computeScorecardMetrics,
@@ -71,7 +74,7 @@ function observations(
 ): ScorecardObservations {
   return {
     loops,
-    briefCreates: 5,
+    observationNotes: 5,
     loopCreates: loops.length,
     runsCompleted: 22,
     runsFailed: 0,
@@ -88,10 +91,9 @@ function observations(
   };
 }
 
-/** The sixteen loops a CORRECT agent leaves behind on the frozen arc set.
- * Arcs that CORRECTLY end with no loop: mistaken-commit (retracted ->
- * deleted), feedback-noise (not-relevant -> deleted), feedback-wrong
- * (wrong -> deleted), feedback-ack (info brief only, never a loop). */
+/** The fourteen loops a CORRECT agent leaves behind on the frozen arc set.
+ * The arc that CORRECTLY ends with no loop: mistaken-commit (retracted ->
+ * deleted). */
 function perfectLoops(): ObservedLoop[] {
   const docIds = fakeDocIds(SET);
   const byFirstStep = (arcId: string): string =>
@@ -111,8 +113,6 @@ function perfectLoops(): ObservedLoop[] {
     loop({ id: "l-errand-cutter", state: "open", docs: [byFirstStep("errand-cutter")] }),
     loop({ id: "l-errand-key", state: "open", docs: [byFirstStep("errand-key")] }),
     loop({ id: "l-nudge", state: "open", docs: [byFirstStep("nudge")] }),
-    loop({ id: "l-fb-handled", state: "done", docs: [byFirstStep("feedback-handled")] }),
-    loop({ id: "l-fb-snooze", state: "open", docs: [byFirstStep("feedback-snooze")] }),
   ];
 }
 
@@ -120,11 +120,10 @@ describe("computeDailyMix", () => {
   test("derives the documented mix from the frozen arc set", () => {
     expect(computeDailyMix(SET)).toEqual({
       representsDays: 1,
-      datumsDelivered: 40,
-      eligibleWakes: 36,
+      datumsDelivered: 35,
+      eligibleWakes: 31,
       wakerSkips: 2,
-      expectedRuns: 37,
-      feedbackRuns: 5,
+      expectedRuns: 32,
     });
   });
 });
@@ -188,14 +187,14 @@ describe("countUncorrectedFailures", () => {
         { tool: "open_loop_create", ok: false },
         { tool: "open_loop_create", ok: false },
         { tool: "open_loop_create", ok: true },
-        { tool: "brief_create", ok: true },
+        { tool: "observation_note", ok: true },
       ]),
     ).toBe(0);
     // A DIFFERENT tool succeeding later does not correct the failure...
     expect(
       countUncorrectedFailures([
         { tool: "open_loop_create", ok: false },
-        { tool: "brief_create", ok: true },
+        { tool: "observation_note", ok: true },
       ]),
     ).toBe(1);
     // ...nor does an earlier success, and a trailing failure never corrects.
@@ -220,12 +219,12 @@ describe("computeScorecardMetrics", () => {
     expect(metrics.silentCloseViolations).toBe(0);
     expect(metrics.infraFailureRate).toBe(0);
     expect(metrics.malformedToolCallRate).toBe(0);
-    expect(metrics.briefsPerDay).toBe(5);
+    expect(metrics.observationsPerDay).toBe(5);
     expect(metrics.tokensPerDay).toBe(91_000);
-    expect(counts.reconcileOpportunities).toBe(15);
-    expect(counts.resolutionTargets).toBe(5);
-    expect(counts.loopsJustified).toBe(16);
-    expect(counts.loopArcTargets).toBe(14);
+    expect(counts.reconcileOpportunities).toBe(13);
+    expect(counts.resolutionTargets).toBe(4);
+    expect(counts.loopsJustified).toBe(14);
+    expect(counts.loopArcTargets).toBe(12);
     expect(counts.updateTargets).toBe(4);
     expect(counts.updatesLanded).toBe(4);
   });
@@ -243,9 +242,9 @@ describe("computeScorecardMetrics", () => {
     );
     const { metrics, counts } = computeScorecardMetrics(SET, observations(loops), 1);
     expect(counts.duplicatesMinted).toBe(1);
-    expect(metrics.duplicateRate).toBeCloseTo(1 / 15, 10);
-    expect(metrics.resolutionRecall).toBe(4 / 5);
-    expect(metrics.loopPrecision).toBeCloseTo(16 / 17, 10);
+    expect(metrics.duplicateRate).toBeCloseTo(1 / 13, 10);
+    expect(metrics.resolutionRecall).toBe(3 / 4);
+    expect(metrics.loopPrecision).toBeCloseTo(14 / 15, 10);
   });
 
   test("closing the ambiguous arc counts a silent-close violation; an unjustified loop drops precision", () => {
@@ -262,14 +261,14 @@ describe("computeScorecardMetrics", () => {
     );
     const { metrics } = computeScorecardMetrics(SET, observations(loops), 1);
     expect(metrics.silentCloseViolations).toBe(1);
-    expect(metrics.loopPrecision).toBeCloseTo(16 / 17, 10);
+    expect(metrics.loopPrecision).toBeCloseTo(14 / 15, 10);
   });
 
   test("a wrong-merged bait (no loop for an expecting arc) drops loop_recall, not precision", () => {
     const loops = perfectLoops().filter((l) => l.id !== "l-obligation-quote");
     const { metrics, counts } = computeScorecardMetrics(SET, observations(loops), 1);
-    expect(counts.loopArcsTracked).toBe(13);
-    expect(metrics.loopRecall).toBeCloseTo(13 / 14, 10);
+    expect(counts.loopArcsTracked).toBe(11);
+    expect(metrics.loopRecall).toBeCloseTo(11 / 12, 10);
     expect(metrics.loopPrecision).toBe(1);
     expect(metrics.duplicateRate).toBe(0);
   });
@@ -318,7 +317,33 @@ describe("computeScorecardMetrics", () => {
 
     const open = perfectLoops().map((l) => (l.id === "l-ooo" ? { ...l, state: "open" } : l));
     const lingering = computeScorecardMetrics(SET, observations(open), 1);
-    expect(lingering.metrics.resolutionRecall).toBe(4 / 5);
+    expect(lingering.metrics.resolutionRecall).toBe(3 / 4);
+  });
+
+  test("retains raw refusals while partitioning only verified concurrency retries", () => {
+    const result = computeScorecardMetrics(
+      SET,
+      observations(perfectLoops(), {
+        mutatingToolCalls: 25,
+        mutatingToolCallsFailed: 5,
+        verifiedCollectionCreateRetries: 1,
+        verifiedConcurrentCreateRetries: 1,
+        verifiedFrontierRetries: 1,
+        mutatingToolCallsUncorrected: 2,
+      }),
+      1,
+    );
+    expect(result.counts.mutatingToolCallsFailed).toBe(5);
+    expect(result.counts.verifiedConcurrentCreateRetries).toBe(1);
+    expect(result.counts.malformedToolCallsFailed).toBe(2);
+    expect(result.counts.mutatingToolCallsFailed).toBe(
+      result.counts.verifiedConcurrentCreateRetries +
+        result.counts.verifiedFrontierRetries +
+        result.counts.verifiedCollectionCreateRetries +
+        result.counts.malformedToolCallsFailed,
+    );
+    expect(result.metrics.malformedToolCallRateRaw).toBe(5 / 25);
+    expect(result.metrics.malformedToolCallRate).toBe(2 / 25);
   });
 
   test("only UNCORRECTED failures gate as malformed_tool_call_rate; the raw rate reports all of them", () => {
@@ -360,10 +385,55 @@ describe("computeScorecardMetrics", () => {
       2,
     );
     expect(metrics.infraFailureRate).toBeCloseTo(0.2, 10);
-    expect(metrics.briefsPerDay).toBe(2.5);
+    expect(metrics.observationsPerDay).toBe(2.5);
     expect(metrics.tokensPerDay).toBe(45_500);
     expect(() => computeScorecardMetrics(SET, observations(perfectLoops()), 0)).toThrow(
       /representsDays/,
     );
   });
+});
+
+test("priced scorecards refuse startup until actual maintenance runs are budgeted", async () => {
+  await expect(
+    runScorecard({
+      gatewayMode: "experimental",
+      seed: 1,
+      backend: {
+        kind: "http",
+        backendName: "fixture",
+        url: "http://127.0.0.1:1",
+        modelId: "fixture",
+      },
+    }),
+  ).rejects.toThrow("actual-run budget reservation");
+});
+
+test("counts evidence revisions separately from later retrieval maintenance", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE cognition_runs(id TEXT,kind TEXT,status TEXT,payload_json TEXT,dedupe_key TEXT,usage_json TEXT,enqueued_at INTEGER);
+      CREATE TABLE knowledge_work(subject_kind TEXT,subject_id TEXT,reason TEXT,batch_id TEXT,status TEXT DEFAULT 'completed');
+      CREATE TABLE knowledge_batches(id TEXT,run_id TEXT);
+      INSERT INTO cognition_runs VALUES
+        ('initial','synthesis','completed','{}','initial',NULL,1),
+        ('catchup','synthesis','completed','{}','catchup',NULL,2),
+        ('changed','synthesis','completed','{}','changed',NULL,3),
+        ('legacy','data','completed','{}','data:doc:legacy-doc',NULL,4),
+        ('pending','synthesis','pending','{}','pending',NULL,5),
+        ('handoff','synthesis','completed','{}','handoff',NULL,6);
+      INSERT INTO knowledge_batches VALUES ('b1','initial'),('b2','catchup'),('b3','changed'),('b4','pending'),('b5','handoff');
+      INSERT INTO knowledge_work(subject_kind,subject_id,reason,batch_id) VALUES
+        ('source','doc','change','b1'),('source','doc','review','b2'),
+        ('source','doc','change','b3'),('source','doc','change','b4'),
+        ('source','other','review','b2');
+      INSERT INTO knowledge_work VALUES('source','doc','change','b5','deferred');
+    `);
+    expect(completedSourceRunCounts(db, ["doc", "other", "legacy-doc"])).toEqual({
+      dataRunsCompleted: 3,
+      sourceMaintenanceRunsCompleted: 2,
+    });
+  } finally {
+    db.close();
+  }
 });

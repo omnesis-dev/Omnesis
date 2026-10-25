@@ -105,6 +105,89 @@ final class AgentScrollUITests: XCTestCase {
         XCTAssertLessThan(gap, 250, "blank space below the last message — overscrolled past the end")
     }
 
+    /// Opening a conversation whose latest reply is taller than the screen
+    /// lands at the top of that reply, below the floating top buttons, rather
+    /// than at its end — and stays there instead of being pulled back to the
+    /// bottom. The chevron still appears and still reaches the end.
+    func testOpensAtTheTopOfTheLatestReply() {
+        launch(mode: "reading-anchor")
+        // Must match `PreviewMocks.agentReadingAnchorReplyStart` / `…End`.
+        let start = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "READING-ANCHOR-REPLY-START"))
+            .firstMatch
+        let end = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "READING-ANCHOR-REPLY-END"))
+            .firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 15), "the conversation never loaded")
+
+        // Let any open-time scrolling and layout settle.
+        Thread.sleep(forTimeInterval: 2.0)
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? app.screenshot().pngRepresentation
+            .write(to: directory.appendingPathComponent("reading-anchor-open.png"))
+
+        XCTAssertTrue(start.isHittable, "the start of the latest reply is not on screen")
+        let topButton = app.buttons["New conversation"]
+        XCTAssertTrue(topButton.exists, "no floating top buttons")
+        XCTAssertGreaterThanOrEqual(
+            start.frame.minY,
+            topButton.frame.maxY - 4,
+            "the reply's start sits under the floating top buttons"
+        )
+        XCTAssertLessThan(
+            start.frame.minY,
+            app.windows.firstMatch.frame.height * 0.4,
+            "the reply's start is not near the top of the screen"
+        )
+        XCTAssertFalse(end.isHittable, "the transcript opened at the end of the reply")
+
+        let chevron = app.buttons["Scroll to latest"]
+        XCTAssertTrue(chevron.waitForExistence(timeout: 4), "the chevron should show away from the bottom")
+        chevron.tap()
+        XCTAssertTrue(
+            waitFor(timeout: 8) { end.exists && end.isHittable },
+            "the chevron did not reach the end of the reply"
+        )
+    }
+
+    func testVoiceCaptionDragWhileStreamingAndReturnLatest() throws {
+        app.launchEnvironment["DEMO_REALTIME_SCROLL"] = "1"
+        app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
+        app.launch()
+        let stream = app.buttons["realtime.fixture.stream"]
+        XCTAssertTrue(stream.waitForExistence(timeout: 15))
+        let latest = app.buttons["Return to latest speech"]
+        XCTAssertFalse(latest.exists, "The initial caption should open at its latest words")
+        stream.tap()
+        let scroll = app.scrollViews["realtime.transcript"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 4))
+        let emittedBefore = Int(stream.value as? String ?? "") ?? 0
+        XCTAssertLessThan(emittedBefore, 40, "The fixture stopped streaming before the drag")
+        // Updates continue every 250ms throughout this genuine drag gesture.
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.45))
+        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.85))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(
+            waitFor(timeout: 2) { (Int(stream.value as? String ?? "") ?? 0) > emittedBefore },
+            "No speech arrived during the drag"
+        )
+        XCTAssertTrue(latest.waitForExistence(timeout: 4), "A streaming update stole manual reading")
+        XCTAssertTrue(latest.isHittable)
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try app.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("realtime-drag-reading.png"))
+        let emittedAtTap = Int(stream.value as? String ?? "") ?? 0
+        XCTAssertLessThan(emittedAtTap, 40, "The fixture stopped streaming before Return Latest")
+        latest.tap()
+        XCTAssertTrue(waitFor(timeout: 4) { !latest.exists }, "Return Latest did not reach the caption end")
+        XCTAssertTrue(
+            waitFor(timeout: 2) { (Int(stream.value as? String ?? "") ?? 0) > emittedAtTap },
+            "No speech arrived after Return Latest"
+        )
+        XCTAssertFalse(latest.exists, "Following did not remain active as speech continued")
+        try app.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("realtime-tapped-latest.png"))
+    }
+
     private func waitFor(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

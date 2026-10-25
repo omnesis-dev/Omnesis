@@ -9,6 +9,7 @@ import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { validateConversationAnnotationEvidence } from "../sources/omnesis-chat/memory-evidence.js";
+import { withPersonProfileRead } from "./person-profile-test-tools.js";
 import { resolveBrainSettings } from "./config.js";
 import {
   createInteractiveMemoryProfile,
@@ -49,7 +50,7 @@ afterEach(() => {
 });
 
 function profile(verifier: EntailCapability | null = null) {
-  return createInteractiveMemoryProfile({
+  const memory = createInteractiveMemoryProfile({
     db,
     writeGate: directWriteGate(db),
     getSettings: () => resolveBrainSettings({ annotations: { enabled: false } }),
@@ -57,6 +58,13 @@ function profile(verifier: EntailCapability | null = null) {
     clock: () => now,
     log,
   });
+  return {
+    ...memory,
+    buildOwnTools(runId: string) {
+      const tools = memory.buildOwnTools(runId);
+      return tools.map((tool) => withPersonProfileRead(db, tools, tool));
+    },
+  };
 }
 
 const claim = {
@@ -128,6 +136,7 @@ describe("interactive memory without background cognition", () => {
       getSettings: () => ({
         ...resolveBrainSettings(),
         annotationConfidenceCeiling: confidenceCeiling,
+        personProfileBudget: { maxFacts: 7, maxCharacters: 1300 },
       }),
       validateAnnotationEvidence,
       clock: () => now,
@@ -139,9 +148,22 @@ describe("interactive memory without background cognition", () => {
     await docTool.invoke({ ...claim, docId: "doc" }, context);
     expect(listLiveAnnotationsForDoc(db, "doc")[0]?.confidence).toBe(0.4);
     confidenceCeiling = 0.6;
-    const personTool = memory
-      .buildOwnTools("interactive_second")
-      .find((tool) => tool.name === "annotate_person")!;
+    const personTools = memory.buildOwnTools("interactive_second");
+    expect(
+      await personTools
+        .find((tool) => tool.name === "annotation_search")!
+        .invoke({ personId: "self" }, context),
+    ).toMatchObject({
+      kind: "structured",
+      data: {
+        profile: { budget: { maxFacts: 7, maxCharacters: 1300 } },
+      },
+    });
+    const personTool = withPersonProfileRead(
+      db,
+      personTools,
+      personTools.find((tool) => tool.name === "annotate_person")!,
+    );
     await personTool.invoke({ ...claim, personId: "self" }, context);
     expect(listLivePersonAnnotationsForPerson(db, "self")[0]?.confidence).toBe(0.6);
     expect(validateAnnotationEvidence).toHaveBeenCalledWith("doc", quote);
@@ -203,9 +225,15 @@ describe("interactive memory without background cognition", () => {
         ["annotation_revise", document.id],
         ["person_annotation_revise", person.id],
       ]) {
-        const result = await tools
-          .find((tool) => tool.name === name)!
-          .invoke({ id, claimText: "A revision must not launder assistant testimony." }, context);
+        const selected = withPersonProfileRead(
+          db,
+          tools,
+          tools.find((tool) => tool.name === name)!,
+        );
+        const result = await selected.invoke(
+          { id, claimText: "A revision must not launder assistant testimony." },
+          context,
+        );
         expect(result).toMatchObject({ kind: "error", code: "invalid_evidence" });
       }
       expect(listLiveAnnotationsForDoc(db, "doc")[0]?.claimText).toBe(claim.claimText);

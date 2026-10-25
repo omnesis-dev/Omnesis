@@ -33,7 +33,8 @@ export function formatSqlCell(v) {
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return String(v);
   if (typeof v === "string") return v;
-  // DuckDB date/timestamp objects round-trip as { days } / { micros }.
+  // Tool results persisted by older gateways may carry DuckDB date/timestamp
+  // objects as { days } / { micros }.
   if (typeof v === "object") {
     if (v.days != null && Object.keys(v).length === 1) {
       const d = new Date(v.days * 86_400_000);

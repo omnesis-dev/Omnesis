@@ -122,6 +122,8 @@ export {
   fetchWithInferenceUrlPolicy,
 } from "./inference-url-policy.js";
 
+export { fetchAllowingSlowResponse } from "./slow-response-fetch.js";
+
 export type {
   InferenceAddressClass,
   InferenceFetchPolicy,
@@ -163,6 +165,8 @@ export { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
+  RateLimitRetryBudget,
+  abortableRateLimitSleep,
   retryRateLimitedRequest,
   type RateLimitPatience,
 } from "./http-rate-limit-retry.js";

@@ -21,6 +21,7 @@
  * Scope: that of POST /notes (`write:omnesis-notes`, satisfied by admin).
  */
 
+import { SCOPE_ADMIN } from "@omnesis/types";
 import { bodyLimit } from "hono/body-limit";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
@@ -119,6 +120,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       longitude: note.longitude,
       placeName: note.placeName,
       allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
+      fromOwner: c.get("auth").scopes.includes(SCOPE_ADMIN),
     });
     return c.json({ id, transcription: "pending" as const }, 202);
   });

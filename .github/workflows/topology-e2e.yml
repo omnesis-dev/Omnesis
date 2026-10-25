@@ -35,6 +35,10 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      # Fixture versioning resolves development dependencies, including OpenClaw.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
       - name: lane [topology]
         run: scripts/docker-topology/run.sh
       - name: Collect host logs on failure

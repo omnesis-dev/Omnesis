@@ -49,14 +49,14 @@ afterEach(() => {
 
 function message(
   suffix: string,
-  overrides: Partial<Extract<NotificationMessage, { kind: "brief" }>> = {},
-): Extract<NotificationMessage, { kind: "brief" }> {
+  overrides: Partial<Extract<NotificationMessage, { kind: "conversation" }>> = {},
+): Extract<NotificationMessage, { kind: "conversation" }> {
   return {
-    kind: "brief",
-    title: `Fictional digest ${suffix}`,
+    kind: "conversation",
+    title: `Fictional update ${suffix}`,
     body: `Invented summary ${suffix}`,
-    data: { briefId: `brf_${suffix}` },
-    collapseId: `digest:${suffix}`,
+    data: { conversationId: `conv_${suffix}` },
+    collapseId: `conversation:${suffix}`,
     ...overrides,
   };
 }
@@ -175,7 +175,7 @@ describe("privacy notification eligibility", () => {
       expect(pendingNotificationCount(db, device.id, now)).toBe(1);
       expect(leaseNotificationWakes(db, { now, limit: 10, maxAttempts: 3 })).toHaveLength(1);
       expect(claimNotification(db, { deviceId: device.id, now })).toMatchObject({
-        targetId: "brf_next",
+        targetId: "conv_next",
         remaining: 0,
       });
       expect(claimNotification(db, { deviceId: device.id, now })).toBeNull();
@@ -301,16 +301,16 @@ describe("notification queue", () => {
 
     const first = claimNotification(db, { deviceId: device.id, now: BASE_TIME + 2 });
     expect(first).toMatchObject({
-      kind: "brief",
-      targetId: "brf_first",
-      collapseId: "digest:first",
+      kind: "conversation",
+      targetId: "conv_first",
+      collapseId: "conversation:first",
       remaining: 1,
     });
     expect(first && state(first.id)).toBe("leased");
 
     const second = claimNotification(db, { deviceId: device.id, now: BASE_TIME + 3 });
     expect(second).toMatchObject({
-      targetId: "brf_second",
+      targetId: "conv_second",
       remaining: 0,
     });
     expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 4 })).toBeNull();
@@ -332,10 +332,10 @@ describe("notification queue", () => {
     });
 
     expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 1 })?.targetId).toBe(
-      "brf_first-same-time",
+      "conv_first-same-time",
     );
     expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 1 })?.targetId).toBe(
-      "brf_second-same-time",
+      "conv_second-same-time",
     );
   });
 
@@ -444,7 +444,7 @@ describe("notification queue", () => {
     const first = createDevice(db, { name: "collapse-one", kind: "ios" });
     const second = createDevice(db, { name: "collapse-two", kind: "android" });
     const original = enqueueNotification(db, {
-      message: message("old", { collapseId: "digest:shared" }),
+      message: message("old", { collapseId: "conversation:shared" }),
       deviceIds: [first.id, second.id],
       createdAt: BASE_TIME,
       expiresAt: BASE_TIME + 60_000,
@@ -452,7 +452,7 @@ describe("notification queue", () => {
     const active = claimNotification(db, { deviceId: first.id, now: BASE_TIME + 1 })!;
 
     enqueueNotification(db, {
-      message: message("new", { collapseId: "digest:shared" }),
+      message: message("new", { collapseId: "conversation:shared" }),
       deviceIds: [first.id],
       createdAt: BASE_TIME + 2,
       expiresAt: BASE_TIME + 60_000,
@@ -461,24 +461,24 @@ describe("notification queue", () => {
     expect(state(active.id)).toBe("leased");
     expect(state(original.deliveryIds[1]!)).toBe("pending");
     expect(claimNotification(db, { deviceId: second.id, now: BASE_TIME + 3 })?.targetId).toBe(
-      "brf_old",
+      "conv_old",
     );
     expect(claimNotification(db, { deviceId: first.id, now: BASE_TIME + 3 })?.targetId).toBe(
-      "brf_new",
+      "conv_new",
     );
   });
 
   test("supersedes an expired lease before adding its replacement", () => {
     const device = createDevice(db, { name: "stale-lease-phone", kind: "ios" });
     const original = enqueueNotification(db, {
-      message: message("stale", { collapseId: "digest:shared" }),
+      message: message("stale", { collapseId: "conversation:shared" }),
       deviceIds: [device.id],
       createdAt: BASE_TIME,
       expiresAt: BASE_TIME + 60_000,
     })!;
     claimNotification(db, { deviceId: device.id, now: BASE_TIME + 1, leaseMs: 10 });
     enqueueNotification(db, {
-      message: message("replacement", { collapseId: "digest:shared" }),
+      message: message("replacement", { collapseId: "conversation:shared" }),
       deviceIds: [device.id],
       createdAt: BASE_TIME + 11,
       expiresAt: BASE_TIME + 60_000,
@@ -486,7 +486,7 @@ describe("notification queue", () => {
 
     expect(state(original.deliveryIds[0]!)).toBe("superseded");
     expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 12 })?.targetId).toBe(
-      "brf_replacement",
+      "conv_replacement",
     );
   });
 
@@ -740,13 +740,13 @@ describe("notification claim query plans", () => {
     const deviceId = seedHistory();
     // The live row is claimed, then its lease lapses without a confirmation.
     const first = claimNotification(db, { deviceId, now: BASE_TIME + 200, leaseMs: 1_000 });
-    expect(first?.targetId).toBe("brf_live");
+    expect(first?.targetId).toBe("conv_live");
     expect(claimNotification(db, { deviceId, now: BASE_TIME + 300 })).toBeNull();
 
     // Past the lease deadline the same delivery becomes claimable again — and
     // none of the forty terminal rows ever do.
     const again = claimNotification(db, { deviceId, now: BASE_TIME + 2_000 });
-    expect(again?.targetId).toBe("brf_live");
+    expect(again?.targetId).toBe("conv_live");
     expect(pendingNotificationCount(db, deviceId, BASE_TIME + 2_000)).toBe(0);
   });
 });

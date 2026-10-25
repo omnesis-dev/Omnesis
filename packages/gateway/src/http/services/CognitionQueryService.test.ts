@@ -59,10 +59,10 @@ describe("CognitionQueryService annotation dependents", () => {
       1_000,
     );
     db.exec(`
-      INSERT INTO briefs
-        (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
+      INSERT INTO observations
+        (id, created_by_run, summary, created_at, updated_at)
       VALUES
-        ('brief-example', 'run-example', 'info', 'Review moved', 0.8, 0.4, 1000, 1000);
+        ('observation-example', 'run-example', 'Review moved', 1000, 1000);
       INSERT INTO open_loops
         (id, created_by_run, state, confidence, importance, title, created_at, last_update)
       VALUES
@@ -74,8 +74,8 @@ describe("CognitionQueryService annotation dependents", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "annotation-page",
-          dependentKind: "brief",
-          dependentId: "brief-example",
+          dependentKind: "observation",
+          dependentId: "observation-example",
           runId: "run-example",
         },
         {

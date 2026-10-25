@@ -13,6 +13,7 @@
  * `scope.read()`.
  */
 
+import { SCOPE_ADMIN } from "@omnesis/types";
 import { publicBrowserNoteEntry } from "../../sources/omnesis-notes/browser-note.js";
 import { DAY_KEY_RE, dayKeyFor } from "../../sources/omnesis-notes/index.js";
 import { notesRateLimiter } from "../../rate-limit.js";
@@ -23,6 +24,7 @@ import { createNoteBody, patchNoteBody, notesProvenanceQuery } from "../schemas/
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { NoteEntry, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { RouteApp } from "./types.js";
+import type { NoteAgentReceipt, NoteAgentRow } from "../../brain/note-agent/storage.js";
 import type { NotesProvenanceService } from "../../sources/omnesis-notes/provenance.js";
 
 export interface NotesRoutesDeps {
@@ -35,10 +37,21 @@ export interface NotesRoutesDeps {
    * can say the text it shows is the device's and is due to be replaced.
    */
   pendingTranscriptions?: (noteIds: readonly string[]) => Set<string>;
+  /** What the note agent did with each of these notes, for those it has queued. */
+  noteAgentRuns?: (noteIds: readonly string[]) => Map<string, NoteAgentRow>;
 }
 
-/** A listed note, marked when its gateway transcript is still to come. */
-type ListedNote = NoteEntry & { transcription?: "pending" };
+/**
+ * A listed note, marked when its gateway transcript is still to come, and
+ * carrying the note agent's receipt once it has read the note.
+ */
+type ListedNote = NoteEntry & {
+  transcription?: "pending";
+  agent?: {
+    state: NoteAgentRow["state"];
+    receipt: NoteAgentReceipt | null;
+  };
+};
 
 const HISTORY_DEFAULT_LIMIT = 25;
 const HISTORY_MAX_LIMIT = 100;
@@ -100,13 +113,17 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
   const runtime = (): OmnesisNotesRuntime =>
     typeof deps.runtime === "function" ? deps.runtime() : deps.runtime;
   const markPending = (entries: NoteEntry[]): ListedNote[] => {
-    const pending = deps.pendingTranscriptions?.(entries.map((entry) => entry.id));
-    if (!pending || pending.size === 0) return entries.map(publicBrowserNoteEntry);
-    return entries.map((entry) =>
-      pending.has(entry.id)
-        ? { ...publicBrowserNoteEntry(entry), transcription: "pending" as const }
-        : publicBrowserNoteEntry(entry),
-    );
+    const ids = entries.map((entry) => entry.id);
+    const pending = deps.pendingTranscriptions?.(ids) ?? new Set<string>();
+    const runs = deps.noteAgentRuns?.(ids) ?? new Map<string, NoteAgentRow>();
+    return entries.map((entry) => {
+      const run = runs.get(entry.id);
+      return {
+        ...publicBrowserNoteEntry(entry),
+        ...(pending.has(entry.id) ? { transcription: "pending" as const } : {}),
+        ...(run ? { agent: { state: run.state, receipt: run.receipt } } : {}),
+      };
+    });
   };
 
   app.post("/notes", scope.writeAny(), validateJson(createNoteBody), async (c) => {
@@ -133,6 +150,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
       latitude: body.latitude,
       longitude: body.longitude,
       placeName: body.placeName,
+      fromOwner: auth.scopes.includes(SCOPE_ADMIN),
     });
     return c.json(publicBrowserNoteEntry(entry), 201);
   });

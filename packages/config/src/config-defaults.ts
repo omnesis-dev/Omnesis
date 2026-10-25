@@ -51,10 +51,35 @@ export const CONFIG_DEFAULTS = {
   },
   releaseCheck: true,
   brain: {
+    knowledge: {
+      immediateThreshold: 0.8,
+      soonThreshold: 0.4,
+      soonDelay: "1h",
+      routineDelay: "6h",
+      recentWindowDays: 30,
+      rootMaxChars: 8000,
+      maxSeeds: 64,
+      maxVisitedPerSeed: 256,
+      maxFrontierNodes: 32,
+      maxFrontierChars: 65536,
+      cascadeBatchSize: 100,
+      discoveryBatchSize: 32,
+      bootstrapBatchSize: 64,
+      maxReviewsPerTick: 16,
+      maxReviewInterval: "30d",
+      checkpointLead: "1d",
+      retryBackoff: "1h",
+      retryBackoffCap: "1d",
+      maxFailedAttempts: 5,
+      contextHandoffRatio: 0.65,
+      contextHandoffTokens: 120000,
+      maxStalledHandoffs: 2,
+    },
     // Omnesis Brain / Cognition Steward (experimental). Runtime resolution lives in
     // packages/gateway/src/brain/config.ts; a cross-check test there keeps
     // these display mirrors honest.
-    workerConcurrency: 1,
+    documentReadChars: 16384,
+    workerConcurrency: 4,
     conversationDebounce: "1h",
     conversationMaxDefer: "6h",
     documentUpdateDebounce: "30m",
@@ -90,11 +115,22 @@ export const CONFIG_DEFAULTS = {
       enabled: true,
       basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
       confidenceFloor: 0.25,
+      personProfile: { maxFacts: 20, maxCharacters: 4000 },
       recordCheck: "shadow",
     },
     reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
     provenanceRecheck: { enabled: true },
+    tasks: { autoApply: true, proposeGate: "shadow" },
+    interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
+    // Ignored; kept so existing configs still parse.
     judge: { enabled: true },
+    observations: {
+      retentionDays: 90,
+      alreadyKnownMax: 0.6,
+      minConsequence: 2,
+      minTimelyConsequence: 1,
+      timelyLevel: 2,
+    },
     // Bounded: one run per candidate, re-run only on re-detection. Like every
     // producer here it needs the brain gate to run at all.
     mergeAdjudication: { enabled: true },
@@ -105,8 +141,10 @@ export const CONFIG_DEFAULTS = {
       maxRunsPerDay: 200,
       maxRuns: 1000000,
       batchSize: 100,
+      horizon: "90d",
     },
     sweepsEnabled: true,
+    excludedSources: [],
   },
   enrichment: {
     // Omnesis-derived enrichment signals. Runtime resolution lives in

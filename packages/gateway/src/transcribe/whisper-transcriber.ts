@@ -35,7 +35,7 @@
 
 import { spawn } from "node:child_process";
 import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
-import { decodeToPcm16kMono } from "./audio-decode.js";
+import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
 import {
   FrameDecoder,
   encodeFrame,
@@ -43,6 +43,7 @@ import {
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
+import { computeTranscriptionTimeoutMs } from "./deadline.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -51,38 +52,6 @@ const SMART_WHISPER_SPECIFIER = "smart-whisper";
 
 /** Idle seconds before smart-whisper offloads the model from memory. */
 const DEFAULT_OFFLOAD_SECONDS = 300;
-
-/** Sample rate of the decoded PCM (see `decodeToPcm16kMono`); samples ÷ rate = seconds. */
-const PCM_SAMPLE_RATE = 16_000;
-
-/**
- * Per-request wall-clock budget, derived from the clip's actual duration rather
- * than a flat number. It is `LOAD_BUDGET + MS_PER_AUDIO_SEC × durationSec`,
- * floored for tiny clips and ceiled so a truly hung native call (the segfault
- * sibling: it doesn't crash, it just never returns) is still killed + respawned
- * rather than wedging the serialized queue.
- *
- * A flat budget was wrong in two ways: it didn't account for the ~50s cold
- * reload after idle-offload, and it didn't scale with length — so a long voice
- * note on CPU (no GPU on this class of host) blew the budget mid-inference and
- * was dropped. Deriving from duration makes it correct on a fast GPU and a slow
- * CPU alike. `MS_PER_AUDIO_SEC` is a generous multiple of whisper.cpp's CPU
- * throughput (~sub-realtime warm), so it's a true hang-catcher, not a perf gate.
- */
-const WHISPER_LOAD_BUDGET_MS = 90_000;
-const WHISPER_MS_PER_AUDIO_SEC = 3_000;
-const WHISPER_MIN_TIMEOUT_MS = 120_000;
-const WHISPER_MAX_TIMEOUT_MS = 1_800_000;
-
-/**
- * Compute the per-request timeout (ms) for a clip of `durationSec` seconds,
- * raised to a caller's `minTimeoutMs`, within the same ceiling.
- */
-export function computeWhisperTimeoutMs(durationSec: number, minTimeoutMs = 0): number {
-  const budget =
-    WHISPER_LOAD_BUDGET_MS + Math.ceil(Math.max(durationSec, 0) * WHISPER_MS_PER_AUDIO_SEC);
-  return Math.min(Math.max(budget, WHISPER_MIN_TIMEOUT_MS, minTimeoutMs), WHISPER_MAX_TIMEOUT_MS);
-}
 
 /** A spawned worker process — minimal surface the supervisor drives. */
 export interface WhisperWorkerProcess {
@@ -106,8 +75,6 @@ export interface SpawnWhisperWorkerArgs {
 
 /** Spawn a worker process. Injectable so tests run without a real subprocess. */
 export type WhisperWorkerSpawner = (args: SpawnWhisperWorkerArgs) => WhisperWorkerProcess;
-
-export type AudioDecoder = (bytes: Uint8Array, mimeType: string) => Promise<Float32Array>;
 
 /**
  * Default spawner: launch `whisper-worker.ts` via `resolveSubprocessEntry` so
@@ -182,7 +149,7 @@ export interface WhisperTranscriberOptions {
   /**
    * Explicit per-request timeout override (ms). When unset (the default), the
    * timeout is derived per request from the clip duration (see
-   * `computeWhisperTimeoutMs`). Tests set it for deterministic, fast timeouts.
+   * `computeTranscriptionTimeoutMs` in `deadline.ts`). Tests set it for deterministic, fast timeouts.
    */
   requestTimeoutMs?: number;
   /** Injectable for tests; defaults to spawning the real worker subprocess. */
@@ -342,19 +309,42 @@ export class WhisperTranscriber implements TranscribeCapability {
     // killed mid-transcribe — raised to the caller's `minTimeoutMs`.
     const timeoutMs =
       this.requestTimeoutMs ??
-      computeWhisperTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
+      computeTranscriptionTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
+    const signal = opts?.signal;
+    signal?.throwIfAborted();
     return new Promise<TranscriptionResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        // A hung whisper.cpp call: reject this request, kill the worker (which
-        // fires onExit → rejects nothing else since we already removed it), and
-        // respawn on the next call.
-        if (this.pending.delete(id)) {
-          log.warn(`Whisper request ${id} timed out after ${timeoutMs}ms — killing worker`);
-          worker.kill();
-          reject(new Error(`Whisper transcription timed out after ${timeoutMs}ms`));
-        }
-      }, timeoutMs);
-      this.pending.set(id, { id, resolve, reject, timer });
+      // whisper.cpp cannot be interrupted mid-call, so giving a request up
+      // means killing the worker; it respawns on the next call. Nothing else
+      // is in flight to lose, since rejecting removed this request first.
+      const giveUp = (reason: Error, why: string) => {
+        if (!this.pending.delete(id)) return;
+        log.warn(`Whisper request ${id} ${why} — killing worker`);
+        worker.kill();
+        reject(reason);
+      };
+      const timer = setTimeout(
+        () =>
+          giveUp(
+            new Error(`Whisper transcription timed out after ${timeoutMs}ms`),
+            `timed out after ${timeoutMs}ms`,
+          ),
+        timeoutMs,
+      );
+      const onAbort = () => {
+        clearTimeout(timer);
+        giveUp(
+          signal!.reason instanceof Error ? signal!.reason : new Error("Transcription aborted"),
+          "lost its caller",
+        );
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const settle =
+        <T>(fn: (value: T) => void) =>
+        (value: T) => {
+          signal?.removeEventListener("abort", onAbort);
+          fn(value);
+        };
+      this.pending.set(id, { id, resolve: settle(resolve), reject: settle(reject), timer });
       worker.write(encodeFrame(header, pcm));
     });
   }

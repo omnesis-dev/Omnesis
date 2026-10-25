@@ -76,6 +76,11 @@ data class CaptureUiState(
      */
     val voiceNote: VoiceNoteUi? = null,
     val save: SaveState = SaveState.Idle,
+    /**
+     * In task-completion mode, the note handed over to complete the task with, while the
+     * completion is in flight. Null otherwise.
+     */
+    val completionNote: String? = null,
 )
 
 /** A voice note being recorded, or recorded and ready to save. */

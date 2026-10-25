@@ -22,6 +22,7 @@
 import {
   createLogger,
   InferenceUrlPolicyError,
+  normalizeTimeZone,
   type AgentEvent,
   type AgentMessageEndEvent,
   type AgentTerminalFailure,
@@ -32,6 +33,7 @@ import {
 } from "@omnesis/core";
 
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import type {
   AssistantPart,
   ChatBackend,
@@ -45,6 +47,24 @@ import type {
 } from "./backend.js";
 
 const log = createLogger("agent:session");
+
+/**
+ * A session with a caller zone shows the model each instant's local time in
+ * tool output (`serializeToolResultForModel`). Whatever the model copies from
+ * that output into a tool call — a quote, a SQL literal, a note — reaches the
+ * tool without those annotations, as the source stored it.
+ */
+function withStoredTimesInArguments(handle: ToolHandle): ToolHandle {
+  const wrapped: ToolHandle = Object.assign(
+    Object.create(Object.getPrototypeOf(handle) as object) as ToolHandle,
+    handle,
+    {
+      invoke: (args: unknown, ctx: Parameters<ToolHandle["invoke"]>[1]) =>
+        handle.invoke(stripLocalTimeAnnotationsDeep(args), ctx),
+    },
+  );
+  return wrapped;
+}
 
 /**
  * Who stopped a turn. `user` is the person pressing Stop; `system` is
@@ -77,6 +97,19 @@ export interface SessionOptions {
    * existing context.
    */
   initialHistory?: ReadonlyArray<ChatMessage>;
+  /**
+   * The part of the stored history the model sees on each turn. The full
+   * history is still kept and persisted; only the backend's view narrows.
+   * Called once per turn, so a view that depends on later appends stays
+   * current. Omitted, the model sees the whole history.
+   */
+  historyView?: (history: ReadonlyArray<ChatMessage>) => ChatMessage[];
+  /**
+   * A section appended to `systemPrompt`, built again for every turn, so the
+   * model reads state that may have changed since the session was created.
+   * Returning an empty string appends nothing.
+   */
+  systemPromptSection?: () => string;
   /**
    * IANA zone of the caller who opened this session, as their client
    * reported it. Rides every {@link ToolContext} so time-aware tools resolve
@@ -115,6 +148,11 @@ export interface SessionOptions {
 }
 
 export interface SendOptions {
+  /** A transport-owned backend for this turn; the canonical session still owns its lifecycle. */
+  backend?: ChatBackend;
+
+  /** Queue receipt identities for presentation handoff, never model instructions. */
+  submissionIds?: string[];
   /** External abort signal. Cancelling causes `agent.message.end { stopReason: "canceled" }`. */
   signal?: AbortSignal;
   /**
@@ -122,6 +160,11 @@ export interface SendOptions {
    * Only profiling callers set this; every other turn leaves it absent.
    */
   llmProbe?: LlmProbe;
+  /**
+   * Context the host adds for the model on this turn only, after the user's
+   * text. It is never broadcast, shown, or kept in the conversation's history.
+   */
+  modelNote?: string;
 }
 
 export type Subscriber = (event: AgentEvent) => void;
@@ -142,13 +185,17 @@ export class AgentSession {
   private readonly subscribers = new Set<Subscriber>();
 
   private history: ChatMessage[] = [];
+  private readonly historyView: SessionOptions["historyView"];
+  private readonly systemPromptSection: SessionOptions["systemPromptSection"];
   private citations = new Map<string, Citation>();
   private currentTurn: TurnState | null = null;
 
   constructor(opts: SessionOptions) {
     this.sessionId = opts.sessionId;
     this.backend = opts.backend;
-    this.tools = opts.tools;
+    this.tools = normalizeTimeZone(opts.timeZone)
+      ? opts.tools.map(withStoredTimesInArguments)
+      : opts.tools;
     this.systemPrompt = opts.systemPrompt;
     this.idGen = opts.idGen ?? defaultIdGen;
     this.zone = opts.timeZone;
@@ -156,6 +203,8 @@ export class AgentSession {
     this.reasoning = opts.reasoning;
     this.rateLimitPatience = opts.rateLimitPatience;
     this.promptCacheKey = opts.promptCacheKey;
+    this.historyView = opts.historyView;
+    this.systemPromptSection = opts.systemPromptSection;
     if (opts.initialHistory && opts.initialHistory.length > 0) {
       // Defensive copy: the caller may keep mutating its own copy
       // (we never do, but the API contract says we own the seed).
@@ -241,12 +290,12 @@ export class AgentSession {
 
   /** Returns the model the backend reported. */
   get model(): string {
-    return this.backend.model;
+    return (this.currentTurn?.backend ?? this.backend).model;
   }
 
   /** Returns the backend name (anthropic / replay / openai-compatible). */
   get backendName(): string {
-    return this.backend.name;
+    return (this.currentTurn?.backend ?? this.backend).name;
   }
 
   /**
@@ -281,6 +330,20 @@ export class AgentSession {
   /** Snapshot of the conversation history. Read-only. */
   historySnapshot(): ReadonlyArray<ChatMessage> {
     return this.history;
+  }
+
+  /** The same model-facing context and wrapped tools used by ordinary turns. */
+  modelContextSnapshot(): Pick<
+    import("./backend.js").TurnInput,
+    "systemPrompt" | "history" | "tools" | "timeZone" | "caller"
+  > {
+    return {
+      systemPrompt: this.systemPrompt,
+      history: this.historyView ? this.historyView(this.history) : [...this.history],
+      tools: this.tools,
+      timeZone: this.zone,
+      caller: this.speaksFor,
+    };
   }
 
   /**
@@ -413,6 +476,7 @@ export class AgentSession {
     const messageId = this.idGen();
     const userMessageId = this.idGen();
     const turn: TurnState = {
+      backend: opts.backend,
       messageId,
       abortController: new AbortController(),
       segments: [],
@@ -443,7 +507,12 @@ export class AgentSession {
     // send can render it. Originator dedupes by `userMessageId`.
     this.broadcast({
       type: "agent.user.message",
-      payload: { sessionId: this.sessionId, userMessageId, text },
+      payload: {
+        sessionId: this.sessionId,
+        userMessageId,
+        text,
+        ...(opts.submissionIds?.length ? { submissionIds: [...opts.submissionIds] } : {}),
+      },
     });
 
     const completion = this.runTurnLoop(turn, userTurn, text, opts, onExternalAbort);
@@ -462,22 +531,25 @@ export class AgentSession {
     let pendingToolBoundary: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     try {
       try {
-        const priorHistory = [...this.history];
+        const priorHistory = this.historyView ? this.historyView(this.history) : [...this.history];
+        const section = this.systemPromptSection?.() ?? "";
+        const systemPrompt = section ? `${this.systemPrompt}\n\n${section}` : this.systemPrompt;
         // Append user turn to canonical history before asking the backend to
         // build its stream so even a synchronous backend-construction throw
         // leaves a coherent transcript. The backend still receives the
         // pre-turn snapshot per TurnInput's contract.
         this.history.push(userTurn);
-        const stream = this.backend.runTurn(
+        const stream = (opts.backend ?? this.backend).runTurn(
           {
             sessionId: this.sessionId,
             messageId: turn.messageId,
             history: priorHistory,
-            userMessage: text,
+            userMessage: opts.modelNote ? `${text}\n\n${opts.modelNote}` : text,
+            ...(opts.modelNote ? { modelNote: opts.modelNote } : {}),
             tools: this.tools,
             timeZone: this.zone,
             caller: this.speaksFor,
-            systemPrompt: this.systemPrompt,
+            systemPrompt,
             ...(this.reasoning === undefined ? {} : { reasoning: this.reasoning }),
             ...(this.rateLimitPatience === undefined
               ? {}
@@ -745,22 +817,22 @@ export class AgentSession {
         ...failure,
         message: CONTEXT_WINDOW_EXCEEDED_MESSAGE,
         retryable: false,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (event.payload.stopReason === "max_tokens" || failure?.code === "output_truncated") {
       failure = {
         code: "output_truncated",
         message: OUTPUT_TRUNCATED_MESSAGE,
         retryable: false,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (failure) {
       failure = {
         ...failure,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (event.payload.stopReason === "error") {
       const terminalError = turn.terminalError;
@@ -772,8 +844,21 @@ export class AgentSession {
           ? CONTEXT_WINDOW_EXCEEDED_MESSAGE
           : (terminalError?.message ?? "The model request failed before completing."),
         retryable: !contextExceeded && code !== "output_truncated",
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
+      };
+    }
+
+    if (turn.backend && failure?.code === "context_window_exceeded") {
+      // An override can have a smaller context than the conversation's default model.
+      // Preserve turn failure detail without making existing clients lock the whole thread.
+      failure = {
+        ...failure,
+        code: "provider_error",
+        message:
+          "This conversation exceeds this turn's model context window. Continue with the default model or start a new conversation.",
+        retryable: false,
+        provider: { ...failure.provider, code: "context_window_exceeded" },
       };
     }
 
@@ -1067,6 +1152,7 @@ export class AgentSession {
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 interface TurnState {
+  backend?: ChatBackend;
   messageId: string;
   abortController: AbortController;
   /** Recorded by `cancel()`; unset when the abort came through the caller's signal. */

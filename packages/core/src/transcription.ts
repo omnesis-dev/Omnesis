@@ -8,7 +8,8 @@
  * `AudioTranscribeFn` the same way it's handed an `AttachmentExtractFn` for
  * binary documents. The collector implements it by forwarding the audio
  * bytes to the gateway's `/inference/transcribe` endpoint, which runs the
- * configured transcriber model (local Whisper) and returns the transcript.
+ * configured transcriber (a local Whisper model or an HTTP transcription
+ * backend) and returns the transcript.
  * The model lives on the gateway (where the GPU and the always-on compute
  * are); the source only ever holds the bytes transiently.
  *
@@ -48,6 +49,14 @@ export interface TranscriptionVocabulary {
 }
 
 export type { TranscriptionResult } from "./models/capabilities.js";
+
+/**
+ * The longest the gateway works on one transcription, whichever backend runs
+ * it. A long recording on a CPU-only host can take many minutes, so a client
+ * waiting on `/inference/transcribe` must allow at least this long rather
+ * than an HTTP library's default response deadline.
+ */
+export const MAX_TRANSCRIPTION_MS = 30 * 60_000;
 
 export type AudioTranscribeFn = (
   data: Uint8Array,

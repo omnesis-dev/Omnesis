@@ -29,6 +29,8 @@ import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -67,9 +69,9 @@ async function runByDedupeKey(bench: BrainBench, kind: string, dedupeKey: string
   return run;
 }
 
-/** The settled data run a pushed document caused. */
+/** The settled source interpretation a pushed document caused. */
 async function dataRunFor(bench: BrainBench, docId: string): Promise<string> {
-  const run = await bench.obs.runForDoc(docId);
+  const run = await bench.obs.interpretationForSource(docId);
   expect(run.status).toBe("completed");
   return run.id;
 }
@@ -303,8 +305,25 @@ describe("merge adjudication", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      brain: { mergeAdjudication: { enabled: true } },
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+        mergeAdjudication: { enabled: true },
+      },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              // The reverse authority direction: a lane that was never granted
+              // the merge verdict reaching for it.
+              docTitle: DOC_DATA_RUN.title,
+              expectedRefusals: [{ tool: "merge_adjudicate", code: "unknown_tool" }],
+              plan: {
+                calls: [call("merge_adjudicate", { verdict: "distinct", reason: DISTINCT_REASON })],
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
           {
             flavour: "merge_adjudication",
@@ -337,12 +356,9 @@ describe("merge adjudication", () => {
                   confidence: 0.8,
                   importance: 0.5,
                 }),
-                call("brief_create", {
-                  kind: "info",
-                  title: "Two identities may be one person",
-                  description: "Raised from the adjudication lane.",
-                  confidence: 0.8,
-                  urgency: 0.3,
+                call("observation_note", {
+                  summary: "Two identities may be one person.",
+                  why: "Raised from the adjudication lane.",
                 }),
                 call("merge_adjudicate", { verdict: "unsure", reason: UNSURE_REASON }),
               ],
@@ -365,15 +381,6 @@ describe("merge adjudication", () => {
             subject: CAND.reguard,
             plan: {
               calls: [call("merge_adjudicate", { verdict: "merge", reason: MERGE_REASON })],
-            },
-          },
-          {
-            // The reverse authority direction: a lane that was never granted
-            // the merge verdict reaching for it.
-            flavour: "data.created",
-            docTitle: DOC_DATA_RUN.title,
-            plan: {
-              calls: [call("merge_adjudicate", { verdict: "distinct", reason: DISTINCT_REASON })],
             },
           },
         ],
@@ -501,20 +508,20 @@ describe("merge adjudication", () => {
     );
     const calls = await bench.obs.executedTools(run.id);
 
-    // Both loop/brief writes were never present to be called: the runtime
+    // Both loop/observation writes were never present to be called: the runtime
     // filters the toolset by the workflow's declared authority, so the model
     // gets an unknown-tool answer rather than a refusal from the tool itself.
     const [loopResult] = resultsOf(calls, "open_loop_create");
     expect(loopResult!.kind).toBe("error");
     expect(loopResult!.code).toBe("unknown_tool");
     expect(String(loopResult!.message)).toContain("open_loop_create");
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult!.kind).toBe("error");
-    expect(briefResult!.code).toBe("unknown_tool");
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult!.kind).toBe("error");
+    expect(observationResult!.code).toBe("unknown_tool");
 
     // Nothing was written by either attempt.
     expect((await bench.obs.loops()).items).toHaveLength(0);
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
 
     // The one granted verb still worked, so the denial is authority, not a
     // broken run.
@@ -769,52 +776,58 @@ describe("agent notes and their background compaction", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      brain: { notesMaxBytes: NOTES_CAP },
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+        notesMaxBytes: NOTES_CAP,
+      },
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: DOC_NOTE_UNDER.title,
-            plan: { calls: [call("notes_append", { text: FIRST_NOTE })] },
-          },
-          {
-            // Two over-cap appends inside ONE run: the second proves the
-            // compaction enqueue is a singleton, which a second run could not
-            // show (the first compaction would already have drained).
-            flavour: "data.created",
-            docTitle: DOC_NOTE_OVER.title,
-            plan: {
-              calls: [
-                call("notes_append", { text: OVER_CAP_NOTE }),
-                call("notes_append", { text: SECOND_OVER_CAP_NOTE }),
-              ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: DOC_NOTE_UNDER.title,
+              plan: { calls: [call("notes_append", { text: FIRST_NOTE })] },
             },
-          },
+            {
+              // Two over-cap appends inside ONE run: the second proves the
+              // compaction enqueue is a singleton, which a second run could not
+              // show (the first compaction would already have drained).
+              docTitle: DOC_NOTE_OVER.title,
+              plan: {
+                calls: [
+                  call("notes_append", { text: OVER_CAP_NOTE }),
+                  call("notes_append", { text: SECOND_OVER_CAP_NOTE }),
+                ],
+              },
+            },
+            {
+              docTitle: DOC_NOTE_EDIT.title,
+              expectedRefusals: [
+                { tool: "notes_edit", code: "notes_edit_not_found" },
+                { tool: "notes_edit", code: "notes_edit_ambiguous" },
+              ],
+              plan: {
+                calls: [
+                  call("notes_edit", { oldText: EDIT_OLD, newText: EDIT_NEW }),
+                  call("notes_edit", { oldText: EDIT_MISSING, newText: "" }),
+                  call("notes_edit", { oldText: EDIT_AMBIGUOUS, newText: "@example.org" }),
+                ],
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [
           {
             flavour: "notes_compaction",
             plan: {
               calls: [
                 // Not granted to this lane: curation must not become an
                 // interruption.
-                call("brief_create", {
-                  kind: "info",
-                  title: "Notes were getting long",
-                  description: "Raised from the compaction lane.",
-                  confidence: 0.8,
-                  urgency: 0.2,
+                call("observation_note", {
+                  summary: "Notes were getting long.",
+                  why: "Raised from the compaction lane.",
                 }),
                 call("notes_rewrite", { text: COMPACTED_NOTES }),
-              ],
-            },
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_NOTE_EDIT.title,
-            plan: {
-              calls: [
-                call("notes_edit", { oldText: EDIT_OLD, newText: EDIT_NEW }),
-                call("notes_edit", { oldText: EDIT_MISSING, newText: "" }),
-                call("notes_edit", { oldText: EDIT_AMBIGUOUS, newText: "@example.org" }),
               ],
             },
           },
@@ -906,13 +919,13 @@ describe("agent notes and their background compaction", () => {
     const run = await runByDedupeKey(bench, "notes_compaction", "notes-compaction");
     const calls = await bench.obs.executedTools(run.id);
 
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult).toBeDefined();
-    expect(briefResult!.kind).toBe("error");
-    expect(briefResult!.code).toBe("unknown_tool");
-    expect(String(briefResult!.message)).toContain("brief_create");
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult).toBeDefined();
+    expect(observationResult!.kind).toBe("error");
+    expect(observationResult!.code).toBe("unknown_tool");
+    expect(String(observationResult!.message)).toContain("observation_note");
 
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
     expect((await bench.obs.loops()).items).toHaveLength(0);
     // The granted verb in the same run worked, so the denial is authority.
     expect(resultsOf(calls, "notes_rewrite")[0]!.kind).toBe("structured");

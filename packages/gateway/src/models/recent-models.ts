@@ -51,7 +51,6 @@ const REFERENCE_TO_CATALOG_ROLE: Partial<Record<CapabilityRole, ModelRole>> = {
   transcriber: "transcribe",
   "background-agent": "agent",
   "watch-judge": "agent",
-  "brief-judge": "agent",
 };
 
 export type RecentModelApply =

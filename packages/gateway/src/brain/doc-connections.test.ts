@@ -58,50 +58,55 @@ describe("readDocConnections", () => {
     );
   }
 
-  test("loops only when annotations:false; loops + annotations when true", () => {
-    const docX = insertRealDoc("dx", "quote for the venue");
-    createOpenLoop(
-      db,
-      {
-        id: "olp_1",
-        createdByRun: "r",
-        title: "Reply to the venue quote",
-        description: "d",
-        confidence: 0.8,
-        importance: 0.7,
-        docs: [docX],
-      },
-      NOW,
-    );
-    createDocAnnotation(
-      db,
-      {
-        id: "a1",
-        docId: docX,
-        claimType: "topic",
-        claimText: "the venue quote thread",
-        evidenceDocId: docX,
-        evidenceQuote: "quote for the venue",
-        confidence: 0.6,
-        claimBasis: "quoted",
-        createdByRun: "r",
-      },
-      NOW,
-    );
+  test.each([null, "verified", "unverified", "failed"] as const)(
+    "annotation hints preserve proof state %s alongside evidence",
+    (verificationState) => {
+      const docX = insertRealDoc("dx", "quote for the venue");
+      createOpenLoop(
+        db,
+        {
+          id: "olp_1",
+          createdByRun: "r",
+          title: "Reply to the venue quote",
+          description: "d",
+          confidence: 0.8,
+          importance: 0.7,
+          docs: [docX],
+        },
+        NOW,
+      );
+      createDocAnnotation(
+        db,
+        {
+          id: "a1",
+          docId: docX,
+          claimType: "topic",
+          claimText: "the venue quote thread",
+          evidenceDocId: docX,
+          evidenceQuote: "quote for the venue",
+          confidence: 0.6,
+          claimBasis: "quoted",
+          createdByRun: "r",
+          verificationState,
+        },
+        NOW,
+      );
 
-    const lean = readDocConnections(db, docX, { annotations: false });
-    expect(lean.openLoops.map((l) => l.loopId)).toEqual(["olp_1"]);
-    expect(lean.openLoops[0]!.title).toBe("Reply to the venue quote");
-    expect(lean.annotations).toEqual([]);
+      const lean = readDocConnections(db, docX, { annotations: false });
+      expect(lean.openLoops.map((l) => l.loopId)).toEqual(["olp_1"]);
+      expect(lean.openLoops[0]!.title).toBe("Reply to the venue quote");
+      expect(lean.annotations).toEqual([]);
 
-    const full = readDocConnections(db, docX, { annotations: true });
-    expect(full.openLoops.map((l) => l.loopId)).toEqual(["olp_1"]);
-    expect(full.annotations).toHaveLength(1);
-    expect(full.annotations[0]!.claim).toBe("the venue quote thread");
-    expect(full.annotations[0]!.claimType).toBe("topic");
-    // The reground pointer rides every inline hint.
-    expect(full.annotations[0]!.evidenceDocId).toBe(docX);
-  });
+      const full = readDocConnections(db, docX, { annotations: true });
+      expect(full.openLoops.map((l) => l.loopId)).toEqual(["olp_1"]);
+      expect(full.annotations).toHaveLength(1);
+      expect(full.annotations[0]!.claim).toBe("the venue quote thread");
+      expect(full.annotations[0]!.claimType).toBe("topic");
+      // The reground pointer rides every inline hint.
+      expect(full.annotations[0]!.evidenceDocId).toBe(docX);
+      expect(full.annotations[0]!.verificationState).toBe(verificationState ?? "unverified");
+    },
+  );
 
   test("terminal loops are not surfaced as connections", () => {
     createOpenLoop(
@@ -126,6 +131,45 @@ describe("readDocConnections", () => {
     expect(c.openLoops).toEqual([]);
     expect(c.annotations).toEqual([]);
     expect(c.temporalAnnotations).toEqual([]);
+  });
+
+  test("a temporal annotation's time names its instants in UTC, its days as written", () => {
+    const docId = insertRealDoc("d-instants");
+    const cases: Array<[string, string]> = [
+      [
+        "2026-10-18T18:28:00+01:00 .. 2026-10-18T19:26:00+01:00",
+        "2026-10-18T17:28:00.000Z .. 2026-10-18T18:26:00.000Z",
+      ],
+      // Written without an offset, the clock was read in the gateway's zone.
+      ["2026-10-18T19:26", new Date("2026-10-18T19:26").toISOString()],
+      ["2026-10-18 .. 2026-10-18T09:00:00Z", "2026-10-18 .. 2026-10-18T09:00:00.000Z"],
+      ["2026-10", "2026-10"],
+    ];
+    for (const [index, [canonical]] of cases.entries()) {
+      insertTemporalAnnotation(
+        db,
+        {
+          id: `ta_instant_${index}`,
+          intervalStartMs: 1000 + index,
+          intervalEndMs: 2000 + index,
+          precision: "instant",
+          canonical,
+          sentence: `fitting ${index}`,
+          documentIds: [docId],
+          createdByRun: "r",
+        },
+        NOW,
+      );
+    }
+    const when = Object.fromEntries(
+      readDocConnections(db, docId, {
+        annotations: false,
+        temporalAnnotations: true,
+      }).temporalAnnotations.map((t) => [t.annotationId, t.when]),
+    );
+    for (const [index, [, expected]] of cases.entries()) {
+      expect(when[`ta_instant_${index}`]).toBe(expected);
+    }
   });
 
   test("temporalAnnotations opt attaches live annotations and excludes invalidated rows", () => {

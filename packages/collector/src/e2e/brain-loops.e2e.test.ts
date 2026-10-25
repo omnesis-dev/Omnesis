@@ -8,7 +8,7 @@
  * invariant around it is a CASCADE rather than a row write: creating one
  * projects a searchable mirror document, reconciling onto one must not mint
  * a second, resolving one retires it into the consolidation store, deleting
- * one must take its brief, its join rows and its mirror with it, and the
+ * one must take its observations, its join rows and its mirror with it, and the
  * decay engine must schedule its own revisits without ever reaping a loop
  * itself.
  *
@@ -28,8 +28,12 @@
 
 import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
+  structuredData,
   call,
   compressCognitionCadences,
   email,
@@ -93,6 +97,12 @@ const P1 = email({
   content: `Hi Alex,\n\nTwo things on the ${P} booking: the signed rental agreement has not come back yet, and the catering menus are attached whenever you want to compare them.\n\nStudio Northstar`,
 });
 
+const P2 = email({
+  externalId: "loops-fernwood-followup",
+  title: P1.title,
+  content: `${P1.content}\n\nThe same two booking matters are still being tracked.`,
+});
+
 const D1 = email({
   externalId: "loops-studio-status",
   title: `Studio status for the ${D_KEEP} and ${D_GONE} sessions`,
@@ -129,30 +139,30 @@ interface MirrorDocRow {
 const HOUR = 3_600_000;
 
 /**
- * Pull a `deletedBriefIds` list out of a run transcript's event stream. Tool
- * results are carried verbatim (sometimes as a JSON string), so the scan is
- * structural rather than keyed on an event type.
+ * Pull a `deletedObservationIds` list out of a run transcript's event stream.
+ * Tool results are carried verbatim (sometimes as a JSON string), so the scan
+ * is structural rather than keyed on an event type.
  */
-function findDeletedBriefIds(value: unknown): string[] | null {
+function findDeletedObservationIds(value: unknown): string[] | null {
   if (typeof value === "string") {
     try {
-      return findDeletedBriefIds(JSON.parse(value));
+      return findDeletedObservationIds(JSON.parse(value));
     } catch {
       return null;
     }
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findDeletedBriefIds(item);
+      const found = findDeletedObservationIds(item);
       if (found) return found;
     }
     return null;
   }
   if (value !== null && typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.deletedBriefIds)) return obj.deletedBriefIds as string[];
+    if (Array.isArray(obj.deletedObservationIds)) return obj.deletedObservationIds as string[];
     for (const nested of Object.values(obj)) {
-      const found = findDeletedBriefIds(nested);
+      const found = findDeletedObservationIds(nested);
       if (found) return found;
     }
     return null;
@@ -187,6 +197,7 @@ describe("Brain Bench — open loops", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         // The clock-driven arcs move virtual time forward by days; documents
         // pushed afterwards still carry wall-clock timestamps, so widen the
         // waker's recency gate rather than back-dating every fixture. The
@@ -203,206 +214,223 @@ describe("Brain Bench — open loops", () => {
         decay: { backoffBase: "1h", backoffCap: "8h", datedFloor: "30m" },
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: A1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  call("open_loop_create", {
+                    title: `Send the deposit for the ${A} showcase`,
+                    description: `Riverside Estate holds the ${A} date until the deposit lands.`,
+                    confidence: 0.9,
+                    importance: 0.7,
+                    docs: [ctx.subject],
+                    actors: ["maya.reeves@example.org"],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: `Deposit requested to hold the ${A} showcase date.`,
+                  }),
+                ],
+                finalText: "Tracked the deposit obligation.",
+              }),
+            },
+            {
+              docTitle: A2.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  // The loop was minted by an EARLIER run, so its id can only
+                  // come from this run's live search result.
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    docs: [ref("open_loop_search", "loops.0.docs.0"), ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    note: `Stage rider arrived; the ${A} deposit is still outstanding.`,
+                  }),
+                ],
+                finalText: "Reconciled onto the existing loop.",
+              }),
+            },
+            {
+              docTitle: A3.title,
+              plan: () => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    state: "done",
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    note: `Deposit confirmed for the ${A} showcase; closing without a card.`,
+                  }),
+                ],
+                finalText: "Closed silently — nothing left for the user to do.",
+              }),
+            },
+            {
+              docTitle: B1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${B} lease review` }),
+                  call("open_loop_create", {
+                    title: `Review the ${B} lease`,
+                    description: `Whitfield Law is waiting on comments for the ${B} lease.`,
+                    confidence: 0.85,
+                    importance: 0.8,
+                    docs: [ctx.subject],
+                    actors: ["dana.whitfield@whitfieldlaw.example"],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: `Review of the ${B} lease requested.`,
+                  }),
+                  call("observation_list"),
+                  call("observation_note", {
+                    summary: `The ${B} lease needs your comments.`,
+                    why: "Requested before Friday.",
+                    citations: [ctx.subject],
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "Whitfield Law needs your comments to close it out.",
+                      },
+                    ],
+                    relatedLoopIds: [ref("open_loop_create", "loop.id")],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: B2.title,
+              plan: () => ({
+                calls: [
+                  call("open_loop_search", { query: `${B} lease review` }),
+                  call("open_loop_delete", { id: ref("open_loop_search", "loops.0.id") }),
+                ],
+                finalText: "The obligation was rescinded; the loop should never have existed.",
+              }),
+            },
+            {
+              docTitle: P1.title,
+              plan: (ctx, _item, steps) => {
+                // The same source can be offered again after canonical-owner
+                // admission or a retry. Reconcile against the actual lookup.
+                const query = P;
+                const lookup = steps
+                  .filter((step) => step.name === "open_loop_search" && step.args?.query === query)
+                  .at(-1);
+                const found = z
+                  .object({ loops: z.array(z.object({ id: z.string(), title: z.string() })) })
+                  .safeParse(lookup ? structuredData(lookup.result) : null);
+                const highTitle = `Return the signed ${P} rental agreement`;
+                const lowTitle = `Compare the ${P} catering menus`;
+                const high =
+                  found.success && found.data.loops.find((loop) => loop.title === highTitle);
+                const low =
+                  found.success && found.data.loops.find((loop) => loop.title === lowTitle);
+                return {
+                  calls: [
+                    call("open_loop_search", { query }),
+                    ...(!high
+                      ? [
+                          call("open_loop_create", {
+                            title: highTitle,
+                            description: `Studio Northstar is waiting on the countersigned ${P} agreement.`,
+                            confidence: 0.9,
+                            importance: 0.9,
+                            docs: [ctx.subject],
+                            actors: ["maya.reeves@example.org"],
+                            involved: ["jamie.lopez@example.com"],
+                          }),
+                        ]
+                      : []),
+                    ...(!low
+                      ? [
+                          call("open_loop_create", {
+                            title: lowTitle,
+                            description: `Menus for the ${P} booking are attached; no deadline given.`,
+                            confidence: 0.7,
+                            importance: 0.2,
+                            docs: [ctx.subject],
+                          }),
+                        ]
+                      : []),
+                    ...(!high
+                      ? [
+                          call("open_loop_ledger_append", {
+                            id: ref("open_loop_create", "loop.id"),
+                            note: `Agreement for ${P} sent for signature.`,
+                          }),
+                        ]
+                      : []),
+                  ],
+                };
+              },
+            },
+            {
+              docTitle: D1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "studio session status" }),
+                  call("open_loop_create", {
+                    title: `Confirm the ${D_KEEP} rehearsal slot`,
+                    description: `Studio Northstar has not confirmed the ${D_KEEP} slot.`,
+                    confidence: 0.8,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_create", {
+                    title: `Chase the ${D_GONE} lighting quote`,
+                    description: `No lighting quote for ${D_GONE} has arrived.`,
+                    confidence: 0.75,
+                    importance: 0.5,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: C1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${C} permit renewal` }),
+                  call("open_loop_create", {
+                    title: `Renew ${C} workshop permit`,
+                    description: `Cedar Grove Supplies asked for the ${C} renewal form.`,
+                    confidence: 0.85,
+                    importance: 0.55,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: C2.title,
+              plan: (ctx) => ({
+                // Deliberately re-worded: the consolidation key is the
+                // order-insensitive normalized title, not the literal string.
+                calls: [
+                  call("open_loop_search", { query: `${C} permit renewal` }),
+                  call("open_loop_create", {
+                    title: `${C} workshop permit — renew`,
+                    description: `Cedar Grove Supplies asked for the ${C} renewal form again.`,
+                    confidence: 0.85,
+                    importance: 0.55,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
-          // ── arc A: create ────────────────────────────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                call("open_loop_create", {
-                  title: `Send the deposit for the ${A} showcase`,
-                  description: `Riverside Estate holds the ${A} date until the deposit lands.`,
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [ctx.subject],
-                  actors: ["maya.reeves@example.org"],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Deposit requested to hold the ${A} showcase date.`,
-                }),
-              ],
-              finalText: "Tracked the deposit obligation.",
-            }),
-          },
-          // ── arc A: reconcile onto the existing loop ──────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A2.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                // The loop was minted by an EARLIER run, so its id can only
-                // come from this run's live search result.
-                call("open_loop_update", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  docs: [ref("open_loop_search", "loops.0.docs.0"), ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  note: `Stage rider arrived; the ${A} deposit is still outstanding.`,
-                }),
-              ],
-              finalText: "Reconciled onto the existing loop.",
-            }),
-          },
-          // ── arc A: silent close ──────────────────────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A3.title,
-            plan: () => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                call("open_loop_update", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  state: "done",
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  note: `Deposit confirmed for the ${A} showcase; closing without a card.`,
-                }),
-              ],
-              finalText: "Closed silently — nothing left for the user to do.",
-            }),
-          },
-          // ── arc B: a loop with an attached brief ─────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: B1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${B} lease review` }),
-                call("open_loop_create", {
-                  title: `Review the ${B} lease`,
-                  description: `Whitfield Law is waiting on comments for the ${B} lease.`,
-                  confidence: 0.85,
-                  importance: 0.8,
-                  docs: [ctx.subject],
-                  actors: ["dana.whitfield@whitfieldlaw.example"],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Review of the ${B} lease requested.`,
-                }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: `${B} lease needs your comments`,
-                  description: "Requested before Friday.",
-                  citations: [ctx.subject],
-                  relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.85,
-                  urgency: 0.6,
-                }),
-              ],
-            }),
-          },
-          // ── arc B: the obligation is rescinded → delete, not done ────────
-          {
-            flavour: "data.created",
-            docTitle: B2.title,
-            plan: () => ({
-              calls: [
-                call("open_loop_search", { query: `${B} lease review` }),
-                call("open_loop_delete", { id: ref("open_loop_search", "loops.0.id") }),
-              ],
-              finalText: "The obligation was rescinded; the loop should never have existed.",
-            }),
-          },
-          // ── arc P: two loops of different importance, with people ────────
-          {
-            flavour: "data.created",
-            docTitle: P1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${P} rental` }),
-                call("open_loop_create", {
-                  title: `Return the signed ${P} rental agreement`,
-                  description: `Studio Northstar is waiting on the countersigned ${P} agreement.`,
-                  confidence: 0.9,
-                  importance: 0.9,
-                  docs: [ctx.subject],
-                  actors: ["maya.reeves@example.org"],
-                  involved: ["jamie.lopez@example.com"],
-                }),
-                call("open_loop_create", {
-                  title: `Compare the ${P} catering menus`,
-                  description: `Menus for the ${P} booking are attached; no deadline given.`,
-                  confidence: 0.7,
-                  importance: 0.2,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Agreement for ${P} sent for signature.`,
-                }),
-              ],
-            }),
-          },
-          // ── arc D: two loops the decay engine will revisit ───────────────
-          {
-            flavour: "data.created",
-            docTitle: D1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: "studio session status" }),
-                call("open_loop_create", {
-                  title: `Confirm the ${D_KEEP} rehearsal slot`,
-                  description: `Studio Northstar has not confirmed the ${D_KEEP} slot.`,
-                  confidence: 0.8,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_create", {
-                  title: `Chase the ${D_GONE} lighting quote`,
-                  description: `No lighting quote for ${D_GONE} has arrived.`,
-                  confidence: 0.75,
-                  importance: 0.5,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-          // ── arc C: a recurring commitment, minted twice ──────────────────
-          {
-            flavour: "data.created",
-            docTitle: C1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${C} permit renewal` }),
-                call("open_loop_create", {
-                  title: `Renew ${C} workshop permit`,
-                  description: `Cedar Grove Supplies asked for the ${C} renewal form.`,
-                  confidence: 0.85,
-                  importance: 0.55,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: C2.title,
-            plan: (ctx) => ({
-              // Deliberately re-worded: the consolidation key is the
-              // order-insensitive normalized title, not the literal string.
-              calls: [
-                call("open_loop_search", { query: `${C} permit renewal` }),
-                call("open_loop_create", {
-                  title: `${C} workshop permit — renew`,
-                  description: `Cedar Grove Supplies asked for the ${C} renewal form again.`,
-                  confidence: 0.85,
-                  importance: 0.55,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-
-          // ── decay behaviors ──────────────────────────────────────────────
-          // Most-specific first: the Brambling REAP arm only matches once the
-          // KEEP arm's ledger note is in the prompt's ledger tail.
           {
             flavour: "time_based.decay",
             promptContains: BRAMBLING_KEPT_NOTE,
@@ -450,8 +478,6 @@ describe("Brain Bench — open loops", () => {
               finalText: "Filed and closed.",
             }),
           },
-          // Every other loop's decay check is a deliberate no-op, so one arc's
-          // clock advance never disturbs another arc's loops.
           { flavour: "time_based.decay", plan: { calls: [] } },
         ],
       },
@@ -541,7 +567,9 @@ describe("Brain Bench — open loops", () => {
     // The reconcile went through the gateway's own search tool, and that
     // search surfaced the loop the EARLIER run minted — the only channel
     // through which this run could have learned the id it then updated.
-    const steps = await bench.obs.executedTools((await bench.obs.runForDoc(a2Id!)).id);
+    const steps = await bench.obs.executedTools(
+      (await bench.obs.interpretationForSource(a2Id!)).id,
+    );
     const search = steps.find((s) => s.tool === "open_loop_search");
     expect(search, "the reconcile run searched for an existing loop").toBeDefined();
     const surfaced = search!.result?.data?.loops as Array<{ id: string }> | undefined;
@@ -553,9 +581,9 @@ describe("Brain Bench — open loops", () => {
 
   // ── 3. silent close ────────────────────────────────────────────────────
 
-  test("a resolution document closes the loop with a note and no brief", async () => {
-    const briefsBefore = await bench.obs.briefs();
-    expect(briefsBefore.items).toHaveLength(0);
+  test("a resolution document closes the loop with a note and no observation", async () => {
+    const observationsBefore = await bench.obs.observations();
+    expect(observationsBefore.items).toHaveLength(0);
 
     const [a3Id] = await bench.pushAndSettle([A3]);
 
@@ -566,17 +594,18 @@ describe("Brain Bench — open loops", () => {
     const detail = await bench.obs.loop(loops[0]!.id);
     expect(detail.ledger).toHaveLength(3);
     expect(detail.ledger[2]!.note).toContain("closing without a card");
-    // Silence is the whole point: no card was raised, none attached.
-    expect(detail.briefs).toHaveLength(0);
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
-    expect(await bench.obs.unreadCount()).toBe(0);
+    // Silence is the whole point: nothing was noted for a morning brief.
+    expect(detail.observations).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
 
     // Non-vacuous: the resolution run really executed and really resolved the
-    // loop — it simply wrote no brief while doing so.
-    const dataRuns = await bench.obs.settledRuns("data");
-    expect(dataRuns).toHaveLength(3);
-    expect(dataRuns.every((r) => r.status === "completed")).toBe(true);
-    const steps = await bench.obs.executedTools((await bench.obs.runForDoc(a3Id!)).id);
+    // loop — it simply noted no observation while doing so.
+    const resolvingRun = await bench.obs.interpretationForSource(a3Id!);
+    expect(resolvingRun.kind).toBe("synthesis");
+    expect(resolvingRun.status).toBe("completed");
+    const steps = await bench.obs.executedTools(
+      (await bench.obs.interpretationForSource(a3Id!)).id,
+    );
     // The gateway handed this run the loop the earlier runs had been building,
     // so the resolving update could only have targeted that loop.
     const surfaced = steps.find((s) => s.tool === "open_loop_search")?.result?.data?.loops as
@@ -599,16 +628,16 @@ describe("Brain Bench — open loops", () => {
 
   // ── 4. loop delete cascade ─────────────────────────────────────────────
 
-  test("deleting a loop clears its brief, its join rows and its mirror", async () => {
+  test("deleting a loop clears its observations, its join rows and its mirror", async () => {
     await bench.pushAndSettle([B1]);
 
     const created = await bench.obs.loopsMatching(B);
     expect(created).toHaveLength(1);
     const loopId = created[0]!.id;
-    const briefs = await bench.obs.briefsMatching(B);
-    expect(briefs).toHaveLength(1);
-    const briefId = briefs[0]!.id;
-    expect(briefs[0]!.relatedLoopIds).toEqual([loopId]);
+    const observations = await bench.obs.observationsMatching(B);
+    expect(observations).toHaveLength(1);
+    const observationId = observations[0]!.id;
+    expect(observations[0]!.relatedLoopIds).toEqual([loopId]);
     const mirrorId = mirrorOf(bench, loopId)?.id;
     expect(mirrorId).toBeDefined();
     // The positive control for the post-delete assertion below: the scoped
@@ -628,36 +657,43 @@ describe("Brain Bench — open loops", () => {
     expect(await bench.obs.loopsMatching(B)).toHaveLength(0);
     await expect(bench.obs.loop(loopId)).rejects.toThrow();
 
-    // … and so is the brief the engine-enforced invariant took with it.
-    expect(await bench.obs.briefsMatching(B)).toHaveLength(0);
-    const briefRow = bench.sql
-      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM briefs WHERE id = ?")
-      .get(briefId);
-    expect(briefRow?.n).toBe(0);
+    // … and so is the observation the engine-enforced invariant took with it.
+    expect(await bench.obs.observationsMatching(B)).toHaveLength(0);
+    const observationRow = bench.sql
+      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM observations WHERE id = ?")
+      .get(observationId);
+    expect(observationRow?.n).toBe(0);
     const citationRows = bench.sql
       .prepare<
         [string],
         { n: number }
-      >("SELECT COUNT(*) AS n FROM brief_citations WHERE brief_id = ?")
-      .get(briefId);
+      >("SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id = ?")
+      .get(observationId);
     expect(citationRows?.n).toBe(0);
 
     // The tool reported the cascade it performed.
-    const deleteRun = (await bench.obs.settledRuns("data")).find(
-      (r) => r.dedupeKey === `data:doc:${b2Id}`,
-    );
+    const deleteRun = await bench.obs.interpretationForSource(b2Id!);
     expect(deleteRun).toBeDefined();
     const refs = await bench.obs.transcripts({ runId: deleteRun!.id });
     const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
-    expect(findDeletedBriefIds(transcript.events)).toEqual([briefId]);
+    expect(findDeletedObservationIds(transcript.events)).toEqual([observationId]);
 
     // Join rows and ledger went with it.
     expect(joinRowCount(bench, "open_loop_docs", loopId)).toBe(0);
     expect(joinRowCount(bench, "open_loop_people", loopId)).toBe(0);
     expect(joinRowCount(bench, "open_loop_ledger", loopId)).toBe(0);
 
-    // And the corpus mirror was removed, not left as a stale search hit.
-    expect(mirrorOf(bench, loopId)).toBeUndefined();
+    // The active-loop mirror is removed. Intentional retirement retains a
+    // historical synthesis projection; source privacy deletion purges that too.
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM documents WHERE external_id=? AND source_id='open-loops'")
+        .get(loopId),
+    ).toBeUndefined();
+    const retiredProjection = mirrorOf(bench, loopId);
+    expect(retiredProjection?.source_id).toBe("brain-knowledge");
+    expect(retiredProjection?.content).toContain('"state":"retired"');
+    expect(retiredProjection?.content).toContain('"outcome":"deleted"');
     const scoped = await bench.harness.gatewayJson<LikeSearchResult>(
       `/documents/search?q=${B}&sources=open-loops`,
     );
@@ -715,6 +751,14 @@ describe("Brain Bench — open loops", () => {
     const detailLow = await bench.obs.productLoop(low.id);
     expect(detailLow.loop.actors).toEqual([]);
     expect(detailLow.ledger).toEqual([]);
+
+    // A later source reporting the same outcomes cannot duplicate them or
+    // repeat the creation ledger entry merely because interpretation runs again.
+    await bench.pushAndSettle([P2]);
+    expect((await bench.obs.loopsMatching(P)).map((loop) => loop.id).sort()).toEqual(
+      [high.id, low.id].sort(),
+    );
+    expect((await bench.obs.productLoop(high.id)).ledger).toHaveLength(1);
   }, 120_000);
 
   // ── 6. decay lifecycle ─────────────────────────────────────────────────
@@ -792,8 +836,17 @@ describe("Brain Bench — open loops", () => {
     expect(trace).toBeDefined();
     expect(trace!.outcome).toBe("decayed");
 
-    // Its mirror and its pending check went with it.
-    expect(mirrorOf(bench, gone.id)).toBeUndefined();
+    // Active retrieval and scheduled checks stop, while the intentional
+    // retirement retains historical context in the synthesis projection.
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM documents WHERE external_id=? AND source_id='open-loops'")
+        .get(gone.id),
+    ).toBeUndefined();
+    const retiredProjection = mirrorOf(bench, gone.id);
+    expect(retiredProjection?.source_id).toBe("brain-knowledge");
+    expect(retiredProjection?.content).toContain('"state":"retired"');
+    expect(retiredProjection?.content).toContain('"outcome":"decayed"');
     expect(bench.pendingDedupeKeys()).not.toContain(`decay:loop:${gone.id}`);
   }, 180_000);
 
@@ -857,7 +910,24 @@ describe("Brain Bench — open loops", () => {
 
     // Three days and one hour later it retires again.
     await bench.clock.advance(73 * HOUR);
-    await bench.drainUntilQuiet();
+    try {
+      await bench.drainUntilQuiet();
+    } catch (error) {
+      const pending = bench.sql
+        .prepare(
+          "SELECT f.*,b.status AS batch_status FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id WHERE b.status!='completed' ORDER BY b.created_at DESC LIMIT 12",
+        )
+        .all();
+      const root = bench.sql
+        .prepare(
+          "SELECT id,revision,validity,markdown,metadata_json FROM knowledge_nodes WHERE kind='root'",
+        )
+        .get();
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; maintenance=${JSON.stringify({ pending, root })}`,
+        { cause: error },
+      );
+    }
 
     const traces = (await bench.obs.retiredLoops()).items;
     const secondTrace = traces.find((r) => r.id === second.id);

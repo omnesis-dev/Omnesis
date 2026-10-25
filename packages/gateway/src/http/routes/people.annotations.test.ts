@@ -21,7 +21,7 @@ import {
   createPersonAnnotation,
   invalidatePersonAnnotationsForDoc,
 } from "../../brain/storage/person-annotations.js";
-import { createBrief } from "../../brain/storage/briefs.js";
+import { createObservation } from "../../brain/storage/observations.js";
 import { recordConsumptionEdges } from "../../brain/storage/consumption-edges.js";
 import type Database from "better-sqlite3";
 
@@ -326,17 +326,9 @@ describe("GET /people/:id/annotations", () => {
       },
       1000,
     );
-    createBrief(
+    createObservation(
       db,
-      {
-        id: "brief_dep",
-        createdByRun: "run_2",
-        kind: "info",
-        title: "Fictional follow-up",
-        description: "An invented briefing.",
-        confidence: 0.7,
-        urgency: 0.4,
-      },
+      { id: "obs_dep", createdByRun: "run_2", summary: "Fictional follow-up" },
       2000,
     );
     recordConsumptionEdges(
@@ -345,8 +337,8 @@ describe("GET /people/:id/annotations", () => {
         {
           priorStore: "person",
           priorAnnotationId: "panno_dep",
-          dependentKind: "brief",
-          dependentId: "brief_dep",
+          dependentKind: "observation",
+          dependentId: "obs_dep",
           runId: "run_2",
         },
       ],
@@ -358,7 +350,7 @@ describe("GET /people/:id/annotations", () => {
     const experimental = await (await req("/people/per_a/annotations")).json();
     expect(experimental.annotations[0].dependentCount).toBe(1);
     expect(experimental.annotations[0].dependents).toEqual([
-      expect.objectContaining({ id: "brief_dep" }),
+      expect.objectContaining({ id: "obs_dep" }),
     ]);
   });
 

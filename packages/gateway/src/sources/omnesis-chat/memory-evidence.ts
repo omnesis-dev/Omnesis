@@ -6,6 +6,7 @@
  * Rendered speaker labels are presentation, never authority: an assistant can
  * quote or reproduce those labels in its own answer. */
 
+import { conversationEvidenceStart } from "./render.js";
 import { containsNormalized } from "../../brain/quote-match.js";
 import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "./ids.js";
 import { buildDocumentInput, type ConversationUpserter } from "./upsert.js";
@@ -29,9 +30,8 @@ interface EvidenceDeps {
 
 /** User-role tool results and the machine-generated seed prefix are excluded. */
 export function conversationUserMessages(record: ConversationRecord): string[] {
-  if (record.originUnrecognized) return [];
-  const start = record.origin?.seedMessageCount ?? 0;
-  if (record.origin && (!Number.isSafeInteger(start) || start <= 0)) return [];
+  const start = conversationEvidenceStart(record);
+  if (start === null) return [];
   return record.messages
     .slice(start)
     .flatMap((message) =>

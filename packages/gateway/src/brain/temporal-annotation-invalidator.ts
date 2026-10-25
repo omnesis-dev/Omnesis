@@ -15,8 +15,8 @@
  * churn-invalidated annotation, so the read guard also fires for documents
  * only such an entry cites. The same upsert wakes the Cognition Steward's
  * data run, which re-files whatever the new content supports.
- * The deletion-driven HARD purge rides the DocumentService privacy-delete
- * seam (`cascadeTemporalAnnotationPrivacyDelete`), not the bus.
+ * A document deletion is handled by the deleting write itself
+ * (`source-deletion-review.ts`), not the bus.
  *
  * Hot-path discipline mirrors the annotation invalidator: a cheap indexed
  * READ guard on the read handle, then the (single-writer) write op fired

@@ -78,6 +78,7 @@ import {
   DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
   listCognitionRunsByDedupePrefix,
 } from "../storage/run-queue.js";
+import type { ObservationTransition } from "../storage/observations.js";
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";
 import type { DailyEnqueuerWriteOps } from "./daily-enqueuer.js";
@@ -104,6 +105,11 @@ export interface ProvenanceRecheckSettings {
 /** The write-gate slice the sweep mutates through. */
 export interface ProvenanceRecheckSweepWriteOps extends DailyEnqueuerWriteOps {
   cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  transitionObservation(
+    id: string,
+    transition: ObservationTransition,
+    now: number,
+  ): Promise<boolean>;
 }
 
 export interface ProvenanceRecheckSweepDeps {
@@ -201,6 +207,16 @@ export async function runProvenanceRecheckSweepPass(
     const stamp = deaths[i]!.invalidatedAt;
     for (; i < deaths.length && deaths[i]!.invalidatedAt === stamp; i += 1) {
       const death = deaths[i]!;
+      if (death.dependentKind === "observation") {
+        // An observation is a short-lived note: a dead prior drops it rather
+        // than buying a re-examination run.
+        await deps.writeGate.transitionObservation(
+          death.dependentId,
+          { state: "dropped", reason: "stale" },
+          now,
+        );
+        continue;
+      }
       const key = provenanceRecheckDedupeKey(death.dependentKind, death.dependentId);
       if (pendingKeys.has(key) || enqueuedKeys.has(key)) continue;
       // Claimed at or after the death → that claim already re-derived it.

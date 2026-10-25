@@ -44,6 +44,19 @@ export function markSourceStatsDirty(db: Db, sourceId?: string): void {
   ).run(sourceId);
 }
 
+/**
+ * Account for `removed` documents deleted from one source: the count drops by
+ * exactly that many in the deleting transaction, and the row is marked dirty
+ * so the backfill reconciles the size and date range off the writer.
+ */
+export function recordSourceDocumentsDeleted(db: Db, sourceId: string, removed: number): void {
+  db.prepare(
+    `UPDATE source_stats
+        SET doc_count = MAX(doc_count - ?, 0), needs_refresh = 1, dirty_version = dirty_version + 1
+      WHERE source_id = ?`,
+  ).run(removed, sourceId);
+}
+
 /** List source IDs whose cached row is dirty (needs a refresh). */
 export function listDirtyStatsSourceIds(db: Db): string[] {
   // Also pull any source_id present in `documents` without a source_stats

@@ -81,6 +81,12 @@ export interface ReverificationSweepDeps {
   clock: Clock;
   /** Live settings slice (config is hot-reloadable). */
   getSettings: () => ReverificationSettings;
+  /**
+   * Sources excluded from the Brain (`brain.excludedSources`). An annotation
+   * about, or resting on, one of their documents is left as it is: its
+   * verification run could not read the evidence it would re-judge.
+   */
+  getExcludedSources?: () => readonly string[];
   log: Logger;
   idGen?: () => string;
 }
@@ -155,9 +161,14 @@ export async function runReverificationSweepPass(
   // Over-fetch by the covered count so rows already riding a pending run
   // cannot starve this pass's budget.
   const fetchLimit = maxPerSweep * batchSize + covered.size;
+  const excludedSources = deps.getExcludedSources?.() ?? [];
 
   const candidates: DueCandidate[] = [];
-  for (const r of listDueVerificationPersonAnnotations(deps.db, { cutoff, limit: fetchLimit })) {
+  for (const r of listDueVerificationPersonAnnotations(deps.db, {
+    cutoff,
+    limit: fetchLimit,
+    excludedSources,
+  })) {
     if (!covered.has(`person:${r.id}`)) {
       candidates.push({
         store: "person",
@@ -168,7 +179,11 @@ export async function runReverificationSweepPass(
       });
     }
   }
-  for (const r of listDueVerificationDocAnnotations(deps.db, { cutoff, limit: fetchLimit })) {
+  for (const r of listDueVerificationDocAnnotations(deps.db, {
+    cutoff,
+    limit: fetchLimit,
+    excludedSources,
+  })) {
     if (!covered.has(`doc:${r.id}`)) {
       candidates.push({
         store: "doc",

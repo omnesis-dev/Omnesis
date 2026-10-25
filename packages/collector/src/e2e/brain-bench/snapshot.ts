@@ -23,6 +23,7 @@
  * should catch.
  */
 
+import { KNOWLEDGE_SOURCE_ID } from "@omnesis/gateway/src/brain/knowledge/source-meta.js";
 import type Database from "better-sqlite3";
 
 /** Renames minted ids to stable ordinals, so a snapshot is comparable across runs. */
@@ -31,16 +32,16 @@ class IdCanonicalizer {
   private readonly counters = new Map<string, number>();
 
   /**
-   * `loop_a1b2` → `loop#1`. Ids with no readable prefix — documents and runs
-   * are bare UUIDs — take the `kind` the caller names, so the two do not
-   * share one counter: they would otherwise renumber each other, and adding
-   * a document to an arc would rewrite every run reference in the golden.
+   * `loop_a1b2` → `loop#1`. An explicit semantic kind takes precedence over
+   * a generated ID prefix: bare UUIDs and `cog_` run IDs both become `run#N`.
+   * Separate document and run counters keep adding evidence from renumbering
+   * every run reference in the golden.
    */
   canon(id: string | null | undefined, kind?: string): string | null {
     if (id === null || id === undefined) return null;
     const existing = this.seen.get(id);
     if (existing) return existing;
-    const prefix = /^([a-z]+)_/.exec(id)?.[1] ?? kind ?? "id";
+    const prefix = kind ?? /^([a-z]+)_/.exec(id)?.[1] ?? "id";
     const n = (this.counters.get(prefix) ?? 0) + 1;
     this.counters.set(prefix, n);
     const label = `${prefix}#${n}`;
@@ -71,7 +72,7 @@ function rebase(ms: number | null | undefined, epoch: number): string | null {
 export interface BrainSnapshot {
   loops: unknown[];
   retiredLoops: unknown[];
-  briefs: unknown[];
+  observations: unknown[];
   docAnnotations: unknown[];
   personAnnotations: unknown[];
   temporalAnnotations: unknown[];
@@ -84,7 +85,11 @@ export interface BrainSnapshot {
  * Serialize the cognitive state. `epoch` anchors relative timestamps —
  * pass the instant the bench started so `T+0` means "at boot".
  */
-export function snapshotBrainState(db: Database.Database, epoch: number): BrainSnapshot {
+export function snapshotBrainState(
+  db: Database.Database,
+  epoch: number,
+  options: { runIds?: readonly string[] } = {},
+): BrainSnapshot {
   const c = new IdCanonicalizer();
   const all = <T>(sql: string, ...params: unknown[]): T[] =>
     db.prepare(sql).all(...(params as never[])) as T[];
@@ -93,7 +98,7 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
   // which table happened to be read first.
   type IdRow = { id: string };
   for (const r of all<IdRow>("SELECT id FROM open_loops ORDER BY created_at, id")) c.canon(r.id);
-  for (const r of all<IdRow>("SELECT id FROM briefs ORDER BY created_at, id")) c.canon(r.id);
+  for (const r of all<IdRow>("SELECT id FROM observations ORDER BY created_at, id")) c.canon(r.id);
   for (const r of all<IdRow>("SELECT id FROM doc_annotations ORDER BY created_at, id"))
     c.canon(r.id);
   for (const r of all<IdRow>("SELECT id FROM person_annotations ORDER BY created_at, id"))
@@ -106,12 +111,15 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
   // loop's mirror document carries the loop id as its external id, and loops
   // were canonicalized above.
   const docs = all<{ id: string; source_id: string; external_id: string }>(
-    "SELECT id, source_id, external_id FROM documents",
+    "SELECT id, source_id, external_id FROM documents WHERE source_id != ?",
+    KNOWLEDGE_SOURCE_ID,
   )
     .map((r) => ({ ...r, sortKey: `${r.source_id}\u0000${c.scrub(r.external_id) ?? ""}` }))
     .sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
   for (const r of docs) c.canon(r.id, "doc");
-  for (const r of all<IdRow>("SELECT id FROM cognition_runs ORDER BY enqueued_at, id"))
+  for (const r of all<IdRow>("SELECT id FROM cognition_runs ORDER BY enqueued_at, id").filter(
+    (row) => !options.runIds || options.runIds.includes(row.id),
+  ))
     c.canon(r.id, "run");
 
   interface LoopRow {
@@ -152,62 +160,45 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
     ).map((e) => ({ runId: c.canon(e.run_id), note: c.scrub(e.note) })),
   }));
 
-  interface BriefRow {
+  interface ObservationRow {
     id: string;
     created_by_run: string;
-    kind: string;
-    title: string;
-    description: string;
-    body: string | null;
-    confidence: number;
-    urgency: number;
+    summary: string;
+    why: string;
+    user_authored: number;
+    window_start: number | null;
+    relevant_until: number | null;
+    claims_json: string;
     state: string;
+    close_reason: string | null;
+    would_push_at: number | null;
     created_at: number;
-    next_show: number | null;
-    event_at: number | null;
-    user_feedback: string | null;
   }
-  const briefs = all<BriefRow>("SELECT * FROM briefs ORDER BY created_at, id").map((b) => ({
-    id: c.canon(b.id),
-    createdByRun: c.canon(b.created_by_run),
-    kind: b.kind,
-    state: b.state,
-    title: c.scrub(b.title),
-    description: c.scrub(b.description),
-    body: c.scrub(b.body),
-    confidence: b.confidence,
-    urgency: b.urgency,
-    userFeedback: b.user_feedback,
-    nextShowSet: b.next_show !== null,
-    eventAtSet: b.event_at !== null,
+  const observations = all<ObservationRow>(
+    "SELECT * FROM observations ORDER BY created_at, id",
+  ).map((o) => ({
+    id: c.canon(o.id),
+    createdByRun: c.canon(o.created_by_run),
+    state: o.state,
+    closeReason: o.close_reason,
+    summary: c.scrub(o.summary),
+    why: c.scrub(o.why),
+    userAuthored: o.user_authored === 1,
+    windowStartSet: o.window_start !== null,
+    relevantUntilSet: o.relevant_until !== null,
+    wouldPush: o.would_push_at !== null,
+    createdAt: rebase(o.created_at, epoch),
     citations: all<{ doc_id: string }>(
-      "SELECT doc_id FROM brief_citations WHERE brief_id = ? ORDER BY position",
-      b.id,
+      "SELECT doc_id FROM observation_citations WHERE observation_id = ? ORDER BY position",
+      o.id,
     ).map((x) => c.canon(x.doc_id)),
     relatedLoops: all<{ loop_id: string }>(
-      "SELECT loop_id FROM brief_related_loops WHERE brief_id = ? ORDER BY loop_id",
-      b.id,
+      "SELECT loop_id FROM observation_related_loops WHERE observation_id = ? ORDER BY loop_id",
+      o.id,
     ).map((x) => c.canon(x.loop_id)),
-    claims: all<{
-      claim_text: string;
-      claim_basis: string;
-      confidence: number;
-      verification_state: string;
-      evidence_doc_id: string | null;
-      evidence_quote: string | null;
-      invalidated_at: number | null;
-    }>(
-      "SELECT claim_text, claim_basis, confidence, verification_state, evidence_doc_id, evidence_quote, invalidated_at FROM brief_claims WHERE brief_id = ? ORDER BY id",
-      b.id,
-    ).map((cl) => ({
-      claimText: c.scrub(cl.claim_text),
-      claimBasis: cl.claim_basis,
-      confidence: cl.confidence,
-      verificationState: cl.verification_state,
-      evidenceDoc: c.canon(cl.evidence_doc_id),
-      evidenceQuote: cl.evidence_quote,
-      live: cl.invalidated_at === null,
-    })),
+    claims: (
+      JSON.parse(o.claims_json) as Array<{ docId: string; quote: string; verification: string }>
+    ).map((cl) => ({ doc: c.canon(cl.docId), quote: cl.quote, verification: cl.verification })),
   }));
 
   const annotationRows = (table: string, subjectCol: string, evidenceTable: string): unknown[] => {
@@ -312,14 +303,20 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
     recurrenceCount: r.recurrence_count,
   }));
 
-  const runs = all<{ kind: string; status: string; dedupe_key: string | null; attempts: number }>(
-    "SELECT kind, status, dedupe_key, attempts FROM cognition_runs ORDER BY enqueued_at, id",
-  ).map((r) => ({
-    kind: r.kind,
-    status: r.status,
-    attempts: r.attempts,
-    dedupeKey: c.scrub(r.dedupe_key),
-  }));
+  const runs = all<{
+    id: string;
+    kind: string;
+    status: string;
+    dedupe_key: string | null;
+    attempts: number;
+  }>("SELECT id, kind, status, dedupe_key, attempts FROM cognition_runs ORDER BY enqueued_at, id")
+    .filter((row) => !options.runIds || options.runIds.includes(row.id))
+    .map((r) => ({
+      kind: r.kind,
+      status: r.status,
+      attempts: r.attempts,
+      dedupeKey: c.scrub(r.dedupe_key),
+    }));
 
   const notes = (
     db.prepare("SELECT content FROM cognition_notes WHERE id = 1").get() as
@@ -330,7 +327,7 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
   return {
     loops,
     retiredLoops: retired,
-    briefs,
+    observations,
     docAnnotations: annotationRows("doc_annotations", "doc_id", "doc_annotation_evidence"),
     personAnnotations: annotationRows(
       "person_annotations",

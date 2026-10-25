@@ -3,7 +3,7 @@
 
 // A small inline ⚑ trigger that files a developer annotation against an
 // EXPLICIT entity — used on the cognition debug page, where a dense list of
-// briefs / runs / loops / temporal annotations / memory rows is under review and
+// observations / runs / loops / temporal annotations / memory rows is under review and
 // the operator wants to flag a specific one. Renders only in developer mode;
 // opens the same shared composer the floating FAB uses, via
 // `openDevAnnotation(target)`. `target` is `{ targetType, targetId?, label?,
