@@ -16,17 +16,30 @@ import urllib.parse
 import urllib.request
 
 
-def wait_for(probe, seconds=180):
+def wait_for(probe, seconds=180, phase='readiness', children=()):
     deadline = time.monotonic() + seconds
+    last_probe = 'not-ready'
     while True:
+        for child in children:
+            code = child.poll()
+            if code is not None:
+                role = getattr(child, 'owned_role', 'daemon')
+                role = role if role in ('gateway', 'collector') else 'daemon'
+                raise RuntimeError(f'isolated {phase}: {role} exited before readiness, exit={code}')
         try:
             value = probe()
             if value:
                 return value
-        except (OSError, ValueError):
-            pass
+            last_probe = 'not-ready'
+        except (OSError, ValueError) as error:
+            # Report only classification/status; HTTP errors may contain a URL
+            # or body, and neither belongs in public CI diagnostics.
+            last_probe = type(error).__name__
+            status = getattr(error, 'code', None)
+            if isinstance(status, int) and 100 <= status <= 599:
+                last_probe += f', status={status}'
         if time.monotonic() >= deadline:
-            raise RuntimeError('isolated foreground runtime did not become ready')
+            raise RuntimeError(f'isolated {phase} did not become ready: {last_probe}')
         time.sleep(2)
 
 
@@ -74,29 +87,45 @@ def no_models(config):
             raise RuntimeError('no-model variant assigned an inference role')
 
 
+def group_running(group):
+    output = subprocess.check_output(['ps', '-axo', 'pgid=,stat='], text=True, timeout=5)
+    return any(int(parts[0]) == group and not parts[1].startswith('Z')
+               for line in output.splitlines() if len(parts := line.split()) == 2)
+
+
 def retire_children(children, grace_seconds=30, force_seconds=15, require_success=False):
     errors = []
     for child in reversed(children):
+        role = getattr(child, 'owned_role', 'daemon')
         try:
-            if child.poll() is None:
+            forced = False
+            if group_running(child.pid):
                 try:
                     os.killpg(child.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-                try:
-                    child.wait(timeout=grace_seconds)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    child.wait(timeout=force_seconds)
-                    if require_success:
-                        raise RuntimeError('owned daemon required forced shutdown')
-            if require_success and child.returncode != 0:
-                raise RuntimeError('owned daemon exited unsuccessfully')
+                deadline = time.monotonic() + grace_seconds
+                while group_running(child.pid):
+                    child.poll()
+                    if time.monotonic() >= deadline:
+                        forced = True
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        break
+                    time.sleep(0.05)
+                deadline = time.monotonic() + force_seconds
+                while group_running(child.pid):
+                    child.poll()
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('owned group survived forced shutdown')
+                    time.sleep(0.05)
+            child.wait(timeout=force_seconds)
+            if require_success and (forced or child.returncode != 0):
+                errors.append(f'{role}: exit={child.returncode}, forced={forced}')
         except Exception as error:
-            errors.append(type(error).__name__)
+            errors.append(f'{role}: {type(error).__name__}')
     if errors:
         raise RuntimeError('owned daemon retirement failed: ' + ', '.join(errors))
 
@@ -113,6 +142,7 @@ def run(work, cli):
         child = subprocess.Popen([cli, *(['gateway', 'serve'] if role == 'gateway' else ['collector', 'run'])],
                                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                  start_new_session=True, env=dict(os.environ, NODE_OPTIONS='--max-old-space-size=' + ('1024' if role == 'collector' else '1536')))
+        child.owned_role = role
         children.append(child)
     def stop():
         retire_children(children, grace_seconds=90, require_success=True)
@@ -147,10 +177,10 @@ def run(work, cli):
         for cycle in (1, 2):
             no_models(config)
             start('gateway')
-            wait_for(lambda: api('/health', False).get('status') == 'ok')
+            wait_for(lambda: api('/health', False).get('status') == 'ok', phase='gateway-health', children=children)
             os.environ['NODE_EXTRA_CA_CERTS'] = str(config / 'tls/cert.pem')
             start('collector')
-            device = wait_for(online)
+            device = wait_for(online, phase='collector-online', children=children)
             if cycle == 1:
                 vault = work / 'vault'
                 (vault / '.obsidian').mkdir(parents=True)
@@ -160,13 +190,13 @@ def run(work, cli):
                 if not match:
                     raise RuntimeError('CLI omitted the invented source identity')
                 command('sources', 'sync', match[1], '--wait', '--timeout', '300')
-                document = wait_for(lookup)
+                document = wait_for(lookup, phase='document-sync', children=children)
                 identity = {'device': device, 'document': document,
                             'hashes': {name: hashlib.sha256((config / name).read_bytes()).hexdigest()
                                        for name in ('token', 'collector-token', 'tls/cert.pem')}}
             else:
                 current = {name: hashlib.sha256((config / name).read_bytes()).hexdigest() for name in identity['hashes']}
-                if device != identity['device'] or wait_for(lookup) != document or current != identity['hashes']:
+                if device != identity['device'] or wait_for(lookup, phase='document-restart', children=children) != document or current != identity['hashes']:
                     raise RuntimeError('foreground restart changed device, document, token or certificate identity')
             stop()
             no_models(config)

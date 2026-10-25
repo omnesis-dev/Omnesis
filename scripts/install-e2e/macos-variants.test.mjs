@@ -358,6 +358,49 @@ assert output.returncode!=0 or output.stdout.strip().startswith('Z'),'grandchild
     }
   });
 
+  test("readiness reports owned exit and sanitized probe classification", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import sys,urllib.error
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+child=runtime.subprocess.Popen([sys.executable,'-c','raise SystemExit(17)'],start_new_session=True);child.owned_role='gateway';child.wait(timeout=5)
+try:runtime.wait_for(lambda:True,seconds=0,phase='gateway-health',children=[child])
+except RuntimeError as error:assert str(error)=='isolated gateway-health: gateway exited before readiness, exit=17',str(error)
+else:raise AssertionError('exited daemon accepted as ready')
+def refused():raise urllib.error.HTTPError('https://example.invalid/private-secret',503,'Bearer private-secret',{},None)
+try:runtime.wait_for(refused,seconds=0,phase='gateway-health')
+except RuntimeError as error:assert str(error)=='isolated gateway-health did not become ready: HTTPError, status=503',str(error)
+else:raise AssertionError('failed readiness passed')
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  test("runtime retirement drains descendants and rejects forced or nonzero exits", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const result = python(`
+import sys,tempfile,time
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+with tempfile.TemporaryDirectory() as temporary:
+ ready=m.Path(temporary)/'ready'
+ code="import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path("+repr(str(ready))+").write_text('ready');time.sleep(60)"
+ leader="import subprocess,sys;subprocess.Popen([sys.executable,'-c',"+repr(code)+"])"
+ child=runtime.subprocess.Popen([sys.executable,'-c',leader],start_new_session=True)
+ try:
+  while not ready.exists():time.sleep(.01)
+  child.wait(timeout=5)
+  try:runtime.retire_children([child],grace_seconds=.1,force_seconds=1,require_success=True)
+  except RuntimeError as error:assert 'exit=0, forced=True' in str(error),str(error)
+  else:raise AssertionError('forced descendant retirement passed')
+  assert not runtime.group_running(child.pid)
+ finally:runtime.retire_children([child],grace_seconds=.1,force_seconds=1)
+ child=runtime.subprocess.Popen([sys.executable,'-c','raise SystemExit(7)'],start_new_session=True);child.wait(timeout=5)
+ try:runtime.retire_children([child],require_success=True)
+ except RuntimeError as error:assert 'exit=7, forced=False' in str(error),str(error)
+ else:raise AssertionError('nonzero daemon passed')
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   test("controller TERM waits for runtime cleanup of two separately owned daemon sessions", async () => {
     const { spawn } = await import("node:child_process");
     const directory = mkdtempSync(join(tmpdir(), "macos-runtime-cancel-"));
