@@ -461,7 +461,11 @@ export class InferenceRegistry {
     if (prefix === "local") return this.resolveLocalModel(role, suffix);
     if (prefix === "anthropic") return this.resolveAnthropicModel(role, value, suffix);
     if (prefix === "codex") return this.resolveCodex(role, suffix);
-    if (prefix === "claude-code") return this.resolveClaudeCode(role, suffix);
+    // An HTTP backend named `claude-code` predates the built-in runtime (0.6.0
+    // allowed the name) and keeps serving its assignments.
+    if (prefix === "claude-code" && !this.httpBackends.has(prefix)) {
+      return this.resolveClaudeCode(role, suffix);
+    }
     if (prefix === "typesafe" && role === "decision") return this.resolveTypeSafe(role, suffix);
     if (prefix === "replay") {
       if (role === "watch-judge") {

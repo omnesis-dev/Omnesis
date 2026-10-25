@@ -13,10 +13,10 @@ import {
   setLogLevel,
   writeConfigSecretSync,
 } from "@omnesis/core";
+import { validateConfig, type OmnesisConfig } from "@omnesis/config";
 import { InferenceRegistry } from "./registry.js";
 import type { LookupAddress } from "node:dns";
 import type { BackendStatus, CatalogEntry, Manifest } from "@omnesis/core";
-import { validateConfig, type OmnesisConfig } from "@omnesis/config";
 
 // This suite intentionally drives many probe FAILURES, each emitting a WARN log.
 // Under the fork pool, that flood of console output can still be mid-RPC when the
@@ -2448,6 +2448,22 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     expect(reg.resolve("background-agent")).toMatchObject({
       kind: "http",
       backendKey: "typesafe",
+      model: "some-chat-model",
+    });
+  });
+
+  it("leaves a configured HTTP backend named claude-code serving its assignments", () => {
+    const reg = registryWithTypeSafeKey(true);
+    reg.loadConfig({
+      inference: {
+        allowRemoteInference: true,
+        backends: { "claude-code": { url: "http://127.0.0.1:18998/v1" } },
+        assignments: { "background-agent": "claude-code/some-chat-model" },
+      },
+    } as OmnesisConfig);
+    expect(reg.resolve("background-agent")).toMatchObject({
+      kind: "http",
+      backendKey: "claude-code",
       model: "some-chat-model",
     });
   });

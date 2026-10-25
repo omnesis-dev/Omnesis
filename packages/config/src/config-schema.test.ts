@@ -1364,8 +1364,18 @@ describe("validateConfig — inference backend names", () => {
     ).toBe(true);
   });
 
+  test("a backend named claude-code stays valid, since 0.6.0 accepted the name", () => {
+    expect(
+      validateConfig({
+        inference: {
+          backends: { "claude-code": { type: "http", url: "http://127.0.0.1:18998/v1" } },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
   test("the built-in backend names stay reserved", () => {
-    for (const name of ["local", "anthropic", "codex", "claude-code", "replay"]) {
+    for (const name of ["local", "anthropic", "codex", "replay"]) {
       expect(
         validateConfig({
           inference: { backends: { [name]: { type: "http", url: "http://127.0.0.1:18998/v1" } } },
