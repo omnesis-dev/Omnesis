@@ -411,9 +411,10 @@
           On a source install, <code>npm ci</code> installs over the <code>node_modules</code> the
           running release left. If that install fails, the update removes
           <code>node_modules</code> and installs once more before it rolls back, and the rollback's
-          own install is retried the same way. If a dependency install is interrupted, rollback
-          removes the incomplete dependency tree before reinstalling the previous release. If
-          removing that tree fails, recovery stops and reports the failed step.
+          own install is retried the same way. If dependency installation is interrupted, killed, or
+          still fails after its retry, rollback removes the incomplete dependency tree before
+          reinstalling the previous release. If removing that tree fails, recovery stops and reports
+          the failed step.
         </p>
 
         <h3 id="update-flags">Options</h3>

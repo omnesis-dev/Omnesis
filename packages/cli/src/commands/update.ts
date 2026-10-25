@@ -686,7 +686,7 @@ class StoppedForBuild {
 
 /** What a rollback knows about the incomplete build and the memory it had. */
 interface RollbackMemory {
-  /** An interrupted dependency install can leave root workspace packages partly written. */
+  /** An unsuccessful dependency install can leave root workspace packages partly written. */
   resetDependencies?: boolean;
   /** Daemons stopped for a build: stopped for the rebuild too, and brought back. */
   daemons?: StoppedForBuild;
@@ -1111,7 +1111,7 @@ async function executeHostPlan(
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
   const pausedForBuild = steps.some((step) => step.kind === "pause-collector");
-  let dependencyInstallInterrupted = false;
+  let dependencyInstallIncomplete = false;
   const rollBack = (
     reason: string,
     booted = false,
@@ -1122,7 +1122,7 @@ async function executeHostPlan(
       daemons,
       killed,
       pausedForBuild,
-      resetDependencies: dependencyInstallInterrupted,
+      resetDependencies: dependencyInstallIncomplete,
     });
 
   // The transaction: from the first thing that moves the host to the point
@@ -1286,7 +1286,9 @@ async function executeHostPlan(
               signal: controller.signal,
               onProcessGroup: (pid) => deps.updateLock?.setProcessGroup(pid),
             });
-            if (isDependencyInstall(spec)) dependencyInstallInterrupted = controller.signal.aborted;
+            if (isDependencyInstall(spec))
+              dependencyInstallIncomplete =
+                controller.signal.aborted || result.code !== 0 || Boolean(result.signal);
             await rollBackIfInterrupted(false);
             if (result.code !== 0) {
               await rollBack(

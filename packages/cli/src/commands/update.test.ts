@@ -2752,7 +2752,8 @@ describe("rolling back a failed update", () => {
         failed,
         clean,
         failed,
-        // The rollback: checkout, a failing install, its reset and retry, build.
+        // The rollback: checkout, clear the incomplete tree, failing install, retry, build.
+        clean,
         clean,
         failed,
         clean,
@@ -2771,6 +2772,7 @@ describe("rolling back a failed update", () => {
         "rm -rf node_modules",
         "npm ci",
         `git checkout --detach ${previousRef}`,
+        "rm -rf node_modules",
         "npm ci",
         "rm -rf node_modules",
         "npm ci",
@@ -2779,7 +2781,7 @@ describe("rolling back a failed update", () => {
     });
 
     test("a reset that fails reports the install's own failure and rolls back", async () => {
-      const runner = fakeRunner([...preflight, clean, failed, failed, ...rollback]);
+      const runner = fakeRunner([...preflight, clean, failed, failed, clean, ...rollback]);
       const failure = await source(makeDeps(runner)).then(
         unexpectedSuccess,
         (err: unknown) => err as Error,
@@ -2792,12 +2794,46 @@ describe("rolling back a failed update", () => {
       ]);
     });
 
-    test("a killed install is not retried: a second run meets the same memory shortage", async () => {
-      const runner = fakeRunner([...preflight, clean, { code: 137, stdout: "" }, ...rollback]);
-      await expect(source(makeDeps(runner))).rejects.toMatchObject({
-        message: expect.stringContaining("`npm ci` was killed (exit 137)"),
+    test.each([
+      { name: "exit 137", outcome: { code: 137, stdout: "" } },
+      { name: "SIGKILL", outcome: { code: 1, signal: "SIGKILL" as const, stdout: "" } },
+      { name: "SIGTERM", outcome: { code: 1, signal: "SIGTERM" as const, stdout: "" } },
+    ])(
+      "an install ended by $name skips an apply retry but clears the tree before rollback",
+      async ({ outcome }) => {
+        const state = fakeApplyState();
+        const runner = fakeRunner([...preflight, clean, outcome, clean, ...rollback]);
+        await expect(source(makeDeps(runner, { applyState: state.store }))).rejects.toMatchObject({
+          message: expect.stringContaining(`Rolled back to ${previousRef}.`),
+        });
+        expect(executed(runner).slice(1)).toEqual([
+          "git checkout --detach v0.3.0",
+          "npm ci",
+          `git checkout --detach ${previousRef}`,
+          "rm -rf node_modules",
+          "npm ci",
+          "npm run build",
+        ]);
+        expect(runner.calls.find(({ spec }) => spec.command === "rm")?.spec.cwd).toBe(rootDir);
+        expect(state.writes.at(-1)).toEqual(completedSourceApplyState(rootDir, previousRef));
+      },
+    );
+
+    test("a final failed dependency install cannot reinstall over a tree whose rollback reset fails", async () => {
+      const state = fakeApplyState();
+      const runner = fakeRunner([...preflight, clean, failed, clean, failed, clean, failed]);
+      await expect(source(makeDeps(runner, { applyState: state.store }))).rejects.toMatchObject({
+        message: expect.stringContaining("rollback also failed at `rm -rf node_modules`"),
       });
-      expect(executed(runner)).not.toContain("rm -rf node_modules");
+      expect(executed(runner).slice(1)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "rm -rf node_modules",
+        "npm ci",
+        `git checkout --detach ${previousRef}`,
+        "rm -rf node_modules",
+      ]);
+      expect(state.writes.map((value) => value.phase)).toEqual(["applying", "rolling-back"]);
     });
 
     test("a failing build is not a reason to reinstall", async () => {
@@ -2855,6 +2891,7 @@ describe("rolling back a failed update", () => {
         ...preflight,
         clean,
         { code: 1, signal: "SIGKILL", stdout: "" },
+        clean,
         ...rollback,
       ]);
       await expect(source(makeDeps(signalled.runner))).rejects.toMatchObject({
@@ -2867,6 +2904,36 @@ describe("rolling back a failed update", () => {
       );
       expect(failure.message).toContain("`npm run build` failed (exit 2).");
       expect(failure.message).not.toContain("out of memory");
+    });
+
+    test("an OOM-killed install stops both daemons before clearing its incomplete rollback tree", async () => {
+      const { events, runner, services } = recording([
+        ...preflight,
+        clean,
+        killedBuild,
+        clean,
+        ...rollback,
+      ]);
+      await expect(
+        source(
+          makeDeps(runner, {
+            roles: hostRoles({ gateway: supervised, collector: supervised }),
+            ...services,
+          }),
+        ),
+      ).rejects.toMatchObject({ message: expect.stringContaining("Rolled back") });
+      expect(events.slice(1)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "stop gateway",
+        "stop collector",
+        `git checkout --detach ${previousRef}`,
+        "rm -rf node_modules",
+        "npm ci",
+        "npm run build",
+        "restart gateway",
+        "start collector",
+      ]);
     });
 
     test("the plan names the stopped collector, before the apply", async () => {
