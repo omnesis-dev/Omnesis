@@ -106,6 +106,19 @@ export function DiskUsageStat({ readout }) {
 const ETA_WINDOW_MS = 5 * 60_000;
 const ETA_MAX_SAMPLES = 200;
 
+/**
+ * The overview's keyword-index stat: shown only when a build was skipped
+ * because the in-memory keyword index would not fit in the gateway host's
+ * memory. Null otherwise, including from a gateway that predates the field.
+ */
+export function keywordIndexReadout(keywordIndex) {
+  if (keywordIndex?.state !== "too-large") return null;
+  return {
+    label: keywordIndex.inMemory ? "not rebuilt" : "not in memory",
+    title: keywordIndex.message,
+  };
+}
+
 function fmtDuration(ms) {
   if (ms <= 0) return "< 1m";
   const mins = Math.floor(ms / 60_000);
@@ -224,6 +237,7 @@ export function OverviewBar({ stats, summary }) {
     : 100;
   const isComplete = totalDocs === 0 || indexedOrErrored >= totalDocs;
 
+  const keywordIndex = keywordIndexReadout(stats.keywordIndex);
   const tone = state === "disabled" ? "off" : isComplete ? "ok" : "partial";
   const pillText = state === "disabled"
     ? "INDEXER OFF"
@@ -278,6 +292,11 @@ export function OverviewBar({ stats, summary }) {
             title="Documents indexed with some chunks truncated to fit the embedder's token window or dropped because they were unembeddable"
           >
             <strong>${fmtNumber(stats.totalDegraded)}</strong> degraded${(stats.totalTruncatedChunks > 0 || stats.totalDroppedChunks > 0) ? html` <span class="overview-stat-sub">(${fmtNumber(stats.totalTruncatedChunks)} truncated, ${fmtNumber(stats.totalDroppedChunks)} dropped)</span>` : ""}
+          </span>
+        `}
+        ${keywordIndex && html`
+          <span class="overview-stat overview-stat-muted" title=${keywordIndex.title}>
+            keyword index <strong>${keywordIndex.label}</strong>
           </span>
         `}
         <${DiskUsageStat} readout=${diskUsageReadout(summary)} />

@@ -196,7 +196,11 @@ export interface SearchConfig {
   vector?: SearchVectorConfig;
   /** Temporal-lane knobs. */
   temporal?: SearchTemporalConfig;
-  bm25?: { commonTokenThreshold?: number; memoryIndex?: boolean };
+  bm25?: {
+    commonTokenThreshold?: number;
+    memoryIndex?: boolean;
+    memoryIndexIgnoreMemoryCheck?: boolean;
+  };
   /**
    * Snapshot isolation for the search-handle index.db connection.
    * When enabled, search reads run through a dedicated long-lived

@@ -31,6 +31,7 @@ import {
 } from "./db.js";
 import { computeIndexingProgress } from "./indexing-progress.js";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { KeywordIndexStatus } from "@omnesis/source-sdk";
 import type { ConfigStore } from "../config-store.js";
 import type { IndexerModelInfo } from "./indexer-lifecycle.js";
 import type Database from "better-sqlite3";
@@ -45,6 +46,8 @@ export interface IndexStatsDeps {
   indexerModel?: IndexerModelInfo;
   getIndexRate?: () => number | null;
   indexerReadiness?: () => { status: string; message?: string; reason?: string };
+  /** The in-memory keyword index's status; absent when the gateway has none wired. */
+  keywordIndex?: () => KeywordIndexStatus;
 }
 
 /** Per-source index progress. */
@@ -78,6 +81,7 @@ export interface IndexStatsPayload {
   etaSeconds?: number | null;
   indexVersions?: ReturnType<typeof getIndexGenerationStatus>;
   bySource?: Record<string, IndexSourceStats>;
+  keywordIndex?: KeywordIndexStatus;
 }
 
 /**
@@ -87,6 +91,7 @@ export interface IndexStatsPayload {
  */
 export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   const { db, indexDb, configStore, config, indexerModel, indexerReadiness, getIndexRate } = deps;
+  const keywordIndex = deps.keywordIndex?.();
 
   const model = indexerModel;
   if (model && !model.present) {
@@ -125,6 +130,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
       watermark: getWatermark(indexDb, "last_updated_at"),
       indexVersions: getIndexGenerationStatus(indexDb),
       bySource: {},
+      ...(keywordIndex ? { keywordIndex } : {}),
     };
   }
 
@@ -253,5 +259,6 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     etaSeconds,
     indexVersions: getIndexGenerationStatus(indexDb),
     bySource: sources,
+    ...(keywordIndex ? { keywordIndex } : {}),
   };
 }

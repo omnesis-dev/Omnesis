@@ -184,6 +184,7 @@ import { startSearchCacheWarm, type SearchCacheWarm } from "./workers/search-war
 import { startLexicalIndexBuild } from "./workers/lexical-index-build.js";
 import { LexicalIndex } from "./search/lexical-index.js";
 import { LexicalIndexService } from "./search/lexical-index-service.js";
+import { readLexicalCorpusStats } from "./search/lexical-index-memory.js";
 import { openSearchSnapshotHandle, type SearchSnapshotHandle } from "./search/snapshot-handle.js";
 import {
   type SearchConfig,
@@ -1104,7 +1105,8 @@ if (runtime.searchWorkerConcurrency > 0) {
 
 // In-memory BM25 postings, built off-thread on shared memory and handed to the
 // main-thread fallback and every search worker. Until the first build lands,
-// and whenever one fails, BM25 ranks with FTS5.
+// whenever one fails, and while one would not fit in memory, BM25 ranks with
+// FTS5.
 const lexicalIndexService =
   (config.search?.bm25?.memoryIndex ?? CONFIG_DEFAULTS.search.bm25.memoryIndex)
     ? new LexicalIndexService({
@@ -1130,6 +1132,11 @@ const lexicalIndexService =
           searchPipeline.setLexicalRanker(new LexicalIndex(data));
           searchWorkerPool?.setLexicalIndex(data);
         },
+        corpusStats: () => readLexicalCorpusStats(searchIndexDb),
+        rankers: 1 + (searchWorkerPool ? runtime.searchWorkerConcurrency : 0),
+        ignoreMemoryCheck: () =>
+          configStore.get().search?.bm25?.memoryIndexIgnoreMemoryCheck ??
+          CONFIG_DEFAULTS.search.bm25.memoryIndexIgnoreMemoryCheck,
       })
     : undefined;
 if (!lexicalIndexService) log.info("in-memory BM25 index disabled by config");
@@ -2465,6 +2472,12 @@ const app = createServer(db, DB_PATH, {
   mcpResourceUrls: runtime.mcpResourceUrls,
   indexerModel: indexerLifecycle.modelInfo,
   indexerReadiness: () => indexerStatus.getReadiness(),
+  keywordIndex: () =>
+    lexicalIndexService?.status() ?? {
+      state: "disabled",
+      inMemory: false,
+      message: "Keyword search ranks from the on-disk index: search.bm25.memoryIndex is false.",
+    },
   indexerControl: {
     reindexMissing: async () => {
       const proxy = indexerLifecycle.indexerProxy;

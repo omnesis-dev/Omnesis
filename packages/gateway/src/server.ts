@@ -157,6 +157,7 @@ import {
   sessionCookieName,
 } from "./http/cookies.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
+import type { KeywordIndexStatus } from "@omnesis/source-sdk";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
 import type { AgentCertificateTrust } from "./tls-lifecycle/agent-trust.js";
 import type { PushPlan } from "@omnesis/core/push";
@@ -346,6 +347,8 @@ export function createServer(
       | { status: "ready" }
       | { status: "failed"; reason: string }
       | { status: "disabled"; reason: string };
+    /** The in-memory keyword index's status, for `/index/stats` and the doctor. */
+    keywordIndex?: () => KeywordIndexStatus;
     /**
      * Operator-facing trigger for the indexer's on-demand passes.
      */
@@ -1382,6 +1385,7 @@ export function createServer(
       indexerModel: opts?.indexerModel,
       indexerReadiness: opts?.indexerReadiness,
       getIndexRate: opts?.indexerControl?.getIndexRate,
+      keywordIndex: opts?.keywordIndex,
     },
     getSystemInfo: opts?.getSystemInfo,
     getInferenceOverview: opts?.getInferenceOverview,
@@ -1820,6 +1824,7 @@ export function createServer(
     indexerModel: opts?.indexerModel,
     indexerControl: opts?.indexerControl,
     indexerReadiness: opts?.indexerReadiness,
+    keywordIndex: opts?.keywordIndex,
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.

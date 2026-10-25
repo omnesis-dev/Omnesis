@@ -53,6 +53,19 @@ validation failures instead of silently selecting another store.
 Authentication rejects unsupported questions and answers to nonpending or shown
 challenges, and preserves typed redirect variants across the subprocess boundary.
 
+### Keyword search from memory, when it fits
+
+Keyword ranking reads from an in-memory copy of the full-text index, built in
+the background after the gateway starts. Before each build the gateway
+estimates the copy from the number of chunks and words in the index and skips
+the build when its peak would exceed half of the available memory or the copy a
+quarter of the host's memory (or of a container's memory limit). Keyword search
+then ranks from the on-disk index, the gateway logs one warning, and
+`omnesis doctor`, the portal's health report and its index summary say how much
+memory the copy would need. Each later check asks again, so the copy is built
+once memory frees up. `search.bm25.memoryIndexIgnoreMemoryCheck: true` builds it
+regardless; `search.bm25.memoryIndex: false` keeps ranking from disk.
+
 ### Mixed-version compatibility with 0.6.0
 
 A 0.7.0 gateway keeps serving 0.6.0 iOS and Android apps, the 0.6.0 Chrome
@@ -73,6 +86,9 @@ does not offer.
 - A 0.6.0 configuration still boots: a `brain.workerConcurrency` above 32 runs
   as 32, and an HTTP backend named `claude-code` keeps serving its
   `claude-code/<model>` assignments.
+- A 0.6.0 gateway started on a 0.7.0 configuration drops
+  `search.bm25.memoryIndex` and `search.bm25.memoryIndexIgnoreMemoryCheck` with
+  a warning and ranks keywords from disk.
 - A 0.6.0 CLI lists a role assigned to Claude Code as `HTTP: claude-code/<model>`.
 
 ## 2026-08-20

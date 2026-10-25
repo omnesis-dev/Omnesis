@@ -38,7 +38,10 @@ export interface LexicalIndexData {
   postingFreq: Uint16Array;
 }
 
-/** Bytes held by an index's arrays. */
+/**
+ * Bytes held by an index's buffers, including the reserve the in-place posting
+ * buffers grew into beyond their last posting.
+ */
 export function lexicalIndexBytes(d: LexicalIndexData): number {
   return [
     d.rowids,
@@ -48,8 +51,11 @@ export function lexicalIndexBytes(d: LexicalIndexData): number {
     d.postingStart,
     d.postingDoc,
     d.postingFreq,
-  ].reduce((sum, a) => sum + a.byteLength, 0);
+  ].reduce((sum, a) => sum + a.buffer.byteLength, 0);
 }
+
+/** Below this largest rowid, the build maps rowids to doc indexes with a direct table. */
+export const DENSE_LOOKUP_MAX_ROWID = 16 * 1024 * 1024;
 
 /**
  * Build the arrays from the index database, in one read transaction so the
@@ -79,7 +85,7 @@ export function buildLexicalIndexData(db: Db, opts: { shared?: boolean } = {}): 
       .iterate()) {
       if (i === docCount) break;
       rowids[i] = rowid;
-      lengths[i] = sumVarints(sz);
+      lengths[i] = decodeVarints(sz).reduce((sum, n) => sum + n, 0);
       totalLength += lengths[i++];
     }
     const avgLength = docCount > 0 ? totalLength / docCount : 1;
@@ -151,12 +157,13 @@ export function buildLexicalIndexData(db: Db, opts: { shared?: boolean } = {}): 
 }
 
 /**
- * Sum of the per-column token counts in a `chunks_fts_docsize.sz` blob. FTS5
- * writes them as SQLite varints: big-endian 7-bit groups with a continuation
- * bit, where a ninth byte contributes all 8 of its bits.
+ * Every SQLite varint in `buf`, in order: big-endian 7-bit groups with a
+ * continuation bit, where a ninth byte contributes all 8 of its bits. FTS5
+ * writes `chunks_fts_docsize.sz` (each column's token count) and its averages
+ * record this way.
  */
-function sumVarints(buf: Buffer): number {
-  let total = 0;
+export function decodeVarints(buf: Buffer): number[] {
+  const out: number[] = [];
   let i = 0;
   while (i < buf.length) {
     let v = 0;
@@ -169,9 +176,9 @@ function sumVarints(buf: Buffer): number {
       v = v * 128 + (byte & 0x7f);
       if (!(byte & 0x80)) break;
     }
-    total += v;
+    out.push(v);
   }
-  return total;
+  return out;
 }
 
 export function binarySearch(sorted: Uint32Array, value: number): number {
@@ -189,7 +196,7 @@ export function binarySearch(sorted: Uint32Array, value: number): number {
 function denseLookup(rowids: Uint32Array): (rowid: number) => number {
   const max = rowids.length > 0 ? rowids[rowids.length - 1] : 0;
   // A direct table while it stays modest; binary search for sparse rowid spaces.
-  if (max < 16 * 1024 * 1024) {
+  if (max < DENSE_LOOKUP_MAX_ROWID) {
     const table = new Int32Array(max + 1).fill(-1);
     for (let i = 0; i < rowids.length; i++) table[rowids[i]] = i;
     return (rowid) => (rowid <= max ? table[rowid] : -1);

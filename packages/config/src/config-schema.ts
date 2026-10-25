@@ -445,12 +445,26 @@ const searchBm25 = z
      * Rank BM25 from an in-memory copy of the full-text postings instead of
      * from SQLite pages. Costs memory roughly proportional to the corpus
      * (about 0.7 GB per 800k chunks) and turns multi-second queries over
-     * common words into milliseconds. Default true.
+     * common words into milliseconds. Each build is skipped when the index
+     * would not fit in the host's memory (see `memoryIndexIgnoreMemoryCheck`).
+     * Default true.
      */
     memoryIndex: z
       .boolean()
       .describe(
-        "Hold the full-text postings in memory so BM25 ranks in milliseconds. Uses memory proportional to the corpus. Default true.",
+        "Hold the full-text postings in memory so BM25 ranks in milliseconds. Uses memory proportional to the corpus, and is skipped when it would not fit in this host's memory. Default true.",
+      )
+      .optional(),
+    /**
+     * Build the in-memory index even when the gateway estimates it would not
+     * fit: by default a build is skipped when its peak would exceed half of
+     * the available memory, or the index a quarter of the host's memory.
+     * Read before each build. Default false.
+     */
+    memoryIndexIgnoreMemoryCheck: z
+      .boolean()
+      .describe(
+        "Build the in-memory BM25 index even when it would take more than half of the available memory, or a quarter of this host's memory. Default false.",
       )
       .optional(),
   })

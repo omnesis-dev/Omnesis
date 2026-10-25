@@ -43,6 +43,7 @@ import type {
   CheckStatus,
   SecurityData,
   DoctorLocalStore,
+  IndexStatsResult,
 } from "./types.js";
 
 // ── Thresholds ──────────────────────────────────────────────────────────
@@ -1278,6 +1279,31 @@ function checkIndex(d: DoctorData, ck: Checks): void {
       `Indexing errors on: ${erroredSources.join(", ")}`,
       "Retry failed documents with `omnesis sources reindex-missing`.",
     );
+  }
+
+  checkKeywordIndex(idx, ck);
+}
+
+/** The in-memory keyword index; the gateway composes the message every client shows. */
+function checkKeywordIndex(idx: IndexStatsResult, ck: Checks): void {
+  const kw = idx.keywordIndex;
+  if (!kw) return;
+  if (kw.state === "too-large") {
+    ck.warn(
+      "Index",
+      "index.keyword-memory",
+      kw.message,
+      "Keyword search still works, more slowly on common words. To rank from disk without this warning, set search.bm25.memoryIndex to false.",
+    );
+  } else if (kw.state === "failed") {
+    ck.warn(
+      "Index",
+      "index.keyword-memory",
+      kw.message,
+      "Check the gateway log for the lexical index build error.",
+    );
+  } else {
+    ck.pass("Index", "index.keyword-memory", kw.message);
   }
 }
 

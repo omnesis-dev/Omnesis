@@ -312,6 +312,7 @@ const EXPECTED_INVENTORY = [
   "/releaseCheck [boolean]",
   "/search/bm25/commonTokenThreshold [number]",
   "/search/bm25/memoryIndex [boolean]",
+  "/search/bm25/memoryIndexIgnoreMemoryCheck [boolean]",
   "/search/boosts/relevanceBoostWeight [number]",
   "/search/boosts/typeBoosts/* [number]",
   "/search/defaultFilters/dateFrom [string]",

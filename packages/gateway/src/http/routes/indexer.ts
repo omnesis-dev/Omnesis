@@ -7,6 +7,7 @@ import { scope } from "../scope.js";
 import { ServiceUnavailableError, BadRequestError } from "../errors.js";
 import type { EmbedSwapMode, IndexerModelInfo } from "../../indexer/indexer-lifecycle.js";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { KeywordIndexStatus } from "@omnesis/source-sdk";
 import type { ConfigStore } from "../../config-store.js";
 import type { RouteApp } from "./types.js";
 import type Database from "better-sqlite3";
@@ -33,6 +34,8 @@ export interface IndexerRoutesDeps {
    *  model, `/index/stats` surfaces `state: "spawning"` so the portal
    *  can show a "starting" pill instead of a misleading 0%. */
   indexerReadiness?: () => { status: string; message?: string; reason?: string };
+  /** The in-memory keyword index's status, reported on `/index/stats`. */
+  keywordIndex?: () => KeywordIndexStatus;
 }
 
 /**
@@ -40,7 +43,16 @@ export interface IndexerRoutesDeps {
  * POST. Mirrors server.ts:3066-3209.
  */
 export function mountIndexerRoutes(app: RouteApp, deps: IndexerRoutesDeps): void {
-  const { db, indexDb, configStore, config, indexerModel, indexerControl, indexerReadiness } = deps;
+  const {
+    db,
+    indexDb,
+    configStore,
+    config,
+    indexerModel,
+    indexerControl,
+    indexerReadiness,
+    keywordIndex,
+  } = deps;
 
   app.get("/index/stats", scope.read(), (c) => {
     return c.json(
@@ -52,6 +64,7 @@ export function mountIndexerRoutes(app: RouteApp, deps: IndexerRoutesDeps): void
         indexerModel,
         indexerReadiness,
         getIndexRate: indexerControl?.getIndexRate,
+        keywordIndex,
       }),
     );
   });

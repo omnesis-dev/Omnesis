@@ -895,4 +895,28 @@ export interface IndexStats {
       latestIndexedDate: string | null;
     }
   >;
+  /** Where keyword (BM25) ranking reads from. Absent on gateways without an in-memory keyword index. */
+  keywordIndex?: KeywordIndexStatus;
+}
+
+/**
+ * The in-memory keyword index, as the gateway reports it. Clients show
+ * `message` as given rather than composing their own.
+ *
+ * - `disabled`: off by configuration; keyword search ranks from the index on disk.
+ * - `pending`: the first build has not landed yet; ranking from disk meanwhile.
+ * - `ready`: held in memory.
+ * - `too-large`: the last build was skipped because it would not fit in this
+ *   host's memory. With `inMemory`, an earlier copy keeps serving.
+ * - `failed`: the last build failed and will be retried.
+ */
+export interface KeywordIndexStatus {
+  state: "disabled" | "pending" | "ready" | "too-large" | "failed";
+  /** Whether a copy is held in memory and serving queries. */
+  inMemory: boolean;
+  /** Bytes the in-memory copy holds. */
+  bytes?: number;
+  /** `too-large`: estimated bytes a build would need at its peak. */
+  neededBytes?: number;
+  message: string;
 }

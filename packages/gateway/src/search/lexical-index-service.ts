@@ -12,10 +12,27 @@
  * chunk count in changes since the last build, or once the index is older than
  * {@link LexicalIndexServiceOptions.maxAgeMs}. A failed build is retried with
  * exponential backoff; until a build lands, BM25 ranks with FTS5.
+ *
+ * Before every build the service checks that the index fits in memory (see
+ * lexical-index-memory.ts). A build that would not fit is skipped: with no
+ * index yet BM25 keeps ranking with FTS5, and an index already built keeps
+ * serving. Each later check asks again, so the index is built once memory
+ * frees up or the corpus shrinks.
  */
 
 import { createLogger } from "@omnesis/core";
 import { lexicalIndexBytes, type LexicalIndexData } from "./lexical-index-data.js";
+import {
+  formatSize,
+  INDEX_SHARE_OF_TOTAL,
+  PEAK_SHARE_OF_AVAILABLE,
+  planLexicalIndexBuild,
+  readHostMemory,
+  type HostMemory,
+  type LexicalCorpusStats,
+  type LexicalIndexBuildPlan,
+} from "./lexical-index-memory.js";
+import type { KeywordIndexStatus } from "@omnesis/source-sdk";
 import type { LexicalIndexBuild } from "../workers/lexical-index-build.js";
 
 const log = createLogger("gateway:search:lexical");
@@ -33,7 +50,18 @@ export interface LexicalIndexServiceOptions {
   maxAgeMs?: number;
   /** How often to check whether a rebuild is due. */
   checkIntervalMs?: number;
+  /** The corpus the next build would index, read cheaply before each build. */
+  corpusStats: () => LexicalCorpusStats;
+  /** Rankers holding scratch over each index: the main thread's plus each search worker's. */
+  rankers: number;
+  /** Build even when the index would not fit in memory. Read before each build. */
+  ignoreMemoryCheck?: () => boolean;
+  /** The process's memory; defaults to {@link readHostMemory}. */
+  hostMemory?: () => HostMemory;
 }
+
+/** The config key that makes a build ignore the memory check. */
+const IGNORE_MEMORY_CHECK_KEY = "search.bm25.memoryIndexIgnoreMemoryCheck";
 
 export class LexicalIndexService {
   private current: { data: LexicalIndexData; builtAt: number } | null = null;
@@ -42,6 +70,9 @@ export class LexicalIndexService {
   private stopped = false;
   private failures = 0;
   private retryAt = 0;
+  /** The last build's outcome when it did not publish; null after a published build. */
+  private setback: { kind: "too-large"; plan: LexicalIndexBuildPlan } | { kind: "failed" } | null =
+    null;
   private readonly changeFraction: number;
   private readonly maxAgeMs: number;
   private readonly checkIntervalMs: number;
@@ -67,10 +98,54 @@ export class LexicalIndexService {
     await this.building?.terminate();
   }
 
+  /** Where keyword ranking reads from, for `/index/stats` and the doctor. */
+  status(): KeywordIndexStatus {
+    const bytes = this.current ? lexicalIndexBytes(this.current.data) : undefined;
+    const inMemory = bytes !== undefined;
+    if (this.setback?.kind === "too-large") {
+      const { plan } = this.setback;
+      return {
+        state: "too-large",
+        inMemory,
+        ...(inMemory ? { bytes } : {}),
+        neededBytes: plan.peakBytes,
+        message: tooLargeMessage(plan, inMemory),
+      };
+    }
+    if (this.setback?.kind === "failed") {
+      return {
+        state: "failed",
+        inMemory,
+        ...(inMemory ? { bytes } : {}),
+        message: inMemory
+          ? "The in-memory keyword index could not be rebuilt; it keeps serving and the build is retried."
+          : "The in-memory keyword index could not be built; keyword search ranks from the on-disk index until a retry succeeds.",
+      };
+    }
+    if (inMemory) {
+      return {
+        state: "ready",
+        inMemory,
+        bytes,
+        message: `Keyword search ranks from an in-memory index (${formatSize(bytes)}).`,
+      };
+    }
+    return {
+      state: "pending",
+      inMemory,
+      message:
+        "The in-memory keyword index is not built yet; keyword search ranks from the on-disk index meanwhile.",
+    };
+  }
+
   private checkDue(): void {
     if (this.building || Date.now() < this.retryAt) return;
     if (!this.current) {
-      void this.rebuild(`retry ${this.failures} after a failed build`);
+      void this.rebuild(
+        this.setback?.kind === "too-large"
+          ? "memory check passed"
+          : `retry ${this.failures} after a failed build`,
+      );
       return;
     }
     const { data, builtAt } = this.current;
@@ -95,7 +170,12 @@ export class LexicalIndexService {
 
   private async rebuild(reason: string): Promise<void> {
     if (this.stopped || this.building) return;
-    log.info(`lexical index build started (${reason})`);
+    const plan = this.admit();
+    if (plan === false) return;
+    log.info(
+      `lexical index build started (${reason}` +
+        (plan ? `; about ${formatSize(plan.peakBytes)} at its peak)` : ")"),
+    );
     let built: { data: LexicalIndexData; ms: number };
     try {
       this.building = this.opts.build();
@@ -111,6 +191,7 @@ export class LexicalIndexService {
     this.current = { data, builtAt: Date.now() };
     this.failures = 0;
     this.retryAt = 0;
+    this.setback = null;
     try {
       this.opts.publish(data);
     } catch (err) {
@@ -125,8 +206,60 @@ export class LexicalIndexService {
     );
   }
 
+  /**
+   * Whether the next build may run: its plan when it may, false when it does
+   * not fit. Logs only when the answer changes, so a host that stays short of
+   * memory warns once rather than at every check. A check that cannot read its
+   * inputs lets the build run, with no plan.
+   */
+  private admit(): LexicalIndexBuildPlan | null | false {
+    let plan: LexicalIndexBuildPlan;
+    try {
+      const current = this.current?.data;
+      plan = planLexicalIndexBuild({
+        corpus: this.opts.corpusStats(),
+        memory: (this.opts.hostMemory ?? readHostMemory)(),
+        rankers: this.opts.rankers,
+        current: current
+          ? {
+              arrayBytes: lexicalIndexBytes(current),
+              docCount: current.docCount,
+              tokens: current.avgLength * current.docCount,
+            }
+          : null,
+      });
+    } catch (err) {
+      log.warn(
+        `could not check whether the lexical index fits in memory; building anyway: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+    if (plan.fits) {
+      if (this.setback?.kind === "too-large") {
+        log.info(
+          `lexical index now fits in memory (about ${formatSize(plan.peakBytes)} at its peak); building it`,
+        );
+        this.setback = null;
+      }
+      return plan;
+    }
+    if (this.opts.ignoreMemoryCheck?.()) {
+      log.warn(
+        `building the lexical index although it may not fit in memory, because ${IGNORE_MEMORY_CHECK_KEY} is true: ` +
+          describePlan(plan),
+      );
+      return plan;
+    }
+    if (this.setback?.kind !== "too-large") {
+      log.warn(`${tooLargeMessage(plan, this.current !== null)} (${describePlan(plan)})`);
+    }
+    this.setback = { kind: "too-large", plan };
+    return false;
+  }
+
   private recordFailure(err: unknown): void {
     this.failures++;
+    this.setback = { kind: "failed" };
     // One check interval after the first failure, doubling up to the max age.
     const backoff = Math.min(this.checkIntervalMs * 2 ** (this.failures - 1), this.maxAgeMs);
     this.retryAt = Date.now() + backoff;
@@ -135,4 +268,25 @@ export class LexicalIndexService {
         `BM25 keeps its current ranker: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/** The operator-facing explanation of a skipped build, shared by the log, `/index/stats` and the doctor. */
+function tooLargeMessage(plan: LexicalIndexBuildPlan, inMemory: boolean): string {
+  const need =
+    plan.limitedBy === "total"
+      ? `would hold about ${formatSize(plan.indexBytes)}, more than a quarter of the ` +
+        `${formatSize(plan.indexBudgetBytes / INDEX_SHARE_OF_TOTAL)} of memory on this host`
+      : `would need about ${formatSize(plan.peakBytes)} while it builds, more than half of the ` +
+        `${formatSize(plan.peakBudgetBytes / PEAK_SHARE_OF_AVAILABLE)} of memory available`;
+  const now = inMemory
+    ? "Keyword search keeps the in-memory index built earlier without rebuilding it"
+    : "Keyword search ranks from the on-disk index";
+  return `${now}: the in-memory keyword index ${need}. Set ${IGNORE_MEMORY_CHECK_KEY} to true to build it anyway.`;
+}
+
+function describePlan(plan: LexicalIndexBuildPlan): string {
+  return (
+    `peak ${formatSize(plan.peakBytes)} of a ${formatSize(plan.peakBudgetBytes)} budget, ` +
+    `index ${formatSize(plan.indexBytes)} of a ${formatSize(plan.indexBudgetBytes)} budget`
+  );
 }

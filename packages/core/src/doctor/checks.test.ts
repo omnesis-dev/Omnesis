@@ -1351,6 +1351,37 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     expect(report.ok).toBe(true);
   });
 
+  test("a keyword index too large for memory warns with the gateway's message", () => {
+    const data = healthyData();
+    const message =
+      "Keyword search ranks from the on-disk index: the in-memory keyword index would need about 1.4 GB while it builds, more than half of the 2.0 GB of memory available.";
+    data.indexStats!.keywordIndex = {
+      state: "too-large",
+      inMemory: false,
+      neededBytes: 1_400_000_000,
+      message,
+    };
+    const report = evaluateDoctor(data);
+    const check = findCheck(report.checks, "index.keyword-memory");
+    expect(check?.status).toBe("warn");
+    expect(check?.message).toBe(message);
+    expect(check?.hint).toContain("search.bm25.memoryIndex");
+    expect(report.ok).toBe(true);
+  });
+
+  test("a keyword index held in memory passes, and an older gateway adds no check", () => {
+    const data = healthyData();
+    data.indexStats!.keywordIndex = {
+      state: "ready",
+      inMemory: true,
+      bytes: 700_000_000,
+      message: "Keyword search ranks from an in-memory index (0.7 GB).",
+    };
+    expect(findCheck(evaluateDoctor(data).checks, "index.keyword-memory")?.status).toBe("pass");
+    delete data.indexStats!.keywordIndex;
+    expect(findCheck(evaluateDoctor(data).checks, "index.keyword-memory")).toBeUndefined();
+  });
+
   test("missing index model file is a FAIL", () => {
     const data = healthyData();
     data.indexStats = { enabled: false, state: "model-missing", model: { present: false } };

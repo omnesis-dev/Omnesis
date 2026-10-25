@@ -7,6 +7,8 @@ import {
   migrationReadout,
   // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
   diskUsageReadout,
+  // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
+  keywordIndexReadout,
 } from "./index-hero.js";
 
 // Status two-readout: the portal must render the gateway's neutral
@@ -111,5 +113,30 @@ describe("diskUsageReadout", () => {
       },
     });
     expect(readout.stores).toEqual([{ id: "z", label: "Z", bytes: 10 }]);
+  });
+});
+
+// The keyword-index stat appears only when the gateway skipped the in-memory
+// build for lack of memory, and carries the gateway's own explanation.
+describe("keywordIndexReadout", () => {
+  test("is absent unless the index was too large to build", () => {
+    expect(keywordIndexReadout(undefined)).toBeNull();
+    for (const state of ["disabled", "pending", "ready", "failed"]) {
+      expect(keywordIndexReadout({ state, inMemory: false, message: "x" })).toBeNull();
+    }
+  });
+
+  test("says the keyword index is not in memory, with the gateway's message as its title", () => {
+    const message = "Keyword search ranks from the on-disk index: the in-memory keyword index would need about 1.4 GB while it builds.";
+    expect(keywordIndexReadout({ state: "too-large", inMemory: false, message })).toEqual({
+      label: "not in memory",
+      title: message,
+    });
+  });
+
+  test("says an earlier in-memory copy was not rebuilt", () => {
+    expect(
+      keywordIndexReadout({ state: "too-large", inMemory: true, bytes: 1, message: "m" }).label,
+    ).toBe("not rebuilt");
   });
 });

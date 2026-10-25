@@ -187,6 +187,18 @@
           runs. Set <code>search.bm25.memoryIndex</code> to <code>false</code> in
           <code>omnesis.json</code> and restart the gateway to rank from disk only.
         </p>
+        <p>
+          Before each build the gateway estimates the copy's size from the number of words in the
+          index and skips the build when it would not fit: when the build would take more than half
+          of the memory available, or the copy more than a quarter of the host's memory (or of the
+          container's memory limit). Keyword search then ranks from the index on disk, which is
+          slower on queries made of common words, and <code>omnesis doctor</code>, the portal's
+          <strong>Debug → System → Health</strong> report and the index summary on the
+          <strong>Sources</strong> page say how much memory the copy would need. The gateway checks
+          again before each later build, so the copy is built once memory frees up. Set
+          <code>search.bm25.memoryIndexIgnoreMemoryCheck</code> to <code>true</code> to build it
+          anyway.
+        </p>
         <figure class="diagram diagram-flat diagram-branches diagram-nested">
           <ol class="flow">
             <li class="flow-step">
