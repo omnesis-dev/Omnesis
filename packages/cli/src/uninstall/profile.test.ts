@@ -15,6 +15,20 @@ describe("removeInstallerPathLines", () => {
     expect(text).toBe(before);
   });
 
+  test("a profile with no newline at its end gets none back", () => {
+    // The installer's leading newline ended the last line instead of adding a blank one.
+    const before = "export EDITOR=vim";
+    const after = `${before}\n${PROFILE_MARKER}\nexport PATH="${BIN}:$PATH"\n`;
+    expect(removeInstallerPathLines(after, BIN)).toEqual({ text: before, removed: 1 });
+  });
+
+  test("a block with no blank line before it, mid-file, keeps the lines apart", () => {
+    const profile = `export EDITOR=vim\n${PROFILE_MARKER}\nexport PATH="${BIN}:$PATH"\nsource ~/.aliases\n`;
+    expect(removeInstallerPathLines(profile, BIN).text).toBe(
+      "export EDITOR=vim\nsource ~/.aliases\n",
+    );
+  });
+
   test("a block in the middle keeps everything around it", () => {
     const profile = `export EDITOR=vim\n${BLOCK}\nsource ~/.aliases\n`;
     expect(removeInstallerPathLines(profile, BIN).text).toBe(

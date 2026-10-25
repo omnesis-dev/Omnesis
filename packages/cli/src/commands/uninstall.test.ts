@@ -34,6 +34,11 @@ import { packageLauncher } from "../update/package-migration-plan.js";
 import { sourceRecoveryLauncher } from "../update/source-launcher.js";
 import { DOCKER_WRAPPER_MARKER } from "../uninstall/launcher.js";
 import { PROFILE_MARKER } from "../uninstall/profile.js";
+import {
+  isDockerInstallImage,
+  type RunOptions,
+  type UninstallContext,
+} from "../uninstall/context.js";
 import { mergeOpenClawSkillEnv } from "./connect.js";
 import {
   parseComponents,
@@ -43,7 +48,6 @@ import {
   type UninstallOptions,
 } from "./uninstall.js";
 import type { UninstallComponent } from "../uninstall/types.js";
-import type { RunOptions, UninstallContext } from "../uninstall/context.js";
 
 // ── The machine ────────────────────────────────────────────────────────
 
@@ -950,6 +954,18 @@ describe("Docker", () => {
     m.inContainer = true;
     await expect(uninstall(m)).rejects.toThrow(/on the host/);
   });
+
+  test("only the image's own CLI counts as inside the Docker install", () => {
+    expect(isDockerInstallImage("/app/packages/cli/dist/uninstall/context.js", true)).toBe(true);
+    // systemd in a container, running a hardened release's CLI
+    expect(
+      isDockerInstallImage(
+        "/opt/omnesis-gateway/releases/a/packages/cli/dist/uninstall/context.js",
+        true,
+      ),
+    ).toBe(false);
+    expect(isDockerInstallImage("/app/packages/cli/dist/uninstall/context.js", false)).toBe(false);
+  });
 });
 
 describe("Hermes", () => {
@@ -1127,6 +1143,17 @@ describe("safety", () => {
     } finally {
       lock.release();
     }
+  });
+
+  test("a client's empty config directory and its keys go on --purge, despite the run's own lock", async () => {
+    // A client-only install leaves the directory empty; the uninstall's update
+    // lock is then the only thing in it while the keys are deleted.
+    const m = new Machine("linux").packageInstall();
+    mkdirSync(m.configDir, { recursive: true });
+    const { code, text } = await uninstall(m, { purge: true });
+    expect(code, text()).toBe(0);
+    expect(existsSync(m.configDir)).toBe(false);
+    expect(m.ran("secret-tool", "clear", "service", "dev.omnesis")).toHaveLength(1);
   });
 
   test("a config directory that does not look like Omnesis's is never purged", async () => {

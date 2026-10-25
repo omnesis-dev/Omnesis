@@ -56,6 +56,9 @@ const CONFIG_DIR_EVIDENCE = [
   join("tls", "cert.pem"),
 ];
 
+/** Where `acquireUpdateLock` keeps the lock this run holds, inside the config directory. */
+const UPDATE_LOCK_DIR = "update.lock";
+
 class StepFailure extends Error {
   constructor(
     message: string,
@@ -276,7 +279,8 @@ function removeCheckout(ctx: UninstallContext, root: string, configDir: string):
 /** Why `dir` must not be purged now, or null when it may. Checked before any key is touched. */
 function purgeRefusal(ctx: UninstallContext, dir: string): string | null {
   if (!existsSync(dir)) return null;
-  const entries = readdirSync(dir);
+  // The update lock this run holds is not the operator's content.
+  const entries = readdirSync(dir).filter((name) => name !== UPDATE_LOCK_DIR);
   if (entries.length > 0 && !CONFIG_DIR_EVIDENCE.some((name) => existsSync(join(dir, name)))) {
     return `Refusing to delete ${dir}: it holds none of the files an Omnesis config directory has (${entries.slice(0, 5).join(", ")}).`;
   }

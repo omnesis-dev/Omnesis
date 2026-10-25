@@ -5809,13 +5809,17 @@ if [ "${1:-}" = uninstall ]; then
           n = 0
           for (i = 1; i <= NR; i++) {
             if (line[i] == marker && i < NR && (line[i + 1] == sh_line || line[i + 1] == fish_line)) {
+              # With no blank line before it, the newline the installer wrote
+              # ended a last line that had none; at the end it goes again.
               if (n > 0 && out[n] == "") n--
+              else if (i + 1 == NR) bare = 1
               i++
               continue
             }
             out[++n] = line[i]
+            bare = 0
           }
-          for (i = 1; i <= n; i++) print out[i]
+          for (i = 1; i <= n; i++) if (i < n || !bare) print out[i]; else printf "%s", out[i]
         }' "$UNINSTALL_PROFILE" > "$UNINSTALL_PROFILE.omnesis-uninstall" &&
         cat "$UNINSTALL_PROFILE.omnesis-uninstall" > "$UNINSTALL_PROFILE"
       rm -f "$UNINSTALL_PROFILE.omnesis-uninstall"

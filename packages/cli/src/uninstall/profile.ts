@@ -46,20 +46,28 @@ export function removeInstallerPathLines(text: string, binDir: string): ProfileE
   const lines = text.split("\n");
   const kept: string[] = [];
   let removed = 0;
+  // The last block ended the file and had no blank line before it: the newline
+  // the installer wrote ended a last line that had none, so it goes too.
+  let bareEnd = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const next = lines[index + 1];
     if (line.trimEnd() === PROFILE_MARKER && next !== undefined && expected.has(next.trimEnd())) {
-      if (kept.length > 0 && kept[kept.length - 1]!.trim() === "") kept.pop();
+      const blankBefore = kept.length > 0 && kept[kept.length - 1]!.trim() === "";
+      if (blankBefore) kept.pop();
+      bareEnd =
+        !blankBefore &&
+        kept.length > 0 &&
+        index + 2 === lines.length - 1 &&
+        lines[index + 2] === "";
       index += 1;
       removed += 1;
       continue;
     }
+    if (index < lines.length - 1) bareEnd = false;
     kept.push(line);
   }
   if (removed === 0) return { text, removed };
-  let result = kept.join("\n");
-  // The block was the file's last content: keep the newline the line before it ended with.
-  if (text.endsWith("\n") && !result.endsWith("\n") && result !== "") result += "\n";
-  return { text: result, removed };
+  if (bareEnd) kept.pop();
+  return { text: kept.join("\n"), removed };
 }

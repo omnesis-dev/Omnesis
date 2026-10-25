@@ -11,6 +11,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   liveGatewayHolder,
   type CreateSecretStoreOptions,
@@ -50,7 +51,7 @@ export interface UninstallContext {
   gatewayHolder(configDir: string): GatewayLockHolder | null;
   /** How the secret store holding `configDir`'s keys is opened. */
   secretStoreOptions(configDir: string): CreateSecretStoreOptions;
-  /** The CLI runs inside a container (the Docker install's own CLI). */
+  /** The CLI is the Docker install's own, running inside its container. */
   inContainer: boolean;
   /** Prefix for root-owned paths that are only looked at (a hardened install); "" outside tests. */
   systemRoot: string;
@@ -120,7 +121,20 @@ export function defaultUninstallContext(): UninstallContext {
     },
     gatewayHolder: liveGatewayHolder,
     secretStoreOptions: (configDir) => ({ configDir }),
-    inContainer: existsSync("/.dockerenv"),
+    inContainer: isDockerInstallImage(fileURLToPath(import.meta.url)),
     systemRoot: "",
   };
+}
+
+/**
+ * Whether the CLI at `modulePath` is the one the Omnesis image carries: in a
+ * Docker container, under the image's `/app` (see the Dockerfile). Any other
+ * container — systemd in Docker, a dev container, a CI image — is a host like
+ * any other, whose installs `omnesis uninstall` removes.
+ */
+export function isDockerInstallImage(
+  modulePath: string,
+  dockerEnv = existsSync("/.dockerenv"),
+): boolean {
+  return dockerEnv && modulePath.startsWith("/app/packages/cli/");
 }

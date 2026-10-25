@@ -2091,6 +2091,18 @@ describe("the wrapper's uninstall, on the host", () => {
     expect(readFileSync(profile, "utf8")).toContain("# Added by the Omnesis installer");
   });
 
+  test("a profile that had no newline at its end gets none back", () => {
+    const run = runInstaller("uninstall-bare-profile", QUIET);
+    const profile = join(run.home, ".bash_profile");
+    // What the installer's append leaves in a profile whose last line had no newline.
+    writeFileSync(
+      profile,
+      `export EDITOR=vim\n# Added by the Omnesis installer\nexport PATH="${run.home}/.local/bin:$PATH"\n`,
+    );
+    expect(runWrapper(run, ["uninstall", "--yes"]).status).toBe(0);
+    expect(readFileSync(profile, "utf8")).toBe("export EDITOR=vim");
+  });
+
   test("uninstalls after the compose file is already gone", () => {
     const run = runInstaller("uninstall-orphan", QUIET);
     rmSync(join(run.configDir, "docker-compose.yml"));
