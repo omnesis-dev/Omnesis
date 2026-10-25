@@ -457,3 +457,12 @@ describe("httpBackendModelSummary", () => {
     expect(httpBackendModelSummary(custom)).toBe("Doesn't list its models");
   });
 });
+
+it("speech selection offers only actual supported OpenAI backends and the OpenAI setup preset", () => {
+  const opts = buildModelPickerOptions(overview({inference:{backends:{
+    cloud:{type:"http",status:"probing",modelRoles:{"gpt-live-1":["speech-to-speech"]}},
+    other:{type:"http",status:"ok",modelRoles:{"gpt-chat":["agent"]}},
+  }}}),"speech-to-speech");
+  expect(opts.map((option: {id:string}) => option.id)).toEqual(["openai","cloud"]);
+  expect(opts.map((option: {kind:string}) => option.kind)).not.toContain("add-custom");
+});

@@ -126,3 +126,9 @@ describe("filterBackendModels", () => {
     expect(filterBackendModels(undefined as unknown as Record<string, string[]>, "embedder").totalCandidates).toBe(0);
   });
 });
+
+it("never reveals chat or arbitrary models for speech even during search or show-others", () => {
+  const models = {"gpt-live-1":["speech-to-speech"],"gpt-chat":["agent"]};
+  expect(filterBackendModels(models,"speech-to-speech",{includeOthers:true})).toMatchObject({suggested:["gpt-live-1"],others:[],totalCandidates:1});
+  expect(filterBackendModels(models,"speech-to-speech",{query:"chat",includeOthers:true})).toMatchObject({suggested:[],others:[],totalCandidates:0});
+});

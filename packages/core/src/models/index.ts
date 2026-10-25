@@ -190,3 +190,5 @@ export type {
   RecentModelCurrent,
   RecentModelCandidate,
 } from "./recent-models.js";
+
+export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./speech-to-speech.js";

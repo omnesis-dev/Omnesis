@@ -29,6 +29,7 @@ export const CAPABILITY_TO_CATALOG = {
   "watch-judge": "agent",
   transcriber: "transcribe",
   ocr: undefined,
+  "speech-to-speech": undefined,
 };
 
 /**
@@ -133,6 +134,20 @@ export function buildModelPickerOptions(overview, role) {
   const claudeCode = overview.inference?.claudeCode;
   const catalog = overview.catalog ?? [];
   const catalogRole = CAPABILITY_TO_CATALOG[role];
+  if (role === "speech-to-speech") {
+    const options = Object.entries(backends)
+      .filter(([, backend]) => backend.type === "http" && Object.values(backend.modelRoles ?? {}).some((roles) => roles.includes(role)))
+      .map(([key, backend]) => ({kind:"custom",id:key,logoProviderId:"openai",configured:true,fitCount:httpFitCount(backend,role),status:backend.status}));
+    const preset = presets.find((item) => item.id === "openai");
+    if (preset && !options.some((option) => option.id === "openai")) {
+      let key = "openai";
+      let suffix = 2;
+      while (backends[key]) key = `openai-${suffix++}`;
+      options.unshift({kind:"preset",id:key,preset:{...preset,id:key},providerId:"openai",configured:false,fitCount:0});
+    }
+    return options;
+  }
+
 
   const options = [];
 

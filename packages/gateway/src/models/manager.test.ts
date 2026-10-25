@@ -133,6 +133,7 @@ describe("ModelManager", () => {
       expect(roles).toContain("decision");
       // The background agent serves the note agent, a stable feature.
       expect(roles).toContain("background-agent");
+      expect(roles).not.toContain("speech-to-speech");
       expect(roles).not.toContain("watch-judge");
       expect(roles).not.toContain("entailment-verifier");
     });
@@ -142,6 +143,7 @@ describe("ModelManager", () => {
       const mgr = new ModelManager({ modelsDir: dir });
       const roles = mgr.getOverview(fakeInference).capabilities.map((c) => c.role);
       expect(roles).toContain("background-agent");
+      expect(roles).toContain("speech-to-speech");
       expect(roles).toContain("watch-judge");
       expect(roles).toContain("entailment-verifier");
     });

@@ -4,7 +4,12 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
-import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
+import {
+  createLogger,
+  experimentalEnabled,
+  normalizeTimeZone,
+  speechToSpeechAssignment,
+} from "@omnesis/core";
 import { AgentError, type AgentService, type RealtimeAgentSession } from "../agent/service.js";
 import { realtimeFailureCode, realtimeFailureDetails } from "./provider-failure.js";
 import { REALTIME_MODEL, RealtimeBackend } from "./backend.js";
@@ -100,18 +105,17 @@ export interface RealtimeDeps {
   ) => void;
 }
 
-/** Select only the real OpenAI service, never a backend named after it. */
+/** Voice requires an explicit supported assignment, remote consent and a usable secret. */
 export function realtimeBackend(
   config: OmnesisConfig,
   key: RealtimeDeps["getApiKey"],
 ): string | undefined {
   if (!experimentalEnabled() || !config.inference?.allowRemoteInference) return undefined;
-  for (const [name, backend] of Object.entries(config.inference.backends ?? {})) {
-    const url = new URL(backend.url);
-    if (url.origin === "https://api.openai.com" && !url.username && !url.password && key(name))
-      return name;
-  }
-  return undefined;
+  const assignment = speechToSpeechAssignment(
+    config.inference.assignments?.["speech-to-speech"],
+    config.inference.backends,
+  );
+  return assignment && key(assignment.backendKey) ? assignment.backendKey : undefined;
 }
 
 /** Each phone call owns its upstream socket and cancellation scope. No audio is persisted. */
@@ -306,7 +310,10 @@ export class RealtimeService {
     }, MAX_CALL_MS);
     const startup = setTimeout(() => fail("startup_timeout"), 30_000);
     const authorized = () =>
-      this.capability().available && this.deps.isAuthorized(options.token, callerId);
+      this.backend() === backend &&
+      this.deps.getApiKey(backend) === key &&
+      this.deps.getAgent() === agent &&
+      this.deps.isAuthorized(options.token, callerId);
     const requireAuthority = () => {
       if (authorized()) return true;
       fail(

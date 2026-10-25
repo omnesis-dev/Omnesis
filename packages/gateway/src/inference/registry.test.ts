@@ -2466,3 +2466,92 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     });
   });
 });
+
+describe("explicit experimental speech-to-speech assignment", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("never auto-enables and resolves the supported media model without a model-list probe", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const reg = makeRegistry();
+    const inference = {
+      allowRemoteInference: true,
+      backends: {
+        cloud: { type: "http" as const, url: "https://api.openai.com", apiKey: "fixture-key" },
+      },
+    };
+    reg.loadConfig({ inference });
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
+    reg.loadConfig({
+      inference: {
+        ...inference,
+        assignments: { "speech-to-speech": "cloud/gpt-live-1", agent: "cloud/chat-fixture" },
+      },
+    });
+    expect(reg.resolve("speech-to-speech")).toMatchObject({
+      kind: "http",
+      model: "gpt-live-1",
+      backendKey: "cloud",
+      available: true,
+    });
+    expect(reg.resolve("agent")).toMatchObject({ kind: "http", model: "chat-fixture" });
+    expect(reg.getOverview().backends.cloud?.modelRoles?.["gpt-live-1"]).toEqual([
+      "speech-to-speech",
+    ]);
+    reg.loadConfig({ inference: { ...inference, assignments: { "speech-to-speech": null } } });
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
+  });
+  it.each([
+    {
+      experimental: "0",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: false,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: undefined,
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://example.org",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-4.1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "replay",
+    },
+  ])("refuses an unusable speech assignment %#", ({ experimental, remote, key, url, value }) => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", experimental);
+    const reg = makeRegistry();
+    reg.loadConfig({
+      inference: {
+        allowRemoteInference: remote,
+        backends: { cloud: { type: "http", url, apiKey: key } },
+        assignments: { "speech-to-speech": value },
+      },
+    });
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "unresolved" });
+  });
+});

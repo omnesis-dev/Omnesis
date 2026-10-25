@@ -3269,6 +3269,7 @@ const inferenceAssignmentsObject = z
     // default: unset means the mention worth gate and the Brain's worth gate
     // are both absent.
     decision: assignmentValue.optional(),
+    "speech-to-speech": assignmentValue.optional(),
   })
   .strict();
 const inferenceAssignments = z.preprocess(withoutRetiredRoles, inferenceAssignmentsObject);

@@ -67,6 +67,12 @@ Realtime transport. The lifecycle stream carries safe call status and errors, no
 a second conversation protocol. Provider duration accounting stays separate from
 the configured agent's token accounting.
 
+The experimental `speech-to-speech` inference assignment selects the speech
+provider independently from `agent`. Unassigned means disabled; merely configuring
+a backend never opts an operator into calls. Capability discovery and admission
+share the assignment eligibility policy and enforce remote-inference consent and
+credentials. Removing or changing that authority ends its existing media leases.
+
 - Canonical agent facade: `packages/gateway/src/agent/voice-session.ts`
 - Media lifecycle: `packages/gateway/src/realtime/live-service.ts`
 - Delegation adapter: `packages/gateway/src/realtime/live-conversation.ts`

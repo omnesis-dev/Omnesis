@@ -486,3 +486,30 @@ describe("Models.dev gateway catalog", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+it("does not advertise chat reasoning controls or saved settings for speech media", () => {
+  const service = new ModelsDevCatalog({
+    configDir: dir(),
+    bundled: BUNDLED,
+    bundledFetchedAt: Date.now(),
+  });
+  const speech: InferenceOverview = {
+    ...inference,
+    assignments: {
+      ...inference.assignments,
+      "speech-to-speech": {
+        role: "speech-to-speech",
+        kind: "http",
+        backendKey: "cloud",
+        url: "https://api.openai.com",
+        model: "gpt-live-1",
+        allowRemoteInference: true,
+        available: true,
+      },
+    },
+  };
+  const view = service.overview(speech, {
+    inference: { assignments: { "speech-to-speech": "cloud/gpt-live-1" } },
+  });
+  expect(view.modelSettings["speech-to-speech"]).toBeUndefined();
+});

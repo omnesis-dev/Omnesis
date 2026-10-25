@@ -543,6 +543,7 @@ export class ModelsDevCatalog {
     const modelSettings: ModelSettingsByRole = {};
     for (const [role, resolved] of Object.entries(inference.assignments)) {
       const cap = role as CapabilityRole;
+      if (cap === "speech-to-speech") continue;
       // An explicit null disables the role even while the registry still
       // reports its previous HTTP assignment during an asynchronous update.
       const configured = config.inference?.assignments?.[cap];

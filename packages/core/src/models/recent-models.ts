@@ -43,6 +43,7 @@ const RECENT_MODEL_REFERENCE_GROUPS: Readonly<Record<CapabilityRole, readonly Ca
   embedder: ["embedder"],
   "entailment-verifier": [],
   decision: ["decision"],
+  "speech-to-speech": ["speech-to-speech"],
 };
 
 /** Roles consulted for `reference`, reference first. */

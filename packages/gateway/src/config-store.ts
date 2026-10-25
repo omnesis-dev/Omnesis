@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { createLogger } from "@omnesis/core";
+import { createLogger, speechToSpeechAssignment } from "@omnesis/core";
 import {
   applyMergePatch,
   diffConfigPaths,
@@ -215,6 +215,19 @@ export class ConfigStore {
     }
     const before = this.current;
     const after = validation.config;
+    const speech = after.inference?.assignments?.["speech-to-speech"];
+    if (speech != null && !speechToSpeechAssignment(speech, after.inference?.backends)) {
+      return {
+        ok: false,
+        errors: [
+          {
+            path: "inference.assignments.speech-to-speech",
+            message:
+              "Speech to speech requires a declared HTTPS api.openai.com backend assigned to gpt-live-1.",
+          },
+        ],
+      };
+    }
     const changedPaths = diffConfigPaths(before, after);
     if (changedPaths.length === 0) {
       // No-op mutation — still bump version? No: keep semantics tight, only

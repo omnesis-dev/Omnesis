@@ -24,6 +24,8 @@ afterEach(async () => {
 function harness() {
   let authorized = true;
   let agentAvailable = true;
+  let backend: string | undefined = "voice-provider";
+  let apiKey: string | undefined = "PRIVATE_PROVIDER_KEY";
   let callbacks!: LiveProviderCallbacks;
   const agent: VoiceAgentSession = {
     sessionId: "conversation-fixture",
@@ -54,8 +56,8 @@ function harness() {
   const recordUsage = vi.fn(() => Promise.resolve());
   const agentService = { openVoiceSession };
   const service: LiveVoiceService = new LiveVoiceService({
-    backend: () => "voice-provider",
-    getApiKey: () => "PRIVATE_PROVIDER_KEY",
+    backend: () => backend,
+    getApiKey: () => apiKey,
     getAgent: () => (agentAvailable ? agentService : undefined),
     isAuthorized: (candidate, caller) => authorized && candidate === token && caller === owner,
     hasCapacity: () => service.activeCount < 4,
@@ -73,6 +75,12 @@ function harness() {
     send,
     close,
     events: () => callbacks,
+    setBackend: (value: string | undefined) => {
+      backend = value;
+    },
+    setApiKey: (value: string | undefined) => {
+      apiKey = value;
+    },
     disableAgent: () => {
       agentAvailable = false;
     },
@@ -269,6 +277,27 @@ describe("Live configured-agent lifecycle", () => {
     expect(h.agent.cancel).toHaveBeenCalledTimes(1);
     expect(h.close).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["unassign", "reassign", "remove-key", "rotate-key"])(
+    "ends a Live call when its selected speech assignment loses authority: %s",
+    async (change) => {
+      vi.useFakeTimers();
+      const h = harness();
+      const answer = await h.service.create(owner, token, offer);
+      h.service.ready(owner, token, answer.id);
+      if (change === "unassign") h.setBackend(undefined);
+      if (change === "reassign") h.setBackend("other-voice-provider");
+      if (change === "remove-key") h.setApiKey(undefined);
+      if (change === "rotate-key") h.setApiKey("replacement-key");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.service.status(owner, token, answer.id)).toMatchObject({
+        status: "failed",
+        failure: { code: "unavailable" },
+      });
+      expect(h.agent.cancel).toHaveBeenCalledTimes(1);
+      expect(h.close).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("makes teardown idempotent even when observers synchronously reenter it", async () => {
     const h = harness();
