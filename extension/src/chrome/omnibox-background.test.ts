@@ -22,6 +22,7 @@ function harness() {
   const create = vi.fn(async () => ({}));
   const update = vi.fn(async () => ({}));
   const get = vi.fn(async () => ({ id: 7, windowId: 1 }));
+  const searchQuery = vi.fn(async () => undefined);
   const queryTabs = vi.fn<() => Promise<chrome.tabs.Tab[]>>(async () => [
     { id: 7, windowId: 1, url: "https://example.org/article" },
   ]);
@@ -57,6 +58,7 @@ function harness() {
       update,
     },
     windows: { update: vi.fn(async () => undefined) },
+    search: { query: searchQuery },
   });
   const controller = installOmniboxBackground({ ensureRead, suggest });
   return {
@@ -68,6 +70,7 @@ function harness() {
     defaultSuggestion,
     create,
     update,
+    searchQuery,
     controller,
     start: () => started(),
     change: (query: string, callback: (results: chrome.omnibox.SuggestResult[]) => void) =>
@@ -307,6 +310,35 @@ describe("Omnesis omnibox", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(h.update).not.toHaveBeenCalled();
     expect(h.create).not.toHaveBeenCalled();
+    expect(h.searchQuery).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["currentTab", { text: "om shanti meaning", tabId: 7 }],
+    ["newForegroundTab", { text: "om shanti meaning", disposition: "NEW_TAB" }],
+    ["newBackgroundTab", { text: "om shanti meaning", disposition: "NEW_TAB" }],
+  ] as const)(
+    "hands keyword text to the default search engine on a gateway without Find (%s)",
+    async (disposition, expected) => {
+      vi.useFakeTimers();
+      const h = harness();
+      h.view.enabled = false;
+      h.start();
+      await vi.advanceTimersByTimeAsync(0);
+      h.enter("  om shanti meaning ", disposition);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.searchQuery).toHaveBeenCalledExactlyOnceWith(expected);
+      expect(h.create).not.toHaveBeenCalled();
+      expect(h.update).not.toHaveBeenCalled();
+    },
+  );
+  it("searches the web when Enter lands before the gateway's Find check settles and Find is off", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.view.enabled = false;
+    h.start();
+    h.enter("weekend plans");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.searchQuery).toHaveBeenCalledExactlyOnceWith({ text: "weekend plans", tabId: 7 });
   });
   it("invalidates an accepted suggestion if unpair clears the session during its authorization recheck", async () => {
     vi.useFakeTimers();
@@ -386,7 +418,7 @@ describe("Omnesis omnibox", () => {
     h.enter("guide");
     expect(h.suggest).not.toHaveBeenCalled();
     expect(h.defaultSuggestion).toHaveBeenLastCalledWith({
-      description: "<dim>Find is unavailable on this paired gateway</dim>",
+      description: "<dim>Find is unavailable on this gateway; Enter searches the web</dim>",
     });
     h.view.enabled = true;
     h.suggest.mockResolvedValue([card("first")]);
