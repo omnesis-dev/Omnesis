@@ -10,6 +10,7 @@ import { childEventHooks, type ChatBackend, type TurnInput } from "@omnesis/agen
 import { LiveVoiceService } from "../realtime/live-service.js";
 import { AgentService } from "./service.js";
 import { FsConversationStore } from "./conversation-store.js";
+import type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import type {
   LiveProvider,
   LiveProviderCallbacks,
@@ -30,6 +31,31 @@ function deferred() {
   });
   pendingGates.push(resolve);
   return { promise, resolve };
+}
+/** Observe every result immediately, and drain owned voice work even when an assertion throws. */
+async function withVoiceResults<T>(
+  voice: VoiceAgentSession,
+  release: () => void,
+  run: (track: (result: Promise<VoiceTurnResult>) => Promise<VoiceTurnResult>) => Promise<T>,
+): Promise<T> {
+  const pending: Array<Promise<VoiceTurnResult>> = [];
+  const track = (result: Promise<VoiceTurnResult>) => {
+    // Keep the original promise rejecting for later assertions, without an
+    // unhandled rejection while durable admission is still in progress.
+    void result.catch(() => {});
+    pending.push(result);
+    return result;
+  };
+  try {
+    return await run(track);
+  } finally {
+    release();
+    try {
+      await voice.close();
+    } finally {
+      await Promise.allSettled(pending);
+    }
+  }
 }
 async function* answer(input: TurnInput): AsyncIterable<AgentEvent> {
   const base = { sessionId: input.sessionId, messageId: input.messageId };
@@ -187,37 +213,112 @@ describe("configured agent voice lease", () => {
       yield* answer(input);
     });
     const voice = await f.service.openVoiceSession("token:fixture");
-    const held = voice.submit({ ...submit("held", "Held invented research"), stream: true });
-    await reading.promise;
-    const chunks = Array.from({ length: 70 }, (_, index) => ` word${index}`);
-    const pending = chunks.map((text, index) =>
-      voice.submit({ ...submit(`fragment-${index}`, text), stream: true }),
-    );
-    const duplicate = voice.submit({ ...submit("fragment-8", chunks[8]!), stream: true });
-    await vi.waitFor(() =>
+    await withVoiceResults(voice, release.resolve, async (track) => {
+      const held = track(
+        voice.submit({ ...submit("held", "Held invented research"), stream: true }),
+      );
+      await reading.promise;
+      const chunks = Array.from({ length: 70 }, (_, index) => ` word${index}`);
+      const durable = deferred();
+      const save = f.store.save.bind(f.store);
+      vi.spyOn(f.store, "save").mockImplementation(async (record) => {
+        if (
+          record.controls?.submissions.some(
+            (item) => item.id === "fragment-0" && item.status === "queued",
+          )
+        )
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        await save(record);
+        if (
+          record.controls?.submissions.some(
+            (item) => item.status === "queued" && item.text === chunks.join(""),
+          )
+        )
+          durable.resolve();
+      });
+      const pending = chunks.map((text, index) =>
+        track(voice.submit({ ...submit(`fragment-${index}`, text), stream: true })),
+      );
+      const duplicate = track(voice.submit({ ...submit("fragment-8", chunks[8]!), stream: true }));
+      // Seventy serialized filesystem commits need their actual completion
+      // barrier, not vi.waitFor's one-second UI-style polling deadline.
+      await durable.promise;
       expect(f.service.conversationControls(voice.sessionId).queuedMessages[0]?.text).toBe(
         chunks.join(""),
-      ),
-    );
-    expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1);
-    expect((await f.store.load(voice.sessionId))?.controls?.submissions).toHaveLength(2);
-    await voice.close();
-    release.resolve();
-    await held;
-    const results = await Promise.all([...pending, duplicate]);
-    expect(new Set(results.map((result) => result.messageId)).size).toBe(1);
-    expect(f.inputs).toHaveLength(2);
-    expect(f.inputs[1]?.userMessage.trim()).toBe(chunks.join("").trim());
-    const resumed = f.service.sendMessage("token:fixture", voice.sessionId, "Continue in text");
-    await vi.waitFor(() =>
-      expect(
-        f.events.some(
-          (event) =>
-            event.type === "agent.message.end" && event.payload.messageId === resumed.messageId,
-        ),
-      ).toBe(true),
-    );
-    expect(f.inputs).toHaveLength(3);
+      );
+      expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1);
+      const stored = (await f.store.load(voice.sessionId))?.controls?.submissions;
+      expect(stored).toHaveLength(2);
+      expect(stored?.find((item) => item.status === "queued")?.text).toBe(chunks.join(""));
+      await voice.close();
+      release.resolve();
+      await held;
+      const results = await Promise.all([...pending, duplicate]);
+      expect(new Set(results.map((result) => result.messageId)).size).toBe(1);
+      expect(f.inputs).toHaveLength(2);
+      expect(f.inputs[1]?.userMessage.trim()).toBe(chunks.join("").trim());
+      const resumed = f.service.sendMessage("token:fixture", voice.sessionId, "Continue in text");
+      await vi.waitFor(() =>
+        expect(
+          f.events.some(
+            (event) =>
+              event.type === "agent.message.end" && event.payload.messageId === resumed.messageId,
+          ),
+        ).toBe(true),
+      );
+      expect(f.inputs).toHaveLength(3);
+    });
+  });
+  it("releases and settles owned voice work when a durability assertion fails", async () => {
+    const reading = deferred();
+    const release = deferred();
+    const durable = deferred();
+    const f = await fixture(async function* (input) {
+      if (input.userMessage === "Held cleanup fixture") {
+        reading.resolve();
+        await release.promise;
+      }
+      yield* answer(input);
+    });
+    const voice = await f.service.openVoiceSession("token:fixture");
+    const save = f.store.save.bind(f.store);
+    vi.spyOn(f.store, "save").mockImplementation(async (record) => {
+      await save(record);
+      if (
+        record.controls?.submissions.some(
+          (item) => item.id === "cleanup-pending" && item.status === "queued",
+        )
+      )
+        durable.resolve();
+    });
+    let held!: Promise<VoiceTurnResult>;
+    let pending!: Promise<VoiceTurnResult>;
+    let rejected!: Promise<VoiceTurnResult>;
+    await expect(
+      withVoiceResults(voice, release.resolve, async (track) => {
+        held = track(
+          voice.submit({ ...submit("cleanup-held", "Held cleanup fixture"), stream: true }),
+        );
+        await reading.promise;
+        pending = track(
+          voice.submit({ ...submit("cleanup-pending", "Pending cleanup fixture"), stream: true }),
+        );
+        rejected = track(
+          voice.submit({ ...submit("cleanup-pending", "Different cleanup fixture"), stream: true }),
+        );
+        // This real filesystem boundary gives the deliberately rejected result
+        // time to surface before the forced assertion exercises finally cleanup.
+        await durable.promise;
+        expect(false, "forced fixture assertion").toBe(true);
+      }),
+    ).rejects.toThrow("forced fixture assertion");
+    await expect(held).resolves.toMatchObject({ text: "Fictional verified answer" });
+    await expect(pending).resolves.toMatchObject({ text: "Fictional verified answer" });
+    await expect(rejected).rejects.toThrow("already used for another message");
+    expect(f.inputs.map((input) => input.userMessage)).toEqual([
+      "Held cleanup fixture",
+      "Pending cleanup fixture",
+    ]);
   });
   it("starts a fresh streamed receipt after prior pending work becomes running", async () => {
     const started = deferred();
