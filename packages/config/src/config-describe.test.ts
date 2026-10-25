@@ -31,6 +31,7 @@ const EXPECTED_INVENTORY = [
   "/activityRetention/maxAge [duration]",
   "/agent/conversationViewingTtl [duration]",
   "/agent/maxToolIterations [number]",
+  "/agent/noteAgent [boolean]",
   "/agent/replay [object owned:Debug]",
   "/agent/subagentConcurrencyCap [number]",
   "/agent/subagentDepthCap [number]",

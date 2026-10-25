@@ -407,7 +407,7 @@ export function createServer(
      * is not mounted and `/status` advertises it inactive.
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
-    getNoteAgentActive?: () => boolean;
+    getNoteAgentStatus?: () => import("./brain/note-agent/runner.js").NoteAgentStatus;
     /** The cascades that follow a task change (loop mirror, scheduled checks, observations). */
     taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
@@ -1246,7 +1246,7 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
-    getNoteAgentActive: opts?.getNoteAgentActive,
+    getNoteAgentStatus: opts?.getNoteAgentStatus,
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,

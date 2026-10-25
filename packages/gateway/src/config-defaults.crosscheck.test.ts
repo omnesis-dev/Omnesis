@@ -21,6 +21,7 @@ import {
 } from "@omnesis/core";
 import { CONFIG_DEFAULTS, configDefaultAt, configUnsetDescriptionAt } from "@omnesis/config";
 import { DEFAULT_MAX_TOOL_ITERATIONS } from "@omnesis/agent";
+import { DEFAULT_NOTE_AGENT_ENABLED } from "./brain/note-agent/runner.js";
 import { resolveRuntimeSettings } from "./runtime-settings.js";
 import { resolveNearDupConfig } from "./near-dupes/config.js";
 import { DATE_ENRICHMENT_DEFAULTS } from "./enrichment/dates/config.js";
@@ -310,6 +311,7 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defAt("/gateway/mdns/enabled")).toBe(DEFAULT_MDNS_ENABLED);
     expect(defAt("/gateway/mdns/hostname")).toBe(DEFAULT_MDNS_HOSTNAME);
     expect(defAt("/agent/maxToolIterations")).toBe(DEFAULT_MAX_TOOL_ITERATIONS);
+    expect(defAt("/agent/noteAgent")).toBe(DEFAULT_NOTE_AGENT_ENABLED);
   });
 
   it("keeps contextual source fallback copy aligned with runtime constants", () => {

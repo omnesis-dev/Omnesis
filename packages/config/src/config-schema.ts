@@ -2318,6 +2318,12 @@ const agent = z
       )
       .optional(),
     replay: agentReplay.optional(),
+    noteAgent: z
+      .boolean()
+      .describe(
+        "The note agent: one background-agent turn reads each Tell Omnesis note you capture from the portal, the apps or the CLI and acts on it — adds, completes or moves tasks, remembers facts, answers questions. On by default; needs a background-agent model. Set false to only save notes; notes captured while it is off are never read later.",
+      )
+      .optional(),
   })
   .strict();
 

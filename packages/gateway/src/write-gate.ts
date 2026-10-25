@@ -20,6 +20,7 @@ import {
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
+  skipNewNotes,
   type NoteAgentRow,
 } from "./brain/note-agent/storage.js";
 import {
@@ -2057,6 +2058,8 @@ export interface WriteGate extends KnowledgeWriteGate {
   clearMorningBriefMessageItems(messageId: string): Promise<number>;
   /** Queue notes captured since the note agent started; returns how many. */
   enqueueNewNotes(now: number): Promise<number>;
+  /** Settle notes captured while the note agent is switched off as skipped; returns how many. */
+  skipNewNotes(now: number): Promise<number>;
   /** Claim the next settled note for the note agent, or null. */
   claimDueNote(now: number): Promise<NoteAgentRow | null>;
   finishNoteRun(
@@ -2807,6 +2810,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     resetInterestEmbeddingsNotFrom: (model) => call("interest.resetEmbeddings", [model]),
     setBriefItemReaction: (input, now) => call("interest.reaction", [input, now]),
     enqueueNewNotes: (now) => call("noteAgent.enqueue", [now]),
+    skipNewNotes: (now) => call("noteAgent.skip", [now]),
     clearMorningBriefMessageItems: (messageId) =>
       call("cognition.morningBriefItemsClear", [messageId]),
     claimDueNote: (now) => call("noteAgent.claim", [now]),
@@ -3500,6 +3504,7 @@ export function directWriteGate(db: Db): WriteGate {
     resetInterestEmbeddingsNotFrom: async (model) => resetInterestEmbeddingsNotFrom(db, model),
     setBriefItemReaction: async (input, now) => applyBriefReaction(db, input, now),
     enqueueNewNotes: async (now) => enqueueNewNotes(db, now),
+    skipNewNotes: async (now) => skipNewNotes(db, now),
     clearMorningBriefMessageItems: async (messageId) =>
       clearMorningBriefMessageItems(db, messageId),
     claimDueNote: async (now) => claimDueNote(db, now),

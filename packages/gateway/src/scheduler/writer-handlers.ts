@@ -68,7 +68,12 @@ import {
   type InterestSupersedeScope,
   type NewInterestSignal,
 } from "../brain/storage/interest.js";
-import { claimDueNote, enqueueNewNotes, finishNoteRun } from "../brain/note-agent/storage.js";
+import {
+  claimDueNote,
+  enqueueNewNotes,
+  finishNoteRun,
+  skipNewNotes,
+} from "../brain/note-agent/storage.js";
 import { advanceOccWatermark } from "../data/occ-materialized.js";
 import {
   preparePendingSourcePage,
@@ -1806,6 +1811,7 @@ export const writerHandlers = {
   "cognition.observationUserAction": (db: Db, id: string, userAction: string | null, now: number) =>
     setObservationUserAction(db, id, userAction, now),
   "noteAgent.enqueue": (db: Db, now: number) => enqueueNewNotes(db, now),
+  "noteAgent.skip": (db: Db, now: number) => skipNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
     clearMorningBriefMessageItems(db, messageId),
   "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),

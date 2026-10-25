@@ -69,7 +69,10 @@ does not offer.
   0.7.0 plugin follows renewals. A plugin that has followed a renewal cannot be
   downgraded to 0.6.0 without reconnecting.
 - With a `background-agent` model assigned, the note agent reads Tell Omnesis
-  notes captured on any app version.
+  notes captured on any app version, including on a gateway upgraded from 0.6.0
+  that already had such a model assigned. `agent.noteAgent` (Settings → Models
+  → Background agent) switches it off; notes captured while it is off are
+  never read.
 - A 0.6.0 configuration still boots: a `brain.workerConcurrency` above 32 runs
   as 32, and an HTTP backend named `claude-code` keeps serving its
   `claude-code/<model>` assignments.

@@ -23,6 +23,7 @@ import {
   finishNoteRun,
   getNoteRuns,
   hasPendingNotes,
+  skipNewNotes,
 } from "./storage.js";
 import { NOTE_AGENT_SYSTEM_PROMPT, NoteAgent, type NoteAgentDeps } from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
@@ -257,6 +258,7 @@ function agent(backend: ChatBackend | null, extra: Partial<NoteAgentDeps> = {}) 
     tasks: new TaskService(db, directWriteGate(db), () => now),
     writeGate: directWriteGate(db),
     resolveBackend: () => backend,
+    getSetting: () => undefined,
     dayDocumentId: (day) => `doc_notes_${day}`,
     recordUsage: async (u, model) => {
       usage.push({ model, input: u.inputTokens });
@@ -536,5 +538,82 @@ describe("note agent turn", () => {
     const { runner } = agent(failing);
     await runner.drain();
     expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 1 });
+  });
+});
+
+/** A backend that records every turn it is asked for and answers with an empty receipt. */
+function countingBackend(): { backend: ChatBackend; turns: TurnInput[] } {
+  const turns: TurnInput[] = [];
+  return { backend: toolCallingBackend(() => [], "Saved.", turns), turns };
+}
+
+describe("note agent switch", () => {
+  test("switched off, it reads nothing and settles new notes as skipped", async () => {
+    enqueueNewNotes(db, T0);
+    note("n1", "Remind me to water the plants", T0 + 1_000);
+    const { backend, turns } = countingBackend();
+    const { runner } = agent(backend, { getSetting: () => false });
+    expect(runner.status()).toEqual({
+      enabled: false,
+      modelAssigned: true,
+      active: false,
+    });
+    expect(await runner.drain()).toBe(0);
+    expect(turns).toEqual([]);
+    expect(getNoteRuns(db, ["n1"]).get("n1")).toMatchObject({ state: "skipped", receipt: null });
+    expect(hasPendingNotes(db)).toBe(false);
+  });
+
+  test("switched back on, it reads only what is told from then on", async () => {
+    let setting: boolean | undefined = false;
+    let now = T0 + 60_000;
+    const { backend, turns } = countingBackend();
+    const { runner } = agent(backend, { getSetting: () => setting, clock: () => now });
+    enqueueNewNotes(db, T0);
+    note("while-off", "Buy stamps", T0 + 1_000);
+    await runner.drain();
+
+    setting = true;
+    note("after", "Call the garage", T0 + 61_000);
+    now = T0 + 61_000 + NOTE_SETTLE_MS;
+    expect(await runner.drain()).toBe(1);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.userMessage).toContain("Call the garage");
+    const runs = getNoteRuns(db, ["while-off", "after"]);
+    expect(runs.get("while-off")?.state).toBe("skipped");
+    expect(runs.get("after")?.state).toBe("done");
+  });
+
+  test("switched off before it ever ran, it records nothing and starts afresh when switched on", async () => {
+    let setting: boolean | undefined = false;
+    const { backend, turns } = countingBackend();
+    const { runner } = agent(backend, { getSetting: () => setting });
+    await runner.start();
+    note("early", "Buy stamps", T0 + 1_000);
+    expect(await runner.drain()).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_meta").get()).toEqual({ n: 0 });
+
+    setting = true;
+    expect(await runner.drain()).toBe(0);
+    expect(turns).toEqual([]);
+    expect(getNoteRuns(db, ["early"]).size).toBe(0);
+  });
+
+  test("skipping before the note agent first ran records nothing", () => {
+    note("n1", "Buy stamps", T0 + 1_000);
+    expect(skipNewNotes(db, T0 + 2_000)).toBe(0);
+    expect(getNoteRuns(db, ["n1"]).size).toBe(0);
+  });
+});
+
+test("unset, it is on whenever a model can run", async () => {
+  const { backend } = countingBackend();
+  const { runner } = agent(backend);
+  await runner.start();
+  expect(runner.status()).toEqual({ enabled: true, modelAssigned: true, active: true });
+  expect(agent(null).runner.status()).toEqual({
+    enabled: true,
+    modelAssigned: false,
+    active: false,
   });
 });

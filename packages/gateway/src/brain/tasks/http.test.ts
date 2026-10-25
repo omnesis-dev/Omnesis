@@ -444,5 +444,30 @@ describe("/tasks", () => {
   test("status advertises tasks", async () => {
     const res = await call("GET", "/status", undefined, reader);
     expect(res.json.tasks).toEqual({ available: true, noteAgent: false });
+    expect(res.json.noteAgent).toEqual({
+      enabled: false,
+      modelAssigned: false,
+      active: false,
+    });
+  });
+
+  test("status advertises the note agent's setting beside whether notes are read", async () => {
+    statusCache.stop();
+    const noteAgent = { enabled: false, modelAssigned: true, active: false };
+    app = createServer(db, dbPath, {
+      briefsClock: clock,
+      getNoteAgentStatus: () => noteAgent,
+      onStatusCache: (cache) => {
+        statusCache = cache;
+      },
+    });
+    let res = await call("GET", "/status", undefined, reader);
+    expect(res.json.tasks).toEqual({ available: true, noteAgent: false });
+    expect(res.json.noteAgent).toEqual(noteAgent);
+
+    Object.assign(noteAgent, { enabled: true, active: true });
+    res = await call("GET", "/status", undefined, reader);
+    expect(res.json.tasks).toEqual({ available: true, noteAgent: true });
+    expect(res.json.noteAgent).toEqual(noteAgent);
   });
 });

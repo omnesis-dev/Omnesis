@@ -10859,6 +10859,7 @@
       "value": "Tell Omnesis",
       "paths": [
         "ios/Sources/Omnesis/UI/PreviewMocks.swift",
+        "packages/gateway/portal/js/views/models-note-agent.test.ts",
         "packages/gateway/src/transcribe/vocabulary/native.integration.test.ts",
         "packages/gateway/src/transcribe/vocabulary/pipeline.test.ts"
       ],
