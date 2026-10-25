@@ -24,6 +24,61 @@ function python(program) {
 }
 
 describe("disposable macOS installer variants", () => {
+  test("nested redirected installer failure restores the console before redacted diagnostics", () => {
+    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+    const diagnostics = source.match(
+      /(^installer_failure_diagnostics\(\) \{\n[\s\S]*?\n\})\ncleanup\(\) \{/m,
+    )[1];
+    const cleanupPrefix = source.match(/(^cleanup\(\) \{\n[\s\S]*? {2}set \+e\n)/m)[1];
+    const preserve = source.match(/^(exec 3>&1 4>&2)\ntrap cleanup EXIT/m)[1];
+    const directory = mkdtempSync(join(tmpdir(), "macos-nested-diagnostic-"));
+    const secret = "fictional-nested-installer-credential";
+    const secretFile = join(directory, "secrets");
+    writeFileSync(secretFile, secret + "\n");
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `set -euo pipefail
+redact() { node "$REDACTOR"; }
+${diagnostics}
+${cleanupPrefix}
+installer_failure_diagnostics "$restored"
+exit "$status"
+}
+${preserve}
+trap cleanup EXIT
+installer() { printf 'Bearer %s\\n' "$CANARY"; return 23; }
+nested() { installer; }
+nested >"$SESSION/client.private.log" 2>&1
+`,
+        ],
+        {
+          env: {
+            ...process.env,
+            SESSION: directory,
+            REDACTOR: resolve("scripts/install-e2e/redact.mjs"),
+            CANARY: secret,
+            INSTALL_E2E_SECRETS_FILE: secretFile,
+          },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(23);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("redacted client installer tail");
+      expect(result.stderr).toContain("Bearer ***");
+      expect(result.stderr).not.toContain(secret);
+      expect(readFileSync(join(directory, "client.private.log"), "utf8")).not.toContain(
+        "installer tail",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("actual installer diagnostics redact only bounded allowlisted tails after restoration", () => {
     const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
     const extracted = source.match(

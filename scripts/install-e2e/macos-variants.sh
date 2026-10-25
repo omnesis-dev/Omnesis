@@ -60,6 +60,10 @@ installer_failure_diagnostics() {
 }
 cleanup() {
   local status=$? restored=1
+  # An errexit inside a redirected installer function keeps that redirection
+  # active during EXIT. Restore the original console before diagnostics.
+  exec 1>&3 2>&4
+  exec 3>&- 4>&-
   trap - EXIT INT TERM
   set +e
   if [ -n "$CHILD_PID" ]; then kill -TERM "$CHILD_PID" 2>/dev/null; wait "$CHILD_PID"; CHILD_PID=''; fi
@@ -76,6 +80,7 @@ cleanup() {
   printf '[install-e2e] macOS %s %s (phase %s)\n' "$MODE" "$([ "$status" = 0 ] && echo passed || echo failed)" "$PHASE"
   exit "$status"
 }
+exec 3>&1 4>&2
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
