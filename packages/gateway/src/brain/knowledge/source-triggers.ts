@@ -10,6 +10,10 @@ import type Database from "better-sqlite3";
 /**
  * Constant-size durable intake in the same transaction as every source write.
  * No graph walk or model call occurs on ingestion. Mirrors are derived outputs.
+ * The journal holds at most one entry per source: intake reads the source as it
+ * stands, so a newer write supersedes an unread one. The bound matters because
+ * only the experimental intake drains the journal while these triggers run on
+ * every install.
  * Generic cursor pages attach transaction-bound initial-inventory provenance.
  * Intake admits those revisions chronologically; ordinary arrivals and edits
  * remain reactive even when their occurrence dates are old.
@@ -92,6 +96,7 @@ export function createKnowledgeSourceTriggers(db: Database.Database): void {
           VALUES(NEW.id,NEW.content_hash,0,${now},${event === "INSERT" ? 0 : 1},${sourceContext})
           ON CONFLICT(document_id) DO UPDATE SET content_hash=excluded.content_hash,deleted=0,updated_at=excluded.updated_at,generation=knowledge_source_revisions.generation+1,source_context=excluded.source_context;
         DELETE FROM knowledge_evidence WHERE document_id=NEW.id AND content_hash!=NEW.content_hash;
+        DELETE FROM knowledge_changes WHERE entity_id=NEW.id;
         INSERT INTO knowledge_changes(kind,entity_id,revision,at) VALUES(CASE WHEN ${sourceFilter("NEW")} THEN 'source_changed' ELSE 'source_evidence_changed' END,NEW.id,${revision},${now});
         INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at)
           VALUES('invalidate','source',NEW.id,${revision},${now})

@@ -82,6 +82,7 @@ export function createKnowledgeTables(db: Database.Database): void {
       revision TEXT NOT NULL,
       at INTEGER NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS knowledge_changes_entity ON knowledge_changes(entity_id);
     CREATE TABLE IF NOT EXISTS knowledge_revisions (
       node_id TEXT NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
       revision INTEGER NOT NULL, previous_revision INTEGER NOT NULL,
