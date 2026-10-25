@@ -249,6 +249,89 @@ exit 23
     }
   });
 
+  test("actual Brew preparation completes and verifies its fix before any tool quarantine", () => {
+    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+    const preparation = source.match(
+      /(^prepare_missing_node_brew\(\) \{\n[\s\S]*?\n\})\nif \[ "\$MODE" != isolation \]/m,
+    )[1];
+    const start = source.indexOf('if [ "$MODE" != isolation ]; then');
+    const boundary =
+      source.slice(start, source.indexOf("  PHASE=actual-prerequisite-absence", start)) + "fi\n";
+    const directory = mkdtempSync(join(tmpdir(), "macos-brew-preparation-"));
+    writeFileSync(
+      join(directory, "brew"),
+      '#!/bin/sh\ncase "$1" in update) echo update >>"$TRACE"; exit "$UPDATE_STATUS" ;; --repository) echo "$SESSION/brew-repository" ;; *) exit 99 ;; esac\n',
+      { mode: 0o700 },
+    );
+    const fakeTools = join(directory, "tools");
+    writeFileSync(
+      fakeTools,
+      '#!/bin/sh\necho quarantine >>"$TRACE"\ntouch "$SESSION/hidden-tools"\n',
+      { mode: 0o700 },
+    );
+    try {
+      for (const [update, verify, mode, expected] of [
+        ["0", "0", "missing-node", 0],
+        ["7", "0", "missing-node", 7],
+        ["0", "1", "missing-node", 1],
+        ["0", "0", "missing-homebrew", 0],
+      ]) {
+        const trace = join(directory, "trace");
+        rmSync(trace, { force: true });
+        rmSync(join(directory, "hidden-tools"), { force: true });
+        rmSync(join(directory, "quarantine-attempted"), { force: true });
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `set -euo pipefail
+child_command() { shift; "$@"; }
+git() { printf 'verify %s\\n' "$*" >>"$TRACE"; return "$VERIFY_STATUS"; }
+${preparation}
+${boundary}
+`,
+          ],
+          {
+            env: {
+              ...process.env,
+              PATH: directory + ":" + process.env.PATH,
+              SESSION: directory,
+              HERE: directory,
+              PYTHON: fakeTools,
+              QUARANTINE: join(directory, "quarantine"),
+              MODE: mode,
+              TRACE: trace,
+              UPDATE_STATUS: update,
+              VERIFY_STATUS: verify,
+            },
+            encoding: "utf8",
+            timeout: 10000,
+          },
+        );
+        expect(result.status, result.stderr).toBe(expected);
+        const steps = readFileSync(trace, "utf8").trim().split("\n");
+        if (mode === "missing-homebrew") expect(steps).toEqual(["quarantine"]);
+        else {
+          expect(steps[0]).toBe("update");
+          if (update === "0")
+            expect(steps[1]).toBe(
+              `verify -C ${directory}/brew-repository merge-base --is-ancestor 16f166d36cddcb485be5a3f2ed5b25dc445d1580 HEAD`,
+            );
+          if (expected === 0) expect(steps[2]).toBe("quarantine");
+          else {
+            expect(steps).not.toContain("quarantine");
+            expect(spawnSync("test", ["-e", join(directory, "hidden-tools")]).status).toBe(1);
+            expect(spawnSync("test", ["-e", join(directory, "quarantine-attempted")]).status).toBe(
+              1,
+            );
+          }
+        }
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("actual installer diagnostics redact only bounded allowlisted tails after restoration", () => {
     const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
     const extracted = source.match(

@@ -164,3 +164,14 @@ addresses, pairing codes, the probe token — are registered with
 Mac installer failures may print bounded, redacted installer tails after exact tool restoration. A first-cycle gateway health failure may also print up to 50 lines and 8192 bytes of its redacted startup log, before any collector or source starts. Collector logs and gateway logs after source setup stay private; uploaded artifacts remain sanitized result summaries only.
 If that gateway exits with a segmentation-fault status, isolated native dependency probes may add fixed stage names and numeric exit/signal/timeout results to the sanitized summary. The probes load no model and discard process output.
 The hosted Mac prerequisite tests set `HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1` to avoid cascading upgrades of unrelated image software. An absent `node@24` and its required dependencies still install through the real installer and Homebrew; original tool restoration remains mandatory.
+Before hiding Node, the disposable hosted test explicitly updates Homebrew and verifies its engine contains the upstream OpenSSL sibling-lock fix. Preparation must succeed before any quarantine starts; automatic updates stay disabled during the actual missing-Node installation proof. This updates the package manager baseline rather than bypassing the real fresh Node install.
+
+## Native vector diagnostics
+
+A manual `lanes=vector-compat` dispatch diagnoses Intel vector-library compatibility on a single disposable `macos-15-intel` runner. It compares published USearch 2.26.3, 2.26.4 and 2.26.5 prebuilds with a source build of 2.26.4, first under Node 24.19.0 and then 24.22.1. The bounded child stages exercise capability detection, construction, size, finalization and real vector search with save/reload; they run no model.
+
+This is a diagnostic collection lane, separate from nightly/full installer validation and the release gate. A completed collection does not mean every candidate passed: the content-free result records each fixed case and its numeric outcomes, including crashes. Raw package/build/native process output is not uploaded. A selected fix must still pass the real Intel gateway/collector installation journey and the normal required checks.
+
+```sh
+gh workflow run install-e2e.yml --ref <branch> -f lanes=vector-compat
+```

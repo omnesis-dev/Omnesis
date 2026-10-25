@@ -96,6 +96,33 @@ describe("installer coverage CI admission and verdict", () => {
     for (const id of ["single-host", "lockfile-upgrade", "tailnet-plan"]) {
       expect(selected(id, "workflow_dispatch", "coverage")).toBe(false);
     }
+    for (const id of ["single-host", "lockfile-upgrade", "tailnet-plan", "installer-coverage"]) {
+      expect(selected(id, "workflow_dispatch", "vector-compat")).toBe(false);
+    }
+    expect(selected("vector-compat", "workflow_dispatch", "vector-compat")).toBe(true);
+    for (const event of ["pull_request", "push", "schedule"]) {
+      expect(selected("vector-compat", event, "vector-compat")).toBe(false);
+    }
+    const diagnostic = install.jobs["vector-compat"];
+    expect(diagnostic["runs-on"]).toBe("macos-15-intel");
+    expect(diagnostic.permissions).toEqual({ contents: "read" });
+    expect(diagnostic.environment).toBeUndefined();
+    expect(diagnostic.secrets).toBeUndefined();
+    expect(
+      diagnostic.steps
+        .filter((step) => step.uses?.startsWith("actions/setup-node@"))
+        .map((step) => String(step.with["node-version"])),
+    ).toEqual(["24.19.0", "24.22.1"]);
+    for (const step of diagnostic.steps.filter((step) => step.uses)) {
+      expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
+      if (step.uses.startsWith("actions/checkout@")) {
+        expect(step.with.ref).toBe("${{ github.sha }}");
+        expect(step.with["persist-credentials"]).toBe(false);
+      }
+      if (step.uses.startsWith("actions/upload-artifact@")) {
+        expect(step.with.path).toBe("${{ runner.temp }}/vector-compat/result.json");
+      }
+    }
     expect(selected("tailnet-plan", "pull_request", "coverage")).toBe(false);
     expect(selected("tailnet-plan", "schedule", undefined)).toBe(true);
     expect(selected("tailnet-plan", "workflow_dispatch", "all")).toBe(true);

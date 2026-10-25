@@ -47,7 +47,7 @@ on:
       lanes:
         description: Which lanes to run
         type: choice
-        options: [all, single-host, tailnet, coverage]
+        options: [all, single-host, tailnet, coverage, vector-compat]
         default: all
 
 permissions: {}
@@ -94,6 +94,47 @@ jobs:
       - name: Diagnostics (redacted)
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+
+  vector-compat:
+    name: Intel vector compatibility diagnosis
+    if: github.event_name == 'workflow_dispatch' && inputs.lanes == 'vector-compat'
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify fixed source and actual Intel platform
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(uname -m)" = x86_64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+      - name: Compare native builds on Node 24.19.0
+        run: python3 scripts/install-e2e/macos-vector-compat.py --work "$RUNNER_TEMP/vector-compat"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: always()
+        with:
+          node-version: 24.22.1
+      - name: Compare native builds on Node 24.22.1
+        if: always()
+        run: python3 scripts/install-e2e/macos-vector-compat.py --work "$RUNNER_TEMP/vector-compat"
+      - name: Retain content-free diagnostic results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: vector-compat-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vector-compat/result.json
+          if-no-files-found: error
+          retention-days: 7
 
   installer-coverage:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'coverage'))

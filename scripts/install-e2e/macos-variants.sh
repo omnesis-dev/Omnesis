@@ -167,7 +167,23 @@ assert_client() {
   test ! -d "$SESSION/client/Library/LaunchAgents"
   "$PYTHON" "$HERE/macos-variants-runtime.py" --check-models "$SESSION/client/config"
 }
+prepare_missing_node_brew() {
+  local brew repo
+  brew="$(command -v brew)" || { echo 'Homebrew preparation requires the existing executable' >&2; return 1; }
+  # Hosted images can ship Brew older than its OpenSSL sibling-lock fix.
+  # Update the engine before hiding tools, then freeze it during the proof.
+  child_command "$SESSION/client" "$brew" update || return "$?"
+  repo="$("$brew" --repository)" || return "$?"
+  if ! git -C "$repo" merge-base --is-ancestor 16f166d36cddcb485be5a3f2ed5b25dc445d1580 HEAD; then
+    echo 'Homebrew preparation did not establish the required formula-lock fix' >&2
+    return 1
+  fi
+}
 if [ "$MODE" != isolation ]; then
+  if [ "$MODE" = missing-node ]; then
+    PHASE=prepare-homebrew
+    prepare_missing_node_brew
+  fi
   PHASE=quarantine
   : >"$SESSION/quarantine-attempted"
   "$PYTHON" "$HERE/macos-variants-tools.py" quarantine --directory "$QUARANTINE" --mode "$MODE"

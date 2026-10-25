@@ -62,6 +62,7 @@ describe("installE2eVerdict", () => {
       run({ status: "in_progress", conclusion: null }),
       dispatch("single-host"),
       dispatch("coverage"),
+      dispatch("vector-compat"),
       run({ event: "workflow_dispatch", display_title: undefined }),
     ]);
     expect(verdict).toMatchObject({
