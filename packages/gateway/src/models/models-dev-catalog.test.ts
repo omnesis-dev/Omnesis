@@ -509,7 +509,10 @@ it("does not advertise chat reasoning controls or saved settings for speech medi
     },
   };
   const view = service.overview(speech, {
-    inference: { assignments: { "speech-to-speech": "cloud/gpt-live-1" } },
+    inference: {
+      entailment: { promptStyle: "judge" },
+      assignments: { "speech-to-speech": "cloud/gpt-live-1" },
+    },
   });
   expect(view.modelSettings["speech-to-speech"]).toBeUndefined();
 });

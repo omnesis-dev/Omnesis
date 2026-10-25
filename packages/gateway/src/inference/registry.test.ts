@@ -16,7 +16,7 @@ import {
 import { InferenceRegistry } from "./registry.js";
 import type { LookupAddress } from "node:dns";
 import type { BackendStatus, CatalogEntry, Manifest } from "@omnesis/core";
-import type { OmnesisConfig } from "@omnesis/config";
+import { validateConfig, type OmnesisConfig } from "@omnesis/config";
 
 // This suite intentionally drives many probe FAILURES, each emitting a WARN log.
 // Under the fork pool, that flood of console output can still be mid-RPC when the
@@ -2469,23 +2469,28 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
 
 describe("explicit experimental speech-to-speech assignment", () => {
   afterEach(() => vi.unstubAllEnvs());
+  const speechConfig = (inference: unknown): OmnesisConfig => {
+    const parsed = validateConfig({ inference });
+    if (!parsed.ok) throw new Error("Invalid speech capability fixture");
+    return parsed.config;
+  };
   it("never auto-enables and resolves the supported media model without a model-list probe", () => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
     const reg = makeRegistry();
     const inference = {
       allowRemoteInference: true,
       backends: {
-        cloud: { type: "http" as const, url: "https://api.openai.com", apiKey: "fixture-key" },
+        cloud: { type: "http", url: "https://api.openai.com", apiKey: "fixture-key" },
       },
     };
-    reg.loadConfig({ inference });
+    reg.loadConfig(speechConfig(inference));
     expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
-    reg.loadConfig({
-      inference: {
+    reg.loadConfig(
+      speechConfig({
         ...inference,
         assignments: { "speech-to-speech": "cloud/gpt-live-1", agent: "cloud/chat-fixture" },
-      },
-    });
+      }),
+    );
     expect(reg.resolve("speech-to-speech")).toMatchObject({
       kind: "http",
       model: "gpt-live-1",
@@ -2496,7 +2501,7 @@ describe("explicit experimental speech-to-speech assignment", () => {
     expect(reg.getOverview().backends.cloud?.modelRoles?.["gpt-live-1"]).toEqual([
       "speech-to-speech",
     ]);
-    reg.loadConfig({ inference: { ...inference, assignments: { "speech-to-speech": null } } });
+    reg.loadConfig(speechConfig({ ...inference, assignments: { "speech-to-speech": null } }));
     expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
   });
   it.each([
@@ -2545,13 +2550,13 @@ describe("explicit experimental speech-to-speech assignment", () => {
   ])("refuses an unusable speech assignment %#", ({ experimental, remote, key, url, value }) => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", experimental);
     const reg = makeRegistry();
-    reg.loadConfig({
-      inference: {
+    reg.loadConfig(
+      speechConfig({
         allowRemoteInference: remote,
         backends: { cloud: { type: "http", url, apiKey: key } },
         assignments: { "speech-to-speech": value },
-      },
-    });
+      }),
+    );
     expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "unresolved" });
   });
 });
