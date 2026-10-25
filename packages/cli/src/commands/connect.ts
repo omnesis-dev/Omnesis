@@ -1848,7 +1848,7 @@ export const connectCommand = defineCommand({
           writePlaintextSecretFile(configPath, retiredConfig);
         }
       }
-      persistInstalledGatewayTrust(credentialsPath, tls);
+      persistInstalledGatewayTrust(credentialsPath, tls, existing.credentials.tls);
       persistGatewayCapabilities(credentialsPath, skillCapabilities);
       console.log(
         `Refreshed the ${c.bold}${harness}${c.reset} Omnesis plugin without changing its operational device pairing.`,

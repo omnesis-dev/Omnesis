@@ -181,12 +181,22 @@ export function withRunTrust(
  * Write the trust the installation keeps, once the plugin that reads it is
  * installed. Re-reads the file first: the OAuth round-trip in between
  * rotated its tokens.
+ *
+ * `previous` is the trust the installation had before this run. A pin it
+ * already relied on is kept rather than replaced with system trust: being
+ * installed on disk is not being loaded, and the plugin process still running
+ * from before system trust re-reads this file on every OAuth call, as does that
+ * plugin again after a rollback, and rejects `{ mode: "system" }` outright.
+ * Nothing is lost by waiting: the current plugins adopt system trust on their
+ * own the first time a public CA's renewal replaces the pinned certificate.
  */
 export function persistInstalledGatewayTrust(
   credentialsPath: string,
   trust: ConnectTlsTrust | undefined,
+  previous?: TlsTrust,
 ): void {
   if (!trust || !existsSync(credentialsPath)) return;
+  if (previous && !isSystemTrust(previous) && isSystemTrust(trust.saved)) return;
   if (sameTrust(loadIntegrationCredentials(credentialsPath).tls, trust.saved)) return;
   updateIntegrationTlsTrust(credentialsPath, trust.saved);
 }

@@ -3020,7 +3020,7 @@ describe("connect to a gateway whose certificate a public CA issued", () => {
     expect(existsSync(join(other, "omnesis", "integration.json"))).toBe(false);
   });
 
-  it("a refresh moves a pinned installation to system trust once the new plugin is in", async () => {
+  it("a refresh keeps a pinned installation's pin, which the new plugin upgrades at renewal", async () => {
     (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
     const home = seedHermesHome();
     const credentialsPath = seedRefreshableInstall(home, "hermes");
@@ -3034,13 +3034,33 @@ describe("connect to a gateway whose certificate a public CA issued", () => {
 
     await run({ harness: "hermes", dir: home, refresh: true });
 
-    // Plugins from before system trust cannot read it, so the ceremony's
-    // early writes keep the shape they read; the switch is the last write.
+    // A plugin from before system trust may still be running — `omnesis
+    // update` refreshes with --no-restart — or come back with a rollback, and
+    // it rejects `{ mode: "system" }` on its next read of this file. The pin
+    // stays, now naming the certificate the gateway presents.
     for (const [, written] of (writeIntegrationCredentials as Mock).mock.calls) {
       expect((written as { tls?: unknown }).tls).not.toEqual({ mode: "system" });
     }
-    expect(loadIntegrationCredentials(credentialsPath).tls).toEqual({ mode: "system" });
+    expect(loadIntegrationCredentials(credentialsPath).tls).toEqual({
+      caPem: "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
+      leafFingerprintSha256: "a".repeat(64),
+    });
     expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
+  });
+
+  it("a refresh keeps an installation already on system trust there", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    const home = seedHermesHome();
+    const credentialsPath = seedRefreshableInstall(home, "hermes");
+    const seeded = JSON.parse(readFileSync(credentialsPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(credentialsPath, `${JSON.stringify({ ...seeded, tls: { mode: "system" } })}\n`, {
+      mode: 0o600,
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await run({ harness: "hermes", dir: home, refresh: true });
+
+    expect(loadIntegrationCredentials(credentialsPath).tls).toEqual({ mode: "system" });
   });
 });
 
