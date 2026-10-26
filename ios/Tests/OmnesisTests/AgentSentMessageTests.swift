@@ -50,7 +50,7 @@ final class AgentSentMessageTests: XCTestCase {
 
     /// Polls the main actor until `condition` holds or two seconds pass.
     private func settle(_ condition: @MainActor () -> Bool) async {
-        for _ in 0..<200 where !condition() {
+        for _ in 0 ..< 200 where !condition() {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
     }

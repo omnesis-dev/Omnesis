@@ -394,9 +394,7 @@ public final class AgentCoordinator {
             await refreshConversationControls()
             return sessionId == id && self.client === client && draftSubmissionID == operation
         } catch {
-            if sessionId == id, self.client === client {
-                withdrawSubmission(presented, id: draft.clientMessageId)
-            }
+            withdrawSubmission(presented, id: draft.clientMessageId, sessionId: id, client: client)
             if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
                draftStore.read(acceptedDraftKey) == draft {
                 draftStore.renewRequest(acceptedDraftKey)
@@ -1481,7 +1479,8 @@ public final class AgentCoordinator {
         id: String,
         text: String,
         request: ConversationDraftSubmission
-    ) -> PresentedSubmission {
+    )
+        -> PresentedSubmission {
         if !busy {
             presentOptimisticSend(id: id, text: text, deepResearch: request.deepResearch, deriveTitle: title.isEmpty)
             transcriptVersion &+= 1
@@ -1512,8 +1511,10 @@ public final class AgentCoordinator {
         return .queued
     }
 
-    /// A refused submission leaves the surface; the draft owns its retry.
-    private func withdrawSubmission(_ presented: PresentedSubmission, id: String) {
+    /// A refused submission leaves the surface; the draft owns its retry. Nothing
+    /// is taken back once the screen has moved on to another session or client.
+    private func withdrawSubmission(_ presented: PresentedSubmission, id: String, sessionId: String, client: AgentClient) {
+        guard self.sessionId == sessionId, self.client === client else { return }
         switch presented {
         case .turn(let started):
             turns.removeAll { turn in
