@@ -27,7 +27,7 @@ import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
 import { conversationDraftRevision, migrateLandingDraft, migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
 import { ConversationControls } from "../components/agent/conversation-controls.js";
-import { recordConsumedQueueReceipts, handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
+import { recordConsumedQueueReceipts, handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls, withOptimisticQueuedMessage, withoutOptimisticQueuedMessage } from "../lib/queue-handoff.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
   Composer,
@@ -1049,16 +1049,39 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       );
     }
     let submission;
+    // The message shows the instant it is sent — as a transcript bubble when
+    // it starts a turn, or on the queued-messages card while one is running —
+    // keyed by its submission id. The gateway's `agent.user.message` event and
+    // the next controls snapshot reconcile that placeholder, so nothing on
+    // screen waits for the HTTP round trip.
+    let optimistic = null;
     try {
       submission = submissionForRetry(sessionId, text, {
         mode: options.mode ?? "queue",
         ...(options.deepResearch ? { deepResearch: true } : {}),
         ...(options.clarificationId ? { clarificationId: options.clarificationId } : {}),
       });
+      if (!state.busy || submission.mode === "interrupt") {
+        optimistic = "turn";
+        dispatch({
+          kind: "user-send",
+          text,
+          optimisticId: submission.clientMessageId,
+          deepResearch: options.deepResearch === true,
+        });
+      } else {
+        optimistic = "queue";
+        setControls((prev) => withOptimisticQueuedMessage(prev, sessionId, submission));
+      }
       const result = await requestConversationSubmission(clientRef.current, sessionId, submission, state.busy);
       if (result?.submission?.status === "failed") {
         clearPendingSubmission(sessionId, submission.clientMessageId);
         throw new Error(result.submission.error || "The message failed. Send again to retry.");
+      }
+      // An older gateway answered through the legacy send route, whose
+      // response carries the stamped id instead of a submission receipt.
+      if (optimistic === "turn" && result?.userMessageId) {
+        dispatch({ kind: "stamp-user-message", optimisticId: submission.clientMessageId, userMessageId: result.userMessageId });
       }
       clearPendingSubmission(sessionId, submission.clientMessageId);
       if (landingDraft) clearConversationDraft(sessionId, landingDraft.text, landingDraft.command, landingDraftRevision);
@@ -1070,6 +1093,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     } catch (err) {
       if (submission && err.status >= 400 && err.status < 500) clearPendingSubmission(sessionId, submission.clientMessageId);
       if (agentRequestIsCurrent(sendGeneration, sendGenerationRef.current, sessionId, activeSessionIdRef.current)) {
+        if (optimistic === "turn") {
+          dispatch({ kind: "user-send-rejected", optimisticId: submission.clientMessageId });
+        } else if (optimistic === "queue") {
+          setControls((prev) => withoutOptimisticQueuedMessage(prev, sessionId, submission.clientMessageId));
+        }
         if (err?.code === "CONTEXT_WINDOW_EXCEEDED") resumeConversation(sessionId);
         if (err?.code === "remote_inference_disabled") {
           dispatch({ kind: "agent.error", payload: { code: err.code, message: err.message } });

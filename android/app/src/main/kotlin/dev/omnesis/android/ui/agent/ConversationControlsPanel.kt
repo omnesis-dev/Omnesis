@@ -28,7 +28,8 @@ internal fun ConversationControlsPanel(
     onEditPending: (String) -> Unit = {},
 ) {
     val question = state.controls.pendingClarification
-    val pending = state.composer.pending
+    // A send the transcript already shows is not also a pending row.
+    val pending = state.composer.pending.filterNot { it.clientMessageId in state.presentedSubmissionIds }
     val queue = state.controls.queuedMessages.filter { queued -> queued.status != "queued" && pending.none { it.clientMessageId == queued.id } }
     if (question == null && pending.isEmpty() && queue.isEmpty()) return
     Column(

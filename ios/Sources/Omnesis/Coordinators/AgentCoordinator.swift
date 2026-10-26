@@ -372,6 +372,11 @@ public final class AgentCoordinator {
         }
         guard let id = sessionId else { return false }
         let acceptedDraftKey = composerDraftKey
+        // The message shows the instant it is sent — a transcript bubble when
+        // it starts a turn, the queued bubble while one is running — keyed by
+        // its submission id. The `agent.user.message` event and the next
+        // controls snapshot reconcile it, so nothing waits on the round trip.
+        let presented = presentSubmission(id: draft.clientMessageId, text: cleaned, request: request)
         do {
             try await client.submitMessage(
                 sessionId: id,
@@ -389,6 +394,9 @@ public final class AgentCoordinator {
             await refreshConversationControls()
             return sessionId == id && self.client === client && draftSubmissionID == operation
         } catch {
+            if sessionId == id, self.client === client {
+                withdrawSubmission(presented, id: draft.clientMessageId)
+            }
             if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
                draftStore.read(acceptedDraftKey) == draft {
                 draftStore.renewRequest(acceptedDraftKey)
@@ -1461,6 +1469,75 @@ public final class AgentCoordinator {
 
     /// Install the local state shared by a normal optimistic send and the
     /// first send's presentation on either side of its session snapshot.
+    private enum PresentedSubmission {
+        /// A transcript bubble; `started` when this send claimed an idle session.
+        case turn(started: Bool)
+        case queued
+        case none
+    }
+
+    /// Show a submission where the gateway will place it, before the round trip.
+    private func presentSubmission(
+        id: String,
+        text: String,
+        request: ConversationDraftSubmission
+    ) -> PresentedSubmission {
+        if !busy {
+            presentOptimisticSend(id: id, text: text, deepResearch: request.deepResearch, deriveTitle: title.isEmpty)
+            transcriptVersion &+= 1
+            return .turn(started: true)
+        }
+        if request.interrupt {
+            // The running turn keeps its generation until its cancel lands.
+            turns.append(.user(id: id, text: text))
+            transcriptVersion &+= 1
+            return .turn(started: false)
+        }
+        guard let controls = conversationControls,
+              !controls.queuedMessages.contains(where: { $0.id == id }) else { return .none }
+        conversationControls = ConversationControls(
+            busy: controls.busy,
+            pendingClarification: controls.pendingClarification,
+            queuedMessages: controls.queuedMessages + [
+                ConversationQueuedMessage(
+                    id: id,
+                    text: text,
+                    status: "queued",
+                    error: nil,
+                    deepResearch: request.deepResearch ? true : nil
+                ),
+            ],
+            capabilities: controls.capabilities
+        )
+        return .queued
+    }
+
+    /// A refused submission leaves the surface; the draft owns its retry.
+    private func withdrawSubmission(_ presented: PresentedSubmission, id: String) {
+        switch presented {
+        case .turn(let started):
+            turns.removeAll { turn in
+                if case .user(let turnId, _) = turn { return turnId == id }
+                return false
+            }
+            transcriptVersion &+= 1
+            if started {
+                retireActiveTurn()
+                deepResearch = false
+            }
+        case .queued:
+            guard let controls = conversationControls else { return }
+            conversationControls = ConversationControls(
+                busy: controls.busy,
+                pendingClarification: controls.pendingClarification,
+                queuedMessages: controls.queuedMessages.filter { $0.id != id },
+                capabilities: controls.capabilities
+            )
+        case .none:
+            break
+        }
+    }
+
     private func presentOptimisticSend(
         id: String,
         text: String,
@@ -1989,16 +2066,30 @@ public final class AgentCoordinator {
         case .userMessage(_, let userMessageId, let text, let submissionIds):
             queueHandoff.delivered(ids: submissionIds)
             // Cross-device user-message sync. The originator already has
-            // an optimistic bubble; the HTTP send-response stamps it with
-            // this `userMessageId`. If we find a turn that matches, skip
-            // — that's our own send. Otherwise this came from another
-            // device on the same session: append a fresh bubble.
+            // an optimistic bubble: keyed by its submission id, or stamped
+            // with this `userMessageId` by the legacy send response. A
+            // matching turn is our own send. The gateway may coalesce
+            // several queued submissions into one turn, so every matching
+            // placeholder collapses into the stamped bubble at the first
+            // one's position. Otherwise this came from another device on
+            // the same session: append a fresh bubble.
             let alreadyHave = turns.contains { turn in
                 if case .user(let id, _) = turn, id == userMessageId { return true }
                 return false
             }
             if !alreadyHave {
-                turns.append(.user(id: userMessageId, text: text))
+                let placeholders = turns.indices.filter { index in
+                    if case .user(let id, _) = turns[index] { return submissionIds.contains(id) }
+                    return false
+                }
+                if let first = placeholders.first {
+                    turns[first] = .user(id: userMessageId, text: text)
+                    for index in placeholders.dropFirst().reversed() {
+                        turns.remove(at: index)
+                    }
+                } else {
+                    turns.append(.user(id: userMessageId, text: text))
+                }
                 transcriptVersion &+= 1
             }
 
