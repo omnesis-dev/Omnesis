@@ -21,6 +21,11 @@ import {
   type ToolResultSerializationOptions,
 } from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
+import {
+  detectPromptTruncation,
+  promptText,
+  promptTruncationMessage,
+} from "./prompt-truncation.js";
 import { modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
   childEventHooks,
@@ -381,6 +386,8 @@ export class HttpChatBackend implements ChatBackend {
       // attempt, including budget-raise retries. Pre-request aborts issue
       // no request, so they correctly leave no span.
       const llmReq = startLlmRequest(input.llmProbe, requestIteration);
+      // What the server was asked to evaluate, for the truncation check below.
+      const requestText = promptText(messages);
       const attempt = await this.requestCompletion(
         messages,
         tools,
@@ -441,16 +448,25 @@ export class HttpChatBackend implements ChatBackend {
       let reasoningBuf = "";
       const reasoningDetailsBuf: unknown[] = [];
       const completedToolCalls: OpenAIToolCall[] = [];
+      let reportedPromptTokens: number;
 
       if (attempt.kind === "stream") {
         // Strip <think>…</think> reasoning some providers emit inline in
         // `content`; the filter spans SSE deltas so a tag split across frames
         // isn't leaked.
         const thinkFilter = createThinkTagFilter();
-        const toolCallAccumulators = new Map<
-          number,
-          { id: string; name: string; argumentsBuf: string; extraContent?: unknown }
-        >();
+        // Calls in arrival order, plus the call each stream index currently
+        // feeds. Keyed by index alone they would merge on servers (Ollama's
+        // OpenAI endpoint among them) that stream every call of a response at
+        // index 0 and tell them apart only by id.
+        type ToolCallAccumulator = {
+          id: string;
+          name: string;
+          argumentsBuf: string;
+          extraContent?: unknown;
+        };
+        const toolCallAccumulators: ToolCallAccumulator[] = [];
+        const toolCallAtIndex = new Map<number, ToolCallAccumulator>();
         let iterationUsage = { prompt: 0, completion: 0, cachedInput: 0 };
 
         let streamError: Error | null = null;
@@ -554,10 +570,14 @@ export class HttpChatBackend implements ChatBackend {
 
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
-                let acc = toolCallAccumulators.get(tc.index);
+                let acc = toolCallAtIndex.get(tc.index);
+                // A delta naming a different id than the call at its index
+                // starts a new call rather than continuing that one.
+                if (acc && tc.id && acc.id && tc.id !== acc.id) acc = undefined;
                 if (!acc) {
                   acc = { id: tc.id ?? "", name: tc.function?.name ?? "", argumentsBuf: "" };
-                  toolCallAccumulators.set(tc.index, acc);
+                  toolCallAccumulators.push(acc);
+                  toolCallAtIndex.set(tc.index, acc);
                   if (acc.id && acc.name) {
                     llmReq.markContent();
                     yield wrapEvent("agent.tool.input_start", {
@@ -593,6 +613,7 @@ export class HttpChatBackend implements ChatBackend {
         totalUsage.inputTokens += Math.max(0, iterationUsage.prompt - iterationUsage.cachedInput);
         totalUsage.cacheReadTokens += iterationUsage.cachedInput;
         totalUsage.outputTokens += iterationUsage.completion;
+        reportedPromptTokens = iterationUsage.prompt;
         // The request's stream is fully consumed here: close its span with
         // this request's provider-reported tokens. Everything downstream
         // (abort, stream error, tool calls, turn end) is not inference.
@@ -641,7 +662,7 @@ export class HttpChatBackend implements ChatBackend {
           return;
         }
 
-        for (const [, acc] of toolCallAccumulators) {
+        for (const acc of toolCallAccumulators) {
           const call: OpenAIToolCall = {
             id: acc.id,
             type: "function",
@@ -654,6 +675,7 @@ export class HttpChatBackend implements ChatBackend {
         // Non-streamed fallback: adapt the single response into the same events
         // and state the streaming path produces.
         finishReason = attempt.finishReason;
+        reportedPromptTokens = attempt.usage.prompt;
         totalUsage.inputTokens += Math.max(0, attempt.usage.prompt - attempt.usage.cachedInput);
         totalUsage.cacheReadTokens += attempt.usage.cachedInput;
         totalUsage.outputTokens += attempt.usage.completion;
@@ -724,6 +746,35 @@ export class HttpChatBackend implements ChatBackend {
           outputTokens: attempt.usage.completion,
           cacheReadTokens: attempt.usage.cachedInput,
         });
+      }
+
+      // A server that trimmed the prompt to its context window answered a
+      // request the model never saw in full — the instructions and tools go
+      // first — and reports it only through a prompt count the request cannot
+      // explain. Whatever it produced, tool calls included, is not acted on.
+      const truncation = detectPromptTruncation(requestText, reportedPromptTokens);
+      if (truncation) {
+        const message = promptTruncationMessage(truncation);
+        log.warn(
+          `model=${this.model} evaluated ${truncation.reportedPromptTokens} prompt tokens of a request ` +
+            `holding at least ${truncation.promptTokenFloor}; the server truncated the prompt`,
+        );
+        yield wrapEvent("agent.error", { sessionId, messageId, code: "prompt_truncated", message });
+        yield wrapEvent("agent.message.end", {
+          sessionId,
+          messageId,
+          stopReason: "error",
+          usage: totalUsage,
+          context: contextAssessment,
+          failure: {
+            code: "prompt_truncated",
+            message,
+            retryable: false,
+            backend: this.name,
+            model: this.model,
+          },
+        });
+        return;
       }
 
       if (completedToolCalls.length === 0 && contentBuf.trim().length === 0) {

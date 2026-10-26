@@ -83,6 +83,15 @@ export {
 
 export { HttpChatBackend, type HttpChatBackendOptions } from "./http-backend.js";
 export {
+  detectPromptTruncation,
+  promptText,
+  promptTokenFloor,
+  promptTruncationMessage,
+  PROMPT_TRUNCATION_MIN_REPORTED_TOKENS,
+  type PromptMessageText,
+  type PromptTruncation,
+} from "./prompt-truncation.js";
+export {
   modelReasoningRequestFields,
   preferredReasoningWireProtocol,
   supportsModelReasoningControl,

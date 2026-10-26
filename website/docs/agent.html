@@ -408,7 +408,13 @@
           </li>
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>: self-hosted (Ollama, llama-server,
-            vLLM) or a cloud provider preset.
+            vLLM) or a cloud provider preset. The agent's instructions and tools alone take well
+            over ten thousand tokens, so give the server a context window of at least 32k tokens.
+            Ollama trims a longer request to its window instead of refusing it; the agent detects
+            the trimmed count the server reports and fails the turn with
+            <code>prompt_truncated</code> rather than answer from a prompt the model never saw.
+            Start it with <code>OLLAMA_CONTEXT_LENGTH=32768</code>, or set <code>num_ctx</code> in a
+            Modelfile.
           </li>
           <li>
             <strong>Codex</strong>: the agent runs on your ChatGPT subscription through OpenAI's
@@ -446,7 +452,12 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis model assign agent anthropic/MODEL_ID</span>
             </p>
-            <p class="t-dim"># fully local: declare an OpenAI-compatible server, then assign</p>
+            <p class="t-dim"># fully local: run the server with room for the agent's requests,</p>
+            <p class="t-dim"># declare it, then assign</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">OLLAMA_CONTEXT_LENGTH=32768 ollama serve</span>
+            </p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis backend add ollama http://localhost:11434</span>

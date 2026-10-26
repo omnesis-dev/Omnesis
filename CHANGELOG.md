@@ -81,6 +81,34 @@ does not offer.
   `claude-code/<model>` assignments.
 - A 0.6.0 CLI lists a role assigned to Claude Code as `HTTP: claude-code/<model>`.
 
+### Fixed: the agent on Ollama no longer loses tool calls or answers from a cut prompt
+
+Two defects showed up as "tool calls fail" with the agent assigned to a model on
+Ollama's OpenAI-compatible endpoint. Both apply to any OpenAI-compatible server
+that behaves the same way.
+
+Ollama streams every tool call of a response at `index: 0` and tells them apart
+only by `id` (its own tracker records this; a fix for some models shipped in
+April 2026, and other paths still do it). The HTTP agent backend accumulated
+streamed calls by index alone, so two parallel calls became one call whose
+arguments were the two JSON objects concatenated: that call was answered with
+`tool_args_unparseable`, the second was dropped, and the corrupted call was
+replayed to the model as history. A delta that names a different id than the call
+at its index now starts a new call.
+
+Ollama also trims a request longer than the model's context window instead of
+refusing it, from the front, which is where the instructions and the tool
+definitions sit; the response carries no error, only a `prompt_tokens` count far
+below what was sent. Its default window on hardware under 24 GiB of VRAM is 4k
+tokens, and the agent's instructions and tools alone take well over ten thousand,
+so the model answered from a prompt it never saw, with no tools. On a 4k window the
+server evaluated 2,050 of a 35,058-token request and the turn ended as an ordinary
+answer. The backend now compares the prompt count the server reports against a
+floor no tokenizer goes under for the request's text, and ends the turn with
+`prompt_truncated` naming both counts and the remedy: raise the server's context
+length, for Ollama with `OLLAMA_CONTEXT_LENGTH` or a Modelfile `num_ctx`. The
+`/docs/agent` page says so beside the Ollama example.
+
 ## 2026-08-20
 
 ### Fixed: Android no longer stalls on a Deep Research turn

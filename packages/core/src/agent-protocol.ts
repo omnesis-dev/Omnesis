@@ -39,6 +39,7 @@ export const KNOWN_AGENT_ERROR_CODES = [
   "remote_inference_disabled",
   "context_window_exceeded",
   "output_truncated",
+  "prompt_truncated",
   "anthropic_api_error",
   "anthropic_usage_limited",
   "anthropic_stream_error",
