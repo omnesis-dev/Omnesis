@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { sourceLoaderFixture } from "./source-loader-fixture.mjs";
+import { seedSourceLauncher, sourceLoaderFixture } from "./source-loader-fixture.mjs";
 import {
   chmodSync,
   mkdtempSync,
@@ -34,6 +34,7 @@ function commitVersion(version, message) {
     join(fixture, "packages", "cli", "package.json"),
     `${JSON.stringify({ version })}\n`,
   );
+  seedSourceLauncher(fixture);
   git("add", ".");
   git("commit", "-m", message);
 }
@@ -72,7 +73,8 @@ function replaceHistory(version) {
     join(fixture, "packages", "cli", "package.json"),
     `${JSON.stringify({ version })}\n`,
   );
-  git("add", ".gitignore", "packages/cli/package.json");
+  seedSourceLauncher(fixture);
+  git("add", ".gitignore", "packages/cli");
   git("commit", "-m", `Squashed history at ${version}`);
   git("branch", "-M", "main");
   for (const tag of git("tag", "--list").split("\n").filter(Boolean)) git("tag", "-d", tag);
@@ -84,7 +86,8 @@ function releaseOnMain(version) {
     join(fixture, "packages", "cli", "package.json"),
     `${JSON.stringify({ version })}\n`,
   );
-  git("add", "packages/cli/package.json");
+  seedSourceLauncher(fixture);
+  git("add", "packages/cli");
   git("commit", "-m", version);
   git("tag", `v${version}`);
 }
@@ -160,6 +163,33 @@ beforeEach(() => {
 afterEach(() => rmSync(fixture, { recursive: true, force: true }));
 
 describe("install.sh source releases", () => {
+  test("a refusal from the actual installed renderer leaves the bootstrap and applying state intact", () => {
+    const renderer = join(fixture, "packages/cli/src/update/source-launcher.ts");
+    writeFileSync(
+      renderer,
+      readFileSync(renderer, "utf8") +
+        '\nthrow new Error("fictional installed renderer refusal");\n',
+    );
+    git("add", "packages/cli/src/update/source-launcher.ts");
+    git("commit", "-m", "Refusing fixture renderer");
+    git("tag", "v0.11.0");
+    let failure;
+    try {
+      install([], "renderer-refusal");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure.stderr)).toContain("fictional installed renderer refusal");
+    expect(String(failure.stderr)).toContain(
+      "Could not render the installed source recovery launcher",
+    );
+    expect(installedState("renderer-refusal").value.phase).toBe("applying");
+    const wrapper = readFileSync(join(fixture, "home-renderer-refusal/.local/bin/omnesis"), "utf8");
+    expect(wrapper).toContain('exec "$SOURCE_ROOT/node_modules/.bin/tsx"');
+    expect(wrapper).not.toContain("exec node --import");
+  });
+
   test("refuses a glibc host that cannot load the supported native bindings", () => {
     fakeLinuxHost();
     const getconf = join(fixture, "fake-bin", "getconf");

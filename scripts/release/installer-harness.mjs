@@ -21,7 +21,7 @@
  * `afterEach`, then plants whatever else it needs under `fixturePath()`.
  */
 
-import { sourceLoaderFixture } from "./source-loader-fixture.mjs";
+import { seedSourceLauncher, sourceLoaderFixture } from "./source-loader-fixture.mjs";
 import {
   accessSync,
   chmodSync,
@@ -90,6 +90,7 @@ export function tagRelease(version) {
     join(fixture, "packages", "cli", "package.json"),
     `${JSON.stringify({ version })}\n`,
   );
+  seedSourceLauncher(fixture);
   git("add", ".");
   git("commit", "-m", version);
   git("tag", `v${version}`);

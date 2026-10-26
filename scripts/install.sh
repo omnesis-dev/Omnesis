@@ -1709,6 +1709,18 @@ try {
 # replaces anything at the same path.
 render_source_wrapper() {
   SOURCE_ROOT="$1"
+  SOURCE_DEPENDENCY_KIND=f
+  SOURCE_DEPENDENCY_PATH=node_modules/tsx/dist/loader.mjs
+  SOURCE_CLI_COMMAND='node --import "$SOURCE_LOADER_URL"'
+  case "${2:-current}" in
+    current) ;;
+    legacy)
+      SOURCE_DEPENDENCY_KIND=x
+      SOURCE_DEPENDENCY_PATH=node_modules/.bin/tsx
+      SOURCE_CLI_COMMAND='"$SOURCE_ROOT/node_modules/.bin/tsx"'
+      ;;
+    *) return 1 ;;
+  esac
   SOURCE_ROOT_LITERAL="$(shell_single_quote "$SOURCE_ROOT")"
   CONFIG_DIR_LITERAL="$(shell_single_quote "$CONFIG_DIR")"
   UPDATE_LOCK_HELPER_LITERAL="$(shell_single_quote "$UPDATE_LOCK_HELPER")"
@@ -1888,9 +1900,9 @@ if update_unfinished; then
     printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
     exit 1
   }
-elif [ ! -f "\$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]; then
+elif [ ! -$SOURCE_DEPENDENCY_KIND "\$SOURCE_ROOT/$SOURCE_DEPENDENCY_PATH" ]; then
   if [ "\$UPDATE_LOCK_ACQUIRED" != "1" ]; then acquire_update_lock; fi
-  if [ ! -f "\$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]; then
+  if [ ! -$SOURCE_DEPENDENCY_KIND "\$SOURCE_ROOT/$SOURCE_DEPENDENCY_PATH" ]; then
     printf '%s\n' "Source recovery: restoring missing CLI dependencies before continuing..." >&2
     install_source_dependencies || {
       printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
@@ -1898,11 +1910,17 @@ elif [ ! -f "\$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs" ]; then
     }
   fi
 fi
+EOF
+  if [ "${2:-current}" = current ]; then
+    cat <<'SOURCE_LOADER_EOF'
 # Import the loader in the daemon itself: the tsx CLI parent force-kills a
 # slow signal handler before the daemon's graceful shutdown can complete.
-SOURCE_LOADER_URL="\$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "\$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs")" || exit 1
+SOURCE_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs")" || exit 1
+SOURCE_LOADER_EOF
+  fi
+  cat <<EOF
 if [ "\$UPDATE_LOCK_HANDOFF" = "1" ]; then
-  node --import "\$SOURCE_LOADER_URL" "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
+  $SOURCE_CLI_COMMAND "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
   UPDATE_STATUS=\$?
   finish_update_lock "\$UPDATE_STATUS"
 fi
@@ -1914,8 +1932,35 @@ if [ "\$UPDATE_LOCK_ACQUIRED" = "1" ]; then
   fi
   trap - EXIT HUP INT TERM
 fi
-exec node --import "\$SOURCE_LOADER_URL" "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
+exec $SOURCE_CLI_COMMAND "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
 EOF
+}
+
+# After dependencies and build succeed, the installed release is authoritative:
+# old CLIs require their exact canonical launcher for update and migration.
+render_installed_source_wrapper() {
+  INSTALLED_RENDERER_PATH=packages/cli/src/update/source-launcher.ts
+  INSTALLED_RENDERER_ENTRY="$(git -C "$1" ls-tree --name-only HEAD -- "$INSTALLED_RENDERER_PATH")" || return 1
+  if [ -z "$INSTALLED_RENDERER_ENTRY" ]; then
+    # Releases predating this export keep their legacy front door. Check the
+    # actual target tree, so a deleted modern helper cannot trigger fallback.
+    render_source_wrapper "$1" legacy
+    return
+  fi
+  [ "$INSTALLED_RENDERER_ENTRY" = "$INSTALLED_RENDERER_PATH" ] || return 1
+  INSTALLED_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$1/node_modules/tsx/dist/loader.mjs")" || return 1
+  node --import "$INSTALLED_LOADER_URL" --input-type=module - "$1" "$CONFIG_DIR" "$UPDATE_LOCK_HELPER" <<'SOURCE_RENDERER_EOF'
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, config, helper] = process.argv.slice(2);
+const { sourceRecoveryLauncher } = await import(pathToFileURL(join(root, 'packages/cli/src/update/source-launcher.ts')).href);
+if (typeof sourceRecoveryLauncher !== 'function') throw new Error('Installed source launcher renderer is unavailable');
+const content = sourceRecoveryLauncher(root, config, helper);
+if (typeof content !== 'string' || !content.startsWith('#!/bin/sh\n') ||
+    content.includes(String.fromCharCode(0)) || Buffer.byteLength(content) > 1024 * 1024)
+  throw new Error('Installed source launcher renderer returned invalid content');
+process.stdout.write(content);
+SOURCE_RENDERER_EOF
 }
 
 # Install the stable front door before mutating an existing checkout. Paths
@@ -1929,13 +1974,24 @@ write_source_wrapper() {
   OMNESIS_BIN="$BIN_DIR/omnesis"
   SOURCE_WRAPPER_TMP="$(mktemp "$BIN_DIR/.omnesis.XXXXXX")" || fail "Could not create a private temporary source launcher."
   chmod 600 "$SOURCE_WRAPPER_TMP"
-  render_source_wrapper "$SOURCE_ROOT" > "$SOURCE_WRAPPER_TMP"
+  if [ "${2:-legacy}" = installed ]; then
+    render_installed_source_wrapper "$SOURCE_ROOT" > "$SOURCE_WRAPPER_TMP" || fail "Could not render the installed source recovery launcher. Re-run this installer to recover."
+  else
+    render_source_wrapper "$SOURCE_ROOT" legacy > "$SOURCE_WRAPPER_TMP" || fail "Could not render the source recovery launcher."
+  fi
   chmod 755 "$SOURCE_WRAPPER_TMP"
   node -e '
 const fs = require("node:fs");
 const [scratch, target, dir] = process.argv.slice(1);
 const fd = fs.openSync(scratch, "r");
-try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+try {
+  const stat = fs.fstatSync(fd);
+  if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("Invalid source recovery launcher output");
+  const bytes = fs.readFileSync(fd);
+  if (!bytes.subarray(0, 10).equals(Buffer.from("#!/bin/sh\n")) || bytes.includes(0))
+    throw new Error("Invalid source recovery launcher output");
+  fs.fsyncSync(fd);
+} finally { fs.closeSync(fd); }
 fs.renameSync(scratch, target);
 try {
   const dirFd = fs.openSync(dir, "r");
@@ -1996,8 +2052,9 @@ try {
   UPDATE_LOCK_HELPER="$HOME/.local/lib/omnesis/update-lock.cjs"
   SOURCE_WRAPPER_EXPECTED_TMP="$(mktemp "$HOME/.local/bin/.omnesis-source-expected.XXXXXX")" || return 1
   chmod 600 "$SOURCE_WRAPPER_EXPECTED_TMP"
-  render_source_wrapper "$SOURCE_WRAPPER_ROOT" > "$SOURCE_WRAPPER_EXPECTED_TMP"
-  node -e '
+  for SOURCE_WRAPPER_FORMAT in current legacy; do
+    render_source_wrapper "$SOURCE_WRAPPER_ROOT" "$SOURCE_WRAPPER_FORMAT" > "$SOURCE_WRAPPER_EXPECTED_TMP" || return 1
+    if node -e '
 const fs = require("node:fs");
 const [candidate, expected] = process.argv.slice(1);
 try {
@@ -2005,7 +2062,11 @@ try {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) process.exit(1);
   if (!fs.readFileSync(candidate).equals(fs.readFileSync(expected))) process.exit(1);
 } catch { process.exit(1); }
-' "$SOURCE_WRAPPER" "$SOURCE_WRAPPER_EXPECTED_TMP"
+' "$SOURCE_WRAPPER" "$SOURCE_WRAPPER_EXPECTED_TMP"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 package_wrapper_parent_is_safe() {
@@ -2397,6 +2458,7 @@ install_source() {
     source_step_failed "$BUILD_STATUS" "The build" "The build failed — its error is above. Its dependencies were reinstalled from scratch first, so this is the code or this machine, not a half-finished earlier run. Fix the error above and re-run; it continues from the checkout it already made."
   SOURCE_ROOT="$(cd "$SOURCE_DIR" && pwd -P)"
   SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+  write_source_wrapper "$SOURCE_ROOT" installed
   write_source_update_state "complete" "$SOURCE_ROOT" "$SOURCE_COMMIT"
   kill "$INSTALL_UPDATE_HEARTBEAT_PID" >/dev/null 2>&1 || true
   wait "$INSTALL_UPDATE_HEARTBEAT_PID" 2>/dev/null || true
