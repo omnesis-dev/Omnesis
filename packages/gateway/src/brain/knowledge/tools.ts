@@ -519,10 +519,7 @@ export function buildKnowledgeTools(
       node.kind === "wiki" &&
       (!candidate || candidate.status !== "proposed")
     )
-      throw new KnowledgeStorageError(
-        "claim_invalid",
-        "A new wiki needs a reconciled proposed candidate",
-      );
+      publicationReads.refuseUnproposed(candidate?.id);
     if (context.batchId && context.engine && node.expectedRevision > 0)
       context.engine.preflightSaveNode(
         context.batchId,
