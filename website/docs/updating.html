@@ -493,7 +493,15 @@
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
                   are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote.
+                  one wrote. An OpenClaw or Hermes plugin that has followed a certificate renewal
+                  stops connecting when moved back to a release whose plugin pins the certificate;
+                  afterwards, run
+                  <code
+                    >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
+                    sha256:&lt;served&gt;</code
+                  >
+                  on its machine, with the fingerprint <code>omnesis tls status</code> shows on the
+                  gateway machine.
                 </td>
               </tr>
               <tr>
