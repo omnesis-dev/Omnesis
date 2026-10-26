@@ -369,16 +369,19 @@ describe("historical discovery: the history horizon", () => {
     );
     await bench.drainUntilQuiet();
     // A later admission proves the engine kept passing over the old history
-    // on a new day, rather than the assertions racing the first pass.
-    await bench.clock.advance(DAY);
-    const { now: later } = await bench.clock.now();
+    // on a new day, rather than the assertions racing the first pass. The
+    // late document is seeded before the day turns: the engine rests a source
+    // whose scan found nothing until the virtual clock moves, so a document
+    // written behind its back just after the turn could wait for a scan that
+    // never comes.
     seedHistory(bench, {
       id: ids.late,
       title: "Studio archive late",
       content: "Archived studio planning notes (late).",
-      at: later - 10 * DAY,
+      at: now + DAY - 10 * DAY,
       sourceId: SRC,
     });
+    await bench.clock.advance(DAY);
     await waitFor(
       "a later in-horizon admission",
       () => (admitted().includes(ids.late) ? true : null),

@@ -673,10 +673,22 @@ describe("brain bench: the morning brief", () => {
       surface: "conversation",
       conversationId: id,
     });
-    // An ordinary conversation is deletable.
-    const deleted = await bench.harness.gatewayFetch(`/agent/conversations/${id}`, {
-      method: "DELETE",
-    });
+    // An ordinary conversation is deletable. The reply is readable as soon as
+    // it is saved, a moment before its turn finishes settling (read state,
+    // spend); until then the gateway answers "still processing", which is a
+    // wait, not a refusal.
+    const deleted = await waitFor(
+      "the reply's turn to release the conversation",
+      async () => {
+        const response = await bench.harness.gatewayFetch(`/agent/conversations/${id}`, {
+          method: "DELETE",
+        });
+        if (response.status === 409 && (await response.clone().text()).includes("still processing"))
+          return null;
+        return response;
+      },
+      30_000,
+    );
     expect(deleted.status).toBe(200);
   }, 180_000);
 

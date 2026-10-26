@@ -82,6 +82,10 @@ async function startScenario(
     },
     behaviors: {
       dynamic: knowledgePuppet({
+        // A matter's documents are read by concurrent runs, so one run's
+        // outcome can be refused because another just wrote the outcome
+        // collection; it reads again instead of waiting a run backoff.
+        maxRevisionConflictRetries: 8,
         plan(item, ctx, steps) {
           if (item.source) {
             const matter = matterOf(item.source.title);
@@ -328,22 +332,30 @@ describe("a matter whose evidence does not fit the maintenance bound", () => {
     // exceeds the bound, so the invoice is never considered and the subject
     // has one usable document.
     for (const document of mooring) await bench.push(document);
+    // The mooring matter outranks the garden studio only once both of its
+    // documents have yielded an important outcome. Their runs race, and the
+    // invoice's is refused at its bound and retried on the run backoff, so
+    // the first report can count a single outcome. The studio arrives only
+    // after a report counts at least two, all of them the mooring's;
+    // otherwise its own runs race the mooring's retries.
     // Retried invoice plans may add outcomes, so only the lacking count is pinned.
     const report =
-      /Subject organization cohorts: none started; [1-9]\d* important outcome\(s\), [1-9]\d* without a page, in 1 subject\(s\); 0 waiting their retry, 0 passed over after a failed start, 1 with fewer than two considered documents/;
-    await waitFor("the subject report", () => report.exec(gatewayLog(bench)), 300_000).catch(
-      (error: unknown) => {
-        const lines = gatewayLog(bench)
-          .split("\n")
-          .filter((line) => /rganization cohort/.test(line));
-        throw new Error(`${String(error)}\n${lines.slice(-20).join("\n")}`);
-      },
-    );
+      /Subject organization cohorts: none started; ([2-9]|[1-9]\d+) important outcome\(s\), ([2-9]|[1-9]\d+) without a page, in 1 subject\(s\); 0 waiting their retry, 0 passed over after a failed start, 1 with fewer than two considered documents/;
+    await waitFor(
+      "the mooring matter to outrank",
+      () => (loops.mooring.length >= 2 ? report.exec(gatewayLog(bench)) : null),
+      300_000,
+    ).catch((error: unknown) => {
+      const lines = gatewayLog(bench)
+        .split("\n")
+        .filter((line) => /rganization cohort/.test(line));
+      throw new Error(
+        `${String(error)}; mooring outcomes planned: ${loops.mooring.length}\n${lines.slice(-20).join("\n")}`,
+      );
+    });
     for (const document of studio) await bench.push(document);
     // The invoice's maintenance stays pending behind the bound, so the queue never drains.
     await waitForPublishedSubject(bench, false, 480_000);
-    // The invoice's work is retried behind the bound, so its plan may run again.
-    expect(loops.mooring.length).toBeGreaterThanOrEqual(2);
     expect(loops.studio).toHaveLength(2);
     const cohorts = subjectCohorts(bench);
     expect(cohorts).toHaveLength(1);
