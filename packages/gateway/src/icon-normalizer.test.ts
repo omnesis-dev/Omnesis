@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer } from "node:http";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   _iconNormalizerCacheSize,
   _requestPinnedIconForTest,
@@ -297,6 +297,30 @@ describe("normalizeIcon", () => {
     const before = calls;
     await normalizeIcon("https://example.com/icon-0.png", fetcher, publicLookup);
     expect(calls).toBe(before + 1);
+  });
+
+  it("fetches no hosted icon in a spawned E2E gateway, but still converts data URIs", async () => {
+    vi.stubEnv("OMNESIS_E2E_DISABLE_ICON_FETCH", "1");
+    try {
+      let lookups = 0;
+      let fetches = 0;
+      const fetcher = (async () => {
+        fetches += 1;
+        return new Response(SAMPLE_SVG, { headers: { "content-type": "image/svg+xml" } });
+      }) as unknown as typeof fetch;
+      const lookup = async () => {
+        lookups += 1;
+        return publicLookup();
+      };
+      expect(await normalizeIcon("https://example.com/logo.svg", fetcher, lookup)).toBeNull();
+      expect(await normalizeIcon("http://example.com/logo.png", fetcher, lookup)).toBeNull();
+      expect(lookups).toBe(0);
+      expect(fetches).toBe(0);
+      expect(await normalizeIcon(SAMPLE_SVG_DATA_URI)).toMatch(/^data:image\/png;base64,/);
+      expect(await normalizeIcon(SAMPLE_PNG_DATA_URI)).toBe(SAMPLE_PNG_DATA_URI);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("does NOT memoize failures (allows retry on next push)", async () => {

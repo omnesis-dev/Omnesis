@@ -56,6 +56,12 @@ describe("e2eGatewayEnv", () => {
     });
   });
 
+  test("always suppresses the gateway's hosted icon fetches", () => {
+    expect(e2eGatewayEnv({ OMNESIS_E2E_DISABLE_ICON_FETCH: "0" })).toMatchObject({
+      OMNESIS_E2E_DISABLE_ICON_FETCH: "1",
+    });
+  });
+
   test("launches tsx through Node without an npx wrapper", () => {
     const command = e2eTsxCommand("packages/gateway/src/index.ts");
 

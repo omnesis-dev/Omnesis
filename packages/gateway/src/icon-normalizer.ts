@@ -84,6 +84,19 @@ function memoSet(key: string, value: Promise<string | null>): void {
   }
 }
 
+/**
+ * Spawned E2E gateways never fetch a hosted icon, so a test run stays
+ * hermetic. Every source meta push waits for its icons, one fetch at a time
+ * per source, and each fetch may take up to `FETCH_TIMEOUT_MS`: one stalled
+ * third-party host held every synthetic gateway boot for 30 s per pass and
+ * timed out the suites that boot one in a 60 s hook. A hosted icon then
+ * normalises to null, which leaves the stored icon as it was — exactly what a
+ * failed fetch does. Embedded data URIs are still converted.
+ */
+function hostedIconFetchDisabled(): boolean {
+  return process.env.OMNESIS_E2E_DISABLE_ICON_FETCH === "1";
+}
+
 /** Drop the in-process URL → PNG-data-URI cache. Test-only. */
 export function _resetIconNormalizerCache(): void {
   memo.clear();
@@ -123,6 +136,7 @@ export async function normalizeIcon(
     return await normalizeDataUri(trimmed);
   }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    if (hostedIconFetchDisabled()) return null;
     return normalizeUrl(trimmed, fetcher, lookup);
   }
   // Legacy raw base64 PNG (no prefix). Wrap with the canonical PNG prefix
