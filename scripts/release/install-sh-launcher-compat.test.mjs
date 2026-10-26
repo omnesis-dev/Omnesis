@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -30,8 +38,10 @@ const functions = [
 ]
   .map(definition)
   .join("\n");
-function fixture({ reserved = true } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "source-family-"));
+function fixture({ reserved = true, temporaryRoot = tmpdir() } = {}) {
+  // The installer records pwd -P paths; macOS TMPDIR can begin with /var,
+  // whose physical path begins with /private/var. Match that contract here.
+  const dir = realpathSync(mkdtempSync(join(temporaryRoot, "source-family-")));
   scratch.push(dir);
   const root = join(dir, reserved ? "source #with?owner's path" : "source with owner's path"),
     home = join(dir, "home"),
@@ -244,7 +254,17 @@ test("migration recognizes exact known families without executing mutable instal
   for (const family of ["legacy", "current"]) {
     const canonical = render(f, family);
     writeFileSync(f.launcher, canonical);
-    expect(run(f, "source_wrapper_is_installer_owned").status).toBe(0);
+    const recognized = run(f, "source_wrapper_is_installer_owned");
+    expect(
+      recognized.status,
+      JSON.stringify({
+        family,
+        root: f.root,
+        physicalRoot: realpathSync(f.root),
+        stdout: recognized.stdout,
+        stderr: recognized.stderr,
+      }),
+    ).toBe(0);
     writeFileSync(f.launcher, canonical + "# user-managed change\n");
     expect(run(f, "source_wrapper_is_installer_owned").status).not.toBe(0);
   }
@@ -306,4 +326,26 @@ test("module stdout cannot corrupt the final launcher or complete the install", 
   expect(result.stderr).toContain("Invalid source recovery launcher output");
   expect(readFileSync(state, "utf8")).toBe("applying");
   expect(readFileSync(f.launcher, "utf8")).toBe(legacy);
+});
+
+test("an aliased temporary parent produces physical fixture paths accepted by migration", () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "source-family-alias-")));
+  scratch.push(parent);
+  const physical = join(parent, "physical");
+  const alias = join(parent, "alias");
+  mkdirSync(physical);
+  symlinkSync(physical, alias, "dir");
+  const f = fixture({ temporaryRoot: alias });
+  expect(f.dir.startsWith(physical + "/")).toBe(true);
+  expect(f.dir).toBe(realpathSync(f.dir));
+  expect(f.root).toBe(realpathSync(f.root));
+  managed(f);
+  for (const family of ["legacy", "current"]) {
+    writeFileSync(f.launcher, render(f, family));
+    const result = run(f, "source_wrapper_is_installer_owned");
+    expect(
+      result.status,
+      JSON.stringify({ family, root: f.root, stdout: result.stdout, stderr: result.stderr }),
+    ).toBe(0);
+  }
 });
