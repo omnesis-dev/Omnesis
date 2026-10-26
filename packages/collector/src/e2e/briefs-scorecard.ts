@@ -252,6 +252,31 @@ export async function pushArcDoc(
   });
 }
 
+/**
+ * Land several pushes while background dispatch is paused, so the Brain's
+ * maintenance tick admits them together: edits that arrive while a source's
+ * change work is still pending fold into that work. Document ingest is
+ * realtime priority and proceeds while paused. Dispatch always resumes.
+ */
+export async function pushEditsTogether(
+  h: SyntheticE2EHarness,
+  push: () => Promise<void>,
+): Promise<void> {
+  const paused = await h.gatewayJson<{ paused: boolean }>("/admin/background/pause", {
+    method: "POST",
+  });
+  if (!paused.paused) throw new Error("background dispatch did not pause");
+  let resumed: { paused: boolean };
+  try {
+    await push();
+  } finally {
+    resumed = await h.gatewayJson<{ paused: boolean }>("/admin/background/resume", {
+      method: "POST",
+    });
+  }
+  if (resumed.paused) throw new Error("background dispatch did not resume");
+}
+
 // ── the daily datum mix ─────────────────────────────────────────────────────
 
 /**
@@ -528,9 +553,14 @@ async function deliverArcSet(
       );
       const createdRunIds = new Set(runsForDoc(db, docId).map((r) => r.id));
       await opts.guard?.reserve(`${doc.externalId}#updated`);
-      // Both edits inside the update debounce → ONE folded updated run.
-      await pushArcDoc(harness, doc, { content: rev1 });
-      await pushArcDoc(harness, doc, { content: rev2 });
+      // Both edits land while the first one's change work is still pending →
+      // ONE folded updated run. Background dispatch (the maintenance tick that
+      // admits and batches change work) is held while they land, so a slow
+      // second push cannot miss the fold window; ingest is realtime.
+      await pushEditsTogether(harness, async () => {
+        await pushArcDoc(harness, doc, { content: rev1 });
+        await pushArcDoc(harness, doc, { content: rev2 });
+      });
       const all = await waitForCompletedRuns(
         db,
         docId,
