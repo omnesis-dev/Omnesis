@@ -1422,13 +1422,14 @@ describe("planHostUpdate", () => {
     ).toEqual(["backup", "apply", "restart:gateway", "await-health", "restart:collector"]);
   });
 
-  test("a build short of memory stops a supervised collector for the apply, and nothing else", () => {
-    const tight = { backup: true, pauseCollectorForBuild: true };
+  test("a build short of memory stops the supervised daemons it restarts, after the backup", () => {
+    const tight = { backup: true, pauseDaemonsForBuild: true };
     expect(
       kinds(planHostUpdate(roles({ gateway: supervised, collector: supervised }), tight)),
     ).toEqual([
       "backup",
       "pause-collector",
+      "pause-gateway",
       "apply",
       "restart:gateway",
       "await-health",
@@ -1455,6 +1456,20 @@ describe("planHostUpdate", () => {
     expect(kinds(planHostUpdate(roles({ collector: supervised }), { backup: true }))).not.toContain(
       "pause-collector",
     );
+    // A gateway already stopped, or root's hardened one, is not stopped again.
+    for (const gateway of [
+      { ...supervised, stopped: true },
+      { ...supervised, hardened: { adminInstalled: true } },
+    ]) {
+      expect(kinds(planHostUpdate(roles({ gateway }), tight))).not.toContain("pause-gateway");
+    }
+    expect(kinds(planHostUpdate(roles({ gateway: supervised }), tight))).toEqual([
+      "backup",
+      "pause-gateway",
+      "apply",
+      "restart:gateway",
+      "await-health",
+    ]);
   });
 
   test("a daemon known to run the installed build is owed no restart hint", () => {

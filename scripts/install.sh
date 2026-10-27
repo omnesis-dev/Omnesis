@@ -5909,6 +5909,30 @@ WRAPPER_EOF
   esac
 }
 
+# Building the images needs about this much free where Docker keeps them: the
+# workspace install, its compiled closure and every image's layers land there
+# together, and a builder that runs out fails while exporting an image, with a
+# containerd mount error that does not say the disk is full. Measured: a 20 GB
+# Ubuntu host with about 15 GB free failed exporting the first image; one with
+# about 31 GB free built all three. OMNESIS_DOCKER_BUILD_DISK_GB states another
+# requirement, 0 to skip the check.
+DOCKER_BUILD_DISK_GB="${OMNESIS_DOCKER_BUILD_DISK_GB:-25}"
+
+# Refuse a --build whose Docker storage cannot hold it, before anything is
+# written. A daemon whose storage this shell cannot see (Docker Desktop's VM, a
+# remote context) is not checked.
+docker_require_build_disk() {
+  [ "$DOCKER_BUILD_FLAG" = 1 ] || return 0
+  case "$DOCKER_BUILD_DISK_GB" in ''|*[!0-9]*|0) return 0 ;; esac
+  BUILD_DISK_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [ -n "$BUILD_DISK_ROOT" ] && [ -d "$BUILD_DISK_ROOT" ] || return 0
+  BUILD_DISK_KB="$(df -Pk "$BUILD_DISK_ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  case "$BUILD_DISK_KB" in ''|*[!0-9]*) return 0 ;; esac
+  BUILD_DISK_FREE_GB=$((BUILD_DISK_KB / 1048576))
+  [ "$BUILD_DISK_FREE_GB" -lt "$DOCKER_BUILD_DISK_GB" ] || return 0
+  fail "Building the images needs about ${DOCKER_BUILD_DISK_GB} GB free where Docker stores them ($BUILD_DISK_ROOT), and it has ${BUILD_DISK_FREE_GB} GB. Free space (\`docker builder prune\` removes build cache) or grow the disk, then re-run. Nothing was built. OMNESIS_DOCKER_BUILD_DISK_GB=0 skips this check."
+}
+
 # Bring the images onto this host. Pulling is the normal path — they are built
 # and published per release, so nothing here compiles anything. A pull the
 # registry refuses stops the install and names `--build`, rather than silently
@@ -6118,6 +6142,7 @@ docker_install() {
   docker_warn_native_install
   docker_resolve_tag
   docker_resolve_build_context
+  docker_require_build_disk
   docker_preflight_images
   docker_validate_topology_transition
   docker_prepare_dirs

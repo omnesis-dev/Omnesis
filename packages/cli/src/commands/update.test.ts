@@ -2941,7 +2941,7 @@ describe("rolling back a failed update", () => {
       ]);
     });
 
-    test("the plan names the stopped collector, before the apply", async () => {
+    test("the plan names the stopped collector and gateway, before the apply", async () => {
       const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
       await updateSourceCheckout(
         { rootDir, edge: false, dryRun: true },
@@ -2951,14 +2951,15 @@ describe("rolling back a failed update", () => {
         }),
       );
       const plan = logged.slice(logged.indexOf("This host will:") + 1, -3);
-      expect(plan.slice(0, 3)).toEqual([
+      expect(plan.slice(0, 4)).toEqual([
         "  - back up the gateway's databases through its API",
         "  - stop the collector while the build runs, so the build has this machine's memory, and start it again after",
+        "  - stop the gateway while the build runs, so the build has this machine's memory; it is down until its restart",
         "  - move this installation to v0.3.0",
       ]);
     });
 
-    test("the collector is stopped for the build and its own restart brings it back; the gateway serves on", async () => {
+    test("both daemons are stopped for the build and their own restarts bring them back", async () => {
       const { events, runner, services } = recording([...preflight, clean, clean, clean]);
       await source(
         makeDeps(runner, {
@@ -2970,6 +2971,7 @@ describe("rolling back a failed update", () => {
       expect(events).toEqual([
         "git fetch --no-tags origin refs/tags/v0.3.0:refs/tags/v0.3.0",
         "stop collector",
+        "stop gateway",
         "git checkout --detach v0.3.0",
         "npm ci",
         "npm run build",
@@ -2978,6 +2980,38 @@ describe("rolling back a failed update", () => {
       ]);
       expect(services.startService).not.toHaveBeenCalled();
       expect(output()).toContain("Stopping the collector while the build runs");
+      expect(output()).toContain("Stopping the gateway while the build runs");
+    });
+
+    test("a gateway stopped for a build that fails is rebuilt stopped, then restarted on the previous one", async () => {
+      const { events, runner, services } = recording([
+        ...preflight,
+        clean,
+        clean,
+        killedBuild,
+        ...rollback,
+      ]);
+      await expect(
+        source(
+          makeDeps(runner, {
+            roles: hostRoles({ gateway: supervised, collector: supervised }),
+            buildMemoryTight: () => true,
+            ...services,
+          }),
+        ),
+      ).rejects.toMatchObject({ message: expect.stringContaining("Rolled back") });
+      expect(events.slice(1)).toEqual([
+        "stop collector",
+        "stop gateway",
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "npm run build",
+        `git checkout --detach ${previousRef}`,
+        "npm ci",
+        "npm run build",
+        "restart gateway",
+        "start collector",
+      ]);
     });
 
     test("a collector no step restarts is started again once the build is in place", async () => {

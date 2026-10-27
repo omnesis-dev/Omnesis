@@ -666,9 +666,9 @@ class StoppedForBuild {
     this.held = true;
   }
 
-  async startAll(): Promise<void> {
+  async startAll(pick: (component: ServiceComponent) => boolean = () => true): Promise<void> {
     if (this.held || !this.deps.startService) return;
-    for (const component of this.components) {
+    for (const component of this.components.filter(pick)) {
       this.stopped.delete(component);
       try {
         await this.deps.startService(component);
@@ -707,6 +707,8 @@ function describeStep(step: UpdateStep, targetLabel: string): string {
         : "back up the gateway's databases through its API";
     case "pause-collector":
       return "stop the collector while the build runs, so the build has this machine's memory, and start it again after";
+    case "pause-gateway":
+      return "stop the gateway while the build runs, so the build has this machine's memory; it is down until its restart";
     case "apply":
       return `move this installation to ${targetLabel}`;
     case "service-definition":
@@ -1110,7 +1112,9 @@ async function executeHostPlan(
   const applyState = applyPlan.apply.length > 0 || phase.applied ? applyPlan.applyState : undefined;
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
-  const pausedForBuild = steps.some((step) => step.kind === "pause-collector");
+  const pausedForBuild = steps.some(
+    (step) => step.kind === "pause-collector" || step.kind === "pause-gateway",
+  );
   let dependencyInstallIncomplete = false;
   const rollBack = (
     reason: string,
@@ -1190,6 +1194,14 @@ async function executeHostPlan(
               "it starts again once the new build is in place.",
           );
           await daemons.stop("collector");
+          break;
+        }
+        case "pause-gateway": {
+          console.log(
+            "Stopping the gateway while the build runs, so the build has this machine's memory; " +
+              "it is down until it restarts on the new build.",
+          );
+          await daemons.stop("gateway");
           break;
         }
         case "backup": {
@@ -1314,15 +1326,15 @@ async function executeHostPlan(
               ? `${c.green}✔${c.reset} Already on ${targetLabel}.`
               : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
           );
-          // A collector no later step restarts comes back once the build is in place.
-          if (
-            !steps.some(
-              (later, at) =>
-                at > index && later.kind === "restart" && later.component === "collector",
-            )
-          ) {
-            await daemons.startAll();
-          }
+          // A daemon no later step restarts comes back once the build is in
+          // place; one that a later step restarts waits for that step.
+          await daemons.startAll(
+            (component) =>
+              !steps.some(
+                (later, at) =>
+                  at > index && later.kind === "restart" && later.component === component,
+              ),
+          );
           if (index === commitIndex) commit();
           if (phase.offer && deps.continueAfterApply && applyPlan.apply.length > 0) {
             release?.();
@@ -2059,7 +2071,7 @@ export async function updateSourceCheckout(
       backup: opts.backup !== false,
       restart: deps.restart,
       serviceDefinitions: deps.serviceDefinitions !== undefined,
-      pauseCollectorForBuild: deps.buildMemoryTight?.() === true,
+      pauseDaemonsForBuild: deps.buildMemoryTight?.() === true,
     });
     // A preview fetches nothing, so an edge target's manifest version is not
     // known here and its preview shows the order without a hand-over.
@@ -2250,7 +2262,7 @@ export async function updateSourceCheckout(
   const alreadyOnTarget = evidence.complete;
   const planned = planHostUpdate(deps.roles, {
     backup: opts.backup !== false && !alreadyOnTarget,
-    pauseCollectorForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
+    pauseDaemonsForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
     restart: deps.restart,
     serviceDefinitions: deps.serviceDefinitions !== undefined,
     ...(alreadyOnTarget ? { runningBuild: await runningBuilds(deps) } : {}),

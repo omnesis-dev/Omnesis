@@ -39,6 +39,12 @@ FROM workspace-install AS runtime-build
 COPY scripts/release/ scripts/release/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/seeded-state/ scripts/seeded-state/
+# Node settles its heap near 2 GB on a small builder, and `tsc --build` across
+# the runtime closure outgrows that and dies with a heap OOM. This is the floor
+# the source installer and `omnesis update` give the same build
+# (packages/cli/src/update/build-heap.ts); a builder short of memory pages
+# rather than failing. `--build-arg NODE_OPTIONS=...` replaces it.
+ARG NODE_OPTIONS=--max-old-space-size=3072
 RUN node scripts/runtime/stage-runtime.mjs --build \
       --package omnesis --out /opt/omnesis-runtime
 

@@ -59,7 +59,7 @@ const PAIRING_CODE = "R4TN8W2QJ6";
 const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
-  info) exit 0 ;;
+  info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf 'unix:///var/run/docker.sock\\n'; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
@@ -1178,6 +1178,27 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(composeAt(run)).toContain("target: gateway-runtime");
     expect(composeAt(run)).toContain("target: collector-runtime");
     expect(composeAt(run)).toContain("target: updater");
+  });
+
+  test("--build is refused before any build when Docker's storage is short of space", () => {
+    // The requirement is stated rather than the disk faked: the real df reads
+    // this run's own directory, which can hold 1 GB and cannot hold a petabyte.
+    const short = runInstaller("build-disk-short", [...QUIET, "--build"], {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_BUILD_DISK_GB: "1000000",
+    });
+    expect(short.status).not.toBe(0);
+    expect(short.output).toContain(
+      `Building the images needs about 1000000 GB free where Docker stores them (${repoRoot})`,
+    );
+    expect(short.output).toContain("Nothing was built.");
+    expect(short.docker.some((call) => call.includes("--profile update build"))).toBe(false);
+    const roomy = runInstaller("build-disk-roomy", [...QUIET, "--build"], {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_BUILD_DISK_GB: "1",
+    });
+    expect(roomy.status).toBe(0);
+    expect(roomy.docker.some((call) => call.includes("--profile update build"))).toBe(true);
   });
 
   test("--dry-run --build names the checkout and performs no Docker work", () => {
