@@ -210,7 +210,7 @@ export async function runReverificationSweepPass(
   while (candidates.length > 0 && enqueued < maxPerSweep) {
     const store = candidates[0]!.store;
     const ids: string[] = [];
-    for (let i = 0; i < candidates.length && ids.length < batchSize; ) {
+    for (let i = 0; i < candidates.length && ids.length < batchSize;) {
       if (candidates[i]!.store === store) {
         ids.push(candidates[i]!.id);
         candidates.splice(i, 1);

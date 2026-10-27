@@ -162,10 +162,9 @@ describe("an explicit document delete through deleteDocumentForUser", () => {
     );
     upsertDocuments(db, [buildOpenLoopDocumentInput(loop, [])]);
     const row = db
-      .prepare<
-        [string],
-        { source_id: string; provider_id: string }
-      >("SELECT source_id, provider_id FROM documents WHERE external_id = ?")
+      .prepare<[string], { source_id: string; provider_id: string }>(
+        "SELECT source_id, provider_id FROM documents WHERE external_id = ?",
+      )
       .get("olp_1");
     expect(row).toEqual({ source_id: OPEN_LOOP_SOURCE_ID, provider_id: "system" });
   });

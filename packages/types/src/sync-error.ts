@@ -11,12 +11,7 @@ import type { FailureScope, QuotaBucket } from "./failure-scope.js";
  * legacy throw paths.
  */
 export type SyncErrorKind =
-  | "auth"
-  | "network"
-  | "rate-limit"
-  | "permission"
-  | "transient"
-  | "unknown";
+  "auth" | "network" | "rate-limit" | "permission" | "transient" | "unknown";
 
 export interface SyncErrorOptions {
   /** Minimum delay before a retry would be useful (e.g. Retry-After). */

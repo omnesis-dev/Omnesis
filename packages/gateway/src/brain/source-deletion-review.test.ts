@@ -187,19 +187,17 @@ function seedArtifacts(doomed: string, kept: string): void {
 
 function temporalInvalidatedAt(): number | null {
   return db
-    .prepare<
-      [],
-      { invalidated_at: number | null }
-    >("SELECT invalidated_at FROM temporal_annotations WHERE id = 'tan_friday'")
+    .prepare<[], { invalidated_at: number | null }>(
+      "SELECT invalidated_at FROM temporal_annotations WHERE id = 'tan_friday'",
+    )
     .get()!.invalidated_at;
 }
 
 function reviewQueue(): Array<{ kind: string; owner_id: string; operation: string }> {
   return db
-    .prepare<
-      [],
-      { kind: string; owner_id: string; operation: string }
-    >("SELECT kind, owner_id, operation FROM knowledge_owner_changes ORDER BY kind, owner_id")
+    .prepare<[], { kind: string; owner_id: string; operation: string }>(
+      "SELECT kind, owner_id, operation FROM knowledge_owner_changes ORDER BY kind, owner_id",
+    )
     .all();
 }
 
@@ -241,10 +239,9 @@ function expectKeptForReview(doomed: string, kept: string): void {
     kept,
   ]);
   const subject = db
-    .prepare<
-      [string],
-      { invalidated_at: number | null; verification_state: string }
-    >("SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?")
+    .prepare<[string], { invalidated_at: number | null; verification_state: string }>(
+      "SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?",
+    )
     .get("ann_subject");
   expect(subject).toEqual({ invalidated_at: null, verification_state: "unverified" });
   const person = getPersonAnnotation(db, "pan_plumber")!;

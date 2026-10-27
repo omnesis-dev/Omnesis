@@ -330,8 +330,7 @@ export interface RecordDisplaySpec {
  * a provider that adds a new enum value must not silently drop the row's fact.
  */
 export type MappedProjectionField<T extends string, Ref extends string = string> =
-  | T
-  | { from: Ref; map: Record<string, T>; default: T };
+  T | { from: Ref; map: Record<string, T>; default: T };
 
 /**
  * Deterministic temporal fact projected from one record.

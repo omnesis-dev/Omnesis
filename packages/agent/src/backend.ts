@@ -163,8 +163,7 @@ export type ChatMessage =
   | { role: "assistant"; parts: ReadonlyArray<AssistantPart> };
 
 export type UserPart =
-  | { kind: "text"; text: string }
-  | { kind: "tool_result"; toolCallId: string; result: ToolResult };
+  { kind: "text"; text: string } | { kind: "tool_result"; toolCallId: string; result: ToolResult };
 
 export type AssistantPart =
   | { kind: "text"; text: string }

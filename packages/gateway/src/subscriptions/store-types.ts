@@ -159,8 +159,7 @@ export type RecordSubscriptionPrivacyReviewMutation =
     });
 
 export type RecordSubscriptionPrivacyReviewMutationResult =
-  | { outcome: "recorded" }
-  | ResolveSubscriptionApprovalMutationResult;
+  { outcome: "recorded" } | ResolveSubscriptionApprovalMutationResult;
 
 export interface RevokeSubscriptionMutation {
   subscriptionId: string;
@@ -237,12 +236,7 @@ export interface SubscriptionEvaluationDetail {
 }
 
 export type SubscriptionEvaluationStatus =
-  | "pending"
-  | "evaluating"
-  | "matched"
-  | "not_matched"
-  | "retry"
-  | "failed";
+  "pending" | "evaluating" | "matched" | "not_matched" | "retry" | "failed";
 
 /**
  * Operator-facing record of one candidate judgment: what the prefilter
@@ -410,8 +404,7 @@ export interface IssueSubscriptionFiringOutcomeAuthorityMutation {
 }
 
 export type IssueSubscriptionFiringOutcomeAuthorityMutationResult =
-  | { outcome: "issued"; firingId: string }
-  | { outcome: "not_found" | "token_unavailable" };
+  { outcome: "issued"; firingId: string } | { outcome: "not_found" | "token_unavailable" };
 
 export interface RecordSubscriptionFiringOutcomeMutation {
   tokenId: string;
@@ -520,9 +513,7 @@ export type FinalizeSubscriptionFiringAnswerEgressMutationResult =
   | { outcome: "recorded"; egress: RecordedAnswerEgress }
   | {
       outcome:
-        | SubscriptionFiringAnswerAuthorityRejection
-        | "task_scope_mismatch"
-        | "task_unreleased";
+        SubscriptionFiringAnswerAuthorityRejection | "task_scope_mismatch" | "task_unreleased";
     };
 
 export interface SettleSubscriptionEvaluationMutation {
@@ -542,8 +533,7 @@ export type SettleSubscriptionEvaluationMutationResult =
   | Exclude<FireSubscriptionMutationResult, { outcome: "fired" | "duplicate" }>;
 
 export type RevokeSubscriptionMutationResult =
-  | { outcome: "revoked"; subscription: SubscriptionDetail }
-  | { outcome: "not_found" };
+  { outcome: "revoked"; subscription: SubscriptionDetail } | { outcome: "not_found" };
 
 export interface StoredSubscriptionRow {
   id: string;

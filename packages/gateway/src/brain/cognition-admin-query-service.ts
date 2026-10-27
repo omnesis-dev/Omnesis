@@ -420,10 +420,9 @@ export class CognitionAdminQueryService {
   decisionInput(id: string) {
     return this.db.transaction(() => {
       const decision = this.db
-        .prepare<
-          [string],
-          { documentId: string | null; subjectDocumentId: string | null }
-        >("SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?")
+        .prepare<[string], { documentId: string | null; subjectDocumentId: string | null }>(
+          "SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?",
+        )
         .get(id);
       if (!decision) throw new NotFoundError("Decision not found");
       const readable = areDecisionSourcesReadable(this.db, decision);

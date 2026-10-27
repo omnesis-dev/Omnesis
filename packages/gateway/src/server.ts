@@ -156,6 +156,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
 import type { AgentCertificateTrust } from "./tls-lifecycle/agent-trust.js";
@@ -337,6 +338,8 @@ export function createServer(
       present: boolean;
       modelsDir: string;
     };
+    /** Semantic-search state against the memory budget, on `/index/stats` and in the doctor. */
+    getSemanticSearch?: () => SemanticSearchStatus | null;
     /**
      * Indexer worker readiness. Used by the portal's search view.
      */
@@ -1382,6 +1385,7 @@ export function createServer(
       indexerModel: opts?.indexerModel,
       indexerReadiness: opts?.indexerReadiness,
       getIndexRate: opts?.indexerControl?.getIndexRate,
+      getSemanticSearch: opts?.getSemanticSearch,
     },
     getSystemInfo: opts?.getSystemInfo,
     getInferenceOverview: opts?.getInferenceOverview,
@@ -1820,6 +1824,7 @@ export function createServer(
     indexerModel: opts?.indexerModel,
     indexerControl: opts?.indexerControl,
     indexerReadiness: opts?.indexerReadiness,
+    getSemanticSearch: opts?.getSemanticSearch,
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.

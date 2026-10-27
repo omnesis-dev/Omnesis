@@ -137,18 +137,16 @@ function comparePeopleCounts(db: Db): void {
   for (;;) {
     let t = Date.now();
     const oldRows = db
-      .prepare<
-        [string, number],
-        { person_id: string; doc_count: number; alias_count: number }
-      >(REFERENCE_PEOPLE_COUNTS_SQL)
+      .prepare<[string, number], { person_id: string; doc_count: number; alias_count: number }>(
+        REFERENCE_PEOPLE_COUNTS_SQL,
+      )
       .all(cursor, batch);
     referenceMs += Date.now() - t;
     t = Date.now();
     const newRows = db
-      .prepare<
-        [string, number],
-        { person_id: string; doc_count: number; alias_count: number }
-      >(peopleCountsChunkSql())
+      .prepare<[string, number], { person_id: string; doc_count: number; alias_count: number }>(
+        peopleCountsChunkSql(),
+      )
       .all(cursor, batch);
     gatewayMs += Date.now() - t;
 
@@ -181,10 +179,9 @@ function comparePeopleCounts(db: Db): void {
 
 function compareInteractionScores(db: Db): void {
   const self = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   if (!self) {
     report("C5 interaction scores", true, "no self person on this corpus — nothing to compare");
@@ -455,10 +452,9 @@ function runDfPipeline(db: Db, mode: "reference" | "gateway", outPath: string): 
     clearInterval(timer);
     const staged = new Database(stagingPath, { readonly: true });
     rows = staged
-      .prepare<
-        [number],
-        { shingle: string; df: number }
-      >("SELECT shingle, df FROM df WHERE df >= ?")
+      .prepare<[number], { shingle: string; df: number }>(
+        "SELECT shingle, df FROM df WHERE df >= ?",
+      )
       .all(2);
     staged.close();
     rmSync(stagingPath, { force: true });

@@ -8,9 +8,11 @@ import {
   E2E_SHARDS,
   EMBEDDER_E2E,
   LANES,
+  MACOS_LANES,
   e2eMatrix,
   fullScope,
   planScope,
+  pullRequestFullScope,
   pullRequestScope,
   staticTargets,
 } from "./ci-scope.mjs";
@@ -24,6 +26,7 @@ function scopeOf(files) {
 }
 
 const lanesOf = (scope) => LANES.filter((lane) => scope[lane] === "true").sort();
+const linuxLanes = LANES.filter((lane) => !MACOS_LANES.includes(lane)).sort();
 const shardFiles = (scope) =>
   JSON.parse(scope.e2e_matrix).flatMap((shard) => shard.files.split(" "));
 
@@ -95,16 +98,43 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     ["the planner", "scripts/nx/bundles.mjs"],
     ["the check runner", "scripts/run-e2e.mjs"],
     ["an unsupported path", "unknown-root-file.txt"],
-  ])("%s runs everything", (_label, file) => {
+  ])("%s runs every Linux lane and no macOS lane", (_label, file) => {
     const scope = scopeOf(["docs/conventions.md", file]);
     expect(scope.scope).toBe("full");
-    expect(lanesOf(scope)).toEqual([...LANES].sort());
+    expect(lanesOf(scope)).toEqual(linuxLanes);
     expect(scope.projects).toBe("");
+    expect(JSON.parse(scope.e2e_matrix)).toHaveLength(E2E_SHARDS);
   });
 
-  test("a planner failure runs everything", () => {
-    const failed = fullScope("the affected plan could not be computed: boom");
-    expect(lanesOf(failed)).toEqual([...LANES].sort());
+  test.each([
+    ["ios/Sources/Omnesis/App.swift", ["apple"]],
+    ["android/app/src/main/java/dev/omnesis/Ui.kt", ["android_render"]],
+    ["scripts/install.sh", ["installer_coverage", "node_macos"]],
+    ["packages/providers/apple-notes/src/index.ts", ["node_macos"]],
+  ])("a core change beside %s still runs the macOS lanes that cover it", (file, lanes) => {
+    const scope = scopeOf(["packages/core/src/index.ts", file]);
+    expect(scope.scope).toBe("full");
+    expect(lanesOf(scope)).toEqual([...linuxLanes, ...lanes].sort());
+  });
+
+  test("a planner failure runs every Linux lane, and the macOS lanes by path", () => {
+    const failed = pullRequestFullScope("the affected plan could not be computed: boom", [
+      "packages/gateway/src/index.ts",
+    ]);
+    expect(failed.scope).toBe("full");
+    expect(lanesOf(failed)).toEqual(linuxLanes);
+    const ios = pullRequestFullScope("boom", ["ios/Sources/Omnesis/App.swift"]);
+    expect(lanesOf(ios)).toEqual([...linuxLanes, "apple"].sort());
+    // Without a file list nothing says a macOS lane is unneeded, so they run.
+    expect(lanesOf(pullRequestFullScope("boom", null))).toEqual([...LANES].sort());
+    expect(lanesOf(fullScope("boom"))).toEqual([...LANES].sort());
+  });
+
+  test("the macOS lanes are exactly the lanes that take a macOS runner", () => {
+    expect([...MACOS_LANES].sort()).toEqual(
+      ["android_render", "apple", "installer_coverage", "node_macos"].sort(),
+    );
+    for (const lane of MACOS_LANES) expect(LANES).toContain(lane);
   });
 
   test.each([

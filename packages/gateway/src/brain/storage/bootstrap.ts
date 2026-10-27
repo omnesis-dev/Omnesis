@@ -312,10 +312,9 @@ export const BOOTSTRAP_TERMINAL_READMISSIONS = 3;
  */
 function countFailedBootstrapRuns(db: Db, docId: string): number {
   return db
-    .prepare<
-      [string],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ? AND status = 'failed'")
+    .prepare<[string], { n: number }>(
+      "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ? AND status = 'failed'",
+    )
     .get(`${BOOTSTRAP_DEDUPE_PREFIX}${docId}`)!.n;
 }
 
@@ -341,9 +340,9 @@ export function readmitFailedBootstrapDoc(db: Db, docId: string): boolean {
     return false;
   }
   const info = db
-    .prepare<
-      [string]
-    >("UPDATE documents SET bootstrap_processed_at = NULL WHERE id = ? AND bootstrap_processed_at IS NOT NULL")
+    .prepare<[string]>(
+      "UPDATE documents SET bootstrap_processed_at = NULL WHERE id = ? AND bootstrap_processed_at IS NOT NULL",
+    )
     .run(docId);
   return info.changes > 0;
 }

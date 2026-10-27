@@ -489,7 +489,9 @@ describe("AnswerService", () => {
       .prepare<
         [string],
         { integration_device_id: string; native_conversation_id: string; status: string }
-      >("SELECT integration_device_id, native_conversation_id, status FROM answer_completion_deliveries WHERE task_id = ?")
+      >(
+        "SELECT integration_device_id, native_conversation_id, status FROM answer_completion_deliveries WHERE task_id = ?",
+      )
       .get(response.taskId);
     expect(delivery, "a held answer was created with nothing scheduled to deliver it").toEqual({
       integration_device_id: "device_fictional",
@@ -507,10 +509,9 @@ describe("AnswerService", () => {
     expect(response.status).toBe("approval_required");
     expect(
       db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM answer_completion_deliveries WHERE task_id = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT COUNT(*) AS count FROM answer_completion_deliveries WHERE task_id = ?",
+        )
         .get(response.taskId),
     ).toEqual({ count: 0 });
   });
@@ -920,10 +921,9 @@ describe("AnswerService", () => {
         ) {
           injectedFiring = true;
           const workflowId = db
-            .prepare<
-              [string],
-              { workflow_id: string }
-            >("SELECT workflow_id FROM answer_tasks WHERE id = ?")
+            .prepare<[string], { workflow_id: string }>(
+              "SELECT workflow_id FROM answer_tasks WHERE id = ?",
+            )
             .get(input.taskId)!.workflow_id;
           db.prepare(
             `INSERT INTO subscription_workflow_disclosure
@@ -1524,10 +1524,9 @@ describe("AnswerService", () => {
     expect(candidateCalls).toBe(2);
 
     const conversationId = db
-      .prepare<
-        [string],
-        { conversation_id: string }
-      >("SELECT conversation_id FROM answer_tasks WHERE client_request_id = ?")
+      .prepare<[string], { conversation_id: string }>(
+        "SELECT conversation_id FROM answer_tasks WHERE client_request_id = ?",
+      )
       .get("capacity-retry")?.conversation_id;
     expect(conversationId).toBeTypeOf("string");
     const failed = listPrivacyAuditEvents(db, conversationId!, 20)?.events.at(-1);

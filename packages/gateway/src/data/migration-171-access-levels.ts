@@ -396,10 +396,9 @@ function nameKey(name: string): string {
 function tableExists(db: Db, name: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
       .get(name) !== undefined
   );
 }

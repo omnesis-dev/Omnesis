@@ -24,8 +24,7 @@ class FakeWorker implements WhisperWorkerProcess {
   readonly requests: WhisperRequestHeader[] = [];
   private messageHandler: ((msg: WhisperWorkerMessage) => void) | null = null;
   private exitHandler:
-    | ((info: { code: number | null; signal: string | null; error?: Error }) => void)
-    | null = null;
+    ((info: { code: number | null; signal: string | null; error?: Error }) => void) | null = null;
   private readonly decoder = new FrameDecoder((header) => {
     this.requests.push(header as WhisperRequestHeader);
     this.onRequest?.(header as WhisperRequestHeader);

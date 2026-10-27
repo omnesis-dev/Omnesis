@@ -2072,10 +2072,9 @@ describe("device management endpoints", () => {
     // The bystander keeps its own row AND its install identity: a repair
     // touches the device it names and nothing else.
     const bystanderRow = db
-      .prepare<
-        [string],
-        { name: string; install_id: string | null }
-      >("SELECT name, install_id FROM devices WHERE id = ?")
+      .prepare<[string], { name: string; install_id: string | null }>(
+        "SELECT name, install_id FROM devices WHERE id = ?",
+      )
       .get(bystander.id);
     expect(bystanderRow?.name).toBe("bystander-collector");
     expect(bystanderRow?.install_id).toBe("install-bystander");
@@ -2463,10 +2462,9 @@ describe("device management endpoints", () => {
     expect(response.status).toBe(200);
     expect(
       db
-        .prepare<
-          [string],
-          { push_transport: string }
-        >("SELECT push_transport FROM devices WHERE id = ?")
+        .prepare<[string], { push_transport: string }>(
+          "SELECT push_transport FROM devices WHERE id = ?",
+        )
         .get(device.id)?.push_transport,
     ).toBe("direct-apns");
   });
@@ -2484,10 +2482,9 @@ describe("device management endpoints", () => {
     expect(response.status).toBe(404);
     expect(
       db
-        .prepare<
-          [string],
-          { push_transport: string }
-        >("SELECT push_transport FROM devices WHERE id = ?")
+        .prepare<[string], { push_transport: string }>(
+          "SELECT push_transport FROM devices WHERE id = ?",
+        )
         .get(device.id)?.push_transport,
     ).toBeNull();
   });
@@ -3016,8 +3013,7 @@ describe("device management endpoints", () => {
     }
     function sourceRow(id: string) {
       return db.prepare("SELECT id FROM sources WHERE id = ?").get(id) as
-        | { id: string }
-        | undefined;
+        { id: string } | undefined;
     }
     function docRow(externalId: string) {
       return db
@@ -4324,10 +4320,9 @@ describe("token management endpoints", () => {
     expect(body.expiresAt).not.toBeNull();
     expect(body.expiresAt as number).toBeGreaterThan(Date.now());
     const row = db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM tokens WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM tokens WHERE id = ?",
+      )
       .get(body.id);
     expect(row?.expires_at).toBeGreaterThan(Date.now());
 
@@ -4339,10 +4334,9 @@ describe("token management endpoints", () => {
     const body2 = (await res2.json()) as { id: string; expiresAt: number | null };
     expect(body2.expiresAt).toBeNull();
     const row2 = db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM tokens WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM tokens WHERE id = ?",
+      )
       .get(body2.id);
     expect(row2?.expires_at).toBeNull();
   });
@@ -4511,10 +4505,9 @@ describe("POST /documents/delete", () => {
     expect(body.rejected).toEqual([{ sourceId: "photos:local", reason: "paused" }]);
 
     const count = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE source_id = 'photos:local'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE source_id = 'photos:local'",
+      )
       .get();
     expect(count?.count).toBe(1);
   });
@@ -4612,10 +4605,9 @@ describe("DELETE /documents/:id (single-document privacy delete)", () => {
     // push client can stop re-sending it.
     expect(await reIngest.json()).toEqual({ ingested: 0, suppressed: ["msg-1"] });
     const count = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE external_id = 'msg-1'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE external_id = 'msg-1'",
+      )
       .get();
     expect(count?.count).toBe(0);
   });
@@ -5017,10 +5009,9 @@ describe("sync state endpoints", () => {
 
     // The privacy delete of alpha's document leaves beta's namesake in place.
     const alphaDocId = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND stream_id = ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND stream_id = ?",
+      )
       .get(source.id, alpha.id)!.id;
     expect((await req(`/documents/${alphaDocId}`, { method: "DELETE" })).status).toBe(200);
     expect(await count()).toBe(1);
@@ -5219,10 +5210,9 @@ describe("sync state endpoints", () => {
     expect(getWipeEpoch(db, source.id, gamma.id)).toBe(gammaEpoch);
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND role = 'restored'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND role = 'restored'",
+        )
         .get(source.id)?.n,
     ).toBe(0);
 
@@ -5263,10 +5253,9 @@ describe("sync state endpoints", () => {
     expect(held()).toEqual(["n-1", "n-2", "n-4"]);
     expect(
       db
-        .prepare<
-          [string, string],
-          { omissions: number; role: string }
-        >("SELECT omissions, role FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-4' AND device_id = ?")
+        .prepare<[string, string], { omissions: number; role: string }>(
+          "SELECT omissions, role FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-4' AND device_id = ?",
+        )
         .get(source.id, beta.id),
     ).toEqual({ omissions: 1, role: "restored" });
     // Naming it again starts the clock over; its own tombstone settles at once.
@@ -5278,10 +5267,9 @@ describe("sync state endpoints", () => {
     ).toMatchObject({ tombstonedDeleted: 0 });
     expect(
       db
-        .prepare<
-          [string, string],
-          { omissions: number }
-        >("SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-4' AND device_id = ?")
+        .prepare<[string, string], { omissions: number }>(
+          "SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-4' AND device_id = ?",
+        )
         .get(source.id, beta.id)?.omissions,
     ).toBe(0);
     expect(
@@ -5305,10 +5293,9 @@ describe("sync state endpoints", () => {
       await asAlpha("/documents/with-cursor", page([], { deletedExternalIds: ["n-1"] })),
     ).toMatchObject({ deletionDisputed: 1 });
     const disputedDocId = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND external_id = 'n-1'")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND external_id = 'n-1'",
+      )
       .get(source.id)!.id;
     const operatorDelete = await app.request(`/documents/${encodeURIComponent(disputedDocId)}`, {
       method: "DELETE",
@@ -5318,10 +5305,9 @@ describe("sync state endpoints", () => {
     expect(held()).toEqual(["n-2"]);
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-1'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-1'",
+        )
         .get(source.id)?.n,
     ).toBe(0);
 
@@ -5348,18 +5334,16 @@ describe("sync state endpoints", () => {
     expect(held()).toEqual(["n-2"]);
     expect(
       db
-        .prepare<
-          [string, string],
-          { omissions: number; role: string }
-        >("SELECT omissions, role FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-2' AND device_id = ?")
+        .prepare<[string, string], { omissions: number; role: string }>(
+          "SELECT omissions, role FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-2' AND device_id = ?",
+        )
         .get(source.id, beta.id),
     ).toEqual({ omissions: 1, role: "restored" });
     expect(
       db
-        .prepare<
-          [string],
-          { observed_by: string }
-        >("SELECT observed_by FROM document_absences WHERE source_id = ? AND external_id = 'n-2'")
+        .prepare<[string], { observed_by: string }>(
+          "SELECT observed_by FROM document_absences WHERE source_id = ? AND external_id = 'n-2'",
+        )
         .get(source.id)?.observed_by,
     ).toBe(beta.id);
     // Naming it again resets the count and revokes the absence.
@@ -5372,10 +5356,9 @@ describe("sync state endpoints", () => {
     });
     expect(
       db
-        .prepare<
-          [string, string],
-          { omissions: number }
-        >("SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-2' AND device_id = ?")
+        .prepare<[string, string], { omissions: number }>(
+          "SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-2' AND device_id = ?",
+        )
         .get(source.id, beta.id)?.omissions,
     ).toBe(0);
   });
@@ -5532,10 +5515,9 @@ describe("sync state endpoints", () => {
     expect(refusedDelete).toMatchObject({ tombstonedDeleted: 0, deletionDeferred: true });
     expect(
       db
-        .prepare<
-          [string, string],
-          { count: number }
-        >("SELECT COUNT(*) count FROM documents WHERE source_id = ? AND external_id = ?")
+        .prepare<[string, string], { count: number }>(
+          "SELECT COUNT(*) count FROM documents WHERE source_id = ? AND external_id = ?",
+        )
         .get(replicated.id, "shared-note")?.count,
     ).toBe(1);
 
@@ -5578,10 +5560,9 @@ describe("sync state endpoints", () => {
     expect(staleBetaPage).toMatchObject({ rejected: true });
     expect(
       db
-        .prepare<
-          [string, string],
-          { count: number }
-        >("SELECT COUNT(*) count FROM documents WHERE source_id = ? AND external_id = ?")
+        .prepare<[string, string], { count: number }>(
+          "SELECT COUNT(*) count FROM documents WHERE source_id = ? AND external_id = ?",
+        )
         .get(replicated.id, "late-beta-row")?.count,
     ).toBe(0);
 
@@ -5895,10 +5876,9 @@ describe("sync state endpoints", () => {
       expect(getWipeEpoch(db, source.id, beta.id)).toBe(recoveryEpoch);
       expect(
         db
-          .prepare<
-            [string, string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND namespace = ? AND role = 'restored'")
+          .prepare<[string, string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND namespace = ? AND role = 'restored'",
+          )
           .get(source.id, "analytics:replicated_stats")?.n,
       ).toBe(1);
 
@@ -6349,10 +6329,9 @@ describe("POST /documents/by-url", () => {
     expect(Object.keys(data.matches)).toHaveLength(2);
     // Look up the actual ids from the DB to compare.
     const rows = db
-      .prepare<
-        [],
-        { id: string; external_id: string }
-      >("SELECT id, external_id FROM documents ORDER BY external_id")
+      .prepare<[], { id: string; external_id: string }>(
+        "SELECT id, external_id FROM documents ORDER BY external_id",
+      )
       .all();
     const idByExt = Object.fromEntries(rows.map((r) => [r.external_id, r.id]));
     // Each URL resolves to a single documentId (no collisions).
@@ -6541,10 +6520,9 @@ describe("POST /documents/by-url", () => {
 
     // Verify source_url in DB is the canonical form.
     const row = db
-      .prepare<
-        [string],
-        { source_url: string | null }
-      >("SELECT source_url FROM documents WHERE external_id = ?")
+      .prepare<[string], { source_url: string | null }>(
+        "SELECT source_url FROM documents WHERE external_id = ?",
+      )
       .get("drive-canon-1");
     expect(row?.source_url).toBe("https://drive.example.com/file/d/drive-canon-1");
 
@@ -6901,10 +6879,9 @@ describe("POST /documents/bulk", () => {
       }),
     });
     const rows = db
-      .prepare<
-        [],
-        { id: string; external_id: string }
-      >("SELECT id, external_id FROM documents ORDER BY external_id")
+      .prepare<[], { id: string; external_id: string }>(
+        "SELECT id, external_id FROM documents ORDER BY external_id",
+      )
       .all();
     return { id1: rows[0].id, id2: rows[1].id };
   }
@@ -7192,10 +7169,9 @@ describe("POST /documents/reconcile replay safety", () => {
     expect((await (await submit()).json()).absence).toMatchObject({ marked: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { observations: number }
-        >("SELECT observations FROM document_absences WHERE external_id = 'omitted'")
+        .prepare<[], { observations: number }>(
+          "SELECT observations FROM document_absences WHERE external_id = 'omitted'",
+        )
         .get()?.observations,
     ).toBe(1);
   });
@@ -7246,18 +7222,16 @@ describe("POST /documents/with-cursor cross-cutting concerns", () => {
     expect((await (await submit()).json()).absence).toMatchObject({ marked: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { observations: number }
-        >("SELECT observations FROM document_absences WHERE external_id = 'omitted'")
+        .prepare<[], { observations: number }>(
+          "SELECT observations FROM document_absences WHERE external_id = 'omitted'",
+        )
         .get()?.observations,
     ).toBe(1);
     expect(
       db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM document_absence_observations WHERE observation_id = 'epoch-7:attempt-a'")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM document_absence_observations WHERE observation_id = 'epoch-7:attempt-a'",
+        )
         .get()?.count,
     ).toBe(1);
   });
@@ -7470,10 +7444,9 @@ describe("POST /documents/with-cursor cross-cutting concerns", () => {
 
     // The DB row holds the pattern JSON the route just wrote.
     const stored = db
-      .prepare<
-        [string],
-        { url_patterns: string | null }
-      >("SELECT url_patterns FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { url_patterns: string | null }>(
+        "SELECT url_patterns FROM sync_state WHERE source_id = ?",
+      )
       .get("gmail");
     const parsed = JSON.parse(stored!.url_patterns!);
     expect(parsed[0].regex).toContain("mail\\.google\\.com");
@@ -7550,10 +7523,9 @@ describe("POST /documents/delete-all/source/:sourceId", () => {
     expect(await res.json()).toMatchObject({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" });
     expect(
       db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM documents WHERE source_id = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
+        )
         .get(source.id)?.count,
     ).toBe(1);
   });
@@ -7665,10 +7637,9 @@ describe("POST /documents/delete-all/source/:sourceId", () => {
 
     const countDocPeople = (sourceId: string): number =>
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_people WHERE source_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_people WHERE source_id = ?",
+        )
         .get(sourceId)?.n ?? 0;
     expect(countDocPeople("gmail")).toBe(1);
 
@@ -7868,10 +7839,9 @@ describe("GET /documents/:id", () => {
       body: JSON.stringify({ documents: [makeDocPayload("partitioned-detail")] }),
     });
     const row = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM documents WHERE external_id = 'partitioned-detail'")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM documents WHERE external_id = 'partitioned-detail'",
+      )
       .get()!;
     db.prepare("UPDATE documents SET stream_id = ? WHERE id = ?").run(device.id, row.id);
 
@@ -8587,10 +8557,9 @@ describe("GET /documents/:id/attachments", () => {
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id = ?")
       .get("mail-9");
     const stored = db
-      .prepare<
-        [string],
-        { source_url: string }
-      >("SELECT source_url FROM documents WHERE external_id = ?")
+      .prepare<[string], { source_url: string }>(
+        "SELECT source_url FROM documents WHERE external_id = ?",
+      )
       .get("mail-9/att/0");
     expect(stored!.source_url).not.toBe(link);
 
@@ -11214,10 +11183,9 @@ describe("POST /admin/sources/:id/resync", () => {
       };
     const rowOf = (sourceId: string, deviceId: string) =>
       db
-        .prepare<
-          [string, string],
-          { cursor: string; last_synced_at: string | null }
-        >("SELECT cursor, last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], { cursor: string; last_synced_at: string | null }>(
+          "SELECT cursor, last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?",
+        )
         .get(sourceId, deviceId);
     const resync = async (sourceId: string, body: Record<string, unknown>) => {
       const res = await admin(`/admin/sources/${encodeURIComponent(sourceId)}/resync`, {

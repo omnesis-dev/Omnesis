@@ -18,10 +18,9 @@ export function snapshotClaimMaintenance(
 ): void {
   if (identity.nodeId.startsWith("source:")) return;
   const claims = db
-    .prepare<
-      [string],
-      { id: string; meaning_revision: number }
-    >("SELECT id,meaning_revision FROM knowledge_claims WHERE node_id=? ORDER BY id")
+    .prepare<[string], { id: string; meaning_revision: number }>(
+      "SELECT id,meaning_revision FROM knowledge_claims WHERE node_id=? ORDER BY id",
+    )
     .all(identity.nodeId);
   if (claims.length > 1024 || (eligibleClaimIds?.length ?? 0) > 1024)
     throw new KnowledgeStorageError("claim_invalid", "Claim maintenance exceeds its bounded scope");
@@ -61,10 +60,9 @@ export function claimDependencySignatures(
   nodeId: string,
 ): Map<string, string> {
   const rows = db
-    .prepare<
-      [string],
-      { claim_id: string; ref: string; input_version_json: string }
-    >("SELECT claim_id,ref,input_version_json FROM knowledge_dependencies WHERE node_id=? ORDER BY claim_id,ref")
+    .prepare<[string], { claim_id: string; ref: string; input_version_json: string }>(
+      "SELECT claim_id,ref,input_version_json FROM knowledge_dependencies WHERE node_id=? ORDER BY claim_id,ref",
+    )
     .all(nodeId);
   const grouped = new Map<string, string[]>();
   for (const row of rows) {
@@ -99,7 +97,9 @@ export function recordAcceptedClaimMaintenance(
     .prepare<
       [string, string, string],
       { claim_id: string; input_claim_revision: number; status: string }
-    >("SELECT claim_id,input_claim_revision,status FROM knowledge_claim_outcomes WHERE batch_id=? AND node_id=? AND input_fingerprint=?")
+    >(
+      "SELECT claim_id,input_claim_revision,status FROM knowledge_claim_outcomes WHERE batch_id=? AND node_id=? AND input_fingerprint=?",
+    )
     .all(identity.batchId, identity.nodeId, identity.inputFingerprint);
   const reviewed = new Set(input.maintenance.reviewedClaimIds ?? []);
   if (

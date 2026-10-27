@@ -85,10 +85,9 @@ describe("migration 45 — time_index_entries.thread_conversation_id", () => {
 
     expect(entryColumns(db)).toContain("thread_conversation_id");
     const row = db
-      .prepare<
-        [],
-        { sentence: string; thread_conversation_id: string | null }
-      >("SELECT sentence, thread_conversation_id FROM time_index_entries WHERE id = 'tix_m45'")
+      .prepare<[], { sentence: string; thread_conversation_id: string | null }>(
+        "SELECT sentence, thread_conversation_id FROM time_index_entries WHERE id = 'tix_m45'",
+      )
       .get();
     expect(row).toEqual({
       sentence: "Library card renewal window.",

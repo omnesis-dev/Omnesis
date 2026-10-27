@@ -3,6 +3,10 @@
 import { afterEach, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
+import { readSourceEvidenceAuthority, attributedSourceStatements } from "../evidence-authority.js";
+import { readKnowledgeSourceEvidence } from "../../brain/knowledge/source-evidence.js";
+import { readKnowledgeSourceRevision } from "../../brain/knowledge/source-revision.js";
+import { parseContextualEntailment } from "../../inference/contextual-entailment.js";
 import { upsertConversationDocument } from "./document-writer.js";
 import { buildDocumentInput } from "./upsert.js";
 import { renderConversation } from "./render.js";
@@ -11,10 +15,6 @@ import {
   sealConversationEvidence,
   installConversationEvidence,
 } from "./evidence-projection.js";
-import { readSourceEvidenceAuthority, attributedSourceStatements } from "../evidence-authority.js";
-import { readKnowledgeSourceEvidence } from "../../brain/knowledge/source-evidence.js";
-import { readKnowledgeSourceRevision } from "../../brain/knowledge/source-revision.js";
-import { parseContextualEntailment } from "../../inference/contextual-entailment.js";
 import type { ConversationRecord } from "../../agent/conversation-store.js";
 import type Database from "better-sqlite3";
 const stores: Database.Database[] = [];
@@ -41,10 +41,9 @@ async function setup() {
   stores.push(db);
   await directWriteGate(db).upsertDocuments([buildDocumentInput(record)]);
   const id = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM documents WHERE external_id='fictional-observatory'")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM documents WHERE external_id='fictional-observatory'",
+    )
     .get()!.id;
   return { db, id, rendered: renderConversation(record) };
 }

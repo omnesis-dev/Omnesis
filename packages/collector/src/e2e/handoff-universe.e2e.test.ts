@@ -77,10 +77,9 @@ describe("handoff universe — one device syncs at a time", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          SyncStateRow
-        >("SELECT device_id, last_synced_at FROM sync_state WHERE source_id = ? ORDER BY device_id")
+        .prepare<[string], SyncStateRow>(
+          "SELECT device_id, last_synced_at FROM sync_state WHERE source_id = ? ORDER BY device_id",
+        )
         .all(GMAIL);
     } finally {
       db.close();

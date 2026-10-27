@@ -77,10 +77,9 @@ describe("withDocIdRestriction", () => {
     for (let i = 0; i < INLINE_DOCID_LIMIT + 1; i++) ids.push(`x-${i}`);
     query(ids);
     const leftover = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_temp_master WHERE type='table' AND name='docid_filter'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_temp_master WHERE type='table' AND name='docid_filter'",
+      )
       .get();
     expect(leftover).toBeUndefined();
   });

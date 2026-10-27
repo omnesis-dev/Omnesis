@@ -351,10 +351,9 @@ describe("SourceService.deleteSource", () => {
     ).toEqual({ invalidated_at: null, verification_state: "unverified" });
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE broken_at IS NULL")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE broken_at IS NULL",
+        )
         .get()!.n,
     ).toBe(0);
     expect(storedQuotes()).toBeGreaterThan(0);
@@ -546,10 +545,9 @@ describe("SourceService.deleteSource", () => {
     expect(getOpenLoop(db, "loop_swept")).not.toBeNull();
     const mirrorCount = (): number =>
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM documents WHERE external_id = 'loop_swept'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM documents WHERE external_id = 'loop_swept'",
+        )
         .get()!.n;
     expect(mirrorCount()).toBe(1);
 
@@ -738,10 +736,9 @@ describe("SourceDataRemovalService.deleteStream", () => {
     ).toEqual([{ id: "anno_a" }]);
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_coverage WHERE source_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_coverage WHERE source_id = ?",
+        )
         .get(sourceId)!.n,
     ).toBe(1);
   });

@@ -92,10 +92,9 @@ describe("migration 83", () => {
     runMigrations(db);
 
     const row = db
-      .prepare<
-        [],
-        { subscription_id: string; grounding_json: string | null }
-      >("SELECT subscription_id, grounding_json FROM subscription_revisions")
+      .prepare<[], { subscription_id: string; grounding_json: string | null }>(
+        "SELECT subscription_id, grounding_json FROM subscription_revisions",
+      )
       .get();
     expect(row?.subscription_id).toBe("sub_northstar");
     // NULL, not an empty measurement: the revision was never grounded.

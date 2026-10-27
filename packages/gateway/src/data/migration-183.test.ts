@@ -61,10 +61,9 @@ describe("migration 183: credentials keep their approved audience and scope", ()
 
   function approved() {
     return db
-      .prepare<
-        [],
-        { id: string; approved_audience: string | null; approved_scope: string | null }
-      >("SELECT id, approved_audience, approved_scope FROM principal_credentials ORDER BY id")
+      .prepare<[], { id: string; approved_audience: string | null; approved_scope: string | null }>(
+        "SELECT id, approved_audience, approved_scope FROM principal_credentials ORDER BY id",
+      )
       .all();
   }
 

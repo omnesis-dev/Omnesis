@@ -319,10 +319,7 @@ export type GraphContextOptionalLinkType = (typeof GRAPH_CONTEXT_OPTIONAL_LINK_T
  * default; the function signature is unchanged and consumers don't move.
  */
 export type GraphEdgeProvenanceKind =
-  | "source-declared"
-  | "content-derived"
-  | "cross-source-derived"
-  | "llm-derived";
+  "source-declared" | "content-derived" | "cross-source-derived" | "llm-derived";
 
 /**
  * Where a given edge type lives. `"synthesized"` edges are not persisted at
@@ -330,10 +327,7 @@ export type GraphEdgeProvenanceKind =
  * `same-entity` boundDocument edge).
  */
 export type GraphEdgeStorage =
-  | "document_links"
-  | "near_dup_edges"
-  | "document_people"
-  | "synthesized";
+  "document_links" | "near_dup_edges" | "document_people" | "synthesized";
 
 /** The pair of vertex kinds an edge connects. */
 export type GraphEdgeEndpoints = "document-document" | "document-person" | "document-analytics-row";

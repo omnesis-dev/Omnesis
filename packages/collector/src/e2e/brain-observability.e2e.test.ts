@@ -179,10 +179,9 @@ describe("Brain Bench — the operator surface", () => {
 
   async function invoiceCreationRun() {
     const owner = bench.sql
-      .prepare<
-        [string],
-        { created_by_run: string }
-      >("SELECT created_by_run FROM open_loops WHERE title LIKE ?")
+      .prepare<[string], { created_by_run: string }>(
+        "SELECT created_by_run FROM open_loops WHERE title LIKE ?",
+      )
       .get(`%${INVOICE_MARKER}%`)!;
     return (await bench.obs.runs({ limit: 200 })).items.find(
       (run) => run.id === owner.created_by_run,
@@ -325,10 +324,9 @@ describe("Brain Bench — the operator surface", () => {
     bench.withWriteHandle((db) => {
       for (const id of [invoiceDocId, roomDocId]) {
         const source = db
-          .prepare<
-            [string],
-            { content_hash: string }
-          >("SELECT content_hash FROM documents WHERE id=?")
+          .prepare<[string], { content_hash: string }>(
+            "SELECT content_hash FROM documents WHERE id=?",
+          )
           .get(id)!;
         enqueueKnowledgeWork(
           db,
@@ -654,10 +652,9 @@ describe("Brain Bench — the operator surface", () => {
     expect(row, "no knowledge-maintenance coverage row for the pushed source").toBeDefined();
 
     const versions = bench.sql
-      .prepare<
-        [string],
-        { processed: number; skipped: number }
-      >("SELECT COALESCE(SUM(c.status='considered'),0) AS processed,COALESCE(SUM(c.status='gated'),0) AS skipped FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id WHERE d.source_id=? AND c.phase='organization'")
+      .prepare<[string], { processed: number; skipped: number }>(
+        "SELECT COALESCE(SUM(c.status='considered'),0) AS processed,COALESCE(SUM(c.status='gated'),0) AS skipped FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id WHERE d.source_id=? AND c.phase='organization'",
+      )
       .get(pushedSource)!;
     expect(row!.processed).toBe(versions.processed);
     expect(row!.skipped).toBe(versions.skipped);
@@ -890,10 +887,9 @@ describe("Brain Bench — the golden snapshot", () => {
     );
 
     const creator = bench.sql
-      .prepare<
-        [string],
-        { created_by_run: string }
-      >("SELECT created_by_run FROM open_loops WHERE id=?")
+      .prepare<[string], { created_by_run: string }>(
+        "SELECT created_by_run FROM open_loops WHERE id=?",
+      )
       .get(loopId)!;
     const sourceRun = (await bench.obs.runsForSource(docId!)).find(
       (run) => run.id === creator.created_by_run,

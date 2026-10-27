@@ -72,10 +72,9 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
       consistency === "live"
         ? ""
         : db
-            .prepare<
-              [],
-              { revision: string }
-            >("SELECT COALESCE(group_concat(collection||':'||revision,','),'') || ':changes:' || COALESCE((SELECT seq FROM sqlite_sequence WHERE name='knowledge_changes'),0) AS revision FROM (SELECT collection,revision FROM knowledge_reconciliation_revisions ORDER BY collection)")
+            .prepare<[], { revision: string }>(
+              "SELECT COALESCE(group_concat(collection||':'||revision,','),'') || ':changes:' || COALESCE((SELECT seq FROM sqlite_sequence WHERE name='knowledge_changes'),0) AS revision FROM (SELECT collection,revision FROM knowledge_reconciliation_revisions ORDER BY collection)",
+            )
             .get()!.revision;
     const scope = JSON.stringify({
       kind: options.kind ?? null,
@@ -99,10 +98,9 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
     if (consistency === "strict" && cursor && cursor.revision !== revision)
       throw new StalePageCursorError();
     const rows = db
-      .prepare<
-        Record<string, string | number | null>,
-        LibraryRow
-      >(`SELECT * FROM (${librarySql(db)}) WHERE (@kind IS NULL OR kind=@kind) AND ${filter} AND (@at IS NULL OR updatedAt<@at OR (updatedAt=@at AND (id<@id OR (id=@id AND libraryType<@type)))) ORDER BY updatedAt DESC,id DESC,libraryType DESC LIMIT @limit`)
+      .prepare<Record<string, string | number | null>, LibraryRow>(
+        `SELECT * FROM (${librarySql(db)}) WHERE (@kind IS NULL OR kind=@kind) AND ${filter} AND (@at IS NULL OR updatedAt<@at OR (updatedAt=@at AND (id<@id OR (id=@id AND libraryType<@type)))) ORDER BY updatedAt DESC,id DESC,libraryType DESC LIMIT @limit`,
+      )
       .all({
         kind: options.kind ?? null,
         status: options.status ?? null,
@@ -147,10 +145,9 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
 }
 export function readKnowledgeLibraryRetirement(db: Database.Database, id: string) {
   const row = db
-    .prepare<
-      [string],
-      LibraryRow
-    >(`SELECT * FROM (${librarySql(db)}) WHERE id=? AND libraryType='retired-loop'`)
+    .prepare<[string], LibraryRow>(
+      `SELECT * FROM (${librarySql(db)}) WHERE id=? AND libraryType='retired-loop'`,
+    )
     .get(id);
   if (!row) throw new NotFoundError("Library entry not found");
   return item(row);

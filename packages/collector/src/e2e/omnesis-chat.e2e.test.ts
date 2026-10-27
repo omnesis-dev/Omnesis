@@ -96,16 +96,14 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
     // wants to annotate. Without them the scenario fires but the link
     // FK fails and the citation count would be zero.
     const notionDoc = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id LIKE ? AND external_id = ? LIMIT 1")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id LIKE ? AND external_id = ? LIMIT 1",
+      )
       .get("notion-pages:%", ANNOTATED_NOTION_EXTID);
     const calendarDoc = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id LIKE ? AND external_id = ? LIMIT 1")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id LIKE ? AND external_id = ? LIMIT 1",
+      )
       .get("google-calendar:%", ANNOTATED_CALENDAR_EXTID);
     expect(notionDoc?.id).toBeTruthy();
     expect(calendarDoc?.id).toBeTruthy();
@@ -126,13 +124,11 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
     // "You"/"Omnesis" speaker headers. Annotated snippets MUST NOT
     // appear (they live on edges, not in the body).
     const docRow = db
-      .prepare<
-        [string],
-        { content: string; source_id: string; title: string; metadata: string }
-      >("SELECT content, source_id, title, metadata FROM documents WHERE id = ?")
+      .prepare<[string], { content: string; source_id: string; title: string; metadata: string }>(
+        "SELECT content, source_id, title, metadata FROM documents WHERE id = ?",
+      )
       .get(convId) as
-      | { content: string; source_id: string; title: string; metadata: string }
-      | undefined;
+      { content: string; source_id: string; title: string; metadata: string } | undefined;
     expect(docRow?.source_id).toBe("omnesis-chat");
     expect(docRow?.content).toContain(TRIGGER_PHRASE);
     expect(docRow?.content).toContain("**You**");
@@ -186,10 +182,9 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
 
     // ── Re-upsert on a second turn ────────────────────────────────
     const firstUpdatedAt = (db
-      .prepare<
-        [string],
-        { updated_at: string; metadata: string }
-      >("SELECT updated_at, metadata FROM documents WHERE id = ?")
+      .prepare<[string], { updated_at: string; metadata: string }>(
+        "SELECT updated_at, metadata FROM documents WHERE id = ?",
+      )
       .get(convId) as { updated_at: string; metadata: string } | undefined)!;
     const firstMessageCount = (
       JSON.parse(firstUpdatedAt.metadata) as {
@@ -202,10 +197,9 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
     await waitForDocChange(db, convId, firstUpdatedAt.updated_at, 5_000);
 
     const after2 = db
-      .prepare<
-        [string],
-        { content: string; metadata: string }
-      >("SELECT content, metadata FROM documents WHERE id = ?")
+      .prepare<[string], { content: string; metadata: string }>(
+        "SELECT content, metadata FROM documents WHERE id = ?",
+      )
       .get(convId) as { content: string; metadata: string };
     expect(after2.content).toContain("second message about the launch");
     const newMessageCount = (
@@ -251,10 +245,9 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
       .get(convId);
     expect(after).toBeUndefined();
     const edgesAfter = db
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) as c FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) as c FROM document_links WHERE source_doc_id = ?",
+      )
       .get(convId);
     expect(edgesAfter?.c ?? -1).toBe(0);
   });

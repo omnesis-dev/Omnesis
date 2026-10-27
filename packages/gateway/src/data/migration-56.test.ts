@@ -91,10 +91,9 @@ describe("migration 56 — annotation claim_basis", () => {
     for (const table of TABLES) {
       expect(columns(db, table)).toContain("claim_basis");
       const row = db
-        .prepare<
-          [],
-          { claim_basis: string; claim_text: string }
-        >(`SELECT claim_basis, claim_text FROM ${table}`)
+        .prepare<[], { claim_basis: string; claim_text: string }>(
+          `SELECT claim_basis, claim_text FROM ${table}`,
+        )
         .get();
       expect(row).toEqual({
         claim_basis: "quoted",

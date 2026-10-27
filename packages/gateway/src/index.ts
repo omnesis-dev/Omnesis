@@ -134,21 +134,18 @@ import { reconcileConfig } from "./config-reconcile.js";
 import {
   createIndexDatabase,
   purgeUsearchSidecars,
-  getVectorWriteSeq,
   getUsearchSavedSeq,
-  setUsearchSavedSeq,
+  getUsearchSavedChangeSeq,
+  getUsearchBackfillCursor,
   getIndexEmbedModel,
   reconcileIndexForGatewaySchema,
   enqueueDocumentIndexPurge,
   scrubPendingSourceIndexPurges,
 } from "./indexer/db.js";
 import { listInterruptedOmnesisChatRetentionDocumentIds } from "./sources/omnesis-chat/wiring.js";
-import {
-  encryptSidecar,
-  restoreActiveSidecar,
-  purgeSidecarTemps,
-  tryUnlink as tryUnlinkSidecar,
-} from "./indexer/usearch-sidecar-crypto.js";
+import { describeMemoryBudget, resolveMemoryBudget } from "./memory-budget.js";
+import { encryptSidecar, tryUnlink as tryUnlinkSidecar } from "./indexer/usearch-sidecar-crypto.js";
+import { prepareEncryptedGraphForBoot } from "./indexer/usearch-sidecar-boot.js";
 import { IndexerStatusReporter } from "./indexer/indexer-status.js";
 import { IndexerLifecycle } from "./indexer/indexer-lifecycle.js";
 import {
@@ -191,6 +188,7 @@ import {
   DEFAULT_SEARCH_READ_CACHE_BYTES,
 } from "./search/search-config.js";
 import { AnalyticsDb } from "./analytics-db.js";
+import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analytics/connection-pool.js";
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
 import { DiskUsageMonitor, measureDiskUsage } from "./disk-usage.js";
@@ -409,6 +407,10 @@ const config = configStore.get();
 // individual key in `gateway.*` / `indexer.*`. See src/mitigations.ts.
 const runtime = resolveRuntimeSettings(config);
 announceRuntimeSettings(runtime);
+// How much memory the gateway may use: the knob, else the cgroup limit, else
+// the host's memory. The indexer keeps the HNSW graph within it.
+const memoryBudget = resolveMemoryBudget({ limitMb: runtime.memoryLimitMb });
+log.info(`memory budget: ${describeMemoryBudget(memoryBudget)}`);
 
 const storageEncryption = await resolveGatewayStorageEncryptionKeys(configDir).catch((err) => {
   log.error(`Cannot start: ${err instanceof Error ? err.message : String(err)}`);
@@ -828,39 +830,12 @@ for (const documentId of listInterruptedOmnesisChatRetentionDocumentIds(db)) {
   }
 }
 if (storageEncryption.enabled) {
-  // Under encryption the plaintext sidecar is never durable — only the
-  // encrypted `.enc` is. Purge every plaintext working file + leftover crypto
-  // temp (the purge regex keeps `.enc`), then re-materialise the ACTIVE
-  // generation's plaintext graph from its `.enc` ONLY when a fingerprint proves
-  // it is consistent with index.db. On any mismatch/tamper we leave no
-  // plaintext file, so the indexer worker rebuilds the graph from
-  // chunks.embedding — never a re-embed, never an index wipe.
-  purgeUsearchSidecars(configDir);
-  purgeSidecarTemps(configDir);
-  const activeTarget = resolveActiveUsearchTarget(indexDb, configDir);
-  const restore = storageEncryption.indexDbKey
-    ? restoreActiveSidecar({
-        encPath: `${activeTarget.path}.enc`,
-        plaintextPath: activeTarget.path,
-        indexDbKey: storageEncryption.indexDbKey,
-        expectedSeq: getVectorWriteSeq(indexDb),
-        expectedModel: getIndexEmbedModel(indexDb),
-      })
-    : { restored: false, reason: "no index-db key" };
-  if (restore.restored) {
-    // The restored plaintext reflects the sidecar's seq (which equals the live
-    // `vector_write_seq` — that is why the restore was accepted). Record it as
-    // `usearch_saved_seq` so a subsequent shutdown can re-encrypt this graph
-    // even though the indexer worker skips its backfill (and thus its save +
-    // stamp) after a restore. Without this an idle gateway restarted right after
-    // a restore-boot would find `usearch_saved_seq` unset and skip the persist.
-    setUsearchSavedSeq(indexDb, restore.seq ?? getVectorWriteSeq(indexDb));
-    log.info(
-      `HNSW sidecar restored from encrypted persistence (write-seq ${restore.seq}) — skipping rebuild`,
-    );
-  } else {
-    log.info(`HNSW sidecar will rebuild from vectors: ${restore.reason}`);
-  }
+  const restore = prepareEncryptedGraphForBoot(indexDb, configDir, storageEncryption.indexDbKey);
+  log.info(
+    restore.restored
+      ? `HNSW sidecar restored from encrypted persistence (write-seq ${restore.seq}, ${restore.reason})`
+      : `HNSW sidecar will rebuild from vectors: ${restore.reason}`,
+  );
 }
 
 // Search pipeline (available immediately with BM25; embedder added later)
@@ -1037,10 +1012,9 @@ const getSourceDocCounts = (): readonly SourceDocCount[] => {
   let counts: SourceDocCount[];
   try {
     counts = db
-      .prepare<
-        [],
-        { sourceId: string; docCount: number }
-      >("SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0")
+      .prepare<[], { sourceId: string; docCount: number }>(
+        "SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0",
+      )
       .all();
   } catch {
     counts = [];
@@ -1164,7 +1138,8 @@ const analyticsDb = new AnalyticsDb(analyticsDbPath, {
   metrics,
   encryptionKeyHex: storageEncryption.analyticsDbKeyHex,
   maxInlineStreamRekeyRows: runtime.analyticsStreamRekeyMaxRows,
-  memoryLimitMiB: runtime.analyticsMemoryLimitMb,
+  memoryLimitMiB:
+    runtime.analyticsMemoryLimitMb ?? defaultAnalyticsMemoryLimitMiB(memoryBudget.bytes),
   threads: runtime.analyticsThreads,
   // DuckDB keeps failing every statement once it has invalidated the store;
   // only reopening the file recovers, so exit non-zero and let the service
@@ -1644,6 +1619,7 @@ const indexerLifecycle = new IndexerLifecycle({
   indexDbKeyHex: storageEncryption.indexDbKeyHex,
   indexDb,
   configDir,
+  memoryBudget,
   initialModelInfo: {
     name: embeddingModelName,
     path: embeddingModelPath,
@@ -1888,8 +1864,7 @@ const sweepService = new SweepService({
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let agentConversationsRuntime:
-  | import("./sources/agent-conversations/index.js").AgentConversationsRuntime
-  | undefined;
+  import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
 // Held for the delivery loop below (policy review and operator-watch
 // re-approval passes) and for the agent's watch port, which authors operator
 // watches through it.
@@ -2463,6 +2438,7 @@ const app = createServer(db, DB_PATH, {
   mcpResourceUrls: runtime.mcpResourceUrls,
   indexerModel: indexerLifecycle.modelInfo,
   indexerReadiness: () => indexerStatus.getReadiness(),
+  getSemanticSearch: () => indexerLifecycle.vectorIndex,
   indexerControl: {
     reindexMissing: async () => {
       const proxy = indexerLifecycle.indexerProxy;
@@ -3705,12 +3681,15 @@ const doShutdown = async (): Promise<void> => {
     const { path: activePath } = resolveActiveUsearchTarget(indexDb, configDir);
     const model = getIndexEmbedModel(indexDb);
     const savedSeq = getUsearchSavedSeq(indexDb);
+    const savedChangeSeq = getUsearchSavedChangeSeq(indexDb);
     if (key && model && savedSeq > 0 && existsSync(activePath)) {
       try {
         encryptSidecar(activePath, `${activePath}.enc`, key, {
           vectorWriteSeq: savedSeq,
           embedModel: model.name,
           embedDim: model.dim,
+          ...(savedChangeSeq !== null ? { changeSeq: savedChangeSeq } : {}),
+          backfillCursor: getUsearchBackfillCursor(indexDb),
         });
         log.info(`Encrypted HNSW sidecar persisted for restart-restore (saved-seq ${savedSeq})`);
       } catch (err) {

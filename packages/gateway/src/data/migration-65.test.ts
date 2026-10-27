@@ -24,10 +24,9 @@ afterEach(() => {
 function tableExists(name: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { one: number }
-      >("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .prepare<[string], { one: number }>(
+        "SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
       .get(name) !== undefined
   );
 }

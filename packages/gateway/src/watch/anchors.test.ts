@@ -238,10 +238,9 @@ function seedCompileRun(db: Db, id: string): void {
 function clientRequestId(h: Harness, subscriptionId: string): string | null {
   return (
     h.db
-      .prepare<
-        [string],
-        { client_request_id: string | null }
-      >(`SELECT client_request_id FROM subscriptions WHERE id = ?`)
+      .prepare<[string], { client_request_id: string | null }>(
+        `SELECT client_request_id FROM subscriptions WHERE id = ?`,
+      )
       .get(subscriptionId)?.client_request_id ?? null
   );
 }

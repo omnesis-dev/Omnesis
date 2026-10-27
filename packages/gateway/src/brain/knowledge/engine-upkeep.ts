@@ -97,10 +97,9 @@ export class KnowledgeUpkeep {
         continue;
       const key = `knowledge:conversion:${kind}`;
       const checkpoint = this.deps.db
-        .prepare<
-          [string],
-          { value_json: string; revision: number }
-        >("SELECT value_json,revision FROM knowledge_checkpoints WHERE id=?")
+        .prepare<[string], { value_json: string; revision: number }>(
+          "SELECT value_json,revision FROM knowledge_checkpoints WHERE id=?",
+        )
         .get(key);
       const after = checkpoint ? (JSON.parse(checkpoint.value_json) as string) : "";
       const rows = this.deps.db

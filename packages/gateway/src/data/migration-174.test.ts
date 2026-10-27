@@ -308,10 +308,9 @@ describe("platform identifiers gain their platform", () => {
       expect(() => namespaceWhatsappLids(db)).not.toThrow();
 
       const rows = db
-        .prepare<
-          [],
-          { id: string; side_a_alias: string; side_b_alias: string }
-        >("SELECT id, side_a_alias, side_b_alias FROM merge_candidates")
+        .prepare<[], { id: string; side_a_alias: string; side_b_alias: string }>(
+          "SELECT id, side_a_alias, side_b_alias FROM merge_candidates",
+        )
         .all();
       // One row, and in the order a detector will compute next time: the fold
       // leaves the survivor for the re-sort below to put right.
@@ -391,10 +390,9 @@ describe("platform identifiers gain their platform", () => {
       expect(() => namespaceWhatsappLids(db)).not.toThrow();
 
       const rows = db
-        .prepare<
-          [],
-          { id: string; active: number }
-        >("SELECT id, active FROM merge_rules ORDER BY id")
+        .prepare<[], { id: string; active: number }>(
+          "SELECT id, active FROM merge_rules ORDER BY id",
+        )
         .all();
       // Deactivated, not deleted: a merge the operator made stays auditable.
       expect(rows).toEqual([

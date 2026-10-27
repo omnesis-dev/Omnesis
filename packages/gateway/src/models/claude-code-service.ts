@@ -116,17 +116,15 @@ export class ClaudeCodeService {
     if (this.refreshInFlight) return this.refreshInFlight;
     this.status = { ...this.status, status: "probing", reason: undefined };
     const promise = this.computeStatus()
-      .catch(
-        (err): ClaudeCodeBackendStatus => ({
-          type: "claude-code",
-          installed: false,
-          status: "unreachable",
-          loggedIn: false,
-          models: [],
-          reason: conciseError(err),
-          refreshedAt: new Date().toISOString(),
-        }),
-      )
+      .catch((err): ClaudeCodeBackendStatus => ({
+        type: "claude-code",
+        installed: false,
+        status: "unreachable",
+        loggedIn: false,
+        models: [],
+        reason: conciseError(err),
+        refreshedAt: new Date().toISOString(),
+      }))
       .then((status) => {
         this.status = status;
         return status;

@@ -441,10 +441,9 @@ describe("historical discovery: provider outage", () => {
   const id = "history-outage";
   const failedRuns = () =>
     bench.sql
-      .prepare<
-        [],
-        { id: string; status: string; attempts: number; last_error: string | null }
-      >("SELECT id,status,attempts,last_error FROM cognition_runs WHERE kind='synthesis' AND last_error LIKE '%412%'")
+      .prepare<[], { id: string; status: string; attempts: number; last_error: string | null }>(
+        "SELECT id,status,attempts,last_error FROM cognition_runs WHERE kind='synthesis' AND last_error LIKE '%412%'",
+      )
       .all();
   const openUntil = () => Number(bench.markers.get("provider_breaker_open_until") ?? "0");
   beforeAll(async () => {

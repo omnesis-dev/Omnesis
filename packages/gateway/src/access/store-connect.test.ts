@@ -178,7 +178,9 @@ function storedRequest(requestId: string) {
     .prepare<
       [string],
       { selection_json: string; credential_id: string; created_level_id: string | null }
-    >("SELECT selection_json, credential_id, created_level_id FROM oauth_authorization_requests WHERE id = ?")
+    >(
+      "SELECT selection_json, credential_id, created_level_id FROM oauth_authorization_requests WHERE id = ?",
+    )
     .get(requestId)!;
 }
 
@@ -343,10 +345,9 @@ describe("legacy connect", () => {
     expect(listAccessOverview(db, NOW + 2)).toMatchObject({ principals: [], levels: [] });
     expect(
       db
-        .prepare<
-          [string],
-          { status: string }
-        >("SELECT status FROM oauth_authorization_requests WHERE id = ?")
+        .prepare<[string], { status: string }>(
+          "SELECT status FROM oauth_authorization_requests WHERE id = ?",
+        )
         .get(pending.id),
     ).toEqual({ status: "pending" });
   });
@@ -601,10 +602,9 @@ describe("replace-connection", () => {
       ),
     ).toMatchObject({ ok: true });
     const stored = db
-      .prepare<
-        [string],
-        { selection_json: string; credential_id: string }
-      >("SELECT selection_json, credential_id FROM oauth_authorization_requests WHERE id = ?")
+      .prepare<[string], { selection_json: string; credential_id: string }>(
+        "SELECT selection_json, credential_id FROM oauth_authorization_requests WHERE id = ?",
+      )
       .get(again.id)!;
     expect(JSON.parse(stored.selection_json)).toEqual({
       kind: "existing-grant",

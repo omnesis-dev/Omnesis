@@ -70,10 +70,9 @@ describe("migration 35 — cycle_anchor_at back-fill", () => {
 
     // The back-fill sets the anchor to the row's real cycle start, not DEFAULT 0.
     const row = db
-      .prepare<
-        [],
-        { enqueued_at: number; cycle_anchor_at: number }
-      >("SELECT enqueued_at, cycle_anchor_at FROM cognition_runs WHERE id = 'run_pre35'")
+      .prepare<[], { enqueued_at: number; cycle_anchor_at: number }>(
+        "SELECT enqueued_at, cycle_anchor_at FROM cognition_runs WHERE id = 'run_pre35'",
+      )
       .get();
     expect(row?.cycle_anchor_at).toBe(1699999999000);
     expect(row?.cycle_anchor_at).toBe(row?.enqueued_at);

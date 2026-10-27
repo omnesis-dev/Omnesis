@@ -70,10 +70,9 @@ function seedLegacyBrief(input: {
 function tableExists(name: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
       .get(name) !== undefined
   );
 }
@@ -115,10 +114,9 @@ describe("migration 70", () => {
     expect(tableExists("crawl_state")).toBe(false);
     expect(
       db
-        .prepare<
-          [],
-          { dirty_version: number }
-        >("SELECT dirty_version FROM refresh_meta WHERE job = 'link_graph'")
+        .prepare<[], { dirty_version: number }>(
+          "SELECT dirty_version FROM refresh_meta WHERE job = 'link_graph'",
+        )
         .get()?.dirty_version,
     ).toBe(0);
   });
@@ -409,10 +407,9 @@ describe("migration 70", () => {
     }
     expect(
       db
-        .prepare<
-          [],
-          { value: string }
-        >("SELECT value FROM canonicalization_state WHERE key = 'recanonicalize_source_url_fingerprint'")
+        .prepare<[], { value: string }>(
+          "SELECT value FROM canonicalization_state WHERE key = 'recanonicalize_source_url_fingerprint'",
+        )
         .get()?.value,
     ).toBe("fingerprint-v1");
     expect(
@@ -430,10 +427,9 @@ describe("migration 70", () => {
     ).toBe(0);
     expect(
       db
-        .prepare<
-          [],
-          { latest_doc_id: string | null }
-        >("SELECT latest_doc_id FROM source_stats WHERE source_id = 'web'")
+        .prepare<[], { latest_doc_id: string | null }>(
+          "SELECT latest_doc_id FROM source_stats WHERE source_id = 'web'",
+        )
         .get()?.latest_doc_id,
     ).toBe("extension-page");
     for (const [table, expectedIds] of [
@@ -470,10 +466,9 @@ describe("migration 70", () => {
     ).toEqual([]);
     expect(
       db
-        .prepare<
-          [],
-          { needs_refresh: number; doc_count: number }
-        >("SELECT needs_refresh, doc_count FROM source_stats WHERE source_id = 'notes:local'")
+        .prepare<[], { needs_refresh: number; doc_count: number }>(
+          "SELECT needs_refresh, doc_count FROM source_stats WHERE source_id = 'notes:local'",
+        )
         .get(),
     ).toEqual({ needs_refresh: 1, doc_count: 1 });
     expect(tableExists("crawl_queue")).toBe(false);
@@ -520,10 +515,9 @@ describe("migration 70", () => {
     ).toEqual({ documentType: "webpage" });
     expect(
       db
-        .prepare<
-          [],
-          { doc_count: number; dirty_version: number; needs_refresh: number }
-        >("SELECT doc_count, dirty_version, needs_refresh FROM source_stats WHERE source_id = 'web'")
+        .prepare<[], { doc_count: number; dirty_version: number; needs_refresh: number }>(
+          "SELECT doc_count, dirty_version, needs_refresh FROM source_stats WHERE source_id = 'web'",
+        )
         .get(),
     ).toEqual({ doc_count: 1, dirty_version: 1, needs_refresh: 1 });
   });

@@ -78,10 +78,9 @@ export function recoverRootNavigation(
       }
       bytes += row.bytes;
       const snapshot = db
-        .prepare<
-          [string, number],
-          { plain_text: string }
-        >("SELECT plain_text FROM knowledge_revisions WHERE node_id=? AND revision=?")
+        .prepare<[string, number], { plain_text: string }>(
+          "SELECT plain_text FROM knowledge_revisions WHERE node_id=? AND revision=?",
+        )
         .get(rootId, row.revision);
       if (!snapshot) continue;
       for (const link of navigationTargets(snapshot.plain_text).values()) {

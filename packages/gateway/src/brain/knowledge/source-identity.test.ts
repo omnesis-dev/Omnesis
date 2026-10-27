@@ -25,10 +25,9 @@ describe("seedKnowledgeSourceMeta", () => {
 
   const row = () =>
     db
-      .prepare<
-        [string],
-        { icon: string | null; label: string | null }
-      >("SELECT icon, label FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { icon: string | null; label: string | null }>(
+        "SELECT icon, label FROM sync_state WHERE source_id = ?",
+      )
       .get(KNOWLEDGE_SOURCE_ID);
 
   test("gives wiki pages a label and a PNG wiki icon every client can decode", async () => {

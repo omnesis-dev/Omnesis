@@ -805,8 +805,13 @@ export function isDuckDbInvalidated(error: unknown): boolean {
   return /database has been invalidated because of a previous fatal error/i.test(message);
 }
 
-function defaultMemoryLimitMiB(): number {
-  const quarter = Math.floor(totalmem() / 4 / MIB);
+/**
+ * A quarter of `budgetBytes`, clamped. The gateway passes its memory budget
+ * (see `memory-budget.ts`) so a container's limit, not the host's memory,
+ * sizes the default; standalone callers fall back to the host's memory.
+ */
+export function defaultMemoryLimitMiB(budgetBytes: number = totalmem()): number {
+  const quarter = Math.floor(budgetBytes / 4 / MIB);
   return Math.max(MIN_MEMORY_LIMIT_MIB, Math.min(MAX_DEFAULT_MEMORY_LIMIT_MIB, quarter));
 }
 

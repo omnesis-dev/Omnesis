@@ -66,16 +66,14 @@ export function fetchMergeEquivalencesData(db: Db): MergeEquivalencesIoData {
     const isName = side.side_alias_type === "name";
     const rows = isName
       ? db
-          .prepare<
-            [string],
-            { person_id: string }
-          >("SELECT person_id FROM person_aliases WHERE alias_type = 'name' AND LOWER(alias) = ?")
+          .prepare<[string], { person_id: string }>(
+            "SELECT person_id FROM person_aliases WHERE alias_type = 'name' AND LOWER(alias) = ?",
+          )
           .all(side.side_alias)
       : db
-          .prepare<
-            [string, string],
-            { person_id: string }
-          >("SELECT person_id FROM person_aliases WHERE alias_type = ? AND alias = ?")
+          .prepare<[string, string], { person_id: string }>(
+            "SELECT person_id FROM person_aliases WHERE alias_type = ? AND alias = ?",
+          )
           .all(side.side_alias_type, side.side_alias);
     const ids = rows.map((r) => r.person_id);
     resolveCache.set(key, ids);
@@ -117,10 +115,9 @@ export function fetchMergeEquivalencesData(db: Db): MergeEquivalencesIoData {
     const ids = [...allPersonIds];
     const placeholders = ids.map(() => "?").join(",");
     const rows = db
-      .prepare<
-        unknown[],
-        { id: string; first_seen: string; is_self: number }
-      >(`SELECT id, first_seen, is_self FROM people WHERE id IN (${placeholders})`)
+      .prepare<unknown[], { id: string; first_seen: string; is_self: number }>(
+        `SELECT id, first_seen, is_self FROM people WHERE id IN (${placeholders})`,
+      )
       .all(...ids);
     for (const r of rows) {
       personMeta.push({ id: r.id, firstSeen: r.first_seen, isSelf: r.is_self === 1 });
@@ -266,10 +263,9 @@ export function upsertMergeEquivalences(
   // Load the current equivalences into memory for diffing.
   const current = new Map<string, string>();
   for (const r of db
-    .prepare<
-      [],
-      { from_id: string; to_id: string }
-    >("SELECT from_id, to_id FROM person_equivalences")
+    .prepare<[], { from_id: string; to_id: string }>(
+      "SELECT from_id, to_id FROM person_equivalences",
+    )
     .iterate()) {
     current.set(r.from_id, r.to_id);
   }

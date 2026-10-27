@@ -572,10 +572,9 @@ function buildDatumNeighbourhoodSection(docId: string, deps: CognitionRunPromptD
   // A truncated date scan means "no extracted dates" must not be read as
   // "no dates in the document" — the tail was never scanned.
   const truncated = deps.db
-    .prepare<
-      [string],
-      { t: number | null }
-    >("SELECT dates_truncated AS t FROM documents WHERE id = ?")
+    .prepare<[string], { t: number | null }>(
+      "SELECT dates_truncated AS t FROM documents WHERE id = ?",
+    )
     .get(docId);
   if (truncated?.t === 1) {
     parts.push(
@@ -625,10 +624,9 @@ function buildDataRunPrompt(
 
   const now = deps.clock();
   const docRow = deps.db
-    .prepare<
-      [string],
-      { id: string; metadata: string | null }
-    >("SELECT id, metadata FROM documents WHERE id = ?")
+    .prepare<[string], { id: string; metadata: string | null }>(
+      "SELECT id, metadata FROM documents WHERE id = ?",
+    )
     .get(payload.docId);
 
   if (!docRow) {
@@ -1064,10 +1062,9 @@ function buildProvenanceRecheckPrompt(
   const { recheckDependentKind: kind, recheckDependentId: id } = payload;
   const parts: string[] = [runHeader(run, deps)];
   const dependent = deps.db
-    .prepare<
-      [string],
-      { title: string; state: string }
-    >(`SELECT title, state FROM open_loops WHERE id = ? AND ${knowledgeOwnerReadPredicate(deps.db, "open_loops.id")}`)
+    .prepare<[string], { title: string; state: string }>(
+      `SELECT title, state FROM open_loops WHERE id = ? AND ${knowledgeOwnerReadPredicate(deps.db, "open_loops.id")}`,
+    )
     .get(id);
   const dead = listConsumedPriorsForDependent(deps.db, kind, id).filter((p) => !p.live);
   if (!dependent) {

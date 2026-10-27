@@ -151,19 +151,17 @@ it("runs four independent discoveries by default and refills a free slot while s
   await bench.drainUntilQuiet();
   for (const id of ids) {
     const rows = bench.sql
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='interpretation'")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='interpretation'",
+      )
       .get(id);
     expect(rows?.count).toBe(1);
   }
   // Real writer admission keeps bounded, identifier-free fairness history.
   const admissions = bench.sql
-    .prepare<
-      [],
-      { joint_work: number; policy_repair: number }
-    >("SELECT joint_work,policy_repair FROM cognition_synthesis_admissions ORDER BY sequence")
+    .prepare<[], { joint_work: number; policy_repair: number }>(
+      "SELECT joint_work,policy_repair FROM cognition_synthesis_admissions ORDER BY sequence",
+    )
     .all();
   expect(admissions).toHaveLength(3);
   for (const admission of admissions) {

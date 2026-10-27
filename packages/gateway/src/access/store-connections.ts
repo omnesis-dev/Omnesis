@@ -39,10 +39,9 @@ export function findDeviceBoundSignIn(
   now: number,
 ): SignInMatch | undefined {
   return db
-    .prepare<
-      { now: number; device: string },
-      SignInMatch
-    >(`${MATCH_SELECT} WHERE c.execution_device_id = @device AND ${LIVE_SIGN_IN} ${NEWEST}`)
+    .prepare<{ now: number; device: string }, SignInMatch>(
+      `${MATCH_SELECT} WHERE c.execution_device_id = @device AND ${LIVE_SIGN_IN} ${NEWEST}`,
+    )
     .get({ now, device: executionDeviceId });
 }
 
@@ -64,7 +63,9 @@ export function findConnectionProposal(
     .prepare<
       [string],
       { client_id: string; client_name: string; execution_device_id: string | null }
-    >("SELECT client_id, client_name, execution_device_id FROM oauth_authorization_requests WHERE id = ?")
+    >(
+      "SELECT client_id, client_name, execution_device_id FROM oauth_authorization_requests WHERE id = ?",
+    )
     .get(requestId);
   if (!request) return null;
 
@@ -76,10 +77,9 @@ export function findConnectionProposal(
   }
   if (!row) {
     row = db
-      .prepare<
-        { now: number; client: string },
-        SignInMatch
-      >(`${MATCH_SELECT} WHERE c.oauth_client_id = @client AND ${LIVE_SIGN_IN} ${NEWEST}`)
+      .prepare<{ now: number; client: string }, SignInMatch>(
+        `${MATCH_SELECT} WHERE c.oauth_client_id = @client AND ${LIVE_SIGN_IN} ${NEWEST}`,
+      )
       .get({ now, client: request.client_id });
     if (row) matchedBy = "client";
   }

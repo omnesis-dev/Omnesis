@@ -559,7 +559,9 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       .prepare<
         [string],
         { invalidated_at: number | null; invalidation_cause: string | null; revision: number }
-      >("SELECT invalidated_at, invalidation_cause, revision FROM temporal_annotations WHERE id = ?")
+      >(
+        "SELECT invalidated_at, invalidation_cause, revision FROM temporal_annotations WHERE id = ?",
+      )
       .get(annotationId);
     expect(row).toBeDefined();
     expect(row!.invalidated_at).not.toBeNull();
@@ -568,10 +570,9 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
     // A soft delete keeps the link rows; only a purge drops them.
     const links = bench.sql
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM temporal_annotation_documents WHERE annotation_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM temporal_annotation_documents WHERE annotation_id = ?",
+      )
       .get(annotationId);
     expect(links!.n).toBe(1);
   }, 60_000);
@@ -586,7 +587,9 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       .prepare<
         [string],
         { position: number; document_id: string; quote: string; broken_at: number | null }
-      >("SELECT position, document_id, quote, broken_at FROM temporal_annotation_evidence WHERE annotation_id = ? ORDER BY position")
+      >(
+        "SELECT position, document_id, quote, broken_at FROM temporal_annotation_evidence WHERE annotation_id = ? ORDER BY position",
+      )
       .all(grounded.id);
     expect(atoms).toHaveLength(1);
     expect(atoms[0]!.quote).toBe(EVIDENCE_QUOTE);
@@ -646,10 +649,9 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
     expect(entry.loopIds).toEqual([loopId]);
     const join = bench.sql
-      .prepare<
-        [string, string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM temporal_annotation_loops WHERE annotation_id = ? AND loop_id = ?")
+      .prepare<[string, string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM temporal_annotation_loops WHERE annotation_id = ? AND loop_id = ?",
+      )
       .get(entry.id, loopId);
     expect(join!.n).toBe(1);
 
@@ -806,27 +808,24 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     // citing the document is broken, so it reads as ungrounded until a
     // reviewed `temporal_annotation_update` or delete settles it.
     const surviving = bench.sql
-      .prepare<
-        [string],
-        { invalidated_at: number | null }
-      >("SELECT invalidated_at FROM temporal_annotations WHERE id = ?")
+      .prepare<[string], { invalidated_at: number | null }>(
+        "SELECT invalidated_at FROM temporal_annotations WHERE id = ?",
+      )
       .get(entry.id);
     expect(surviving, "the annotation must survive the deletion").toEqual({
       invalidated_at: null,
     });
     const links = bench.sql
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM temporal_annotation_documents WHERE annotation_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM temporal_annotation_documents WHERE annotation_id = ?",
+      )
       .get(entry.id);
     expect(links!.n).toBe(1);
     expect(
       bench.sql
-        .prepare<
-          [string, string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM temporal_annotation_evidence WHERE annotation_id = ? AND document_id = ? AND broken_at IS NULL")
+        .prepare<[string, string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM temporal_annotation_evidence WHERE annotation_id = ? AND document_id = ? AND broken_at IS NULL",
+        )
         .get(entry.id, docId)!.n,
     ).toBe(0);
     expect(await items("TIX-CASCADE")).toHaveLength(1);
@@ -899,10 +898,9 @@ describe("Brain Bench — the entailment gate's reject arm on a temporal write",
     const page = await bench.obs.timeIndex({ limit: 500 });
     expect(page.items.some((i) => i.sentence.includes("TIX-REJECT"))).toBe(false);
     const rows = bench.sql
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM temporal_annotations WHERE sentence LIKE 'TIX-REJECT%'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM temporal_annotations WHERE sentence LIKE 'TIX-REJECT%'",
+      )
       .get();
     expect(rows!.n).toBe(0);
 
@@ -1038,7 +1036,9 @@ describe("Brain Bench — a supporting document's edit and the entries it touche
       .prepare<
         [],
         { invalidated_at: number | null; invalidation_cause: string | null } | undefined
-      >("SELECT invalidated_at, invalidation_cause FROM temporal_annotations WHERE sentence LIKE '%TIX-FERRY%'")
+      >(
+        "SELECT invalidated_at, invalidation_cause FROM temporal_annotations WHERE sentence LIKE '%TIX-FERRY%'",
+      )
       .get();
     expect(row, "the entry row still exists").toBeDefined();
     editInvalidatedAt = row!.invalidated_at;
@@ -1185,10 +1185,9 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
 
     // … and the re-filed replacement is live, grounded in the new quote.
     const replacement = bench.sql
-      .prepare<
-        [],
-        { invalidated_at: number | null } | undefined
-      >("SELECT invalidated_at FROM temporal_annotations WHERE sentence = 'TIX-REFILE move-out inspection at the studio (moved).'")
+      .prepare<[], { invalidated_at: number | null } | undefined>(
+        "SELECT invalidated_at FROM temporal_annotations WHERE sentence = 'TIX-REFILE move-out inspection at the studio (moved).'",
+      )
       .get();
     expect(replacement, "the re-filed entry exists").toBeDefined();
     expect(replacement!.invalidated_at).toBeNull();
@@ -1219,10 +1218,9 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
     // row carries it: the second source-maintenance pass's re-file attempt met
     // the reconcile refusal instead of minting a duplicate.
     const rows = bench.sql
-      .prepare<
-        [],
-        { invalidated_at: number | null }
-      >("SELECT invalidated_at FROM temporal_annotations WHERE sentence = 'TIX-REFILE move-out inspection at the studio (moved).'")
+      .prepare<[], { invalidated_at: number | null }>(
+        "SELECT invalidated_at FROM temporal_annotations WHERE sentence = 'TIX-REFILE move-out inspection at the studio (moved).'",
+      )
       .all();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.invalidated_at).toBeNull();
@@ -1316,10 +1314,9 @@ describe("Brain Bench — paginated temporal casualties in source maintenance", 
     expect(pages[0]!.result?.data?.invalidated).toHaveLength(2);
     expect(pages[0]!.result?.data?.hasMoreInvalidated).toBe(false);
     const rows = bench.sql
-      .prepare<
-        [string],
-        { refile_presented_run: string | null }
-      >("SELECT refile_presented_run FROM temporal_annotations WHERE id IN (SELECT annotation_id FROM temporal_annotation_documents WHERE document_id=?) AND sentence LIKE 'Pagination workshop%'")
+      .prepare<[string], { refile_presented_run: string | null }>(
+        "SELECT refile_presented_run FROM temporal_annotations WHERE id IN (SELECT annotation_id FROM temporal_annotation_documents WHERE document_id=?) AND sentence LIKE 'Pagination workshop%'",
+      )
       .all(docId!);
     expect(rows).toHaveLength(12);
     expect(rows.every((row) => row.refile_presented_run === run.id)).toBe(true);

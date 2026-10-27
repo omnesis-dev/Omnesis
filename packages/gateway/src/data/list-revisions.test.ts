@@ -35,10 +35,9 @@ describe("mutable list revisions", () => {
     expect(mutableListRevision(db, "cognition-runs")).toBe(0);
     expect(
       db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'mutable_list_people%'")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'mutable_list_people%'",
+        )
         .all(),
     ).toEqual([]);
   });

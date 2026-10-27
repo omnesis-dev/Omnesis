@@ -132,10 +132,9 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
     let conversationId = input.conversationId;
     if (conversationId) {
       const tombstone = db
-        .prepare<
-          [string],
-          { owner_id: string }
-        >("SELECT owner_id FROM answer_conversation_tombstones WHERE id = ?")
+        .prepare<[string], { owner_id: string }>(
+          "SELECT owner_id FROM answer_conversation_tombstones WHERE id = ?",
+        )
         .get(conversationId);
       if (tombstone) {
         if (tombstone.owner_id !== input.ownerId) {
@@ -206,10 +205,9 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
       conversationId = input.ids.conversationId;
       if (
         db
-          .prepare<
-            [string],
-            { id: string }
-          >("SELECT id FROM answer_conversation_tombstones WHERE id = ?")
+          .prepare<[string], { id: string }>(
+            "SELECT id FROM answer_conversation_tombstones WHERE id = ?",
+          )
           .get(conversationId)
       ) {
         throw new AnswerStoreError(
@@ -262,10 +260,9 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
 export function recoverInterruptedAnswerTasks(db: PrivacyDb, now: number): number {
   return db.transaction(() => {
     const tasks = db
-      .prepare<
-        [],
-        { id: string; owner_id: string }
-      >("SELECT id, owner_id FROM answer_tasks WHERE status = 'running'")
+      .prepare<[], { id: string; owner_id: string }>(
+        "SELECT id, owner_id FROM answer_tasks WHERE status = 'running'",
+      )
       .all();
     if (tasks.length === 0) return 0;
     db.prepare(
@@ -730,10 +727,9 @@ export function resolvePrivacyApproval(
 export function expirePrivacyApprovals(db: PrivacyDb, now: number): number {
   return db.transaction(() => {
     const expired = db
-      .prepare<
-        [number],
-        ApprovalJoinedRow
-      >(approvalJoinSql("a.status = 'pending' AND a.expires_at <= ?"))
+      .prepare<[number], ApprovalJoinedRow>(
+        approvalJoinSql("a.status = 'pending' AND a.expires_at <= ?"),
+      )
       .all(now);
     for (const joined of expired) {
       expireJoinedApproval(db, joined, now);

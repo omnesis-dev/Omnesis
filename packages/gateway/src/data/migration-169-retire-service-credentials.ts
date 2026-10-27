@@ -21,10 +21,9 @@ import type { Db } from "./types.js";
  */
 export function retireServiceCredentials(db: Db, now = Date.now()): void {
   const tableExists = db
-    .prepare<
-      [string],
-      { present: number }
-    >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .prepare<[string], { present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
     .get("access_principals");
   if (!tableExists) return;
 

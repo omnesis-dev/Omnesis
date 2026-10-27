@@ -29,10 +29,9 @@ describe("migration 61 - privacy reviewer health index", () => {
 
     expect(
       db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_answer_tasks_created_at'")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_answer_tasks_created_at'",
+        )
         .get(),
     ).toEqual({ name: "idx_answer_tasks_created_at" });
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

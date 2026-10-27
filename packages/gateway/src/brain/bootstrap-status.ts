@@ -83,13 +83,7 @@ export interface BootstrapSettingsView {
  * left queued. Both resolve themselves without an operator.
  */
 export type BootstrapLaneState =
-  | "unstarted"
-  | "off"
-  | "holding"
-  | "waiting"
-  | "running"
-  | "drained"
-  | "parked";
+  "unstarted" | "off" | "holding" | "waiting" | "running" | "drained" | "parked";
 
 export interface BootstrapStatus {
   settings: BootstrapSettingsView;
@@ -178,19 +172,17 @@ interface RunCountRow {
  */
 function bootstrapCompletedSince(db: Db, since: number): number {
   return db
-    .prepare<
-      [number],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap' AND status = 'completed' AND completed_at >= ?")
+    .prepare<[number], { n: number }>(
+      "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap' AND status = 'completed' AND completed_at >= ?",
+    )
     .get(since)!.n;
 }
 
 function bootstrapRunCounts(db: Db): { pending: number; completed: number; failed: number } {
   const rows = db
-    .prepare<
-      [],
-      RunCountRow
-    >("SELECT status, COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap' GROUP BY status")
+    .prepare<[], RunCountRow>(
+      "SELECT status, COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap' GROUP BY status",
+    )
     .all();
   const by = new Map(rows.map((r) => [r.status, r.n]));
   return {

@@ -230,10 +230,9 @@ export class SourceDataRemovalService {
     const remove = async (): Promise<{ deleted: number }> => {
       assertSourceWireAuthority?.();
       const doomedRows = this.deps.db
-        .prepare<
-          [string],
-          { id: string; source_id: string }
-        >("SELECT id, source_id FROM documents WHERE provider_id = ?")
+        .prepare<[string], { id: string; source_id: string }>(
+          "SELECT id, source_id FROM documents WHERE provider_id = ?",
+        )
         .all(providerId);
       for (const sourceId of new Set(doomedRows.map((row) => row.source_id))) {
         await this.prepareSourceRemoval(sourceId);

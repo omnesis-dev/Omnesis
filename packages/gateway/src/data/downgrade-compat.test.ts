@@ -74,10 +74,9 @@ describe("runDowngradeCompatCheck", () => {
     runDowngradeCompatCheck(db);
 
     const rows = db
-      .prepare<
-        [],
-        { source_id: string; cursor: string }
-      >("SELECT source_id, cursor FROM sync_state")
+      .prepare<[], { source_id: string; cursor: string }>(
+        "SELECT source_id, cursor FROM sync_state",
+      )
       .all();
     // Both sources are untouched (minimum_gateway_version <= LATEST_SCHEMA_VERSION).
     for (const row of rows) {
@@ -99,19 +98,17 @@ describe("runDowngradeCompatCheck", () => {
     runDowngradeCompatCheck(db);
 
     const incompatible = db
-      .prepare<
-        [string],
-        { cursor: string; minimum_gateway_version: number }
-      >("SELECT cursor, minimum_gateway_version FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { cursor: string; minimum_gateway_version: number }>(
+        "SELECT cursor, minimum_gateway_version FROM sync_state WHERE source_id = ?",
+      )
       .get(incompatibleId)!;
     expect(incompatible.cursor).toBe("{}");
     expect(incompatible.minimum_gateway_version).toBe(0);
 
     const compatible = db
-      .prepare<
-        [string],
-        { cursor: string; minimum_gateway_version: number }
-      >("SELECT cursor, minimum_gateway_version FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { cursor: string; minimum_gateway_version: number }>(
+        "SELECT cursor, minimum_gateway_version FROM sync_state WHERE source_id = ?",
+      )
       .get(compatibleId)!;
     expect(compatible.cursor).toBe('{"page":1}');
     expect(compatible.minimum_gateway_version).toBe(LATEST_SCHEMA_VERSION - 1);
@@ -201,10 +198,9 @@ describe("setSyncState stamps minimum_gateway_version", () => {
     setSyncState(db, "gmail:alice@example.com", { page: 1 });
 
     const row = db
-      .prepare<
-        [string],
-        { minimum_gateway_version: number }
-      >("SELECT minimum_gateway_version FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { minimum_gateway_version: number }>(
+        "SELECT minimum_gateway_version FROM sync_state WHERE source_id = ?",
+      )
       .get("gmail:alice@example.com")!;
     expect(row.minimum_gateway_version).toBe(LATEST_SCHEMA_VERSION);
   });
@@ -216,10 +212,9 @@ describe("setSyncState stamps minimum_gateway_version", () => {
     setSyncState(db, "gmail:alice@example.com", { page: 2 });
 
     const row = db
-      .prepare<
-        [string],
-        { minimum_gateway_version: number }
-      >("SELECT minimum_gateway_version FROM sync_state WHERE source_id = ?")
+      .prepare<[string], { minimum_gateway_version: number }>(
+        "SELECT minimum_gateway_version FROM sync_state WHERE source_id = ?",
+      )
       .get("gmail:alice@example.com")!;
     expect(row.minimum_gateway_version).toBe(LATEST_SCHEMA_VERSION);
   });

@@ -522,10 +522,9 @@ describe("observation repository", () => {
       expect(listObservations(db).map((o) => o.id)).toEqual(["obs_c"]);
       expect(
         db
-          .prepare<
-            [string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM observation_citations WHERE doc_id = ?")
+          .prepare<[string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM observation_citations WHERE doc_id = ?",
+          )
           .get(docA)?.n,
       ).toBe(0);
     });
@@ -573,10 +572,9 @@ describe("observation repository", () => {
       ).toEqual(["obs_open", "obs_recent"]);
       expect(
         db
-          .prepare<
-            [],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id LIKE 'obs_old%'")
+          .prepare<[], { n: number }>(
+            "SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id LIKE 'obs_old%'",
+          )
           .get()?.n,
       ).toBe(0);
 

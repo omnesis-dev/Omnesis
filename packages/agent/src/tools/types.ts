@@ -429,8 +429,7 @@ export interface RecordCitationResolved {
  *     timeline record citation (a frozen rule).
  */
 export type RecordCitationRejection =
-  | { reason: "unknown_table"; table: string }
-  | { reason: "not_timeline_eligible"; table: string };
+  { reason: "unknown_table"; table: string } | { reason: "not_timeline_eligible"; table: string };
 
 export class RecordPortError extends Error {
   readonly rejection: RecordCitationRejection;

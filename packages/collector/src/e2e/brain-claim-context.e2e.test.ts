@@ -232,10 +232,9 @@ it("rejects an unchanged factual claim moved to an unsupported page scope throug
       .get(),
   ).toMatchObject({ status: "completed" });
   const runs = bench.sql
-    .prepare<
-      [],
-      { run_id: string }
-    >("SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL")
+    .prepare<[], { run_id: string }>(
+      "SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL",
+    )
     .all();
   const executed = (
     await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))

@@ -173,6 +173,30 @@ describe("Models.dev gateway catalog", () => {
     ).toThrow(/advertised effort values/);
   });
 
+  it("resolves Regolo aliases, renamed backends and logos through its catalog identity", () => {
+    const service = new ModelsDevCatalog({
+      configDir: dir(),
+      bundled: {
+        ...BUNDLED,
+        "regolo-ai": {
+          name: "Regolo AI",
+          models: { "chat-example": { tool_call: true, reasoning: false } },
+        },
+      },
+    });
+    expect(service.providerId("regolo")).toBe("regolo-ai");
+    expect(service.providerId("regolo-ai")).toBe("regolo-ai");
+    expect(service.providerId("custom-regolo", "https://api.regolo.ai/")).toBe("regolo-ai");
+    expect(service.controlsForBackend("regolo", "chat-example")).toMatchObject({
+      providerId: "regolo-ai",
+      providerName: "Regolo AI",
+      source: "models.dev",
+      toolCall: true,
+      logoUrl: "/model-logos/regolo-ai.svg",
+    });
+    expect(service.controlsForBackend("regolo", "unknown-example").source).toBe("unknown");
+  });
+
   it("does not confuse inherited object names with exact provider or model IDs", async () => {
     const service = new ModelsDevCatalog({
       configDir: dir(),

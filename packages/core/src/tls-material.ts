@@ -24,12 +24,7 @@ import { join, resolve } from "node:path";
 export type TlsOwnership = "self-signed" | "tailscale" | "mkcert" | "external";
 
 export type TlsMaterialState =
-  | "valid"
-  | "expiring"
-  | "expired"
-  | "not-yet-valid"
-  | "key-mismatch"
-  | "unreadable";
+  "valid" | "expiring" | "expired" | "not-yet-valid" | "key-mismatch" | "unreadable";
 
 export interface TlsMaterialInspection {
   state: TlsMaterialState;

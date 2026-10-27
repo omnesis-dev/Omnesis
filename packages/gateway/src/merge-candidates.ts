@@ -1289,10 +1289,9 @@ export function getMergeCandidateById(db: Db, id: string): MergeCandidateRow | n
 export function countMergeCandidates(db: Db, status?: MergeCandidateStatus): number {
   if (status) {
     const r = db
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM merge_candidates WHERE status = ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM merge_candidates WHERE status = ?",
+      )
       .get(status);
     return r?.c ?? 0;
   }
@@ -1817,10 +1816,9 @@ function representativeAlias(
   personId: string,
 ): { aliasType: MergeRuleAliasType; alias: string } | null {
   const rows = db
-    .prepare<
-      [string],
-      { alias_type: string; alias: string }
-    >("SELECT alias_type, alias FROM person_aliases WHERE person_id = ?")
+    .prepare<[string], { alias_type: string; alias: string }>(
+      "SELECT alias_type, alias FROM person_aliases WHERE person_id = ?",
+    )
     .all(personId);
   if (rows.length === 0) return null;
   const sorted = rows

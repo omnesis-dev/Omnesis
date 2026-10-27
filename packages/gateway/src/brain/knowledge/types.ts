@@ -2,12 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 export type KnowledgeNodeKind =
-  | "wiki"
-  | "root"
-  | "loop"
-  | "doc_annotation"
-  | "person_annotation"
-  | "observation";
+  "wiki" | "root" | "loop" | "doc_annotation" | "person_annotation" | "observation";
 export type KnowledgeValidity = "current" | "stale";
 export type KnowledgeVerification = "unverified" | "verified" | "rejected" | "stale";
 export type KnowledgeRelation = "supports" | "contradicts" | "context" | "depends_on";
@@ -174,11 +169,7 @@ export interface KnowledgeDependency {
 export class KnowledgeStorageError extends Error {
   constructor(
     readonly code:
-      | "revision_conflict"
-      | "reference_invalid"
-      | "claim_invalid"
-      | "cycle"
-      | "root_conflict",
+      "revision_conflict" | "reference_invalid" | "claim_invalid" | "cycle" | "root_conflict",
     message: string,
   ) {
     super(message);

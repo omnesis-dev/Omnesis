@@ -121,10 +121,9 @@ function stampMetadata(metadata: string): string {
  */
 export function foldWebPagesIntoWebSource(db: Db): FoldWebPagesResult {
   const rows = db
-    .prepare<
-      [string],
-      LegacyDocRow
-    >("SELECT id, source_id, source_url, metadata, updated_at FROM documents WHERE source_id = ?")
+    .prepare<[string], LegacyDocRow>(
+      "SELECT id, source_id, source_url, metadata, updated_at FROM documents WHERE source_id = ?",
+    )
     .all(LEGACY_BROWSER_SOURCE_ID);
 
   if (rows.length === 0) return EMPTY_RESULT;

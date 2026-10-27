@@ -241,8 +241,7 @@ function resolvePerson(db: Db, person: TranscriptionPerson, includeSelf = false)
     );
     if (id) {
       const row = db.prepare(`SELECT is_self FROM people WHERE id=?`).get(id) as
-        | { is_self: number }
-        | undefined;
+        { is_self: number } | undefined;
       if (row && (includeSelf || !row.is_self)) return id;
     }
   }
@@ -264,8 +263,7 @@ export function getTranscriptionVocabulary(
     speakerCanonical &&
     (
       db.prepare("SELECT is_self FROM people WHERE id=?").get(speakerCanonical) as
-        | { is_self: number }
-        | undefined
+        { is_self: number } | undefined
     )?.is_self;
   if (
     (settings.authoredWeight ?? 4) > 0 &&
@@ -374,8 +372,10 @@ export function getTranscriptionVocabulary(
       let background = globalCounts.get(row.term);
       if (!background) {
         background = (global.get(row.term) as
-          | { document_count: number; evidence_count: number }
-          | undefined) ?? { document_count: row.document_count, evidence_count: 0 };
+          { document_count: number; evidence_count: number } | undefined) ?? {
+          document_count: row.document_count,
+          evidence_count: 0,
+        };
         globalCounts.set(row.term, background);
       }
       const total = background.document_count;

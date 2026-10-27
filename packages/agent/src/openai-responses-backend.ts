@@ -500,8 +500,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
       const callsByItem = new Map<string, ResponsesFunctionCall>();
       let responseId: string | undefined;
       let streamFailure:
-        | { code: string; message: string; contextWindowExceeded: boolean }
-        | undefined;
+        { code: string; message: string; contextWindowExceeded: boolean } | undefined;
       let incompleteReason: string | undefined;
       let visibleOutput = "";
       let iterationUsage = { input: 0, output: 0, cachedInput: 0 };

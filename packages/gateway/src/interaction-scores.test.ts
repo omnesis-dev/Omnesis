@@ -118,10 +118,9 @@ function person(role: PersonRole, email: string, name?: string): PersonMention {
 /** Look up a (canonical) person id by email alias. */
 function personIdByEmail(email: string): string | null {
   const row = db
-    .prepare<
-      [string],
-      { person_id: string }
-    >("SELECT person_id FROM person_aliases WHERE alias_type='email' AND alias=? LIMIT 1")
+    .prepare<[string], { person_id: string }>(
+      "SELECT person_id FROM person_aliases WHERE alias_type='email' AND alias=? LIMIT 1",
+    )
     .get(email);
   return row?.person_id ?? null;
 }
@@ -413,19 +412,17 @@ describe("computeInteractionScores — decay", () => {
     const a = snap.rows.find(
       (r) =>
         db
-          .prepare<
-            [string],
-            { alias: string }
-          >("SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='email' LIMIT 1")
+          .prepare<[string], { alias: string }>(
+            "SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='email' LIMIT 1",
+          )
           .get(r.personId)?.alias === "a@example.com",
     );
     const b = snap.rows.find(
       (r) =>
         db
-          .prepare<
-            [string],
-            { alias: string }
-          >("SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='email' LIMIT 1")
+          .prepare<[string], { alias: string }>(
+            "SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='email' LIMIT 1",
+          )
           .get(r.personId)?.alias === "b@example.com",
     );
     expect(a).toBeDefined();
@@ -762,10 +759,9 @@ describe("interaction scores under merges", () => {
 
     const aliceEmail = personIdByEmail("alice@example.com")!;
     const alicePhoneRow = db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias_type='phone' AND alias=? LIMIT 1")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias_type='phone' AND alias=? LIMIT 1",
+      )
       .get("+15555550100");
     const alicePhone = alicePhoneRow!.person_id;
     expect(aliceEmail).not.toBe(alicePhone);
@@ -787,10 +783,9 @@ describe("interaction scores under merges", () => {
     // (zeroed by the upsert pass since loser is no longer in the
     // snapshot).
     const loser = db
-      .prepare<
-        [string],
-        { interaction_score: number }
-      >("SELECT interaction_score FROM people WHERE id = ?")
+      .prepare<[string], { interaction_score: number }>(
+        "SELECT interaction_score FROM people WHERE id = ?",
+      )
       .get(alicePhone);
     expect(loser?.interaction_score ?? 0).toBe(0);
   });

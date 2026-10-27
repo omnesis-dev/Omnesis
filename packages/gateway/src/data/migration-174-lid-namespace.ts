@@ -142,10 +142,9 @@ export function namespaceWhatsappLids(db: Db): void {
   const has = (table: string): boolean =>
     (
       db
-        .prepare<
-          [string],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+        .prepare<[string], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+        )
         .all(table) as { name: string }[]
     ).length > 0;
 

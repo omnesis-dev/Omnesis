@@ -87,10 +87,9 @@ if (dateRanges.length > 0) {
 
 // --- Sync state ---
 const syncStates = db
-  .prepare<
-    [],
-    { source_id: string; cursor: string; last_synced_at: string }
-  >("SELECT * FROM sync_state ORDER BY source_id")
+  .prepare<[], { source_id: string; cursor: string; last_synced_at: string }>(
+    "SELECT * FROM sync_state ORDER BY source_id",
+  )
   .all();
 
 if (syncStates.length > 0) {
@@ -140,19 +139,17 @@ if (recent.length > 0) {
 
 // --- Link graph stats ---
 const hasLinksTable = db
-  .prepare<
-    [],
-    { name: string }
-  >("SELECT name FROM sqlite_master WHERE type='table' AND name='document_links'")
+  .prepare<[], { name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='document_links'",
+  )
   .get();
 
 if (hasLinksTable) {
   const totalDocs = total?.count ?? 0;
   const processed = db
-    .prepare<
-      [],
-      { count: number }
-    >("SELECT COUNT(*) as count FROM documents WHERE links_extracted_at IS NOT NULL")
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) as count FROM documents WHERE links_extracted_at IS NOT NULL",
+    )
     .get();
   const processedCount = processed?.count ?? 0;
   const remaining = totalDocs - processedCount;
@@ -161,10 +158,9 @@ if (hasLinksTable) {
     .prepare<[], { count: number }>("SELECT COUNT(*) as count FROM document_links")
     .get();
   const resolvedLinks = db
-    .prepare<
-      [],
-      { count: number }
-    >("SELECT COUNT(*) as count FROM document_links WHERE target_doc_id IS NOT NULL")
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) as count FROM document_links WHERE target_doc_id IS NOT NULL",
+    )
     .get();
   const linkCount = totalLinks?.count ?? 0;
   const resolvedCount = resolvedLinks?.count ?? 0;

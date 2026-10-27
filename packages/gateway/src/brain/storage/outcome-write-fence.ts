@@ -39,10 +39,9 @@ function evidenceHash(db: Database.Database, id: string): string | null {
   if (hasKnowledge && !isKnowledgeEvidenceReadable(db, id)) return null;
   return (
     db
-      .prepare<
-        [string],
-        { content_hash: string | null }
-      >("SELECT content_hash FROM documents WHERE id=?")
+      .prepare<[string], { content_hash: string | null }>(
+        "SELECT content_hash FROM documents WHERE id=?",
+      )
       .get(id)?.content_hash ?? null
   );
 }

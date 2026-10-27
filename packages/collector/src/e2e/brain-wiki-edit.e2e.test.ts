@@ -307,8 +307,7 @@ it("enriches an existing page with targeted edits and refuses each unsafe edit",
     .poll(
       () =>
         bench.sql.prepare("SELECT revision FROM knowledge_nodes WHERE id=?").get(pageId) as
-          | { revision: number }
-          | undefined,
+          { revision: number } | undefined,
       { timeout: 120_000 },
     )
     .toMatchObject({ revision: expect.any(Number) });
@@ -328,10 +327,9 @@ it("enriches an existing page with targeted edits and refuses each unsafe edit",
 
   // The stored revision is exactly the scripted edits applied to revision 1.
   const revisions = bench.sql
-    .prepare<
-      [string],
-      { revision: number; markdown: string; diff_json: string }
-    >("SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? ORDER BY revision")
+    .prepare<[string], { revision: number; markdown: string; diff_json: string }>(
+      "SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? ORDER BY revision",
+    )
     .all(pageId);
   const original = created(sourceId, supportId);
   expect(revisions[0]).toMatchObject({ revision: 1, markdown: original });
@@ -354,10 +352,9 @@ it("enriches an existing page with targeted edits and refuses each unsafe edit",
   ).toEqual(["labels", "overview", "tools"]);
   expect(
     bench.sql
-      .prepare<
-        [string],
-        { inputs: string }
-      >("SELECT group_concat(DISTINCT target_id) AS inputs FROM knowledge_dependencies WHERE node_id=? AND claim_id='tools'")
+      .prepare<[string], { inputs: string }>(
+        "SELECT group_concat(DISTINCT target_id) AS inputs FROM knowledge_dependencies WHERE node_id=? AND claim_id='tools'",
+      )
       .get(pageId)!.inputs,
   ).toBe(supportId);
 
@@ -403,10 +400,9 @@ it("enriches an existing page with targeted edits and refuses each unsafe edit",
   // The review the edit settled is complete, as after a full knowledge_save.
   expect(
     bench.sql
-      .prepare<
-        [string, string],
-        { status: string }
-      >("SELECT DISTINCT w.status FROM knowledge_work w JOIN knowledge_batches b ON w.batch_id=b.id WHERE w.subject_id=? AND b.run_id=?")
+      .prepare<[string, string], { status: string }>(
+        "SELECT DISTINCT w.status FROM knowledge_work w JOIN knowledge_batches b ON w.batch_id=b.id WHERE w.subject_id=? AND b.run_id=?",
+      )
       .all(pageId, editRun!),
   ).toEqual([{ status: "completed" }]);
 

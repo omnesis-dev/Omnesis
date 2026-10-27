@@ -109,10 +109,9 @@ export function readUnreadConversationIds(db: Db, conversationIds: readonly stri
     const chunk = conversationIds.slice(i, i + chunkSize);
     const placeholders = chunk.map(() => "?").join(",");
     const rows = db
-      .prepare<
-        string[],
-        { conversation_id: string }
-      >(`SELECT conversation_id FROM conversation_read_state WHERE conversation_id IN (${placeholders})`)
+      .prepare<string[], { conversation_id: string }>(
+        `SELECT conversation_id FROM conversation_read_state WHERE conversation_id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const row of rows) unread.add(row.conversation_id);
   }
@@ -123,10 +122,9 @@ export function readUnreadConversationIds(db: Db, conversationIds: readonly stri
 export function isConversationUnread(db: Db, conversationId: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { one: number }
-      >("SELECT 1 AS one FROM conversation_read_state WHERE conversation_id = ?")
+      .prepare<[string], { one: number }>(
+        "SELECT 1 AS one FROM conversation_read_state WHERE conversation_id = ?",
+      )
       .get(conversationId) !== undefined
   );
 }

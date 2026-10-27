@@ -92,10 +92,9 @@ describe("migration 86", () => {
     runMigrations(db);
 
     const row = db
-      .prepare<
-        [],
-        { subscription_id: string; compile_run_id: string | null }
-      >("SELECT subscription_id, compile_run_id FROM subscription_revisions")
+      .prepare<[], { subscription_id: string; compile_run_id: string | null }>(
+        "SELECT subscription_id, compile_run_id FROM subscription_revisions",
+      )
       .get();
     expect(row?.subscription_id).toBe("sub_northstar");
     // NULL, not an invented id: no run was ever recorded for this revision.

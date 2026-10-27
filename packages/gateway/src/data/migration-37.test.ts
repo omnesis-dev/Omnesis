@@ -35,10 +35,9 @@ afterEach(() => {
 function hasTable(d: Db, name: string): boolean {
   return (
     d
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      )
       .get(name) !== undefined
   );
 }
@@ -46,10 +45,9 @@ function hasTable(d: Db, name: string): boolean {
 function hasIndex(d: Db, name: string): boolean {
   return (
     d
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+      )
       .get(name) !== undefined
   );
 }

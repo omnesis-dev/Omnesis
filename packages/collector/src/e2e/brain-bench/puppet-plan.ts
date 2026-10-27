@@ -399,8 +399,7 @@ export function fetchedTitle(step: ToolStep | undefined): string | null {
 // ── the decision ────────────────────────────────────────────────────────────
 
 export type NextTurn =
-  | { kind: "tool"; name: string; args: Record<string, unknown> }
-  | { kind: "final"; text: string };
+  { kind: "tool"; name: string; args: Record<string, unknown> } | { kind: "final"; text: string };
 
 /** Flavours whose subject is a document the puppet fetches before deciding. */
 const DOCUMENT_SUBJECT_FLAVOURS = new Set<RunFlavour>([

@@ -57,20 +57,18 @@ export function outcomeReviewBatch(
 ): string | null {
   return (
     db
-      .prepare<
-        [string, string],
-        { batch_id: string }
-      >("SELECT w.batch_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE b.run_id=? AND w.subject_kind='node' AND w.subject_id=? AND w.reason='review' LIMIT 1")
+      .prepare<[string, string], { batch_id: string }>(
+        "SELECT w.batch_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE b.run_id=? AND w.subject_kind='node' AND w.subject_id=? AND w.reason='review' LIMIT 1",
+      )
       .get(runId, ownerId)?.batch_id ?? null
   );
 }
 
 export function readOutcomeAssessment(db: Database.Database, ownerId: string, fingerprint: string) {
   return db
-    .prepare<
-      [string, string],
-      OutcomeAssessmentRow
-    >("SELECT * FROM knowledge_outcome_assessments WHERE owner_id=? AND fingerprint=?")
+    .prepare<[string, string], OutcomeAssessmentRow>(
+      "SELECT * FROM knowledge_outcome_assessments WHERE owner_id=? AND fingerprint=?",
+    )
     .get(ownerId, fingerprint);
 }
 

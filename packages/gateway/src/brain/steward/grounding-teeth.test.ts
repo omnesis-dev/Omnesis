@@ -683,10 +683,9 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
       ]),
     );
     const atoms = db
-      .prepare<
-        [],
-        { position: number; evidence_doc_id: string }
-      >("SELECT position, evidence_doc_id FROM doc_annotation_evidence ORDER BY position")
+      .prepare<[], { position: number; evidence_doc_id: string }>(
+        "SELECT position, evidence_doc_id FROM doc_annotation_evidence ORDER BY position",
+      )
       .all();
     expect(atoms).toEqual([
       { position: 0, evidence_doc_id: subject },
@@ -823,10 +822,9 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     const id = created.data.id as string;
     const stamps = () =>
       db
-        .prepare<
-          [string],
-          { s: string | null; t: number | null }
-        >("SELECT verification_state AS s, last_verified_at AS t FROM doc_annotations WHERE id = ?")
+        .prepare<[string], { s: string | null; t: number | null }>(
+          "SELECT verification_state AS s, last_verified_at AS t FROM doc_annotations WHERE id = ?",
+        )
         .get(id)!;
     expect(stamps()).toEqual({ s: "verified", t: NOW });
     // A stamps-only revise (standing confidence re-supplied) at a later time.
@@ -884,10 +882,9 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     const id = created.data.id as string;
     const stamps = () =>
       db
-        .prepare<
-          [string],
-          { s: string | null; t: number | null }
-        >("SELECT verification_state AS s, last_verified_at AS t FROM person_annotations WHERE id = ?")
+        .prepare<[string], { s: string | null; t: number | null }>(
+          "SELECT verification_state AS s, last_verified_at AS t FROM person_annotations WHERE id = ?",
+        )
         .get(id)!;
     expect(stamps()).toEqual({ s: "verified", t: NOW });
     const revised = await tool(
@@ -934,10 +931,9 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     );
     const observationId = structured(created).data.id as string;
     const edges = db
-      .prepare<
-        [],
-        Record<string, unknown>
-      >("SELECT prior_store, prior_annotation_id, dependent_kind, dependent_id, run_id FROM cognition_consumption_edges")
+      .prepare<[], Record<string, unknown>>(
+        "SELECT prior_store, prior_annotation_id, dependent_kind, dependent_id, run_id FROM cognition_consumption_edges",
+      )
       .all();
     expect(edges).toEqual([
       {
@@ -961,10 +957,9 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     const loopId = (structured(loop).data.loop as { id: string }).id;
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_consumption_edges WHERE dependent_kind = 'loop' AND dependent_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_consumption_edges WHERE dependent_kind = 'loop' AND dependent_id = ?",
+        )
         .get(loopId)!.n,
     ).toBe(0);
 

@@ -235,12 +235,58 @@ test("missing semantic model still reports active keyword indexing and real chun
   });
 });
 test("intentional semantic disable is distinct from a missing model", () => {
-  expect(
-    computeIndexStats({
+  const stats = computeIndexStats({
+    db,
+    indexDb,
+    indexerModel: { ...MODEL, present: false, disabled: true },
+    indexerReadiness: () => ({ status: "disabled", keywordIndexingActive: true }),
+    getSemanticSearch: () => null,
+  });
+  expect(stats).toMatchObject({
+    enabled: true,
+    state: "running",
+    keywordIndexingActive: true,
+    model: null,
+  });
+  expect(stats).not.toHaveProperty("semanticSearch");
+});
+
+describe("semantic search state", () => {
+  const degraded = {
+    state: "degraded" as const,
+    reason: "memory ran short while serving: 90 MiB left of the 2.0 GiB (host memory) budget",
+  };
+
+  test("is reported while running and while the worker starts", () => {
+    const running = computeIndexStats({
       db,
       indexDb,
-      indexerModel: { ...MODEL, present: false, disabled: true },
-      indexerReadiness: () => ({ status: "disabled", keywordIndexingActive: true }),
-    }),
-  ).toMatchObject({ enabled: true, state: "running", keywordIndexingActive: true, model: null });
+      indexerModel: MODEL,
+      getSemanticSearch: () => degraded,
+    });
+    expect(running.state).toBe("running");
+    expect(running.semanticSearch).toEqual(degraded);
+    expect(running.model).toEqual(MODEL);
+    expect(running).not.toHaveProperty("keywordIndexingActive");
+
+    const spawning = computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: MODEL,
+      indexerReadiness: () => ({ status: "loading-model" }),
+      getSemanticSearch: () => degraded,
+    });
+    expect(spawning.state).toBe("spawning");
+    expect(spawning.semanticSearch).toEqual(degraded);
+  });
+
+  test("is absent before the worker reports its graph", () => {
+    const stats = computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: MODEL,
+      getSemanticSearch: () => null,
+    });
+    expect(stats).not.toHaveProperty("semanticSearch");
+  });
 });

@@ -120,10 +120,9 @@ function undoVocabulary(db: Db): void {
     if (documentColumns.includes(column)) db.exec(`ALTER TABLE documents DROP COLUMN ${column}`);
   }
   const pendingVoiceColumns = db
-    .prepare<
-      [],
-      { name: string }
-    >("SELECT name FROM pragma_table_info('voice_note_transcriptions')")
+    .prepare<[], { name: string }>(
+      "SELECT name FROM pragma_table_info('voice_note_transcriptions')",
+    )
     .all();
   if (pendingVoiceColumns.some((row) => row.name === "allow_vocabulary"))
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
@@ -226,10 +225,9 @@ function undoKnowledge(db: Db): void {
   db.exec("PRAGMA foreign_keys=OFF");
   for (const type of ["trigger", "table"] as const) {
     const rows = db
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*' OR name GLOB 'temporal_epoch_*')")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*' OR name GLOB 'temporal_epoch_*')",
+      )
       .all(type);
     for (const { name } of rows)
       db.exec(`DROP ${type.toUpperCase()} "${name.replaceAll('"', '""')}"`);
@@ -724,18 +722,16 @@ describe("an install several versions behind, upgrading", () => {
       );
       expect(
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'date_mention_judgements'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'date_mention_judgements'",
+          )
           .get(),
       ).toBeDefined();
       expect(
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_source_external_id'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_source_external_id'",
+          )
           .get(),
       ).toBeDefined();
     } finally {
@@ -815,10 +811,9 @@ describe("an install several versions behind, upgrading", () => {
     try {
       expect(
         db
-          .prepare<
-            [],
-            { alias_id: string; source_id: string }
-          >("SELECT alias_id, source_id FROM person_alias_assertions ORDER BY alias_id")
+          .prepare<[], { alias_id: string; source_id: string }>(
+            "SELECT alias_id, source_id FROM person_alias_assertions ORDER BY alias_id",
+          )
           .all(),
       ).toEqual([
         { alias_id: "a-1", source_id: "gmail:me@example.org" },
@@ -888,10 +883,9 @@ describe("an install several versions behind, upgrading", () => {
       // each of them a moment earlier, folded rather than dropped.
       expect(
         db
-          .prepare<
-            [],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM person_alias_assertions a JOIN person_aliases al ON al.id = a.alias_id WHERE al.person_id = 'p-2'")
+          .prepare<[], { n: number }>(
+            "SELECT COUNT(*) AS n FROM person_alias_assertions a JOIN person_aliases al ON al.id = a.alias_id WHERE al.person_id = 'p-2'",
+          )
           .get()!.n,
       ).toBe(1);
     } finally {
@@ -999,10 +993,9 @@ describe("an install several versions behind, upgrading", () => {
       // Nothing is recoverable from the stamp itself, so the row falls back to
       // the one timestamp it does have rather than staying undecodable.
       const row = db
-        .prepare<
-          [],
-          { updated: string; updated_at: number }
-        >("SELECT typeof(updated_at) AS updated, updated_at FROM sources")
+        .prepare<[], { updated: string; updated_at: number }>(
+          "SELECT typeof(updated_at) AS updated, updated_at FROM sources",
+        )
         .get()!;
       expect(row.updated).toBe("integer");
       expect(row.updated_at).toBe(1_700_000_000_003);
@@ -1026,10 +1019,9 @@ describe("an install several versions behind, upgrading", () => {
       ).toBe(1);
       expect(
         db
-          .prepare<
-            [],
-            { n: number }
-          >(`SELECT COUNT(*) AS n FROM schema_migrations WHERE version > ${BEFORE_TAIL}`)
+          .prepare<[], { n: number }>(
+            `SELECT COUNT(*) AS n FROM schema_migrations WHERE version > ${BEFORE_TAIL}`,
+          )
           .get()!.n,
       ).toBe(TAIL_VERSIONS.length);
     } finally {

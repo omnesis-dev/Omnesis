@@ -63,10 +63,9 @@ describe("migration 19 — provenance + edge vocabulary", () => {
 
     const byType = (t: string) =>
       db
-        .prepare<
-          [string],
-          Record<string, unknown>
-        >("SELECT * FROM document_links WHERE link_type = ?")
+        .prepare<[string], Record<string, unknown>>(
+          "SELECT * FROM document_links WHERE link_type = ?",
+        )
         .get(t);
 
     // attachment → contains with metadata{role:attachment}
@@ -104,10 +103,9 @@ describe("migration 19 — provenance + edge vocabulary", () => {
     runMigrations(db);
 
     const counters = db
-      .prepare<
-        [],
-        { link_type: string; total: number }
-      >("SELECT link_type, total FROM link_stats_counters")
+      .prepare<[], { link_type: string; total: number }>(
+        "SELECT link_type, total FROM link_stats_counters",
+      )
       .all();
     const byType = new Map(counters.map((c) => [c.link_type, c.total]));
     expect(byType.get("contains")).toBe(1);
@@ -118,17 +116,15 @@ describe("migration 19 — provenance + edge vocabulary", () => {
     db.exec("PRAGMA user_version = 18");
     runMigrations(db);
     const pending = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_edges'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_edges'",
+      )
       .get();
     expect(pending).toBeDefined();
     const idx = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_document_links_provenance'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_document_links_provenance'",
+      )
       .get();
     expect(idx).toBeDefined();
   });
@@ -142,20 +138,18 @@ describe("migration 19 — provenance + edge vocabulary", () => {
 
     runMigrations(db);
     const after = db
-      .prepare<
-        [],
-        Record<string, unknown>
-      >("SELECT * FROM document_links WHERE link_type = 'contains'")
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM document_links WHERE link_type = 'contains'",
+      )
       .get()!;
     // Re-run: version is already 19 so migration 19 must not execute again.
     runMigrations(db);
     const again = db.prepare<[], { c: number }>("SELECT COUNT(*) AS c FROM document_links").get()!;
     expect(again.c).toBe(1);
     const stillContains = db
-      .prepare<
-        [],
-        Record<string, unknown>
-      >("SELECT * FROM document_links WHERE link_type = 'contains'")
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM document_links WHERE link_type = 'contains'",
+      )
       .get()!;
     expect(stillContains).toMatchObject({
       id: after.id,
@@ -177,10 +171,9 @@ describe("migration 19 — provenance + edge vocabulary", () => {
     runMigrations(db);
 
     const row = db
-      .prepare<
-        [],
-        Record<string, unknown>
-      >("SELECT * FROM document_links WHERE link_type = 'replies-to'")
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM document_links WHERE link_type = 'replies-to'",
+      )
       .get()!;
     expect(row).toMatchObject({
       provenance_kind: "source-declared",

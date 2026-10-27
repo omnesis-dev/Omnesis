@@ -911,10 +911,9 @@ function answerRule(db: Database.Database, grantId: string) {
 
 function answerTaskPolicy(db: Database.Database, taskId: string): string | null | undefined {
   return db
-    .prepare<
-      [string],
-      { policy_revision: string | null }
-    >("SELECT policy_revision FROM answer_tasks WHERE id = ?")
+    .prepare<[string], { policy_revision: string | null }>(
+      "SELECT policy_revision FROM answer_tasks WHERE id = ?",
+    )
     .get(taskId)?.policy_revision;
 }
 
@@ -954,10 +953,9 @@ async function waitForAnswerTask(dbPath: string, requestId: string): Promise<str
     const db = new Database(dbPath, { readonly: true });
     try {
       const task = db
-        .prepare<
-          [string],
-          { id: string }
-        >("SELECT id FROM answer_tasks WHERE client_request_id = ?")
+        .prepare<[string], { id: string }>(
+          "SELECT id FROM answer_tasks WHERE client_request_id = ?",
+        )
         .get(requestId);
       if (task) return task.id;
     } finally {

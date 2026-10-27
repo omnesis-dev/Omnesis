@@ -27,10 +27,7 @@ interface IdleResult {
 }
 
 type SweepPhase =
-  | ActivityRetentionPhase
-  | "cognitionTranscripts"
-  | "agentConversations"
-  | "sqlitePages";
+  ActivityRetentionPhase | "cognitionTranscripts" | "agentConversations" | "sqlitePages";
 
 const SWEEP_PHASES: readonly SweepPhase[] = [
   ...ACTIVITY_RETENTION_PHASES,

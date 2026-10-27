@@ -736,10 +736,9 @@ describe("Indexer", () => {
     expect(embedder.embedCount).toBe(1);
     expect(
       db
-        .prepare<
-          [string],
-          { title: string }
-        >("SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0")
+        .prepare<[string], { title: string }>(
+          "SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0",
+        )
         .get("d1")?.title,
     ).toBe("Revised fictional retry title");
   });
@@ -1018,10 +1017,9 @@ describe("Indexer", () => {
   describe("non-content document event propagation", () => {
     function indexedEvent(documentId: string) {
       return db
-        .prepare<
-          [string],
-          { source_event_at: string; event_indexed_at: string }
-        >("SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?")
+        .prepare<[string], { source_event_at: string; event_indexed_at: string }>(
+          "SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?",
+        )
         .get(documentId)!;
     }
 
@@ -1043,10 +1041,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(1);
       expect(
         db
-          .prepare<
-            [string],
-            { title: string }
-          >("SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { title: string }>(
+            "SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1")?.title,
       ).toBe("Revised fictional title");
       expect(indexedEvent("d1")).toEqual({
@@ -1070,10 +1067,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(1);
       expect(
         db
-          .prepare<
-            [string],
-            { author: string | null }
-          >("SELECT author FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { author: string | null }>(
+            "SELECT author FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1")?.author,
       ).toBe("Maya Reeves");
       expect(indexedEvent("d1").source_event_at).toBe("2026-03-10T01:00:00Z");
@@ -1097,10 +1093,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(0);
       expect(
         db
-          .prepare<
-            [string],
-            { tags: string | null; relevance_score: number | null }
-          >("SELECT tags, relevance_score FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { tags: string | null; relevance_score: number | null }>(
+            "SELECT tags, relevance_score FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1"),
       ).toEqual({
         tags: JSON.stringify(["fictional-review"]),
@@ -1368,10 +1363,9 @@ describe("Indexer", () => {
         let plan = planSourceUrlRecanonicalization(gw, specs);
         const rewritten = () =>
           gw
-            .prepare<
-              [],
-              { count: number }
-            >("SELECT COUNT(*) AS count FROM documents WHERE source_url LIKE 'https://example.com/items/%'")
+            .prepare<[], { count: number }>(
+              "SELECT COUNT(*) AS count FROM documents WHERE source_url LIKE 'https://example.com/items/%'",
+            )
             .get()!.count;
 
         expect(plan.mutations).toHaveLength(50);

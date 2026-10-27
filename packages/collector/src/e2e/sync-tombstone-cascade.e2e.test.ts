@@ -43,10 +43,9 @@ const indexDb = <T>(use: (db: Database.Database) => T, readonly = true): T =>
 function documentIdFor(sourceId: string, externalId: string): string {
   return gatewayDb((db) => {
     const row = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+      )
       .get(sourceId, externalId);
     if (!row) throw new Error(`fixture document ${externalId} did not land`);
     return row.id;
@@ -63,10 +62,9 @@ function documentExistsFor(sourceId: string, externalId: string): boolean {
   return gatewayDb(
     (db) =>
       db
-        .prepare<
-          [string, string],
-          { present: number }
-        >("SELECT 1 AS present FROM documents WHERE source_id = ? AND external_id = ?")
+        .prepare<[string, string], { present: number }>(
+          "SELECT 1 AS present FROM documents WHERE source_id = ? AND external_id = ?",
+        )
         .get(sourceId, externalId) !== undefined,
   );
 }
@@ -83,10 +81,9 @@ function chunkCount(id: string): number {
 function pendingCascade(id: string): { indexDone: boolean; cognitionDone: boolean } | undefined {
   return gatewayDb((db) => {
     const rows = db
-      .prepare<
-        [],
-        { document_ids: string; index_done: number; cognition_done: number }
-      >("SELECT document_ids, index_done, cognition_done FROM snapshot_absence_cascade_outbox")
+      .prepare<[], { document_ids: string; index_done: number; cognition_done: number }>(
+        "SELECT document_ids, index_done, cognition_done FROM snapshot_absence_cascade_outbox",
+      )
       .all();
     const row = rows.find((item) => (JSON.parse(item.document_ids) as string[]).includes(id));
     return row
@@ -99,10 +96,9 @@ function annotationExists(id: string): boolean {
   return gatewayDb(
     (db) =>
       db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM doc_annotations WHERE id = ?")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM doc_annotations WHERE id = ?",
+        )
         .get(id) !== undefined,
   );
 }
@@ -113,10 +109,9 @@ function annotationState(
 ): { invalidated_at: number | null; verification_state: string | null } | undefined {
   return gatewayDb((db) =>
     db
-      .prepare<
-        [string],
-        { invalidated_at: number | null; verification_state: string | null }
-      >("SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?")
+      .prepare<[string], { invalidated_at: number | null; verification_state: string | null }>(
+        "SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?",
+      )
       .get(id),
   );
 }

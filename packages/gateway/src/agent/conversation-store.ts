@@ -123,9 +123,7 @@ export interface ConversationRecord {
  * on the main session profile.
  */
 export type ConversationOrigin =
-  | WatchFiringConversationOrigin
-  | DailyBriefConversationOrigin
-  | TaskConversationOrigin;
+  WatchFiringConversationOrigin | DailyBriefConversationOrigin | TaskConversationOrigin;
 
 /**
  * The standing Morning brief conversation: one per gateway, pinned and

@@ -64,10 +64,9 @@ test("migration 181 adds a nullable access_level_id to devices and pairings, ide
 
   const read = () =>
     db
-      .prepare<
-        [string],
-        { access_level_id: string | null }
-      >("SELECT access_level_id FROM devices WHERE id = ?")
+      .prepare<[string], { access_level_id: string | null }>(
+        "SELECT access_level_id FROM devices WHERE id = ?",
+      )
       .get("d1")?.access_level_id;
   expect(read()).toBeNull();
   db.prepare("UPDATE devices SET access_level_id = ? WHERE id = ?").run("level-1", "d1");

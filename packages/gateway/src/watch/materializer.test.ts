@@ -949,9 +949,9 @@ describe("the semantic clock", () => {
 
     const fresh = randomUUID();
     index
-      .prepare<
-        [string, string]
-      >("INSERT INTO indexed_documents (document_id, event_indexed_at) VALUES (?, ?)")
+      .prepare<[string, string]>(
+        "INSERT INTO indexed_documents (document_id, event_indexed_at) VALUES (?, ?)",
+      )
       .run(fresh, "2026-03-01T09:00:00.000Z");
 
     const result = await materializer.drain();

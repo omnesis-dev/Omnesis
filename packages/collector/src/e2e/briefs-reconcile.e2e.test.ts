@@ -316,10 +316,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     if (task.result?.state !== "fail" || !db || !harness) return;
     const obs = new BrainObs(harness);
     const runs = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM cognition_runs WHERE kind='synthesis' ORDER BY enqueued_at DESC LIMIT 12")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM cognition_runs WHERE kind='synthesis' ORDER BY enqueued_at DESC LIMIT 12",
+      )
       .all();
     createLogger("collector:brain-bench").error(
       `Loop reconciliation failure: ${JSON.stringify({
@@ -356,10 +355,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     // The ambient corpus really landed; discovery may inspect historical
     // evidence without manufacturing an obligation.
     const ambient = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id IN (SELECT value FROM json_each(?)) ORDER BY id LIMIT 257")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id IN (SELECT value FROM json_each(?)) ORDER BY id LIMIT 257",
+      )
       .all(JSON.stringify(harness.getSourceIds()));
     expect(ambient.length).toBeGreaterThanOrEqual(10);
     expect(ambient.length).toBeLessThanOrEqual(256);
@@ -381,10 +379,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
       55_000,
     );
     const row = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT (SELECT COUNT(*) FROM open_loops) + (SELECT COUNT(*) FROM observations) AS n")
+      .prepare<[], { n: number }>(
+        "SELECT (SELECT COUNT(*) FROM open_loops) + (SELECT COUNT(*) FROM observations) AS n",
+      )
       .get();
     expect(row?.n).toBe(0);
   }, 60_000);
@@ -449,10 +446,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     expect(noted.filter(isOpen)).toEqual([]);
     expect(
       db
-        .prepare<
-          [string],
-          { close_reason: string | null }
-        >("SELECT close_reason FROM observations WHERE id = ?")
+        .prepare<[string], { close_reason: string | null }>(
+          "SELECT close_reason FROM observations WHERE id = ?",
+        )
         .get(noted[0]!.id)?.close_reason,
     ).toBe("superseded");
 
@@ -599,10 +595,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
         .transaction(() => {
           const now = Date.now();
           const source = writer
-            .prepare<
-              [string],
-              { revision: string }
-            >(`SELECT ${knowledgeSourceRevisionSql("d")} AS revision FROM documents d WHERE d.id=?`)
+            .prepare<[string], { revision: string }>(
+              `SELECT ${knowledgeSourceRevisionSql("d")} AS revision FROM documents d WHERE d.id=?`,
+            )
             .get(fulfilmentDocId)!;
           return enqueueKnowledgeWork(
             writer,
@@ -1152,10 +1147,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     // Seeded here rather than relying on another test having driven one, so
     // the assertion does not depend on file order.
     const probeDoc = db
-      .prepare<
-        [],
-        { id: string; source_id: string }
-      >("SELECT id, source_id FROM documents WHERE source_id NOT LIKE '%open-loop%' ORDER BY id LIMIT 1")
+      .prepare<[], { id: string; source_id: string }>(
+        "SELECT id, source_id FROM documents WHERE source_id NOT LIKE '%open-loop%' ORDER BY id LIMIT 1",
+      )
       .get();
     expect(probeDoc, "the synced universe produced at least one source document").toBeDefined();
     const dailyRunId = "run_daily_spend_probe";
@@ -1190,10 +1184,9 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
   test("a daily run's prompt delta-primes the batched source's own loops", async () => {
     // A real universe document + its source (never the open-loop mirror source).
     const doc = db
-      .prepare<
-        [],
-        { id: string; source_id: string }
-      >("SELECT id, source_id FROM documents WHERE source_id NOT LIKE '%open-loop%' ORDER BY id LIMIT 1")
+      .prepare<[], { id: string; source_id: string }>(
+        "SELECT id, source_id FROM documents WHERE source_id NOT LIKE '%open-loop%' ORDER BY id LIMIT 1",
+      )
       .get();
     expect(doc, "the synced universe produced at least one source document").toBeDefined();
 

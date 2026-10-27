@@ -24,6 +24,7 @@ import {
   type ChunkUpsertInput,
 } from "./db.js";
 import { UsearchWriteHandle } from "./usearch-index.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { Embedder } from "./types.js";
 import type { IndexerWorkerProxy } from "../workers/indexer-worker-proxy.js";
 
@@ -109,6 +110,12 @@ const proxyInstances: FakeProxy[] = [];
 let nextProxyReadyError: Error | null = null;
 let nextProxyReadyGate: Promise<void> | null = null;
 class FakeProxy {
+  vectorIndex: SemanticSearchStatus | null = null;
+  onVectorIndexChange?: (graph: SemanticSearchStatus) => void;
+  reportVectorIndex(graph: SemanticSearchStatus): void {
+    this.vectorIndex = graph;
+    this.onVectorIndexChange?.(graph);
+  }
   whenReady = vi.fn(async () => {
     if (nextProxyReadyGate) await nextProxyReadyGate;
     if (nextProxyReadyError) throw nextProxyReadyError;
@@ -201,6 +208,7 @@ vi.mock("./embedder-prefixes.js", () => ({
 function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   deps: IndexerLifecycleDeps;
   setEmbedder: ReturnType<typeof vi.fn>;
+  setVectorSearchUnavailable: ReturnType<typeof vi.fn>;
   registerAll: ReturnType<typeof vi.fn>;
   resolve: ReturnType<typeof vi.fn>;
   statusReporter: IndexerStatusReporter;
@@ -231,8 +239,10 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   const setEmbedder = vi.fn((value: Embedder | undefined) => {
     queryEmbedder = value;
   });
+  const setVectorSearchUnavailable = vi.fn();
   const searchPipeline = {
     setEmbedder,
+    setVectorSearchUnavailable,
     queryEmbedder: () => queryEmbedder,
   } as unknown as IndexerLifecycleDeps["searchPipeline"];
 
@@ -284,7 +294,7 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
     },
     ...overrides,
   };
-  return { deps, setEmbedder, registerAll, resolve, statusReporter };
+  return { deps, setEmbedder, setVectorSearchUnavailable, registerAll, resolve, statusReporter };
 }
 
 /** Count on-disk generation usearch files (`index.usearch` / `index-N.usearch`),
@@ -995,10 +1005,9 @@ describe("IndexerLifecycle", () => {
       // The mid-crash document landed in the resumed generation: its
       // chunks.embedding was promoted to the new dimension at the flip.
       const promoted = idxDb
-        .prepare<
-          [],
-          { embedding: Buffer }
-        >("SELECT embedding FROM chunks WHERE document_id = 'd-5'")
+        .prepare<[], { embedding: Buffer }>(
+          "SELECT embedding FROM chunks WHERE document_id = 'd-5'",
+        )
         .get();
       expect(promoted?.embedding.byteLength).toBe(64 * 4);
 
@@ -1596,6 +1605,54 @@ test("explicit global indexing disable never starts a lexical worker", async () 
 });
 
 describe("lexical worker promotion on model installation", () => {
+  test("graph degradation follows the current semantic owner across a lexical interval", async () => {
+    const { deps, resolve, setVectorSearchUnavailable, statusReporter } = makeDeps();
+    const lifecycle = new IndexerLifecycle(deps);
+    const degraded = { state: "degraded" as const, reason: "fictional graph memory budget" };
+    try {
+      await lifecycle.startIndexer();
+      const firstSemantic = proxyInstances[0];
+      firstSemantic.reportVectorIndex(degraded);
+      expect(lifecycle.vectorIndex).toEqual(degraded);
+      expect(setVectorSearchUnavailable).toHaveBeenLastCalledWith(degraded.reason);
+
+      resolve.mockReturnValue({ kind: "disabled" });
+      await lifecycle.applyEmbedSwap();
+      const lexical = proxyInstances[1];
+      expect(lexical.opts.lexicalOnly).toBe(true);
+      expect(lifecycle.vectorIndex).toBeNull();
+      expect(deps.searchPipeline.queryEmbedder()).toBeUndefined();
+      expect(statusReporter.getReadiness()).toMatchObject({
+        status: "disabled",
+        keywordIndexingActive: true,
+      });
+      const duringLexical = setVectorSearchUnavailable.mock.calls.length;
+      firstSemantic.reportVectorIndex({ state: "ready" });
+      expect(setVectorSearchUnavailable).toHaveBeenCalledTimes(duringLexical);
+
+      resolve.mockReturnValue({
+        kind: "http",
+        backendKey: "local-http",
+        url: "http://localhost:9/v1",
+        model: "",
+        allowRemoteInference: false,
+      });
+      await lifecycle.applyEmbedSwap();
+      const nextSemantic = proxyInstances[2];
+      expect(nextSemantic.opts.lexicalOnly).toBe(false);
+      expect(deps.searchPipeline.queryEmbedder()).toBeInstanceOf(FakeHttpEmbedder);
+      nextSemantic.reportVectorIndex({ state: "ready" });
+      expect(lifecycle.vectorIndex).toEqual({ state: "ready" });
+      expect(setVectorSearchUnavailable).toHaveBeenLastCalledWith(null);
+      const afterRecovery = setVectorSearchUnavailable.mock.calls.length;
+      lexical.reportVectorIndex(degraded);
+      expect(setVectorSearchUnavailable).toHaveBeenCalledTimes(afterRecovery);
+      expect(lifecycle.vectorIndex).toEqual({ state: "ready" });
+    } finally {
+      await lifecycle.shutdownIndexer();
+    }
+  });
+
   test("ordinary duplicate bootstrap is single-flight and never adds another owner", async () => {
     const { deps } = makeDeps();
     const lifecycle = new IndexerLifecycle(deps);

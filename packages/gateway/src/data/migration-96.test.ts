@@ -65,10 +65,9 @@ describe("migration 96 — retired temporal-annotation conversation pointer", ()
     });
     expect(
       db
-        .prepare<
-          [],
-          { person_id: string }
-        >("SELECT person_id FROM temporal_annotation_people WHERE annotation_id = 'ta_migration'")
+        .prepare<[], { person_id: string }>(
+          "SELECT person_id FROM temporal_annotation_people WHERE annotation_id = 'ta_migration'",
+        )
         .get(),
     ).toEqual({ person_id: "person_fictional" });
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

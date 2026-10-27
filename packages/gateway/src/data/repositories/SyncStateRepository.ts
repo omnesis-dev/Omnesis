@@ -28,10 +28,9 @@ import type { SyncRemediation } from "@omnesis/types";
 export function getSyncState(db: Db, sourceId: string, deviceId = ""): StoredSyncState | null {
   return (
     db
-      .prepare<
-        [string, string],
-        StoredSyncState
-      >("SELECT * FROM sync_state WHERE source_id = ? AND device_id = ?")
+      .prepare<[string, string], StoredSyncState>(
+        "SELECT * FROM sync_state WHERE source_id = ? AND device_id = ?",
+      )
       .get(sourceId, deviceId) ?? null
   );
 }
@@ -44,10 +43,9 @@ export function getSyncState(db: Db, sourceId: string, deviceId = ""): StoredSyn
  */
 export function getWipeEpoch(db: Db, sourceId: string, deviceId = ""): number {
   const row = db
-    .prepare<
-      [string, string],
-      { epoch: number }
-    >("SELECT epoch FROM source_wipe_epoch WHERE source_id = ? AND device_id = ?")
+    .prepare<[string, string], { epoch: number }>(
+      "SELECT epoch FROM source_wipe_epoch WHERE source_id = ? AND device_id = ?",
+    )
     .get(sourceId, deviceId);
   return row?.epoch ?? 0;
 }
@@ -473,10 +471,9 @@ export function getSourceMeta(db: Db): SourceMeta {
   }
   const singleton = new Map<string, string | null>();
   const identities = db
-    .prepare<
-      [],
-      { source_id: string }
-    >("SELECT source_id FROM sync_state UNION SELECT id AS source_id FROM sources")
+    .prepare<[], { source_id: string }>(
+      "SELECT source_id FROM sync_state UNION SELECT id AS source_id FROM sources",
+    )
     .all();
   for (const { source_id: id } of identities) {
     const type = sourceTypeOf(id);

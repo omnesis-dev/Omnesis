@@ -244,10 +244,9 @@ export class WatchJournalStore {
    */
   headAt(): { seq: number; observedAtMs: number | null } {
     const row = this.db
-      .prepare<
-        [],
-        { seq: number | null; observed_at: string | null }
-      >("SELECT seq, observed_at FROM watch_events ORDER BY seq DESC LIMIT 1")
+      .prepare<[], { seq: number | null; observed_at: string | null }>(
+        "SELECT seq, observed_at FROM watch_events ORDER BY seq DESC LIMIT 1",
+      )
       .get();
     if (!row?.seq) return { seq: 0, observedAtMs: null };
     const at = row.observed_at ? Date.parse(row.observed_at) : Number.NaN;
@@ -271,10 +270,9 @@ export class WatchJournalStore {
    */
   firstSeqAtOrAfter(observedAtIso: string): number {
     const row = this.db
-      .prepare<
-        [string],
-        { seq: number | null }
-      >("SELECT MIN(seq) AS seq FROM watch_events WHERE observed_at >= ?")
+      .prepare<[string], { seq: number | null }>(
+        "SELECT MIN(seq) AS seq FROM watch_events WHERE observed_at >= ?",
+      )
       .get(observedAtIso);
     return row?.seq ? row.seq - 1 : this.head();
   }
@@ -295,10 +293,9 @@ export class WatchJournalStore {
    */
   read(afterSeq: number, limit: number): JournalEvent[] {
     const rows = this.db
-      .prepare<
-        [number, number],
-        EventRow
-      >(`SELECT seq, kind, occurred_at, observed_at, payload FROM watch_events WHERE seq > ? ORDER BY seq ASC LIMIT ?`)
+      .prepare<[number, number], EventRow>(
+        `SELECT seq, kind, occurred_at, observed_at, payload FROM watch_events WHERE seq > ? ORDER BY seq ASC LIMIT ?`,
+      )
       .all(afterSeq, limit);
 
     const events: JournalEvent[] = [];
@@ -377,10 +374,9 @@ export class WatchJournalStore {
       const chunk = docIds.slice(offset, offset + 5_000);
       const placeholders = chunk.map(() => "?").join(", ");
       const rows = this.db
-        .prepare<
-          unknown[],
-          { doc_id: string; event_hash: string }
-        >(`SELECT doc_id, event_hash FROM documents_seen WHERE doc_id IN (${placeholders})`)
+        .prepare<unknown[], { doc_id: string; event_hash: string }>(
+          `SELECT doc_id, event_hash FROM documents_seen WHERE doc_id IN (${placeholders})`,
+        )
         .all(...chunk);
       for (const row of rows) found.set(row.doc_id, row.event_hash);
     }

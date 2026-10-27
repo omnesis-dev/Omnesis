@@ -222,10 +222,9 @@ interface RawAnnotationRow {
 /** The stored row behind an annotation id — including one no read route serves. */
 function rawAnnotation(bench: BrainBench, id: string): RawAnnotationRow | undefined {
   return bench.sql
-    .prepare<
-      [string],
-      RawAnnotationRow
-    >("SELECT id, invalidated_at, superseded_by FROM doc_annotations WHERE id = ?")
+    .prepare<[string], RawAnnotationRow>(
+      "SELECT id, invalidated_at, superseded_by FROM doc_annotations WHERE id = ?",
+    )
     .get(id);
 }
 
@@ -610,10 +609,9 @@ describe("annotations with the entailment role unassigned", () => {
     expect((await bench.obs.docAnnotations(docId!)).annotations).toHaveLength(0);
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM doc_annotations WHERE doc_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM doc_annotations WHERE doc_id = ?",
+        )
         .get(docId!)?.n,
     ).toBe(0);
     // The refusal is re-askable, not fatal: the run still settles cleanly.
@@ -651,10 +649,9 @@ describe("annotations with the entailment role unassigned", () => {
 
   test("a person annotation lands on the canonical person id", async () => {
     const person = bench.sql
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM people WHERE canonical_name = 'Maya Reeves' AND merged_into IS NULL")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM people WHERE canonical_name = 'Maya Reeves' AND merged_into IS NULL",
+      )
       .get();
     expect(person?.id).toBeTruthy();
 
@@ -754,10 +751,9 @@ describe("annotations with the entailment role unassigned", () => {
     expect(rawAnnotation(bench, retractedId)).toBeUndefined();
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE annotation_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE annotation_id = ?",
+        )
         .get(retractedId)?.n,
     ).toBe(0);
   }, 120_000);
@@ -1037,10 +1033,9 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
     expect((await bench.obs.docAnnotations(docId!)).annotations).toHaveLength(0);
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM doc_annotations WHERE doc_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM doc_annotations WHERE doc_id = ?",
+        )
         .get(docId!)?.n,
     ).toBe(0);
 

@@ -210,10 +210,9 @@ function fireSubscriptionInTransaction(
   }
   const deliveryId = `sdel_${input.firingId}`;
   const workflowDisclosure = db
-    .prepare<
-      [string],
-      { categories_json: string }
-    >("SELECT categories_json FROM subscription_workflow_disclosure WHERE workflow_id = ?")
+    .prepare<[string], { categories_json: string }>(
+      "SELECT categories_json FROM subscription_workflow_disclosure WHERE workflow_id = ?",
+    )
     .get(row.workflow_id);
   const cumulativeCategories = addExistenceDisclosure(
     workflowDisclosure?.categories_json ?? "[]",

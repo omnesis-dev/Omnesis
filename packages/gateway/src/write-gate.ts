@@ -968,8 +968,7 @@ export interface WriteGate extends KnowledgeWriteGate {
    */
   bootstrapSelfFromConfig(
     configSelf:
-      | { name?: string; emails?: readonly string[]; phones?: readonly string[] }
-      | undefined,
+      { name?: string; emails?: readonly string[]; phones?: readonly string[] } | undefined,
   ): Promise<string | null>;
   mergePeople(winnerId: string, loserId: string): Promise<void>;
   runMergePass(): Promise<{ merged: number }>;

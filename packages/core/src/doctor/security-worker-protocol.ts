@@ -11,5 +11,4 @@ export interface DoctorSecurityWorkerInput {
 }
 
 export type DoctorSecurityWorkerMessage =
-  | { type: "done"; security: SecurityData }
-  | { type: "error"; error: string };
+  { type: "done"; security: SecurityData } | { type: "error"; error: string };

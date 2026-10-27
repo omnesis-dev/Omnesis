@@ -102,10 +102,9 @@ async function insertBoundDoc(externalId: string, streamId = ""): Promise<string
     { "demo:acct1": streamId },
   );
   const row = db
-    .prepare<
-      [string, string],
-      { id: string }
-    >("SELECT id FROM documents WHERE external_id = ? AND stream_id = ?")
+    .prepare<[string, string], { id: string }>(
+      "SELECT id FROM documents WHERE external_id = ? AND stream_id = ?",
+    )
     .get(externalId, streamId);
   if (!row) throw new Error("expected bound doc id");
   return row.id;

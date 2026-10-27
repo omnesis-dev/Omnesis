@@ -1096,6 +1096,7 @@ export {
   parseDecisionCassette,
   PROVIDER_PRESETS,
   getPreset,
+  getPresetByUrl,
   PROVIDER_BRANDS,
   getProviderBrand,
   resolveModelDisplay,

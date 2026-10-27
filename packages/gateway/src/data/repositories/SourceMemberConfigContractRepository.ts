@@ -53,10 +53,9 @@ function parseStoredContract(sourceId: SourceId, raw: string): string[] {
 /** The source-lifetime member-local parameter contract; null means legacy/uninitialized. */
 export function getSourceMemberConfigContract(db: Db, sourceId: SourceId): string[] | null {
   const row = db
-    .prepare<
-      [string],
-      { param_names: string }
-    >("SELECT param_names FROM source_member_config_contracts WHERE source_id = ?")
+    .prepare<[string], { param_names: string }>(
+      "SELECT param_names FROM source_member_config_contracts WHERE source_id = ?",
+    )
     .get(sourceId);
   return row ? parseStoredContract(sourceId, row.param_names) : null;
 }
@@ -183,10 +182,9 @@ export function extendUnanimousMemberConfigContracts(db: Db, deviceId: DeviceId)
     const stored = getSourceMemberConfigContract(db, sourceId);
     if (stored === null) continue;
     const members = db
-      .prepare<
-        [string],
-        { device_id: string; config_override: string }
-      >("SELECT device_id, config_override FROM source_devices WHERE source_id = ?")
+      .prepare<[string], { device_id: string; config_override: string }>(
+        "SELECT device_id, config_override FROM source_devices WHERE source_id = ?",
+      )
       .all(sourceId);
     const contracts = members.map((member) => {
       const device = getDevice(db, makeDeviceId(member.device_id));

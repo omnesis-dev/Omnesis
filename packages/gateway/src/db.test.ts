@@ -101,10 +101,9 @@ describe("createDatabase", () => {
     const p = testDbPath();
     const db = createDatabase(p);
     const tables = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+      )
       .all();
     const names = tables.map((t) => t.name);
     expect(names).toContain("documents");
@@ -361,10 +360,9 @@ describe("upsertDocuments", () => {
 
     upsertDocuments(db, [fresh], replicated);
     const dirtyBeforeStale = db
-      .prepare<
-        [],
-        { dirty_version: number }
-      >("SELECT dirty_version FROM source_stats WHERE source_id = 'gmail'")
+      .prepare<[], { dirty_version: number }>(
+        "SELECT dirty_version FROM source_stats WHERE source_id = 'gmail'",
+      )
       .get()?.dirty_version;
     upsertDocuments(db, [stale], replicated);
     let stored = db.prepare<[], StoredDocument>("SELECT * FROM documents").get();
@@ -372,10 +370,9 @@ describe("upsertDocuments", () => {
     expect(stored?.source_updated_at).toBe("2026-03-11T00:00:00.000Z");
     expect(
       db
-        .prepare<
-          [],
-          { dirty_version: number }
-        >("SELECT dirty_version FROM source_stats WHERE source_id = 'gmail'")
+        .prepare<[], { dirty_version: number }>(
+          "SELECT dirty_version FROM source_stats WHERE source_id = 'gmail'",
+        )
         .get()?.dirty_version,
     ).toBe(dirtyBeforeStale);
 
@@ -754,16 +751,14 @@ describe("deleteDocumentForUser (single-document privacy delete)", () => {
       makeDoc({ sourceId: "google-calendar", externalId: "msg-1", contentHash: "y" }),
     ]);
     const gmail = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE source_id = 'gmail' AND external_id = 'msg-1'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE source_id = 'gmail' AND external_id = 'msg-1'",
+      )
       .get();
     const cal = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE source_id = 'google-calendar' AND external_id = 'msg-1'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE source_id = 'google-calendar' AND external_id = 'msg-1'",
+      )
       .get();
     expect(gmail?.count).toBe(0);
     expect(cal?.count).toBe(1);
@@ -801,10 +796,9 @@ describe("activity document retention", () => {
     ).toEqual(["conversation-1/att/legacy"]);
     expect(
       db
-        .prepare<
-          [],
-          { original_document_id: string | null }
-        >("SELECT original_document_id FROM removed_documents")
+        .prepare<[], { original_document_id: string | null }>(
+          "SELECT original_document_id FROM removed_documents",
+        )
         .get()?.original_document_id,
     ).toBe(id);
 
@@ -826,10 +820,9 @@ describe("activity document retention", () => {
     );
     expect(
       db
-        .prepare<
-          [],
-          { id: string }
-        >("SELECT id FROM documents WHERE source_id = 'gmail' AND external_id = 'conversation-1'")
+        .prepare<[], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = 'gmail' AND external_id = 'conversation-1'",
+        )
         .get(),
     ).toBeDefined();
     expect(db.prepare("SELECT 1 FROM removed_documents").get()).toBeUndefined();
@@ -905,10 +898,9 @@ describe("snapshot reconcile (absence, not deletion)", () => {
     const plan = computeSnapshotAbsencePlan(db, "fictional-tasks", source.id, [], immediate);
     applySnapshotAbsencePlan(db, plan);
     const documentId = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = 'fictional-tasks:shared'")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = 'fictional-tasks:shared'",
+      )
       .get()!.id;
 
     sweepDueAbsences(db, [documentId], {
@@ -1127,10 +1119,9 @@ describe("deleteAllByStream", () => {
     // The source's stats row stays and is marked for a refresh.
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM source_stats WHERE source_id = 'gmail'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM source_stats WHERE source_id = 'gmail'",
+        )
         .get()!.n,
     ).toBe(1);
   });
@@ -1433,10 +1424,9 @@ describe("deleteAllBySource", () => {
     expect(remaining.map((r) => r.id)).toEqual([]);
     // Cascade cleared the calendar doc's document_people row.
     const cascaded = db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_people WHERE document_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_people WHERE document_id = ?",
+      )
       .get(calDoc!.id)!.n;
     expect(cascaded).toBe(0);
   });
@@ -2128,10 +2118,9 @@ describe("source_stats — compute / upsert split", () => {
     //   2. NOT applied the stale aggregation values over the fresher
     //      ones that upsertDocuments's inline refresh wrote.
     const row = db
-      .prepare<
-        [string],
-        { needs_refresh: number; dirty_version: number; doc_count: number }
-      >("SELECT needs_refresh, dirty_version, doc_count FROM source_stats WHERE source_id = ?")
+      .prepare<[string], { needs_refresh: number; dirty_version: number; doc_count: number }>(
+        "SELECT needs_refresh, dirty_version, doc_count FROM source_stats WHERE source_id = ?",
+      )
       .get("gmail")!;
     expect(row.needs_refresh).toBe(1);
     expect(row.dirty_version).toBeGreaterThan(versionAtCompute);
@@ -2144,10 +2133,9 @@ describe("source_stats — compute / upsert split", () => {
     const agg2 = computeSourceStatsRow(db, "gmail");
     upsertSourceStatsRow(db, "gmail", agg2);
     const row2 = db
-      .prepare<
-        [string],
-        { needs_refresh: number; doc_count: number }
-      >("SELECT needs_refresh, doc_count FROM source_stats WHERE source_id = ?")
+      .prepare<[string], { needs_refresh: number; doc_count: number }>(
+        "SELECT needs_refresh, doc_count FROM source_stats WHERE source_id = ?",
+      )
       .get("gmail")!;
     expect(row2.needs_refresh).toBe(0);
     expect(row2.doc_count).toBe(2);
@@ -2278,10 +2266,9 @@ describe("source_stats — compute / upsert split", () => {
     refreshSourceStatsRow(db, "gmail");
 
     const row = db
-      .prepare<
-        [string],
-        { doc_count: number; needs_refresh: number }
-      >("SELECT doc_count, needs_refresh FROM source_stats WHERE source_id = ?")
+      .prepare<[string], { doc_count: number; needs_refresh: number }>(
+        "SELECT doc_count, needs_refresh FROM source_stats WHERE source_id = ?",
+      )
       .get("gmail")!;
     expect(row.doc_count).toBe(2);
     expect(row.needs_refresh).toBe(0);
@@ -2598,10 +2585,9 @@ describe("upsertWithCursor", () => {
     const present = checkExistingExternalIds(db, "google", "gmail", [doc.externalId]);
     expect(present).toEqual([doc.externalId]);
     const row = db
-      .prepare<
-        [string, string, string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
+      .prepare<[string, string, string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+      )
       .get("google", "gmail", doc.externalId);
     expect(row?.count).toBe(1);
   });
@@ -2753,10 +2739,9 @@ describe("upsertWithCursor — wipe-epoch guard", () => {
     expect(reconciled.absence).toMatchObject({ marked: 1, absent: 1, stored: 2 });
     expect(
       db
-        .prepare<
-          [],
-          { stream_id: string; external_id: string }
-        >("SELECT stream_id, external_id FROM document_absences")
+        .prepare<[], { stream_id: string; external_id: string }>(
+          "SELECT stream_id, external_id FROM document_absences",
+        )
         .all(),
     ).toEqual([{ stream_id: "device-a", external_id: "day-2" }]);
     expect(getDocumentCount(db, "gmail")).toBe(4);
@@ -2769,10 +2754,9 @@ describe("upsertWithCursor — wipe-epoch guard", () => {
     page("device-a", ["day-1"]);
     const contentHashOf = (streamId: string) =>
       db
-        .prepare<
-          [string],
-          { content_hash: string }
-        >("SELECT content_hash FROM documents WHERE source_id = 'gmail' AND external_id = 'day-1' AND stream_id = ?")
+        .prepare<[string], { content_hash: string }>(
+          "SELECT content_hash FROM documents WHERE source_id = 'gmail' AND external_id = 'day-1' AND stream_id = ?",
+        )
         .get(streamId)?.content_hash;
     expect(contentHashOf("device-a")).toBeUndefined();
     expect(getDocumentCount(db, "gmail")).toBe(3);

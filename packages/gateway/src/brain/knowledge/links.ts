@@ -9,11 +9,7 @@ import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 
 export type KnowledgeLinkKind =
-  | "related_to"
-  | "belongs_to_project"
-  | "part_of"
-  | "supersedes"
-  | "duplicate_of";
+  "related_to" | "belongs_to_project" | "part_of" | "supersedes" | "duplicate_of";
 export interface KnowledgeLinkInput {
   fromId: string;
   toId: string;
@@ -80,10 +76,9 @@ export function setKnowledgeLink(
     }
     if (input.kind === "part_of" || input.kind === "supersedes") {
       const ancestors = db
-        .prepare<
-          [string, KnowledgeLinkKind],
-          { id: string }
-        >(`WITH RECURSIVE ancestors(id) AS (SELECT ? UNION SELECT l.to_id FROM knowledge_links l JOIN ancestors a ON l.from_id=a.id WHERE l.kind=? LIMIT 8193) SELECT id FROM ancestors`)
+        .prepare<[string, KnowledgeLinkKind], { id: string }>(
+          `WITH RECURSIVE ancestors(id) AS (SELECT ? UNION SELECT l.to_id FROM knowledge_links l JOIN ancestors a ON l.from_id=a.id WHERE l.kind=? LIMIT 8193) SELECT id FROM ancestors`,
+        )
         .all(input.toId, input.kind);
       if (ancestors.some((ancestor) => ancestor.id === input.fromId))
         throw new KnowledgeStorageError("cycle", "This organizational link would form a cycle");

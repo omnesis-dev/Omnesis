@@ -244,12 +244,7 @@ export interface PrivacyPolicyDocument {
 export const DEFAULT_PRIVACY_POLICY_FAMILY_ID = "00000000-0000-4000-8000-000000000001";
 
 export type PrivacyPolicyVersionAction =
-  | "bootstrap"
-  | "edit"
-  | "revert"
-  | "restore"
-  | "fork"
-  | "template";
+  "bootstrap" | "edit" | "revert" | "restore" | "fork" | "template";
 
 export interface PrivacyPolicyVersionSummary {
   generation: number;

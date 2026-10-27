@@ -170,10 +170,9 @@ describe("push queue migrations", () => {
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
     expect(
       db
-        .prepare<
-          [],
-          { route_data: string | null; body: string }
-        >("SELECT route_data, body FROM notifications WHERE id = 'notification-1'")
+        .prepare<[], { route_data: string | null; body: string }>(
+          "SELECT route_data, body FROM notifications WHERE id = 'notification-1'",
+        )
         .get(),
     ).toEqual({ route_data: null, body: "Invented summary." });
   });

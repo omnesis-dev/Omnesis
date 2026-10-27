@@ -37,7 +37,9 @@ const RESERVED_TARGETS = new Set([SEEDED_STATE_MANIFEST, SEEDED_STATE_MARKER, IN
 // SQLite's internal representation; the index database boot path recreates
 // and rebuilds them from the canonical chunk rows when they are absent. The
 // chunk change log only tells running in-memory search indexes what changed
-// since they were built; the boot path recreates it empty.
+// since they were built; the boot path recreates it empty. The vector change
+// log likewise only says what changed since a persisted HNSW graph was saved,
+// and no graph file crosses the boundary: the target builds its own.
 const REBUILT_TABLES = new Set([
   "chunks_fts",
   "chunks_fts_changes",
@@ -46,6 +48,7 @@ const REBUILT_TABLES = new Set([
   "chunks_fts_docsize",
   "chunks_fts_idx",
   "chunks_fts_vocab",
+  "vector_changes",
 ]);
 
 // These tables contain bearer material or active delivery claims and may never

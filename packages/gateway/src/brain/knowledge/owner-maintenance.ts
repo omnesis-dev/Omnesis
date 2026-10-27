@@ -54,10 +54,9 @@ export function isHistoricalKnowledgeOwner(
   const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
   const owner = exists
     ? db
-        .prepare<
-          [string],
-          { invalidatedAt: number | null; supersededBy: string | null }
-        >(`SELECT invalidated_at AS invalidatedAt,superseded_by AS supersededBy FROM ${table} WHERE id=?`)
+        .prepare<[string], { invalidatedAt: number | null; supersededBy: string | null }>(
+          `SELECT invalidated_at AS invalidatedAt,superseded_by AS supersededBy FROM ${table} WHERE id=?`,
+        )
         .get(node.ownerId ?? node.id)
     : undefined;
   // Missing owners alone are not evidence of retirement. Explicit historical

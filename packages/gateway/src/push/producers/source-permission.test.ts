@@ -213,10 +213,9 @@ describe("SourcePermissionNotifier", () => {
     expect(setup.wakeAuthorized).not.toHaveBeenCalled();
     expect(
       setup.db
-        .prepare<
-          [string],
-          { notify_count: number }
-        >("SELECT notify_count FROM mobile_permission_health WHERE source_id = ?")
+        .prepare<[string], { notify_count: number }>(
+          "SELECT notify_count FROM mobile_permission_health WHERE source_id = ?",
+        )
         .get(setup.source.id)?.notify_count,
     ).toBe(0);
   });

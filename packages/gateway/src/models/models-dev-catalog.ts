@@ -17,6 +17,7 @@ import {
   createLogger,
   assertNever,
   getPreset,
+  getPresetByUrl,
   type InferenceOverview,
   type ModelControls,
   type ModelControlDescriptor,
@@ -425,30 +426,9 @@ export class ModelsDevCatalog {
     const preset = getPreset(requested);
     const byPreset = preset?.modelsDevId ?? preset?.id;
     if (byPreset && Object.hasOwn(this.catalog, byPreset)) return byPreset;
-    if (backendUrl) {
-      const url = backendUrl.replace(/\/+$/, "");
-      for (const id of [
-        "openai",
-        "google",
-        "groq",
-        "cerebras",
-        "together",
-        "fireworks",
-        "mistral",
-        "deepseek",
-        "nvidia",
-        "xai",
-        "meta",
-        "moonshot",
-        "openrouter",
-      ]) {
-        const item = getPreset(id);
-        if (item && url === item.defaultUrl.replace(/\/+$/, "")) {
-          const provider = item.modelsDevId ?? item.id;
-          if (Object.hasOwn(this.catalog, provider)) return provider;
-        }
-      }
-    }
+    const byUrl = backendUrl ? getPresetByUrl(backendUrl) : undefined;
+    const provider = byUrl && (byUrl.modelsDevId ?? byUrl.id);
+    if (provider && Object.hasOwn(this.catalog, provider)) return provider;
     return null;
   }
 

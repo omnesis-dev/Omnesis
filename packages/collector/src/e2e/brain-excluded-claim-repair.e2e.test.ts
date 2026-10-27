@@ -360,10 +360,9 @@ it("keeps excluded-source claims through a repair and refuses gutting the page",
       () =>
         (
           bench.sql
-            .prepare<
-              [string],
-              { markdown: string }
-            >("SELECT markdown FROM knowledge_nodes WHERE id=?")
+            .prepare<[string], { markdown: string }>(
+              "SELECT markdown FROM knowledge_nodes WHERE id=?",
+            )
             .get(pageId)?.markdown ?? ""
         ).includes("The garden opens in May."),
       { timeout: 180_000 },
@@ -415,10 +414,9 @@ it("keeps excluded-source claims through a repair and refuses gutting the page",
   // Every claim survives; the excluded-source claims are byte-identical and
   // still rest on the session log.
   const page = bench.sql
-    .prepare<
-      [string],
-      { title: string; markdown: string; validity: string }
-    >("SELECT title,markdown,validity FROM knowledge_nodes WHERE id=?")
+    .prepare<[string], { title: string; markdown: string; validity: string }>(
+      "SELECT title,markdown,validity FROM knowledge_nodes WHERE id=?",
+    )
     .get(pageId)!;
   expect(page.title).toBe(TITLE);
   expect(page.markdown).toBe(
@@ -445,10 +443,9 @@ it("keeps excluded-source claims through a repair and refuses gutting the page",
   ).toEqual(LOG_CLAIMS);
   // No revision ever removed a claim.
   for (const revision of bench.sql
-    .prepare<
-      [string],
-      { diff_json: string }
-    >("SELECT diff_json FROM knowledge_revisions WHERE node_id=?")
+    .prepare<[string], { diff_json: string }>(
+      "SELECT diff_json FROM knowledge_revisions WHERE node_id=?",
+    )
     .all(pageId))
     expect(JSON.parse(revision.diff_json).claimRemovals).toBeUndefined();
   // The excluded-source claims were settled as not examined, never as verified by review.

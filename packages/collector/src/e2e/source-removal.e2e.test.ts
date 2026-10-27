@@ -42,16 +42,14 @@ describe("whole-source removal across members", () => {
       return {
         source: db.prepare("SELECT id, device_id, enabled FROM sources WHERE id = ?").get(id),
         tombstone: db
-          .prepare<
-            [string],
-            { cleanup_done_at: number | null }
-          >("SELECT cleanup_done_at FROM removed_sources WHERE id = ?")
+          .prepare<[string], { cleanup_done_at: number | null }>(
+            "SELECT cleanup_done_at FROM removed_sources WHERE id = ?",
+          )
           .get(id),
         documents: db
-          .prepare<
-            [string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM documents WHERE source_id = ?")
+          .prepare<[string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM documents WHERE source_id = ?",
+          )
           .get(id)!.n,
       };
     } finally {

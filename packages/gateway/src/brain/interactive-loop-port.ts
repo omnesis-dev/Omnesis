@@ -56,10 +56,9 @@ function resolveNames(db: Db, ids: readonly string[]): string[] {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(",");
   const rows = db
-    .prepare<
-      string[],
-      { id: string; canonical_name: string }
-    >(`SELECT id, canonical_name FROM people WHERE id IN (${placeholders})`)
+    .prepare<string[], { id: string; canonical_name: string }>(
+      `SELECT id, canonical_name FROM people WHERE id IN (${placeholders})`,
+    )
     .all(...ids);
   const byId = new Map(rows.map((r) => [r.id, r.canonical_name]));
   return ids.map((id) => byId.get(id) ?? id);

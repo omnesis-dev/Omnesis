@@ -461,10 +461,9 @@ describe("two documents that differ only in provider each keep their projections
     ).not.toThrow();
 
     const rows = db
-      .prepare<
-        [],
-        { id: string; document_id: string; slot: string }
-      >("SELECT id, document_id, slot FROM document_temporal_projections ORDER BY document_id")
+      .prepare<[], { id: string; document_id: string; slot: string }>(
+        "SELECT id, document_id, slot FROM document_temporal_projections ORDER BY document_id",
+      )
       .all();
 
     // One projection per document, under distinct ids.

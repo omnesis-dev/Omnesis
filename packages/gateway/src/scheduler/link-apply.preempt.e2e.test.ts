@@ -257,10 +257,9 @@ describe("link apply under forced preemption", () => {
   /** Links stored for a document right now, on the read handle. */
   function storedLinks(docId: string): number {
     return read
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?",
+      )
       .get(docId)!.n;
   }
 
@@ -268,10 +267,9 @@ describe("link apply under forced preemption", () => {
   function extractedAt(docId: string): string | null {
     return (
       read
-        .prepare<
-          [string],
-          { links_extracted_at: string | null }
-        >("SELECT links_extracted_at FROM documents WHERE id = ?")
+        .prepare<[string], { links_extracted_at: string | null }>(
+          "SELECT links_extracted_at FROM documents WHERE id = ?",
+        )
         .get(docId)?.links_extracted_at ?? null
     );
   }
@@ -381,10 +379,9 @@ describe("link apply under forced preemption", () => {
     expect(result.skipped).toBe(0);
 
     const rows = read
-      .prepare<
-        [string],
-        { link_type: string; target_doc_id: string | null }
-      >("SELECT link_type, target_doc_id FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { link_type: string; target_doc_id: string | null }>(
+        "SELECT link_type, target_doc_id FROM document_links WHERE source_doc_id = ?",
+      )
       .all(subject.id);
     expect(rows).toHaveLength(600);
     expect(new Set(rows.map((r) => r.link_type))).toEqual(new Set(["references"]));
@@ -477,10 +474,9 @@ describe("link apply under forced preemption", () => {
 
     const foreignRows = () =>
       read
-        .prepare<
-          [string],
-          Record<string, unknown>
-        >(`SELECT id, link_type, raw_target, normalized_target, target_doc_id, resolved_at, created_at, metadata_json, provenance_kind, provenance_origin, declared_at FROM document_links WHERE source_doc_id = ? AND link_type IN ('cited', 'replies-to') ORDER BY id`)
+        .prepare<[string], Record<string, unknown>>(
+          `SELECT id, link_type, raw_target, normalized_target, target_doc_id, resolved_at, created_at, metadata_json, provenance_kind, provenance_origin, declared_at FROM document_links WHERE source_doc_id = ? AND link_type IN ('cited', 'replies-to') ORDER BY id`,
+        )
         .all(conversation.id);
     const managedRows = () =>
       read
@@ -604,10 +600,9 @@ describe("link apply under forced preemption", () => {
     await startScheduler();
 
     const linkIds = read
-      .prepare<
-        [string],
-        { id: number; normalized_target: string }
-      >("SELECT id, normalized_target FROM document_links WHERE source_doc_id = ? ORDER BY id")
+      .prepare<[string], { id: number; normalized_target: string }>(
+        "SELECT id, normalized_target FROM document_links WHERE source_doc_id = ? ORDER BY id",
+      )
       .all(hub.id);
     expect(linkIds).toHaveLength(460);
     const maxLinkId = linkIds[459].id;
@@ -639,17 +634,15 @@ describe("link apply under forced preemption", () => {
 
     const reconcileState = () =>
       read
-        .prepare<
-          [],
-          { cursor: number; url_cycle_max_id: number }
-        >("SELECT cursor, url_cycle_max_id FROM link_reconcile_state WHERE id = 1")
+        .prepare<[], { cursor: number; url_cycle_max_id: number }>(
+          "SELECT cursor, url_cycle_max_id FROM link_reconcile_state WHERE id = 1",
+        )
         .get()!;
     const resolvedCount = () =>
       read
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND target_doc_id IS NOT NULL")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND target_doc_id IS NOT NULL",
+        )
         .get(hub.id)!.n;
     expect(reconcileState().cursor).toBe(0);
 
@@ -676,10 +669,9 @@ describe("link apply under forced preemption", () => {
     expect(result).toEqual({ updated: 400, deleted: 60, retargeted: 0 });
 
     const after = read
-      .prepare<
-        [string],
-        { id: number; target_doc_id: string | null }
-      >("SELECT id, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY id")
+      .prepare<[string], { id: number; target_doc_id: string | null }>(
+        "SELECT id, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY id",
+      )
       .all(hub.id);
     // The delete phase ran, which is only true if the continuation resumed
     // at the phase it yielded in instead of restarting at `resolve`.

@@ -114,10 +114,9 @@ describe("bootstrap work-list", () => {
       (r) =>
         (
           db
-            .prepare<
-              [string],
-              { external_id: string }
-            >("SELECT external_id FROM documents WHERE id = ?")
+            .prepare<[string], { external_id: string }>(
+              "SELECT external_id FROM documents WHERE id = ?",
+            )
             .get(r.docId) as { external_id: string }
         ).external_id,
     );
@@ -309,10 +308,9 @@ describe("re-admission after a terminal run failure", () => {
   function markerOf(docId: string): string | null {
     return (
       db
-        .prepare<
-          [string],
-          { bootstrap_processed_at: string | null }
-        >("SELECT bootstrap_processed_at FROM documents WHERE id = ?")
+        .prepare<[string], { bootstrap_processed_at: string | null }>(
+          "SELECT bootstrap_processed_at FROM documents WHERE id = ?",
+        )
         .get(docId)?.bootstrap_processed_at ?? null
     );
   }

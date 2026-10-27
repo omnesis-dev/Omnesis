@@ -255,12 +255,7 @@ export type AuthorizationDecisionSelection =
   | AuthorizationReplaceConnectionSelection;
 
 export type AuthorizationRequestStatus =
-  | "pending"
-  | "approved"
-  | "denied"
-  | "code-issued"
-  | "complete"
-  | "expired";
+  "pending" | "approved" | "denied" | "code-issued" | "complete" | "expired";
 
 export interface AuthorizationRequestPublic {
   id: string;

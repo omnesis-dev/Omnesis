@@ -74,8 +74,7 @@ function captureOwner(db: Database.Database, id: string, remaining: { rows: numb
       const node = db
         .prepare("SELECT kind,meaning_revision,validity FROM knowledge_nodes WHERE id=?")
         .get(ancestor.id) as
-        | { kind: string; meaning_revision: number; validity: string }
-        | undefined;
+        { kind: string; meaning_revision: number; validity: string } | undefined;
       if (!node) throw new AuthorityCaptureError("owner_unavailable");
       const claims = db
         .prepare(

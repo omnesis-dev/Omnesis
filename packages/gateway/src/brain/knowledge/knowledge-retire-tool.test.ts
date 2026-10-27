@@ -132,10 +132,9 @@ describe("knowledge_retire", () => {
     });
 
     const row = db
-      .prepare<
-        [],
-        { fields_json: string; markdown: string }
-      >("SELECT fields_json,markdown FROM knowledge_nodes WHERE id='garden'")
+      .prepare<[], { fields_json: string; markdown: string }>(
+        "SELECT fields_json,markdown FROM knowledge_nodes WHERE id='garden'",
+      )
       .get()!;
     expect(JSON.parse(row.fields_json)).toEqual({
       withdrawn: true,

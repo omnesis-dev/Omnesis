@@ -50,10 +50,9 @@ export function sealConversationEvidence(
 ): void {
   const projection = projectionSchema.parse(input);
   const row = db
-    .prepare<
-      [string, string, string],
-      { content: string; content_hash: string; metadata: string }
-    >("SELECT content,content_hash,metadata FROM documents WHERE id=? AND provider_id=? AND source_id=?")
+    .prepare<[string, string, string], { content: string; content_hash: string; metadata: string }>(
+      "SELECT content,content_hash,metadata FROM documents WHERE id=? AND provider_id=? AND source_id=?",
+    )
     .get(id, OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID);
   if (
     !row ||
@@ -87,10 +86,9 @@ export function preparedConversationEvidence(
 ) {
   const json = JSON.stringify(projectionSchema.parse(projection));
   const prior = db
-    .prepare<
-      [string | null],
-      { projection_json: string; generation: number; digest: string }
-    >("SELECT projection_json,generation,digest FROM conversation_evidence_projections WHERE document_id=?")
+    .prepare<[string | null], { projection_json: string; generation: number; digest: string }>(
+      "SELECT projection_json,generation,digest FROM conversation_evidence_projections WHERE document_id=?",
+    )
     .get(id);
   const generation =
     prior?.projection_json === json ? prior.generation : (prior?.generation ?? 0) + 1;

@@ -129,7 +129,9 @@ export function reserveReauthReminder(
         .prepare<
           [string, string],
           { reservation_token: string | null; reserved_until: number | null }
-        >("SELECT reservation_token, reserved_until FROM reauth_reminders WHERE principal = ? AND device_id = ?")
+        >(
+          "SELECT reservation_token, reserved_until FROM reauth_reminders WHERE principal = ? AND device_id = ?",
+        )
         .get(principal, deviceId);
       if (raw?.reservation_token && raw.reserved_until != null && raw.reserved_until > now)
         return null;
@@ -191,10 +193,9 @@ export function getReauthReminder(
 ): ReauthReminderRow | null {
   return (
     db
-      .prepare<
-        [string, string],
-        ReauthReminderRow
-      >("SELECT * FROM reauth_reminders WHERE principal = ? AND device_id = ?")
+      .prepare<[string, string], ReauthReminderRow>(
+        "SELECT * FROM reauth_reminders WHERE principal = ? AND device_id = ?",
+      )
       .get(principal, deviceId) ?? null
   );
 }

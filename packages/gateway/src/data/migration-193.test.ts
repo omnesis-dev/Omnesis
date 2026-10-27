@@ -46,10 +46,9 @@ function removeKnowledgeSchema() {
   db.pragma("foreign_keys=OFF");
   for (const type of ["trigger", "table"] as const) {
     const names = db
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type=? AND name GLOB 'knowledge_*'")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type=? AND name GLOB 'knowledge_*'",
+      )
       .all(type);
     for (const { name } of names)
       db.exec(`DROP ${type.toUpperCase()} "${name.replaceAll('"', '""')}"`);
@@ -156,10 +155,9 @@ it("installs reconciliation counters on an already-current database at startup",
   runMigrations(db);
   const version = db.pragma("user_version", { simple: true });
   const triggers = db
-    .prepare<
-      [],
-      { name: string }
-    >("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'knowledge_reconcile_%'")
+    .prepare<[], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'knowledge_reconcile_%'",
+    )
     .all();
   for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
   db.exec("DROP TABLE knowledge_reconciliation_revisions");

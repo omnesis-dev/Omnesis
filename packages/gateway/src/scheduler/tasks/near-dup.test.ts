@@ -156,10 +156,9 @@ function stubGates(state: NearDupStubState): { compute: IoGate; write: WriteGate
       const staged = new Database(input.stagingPath, { readonly: true });
       try {
         state.stagedRows = staged
-          .prepare<
-            [number],
-            { shingle: string; df: number }
-          >("SELECT shingle, df FROM df WHERE df >= ? ORDER BY shingle")
+          .prepare<[number], { shingle: string; df: number }>(
+            "SELECT shingle, df FROM df WHERE df >= ? ORDER BY shingle",
+          )
           .all(input.minDf);
       } finally {
         staged.close();

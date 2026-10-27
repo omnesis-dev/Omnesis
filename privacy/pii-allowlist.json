@@ -10294,6 +10294,11 @@
       "reason": "reviewed Linux keyring API name"
     },
     {
+      "value": "Semantic Search Degraded",
+      "paths": ["packages/cli/src/commands/status-render.test.ts"],
+      "reason": "index status header label"
+    },
+    {
       "value": "Section Header",
       "paths": ["packages/providers/apple/src/note-parser.test.ts"],
       "reason": "reviewed existing fixture"

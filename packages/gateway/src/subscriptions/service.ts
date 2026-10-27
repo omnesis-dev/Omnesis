@@ -1067,10 +1067,9 @@ export class SubscriptionService {
     const policyRevision =
       resolvedBy.kind === "operator" ? approval.policyRevision : policy.revision;
     const subscription = this.deps.db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM subscriptions WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM subscriptions WHERE id = ?",
+      )
       .get(approval.subscriptionId);
     if (!subscription) {
       throw new SubscriptionServiceError("not_found", "Watch not found.");

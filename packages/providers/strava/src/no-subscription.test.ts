@@ -1014,12 +1014,7 @@ function predicate(tokens: string[]): Predicate {
 // ── The source's life ────────────────────────────────────────────────
 
 type Stage =
-  | "first sync"
-  | "steady"
-  | "a week later"
-  | "a new activity"
-  | "deactivated"
-  | "reactivated";
+  "first sync" | "steady" | "a week later" | "a new activity" | "deactivated" | "reactivated";
 
 /** What one page did. */
 interface PageReport {

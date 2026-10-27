@@ -70,10 +70,9 @@ describe("migration 89", () => {
     expect(columns("briefs")).toContain("read_at");
     expect(
       db
-        .prepare<
-          [],
-          { state: string; read_at: number | null }
-        >("SELECT state, read_at FROM briefs WHERE id = 'brf_northstar'")
+        .prepare<[], { state: string; read_at: number | null }>(
+          "SELECT state, read_at FROM briefs WHERE id = 'brf_northstar'",
+        )
         .get(),
     ).toEqual({ state: "read", read_at: null });
     expect(db.pragma("user_version", { simple: true })).toBe(196);
@@ -102,10 +101,9 @@ describe("migration 89", () => {
     const migration = MIGRATIONS.find((candidate) => candidate.version === 89)!;
     expect(() => migration.up(db)).not.toThrow();
     const after = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?, ?, ?, ?, ?)")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?, ?, ?, ?, ?)",
+      )
       .all(...expected);
     expect(after).toHaveLength(expected.length);
   });
@@ -116,10 +114,9 @@ describe("migration 89", () => {
 
     expect(
       db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE name GLOB 'brief*' OR name GLOB 'idx_brief*' ORDER BY name")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE name GLOB 'brief*' OR name GLOB 'idx_brief*' ORDER BY name",
+        )
         .all(),
     ).toEqual([]);
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

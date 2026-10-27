@@ -127,10 +127,9 @@ describe("real Maildir source through a real collector", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          DocumentRow
-        >("SELECT external_id, title, metadata FROM documents WHERE source_id = ? ORDER BY title")
+        .prepare<[string], DocumentRow>(
+          "SELECT external_id, title, metadata FROM documents WHERE source_id = ? ORDER BY title",
+        )
         .all(id);
     } finally {
       db.close();
@@ -177,10 +176,9 @@ describe("real Maildir source through a real collector", () => {
     try {
       return (
         db
-          .prepare<
-            [string],
-            { last_synced_at: string | null }
-          >("SELECT last_synced_at FROM sync_state WHERE source_id = ?")
+          .prepare<[string], { last_synced_at: string | null }>(
+            "SELECT last_synced_at FROM sync_state WHERE source_id = ?",
+          )
           .get(id)?.last_synced_at ?? null
       );
     } finally {

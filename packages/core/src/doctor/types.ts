@@ -121,8 +121,7 @@ export interface SecurityKeyringWiring {
  * this one qualifies all of them.
  */
 export type SecurityKeyringAccess =
-  | { readable: true }
-  | { readable: false; path: string; detail: string };
+  { readable: true } | { readable: false; path: string; detail: string };
 
 export interface SecurityKeyringData {
   keyName: string;
@@ -278,8 +277,7 @@ export interface DeviceEntry {
   tlsTrust?: DeviceTlsTrust;
   /** For an agent device, whether its corpus access needs a human to re-authorize it. */
   agentAuthorization?:
-    | { status: "authorized" }
-    | { status: "needs-reauthorization"; remedy: string };
+    { status: "authorized" } | { status: "needs-reauthorization"; remedy: string };
 }
 
 /** One entry of `GET /admin/sources` (Page<AdminSource>). */
@@ -331,11 +329,7 @@ export interface SyncStatusEntry {
   staleHint?: string;
   permissionHealth?: {
     state:
-      | "healthy"
-      | "permission-degraded"
-      | "background-access-missing"
-      | "unavailable"
-      | "unknown";
+      "healthy" | "permission-degraded" | "background-access-missing" | "unavailable" | "unknown";
     reportStale: boolean;
     validUntil: number;
     capabilities: MobilePermissionCapability[];

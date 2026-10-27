@@ -132,10 +132,7 @@ export interface SynthHarnessStatus {
 }
 
 export type SyntheticGatewayMode =
-  | "stable"
-  | "experimental"
-  | "synthetic"
-  | "synthetic-experimental";
+  "stable" | "experimental" | "synthetic" | "synthetic-experimental";
 
 const GATEWAY_ENV_BY_MODE = {
   stable: { OMNESIS_SYNTHETIC: "0", OMNESIS_EXPERIMENTAL: "0" },

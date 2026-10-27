@@ -41,14 +41,7 @@ export type AuthFlowState =
 
 /** Event types emitted to SSE subscribers. Mirrors the collector's auth-subprocess output. */
 export type AuthFlowEventType =
-  | "url"
-  | "qr"
-  | "widget"
-  | "challenge"
-  | "info"
-  | "complete"
-  | "error"
-  | "snapshot";
+  "url" | "qr" | "widget" | "challenge" | "info" | "complete" | "error" | "snapshot";
 
 export interface AuthFlowEvent {
   type: AuthFlowEventType;

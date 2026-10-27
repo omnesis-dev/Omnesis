@@ -30,10 +30,7 @@ interface OrganizationContext {
 }
 /** Why a selected cohort did not start. */
 export type OrganizationDropReason =
-  | "unreadable_source"
-  | "region_limit"
-  | "seed_limit"
-  | "revision_conflict";
+  "unreadable_source" | "region_limit" | "seed_limit" | "revision_conflict";
 interface FittedCohort {
   selection: OrganizationCohortSelection;
   frontier: KnowledgeFrontierInput[];

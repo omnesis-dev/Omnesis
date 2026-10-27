@@ -35,11 +35,7 @@ type Db = Database.Database;
 
 /** Refresh-job identity. Mirrors the `refresh_meta.job` CHECK clause. */
 export type RefreshJob =
-  | "link_graph"
-  | "interaction_scores"
-  | "merge_rules"
-  | "near_dup_df"
-  | "people_counts";
+  "link_graph" | "interaction_scores" | "merge_rules" | "near_dup_df" | "people_counts";
 
 /**
  * Snapshot returned by `readOccMeta`. Field names match the columns
@@ -57,10 +53,9 @@ export interface OccMetaSnapshot {
  */
 export function captureOccVersion(db: Db, job: RefreshJob): number {
   const row = db
-    .prepare<
-      [string],
-      { dirty_version: number }
-    >("SELECT dirty_version FROM refresh_meta WHERE job = ?")
+    .prepare<[string], { dirty_version: number }>(
+      "SELECT dirty_version FROM refresh_meta WHERE job = ?",
+    )
     .get(job);
   return row?.dirty_version ?? 0;
 }

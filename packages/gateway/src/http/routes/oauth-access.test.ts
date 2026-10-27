@@ -280,19 +280,17 @@ describe("MCP OAuth access routes", () => {
 
   test("authorizes a verified client metadata document without dynamic registration", async () => {
     const clientId = "https://client.example.com/oauth/client.json";
-    const resolve = vi.fn(
-      async (): Promise<OAuthClientMetadataDocument> => ({
-        clientId,
-        clientName: "Example client",
-        redirectUris: [REDIRECT],
-        grantTypes: ["authorization_code", "refresh_token"],
-        responseTypes: ["code"],
-        tokenEndpointAuthMethod: "none" as const,
-        jwksUri: null,
-        tokenEndpointAuthSigningAlg: null,
-        clientUri: "https://client.example.com",
-      }),
-    );
+    const resolve = vi.fn(async (): Promise<OAuthClientMetadataDocument> => ({
+      clientId,
+      clientName: "Example client",
+      redirectUris: [REDIRECT],
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none" as const,
+      jwksUri: null,
+      tokenEndpointAuthSigningAlg: null,
+      clientUri: "https://client.example.com",
+    }));
     app = createTestApp({ clientMetadataResolver: { resolve } });
     const authorize = authorizationUrl(clientId, "state-cimd");
     const started = await app.request(authorize);
@@ -722,10 +720,9 @@ describe("MCP OAuth access routes", () => {
     });
     expect(registration.client_secret).toMatch(/^omn_ocs_[A-Za-z0-9_-]+$/);
     const stored = db
-      .prepare<
-        [string],
-        { client_secret_hash: string }
-      >("SELECT client_secret_hash FROM oauth_clients WHERE client_id = ?")
+      .prepare<[string], { client_secret_hash: string }>(
+        "SELECT client_secret_hash FROM oauth_clients WHERE client_id = ?",
+      )
       .get(registration.client_id);
     expect(stored?.client_secret_hash).toBeTruthy();
     expect(stored?.client_secret_hash).not.toBe(registration.client_secret);
@@ -1226,10 +1223,9 @@ describe("MCP OAuth access routes", () => {
     expect(portalLostRace.body).toEqual({ error: "already-decided" });
     expect(
       db
-        .prepare<
-          [string],
-          { status: string; decision_token_id: string }
-        >("SELECT status, decision_token_id FROM oauth_authorization_requests WHERE id = ?")
+        .prepare<[string], { status: string; decision_token_id: string }>(
+          "SELECT status, decision_token_id FROM oauth_authorization_requests WHERE id = ?",
+        )
         .get(approvalId),
     ).toEqual({ status: "approved", decision_token_id: MOBILE_TOKEN_ID });
   });
@@ -1930,19 +1926,17 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
 
   beforeEach(() => {
     jwksFetches = 0;
-    const resolve = vi.fn(
-      async (): Promise<OAuthClientMetadataDocument> => ({
-        clientId: CLIENT_ID,
-        clientName: "Example assistant",
-        redirectUris: [REDIRECT],
-        grantTypes: ["authorization_code", "refresh_token"],
-        responseTypes: ["code"],
-        tokenEndpointAuthMethod: "private_key_jwt",
-        jwksUri: JWKS_URI,
-        tokenEndpointAuthSigningAlg: "RS256",
-        clientUri: "https://assistant.example.com/",
-      }),
-    );
+    const resolve = vi.fn(async (): Promise<OAuthClientMetadataDocument> => ({
+      clientId: CLIENT_ID,
+      clientName: "Example assistant",
+      redirectUris: [REDIRECT],
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "private_key_jwt",
+      jwksUri: JWKS_URI,
+      tokenEndpointAuthSigningAlg: "RS256",
+      clientUri: "https://assistant.example.com/",
+    }));
     const clientAssertionVerifier = new ClientAssertionVerifier({
       now: Date.now,
       resolve: async () => [{ address: "93.184.216.34", family: 4 }],

@@ -120,6 +120,17 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     capabilities: ["agent"],
   },
   {
+    id: "regolo",
+    modelsDevId: "regolo-ai",
+    name: "Regolo AI",
+    // OpenAI-compatible Chat Completions and embeddings under `/v1`. Its
+    // `/models` list also serves rerankers, speech-to-text, OCR and image
+    // models; only the embedding models (e.g. `qwen3-embedding-8b`) suit the
+    // embedder role.
+    defaultUrl: "https://api.regolo.ai",
+    capabilities: ["agent", "embed"],
+  },
+  {
     id: "openrouter",
     name: "OpenRouter",
     // Aggregator — one key routes to many upstream providers. The OpenAI
@@ -134,4 +145,10 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
 /** Look up a provider preset by its short id. */
 export function getPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.id === id);
+}
+
+/** Look up the provider preset whose default URL a backend uses, ignoring trailing slashes. */
+export function getPresetByUrl(url: string): ProviderPreset | undefined {
+  const normalized = url.replace(/\/+$/, "");
+  return PROVIDER_PRESETS.find((p) => p.defaultUrl.replace(/\/+$/, "") === normalized);
 }

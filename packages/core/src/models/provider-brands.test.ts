@@ -21,6 +21,26 @@ describe("provider brands", () => {
 });
 
 describe("resolveModelDisplay", () => {
+  it("labels a Regolo HTTP assignment even without catalog metadata", () => {
+    expect(
+      resolveModelDisplay({
+        role: "agent",
+        kind: "http",
+        backendKey: "regolo",
+        url: "https://api.regolo.ai",
+        model: "chat-example",
+        allowRemoteInference: true,
+        available: true,
+      }),
+    ).toMatchObject({
+      providerId: "regolo",
+      providerLabel: "Regolo AI",
+      modelName: "chat-example",
+      available: true,
+      configured: true,
+    });
+  });
+
   it("projects an Anthropic assignment to its catalog name + brand", () => {
     const a: ResolvedAssignment = {
       role: "agent",

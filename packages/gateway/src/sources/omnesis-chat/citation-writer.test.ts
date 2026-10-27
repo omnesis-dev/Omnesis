@@ -128,10 +128,9 @@ describe("upsertConversationCitations", () => {
     expect(r2).toEqual({ removed: 1, inserted: 1 });
 
     const rows = db
-      .prepare<
-        [string],
-        { target_doc_id: string; metadata_json: string | null }
-      >("SELECT target_doc_id, metadata_json FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { target_doc_id: string; metadata_json: string | null }>(
+        "SELECT target_doc_id, metadata_json FROM document_links WHERE source_doc_id = ?",
+      )
       .all(convId);
     expect(rows).toEqual([
       { target_doc_id: targetB, metadata_json: JSON.stringify({ note: "new" }) },
@@ -149,10 +148,9 @@ describe("upsertConversationCitations", () => {
     expect(r).toEqual({ removed: 0, inserted: 2 });
 
     const rows = db
-      .prepare<
-        [string],
-        { normalized_target: string; metadata_json: string }
-      >("SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ? ORDER BY id")
+      .prepare<[string], { normalized_target: string; metadata_json: string }>(
+        "SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ? ORDER BY id",
+      )
       .all(convId);
     expect(rows).toHaveLength(2);
     expect(rows[0].normalized_target).not.toBe(rows[1].normalized_target);
@@ -173,10 +171,9 @@ describe("upsertConversationCitations", () => {
     expect(r).toEqual({ removed: 1, inserted: 0 });
 
     const count = db
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) as c FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) as c FROM document_links WHERE source_doc_id = ?",
+      )
       .get(convId);
     expect(count?.c ?? -1).toBe(0);
   });
@@ -258,10 +255,9 @@ describe("upsertConversationCitations — record citations", () => {
     expect(first).toEqual({ removed: 0, inserted: 1 });
 
     const before = db
-      .prepare<
-        [string],
-        { normalized_target: string; metadata_json: string | null }
-      >("SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string; metadata_json: string | null }>(
+        "SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ?",
+      )
       .all(convId);
 
     const second = upsertConversationCitations(db, convId, [recordCitation()]);
@@ -270,10 +266,9 @@ describe("upsertConversationCitations — record citations", () => {
     expect(second).toEqual({ removed: 1, inserted: 1 });
 
     const after = db
-      .prepare<
-        [string],
-        { normalized_target: string; metadata_json: string | null }
-      >("SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string; metadata_json: string | null }>(
+        "SELECT normalized_target, metadata_json FROM document_links WHERE source_doc_id = ?",
+      )
       .all(convId);
     expect(after).toHaveLength(1);
     expect(after).toEqual(before);
@@ -292,10 +287,9 @@ describe("upsertConversationCitations — record citations", () => {
     expect(r).toEqual({ removed: 0, inserted: 2 });
 
     const rows = db
-      .prepare<
-        [string],
-        { normalized_target: string; target_doc_id: string | null }
-      >("SELECT normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY id")
+      .prepare<[string], { normalized_target: string; target_doc_id: string | null }>(
+        "SELECT normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY id",
+      )
       .all(convId);
     expect(rows).toHaveLength(2);
     expect(rows[0].normalized_target).toBe(`omnesis://doc/${targetDoc}#0`);
@@ -311,10 +305,9 @@ describe("upsertConversationCitations — record citations", () => {
     const targetDoc = await insertGenericDoc(db, "email-rec-4");
     upsertConversationCitations(db, convId, [recordCitation({ boundDocumentId: targetDoc })]);
     const row = db
-      .prepare<
-        [string],
-        { target_doc_id: string | null }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { target_doc_id: string | null }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ?",
+      )
       .get(convId);
     expect(row?.target_doc_id).toBe(targetDoc);
   });

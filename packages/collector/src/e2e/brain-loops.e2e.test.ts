@@ -182,10 +182,9 @@ function joinRowCount(bench: BrainBench, table: string, loopId: string): number 
 /** The mirror document for a loop, or undefined once it has been removed. */
 function mirrorOf(bench: BrainBench, loopId: string): MirrorDocRow | undefined {
   return bench.sql
-    .prepare<
-      [string],
-      MirrorDocRow
-    >("SELECT id, title, content, source_id FROM documents WHERE external_id = ?")
+    .prepare<[string], MirrorDocRow>(
+      "SELECT id, title, content, source_id FROM documents WHERE external_id = ?",
+    )
     .get(loopId);
 }
 
@@ -609,8 +608,7 @@ describe("Brain Bench — open loops", () => {
     // The gateway handed this run the loop the earlier runs had been building,
     // so the resolving update could only have targeted that loop.
     const surfaced = steps.find((s) => s.tool === "open_loop_search")?.result?.data?.loops as
-      | Array<{ id: string }>
-      | undefined;
+      Array<{ id: string }> | undefined;
     expect(surfaced?.map((l) => l.id)).toContain(loops[0]!.id);
     const resolutions = steps.filter(
       (s) => s.tool === "open_loop_update" && (s.args as { state?: unknown }).state === "done",
@@ -664,10 +662,9 @@ describe("Brain Bench — open loops", () => {
       .get(observationId);
     expect(observationRow?.n).toBe(0);
     const citationRows = bench.sql
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id = ?",
+      )
       .get(observationId);
     expect(citationRows?.n).toBe(0);
 

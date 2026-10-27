@@ -58,10 +58,9 @@ export function upsertSourceWatermark(db: Db, sourceId: string, watermark: Sourc
 export function listSourceWatermarks(db: Db, sourceId?: string): StoredSourceWatermark[] {
   if (sourceId !== undefined) {
     return db
-      .prepare<
-        [string],
-        StoredSourceWatermark
-      >("SELECT * FROM source_watermarks WHERE source_id = ? ORDER BY source_id")
+      .prepare<[string], StoredSourceWatermark>(
+        "SELECT * FROM source_watermarks WHERE source_id = ? ORDER BY source_id",
+      )
       .all(sourceId);
   }
   return db
@@ -72,10 +71,9 @@ export function listSourceWatermarks(db: Db, sourceId?: string): StoredSourceWat
 export function getSourceWatermark(db: Db, sourceId: string): StoredSourceWatermark | null {
   return (
     db
-      .prepare<
-        [string],
-        StoredSourceWatermark
-      >("SELECT * FROM source_watermarks WHERE source_id = ? AND stream_id = 'default'")
+      .prepare<[string], StoredSourceWatermark>(
+        "SELECT * FROM source_watermarks WHERE source_id = ? AND stream_id = 'default'",
+      )
       .get(sourceId) ?? null
   );
 }

@@ -20,18 +20,16 @@ export function readKnowledgeSourceRevision(db: Database.Database, id: string): 
   )
     return (
       db
-        .prepare<
-          [string],
-          { content_hash: string }
-        >("SELECT content_hash FROM documents WHERE id=?")
+        .prepare<[string], { content_hash: string }>(
+          "SELECT content_hash FROM documents WHERE id=?",
+        )
         .get(id)?.content_hash ?? null
     );
   return (
     db
-      .prepare<
-        [string],
-        { revision: string }
-      >(`SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id WHERE d.id=? AND COALESCE(r.deleted,0)=0`)
+      .prepare<[string], { revision: string }>(
+        `SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id WHERE d.id=? AND COALESCE(r.deleted,0)=0`,
+      )
       .get(id)?.revision ?? null
   );
 }

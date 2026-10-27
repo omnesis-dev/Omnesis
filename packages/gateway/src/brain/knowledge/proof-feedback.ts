@@ -40,10 +40,9 @@ export function savedProofFeedback(db: Database.Database, accepted: KnowledgeNod
           "The saved revision's verification summary is unavailable; read the current node before describing its proof status.",
       };
     const rows = db
-      .prepare<
-        [string, number],
-        { id: string; storedVerification: KnowledgeVerification }
-      >("SELECT id,verification AS storedVerification FROM knowledge_claims WHERE node_id=? ORDER BY id LIMIT ?")
+      .prepare<[string, number], { id: string; storedVerification: KnowledgeVerification }>(
+        "SELECT id,verification AS storedVerification FROM knowledge_claims WHERE node_id=? ORDER BY id LIMIT ?",
+      )
       .all(node.id, SAVE_FEEDBACK_CLAIMS + 1);
     return {
       status: "available" as const,

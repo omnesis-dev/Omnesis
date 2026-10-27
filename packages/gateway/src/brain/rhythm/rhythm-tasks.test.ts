@@ -120,10 +120,9 @@ describe("steward rhythm tasks", () => {
       value: { idle: false },
     });
     const decayRuns = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key LIKE 'decay:loop:%'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key LIKE 'decay:loop:%'",
+      )
       .get();
     expect(decayRuns?.n).toBe(1);
     // Second ticks are idle: the day is handled and the dirty-mark clean.
@@ -179,20 +178,18 @@ describe("steward rhythm tasks", () => {
     // Knob off → the tick idles without touching the queue (quiesce without restart).
     expect(await task!.run(undefined, taskCtx)).toEqual({ kind: "done", value: { idle: true } });
     let runs = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'",
+      )
       .get();
     expect(runs?.n).toBe(0);
     // Knob on (re-read live) → the same task's next tick fires the sweep.
     enabled = true;
     expect(await task!.run(undefined, taskCtx)).toEqual({ kind: "done", value: { idle: false } });
     runs = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'",
+      )
       .get();
     expect(runs?.n).toBe(1);
   });

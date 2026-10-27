@@ -490,8 +490,7 @@ function decodedBase64Bytes(payload: string): number {
 // rasterizes. A graceful shutdown hook tears it down on process exit.
 
 type RasterizeWorkerReply =
-  | { id: number; ok: true; png: string }
-  | { id: number; ok: false; error: string };
+  { id: number; ok: true; png: string } | { id: number; ok: false; error: string };
 
 interface PendingRasterize {
   resolve: (s: string) => void;

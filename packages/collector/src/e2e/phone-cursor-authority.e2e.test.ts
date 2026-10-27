@@ -46,10 +46,9 @@ describe("a phone's cursor write authority", () => {
     const db = new SqliteDatabase(harness.getDbPath(), { readonly: true });
     try {
       const row = db
-        .prepare<
-          [string],
-          { epoch: number }
-        >("SELECT epoch FROM source_wipe_epoch WHERE source_id = ? AND device_id = ''")
+        .prepare<[string], { epoch: number }>(
+          "SELECT epoch FROM source_wipe_epoch WHERE source_id = ? AND device_id = ''",
+        )
         .get(HEALTH);
       return row?.epoch ?? 0;
     } finally {

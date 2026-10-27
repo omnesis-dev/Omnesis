@@ -272,10 +272,9 @@ export function resolveSelection(
     principalId = createPrincipal(db, principalName, now);
   } else {
     const principal = db
-      .prepare<
-        [string],
-        { id: string; name: string; kind: string; revoked_at: number | null }
-      >("SELECT id, name, kind, revoked_at FROM access_principals WHERE id = ?")
+      .prepare<[string], { id: string; name: string; kind: string; revoked_at: number | null }>(
+        "SELECT id, name, kind, revoked_at FROM access_principals WHERE id = ?",
+      )
       .get(selection.principalId);
     if (!principal || principal.kind !== "interactive" || principal.revoked_at !== null) {
       return null;

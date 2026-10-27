@@ -300,10 +300,9 @@ function insertDecisionRow(db: Db, record: CognitionDecisionRecord): boolean {
 /** The decisions made for one run, oldest first. */
 export function listDecisionsForRun(db: Db, runId: string): CognitionDecisionRecord[] {
   return db
-    .prepare<
-      [string],
-      DecisionRow
-    >(`SELECT * FROM cognition_decisions WHERE run_id = ? ORDER BY created_at, id`)
+    .prepare<[string], DecisionRow>(
+      `SELECT * FROM cognition_decisions WHERE run_id = ? ORDER BY created_at, id`,
+    )
     .all(runId)
     .map(fromRow);
 }

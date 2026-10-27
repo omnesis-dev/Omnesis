@@ -25,5 +25,4 @@ export type AccessMutationError =
   | "invalid-secret";
 
 export type AccessMutationResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: AccessMutationError };
+  { ok: true; value: T } | { ok: false; error: AccessMutationError };

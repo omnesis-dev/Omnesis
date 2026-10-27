@@ -6,12 +6,7 @@ import { CAPTURE_PERMISSION_STATE_KEY } from "./capture-permission-state.js";
 import { PAIRING_KEY, hasExactWebScope, isBrowserPairing } from "./pairing-record.js";
 
 export type CaptureStorageAction =
-  | "none"
-  | "refresh"
-  | "rejudge"
-  | "reconcile"
-  | "deactivate"
-  | "terminate";
+  "none" | "refresh" | "rejudge" | "reconcile" | "deactivate" | "terminate";
 
 /**
  * Classify only the storage keys that control content-script authorization.

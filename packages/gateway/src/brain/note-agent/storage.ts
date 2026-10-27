@@ -146,10 +146,9 @@ function scanNewNotes(db: Db, now: number, state: "pending" | "skipped"): number
       )
       .run(state, now, now, now, scanned);
     const latest = db
-      .prepare<
-        [string],
-        { latest: string | null }
-      >("SELECT MAX(received_at) AS latest FROM note_entries WHERE from_owner = 1 AND received_at >= ?")
+      .prepare<[string], { latest: string | null }>(
+        "SELECT MAX(received_at) AS latest FROM note_entries WHERE from_owner = 1 AND received_at >= ?",
+      )
       .get(scanned)?.latest;
     if (latest && latest > scanned)
       db.prepare<[string]>("UPDATE note_agent_meta SET value = ? WHERE key = 'scanned'").run(
@@ -229,10 +228,9 @@ export function finishNoteRun(
 export function getNoteRuns(db: Db, entryIds: readonly string[]): Map<string, NoteAgentRow> {
   if (entryIds.length === 0) return new Map();
   const rows = db
-    .prepare<
-      string[],
-      DbRow
-    >(`SELECT * FROM note_agent_runs WHERE entry_id IN (${entryIds.map(() => "?").join(", ")})`)
+    .prepare<string[], DbRow>(
+      `SELECT * FROM note_agent_runs WHERE entry_id IN (${entryIds.map(() => "?").join(", ")})`,
+    )
     .all(...entryIds);
   return new Map(rows.map((r) => [r.entry_id, toRow(r)]));
 }
@@ -241,10 +239,9 @@ export function getNoteRuns(db: Db, entryIds: readonly string[]): Map<string, No
 export function hasPendingNotes(db: Db): boolean {
   return (
     db
-      .prepare<
-        [],
-        { one: number }
-      >("SELECT 1 AS one FROM note_agent_runs WHERE state IN ('pending', 'running') LIMIT 1")
+      .prepare<[], { one: number }>(
+        "SELECT 1 AS one FROM note_agent_runs WHERE state IN ('pending', 'running') LIMIT 1",
+      )
       .get() !== undefined
   );
 }

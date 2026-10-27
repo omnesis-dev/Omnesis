@@ -17,17 +17,24 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { UsearchWriteHandle, UsearchReadHandle } from "./usearch-index.js";
 import {
   EMBEDDING_DIM,
+  setIndexEmbedModel,
+  setLexicalWrites,
+  hasLexicalWrites,
   createIndexDatabase,
   upsertChunks,
   getVectorWriteSeq,
   getUsearchSavedSeq,
   setUsearchSavedSeq,
+  getVectorChangeHead,
+  getVectorChangesPrunedThrough,
+  pruneVectorChanges,
 } from "./db.js";
 import {
   encryptSidecar,
   restoreActiveSidecar,
   readSidecarFingerprint,
 } from "./usearch-sidecar-crypto.js";
+import { prepareEncryptedGraphForBoot } from "./usearch-sidecar-boot.js";
 import type Database from "better-sqlite3";
 
 const KEY = randomBytes(32);
@@ -111,6 +118,26 @@ describe("encrypted-sidecar persistence (real graph)", () => {
     w.close();
   }
 
+  it("does not restore an obsolete graph while semantic invalidation is pending", () => {
+    seedChunks(3);
+    setIndexEmbedModel(db, MODEL, EMBEDDING_DIM);
+    buildAndSaveEncrypted();
+    const encrypted = readFileSync(encPath);
+    setLexicalWrites(db, true);
+    expect(prepareEncryptedGraphForBoot(db, dir, KEY)).toEqual({
+      restored: false,
+      reason: "semantic index invalidation pending",
+    });
+    expect(existsSync(usearchPath)).toBe(false);
+    expect(readFileSync(encPath)).toEqual(encrypted);
+    expect(hasLexicalWrites(db)).toBe(true);
+    expect(db.prepare("SELECT count(*) AS n FROM chunks").get()).toEqual({ n: 3 });
+    // The guard preserves the valid ciphertext; without pending invalidation
+    // the same checkpoint remains decryptable.
+    setLexicalWrites(db, false);
+    expect(prepareEncryptedGraphForBoot(db, dir, KEY).restored).toBe(true);
+  });
+
   it("saves an encrypted sidecar whose fingerprint matches the write-seq", () => {
     seedChunks(30);
     const size = buildAndSaveEncrypted();
@@ -161,6 +188,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(true);
     expect(existsSync(usearchPath)).toBe(true);
@@ -196,6 +224,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(true);
     // Boot stamps the restored seq (what `index.ts` now does).
@@ -218,6 +247,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore2.restored).toBe(true);
   });
@@ -239,6 +269,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(false);
     expect(restore.reason).toMatch(/write-seq mismatch/);
@@ -249,6 +280,67 @@ describe("encrypted-sidecar persistence (real graph)", () => {
     w.backfillFromDb(db);
     expect(w.size()).toBe(25); // rebuilt from ALL 25 durable vectors
     w.close();
+  });
+
+  it("a sidecar that carries its change-log position restores behind index.db and catches up", async () => {
+    seedChunks(20);
+    const w = new UsearchWriteHandle(usearchPath, EMBEDDING_DIM);
+    w.backfillFromDb(db);
+    w.close();
+    const changeSeq = getVectorChangeHead(db);
+    encryptSidecar(usearchPath, encPath, KEY, {
+      vectorWriteSeq: getVectorWriteSeq(db),
+      embedModel: MODEL,
+      embedDim: EMBEDDING_DIM,
+      changeSeq,
+    });
+    // New vectors after the sidecar, then a kill: the plaintext is gone.
+    seedChunks(5, 100);
+    rmSync(usearchPath, { force: true });
+
+    const restore = restoreActiveSidecar({
+      encPath,
+      plaintextPath: usearchPath,
+      indexDbKey: KEY,
+      expectedSeq: getVectorWriteSeq(db),
+      expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: getVectorChangesPrunedThrough(db),
+    });
+    expect(restore.restored).toBe(true);
+    expect(restore.reason).toMatch(/behind index\.db/);
+    expect(restore.changeSeq).toBe(changeSeq);
+    const restored = new UsearchWriteHandle(usearchPath, EMBEDDING_DIM);
+    expect(restored.size()).toBe(20);
+    await restored.catchUpFromChangeLog(db, changeSeq);
+    expect(restored.size()).toBe(25);
+  });
+
+  it("a sidecar the change log no longer reaches back to forces a rebuild", () => {
+    seedChunks(20);
+    const w = new UsearchWriteHandle(usearchPath, EMBEDDING_DIM);
+    w.backfillFromDb(db);
+    w.close();
+    encryptSidecar(usearchPath, encPath, KEY, {
+      vectorWriteSeq: getVectorWriteSeq(db),
+      embedModel: MODEL,
+      embedDim: EMBEDDING_DIM,
+      changeSeq: getVectorChangeHead(db),
+    });
+    seedChunks(5, 100);
+    pruneVectorChanges(db, getVectorChangeHead(db));
+    rmSync(usearchPath, { force: true });
+
+    const restore = restoreActiveSidecar({
+      encPath,
+      plaintextPath: usearchPath,
+      indexDbKey: KEY,
+      expectedSeq: getVectorWriteSeq(db),
+      expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: getVectorChangesPrunedThrough(db),
+    });
+    expect(restore.restored).toBe(false);
+    expect(restore.reason).toMatch(/change log no longer reaches back/);
+    expect(existsSync(usearchPath)).toBe(false);
   });
 
   it("a shutdown flush-save after un-saved ingest re-persists the sidecar so the next boot RESTORES", () => {
@@ -297,6 +389,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(true); // RESTORED, not rebuilt — the fix's payoff
 
@@ -325,6 +418,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(false);
     expect(restore.reason).toMatch(/decrypt failed/);
@@ -343,6 +437,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: KEY,
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: "some-other-model", dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(false);
     expect(restore.reason).toMatch(/stamp mismatch/);
@@ -360,6 +455,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       indexDbKey: randomBytes(32), // different key
       expectedSeq: getVectorWriteSeq(db),
       expectedModel: { name: MODEL, dim: EMBEDDING_DIM },
+      changesPrunedThrough: 0,
     });
     expect(restore.restored).toBe(false);
     expect(existsSync(usearchPath)).toBe(false);

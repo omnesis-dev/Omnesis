@@ -191,10 +191,9 @@ describe("computePeopleCountsChunk equivalence", () => {
     db.prepare("UPDATE people SET doc_count = 5, alias_count = 3 WHERE id = ?").run("loser-1");
 
     const before = db
-      .prepare<
-        [string],
-        { doc_count: number; alias_count: number }
-      >("SELECT doc_count, alias_count FROM people WHERE id = ?")
+      .prepare<[string], { doc_count: number; alias_count: number }>(
+        "SELECT doc_count, alias_count FROM people WHERE id = ?",
+      )
       .get("loser-1");
     expect(before).toEqual({ doc_count: 5, alias_count: 3 });
 
@@ -202,10 +201,9 @@ describe("computePeopleCountsChunk equivalence", () => {
     expect(result.updated).toBe(1);
 
     const after = db
-      .prepare<
-        [string],
-        { doc_count: number; alias_count: number }
-      >("SELECT doc_count, alias_count FROM people WHERE id = ?")
+      .prepare<[string], { doc_count: number; alias_count: number }>(
+        "SELECT doc_count, alias_count FROM people WHERE id = ?",
+      )
       .get("loser-1");
     expect(after).toEqual({ doc_count: 0, alias_count: 0 });
   });

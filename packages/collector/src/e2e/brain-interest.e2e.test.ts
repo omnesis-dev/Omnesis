@@ -696,10 +696,9 @@ describe("brain bench: the interest engine", () => {
     expect(((await again.json()) as { noteId?: string }).noteId).toBe(wrongBody.noteId);
     expect(await bench.obs.tellNotes(DAYS.first)).toHaveLength(notesBefore + 1);
     const surface = bench.sql
-      .prepare<
-        [string],
-        { surface: string | null }
-      >("SELECT surface FROM note_entries WHERE id = ?")
+      .prepare<[string], { surface: string | null }>(
+        "SELECT surface FROM note_entries WHERE id = ?",
+      )
       .get(wrongBody.noteId!);
     expect(surface?.surface).toBe("brief");
     // A client cannot name the note: the body takes no note id.
@@ -778,10 +777,9 @@ describe("brain bench: the interest engine", () => {
     };
     expect(urgencyState.owner_interest?.positive.map((p) => p.source)).toContain("brief_thumbs_up");
     const rubric = bench.sql
-      .prepare<
-        [],
-        { rubric_version: string }
-      >("SELECT rubric_version FROM knowledge_decisions WHERE purpose='urgency' ORDER BY created_at DESC LIMIT 1")
+      .prepare<[], { rubric_version: string }>(
+        "SELECT rubric_version FROM knowledge_decisions WHERE purpose='urgency' ORDER BY created_at DESC LIMIT 1",
+      )
       .get();
     expect(rubric?.rubric_version).toBe("knowledge-decisions-v3");
 

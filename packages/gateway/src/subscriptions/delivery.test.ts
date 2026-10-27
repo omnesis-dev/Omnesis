@@ -301,18 +301,16 @@ describe("SubscriptionDeliveryService", () => {
     expect(token?.scopes).toEqual([SCOPE_SUBSCRIPTIONS_ANSWER]);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; local_run_id: string }
-        >("SELECT status, local_run_id FROM subscription_deliveries")
+        .prepare<[], { status: string; local_run_id: string }>(
+          "SELECT status, local_run_id FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "delivered", local_run_id: "openclaw-run-fictional" });
     expect(
       db
-        .prepare<
-          [],
-          { raw_tokens: number }
-        >("SELECT COUNT(*) AS raw_tokens FROM tokens WHERE token_hash = ?")
+        .prepare<[], { raw_tokens: number }>(
+          "SELECT COUNT(*) AS raw_tokens FROM tokens WHERE token_hash = ?",
+        )
         .get(payload!.answer.token)?.raw_tokens,
     ).toBe(0);
   });
@@ -329,10 +327,9 @@ describe("SubscriptionDeliveryService", () => {
     ).toBe(0);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; next_attempt_at: number; attempts: number }
-        >("SELECT status, next_attempt_at, attempts FROM subscription_deliveries")
+        .prepare<[], { status: string; next_attempt_at: number; attempts: number }>(
+          "SELECT status, next_attempt_at, attempts FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "retry", next_attempt_at: 1_400, attempts: 0 });
   });
@@ -521,10 +518,9 @@ describe("SubscriptionDeliveryService", () => {
     ).toBe(0);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM subscription_deliveries")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "retry", attempts: 0 });
   });
@@ -681,10 +677,9 @@ describe("SubscriptionDeliveryService", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; next_attempt_at: number | null }
-        >("SELECT status, next_attempt_at FROM subscription_deliveries")
+        .prepare<[], { status: string; next_attempt_at: number | null }>(
+          "SELECT status, next_attempt_at FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "manual_review", next_attempt_at: null });
     const token = lookupToken(db, prepared!.answer.token);
@@ -773,10 +768,9 @@ describe("SubscriptionDeliveryService", () => {
     );
     expect(
       db
-        .prepare<
-          [],
-          { status: string; current_revision: number }
-        >("SELECT status, current_revision FROM subscriptions")
+        .prepare<[], { status: string; current_revision: number }>(
+          "SELECT status, current_revision FROM subscriptions",
+        )
         .get(),
     ).toEqual({ status: "pending_approval", current_revision: 2 });
     expect(
@@ -806,10 +800,9 @@ describe("SubscriptionDeliveryService", () => {
     await expect(deliveryService.drainOnce()).resolves.toMatchObject({ failed: 1 });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM subscription_deliveries")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "failed", attempts: 3 });
   });
@@ -895,10 +888,9 @@ describe("SubscriptionDeliveryService", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number; last_error: string }
-        >("SELECT status, attempts, last_error FROM subscription_deliveries")
+        .prepare<[], { status: string; attempts: number; last_error: string }>(
+          "SELECT status, attempts, last_error FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({
       status: "commit_authorized",
@@ -921,10 +913,9 @@ describe("SubscriptionDeliveryService", () => {
     await expect(deliveryService.drainOnce()).resolves.toMatchObject({ retrying: 1 });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM subscription_deliveries")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM subscription_deliveries",
+        )
         .get(),
     ).toEqual({ status: "commit_authorized", attempts: 2 });
   });

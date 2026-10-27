@@ -68,7 +68,9 @@ function deferral(ownerId: string) {
     .prepare<
       [string],
       { reason: string; attempts: number; retry_at: number; input_fingerprint: string }
-    >("SELECT reason,attempts,retry_at,input_fingerprint FROM knowledge_conversion_deferrals WHERE owner_id=?")
+    >(
+      "SELECT reason,attempts,retry_at,input_fingerprint FROM knowledge_conversion_deferrals WHERE owner_id=?",
+    )
     .get(ownerId);
 }
 

@@ -35,10 +35,9 @@ function sourceEvidencePolicy(db: Database.Database, id: string) {
   const columns = db.prepare<[], { name: string }>("PRAGMA table_info(documents)").all();
   if (!columns.some((c) => c.name === "source_id")) return undefined;
   const row = db
-    .prepare<
-      [string],
-      { source_id: string; provider_id: string }
-    >(`SELECT source_id,${columns.some((c) => c.name === "provider_id") ? "provider_id" : "NULL AS provider_id"} FROM documents WHERE id=?`)
+    .prepare<[string], { source_id: string; provider_id: string }>(
+      `SELECT source_id,${columns.some((c) => c.name === "provider_id") ? "provider_id" : "NULL AS provider_id"} FROM documents WHERE id=?`,
+    )
     .get(id);
   if (!row) return undefined;
   const policy = policies.find((p) => p.sourceId === row.source_id);

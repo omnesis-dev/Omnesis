@@ -64,10 +64,9 @@ describe("upsertDocuments yieldable chunking", () => {
       },
     });
     const rows = db
-      .prepare<
-        [],
-        { external_id: string; updated_at: string }
-      >("SELECT external_id, updated_at FROM documents ORDER BY external_id")
+      .prepare<[], { external_id: string; updated_at: string }>(
+        "SELECT external_id, updated_at FROM documents ORDER BY external_id",
+      )
       .all();
     expect(rows).toEqual([
       { external_id: "a", updated_at: firstAt.toISOString() },

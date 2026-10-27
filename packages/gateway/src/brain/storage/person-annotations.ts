@@ -450,10 +450,9 @@ export function findUnchangedPersonAnnotation(
 /** Single annotation by id — the read the revise firewall re-check needs. */
 export function getPersonAnnotation(db: Db, id: string): PersonAnnotationRow | null {
   const row = db
-    .prepare<
-      [string],
-      PersonAnnotationDbRow
-    >(`SELECT * FROM person_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "person_annotations.id")}`)
+    .prepare<[string], PersonAnnotationDbRow>(
+      `SELECT * FROM person_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "person_annotations.id")}`,
+    )
     .get(id);
   return row ? rowToPersonAnnotation(row) : null;
 }
@@ -690,10 +689,9 @@ function regroundPersonAnnotations(
       cause === "deleted"
         ? ""
         : (db
-            .prepare<
-              [string],
-              { content: string | null }
-            >("SELECT content FROM documents WHERE id = ?")
+            .prepare<[string], { content: string | null }>(
+              "SELECT content FROM documents WHERE id = ?",
+            )
             .get(docId)?.content ?? "");
     const dead: string[] = [];
     const survivors: string[] = [];
@@ -913,10 +911,9 @@ export function revisePersonAnnotation(
   args.push(now);
   const txn = db.transaction((): boolean => {
     const subject = db
-      .prepare<
-        [string],
-        { person_id: string; claim_text: string }
-      >("SELECT person_id,claim_text FROM person_annotations WHERE id=?")
+      .prepare<[string], { person_id: string; claim_text: string }>(
+        "SELECT person_id,claim_text FROM person_annotations WHERE id=?",
+      )
       .get(id);
     if (!subject) return false;
     assertPersonProfileReceipt(db, subject.person_id, budget);
@@ -997,10 +994,9 @@ export function createPersonAnnotationSuperseding(
     const canonical = resolvePersonId(db, input.personId);
     for (const id of ids) {
       const target = db
-        .prepare<
-          [string],
-          { person_id: string; invalidated_at: number | null }
-        >("SELECT person_id,invalidated_at FROM person_annotations WHERE id=?")
+        .prepare<[string], { person_id: string; invalidated_at: number | null }>(
+          "SELECT person_id,invalidated_at FROM person_annotations WHERE id=?",
+        )
         .get(id);
       if (target && resolvePersonId(db, target.person_id) !== canonical) {
         throw new Error("Person annotation supersession must stay within one person");

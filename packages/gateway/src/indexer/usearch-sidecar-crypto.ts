@@ -27,10 +27,19 @@
  * the same key that protects `index.db`, so the sidecar and its source
  * vectors share one trust root.
  *
+ * A sidecar need not match `index.db` exactly. Its header also carries the
+ * graph's position in the vector change log (`changeSeq`) and, for a cold
+ * rebuild still in progress, its backfill cursor; while the log still holds
+ * every change after that position, boot restores the sidecar and the indexer
+ * catches it up, or resumes its build, instead of starting over. A sidecar
+ * written before the log existed carries neither and restores only on an
+ * exact `vectorWriteSeq` match.
+ *
  * All operations are synchronous and stay off the live request path:
- * `encryptSidecar` runs inside the indexer worker at shutdown, while
- * `restoreActiveSidecar`/`decryptSidecar` run at boot before the gateway
- * accepts traffic. Streaming keeps the multi-gigabyte graph off the heap.
+ * `encryptSidecar` runs in the indexer worker at its checkpoints and in the
+ * gateway at shutdown, while `restoreActiveSidecar`/`decryptSidecar` run at
+ * boot before the gateway accepts traffic. Streaming keeps the multi-gigabyte
+ * graph off the heap.
  */
 
 import {
@@ -60,6 +69,10 @@ export interface SidecarFingerprint {
   /** Embedder stamp — a mismatch forces a rebuild (defense in depth). */
   embedModel: string;
   embedDim: number;
+  /** The graph's vector change log position; absent on sidecars older than the log. */
+  changeSeq?: number;
+  /** Last rowid an unfinished cold rebuild had added; absent or null once complete. */
+  backfillCursor?: number | null;
 }
 
 interface SidecarHeader extends SidecarFingerprint {
@@ -103,6 +116,8 @@ export function encryptSidecar(
     vectorWriteSeq: fingerprint.vectorWriteSeq,
     embedModel: fingerprint.embedModel,
     embedDim: fingerprint.embedDim,
+    ...(fingerprint.changeSeq !== undefined ? { changeSeq: fingerprint.changeSeq } : {}),
+    ...(fingerprint.backfillCursor != null ? { backfillCursor: fingerprint.backfillCursor } : {}),
   };
   const headerBytes = Buffer.from(JSON.stringify(header), "utf8");
   const key = deriveKey(indexDbKey, salt);
@@ -184,6 +199,10 @@ export function readSidecarFingerprint(encPath: string): SidecarFingerprint | nu
       vectorWriteSeq: parsed.vectorWriteSeq,
       embedModel: parsed.embedModel,
       embedDim: parsed.embedDim,
+      ...(typeof parsed.changeSeq === "number" ? { changeSeq: parsed.changeSeq } : {}),
+      ...(typeof parsed.backfillCursor === "number"
+        ? { backfillCursor: parsed.backfillCursor }
+        : {}),
     };
   } catch {
     return null;
@@ -273,11 +292,14 @@ export function tryUnlink(path: string): void {
 
 /**
  * Boot-time: materialise the active generation's plaintext working graph from
- * its encrypted sidecar, but ONLY when the fingerprint proves it is consistent
- * with `index.db`. On any mismatch / tamper / missing sidecar it leaves NO
+ * its encrypted sidecar, but ONLY when its fingerprint proves the indexer can
+ * bring it level with `index.db`: an exact `vectorWriteSeq` match, or a change
+ * log position the log has not pruned past (the worker then catches the graph
+ * up from it). On any mismatch / tamper / missing sidecar it leaves NO
  * plaintext file — so the indexer worker rebuilds the graph from
  * `chunks.embedding` (never a re-embed). Must run AFTER the plaintext purge and
- * BEFORE the worker spawns.
+ * BEFORE the worker spawns. A restored graph's fingerprint is returned for the
+ * caller to stamp as the plaintext file's own.
  */
 export function restoreActiveSidecar(opts: {
   encPath: string;
@@ -285,13 +307,25 @@ export function restoreActiveSidecar(opts: {
   indexDbKey: Buffer;
   expectedSeq: number;
   expectedModel: { name: string; dim: number } | null;
-}): { restored: boolean; reason: string; seq?: number } {
+  /** `vector_changes` entries at or below this position are gone. */
+  changesPrunedThrough: number;
+}): {
+  restored: boolean;
+  reason: string;
+  seq?: number;
+  changeSeq?: number;
+  backfillCursor?: number | null;
+} {
   const fp = readSidecarFingerprint(opts.encPath);
   if (!fp) return { restored: false, reason: "no encrypted sidecar" };
-  if (fp.vectorWriteSeq !== opts.expectedSeq) {
+  const catchesUp = fp.changeSeq !== undefined && fp.changeSeq >= opts.changesPrunedThrough;
+  if (fp.vectorWriteSeq !== opts.expectedSeq && !catchesUp) {
     return {
       restored: false,
-      reason: `write-seq mismatch (sidecar=${fp.vectorWriteSeq} db=${opts.expectedSeq})`,
+      reason:
+        fp.changeSeq === undefined
+          ? `write-seq mismatch (sidecar=${fp.vectorWriteSeq} db=${opts.expectedSeq})`
+          : `write-seq mismatch (sidecar=${fp.vectorWriteSeq} db=${opts.expectedSeq}) and the change log no longer reaches back to the sidecar (sidecar=${fp.changeSeq} pruned=${opts.changesPrunedThrough})`,
     };
   }
   if (
@@ -305,7 +339,16 @@ export function restoreActiveSidecar(opts: {
   }
   try {
     decryptSidecar(opts.encPath, opts.plaintextPath, opts.indexDbKey);
-    return { restored: true, reason: "consistent", seq: fp.vectorWriteSeq };
+    return {
+      restored: true,
+      reason:
+        fp.vectorWriteSeq === opts.expectedSeq && fp.backfillCursor == null
+          ? "consistent"
+          : "behind index.db — the indexer catches it up",
+      seq: fp.vectorWriteSeq,
+      ...(fp.changeSeq !== undefined ? { changeSeq: fp.changeSeq } : {}),
+      backfillCursor: fp.backfillCursor ?? null,
+    };
   } catch (err) {
     // Tamper / torn ciphertext / wrong key. Drop the bad `.enc` so the next
     // boot doesn't retry the same failure; the worker rebuilds from vectors.

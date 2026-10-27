@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { useState, useRef, useEffect } from "preact/hooks";
+import { useState, useRef, useEffect, useContext } from "preact/hooks";
+
+import { ToolReplayContext, replayRotation } from "./replay.js";
 
 export const EPHEMERAL_REVEAL_MS = 350; // PARITY:ephemeral-reveal-ms
 export const EPHEMERAL_HOLD_MS = 450; // PARITY:ephemeral-hold-ms
@@ -33,6 +35,7 @@ export const EPHEMERAL_TRAIL_DOCS_MAX = 12;
 export const EPHEMERAL_PEOPLE_RESULTS_MAX = 12;
 
 export function RollingSlot({ items, currentIndex, slotHeight, itemView }) {
+  const replay = useContext(ToolReplayContext);
   // currentIndex == null → stack starts one slot below (off-screen);
   // first step (i=0) translates by 0 → first item rolls into view.
   const offsetSlots = currentIndex == null ? 1 : -currentIndex;
@@ -41,7 +44,7 @@ export function RollingSlot({ items, currentIndex, slotHeight, itemView }) {
     <div class="agent-ephemeral-slot" style=${`height:${slotHeight}px`}>
       <div
         class="agent-ephemeral-stack"
-        style=${`transform:${transform};transition:transform ${EPHEMERAL_REVEAL_MS}ms linear`}
+        style=${`transform:${transform};transition:${replay ? "none" : `transform ${EPHEMERAL_REVEAL_MS}ms linear`}`}
       >
         ${items.map(
           (item, i) => html`
@@ -106,6 +109,7 @@ export function ephemeralHasFollowingText(call) {
  * the fade completes so the caller can dispatch `ephemeral-tail-flush`.
  */
 export function useRollingRotation(ready, count, options) {
+  const replay = useContext(ToolReplayContext);
   const expedite = options?.expedite ?? false;
   const postText = options?.postText ?? false;
   const onDone = options?.onDone;
@@ -142,7 +146,7 @@ export function useRollingRotation(ready, count, options) {
 
   // Natural-flow start. Fires once when `ready` flips true.
   useEffect(() => {
-    if (!ready || startedRef.current) return;
+    if (replay != null || !ready || startedRef.current) return;
     startedRef.current = true;
     startedAtRef.current = Date.now();
     if (count === 0) {
@@ -162,7 +166,7 @@ export function useRollingRotation(ready, count, options) {
   // remaining display time to whatever brings total visible time to
   // the applicable visibility floor (or 0 if we're already past).
   useEffect(() => {
-    if (!expedite || !startedRef.current || phase !== "live") return;
+    if (replay != null || !expedite || !startedRef.current || phase !== "live") return;
     const elapsed = Date.now() - startedAtRef.current;
     const minimum = postText ? EPHEMERAL_POST_TEXT_MIN_VISIBLE_MS : EPHEMERAL_MIN_VISIBLE_MS;
     const remaining = minimum - elapsed;
@@ -181,7 +185,7 @@ export function useRollingRotation(ready, count, options) {
     [],
   );
 
-  return { currentIndex, phase };
+  return replay == null ? { currentIndex, phase } : replayRotation({ ...replay, resultAtMs: ready ? (options?.replayResultAtMs ?? replay.resultAtMs) : null }, count, EPHEMERAL_REVEAL_MS, EPHEMERAL_FADE_MS);
 }
 
 /**
@@ -191,12 +195,14 @@ export function useRollingRotation(ready, count, options) {
  * and collapses it; the gone phase removes the flex child and its parent gap.
  */
 export function EphemeralCard({ phase, children }) {
+  const replay = useContext(ToolReplayContext);
+  const fade = replay == null ? null : replayRotation(replay, 0, EPHEMERAL_REVEAL_MS, EPHEMERAL_FADE_MS).fade;
   if (phase === "gone") return null;
   const dismissing = phase === "dismissing" || phase === "dismissing-post-text";
   const fadeMs = phase === "dismissing-post-text" ? EPHEMERAL_POST_TEXT_FADE_MS : EPHEMERAL_FADE_MS;
   return html`
     <div class=${`agent-ephemeral${dismissing ? " is-dismissed" : ""}`}
-      style=${`--agent-ephemeral-fade-ms:${fadeMs}ms`}>
+      style=${`--agent-ephemeral-fade-ms:${fadeMs}ms;${fade == null ? "" : `transition:none;opacity:${1-fade};max-height:${200*(1-fade)}px;padding-top:${4*(1-fade)}px;padding-bottom:${4*(1-fade)}px;`}`}>
       ${children}
     </div>
   `;

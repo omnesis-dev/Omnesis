@@ -232,8 +232,7 @@ function authenticationCredsProblems(value: unknown): string[] {
 
   const me = creds.me as { id?: unknown } | undefined;
   const signedPreKey = creds.signedPreKey as
-    | { keyPair?: unknown; signature?: unknown; keyId?: unknown }
-    | undefined;
+    { keyPair?: unknown; signature?: unknown; keyId?: unknown } | undefined;
   const checks: Array<[string, boolean]> = [
     ["me.id", typeof me?.id === "string" && me.id.length > 0],
     ["registrationId", typeof creds.registrationId === "number"],

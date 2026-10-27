@@ -218,10 +218,9 @@ describe("findOrCreatePerson", () => {
     );
     expect(result).toBeNull();
     const junk = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM person_aliases WHERE alias LIKE '%.vous'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM person_aliases WHERE alias LIKE '%.vous'",
+      )
       .get()!;
     expect(junk.n).toBe(0);
   });
@@ -235,10 +234,9 @@ describe("findOrCreatePerson", () => {
     );
     expect(id).not.toBeNull();
     const emails = db
-      .prepare<
-        [string],
-        { alias: string }
-      >("SELECT alias FROM person_aliases WHERE person_id = ? AND alias_type = 'email'")
+      .prepare<[string], { alias: string }>(
+        "SELECT alias FROM person_aliases WHERE person_id = ? AND alias_type = 'email'",
+      )
       .all(id!);
     expect(emails.map((e) => e.alias)).toEqual(["maya@example.com"]);
   });
@@ -256,10 +254,9 @@ describe("findOrCreatePerson", () => {
     see("Maya");
     const countOf = (name: string): number | undefined =>
       db
-        .prepare<
-          [string, string],
-          { occurrence_count: number }
-        >("SELECT occurrence_count FROM person_aliases WHERE person_id=? AND alias_type='name' AND alias=?")
+        .prepare<[string, string], { occurrence_count: number }>(
+          "SELECT occurrence_count FROM person_aliases WHERE person_id=? AND alias_type='name' AND alias=?",
+        )
         .get(id!, name)?.occurrence_count;
     expect(countOf("Maya")).toBe(3);
 
@@ -362,10 +359,9 @@ describe("findOrCreatePerson", () => {
     expect(id2).toBe(id1);
 
     const aliases = db
-      .prepare<
-        [string],
-        { alias: string; alias_type: string }
-      >("SELECT alias, alias_type FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias")
+      .prepare<[string], { alias: string; alias_type: string }>(
+        "SELECT alias, alias_type FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias",
+      )
       .all(id1!);
     const phoneAliases = aliases.filter((a) => a.alias_type === "phone");
     expect(phoneAliases.map((a) => a.alias)).toContain("+447700000002");
@@ -1034,10 +1030,9 @@ describe("findOrCreatePerson conflict path: partial alias attach", () => {
    */
   function aliasesOf(personId: string): Set<string> {
     const rows = db
-      .prepare<
-        [string],
-        { alias_type: string; alias: string }
-      >("SELECT alias_type, alias FROM person_aliases WHERE person_id = ?")
+      .prepare<[string], { alias_type: string; alias: string }>(
+        "SELECT alias_type, alias FROM person_aliases WHERE person_id = ?",
+      )
       .all(personId);
     return new Set(rows.map((r) => `${r.alias_type}:${r.alias}`));
   }
@@ -1512,10 +1507,9 @@ describe("resolveDocumentPeople contact-card alias reconciliation", () => {
   ): string {
     resolveDocumentPeople(db, docId, people, source, "2026-01-01");
     const row = db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM document_people WHERE document_id = ? LIMIT 1")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM document_people WHERE document_id = ? LIMIT 1",
+      )
       .get(docId);
     return row!.person_id;
   }
@@ -1623,10 +1617,9 @@ describe("backfillOnePerson", () => {
 
     // Document should be marked as resolved
     const row = db
-      .prepare<
-        [string],
-        { people_resolved_at: string | null }
-      >("SELECT people_resolved_at FROM documents WHERE id = ?")
+      .prepare<[string], { people_resolved_at: string | null }>(
+        "SELECT people_resolved_at FROM documents WHERE id = ?",
+      )
       .get("doc-1");
     expect(row!.people_resolved_at).not.toBeNull();
   });
@@ -1701,10 +1694,9 @@ describe("backfillManyPeople (batched)", () => {
     backfillManyPeople(db, 10);
 
     const allResolved = db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NOT NULL")
+      .prepare<[], { c: number }>(
+        "SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NOT NULL",
+      )
       .get()!.c;
     expect(allResolved).toBe(2);
   });
@@ -1922,10 +1914,9 @@ describe("computeSeedFromContacts + upsertSeedFromContacts", () => {
       // card wins — same dedupe rule on both sides).
       const selfRow = (target: Db) =>
         target
-          .prepare<
-            [],
-            { canonical_name: string }
-          >("SELECT canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+          .prepare<[], { canonical_name: string }>(
+            "SELECT canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+          )
           .all();
       expect(selfRow(db2)).toEqual(selfRow(db));
     } finally {
@@ -1965,10 +1956,9 @@ describe("seedFromContacts — multiple isMe contacts", () => {
     seedFromContacts(db);
 
     const selfRows = db
-      .prepare<
-        [],
-        { id: string; canonical_name: string }
-      >("SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+      .prepare<[], { id: string; canonical_name: string }>(
+        "SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+      )
       .all();
 
     expect(selfRows.length).toBe(1);
@@ -1999,10 +1989,9 @@ describe("seedFromContacts — multiple isMe contacts", () => {
     seedFromContacts(db);
 
     const selfRows = db
-      .prepare<
-        [],
-        { canonical_name: string }
-      >("SELECT canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+      .prepare<[], { canonical_name: string }>(
+        "SELECT canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+      )
       .all();
 
     expect(selfRows.length).toBe(1);
@@ -2044,10 +2033,9 @@ describe("seedFromContacts — multiple isMe contacts", () => {
     seedFromContacts(db);
 
     const selfRows = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+      )
       .all();
     expect(selfRows.length).toBe(1);
     const selfId = selfRows[0].id;
@@ -2119,10 +2107,9 @@ describe("seedFromContacts — same-name consolidation", () => {
 
     // Exactly one canonical self.
     const canonicalSelf = db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+      .prepare<[], { c: number }>(
+        "SELECT COUNT(*) AS c FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+      )
       .get()!.c;
     expect(canonicalSelf).toBe(1);
 
@@ -2518,10 +2505,9 @@ describe("mergePeople", () => {
 
     // Person 2 should be merged
     const p2 = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(id2);
     expect(p2!.merged_into).toBe(id1);
 
@@ -2682,10 +2668,9 @@ describe("runMergePass", () => {
       .get(id2);
     expect(id2Exists).toBeUndefined();
     const lidOwners = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias = 'strava-athlete:43560449'")
+      .prepare<[], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias = 'strava-athlete:43560449'",
+      )
       .all();
     expect(lidOwners.map((r) => r.person_id)).toEqual([id1]);
   });
@@ -2777,20 +2762,18 @@ describe("rebuildPeopleFromDocuments", () => {
 
     // Documents should be unresolved (backfill will re-process)
     const unresolved = db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NULL")
+      .prepare<[], { c: number }>(
+        "SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NULL",
+      )
       .get()!.c;
     expect(unresolved).toBeGreaterThan(0);
   });
 
   const countResolved = (): number =>
     db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NOT NULL")
+      .prepare<[], { c: number }>(
+        "SELECT COUNT(*) as c FROM documents WHERE people_resolved_at IS NOT NULL",
+      )
       .get()!.c;
 
   test("reset phase yields before clearing flags; resuming the flags phase clears them", () => {
@@ -3484,10 +3467,9 @@ describe("split collapseTransitiveChains (compute / upsert)", () => {
       // Compare merged_into for every person.
       const stateOf = (target: Db) =>
         target
-          .prepare<
-            [],
-            { id: string; merged_into: string | null }
-          >("SELECT id, merged_into FROM people ORDER BY id")
+          .prepare<[], { id: string; merged_into: string | null }>(
+            "SELECT id, merged_into FROM people ORDER BY id",
+          )
           .all();
       expect(stateOf(db)).toEqual(stateOf(db2));
 
@@ -3519,10 +3501,9 @@ describe("a mention naming its identifiers by kind", () => {
 
   function personFor(alias: string): string | undefined {
     return db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias = ?")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias = ?",
+      )
       .get(alias)?.person_id;
   }
 
@@ -3591,10 +3572,9 @@ describe("a mention naming its identifiers by kind", () => {
     expect(personId).toBeDefined();
     expect(
       db
-        .prepare<
-          [string],
-          { canonical_name: string }
-        >("SELECT canonical_name FROM people WHERE id = ?")
+        .prepare<[string], { canonical_name: string }>(
+          "SELECT canonical_name FROM people WHERE id = ?",
+        )
         .get(personId!)!.canonical_name,
     ).toBe("Unknown");
   });
@@ -3620,10 +3600,9 @@ describe("a platform identifier arriving without its platform", () => {
 
   function personFor(alias: string): string | undefined {
     return db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias = ?")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias = ?",
+      )
       .get(alias)?.person_id;
   }
 
@@ -3678,10 +3657,9 @@ describe("an identifier more than one source vouches for", () => {
 
   function personFor(alias: string): string | undefined {
     return db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias = ?")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias = ?",
+      )
       .get(alias)?.person_id;
   }
 
@@ -3777,10 +3755,9 @@ describe("an identifier more than one source vouches for", () => {
 
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_people WHERE person_id = ? AND document_id = 'doc-msg-3'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_people WHERE person_id = ? AND document_id = 'doc-msg-3'",
+        )
         .get(personId)?.n,
     ).toBe(1);
   });
@@ -3833,10 +3810,9 @@ describe("a mention carrying a platform identifier", () => {
 
   function personFor(alias: string): string | undefined {
     return db
-      .prepare<
-        [string],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias = ?")
+      .prepare<[string], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias = ?",
+      )
       .get(alias)?.person_id;
   }
 

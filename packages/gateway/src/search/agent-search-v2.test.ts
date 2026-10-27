@@ -159,10 +159,9 @@ describe("agent search v2 enrollment and compatibility", () => {
     async (boundary) => {
       vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
       const source = gateway
-        .prepare<
-          [string],
-          { content_hash: string }
-        >("SELECT content_hash FROM documents WHERE id=?")
+        .prepare<[string], { content_hash: string }>(
+          "SELECT content_hash FROM documents WHERE id=?",
+        )
         .get("a")!;
       const node = saveKnowledgeNode(
         gateway,

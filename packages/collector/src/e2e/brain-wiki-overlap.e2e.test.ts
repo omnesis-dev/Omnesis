@@ -225,10 +225,9 @@ it("refuses a near-duplicate new page beyond the first library page and merges i
   });
   const steps = async (): Promise<ExecutedTool[]> => {
     const runs = bench!.sql
-      .prepare<
-        [],
-        { run_id: string }
-      >("SELECT run_id FROM knowledge_batches WHERE run_id IS NOT NULL GROUP BY run_id ORDER BY MIN(created_at)")
+      .prepare<[], { run_id: string }>(
+        "SELECT run_id FROM knowledge_batches WHERE run_id IS NOT NULL GROUP BY run_id ORDER BY MIN(created_at)",
+      )
       .all();
     return (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
   };

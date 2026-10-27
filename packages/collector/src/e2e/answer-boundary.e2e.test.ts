@@ -468,20 +468,18 @@ describe("REST Answer boundary — spawned replay gateway", () => {
   const taskByRequest = (clientRequestId: string): TaskRow | undefined =>
     readDb((db) =>
       db
-        .prepare<
-          [string],
-          TaskRow
-        >("SELECT id, status, candidate_answer, candidate_digest, review_json, denial_reason, release_id FROM answer_tasks WHERE client_request_id = ?")
+        .prepare<[string], TaskRow>(
+          "SELECT id, status, candidate_answer, candidate_digest, review_json, denial_reason, release_id FROM answer_tasks WHERE client_request_id = ?",
+        )
         .get(clientRequestId),
     );
 
   const task = (taskId: string): TaskRow =>
     readDb((db) => {
       const row = db
-        .prepare<
-          [string],
-          TaskRow
-        >("SELECT id, status, candidate_answer, candidate_digest, review_json, denial_reason, release_id FROM answer_tasks WHERE id = ?")
+        .prepare<[string], TaskRow>(
+          "SELECT id, status, candidate_answer, candidate_digest, review_json, denial_reason, release_id FROM answer_tasks WHERE id = ?",
+        )
         .get(taskId);
       if (!row) throw new Error(`no answer_tasks row for ${taskId}`);
       return row;
@@ -496,10 +494,9 @@ describe("REST Answer boundary — spawned replay gateway", () => {
     readDb(
       (db) =>
         db
-          .prepare<
-            [string, string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM answer_audit_events WHERE task_id = ? AND event_type = ?")
+          .prepare<[string, string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM answer_audit_events WHERE task_id = ? AND event_type = ?",
+          )
           .get(taskId, eventType)?.n ?? 0,
     );
 
@@ -524,10 +521,9 @@ describe("REST Answer boundary — spawned replay gateway", () => {
   const transcript = (taskId: string): Array<{ role: string; content: string }> =>
     readDb((db) =>
       db
-        .prepare<
-          [string],
-          { role: string; content: string }
-        >("SELECT role, content FROM answer_messages WHERE task_id = ? ORDER BY id")
+        .prepare<[string], { role: string; content: string }>(
+          "SELECT role, content FROM answer_messages WHERE task_id = ? ORDER BY id",
+        )
         .all(taskId),
     );
 
@@ -772,10 +768,9 @@ describe("REST Answer boundary — spawned replay gateway", () => {
     }
     const release = readDb((db) =>
       db
-        .prepare<
-          [string],
-          { citations_json: string }
-        >("SELECT citations_json FROM answer_releases WHERE task_id = ?")
+        .prepare<[string], { citations_json: string }>(
+          "SELECT citations_json FROM answer_releases WHERE task_id = ?",
+        )
         .get(plainBody.taskId),
     );
     expect(JSON.parse(release!.citations_json)).toEqual(citations);
@@ -851,10 +846,9 @@ describe("REST Answer boundary — spawned replay gateway", () => {
       readDb(
         (db) =>
           db
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM answer_tasks WHERE client_request_id = ?")
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM answer_tasks WHERE client_request_id = ?",
+            )
             .get("poll_e2e_a")?.n,
       ),
     ).toBe(1);

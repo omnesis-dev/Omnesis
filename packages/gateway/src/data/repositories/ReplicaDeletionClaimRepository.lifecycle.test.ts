@@ -169,10 +169,9 @@ describe("replica deletion claims across the member lifecycle", () => {
       replicaClaimDeviceId: macA,
     });
     const docId = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND external_id = 'n-3'")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND external_id = 'n-3'",
+      )
       .get(sourceId)!.id;
     db.prepare(
       `INSERT INTO document_absences
@@ -182,10 +181,9 @@ describe("replica deletion claims across the member lifecycle", () => {
     removeSourceMember(db, sourceId, macB);
     expect(
       db
-        .prepare<
-          [string],
-          { observed_by: string }
-        >("SELECT observed_by FROM document_absences WHERE document_id = ?")
+        .prepare<[string], { observed_by: string }>(
+          "SELECT observed_by FROM document_absences WHERE document_id = ?",
+        )
         .get(docId)?.observed_by,
     ).toBe("");
   });
@@ -222,10 +220,9 @@ describe("replica deletion claims across the member lifecycle", () => {
     expect(second.kind).toBe("done");
     expect(
       db
-        .prepare<
-          [string, string],
-          { omissions: number }
-        >("SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-1' AND device_id = ?")
+        .prepare<[string, string], { omissions: number }>(
+          "SELECT omissions FROM replica_deletion_claims WHERE source_id = ? AND external_id = 'n-1' AND device_id = ?",
+        )
         .get(sourceId, macB)?.omissions,
     ).toBe(1);
   });

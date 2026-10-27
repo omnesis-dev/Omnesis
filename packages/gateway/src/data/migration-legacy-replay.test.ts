@@ -99,19 +99,17 @@ describe("upgrading an install that predates the table rename", () => {
     // converts the retired terminal bootstrap marker to the reopenable one.
     expect(
       db
-        .prepare<
-          [],
-          { value: string }
-        >("SELECT value FROM cognition_engine_state WHERE key = 'bootstrap_state'")
+        .prepare<[], { value: string }>(
+          "SELECT value FROM cognition_engine_state WHERE key = 'bootstrap_state'",
+        )
         .get()?.value,
     ).toBe("drained");
     expect(count("cognition_spend_daily"), "day totals").toBe(1);
     // The old names are gone, so nothing reads a stranded table by accident.
     const legacy = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'loop_agent_%'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'loop_agent_%'",
+      )
       .all();
     expect(legacy).toEqual([]);
   });
@@ -123,10 +121,9 @@ describe("upgrading an install that predates the table rename", () => {
     seedLegacyInstall(34);
     boot();
     const row = db
-      .prepare<
-        [],
-        { cycle_anchor_at: number }
-      >("SELECT cycle_anchor_at FROM cognition_runs WHERE id = 'run_legacy'")
+      .prepare<[], { cycle_anchor_at: number }>(
+        "SELECT cycle_anchor_at FROM cognition_runs WHERE id = 'run_legacy'",
+      )
       .get();
     expect(row?.cycle_anchor_at).toBe(500);
   });
@@ -137,10 +134,9 @@ describe("upgrading an install that predates the table rename", () => {
     seedLegacyInstall(53);
     boot();
     const row = db
-      .prepare<
-        [],
-        { prompt_tokens: number; mechanism: string }
-      >("SELECT mechanism, prompt_tokens FROM cognition_spend WHERE day = '2026-01-01'")
+      .prepare<[], { prompt_tokens: number; mechanism: string }>(
+        "SELECT mechanism, prompt_tokens FROM cognition_spend WHERE day = '2026-01-01'",
+      )
       .get();
     expect(row?.prompt_tokens).toBe(4321);
     expect(row?.mechanism).toBe("unattributed");

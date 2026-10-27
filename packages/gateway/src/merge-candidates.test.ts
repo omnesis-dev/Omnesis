@@ -829,10 +829,9 @@ describe("acceptMergeCandidate", () => {
 
     const personIdFor = (alias: string): string =>
       db
-        .prepare<
-          [string],
-          { person_id: string }
-        >("SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?")
+        .prepare<[string], { person_id: string }>(
+          "SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?",
+        )
         .get(alias)!.person_id;
     db.prepare("UPDATE people SET merged_into = ? WHERE id = ?").run(
       personIdFor("jamie@example.com"),
@@ -874,10 +873,9 @@ describe("acceptMergeCandidate", () => {
 
     const personIdFor = (alias: string): string =>
       db
-        .prepare<
-          [string],
-          { person_id: string }
-        >("SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?")
+        .prepare<[string], { person_id: string }>(
+          "SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?",
+        )
         .get(alias)!.person_id;
     const winner = personIdFor("maya@example.com");
     const loser = personIdFor("m.reeves@example.org");
@@ -3130,10 +3128,9 @@ describe("recomputeNamePrimaries", () => {
   }
   const primaryName = (personId: string): string | undefined =>
     db
-      .prepare<
-        [string],
-        { alias: string }
-      >("SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='name' AND is_primary=1")
+      .prepare<[string], { alias: string }>(
+        "SELECT alias FROM person_aliases WHERE person_id=? AND alias_type='name' AND is_primary=1",
+      )
       .get(personId)?.alias;
   const canonical = (personId: string): string =>
     db

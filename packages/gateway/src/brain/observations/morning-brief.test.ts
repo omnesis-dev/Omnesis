@@ -162,9 +162,10 @@ describe("morning brief sending", () => {
     });
 
     test("a send recorded concurrently after the append reports already_sent", async () => {
-      const markSent = vi.fn(
-        async (): Promise<MarkMorningBriefSentResult> => ({ ok: false, reason: "already_sent" }),
-      );
+      const markSent = vi.fn(async (): Promise<MarkMorningBriefSentResult> => ({
+        ok: false,
+        reason: "already_sent",
+      }));
       const result = await sendMorningBrief(deps({ markSent }), {
         day: DAY,
         runId: "run_morning",

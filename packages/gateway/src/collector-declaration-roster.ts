@@ -21,10 +21,9 @@ export interface CollectorRosterSnapshot {
 export function collectorRosterSnapshot(db: Db): CollectorRosterSnapshot {
   const revision =
     db
-      .prepare<
-        [],
-        { revision: number }
-      >("SELECT revision FROM mutable_list_revisions WHERE scope = 'link-declarations'")
+      .prepare<[], { revision: number }>(
+        "SELECT revision FROM mutable_list_revisions WHERE scope = 'link-declarations'",
+      )
       .get()?.revision ?? 0;
   return { revision };
 }
@@ -68,10 +67,9 @@ export function applyCollectorDeclarationRoster(ids: readonly string[]): void {
 
 export function collectorRosterRevisionMatches(db: Db, expectedRevision: number): boolean {
   const current = db
-    .prepare<
-      [],
-      { revision: number }
-    >("SELECT revision FROM mutable_list_revisions WHERE scope = 'link-declarations'")
+    .prepare<[], { revision: number }>(
+      "SELECT revision FROM mutable_list_revisions WHERE scope = 'link-declarations'",
+    )
     .get();
   return expectedRevision % 2 === 0 && current?.revision === expectedRevision;
 }
@@ -89,10 +87,9 @@ export function collectorDeclarationKey(
 ): string {
   if (deviceId !== null) {
     const active = db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM devices WHERE id = ? AND kind = 'collector' AND revoked_at IS NULL")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM devices WHERE id = ? AND kind = 'collector' AND revoked_at IS NULL",
+      )
       .get(deviceId);
     // Collector tokens currently carry broad administrative scopes. They must
     // still declare under their device id so readiness represents every live

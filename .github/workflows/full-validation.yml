@@ -24,11 +24,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# A newer push to a pull request replaces its run: only the newest revision
+# can merge. Every push to `main` keeps its own run, keyed by commit, so a burst
+# of merges leaves no commit of `main` untested and a red verdict names the
+# merge that caused it.
 concurrency:
   group: >-
     full-validation-${{ github.event_name == 'pull_request'
     && format('pr-{0}', github.event.pull_request.number)
-    || format('{0}-{1}', github.event_name, github.ref) }}
+    || format('{0}-{1}-{2}', github.event_name, github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -41,9 +45,11 @@ jobs:
   # for its merge commit — the same plan as `npm run checks:plan` — and the
   # native, install, Docker, harness and security lanes whose paths it touches.
   # A shared input (lockfile, manifests, root configs, workflows, packages/core,
-  # the check runners), an unsupported path, or a planner failure runs
-  # everything. The macOS lanes stay path-scoped rather than graph-scoped:
-  # GitHub gives the repository only a few macOS runners at a time.
+  # the check runners), an unsupported path, or a planner failure runs every
+  # Linux lane. The macOS lanes (the macOS Node lane, Swift and iOS, the Android
+  # screenshots, the Mac installer) run on a pull request only for the paths
+  # they cover, never for a shared input: GitHub gives the repository only a
+  # few macOS runners at a time, and main runs them on every push.
   scope:
     runs-on: ubuntu-latest
     timeout-minutes: 15

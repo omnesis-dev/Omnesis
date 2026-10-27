@@ -228,10 +228,9 @@ describe("needs-auth re-auth reminder backoff (fake APNs)", () => {
   function readReminder(deviceId: string): ReauthReminderRow | null {
     return (
       db
-        .prepare<
-          [string, string],
-          ReauthReminderRow
-        >("SELECT * FROM reauth_reminders WHERE principal = ? AND device_id = ?")
+        .prepare<[string, string], ReauthReminderRow>(
+          "SELECT * FROM reauth_reminders WHERE principal = ? AND device_id = ?",
+        )
         .get(PROVIDER_ID, deviceId) ?? null
     );
   }

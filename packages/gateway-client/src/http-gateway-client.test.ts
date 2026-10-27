@@ -696,10 +696,9 @@ describe("HttpGatewayClient", () => {
     await client.deleteDocuments("google", "gmail", ["del-1"]);
 
     const row = db
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE external_id = ?")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE external_id = ?",
+      )
       .get("del-1");
     expect(row?.count).toBe(0);
   });
@@ -732,10 +731,9 @@ describe("HttpGatewayClient", () => {
     expect((await client.getSyncState(sourceId))?.cursor).toEqual(cursor);
     expect(
       db
-        .prepare<
-          [string],
-          { label: string; content_retention: string }
-        >("SELECT label, content_retention FROM sync_state WHERE source_id = ?")
+        .prepare<[string], { label: string; content_retention: string }>(
+          "SELECT label, content_retention FROM sync_state WHERE source_id = ?",
+        )
         .get(sourceId),
     ).toEqual({ label: "Fictional source", content_retention: "best-effort" });
   });
@@ -795,10 +793,9 @@ describe("HttpGatewayClient", () => {
 
     // All 175 docs landed in the DB.
     const inserted = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM documents WHERE external_id LIKE 'chunk-%'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM documents WHERE external_id LIKE 'chunk-%'",
+      )
       .get();
     expect(inserted?.count).toBe(175);
   });

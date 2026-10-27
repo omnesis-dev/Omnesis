@@ -20,6 +20,7 @@
 
 import Database from "better-sqlite3";
 type Db = Database.Database;
+import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
 import { parseDuration } from "@omnesis/core";
 import { LlamaCppEmbedder } from "../indexer/embedder.js";
@@ -33,7 +34,6 @@ import {
   refreshIndexStats,
   getIndexEmbedModel,
   setIndexEmbedModel,
-  wipeAndRecreateVectorIndex,
   getWatermark,
   setWatermark,
   getIndexedDocumentCount,
@@ -47,10 +47,12 @@ import {
   enqueueDocumentIndexPurge,
   listPendingDocumentIndexPurges,
   completeDocumentIndexPurges,
-  getVectorWriteSeq,
-  getUsearchSavedSeq,
-  setUsearchSavedSeq,
+  getChunkCount,
+  getUsearchBackfillCursor,
 } from "../indexer/db.js";
+import { invalidateSemanticIndex } from "../indexer/invalidate-semantic-index.js";
+import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
+import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { computeRatePerSec, type IndexRateSample } from "./indexer-rate.js";
 import { shouldRunIndexCycle } from "./indexer-disk-guard.js";
@@ -158,6 +160,8 @@ function resolveCutoff(sourceId: string): string | null {
 const RATE_HISTORY_WINDOW_MS = 10 * 60_000;
 const RATE_HISTORY_MAX_SAMPLES = 200;
 const PENDING_VECTOR_DELETE_BATCH = 512;
+/** How often a graph in memory checks it still has headroom. */
+const GRAPH_GUARD_INTERVAL_MS = 15_000;
 const PENDING_DOCUMENT_PURGE_BATCH = 1;
 const rateHistory: IndexRateSample[] = [];
 
@@ -184,6 +188,7 @@ type DeferredDocumentDelete = {
  * of racing through a main-thread fallback.
  */
 let startupIndexResources: StartupIndexResources | null = null;
+let graphKeeper: GraphKeeper | null = null;
 const deferredSourceDeletes: DeferredSourceDelete[] = [];
 const deferredDocumentDeletes: DeferredDocumentDelete[] = [];
 
@@ -458,7 +463,9 @@ function persistGraphAfterSourcePurges(
   const purgeError = drainPendingSourcePurges();
   if (purgeError) return purgeError;
   const saveError = trySaveUsearchGraph(context);
-  if (!saveError) completePendingVectorDeletes(state!.indexDb, preparedVectorDeletes);
+  if (!saveError && state!.usearchHandle && !state!.usearchHandle.isDetached) {
+    completePendingVectorDeletes(state!.indexDb, preparedVectorDeletes);
+  }
   return saveError;
 }
 
@@ -617,33 +624,61 @@ async function handleInit(init: IndexerInit): Promise<void> {
       await warmupEmbedder.embed(["warmup"]);
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
       warmedUp = true;
-      wipeAndRecreateVectorIndex(indexDb, init.embedDim, init.modelName);
-      setLexicalWrites(indexDb, false);
+      invalidateSemanticIndex(indexDb, init.usearchIndexPath, init.embedDim, init.modelName);
     }
 
-    // HNSW index: create write handle, backfill if needed.
-    const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
-    const usearchHandle = init.lexicalOnly
-      ? undefined
-      : new UsearchWriteHandle(init.usearchIndexPath, init.embedDim);
-    // After every save, record the seq the on-disk plaintext graph now reflects,
-    // so the gateway's shutdown can encrypt the sidecar with a fingerprint that
-    // exactly matches the file — no dependency on a "clean shutdown" signal.
-    usearchHandle?.setOnSaved(() => setUsearchSavedSeq(indexDb, getVectorWriteSeq(indexDb)));
-    // Capture this before a queued startup delete can save the loaded graph and
-    // advance its stamp. Such a save makes the deletion durable but cannot
-    // certify unrelated stale same-cardinality vectors already in that graph.
-    const forceHnswRebuild = getUsearchSavedSeq(indexDb) !== getVectorWriteSeq(indexDb);
+    // HNSW index: hold the graph in memory only if it fits the budget, then
+    // bring it level with index.db (see GraphKeeper). A graph that does not
+    // fit is left on disk untouched and search stays keyword-only.
+    let usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle | undefined;
+    let keeper: GraphKeeper | undefined;
+    if (!init.lexicalOnly) {
+      const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
+      const graphFileExisted = existsSync(init.usearchIndexPath);
+      const admission = init.memoryBudget
+        ? planGraphAdmission({
+            vectors: getChunkCount(indexDb),
+            dim: init.embedDim,
+            budget: init.memoryBudget,
+            headroom: memoryHeadroom(init.memoryBudget),
+            loading: graphFileExisted && getUsearchBackfillCursor(indexDb) === null,
+          })
+        : ({ admitted: true } as const);
+      usearchHandle = new UsearchWriteHandle(init.usearchIndexPath, init.embedDim, {
+        detached: !admission.admitted,
+      });
+      keeper = new GraphKeeper({
+        indexDb,
+        handle: usearchHandle,
+        graphPath: init.usearchIndexPath,
+        graphFileExisted,
+        indexDbKey: init.indexDbKeyHex ? Buffer.from(init.indexDbKeyHex, "hex") : null,
+        budget: init.memoryBudget ?? null,
+        pageSize: init.usearchBackfillPageSize,
+        checkpointIntervalMs: init.usearchCheckpointIntervalMs,
+        onProgress: (fraction) =>
+          post({ type: "bootProgress", stage: "hnsw-backfill", progress: fraction }),
+        onState: (graph) => post({ type: "vectorIndex", ...graph }),
+        log: (level, message) => log(level, "indexer-worker", message),
+      });
+      graphKeeper = keeper;
+      if (!admission.admitted) {
+        log(
+          "warn",
+          "indexer-worker",
+          `semantic search degraded, keyword search only: ${admission.reason}`,
+        );
+        post({ type: "vectorIndex", state: "degraded", reason: admission.reason });
+      }
+    }
     startupIndexResources = { indexDb, usearchHandle };
     flushDeferredSourceDeletes();
     flushDeferredDocumentDeletes();
     post({ type: "bootProgress", stage: "hnsw-backfill", progress: 0 });
-    await usearchHandle?.backfillFromDbCooperatively(indexDb, {
-      onProgress: (fraction) =>
-        post({ type: "bootProgress", stage: "hnsw-backfill", progress: fraction }),
-      forceRebuild: forceHnswRebuild,
-      pageSize: init.usearchBackfillPageSize,
-    });
+    if (keeper) {
+      await keeper.open();
+      keeper.startGuard(GRAPH_GUARD_INTERVAL_MS);
+    }
 
     // Finish both source-wide and standalone vector-delete residue before
     // model warmup/readiness, then serve any delete messages that arrived while
@@ -943,8 +978,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
           const gatewayCount =
             (
               gatewayDb.prepare<[], { c: number }>("SELECT COUNT(*) as c FROM documents").get() as
-                | { c: number }
-                | undefined
+                { c: number } | undefined
             )?.c ?? 0;
           if (gatewayCount > 0 && indexedCount / gatewayCount < 0.99 && diskOkForCycle()) {
             log(
@@ -1433,6 +1467,9 @@ function handleDeleteDocumentIndexBatch(
 }
 
 async function handleShutdown(): Promise<void> {
+  // The guard saves and releases the graph on its own timer; it must not fire
+  // into databases this shutdown is about to close.
+  graphKeeper?.stop();
   if (!state) {
     post({ type: "shutdownComplete" });
     return;

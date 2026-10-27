@@ -227,6 +227,44 @@ describe("renderStatus index migration", () => {
   });
 });
 
+describe("renderStatus semantic search", () => {
+  const indexStats = {
+    enabled: true,
+    totalIndexed: 10,
+    totalChunks: 20,
+    totalGatewayDocs: 10,
+    watermark: null,
+    bySource: {},
+  };
+
+  test("a gateway without the memory for its HNSW index says search is keyword-only and why", () => {
+    const out = captureRender({
+      ...baseData(),
+      indexStats: {
+        ...indexStats,
+        semanticSearch: {
+          state: "degraded",
+          reason: "memory ran short while building the graph: 200 MiB left of the 4.0 GiB budget",
+        },
+      },
+    });
+    expect(out).toContain("Semantic Search Degraded");
+    expect(out).toContain("keyword search only: memory ran short while building the graph");
+    expect(out).toContain("gateway.memoryLimitMb");
+  });
+
+  test("an index in memory renders no warning", () => {
+    const out = captureRender({
+      ...baseData(),
+      indexStats: {
+        ...indexStats,
+        semanticSearch: { state: "ready" },
+      },
+    });
+    expect(out).not.toContain("Semantic Search Degraded");
+  });
+});
+
 describe("renderStatus configHealth (C15a)", () => {
   test("renders a named degraded-role line for a typo'd assignment", () => {
     const out = captureRender({

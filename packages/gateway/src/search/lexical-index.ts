@@ -461,7 +461,7 @@ function topK(
     if (s < heapScore[0] || (s === heapScore[0] && d > heapDoc[0])) continue;
     heapDoc[0] = d;
     heapScore[0] = s;
-    for (let j = 0; ; ) {
+    for (let j = 0; ;) {
       const l = 2 * j + 1;
       const r = l + 1;
       let m = j;

@@ -109,10 +109,9 @@ describe("interactive durable memory without the experimental Brain", () => {
     );
     targetDocId = requireId(
       db
-        .prepare<
-          [],
-          { id: string }
-        >("SELECT id FROM documents WHERE external_id = 'memory-packing-checklist'")
+        .prepare<[], { id: string }>(
+          "SELECT id FROM documents WHERE external_id = 'memory-packing-checklist'",
+        )
         .get(),
     );
     // Document ingestion commits before the background people-resolution
@@ -319,10 +318,9 @@ describe("interactive durable memory without the experimental Brain", () => {
     await harness.gatewayJson(`/agent/conversations/${sessionId}`, { method: "DELETE" });
     expect(await annotations(harness, `/people/${selfId}/annotations`)).toEqual([]);
     const kept = db
-      .prepare<
-        [string],
-        { invalidated_at: number | null; verification_state: string | null }
-      >("SELECT invalidated_at, verification_state FROM person_annotations WHERE evidence_doc_id = ?")
+      .prepare<[string], { invalidated_at: number | null; verification_state: string | null }>(
+        "SELECT invalidated_at, verification_state FROM person_annotations WHERE evidence_doc_id = ?",
+      )
       .all(prepared.documentId);
     expect(kept).toHaveLength(2);
     expect(kept.filter((row) => row.invalidated_at === null)).toEqual([

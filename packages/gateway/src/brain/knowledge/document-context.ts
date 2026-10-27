@@ -36,10 +36,9 @@ function projectionId(db: Db, nodeId: string): string | null {
   )
     return null;
   const row = db
-    .prepare<
-      [string, string, string],
-      { id: string }
-    >("SELECT id FROM documents WHERE provider_id=? AND source_id=? AND external_id=? LIMIT 1")
+    .prepare<[string, string, string], { id: string }>(
+      "SELECT id FROM documents WHERE provider_id=? AND source_id=? AND external_id=? LIMIT 1",
+    )
     .get(KNOWLEDGE_PROVIDER_ID, KNOWLEDGE_SOURCE_ID, nodeId);
   return row && isKnowledgeDocumentReadable(db, row.id) ? row.id : null;
 }
@@ -54,10 +53,9 @@ export function knowledgePageRefForDocument(db: Db, documentId: string): string 
   )
     return null;
   const node = db
-    .prepare<
-      [string, string, string],
-      { id: string }
-    >("SELECT n.id FROM documents d JOIN knowledge_nodes n ON n.id=d.external_id WHERE d.id=? AND d.provider_id=? AND d.source_id=? AND n.kind IN ('wiki','root') AND json_extract(n.fields_json,'$.withdrawn') IS NOT 1 LIMIT 1")
+    .prepare<[string, string, string], { id: string }>(
+      "SELECT n.id FROM documents d JOIN knowledge_nodes n ON n.id=d.external_id WHERE d.id=? AND d.provider_id=? AND d.source_id=? AND n.kind IN ('wiki','root') AND json_extract(n.fields_json,'$.withdrawn') IS NOT 1 LIMIT 1",
+    )
     .get(documentId, KNOWLEDGE_PROVIDER_ID, KNOWLEDGE_SOURCE_ID);
   return node ? `wiki:${node.id}` : null;
 }
@@ -73,10 +71,9 @@ export function resolveKnowledgeDocumentAlias(db: Db, id: string): string | null
   // byte cap before the ordinary full-read privacy/revision fence materializes it.
   return (
     db
-      .prepare<
-        [string, string, string],
-        { id: string }
-      >("SELECT d.id FROM documents d JOIN knowledge_nodes n ON n.id=d.external_id WHERE d.provider_id=? AND d.source_id=? AND n.id=? AND n.kind IN ('wiki','root') AND json_extract(n.fields_json,'$.withdrawn') IS NOT 1 LIMIT 1")
+      .prepare<[string, string, string], { id: string }>(
+        "SELECT d.id FROM documents d JOIN knowledge_nodes n ON n.id=d.external_id WHERE d.provider_id=? AND d.source_id=? AND n.id=? AND n.kind IN ('wiki','root') AND json_extract(n.fields_json,'$.withdrawn') IS NOT 1 LIMIT 1",
+      )
       .get(KNOWLEDGE_PROVIDER_ID, KNOWLEDGE_SOURCE_ID, id.slice(5))?.id ?? null
   );
 }
@@ -89,10 +86,9 @@ export function resolveKnowledgeDocumentAlias(db: Db, id: string): string | null
  */
 export function readKnowledgeDocumentContext(db: Db, documentId: string) {
   const document = db
-    .prepare<
-      [string],
-      { source_id: string; external_id: string }
-    >("SELECT source_id,external_id FROM documents WHERE id=?")
+    .prepare<[string], { source_id: string; external_id: string }>(
+      "SELECT source_id,external_id FROM documents WHERE id=?",
+    )
     .get(documentId);
   if (document?.source_id !== KNOWLEDGE_SOURCE_ID || !isKnowledgeDocumentReadable(db, documentId))
     return undefined;
@@ -100,7 +96,9 @@ export function readKnowledgeDocumentContext(db: Db, documentId: string) {
     .prepare<
       [string],
       { id: string; kind: string; revision: number; validity: string; text_length: number }
-    >("SELECT n.id,n.kind,n.revision,json_extract(d.metadata,'$.extra.knowledgeValidity') AS validity,length(n.plain_text) AS text_length FROM knowledge_nodes n JOIN documents d ON d.external_id=n.id WHERE d.id=?")
+    >(
+      "SELECT n.id,n.kind,n.revision,json_extract(d.metadata,'$.extra.knowledgeValidity') AS validity,length(n.plain_text) AS text_length FROM knowledge_nodes n JOIN documents d ON d.external_id=n.id WHERE d.id=?",
+    )
     .get(documentId);
   if (!node) return undefined;
   return buildKnowledgeDocumentContext(db, node);
@@ -254,10 +252,9 @@ function buildKnowledgeDocumentContext(
       claim.verification = "verified";
   }
   const links = db
-    .prepare<
-      [string, string, number],
-      { from_id: string; to_id: string; kind: string }
-    >("SELECT from_id,to_id,kind FROM knowledge_links WHERE from_id=? OR to_id=? ORDER BY from_id,to_id,kind LIMIT ?")
+    .prepare<[string, string, number], { from_id: string; to_id: string; kind: string }>(
+      "SELECT from_id,to_id,kind FROM knowledge_links WHERE from_id=? OR to_id=? ORDER BY from_id,to_id,kind LIMIT ?",
+    )
     .all(node.id, node.id, NAVIGATION_LIMIT + 1);
   const navigation = links.slice(0, NAVIGATION_LIMIT).flatMap((link) => {
     const id = projectionId(db, link.from_id === node.id ? link.to_id : link.from_id);

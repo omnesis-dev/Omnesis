@@ -744,10 +744,9 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
       // Step 1: fetch the content_hash of every input docId.
       const placeholders = unique.map(() => "?").join(",");
       const inputRows = indexDb
-        .prepare<
-          string[],
-          { document_id: string; content_hash: string }
-        >(`SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`)
+        .prepare<string[], { document_id: string; content_hash: string }>(
+          `SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`,
+        )
         .all(...unique);
       if (inputRows.length === 0) return c.json({ siblings });
 
@@ -762,10 +761,9 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
       // double-listing).
       const hashPlaceholders = uniqueHashes.map(() => "?").join(",");
       const allRows = indexDb
-        .prepare<
-          string[],
-          { document_id: string; content_hash: string }
-        >(`SELECT document_id, content_hash FROM indexed_documents WHERE content_hash IN (${hashPlaceholders})`)
+        .prepare<string[], { document_id: string; content_hash: string }>(
+          `SELECT document_id, content_hash FROM indexed_documents WHERE content_hash IN (${hashPlaceholders})`,
+        )
         .all(...uniqueHashes);
 
       const idsByHash = new Map<string, string[]>();
@@ -1146,8 +1144,7 @@ export function mountDocumentByIdRoute(app: RouteApp, deps: { db: Db }): void {
     });
     if (FULL_UUID.test(id)) {
       const row = db.prepare(`SELECT ${columns} ${from} WHERE document.id = ?`).get(id) as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       if (!row || !isKnowledgeDocumentReadable(db, row.id as string, row.source_id as string))
         throw new NotFoundError("Document not found");
       return c.json(withInternalFlag(row));

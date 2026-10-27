@@ -23,10 +23,9 @@ function decision(request: DecisionServerRequest) {
 }
 function coverage(bench: BrainBench, id: string) {
   return bench.sql
-    .prepare<
-      [string],
-      { input_revision: string; status: string }
-    >("SELECT input_revision,status FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='organization'")
+    .prepare<[string], { input_revision: string; status: string }>(
+      "SELECT input_revision,status FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='organization'",
+    )
     .all(id);
 }
 describe("Brain intake — gates and readiness", () => {
@@ -153,10 +152,9 @@ describe("Brain intake — gates and readiness", () => {
     const [controlId] = await bench.pushAndSettle([control]);
     await bench.patchConfig({ brain: { derivationBarrier: "1h" } });
     const anchor = bench.sql
-      .prepare<
-        [string],
-        { provider_id: string; source_id: string }
-      >("SELECT provider_id,source_id FROM documents WHERE id=?")
+      .prepare<[string], { provider_id: string; source_id: string }>(
+        "SELECT provider_id,source_id FROM documents WHERE id=?",
+      )
       .get(controlId!)!;
     const stamp = "2020-01-01T00:00:00.000Z";
     // Valid source-reference IDs sort ahead of UUIDs, keeping the derivation
@@ -193,10 +191,9 @@ describe("Brain intake — gates and readiness", () => {
       "source work held for derivation",
       () =>
         bench.sql
-          .prepare<
-            [string],
-            { id: string; last_error: string }
-          >("SELECT id,last_error FROM knowledge_work WHERE subject_id=? AND status='pending' AND last_error='derivation'")
+          .prepare<[string], { id: string; last_error: string }>(
+            "SELECT id,last_error FROM knowledge_work WHERE subject_id=? AND status='pending' AND last_error='derivation'",
+          )
           .get(id) ?? null,
       60_000,
     );

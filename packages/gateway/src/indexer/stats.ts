@@ -31,6 +31,7 @@ import {
 } from "./db.js";
 import { computeIndexingProgress } from "./indexing-progress.js";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { ConfigStore } from "../config-store.js";
 import type { IndexerModelInfo } from "./indexer-lifecycle.js";
 import type Database from "better-sqlite3";
@@ -50,6 +51,8 @@ export interface IndexStatsDeps {
     reason?: string;
     keywordIndexingActive?: boolean;
   };
+  /** The HNSW graph's state against the memory budget; null before the worker reports. */
+  getSemanticSearch?: () => SemanticSearchStatus | null;
 }
 
 /** Per-source index progress. */
@@ -83,6 +86,7 @@ export interface IndexStatsPayload {
   indexRatePerSec?: number | null;
   etaSeconds?: number | null;
   indexVersions?: ReturnType<typeof getIndexGenerationStatus>;
+  semanticSearch?: SemanticSearchStatus;
   bySource?: Record<string, IndexSourceStats>;
 }
 
@@ -93,6 +97,7 @@ export interface IndexStatsPayload {
  */
 export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   const { db, indexDb, configStore, config, indexerModel, indexerReadiness, getIndexRate } = deps;
+  const semanticSearch = deps.getSemanticSearch?.() ?? null;
 
   const model = indexerModel?.disabled ? null : indexerModel;
   const keywordIndexingActive = indexerReadiness?.().keywordIndexingActive === true;
@@ -138,6 +143,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
       totalGatewayDocs: 0,
       watermark: getWatermark(indexDb, "last_updated_at"),
       indexVersions: getIndexGenerationStatus(indexDb),
+      ...(semanticSearch ? { semanticSearch } : {}),
       bySource: {},
     };
   }
@@ -185,10 +191,9 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     }
   } else {
     const rows = db
-      .prepare<
-        [],
-        { source_id: string; count: number }
-      >("SELECT source_id, doc_count AS count FROM source_stats")
+      .prepare<[], { source_id: string; count: number }>(
+        "SELECT source_id, doc_count AS count FROM source_stats",
+      )
       .all();
     for (const row of rows) gatewaySourceCounts[row.source_id] = row.count;
   }
@@ -254,7 +259,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     enabled: true,
     state: "running",
     ...(keywordIndexingActive ? { keywordIndexingActive: true } : {}),
-    model,
+    model: model ?? null,
     totalIndexed,
     totalIndexErrors,
     percentIndexed: overall.percent,
@@ -267,6 +272,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     indexRatePerSec,
     etaSeconds,
     indexVersions: getIndexGenerationStatus(indexDb),
+    ...(semanticSearch ? { semanticSearch } : {}),
     bySource: sources,
   };
 }

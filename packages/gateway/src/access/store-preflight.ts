@@ -17,8 +17,7 @@ import type { AccessMutationResult } from "./store-contracts.js";
 import type { OAuthTokenExchangeInput, AccessRevocationInput } from "./types.js";
 
 export type OAuthRevocationPreflight =
-  | { ok: true }
-  | { ok: false; error: "invalid-client" | "not-found" };
+  { ok: true } | { ok: false; error: "invalid-client" | "not-found" };
 
 /** Authenticate a token's owning client before scheduling its writer-side revocation. */
 export function preflightOAuthTokenRevocation(
@@ -78,10 +77,9 @@ function preflightAuthorizationCode(
     return { ok: false, error: "invalid-client" };
   }
   const row = db
-    .prepare<
-      [string],
-      AuthorizationRequestRow
-    >("SELECT * FROM oauth_authorization_requests WHERE authorization_code_hash = ?")
+    .prepare<[string], AuthorizationRequestRow>(
+      "SELECT * FROM oauth_authorization_requests WHERE authorization_code_hash = ?",
+    )
     .get(hashSecret(input.code));
   if (!row || row.status !== "code-issued" || row.authorization_code_consumed_at !== null) {
     return { ok: false, error: "invalid-code" };
@@ -142,10 +140,9 @@ function preflightRefreshToken(
       return { ok: true, value: null };
     }
     const familyActive = db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM oauth_refresh_tokens WHERE family_id = ? AND revoked_at IS NULL LIMIT 1")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM oauth_refresh_tokens WHERE family_id = ? AND revoked_at IS NULL LIMIT 1",
+      )
       .get(row.family_id);
     return familyActive ? { ok: true, value: null } : { ok: false, error: "invalid-grant" };
   }

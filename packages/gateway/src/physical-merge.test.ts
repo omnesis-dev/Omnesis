@@ -94,19 +94,17 @@ function insertDocPerson(docId: string, personId: string, role: string): void {
 
 function getAliases(personId: string): Array<{ alias_type: string; alias: string }> {
   return db
-    .prepare<
-      [string],
-      { alias_type: string; alias: string }
-    >("SELECT alias_type, alias FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias")
+    .prepare<[string], { alias_type: string; alias: string }>(
+      "SELECT alias_type, alias FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias",
+    )
     .all(personId);
 }
 
 function getDocPeople(personId: string): Array<{ document_id: string; role: string }> {
   return db
-    .prepare<
-      [string],
-      { document_id: string; role: string }
-    >("SELECT document_id, role FROM document_people WHERE person_id = ? ORDER BY document_id, role")
+    .prepare<[string], { document_id: string; role: string }>(
+      "SELECT document_id, role FROM document_people WHERE person_id = ? ORDER BY document_id, role",
+    )
     .all(personId);
 }
 
@@ -267,10 +265,9 @@ describe("physicalMergePeople happy path", () => {
     const countFor = (table: string, id: string): number =>
       (
         db
-          .prepare<
-            [string],
-            { n: number }
-          >(`SELECT COUNT(*) AS n FROM ${table} WHERE person_id = ?`)
+          .prepare<[string], { n: number }>(
+            `SELECT COUNT(*) AS n FROM ${table} WHERE person_id = ?`,
+          )
           .get(id) as { n: number }
       ).n;
     // All three moved to the winner; nothing left stranded under the deleted loser.
@@ -303,10 +300,9 @@ describe("physicalMergePeople happy path", () => {
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
 
     const rows = db
-      .prepare<
-        [],
-        { annotation_id: string; person_id: string }
-      >("SELECT annotation_id, person_id FROM temporal_annotation_people")
+      .prepare<[], { annotation_id: string; person_id: string }>(
+        "SELECT annotation_id, person_id FROM temporal_annotation_people",
+      )
       .all();
     expect(rows).toEqual([{ annotation_id: "ta_1", person_id: winner }]);
   });
@@ -332,10 +328,9 @@ describe("physicalMergePeople conflicts", () => {
     // Total alias count for the email is 1 — the loser's duplicate
     // was cascade-deleted with the loser row.
     const totalForEmail = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM person_aliases WHERE alias_type='email' AND alias='alice@x.com'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM person_aliases WHERE alias_type='email' AND alias='alice@x.com'",
+      )
       .get()!.n;
     expect(totalForEmail).toBe(1);
   });
@@ -403,10 +398,9 @@ describe("physicalMergePeople conflicts", () => {
     expect(result.docPeopleMoved).toBe(0);
     expect(result.docPeopleDuplicateDropped).toBe(1);
     const totalForDocRole = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_people WHERE document_id='d1' AND role='sender'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_people WHERE document_id='d1' AND role='sender'",
+      )
       .get()!.n;
     expect(totalForDocRole).toBe(1);
   });
@@ -451,17 +445,15 @@ describe("physicalMergePeople side-effects", () => {
     insertPerson(winner);
     insertPerson(loser);
     const before = db
-      .prepare<
-        [],
-        { dirty_version: number }
-      >("SELECT dirty_version FROM refresh_meta WHERE job = 'interaction_scores'")
+      .prepare<[], { dirty_version: number }>(
+        "SELECT dirty_version FROM refresh_meta WHERE job = 'interaction_scores'",
+      )
       .get()!.dirty_version;
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
     const after = db
-      .prepare<
-        [],
-        { dirty_version: number }
-      >("SELECT dirty_version FROM refresh_meta WHERE job = 'interaction_scores'")
+      .prepare<[], { dirty_version: number }>(
+        "SELECT dirty_version FROM refresh_meta WHERE job = 'interaction_scores'",
+      )
       .get()!.dirty_version;
     expect(after).toBeGreaterThan(before);
   });
@@ -473,10 +465,9 @@ describe("physicalMergePeople side-effects", () => {
     insertPerson(loser, { firstSeen: "2026-01-15", lastSeen: "2026-04-15" });
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
     const w = db
-      .prepare<
-        [string],
-        { first_seen: string; last_seen: string }
-      >("SELECT first_seen, last_seen FROM people WHERE id = ?")
+      .prepare<[string], { first_seen: string; last_seen: string }>(
+        "SELECT first_seen, last_seen FROM people WHERE id = ?",
+      )
       .get(winner);
     expect(w!.first_seen).toBe("2026-01-15");
     expect(w!.last_seen).toBe("2026-04-15");
@@ -498,10 +489,9 @@ describe("physicalMergePeople side-effects", () => {
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
 
     const row = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(dangler);
     expect(row?.merged_into).toBeNull();
     expect(personExists(loser)).toBe(false);
@@ -521,10 +511,9 @@ describe("physicalMergePeople side-effects", () => {
     ).run("other-loser-id");
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
     const remaining = db
-      .prepare<
-        [],
-        { from_id: string; to_id: string }
-      >("SELECT from_id, to_id FROM person_equivalences")
+      .prepare<[], { from_id: string; to_id: string }>(
+        "SELECT from_id, to_id FROM person_equivalences",
+      )
       .all();
     // Only the unrelated row survives.
     expect(remaining).toEqual([{ from_id: "other-loser-id", to_id: "unrelated" }]);
@@ -542,10 +531,9 @@ describe("physicalMergePeople side-effects", () => {
     physicalMergePeople(db, { loserId: loser, winnerId: winner });
     // Loser is gone; cascade removed loser's alias row.
     const onLoser = db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?",
+      )
       .get(loser)!.n;
     expect(onLoser).toBe(0);
   });
@@ -657,10 +645,9 @@ describe("physicalDedupSharedAliases", () => {
     expect(personExists(b)).toBe(false);
     expect(personExists(c)).toBe(false);
     const distinctOnEmail = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(DISTINCT person_id) AS n FROM person_aliases WHERE alias='shared@x.com'")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(DISTINCT person_id) AS n FROM person_aliases WHERE alias='shared@x.com'",
+      )
       .get()!.n;
     expect(distinctOnEmail).toBe(1);
   });
@@ -794,10 +781,9 @@ describe("physicalDedupSharedAliases", () => {
     expect(personExists(B)).toBe(true);
     // B's merged_into still points at A.
     const bRow = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(B);
     expect(bRow?.merged_into).toBe(A);
   });

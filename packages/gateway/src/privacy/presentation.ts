@@ -156,10 +156,9 @@ export function listPrivacyExchangePresentations(
   includeAgentTracesTaskId?: string,
 ): PrivacyExchangePresentationPage | null {
   const conversationExists = db
-    .prepare<
-      [string],
-      { found: number }
-    >("SELECT 1 AS found FROM answer_conversations WHERE id = ?")
+    .prepare<[string], { found: number }>(
+      "SELECT 1 AS found FROM answer_conversations WHERE id = ?",
+    )
     .get(conversationId);
   if (!conversationExists) return null;
 

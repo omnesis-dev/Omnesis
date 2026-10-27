@@ -95,8 +95,7 @@ export interface SweepFileContent {
 }
 
 export type SweepFileParse =
-  | { ok: true; content: SweepFileContent }
-  | { ok: false; message: string };
+  { ok: true; content: SweepFileContent } | { ok: false; message: string };
 
 /** Whether an id is usable as both a sweep id and a filename stem. */
 export function isValidSweepId(id: string): boolean {

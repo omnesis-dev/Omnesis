@@ -92,10 +92,9 @@ function retireBriefData(db: Db, now: number): void {
 
 function rebuildKnowledgeNodes(db: Db): void {
   const current = db
-    .prepare<
-      [],
-      { sql: string }
-    >("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'")
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'",
+    )
     .get();
   if (!current || !current.sql.includes("'brief'")) return;
   const dependents = db

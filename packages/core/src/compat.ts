@@ -56,11 +56,7 @@ import type { DeviceKind } from "@omnesis/types";
  *   validates and migrates its own cursor / local store.
  */
 export type StorePolicy =
-  | "numbered-migrations"
-  | "derivable"
-  | "source-schema-evolved"
-  | "in-place"
-  | "provider-owned";
+  "numbered-migrations" | "derivable" | "source-schema-evolved" | "in-place" | "provider-owned";
 
 export interface StoreCompat {
   readonly policy: StorePolicy;

@@ -83,8 +83,7 @@ export class LiveConversation {
   private revision = 0;
   private inputRevision = 0;
   private currentDelegation:
-    | { id: string; offset: number; firstInputRevision?: number }
-    | undefined;
+    { id: string; offset: number; firstInputRevision?: number } | undefined;
   private latestTask: { delegationId: string; inputRevision: number } | undefined;
   private readonly seenTranscripts = new Set<string>();
   private readonly seenDelegations = new Set<string>();

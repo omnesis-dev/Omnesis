@@ -81,10 +81,9 @@ export class KnowledgeIntake {
     if (!hasInventory) return 0;
     return (
       this.context.deps.db
-        .prepare<
-          [string],
-          { mark: number | null }
-        >("SELECT MAX(observed_at) AS mark FROM source_inventories WHERE source_id=?")
+        .prepare<[string], { mark: number | null }>(
+          "SELECT MAX(observed_at) AS mark FROM source_inventories WHERE source_id=?",
+        )
         .get(sourceId)?.mark ?? 0
     );
   }
@@ -219,10 +218,9 @@ export class KnowledgeIntake {
         // A maintenance run itself expands its changed frontier. Independent
         // interactive edits still need a durable successor for their dependents.
         const checkpoint = this.context.deps.db
-          .prepare<
-            [],
-            { revision: number; value_json: string }
-          >("SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:intake:dependent-page'")
+          .prepare<[], { revision: number; value_json: string }>(
+            "SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:intake:dependent-page'",
+          )
           .get();
         const cursor = checkpoint
           ? (JSON.parse(checkpoint.value_json) as { seq: number; after: string })
@@ -304,28 +302,25 @@ export class KnowledgeIntake {
     if (!hasSourceInventoryTables(deps.db)) return;
     const cfg = deps.getSettings().knowledge;
     const pending = deps.db
-      .prepare<
-        [],
-        { count: number }
-      >(`SELECT COUNT(*) AS count FROM knowledge_work w JOIN source_inventory_documents si ON si.document_id=w.subject_id AND si.input_revision=w.input_revision WHERE w.subject_kind='source' AND w.reason='change' AND w.status IN ('pending','batched')`)
+      .prepare<[], { count: number }>(
+        `SELECT COUNT(*) AS count FROM knowledge_work w JOIN source_inventory_documents si ON si.document_id=w.subject_id AND si.input_revision=w.input_revision WHERE w.subject_kind='source' AND w.reason='change' AND w.status IN ('pending','batched')`,
+      )
       .get()!.count;
     const room = Math.max(0, cfg.discoveryBatchSize - pending);
     if (!room) return;
     const checkpoint = deps.db
-      .prepare<
-        [],
-        { revision: number; value_json: string }
-      >("SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:inventory:source'")
+      .prepare<[], { revision: number; value_json: string }>(
+        "SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:inventory:source'",
+      )
       .get();
     const after = checkpoint
       ? (JSON.parse(checkpoint.value_json) as { sourceId: string }).sourceId
       : "";
     const included = brainSourceInclusionSql(deps.getSettings().excludedSources, "source_id");
     const sources = deps.db
-      .prepare<
-        unknown[],
-        { sourceId: string }
-      >(`SELECT DISTINCT source_id AS sourceId FROM source_inventories WHERE ${included.sql} ORDER BY source_id<=?,source_id LIMIT ?`)
+      .prepare<unknown[], { sourceId: string }>(
+        `SELECT DISTINCT source_id AS sourceId FROM source_inventories WHERE ${included.sql} ORDER BY source_id<=?,source_id LIMIT ?`,
+      )
       .all(...included.params, after, Math.min(cfg.bootstrapBatchSize, room));
     for (const { sourceId } of sources) {
       const mark = this.inventoryMark(sourceId, true);
@@ -427,10 +422,9 @@ export class KnowledgeIntake {
     const counts = {
       ...historicalKnowledgeAdmissions(this.context.deps.db, this.context.deps.clock()),
       ...this.context.deps.db
-        .prepare<
-          [],
-          { backlog: number }
-        >("SELECT COUNT(*) AS backlog FROM knowledge_work WHERE subject_kind='source' AND reason IN ('discovery','upgrade') AND status IN ('pending','batched')")
+        .prepare<[], { backlog: number }>(
+          "SELECT COUNT(*) AS backlog FROM knowledge_work WHERE subject_kind='source' AND reason IN ('discovery','upgrade') AND status IN ('pending','batched')",
+        )
         .get()!,
     };
     const room = Math.min(
@@ -444,10 +438,9 @@ export class KnowledgeIntake {
     // consume its entire allowance. Round-robin source IDs prevent a prolific
     // recent source from hiding all history from quieter sources.
     const checkpoint = this.context.deps.db
-      .prepare<
-        [],
-        { revision: number; value_json: string }
-      >("SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:bootstrap:source'")
+      .prepare<[], { revision: number; value_json: string }>(
+        "SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:bootstrap:source'",
+      )
       .get();
     const after = checkpoint
       ? (JSON.parse(checkpoint.value_json) as { sourceId: string }).sourceId
@@ -455,18 +448,16 @@ export class KnowledgeIntake {
     const limit = Math.min(cfg.bootstrapBatchSize, room);
     const included = brainSourceInclusionSql(excluded, "source_id");
     const sources = this.context.deps.db
-      .prepare<
-        unknown[],
-        { source_id: string }
-      >(`SELECT DISTINCT source_id FROM documents WHERE source_id>? AND ${included.sql} ORDER BY source_id LIMIT ?`)
+      .prepare<unknown[], { source_id: string }>(
+        `SELECT DISTINCT source_id FROM documents WHERE source_id>? AND ${included.sql} ORDER BY source_id LIMIT ?`,
+      )
       .all(after, ...included.params, limit);
     if (sources.length < limit) {
       sources.push(
         ...this.context.deps.db
-          .prepare<
-            unknown[],
-            { source_id: string }
-          >(`SELECT DISTINCT source_id FROM documents WHERE source_id<=? AND ${included.sql} ORDER BY source_id LIMIT ?`)
+          .prepare<unknown[], { source_id: string }>(
+            `SELECT DISTINCT source_id FROM documents WHERE source_id<=? AND ${included.sql} ORDER BY source_id LIMIT ?`,
+          )
           .all(after, ...included.params, limit - sources.length),
       );
     }

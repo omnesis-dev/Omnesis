@@ -320,8 +320,7 @@ export function snapshotBrainState(
 
   const notes = (
     db.prepare("SELECT content FROM cognition_notes WHERE id = 1").get() as
-      | { content: string }
-      | undefined
+      { content: string } | undefined
   )?.content;
 
   return {

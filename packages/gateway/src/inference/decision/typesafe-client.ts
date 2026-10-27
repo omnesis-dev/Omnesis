@@ -145,8 +145,7 @@ export function parseResponse(raw: unknown, request: DecisionRequest): DecisionR
   const answers: Record<string, DecisionAnswer> = {};
   for (const [id, question] of Object.entries(request.questions)) {
     const answer = (body.answers as Record<string, unknown>)[id] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (!answer || answer.type !== question.type) {
       throw new Error(`TypeSafe reply lacks a ${question.type} answer for "${id}"`);
     }

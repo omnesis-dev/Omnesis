@@ -103,8 +103,7 @@ describe("published document-event profiles", () => {
       // definition rather than the descriptor list, which is additionally
       // gated by the experimental flag and so varies with the environment.
       const definition = allDefinitions.find((d) => d.type === "source" && d.id === sourceType) as
-        | { gatewayHosted?: boolean; execution?: string; create?: unknown }
-        | undefined;
+        { gatewayHosted?: boolean; execution?: string; create?: unknown } | undefined;
       expect(definition, `${sourceType} has no definition`).toBeDefined();
       expect(definition!.gatewayHosted).toBe(true);
       // And nothing here drives it, which is why it declares no factory at all

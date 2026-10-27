@@ -57,10 +57,9 @@ export function fetchContentHashByDoc(
   const docIds = [...new Set(documentIds)];
   const placeholders = docIds.map(() => "?").join(",");
   const hashRows = indexDb
-    .prepare<
-      string[],
-      HashRow
-    >(`SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`)
+    .prepare<string[], HashRow>(
+      `SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`,
+    )
     .all(...docIds);
   for (const r of hashRows) hashByDoc[r.document_id] = r.content_hash;
   return hashByDoc;

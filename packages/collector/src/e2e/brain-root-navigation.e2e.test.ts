@@ -196,8 +196,7 @@ it("refuses silent root navigation loss, permits retained navigation, then delib
   const settled = (id: string) =>
     (
       bench!.sql.prepare("SELECT status FROM knowledge_work WHERE id=?").get(id) as
-        | { status: string }
-        | undefined
+        { status: string } | undefined
     )?.status;
   enqueue("root-navigation-retain");
   await expect.poll(() => settled("root-navigation-retain"), { timeout: 45_000 }).toBe("completed");

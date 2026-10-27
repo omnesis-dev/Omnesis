@@ -204,8 +204,7 @@
             <pre>
 COMPONENT    UNIT                                     STATE          PID
 gateway      omnesis-gateway.service                  running        41250
-collector    omnesis-collector.service                running        41283</pre
-            >
+collector    omnesis-collector.service                running        41283</pre>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis service restart gateway</span>
@@ -304,6 +303,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>omnesis doctor</code> show such a warning with when it was first seen and how to
           recover. It survives gateway restarts and clears only when the affected collector confirms
           recovery.
+        </p>
+        <p>
+          When the gateway does not have the memory to keep its semantic search index, the output
+          adds a <strong>Semantic Search Degraded</strong> block with the reason; see
+          <a href="#memory">Semantic search is degraded</a>.
         </p>
 
         <h3 id="doctor">Doctor</h3>
@@ -432,8 +436,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
     "params": { "resultLimit": 10 },
     "boosts": { "typeBoosts": { "note": 1.2 } }
   }
-}</pre
-            >
+}</pre>
           </div>
         </div>
         <p>
@@ -490,6 +493,16 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>gateway.analyticsStreamRekeyMaxRows</code> (default <code>100000</code>) caps how
           large an analytics table may be when a source switches to per-device mode while the
           gateway runs; a larger table waits until you raise the limit and restart the gateway.
+        </p>
+        <p>
+          <code>gateway.memoryLimitMb</code> (or the <code>OMNESIS_MEMORY_LIMIT_MB</code>
+          environment variable) is how much memory the gateway allows itself. Unset, it is the
+          container's memory limit when the gateway runs under one, otherwise the host's physical
+          memory; the gateway logs the figure and where it came from at start. Set it when other
+          services share the host's memory, such as other containers in the same virtual machine.
+          The analytics engine's default memory ceiling is a quarter of the budget, and semantic
+          search keeps its index in memory only while it fits (see
+          <a href="#memory">Semantic search is degraded</a>).
         </p>
 
         <h2 id="models">Models</h2>
@@ -578,8 +591,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </li>
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
-            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI
-            and OpenRouter.
+            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI,
+            Regolo AI and OpenRouter.
           </li>
           <li>
             <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
@@ -663,8 +676,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </div>
         </div>
         <p>
-          Personal vocabulary hints for transcription are disabled by default. To enable them, set
-          <code>inference.transcriptionVocabulary.enabled</code> to <code>true</code> in
+          Personal vocabulary hints for transcription are on by default. To turn them off, set
+          <code>inference.transcriptionVocabulary.enabled</code> to <code>false</code> in
           <code>omnesis.json</code>. The gateway learns a small vocabulary from indexed documents,
           prioritizing distinctive names and terms from the current conversation and its people
           across sources. Sent and received text both contribute. Recent source-verified words you
@@ -945,8 +958,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
       }
     }
   }
-}</pre
-            >
+}</pre>
           </div>
         </div>
         <p>
@@ -1094,6 +1106,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
+                <td>
+                  <code>omnesis status</code> shows <strong>Semantic Search Degraded</strong>, or
+                  the gateway keeps restarting while it builds its search index
+                </td>
+                <td>The gateway does not have the memory for the semantic search index</td>
+                <td><a href="#memory">Below</a></td>
+              </tr>
+              <tr>
                 <td>The gateway exits at start, naming a store</td>
                 <td>Another process holds the store, or the file is damaged</td>
                 <td><a href="#store-will-not-open">Below</a></td>
@@ -1195,6 +1215,32 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             </tbody>
           </table>
         </div>
+
+        <h3 id="memory">Semantic search is degraded</h3>
+        <p>
+          Semantic search keeps an index of every embedded passage in memory, so its size grows with
+          the corpus: about 1.4 times the size of the passages' vectors. The gateway loads or builds
+          it only when it fits in the gateway's memory budget with room left for everything else,
+          and saves and releases it if memory runs short later. Until it is back, search answers
+          from keywords alone: <code>omnesis status</code> shows
+          <strong>Semantic Search Degraded</strong> with the reason,
+          <code>omnesis doctor</code> warns under Index, and the gateway log has a
+          <code>semantic search degraded</code> line. Indexing goes on, and passages indexed
+          meanwhile join the semantic index when it returns.
+        </p>
+        <p>
+          The budget is <code>gateway.memoryLimitMb</code> when set, otherwise the container's
+          memory limit, otherwise the host's physical memory (see
+          <a href="#configuration">Configuration</a>). Give the gateway more memory: raise that
+          setting or the container's limit, or free memory on the host. Then restart the gateway. On
+          a host whose memory other services share, set <code>gateway.memoryLimitMb</code> to what
+          the gateway may really use, so it backs off before the system runs out.
+        </p>
+        <p>
+          The index is saved as it is built and as it changes, so a gateway that stops or is killed
+          while building or updating it continues from the last save on its next start rather than
+          building it again.
+        </p>
 
         <h3 id="store-will-not-open">A store will not open</h3>
         <p>

@@ -30,6 +30,7 @@ import { availableParallelism } from "node:os";
 import { createLogger } from "@omnesis/core";
 import usearch from "usearch";
 
+import { shrinkPageCacheForScan } from "./scan-page-cache.js";
 import type Database from "better-sqlite3";
 
 const { Index, MetricKind, ScalarKind } = usearch;
@@ -38,6 +39,11 @@ const log = createLogger("gateway:usearch");
 const HNSW_CONNECTIVITY = 16;
 const HNSW_EXPANSION_ADD = 128;
 const HNSW_EXPANSION_SEARCH = 64;
+
+/** How often a cold rebuild saves its partial graph, so a crash resumes from it. */
+const DEFAULT_CHECKPOINT_INTERVAL_MS = 60_000;
+/** Changed rowids re-read per catch-up batch. */
+const CATCH_UP_BATCH = 1_000;
 
 type BackfillOptions = {
   onProgress?: (fraction: number) => void;
@@ -48,7 +54,31 @@ type BackfillOptions = {
    * failed save can leave a stale graph with the right cardinality.
    */
   forceRebuild?: boolean;
+  /**
+   * Continue a cold rebuild a checkpoint left unfinished: keep the loaded
+   * graph and add the chunks after this rowid. The caller has already caught
+   * the graph up on the rowids it holds (`catchUpFromChangeLog`).
+   */
+  resumeAfterRowid?: number;
+  /** Fired when a cold rebuild discards the graph and starts from the first chunk. */
+  onRebuildStart?: () => void;
+  /**
+   * Save the partial graph at least this often while building. Default 60 s;
+   * a timed interval stretches to ten times the cost of a save, and 0 saves
+   * after every page.
+   */
+  checkpointIntervalMs?: number;
+  /** Fired after each checkpoint save, including the final one. */
+  onCheckpoint?: () => void;
+  /**
+   * Checked after every page. True stops the build after a checkpoint, so
+   * the caller can release the graph's memory and resume on a later start.
+   */
+  shouldStop?: () => boolean;
 };
+
+/** `skipped`: the graph already matched; `stopped`: `shouldStop` ended it early. */
+export type GraphBuildOutcome = "skipped" | "complete" | "stopped";
 
 /**
  * Native build threads for the cold HNSW backfill. Machine-derived — half the
@@ -125,13 +155,23 @@ export class UsearchWriteHandle {
   private index: InstanceType<typeof Index>;
   private dirty = false;
   private onSaved?: () => void;
+  private detached: boolean;
+  private cursor: number | null = null;
 
+  /**
+   * `detached` opens the handle without loading the graph: every mutation and
+   * save is a no-op and the file on disk is left as it is. The indexer uses it
+   * when the graph does not fit in memory; the changes it skips are in the
+   * vector change log and reach the graph when a later start loads it.
+   */
   constructor(
     private readonly path: string,
     private readonly dimensions: number,
+    opts: { detached?: boolean } = {},
   ) {
     this.index = createIndex(dimensions);
-    if (existsSync(path)) {
+    this.detached = opts.detached === true;
+    if (!this.detached && existsSync(path)) {
       this.index.load(path);
       // `load()` adopts the dimension serialized in the file. If that differs
       // from the dimension this handle was opened at (a stale index left by a
@@ -159,7 +199,37 @@ export class UsearchWriteHandle {
     }
   }
 
+  /** True once the graph is not held in memory (opened detached, or released). */
+  get isDetached(): boolean {
+    return this.detached;
+  }
+
+  /**
+   * The last rowid an unfinished cold rebuild has added, or null when the
+   * graph is complete. A save writes the graph as of this cursor, so the
+   * indexer stamps it next to the save (`usearch_backfill_cursor`).
+   */
+  get backfillCursor(): number | null {
+    return this.cursor;
+  }
+
+  /**
+   * Give the graph's memory back and stop maintaining it. Unsaved changes are
+   * dropped from the graph but not lost: they are in the vector change log
+   * above the graph's saved position. `view()` resets the native index —
+   * releasing its allocations synchronously — before mapping the file; the
+   * mapping is file-backed and goes with the wrapper.
+   */
+  release(): void {
+    if (this.detached) return;
+    if (existsSync(this.path)) this.index.view(this.path);
+    this.index = createIndex(this.dimensions);
+    this.detached = true;
+    this.dirty = false;
+  }
+
   add(key: bigint, vector: Float32Array): void {
+    if (this.detached) return;
     try {
       this.index.remove(key);
     } catch {
@@ -174,6 +244,7 @@ export class UsearchWriteHandle {
   }
 
   remove(key: bigint): void {
+    if (this.detached) return;
     try {
       this.index.remove(key);
       this.dirty = true;
@@ -197,7 +268,7 @@ export class UsearchWriteHandle {
   }
 
   save(): void {
-    if (!this.dirty) return;
+    if (this.detached || !this.dirty) return;
     // Atomic save: write to a temp file then rename. The reader thread
     // mmap-views the file — a non-atomic save would expose a partially-
     // written file and crash with "Linking to missing level" in the
@@ -239,6 +310,7 @@ export class UsearchWriteHandle {
     }
     this.index = createIndex(this.dimensions);
     this.dirty = false;
+    this.cursor = null;
   }
 
   size(): number {
@@ -256,10 +328,8 @@ export class UsearchWriteHandle {
    * Reads (rowid, embedding) in pages and adds to the index.
    * Idempotent: skips if index already has vectors matching the DB count.
    */
-  backfillFromDb(db: Database.Database, opts?: BackfillOptions): void {
-    for (const _ of this.backfillFromDbBatches(db, opts)) {
-      // Direct callers intentionally retain the synchronous legacy surface.
-    }
+  backfillFromDb(db: Database.Database, opts?: BackfillOptions): GraphBuildOutcome {
+    return drain(this.backfillFromDbBatches(db, opts));
   }
 
   /**
@@ -267,16 +337,100 @@ export class UsearchWriteHandle {
    * page remains synchronous, but yielding between pages lets the worker
    * service source-deletion and shutdown messages during a long cold rebuild.
    */
-  async backfillFromDbCooperatively(db: Database.Database, opts?: BackfillOptions): Promise<void> {
-    for (const _ of this.backfillFromDbBatches(db, opts)) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
+  backfillFromDbCooperatively(
+    db: Database.Database,
+    opts?: BackfillOptions,
+  ): Promise<GraphBuildOutcome> {
+    return drainCooperatively(this.backfillFromDbBatches(db, opts));
+  }
+
+  /**
+   * Bring a graph saved at vector-change-log position `afterSeq` up to date:
+   * every rowid logged since is re-read from `chunks` and re-added with its
+   * current vector, or removed when the chunk or its vector is gone. Applying a
+   * change the graph already has is harmless, so a saved position that lags
+   * the file only costs work. `upToRowid` limits it to the rowids an
+   * unfinished rebuild covers; resuming the build adds the rest.
+   */
+  catchUpFromChangeLog(
+    db: Database.Database,
+    afterSeq: number,
+    opts?: { upToRowid?: number | null; threads?: number; shouldStop?: () => boolean },
+  ): Promise<"complete" | "stopped"> {
+    return drainCooperatively(this.catchUpBatches(db, afterSeq, opts));
+  }
+
+  private *catchUpBatches(
+    db: Database.Database,
+    afterSeq: number,
+    opts?: { upToRowid?: number | null; threads?: number; shouldStop?: () => boolean },
+  ): Generator<void, "complete" | "stopped", void> {
+    if (this.detached) return "complete";
+    const upTo = opts?.upToRowid ?? null;
+    // The log's schema and triggers live with the rest of index.db (db.ts).
+    const rowids = db
+      .prepare<[number, number | null, number | null], number>(
+        `SELECT DISTINCT chunk_rowid FROM vector_changes
+          WHERE seq > ? AND (? IS NULL OR chunk_rowid <= ?)
+          ORDER BY chunk_rowid`,
+      )
+      .pluck()
+      .all(afterSeq, upTo, upTo);
+    if (rowids.length === 0) return "complete";
+    const threads = resolveBackfillThreads(opts?.threads);
+    const dim = this.dimensions;
+    const startMs = Date.now();
+    log.info(
+      `HNSW catch-up: ${rowids.length} changed vector(s) since the last checkpoint (index has ${this.index.size()})`,
+    );
+    const select = db.prepare<[string], { rowid: number; embedding: Buffer }>(
+      `SELECT rowid, embedding FROM chunks
+        WHERE rowid IN (SELECT value FROM json_each(?)) AND embedding IS NOT NULL`,
+    );
+    for (let i = 0; i < rowids.length; i += CATCH_UP_BATCH) {
+      const batch = rowids.slice(i, i + CATCH_UP_BATCH);
+      const live = new Map<number, Buffer>();
+      for (const row of select.all(JSON.stringify(batch))) {
+        if (row.embedding.byteLength === dim * 4) live.set(row.rowid, row.embedding);
+      }
+      const keys = new BigUint64Array(live.size);
+      const matrix = new Float32Array(live.size * dim);
+      let n = 0;
+      for (const rowid of batch) {
+        const key = BigInt(rowid);
+        try {
+          this.index.remove(key);
+        } catch {
+          // not in the graph
+        }
+        const embedding = live.get(rowid);
+        if (!embedding) continue;
+        keys[n] = key;
+        matrix.set(new Float32Array(embedding.buffer, embedding.byteOffset, dim), n * dim);
+        n++;
+      }
+      if (n > 0) this.index.add(keys, matrix, threads);
+      this.dirty = true;
+      if (opts?.shouldStop?.()) return "stopped";
+      yield;
     }
+    log.info(
+      `HNSW catch-up complete: ${rowids.length} vector(s) in ${Date.now() - startMs}ms (index has ${this.index.size()})`,
+    );
+    return "complete";
+  }
+
+  private checkpoint(opts?: BackfillOptions): void {
+    this.dirty = true;
+    this.save();
+    opts?.onCheckpoint?.();
   }
 
   private *backfillFromDbBatches(
     db: Database.Database,
     opts?: BackfillOptions,
-  ): Generator<void, void, void> {
+  ): Generator<void, GraphBuildOutcome, void> {
+    if (this.detached) return "skipped";
     const PAGE_SIZE = opts?.pageSize ?? 5_000;
     // Build the graph with usearch's multi-threaded batch `add` instead of one
     // vector at a time. A single-vector add is ~2ms of serial native HNSW graph
@@ -295,28 +449,40 @@ export class UsearchWriteHandle {
     const threads = resolveBackfillThreads(opts?.threads);
 
     const totalRow = db
-      .prepare<
-        [],
-        { cnt: number }
-      >(`SELECT count(*) as cnt FROM chunks WHERE embedding IS NOT NULL`)
+      .prepare<[], { cnt: number }>(
+        `SELECT count(*) as cnt FROM chunks WHERE embedding IS NOT NULL`,
+      )
       .get();
     const totalInDb = totalRow?.cnt ?? 0;
     const currentSize = this.index.size();
 
-    if (!opts?.forceRebuild && currentSize >= totalInDb && totalInDb > 0) {
+    const resumeAfter = opts?.resumeAfterRowid;
+    if (
+      resumeAfter === undefined &&
+      !opts?.forceRebuild &&
+      currentSize >= totalInDb &&
+      totalInDb > 0
+    ) {
       log.info(`HNSW backfill skipped: index has ${currentSize} vectors, DB has ${totalInDb}`);
       opts?.onProgress?.(1);
-      return;
+      return "skipped";
     }
 
-    log.info(
-      `HNSW backfill starting: ${totalInDb} vectors to add (index has ${currentSize}${opts?.forceRebuild ? ", fingerprint stale" : ""})`,
-    );
+    if (resumeAfter !== undefined) {
+      log.info(
+        `HNSW backfill resuming after rowid ${resumeAfter}: index has ${currentSize} of ${totalInDb} vectors`,
+      );
+    } else {
+      log.info(
+        `HNSW backfill starting: ${totalInDb} vectors to add (index has ${currentSize}${opts?.forceRebuild ? ", fingerprint stale" : ""})`,
+      );
+      // `clear()` already deletes the sidecar and recreates an empty index at
+      // the right dimension, so no separate re-alloc is needed.
+      if (currentSize > 0) this.clear();
+      opts?.onRebuildStart?.();
+    }
     const startMs = Date.now();
-
-    // `clear()` already deletes the sidecar and recreates an empty index at the
-    // right dimension, so no separate re-alloc is needed.
-    if (currentSize > 0) this.clear();
+    const restorePageCache = shrinkPageCacheForScan(db);
 
     const stmt = db.prepare<[number, number], { rowid: number; embedding: Buffer }>(
       `SELECT rowid, embedding
@@ -326,9 +492,13 @@ export class UsearchWriteHandle {
        LIMIT ?`,
     );
 
-    let lastRowid = 0;
+    let lastRowid = resumeAfter ?? 0;
+    this.cursor = lastRowid;
+    const resumedWith = resumeAfter === undefined ? 0 : currentSize;
     let added = 0;
     let nextProgressLog = 50_000;
+    let checkpointEvery = opts?.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_INTERVAL_MS;
+    let lastCheckpointAt = Date.now();
     while (true) {
       const rows = stmt.all(lastRowid, PAGE_SIZE);
       if (rows.length === 0) break;
@@ -357,31 +527,75 @@ export class UsearchWriteHandle {
         n++;
       }
       if (n > 0) {
-        this.index.add(
-          n === rows.length ? keys : keys.subarray(0, n),
-          n === rows.length ? matrix : matrix.subarray(0, n * dim),
-          threads,
-        );
+        const pageKeys = n === rows.length ? keys : keys.subarray(0, n);
+        if (resumeAfter !== undefined) {
+          // A checkpoint's file can be a page ahead of its stamped cursor (a
+          // kill between the rename and the stamp), so a resumed build may meet
+          // rowids the graph already holds; replace them rather than duplicate.
+          const present = this.index.contains(pageKeys) as boolean[];
+          for (let i = 0; i < n; i++) if (present[i]) this.index.remove(pageKeys[i]);
+        }
+        this.index.add(pageKeys, n === rows.length ? matrix : matrix.subarray(0, n * dim), threads);
         added += n;
       }
       lastRowid = rows[rows.length - 1].rowid;
+      this.cursor = lastRowid;
       if (added >= nextProgressLog) {
-        log.info(`HNSW backfill progress: ${added}/${totalInDb} (${threads} threads)`);
+        log.info(
+          `HNSW backfill progress: ${resumedWith + added}/${totalInDb} (${threads} threads)`,
+        );
         nextProgressLog += 50_000;
       }
-      opts?.onProgress?.(totalInDb > 0 ? Math.min(added / totalInDb, 1) : 1);
+      opts?.onProgress?.(totalInDb > 0 ? Math.min((resumedWith + added) / totalInDb, 1) : 1);
+      if (opts?.shouldStop?.()) {
+        restorePageCache();
+        this.checkpoint(opts);
+        log.info(
+          `HNSW backfill stopped after rowid ${lastRowid}: ${resumedWith + added}/${totalInDb} vectors saved for the next start`,
+        );
+        return "stopped";
+      }
+      if (Date.now() - lastCheckpointAt >= checkpointEvery) {
+        // A checkpoint rewrites the whole graph on this thread, which also
+        // embeds queries; keep it to a tenth of the build's time at most.
+        const savingSince = Date.now();
+        this.checkpoint(opts);
+        lastCheckpointAt = Date.now();
+        // An explicit interval of 0 asks for a checkpoint after every page
+        // (tests rely on it to kill a build at a known position); only a
+        // timed interval stretches with the cost of the save.
+        if (checkpointEvery > 0)
+          checkpointEvery = Math.max(checkpointEvery, (lastCheckpointAt - savingSince) * 10);
+      }
       // Cooperative callers yield here. Deletions that land after this page
       // remove its vectors synchronously; keyset pagination means deleting
       // rows cannot shift the next page and make unrelated rows get skipped.
       yield;
     }
 
-    this.dirty = true;
-    this.save();
+    restorePageCache();
+    this.cursor = null;
+    this.checkpoint(opts);
     opts?.onProgress?.(1);
     log.info(
       `HNSW backfill complete: ${added} vectors in ${Date.now() - startMs}ms (${threads} threads)`,
     );
+    return "complete";
+  }
+}
+
+function drain<T>(steps: Generator<void, T, void>): T {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+async function drainCooperatively<T>(steps: Generator<void, T, void>): Promise<T> {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }
 

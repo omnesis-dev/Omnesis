@@ -74,10 +74,9 @@ function makeEngine(getEmbedder: () => InterestEmbedder | null = () => embedder)
 
 function embedState(id: string): { attempts: number; after: number } {
   const row = db
-    .prepare<
-      [string],
-      { embed_attempts: number; embed_after: number }
-    >("SELECT embed_attempts, embed_after FROM interest_signals WHERE id = ?")
+    .prepare<[string], { embed_attempts: number; embed_after: number }>(
+      "SELECT embed_attempts, embed_after FROM interest_signals WHERE id = ?",
+    )
     .get(id)!;
   return { attempts: row.embed_attempts, after: row.embed_after };
 }

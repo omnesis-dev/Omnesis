@@ -149,10 +149,9 @@ export function admitKnowledgeOrganization(
     const generation =
       admission.kind === "candidate"
         ? db
-            .prepare<
-              [string],
-              { generation: number }
-            >("SELECT decision_generation+CASE WHEN decision_pending=0 THEN 1 ELSE 0 END AS generation FROM knowledge_candidates WHERE id=?")
+            .prepare<[string], { generation: number }>(
+              "SELECT decision_generation+CASE WHEN decision_pending=0 THEN 1 ELSE 0 END AS generation FROM knowledge_candidates WHERE id=?",
+            )
             .get(admission.id)!.generation
         : 0;
     if (excludedDocumentIds(db, input.excludedSources ?? [], ids).size > 0) return false;

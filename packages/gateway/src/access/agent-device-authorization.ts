@@ -37,8 +37,7 @@ import type { PrincipalCredentialKind } from "./types.js";
  * should not have to handle its absence.
  */
 export type AgentDeviceAuthorization =
-  | { status: "authorized" }
-  | { status: "needs-reauthorization"; remedy: string };
+  { status: "authorized" } | { status: "needs-reauthorization"; remedy: string };
 
 export interface AgentDeviceRevocationCredential {
   credentialLabel: string;

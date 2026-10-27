@@ -121,10 +121,9 @@ function startHistoricalReview() {
 
 function work(): Array<{ subject_id: string; reason: string; status: string }> {
   return db
-    .prepare<
-      [],
-      { subject_id: string; reason: string; status: string }
-    >("SELECT subject_id,reason,status FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id")
+    .prepare<[], { subject_id: string; reason: string; status: string }>(
+      "SELECT subject_id,reason,status FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+    )
     .all();
 }
 
@@ -230,10 +229,9 @@ describe("brain.excludedSources retirement", () => {
     source("mail", "gmail:maya@example.com");
     await engine.tick();
     const batches = db
-      .prepare<
-        [],
-        { id: string; runId: string }
-      >("SELECT id,run_id AS runId FROM knowledge_batches WHERE status IN ('pending','running')")
+      .prepare<[], { id: string; runId: string }>(
+        "SELECT id,run_id AS runId FROM knowledge_batches WHERE status IN ('pending','running')",
+      )
       .all();
     expect(batches.length).toBeGreaterThan(0);
     configure(["codex"], false);

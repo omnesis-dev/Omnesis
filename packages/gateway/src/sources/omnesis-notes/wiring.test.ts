@@ -98,10 +98,9 @@ describe("bootOmnesisNotes", () => {
     expect(entry.updatedAt).toBe(entry.capturedAt);
 
     const row = db
-      .prepare<
-        [string],
-        { text: string; day: string; surface: string }
-      >("SELECT text, day, surface FROM note_entries WHERE id = ?")
+      .prepare<[string], { text: string; day: string; surface: string }>(
+        "SELECT text, day, surface FROM note_entries WHERE id = ?",
+      )
       .get(entry.id);
     expect(row).toEqual({ text: "Book the piano tuner", day: entry.day, surface: "cli" });
 
@@ -130,10 +129,9 @@ describe("bootOmnesisNotes", () => {
     expect(entry.placeName).toBe("Paris");
 
     const row = db
-      .prepare<
-        [string],
-        { latitude: number; longitude: number; place_name: string }
-      >("SELECT latitude, longitude, place_name FROM note_entries WHERE id = ?")
+      .prepare<[string], { latitude: number; longitude: number; place_name: string }>(
+        "SELECT latitude, longitude, place_name FROM note_entries WHERE id = ?",
+      )
       .get(entry.id);
     expect(row).toMatchObject({ place_name: "Paris" });
     expect(row!.latitude).toBeCloseTo(48.8566, 4);
@@ -189,10 +187,9 @@ describe("bootOmnesisNotes", () => {
       capturedAt: "2026-06-15T09:31:00+05:30",
     });
     const rows = db
-      .prepare<
-        [string, string, string],
-        { text: string }
-      >("SELECT text FROM note_entries WHERE id IN (?, ?, ?) ORDER BY captured_at, id")
+      .prepare<[string, string, string], { text: string }>(
+        "SELECT text FROM note_entries WHERE id IN (?, ?, ?) ORDER BY captured_at, id",
+      )
       .all(before.id, middle.id, after.id);
     expect(rows.map((r) => r.text)).toEqual(["before", "middle", "after"]);
   });
@@ -284,10 +281,9 @@ describe("bootOmnesisNotes", () => {
     const docCount = (): number =>
       (
         db
-          .prepare<
-            [],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM documents WHERE source_id = 'omnesis-notes'")
+          .prepare<[], { n: number }>(
+            "SELECT COUNT(*) AS n FROM documents WHERE source_id = 'omnesis-notes'",
+          )
           .get() as { n: number }
       ).n;
     expect(docCount()).toBe(1);
@@ -313,10 +309,9 @@ describe("bootOmnesisNotes", () => {
   test("boot seeds the source display meta in the background (flushAll awaits it)", async () => {
     await runtime.flushAll();
     const row = db
-      .prepare<
-        [],
-        { label: string }
-      >("SELECT label FROM sync_state WHERE source_id = 'omnesis-notes'")
+      .prepare<[], { label: string }>(
+        "SELECT label FROM sync_state WHERE source_id = 'omnesis-notes'",
+      )
       .get();
     expect(row?.label).toBe("Notes");
   });
@@ -393,10 +388,9 @@ describe("bootOmnesisNotes", () => {
       { providerId: "system", sourceId: "omnesis-notes", externalIds: [staleDay] },
     ]);
     const staleCount = db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?",
+      )
       .get(staleDay);
     expect(staleCount?.n).toBe(0);
   });

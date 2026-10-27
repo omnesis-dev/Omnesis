@@ -326,10 +326,9 @@ describe("Cognition Steward tools", () => {
     const mirrorId = docIdByExternal(db, loopId);
     expect(mirrorId).not.toBeNull();
     const mirror = db
-      .prepare<
-        [string],
-        { content: string; source_id: string }
-      >("SELECT content, source_id FROM documents WHERE id = ?")
+      .prepare<[string], { content: string; source_id: string }>(
+        "SELECT content, source_id FROM documents WHERE id = ?",
+      )
       .get(mirrorId!);
     expect(mirror!.source_id).toBe("open-loops");
     expect(mirror!.content).toContain("Reply to the venue quote");
@@ -906,10 +905,9 @@ describe("Cognition Steward tools", () => {
 
   function pendingCompactionRuns(): Array<{ id: string; payload_json: string; attempts: number }> {
     return db
-      .prepare<
-        [],
-        { id: string; payload_json: string; attempts: number }
-      >("SELECT id, payload_json, attempts FROM cognition_runs WHERE kind = 'notes_compaction' AND status = 'pending'")
+      .prepare<[], { id: string; payload_json: string; attempts: number }>(
+        "SELECT id, payload_json, attempts FROM cognition_runs WHERE kind = 'notes_compaction' AND status = 'pending'",
+      )
       .all();
   }
 
@@ -1718,10 +1716,9 @@ describe("Cognition Steward tools", () => {
     });
     expect(
       db
-        .prepare<
-          [string],
-          { canonical: string }
-        >("SELECT canonical FROM temporal_annotations WHERE id = ?")
+        .prepare<[string], { canonical: string }>(
+          "SELECT canonical FROM temporal_annotations WHERE id = ?",
+        )
         .get(annotationId),
     ).toEqual({ canonical: "2026-08-14T09:00:00.000Z" });
 

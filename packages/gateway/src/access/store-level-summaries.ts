@@ -21,10 +21,9 @@ const LIVE_MEMBER = `g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires
 export function getLiveLevelRow(db: Db, levelId: string): AccessLevelRow | null {
   return (
     db
-      .prepare<
-        [string],
-        AccessLevelRow
-      >("SELECT * FROM access_levels WHERE id = ? AND revoked_at IS NULL")
+      .prepare<[string], AccessLevelRow>(
+        "SELECT * FROM access_levels WHERE id = ? AND revoked_at IS NULL",
+      )
       .get(levelId) ?? null
   );
 }
@@ -52,10 +51,9 @@ type LevelDevice = AccessLevelSummary["devices"][number];
 export function liveLevelDevices(db: Db, levelId?: string): Map<string, LevelDevice[]> {
   const byLevel = new Map<string, LevelDevice[]>();
   const bound = db
-    .prepare<
-      [],
-      { present: number }
-    >("SELECT 1 AS present FROM pragma_table_info('devices') WHERE name = 'access_level_id'")
+    .prepare<[], { present: number }>(
+      "SELECT 1 AS present FROM pragma_table_info('devices') WHERE name = 'access_level_id'",
+    )
     .get();
   if (!bound) return byLevel;
   const rows = db

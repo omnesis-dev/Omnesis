@@ -34,6 +34,8 @@ import type { ConfigStore } from "../config-store.js";
 import type { SearchPipeline } from "../search/pipeline.js";
 import type { BackgroundJobsRegistry } from "../background-jobs/index.js";
 import type { ResolvedRuntimeSettings } from "../runtime-settings.js";
+import type { MemoryBudget } from "../memory-budget.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 
 /**
  * How an embedder swap transitions from the old model to the new one:
@@ -168,6 +170,8 @@ export interface IndexerLifecycleDeps {
   indexDb: import("better-sqlite3").Database;
   /** Config dir → `usearchPathForVersion(configDir, …)`. */
   configDir: string;
+  /** The gateway's memory budget; the indexer worker keeps the HNSW graph within it. */
+  memoryBudget?: MemoryBudget;
   /**
    * Boot-time seed for the mutable model-info snapshot. The lifecycle copies
    * these into its own stable internal object exposed by `modelInfo`; that
@@ -272,6 +276,11 @@ export class IndexerLifecycle {
       present: deps.initialModelInfo.present,
       modelsDir: deps.initialModelInfo.modelsDir,
     };
+  }
+
+  /** The live worker's HNSW graph state, or null before it reports one. */
+  get vectorIndex(): SemanticSearchStatus | null {
+    return this._indexerOwner?.vectorIndex ?? null;
   }
 
   /** Live worker proxy, or null while not ready / mid-swap / shut down. */
@@ -684,7 +693,16 @@ export class IndexerLifecycle {
       ),
       ...(this.deps.gatewayDbKeyHex ? { gatewayDbKeyHex: this.deps.gatewayDbKeyHex } : {}),
       ...(this.deps.indexDbKeyHex ? { indexDbKeyHex: this.deps.indexDbKeyHex } : {}),
+      ...(this.deps.memoryBudget ? { memoryBudget: this.deps.memoryBudget } : {}),
     });
+    // A worker that cannot hold the graph says so; search then skips the
+    // vector lane rather than querying a graph nothing keeps up to date.
+    proxy.onVectorIndexChange = (graph) => {
+      if (this._indexerOwner !== proxy) return;
+      this.deps.searchPipeline.setVectorSearchUnavailable(
+        graph.state === "degraded" ? (graph.reason ?? "semantic search degraded") : null,
+      );
+    };
 
     // Ownership begins in the constructor: it has already spawned the worker
     // and posted init, so no main-thread index.db mutation may race it from

@@ -41,10 +41,9 @@ test("indexes documents by source and external id, idempotently", () => {
 
   expect(indexColumns()).toEqual(["source_id", "external_id"]);
   const plan = db
-    .prepare<
-      [string, string],
-      { detail: string }
-    >("EXPLAIN QUERY PLAN SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+    .prepare<[string, string], { detail: string }>(
+      "EXPLAIN QUERY PLAN SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+    )
     .all("web", "https://example.com/");
   expect(plan.map((row) => row.detail)).toEqual([
     `SEARCH documents USING INDEX ${DOCUMENTS_SOURCE_EXTERNAL_ID_INDEX} (source_id=? AND external_id=?)`,

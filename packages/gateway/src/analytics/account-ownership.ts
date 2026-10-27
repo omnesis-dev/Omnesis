@@ -39,8 +39,7 @@ async function assertPhysicalPrimaryKey(
   );
   const expected = [...primaryKey, ...(streamKeyed ? [STREAM_COLUMN] : [])];
   const physical = (constraint.getRows() as unknown[][])[0]?.[0] as
-    | { items?: unknown[] }
-    | undefined;
+    { items?: unknown[] } | undefined;
   if (!physical?.items || JSON.stringify(physical.items) !== JSON.stringify(expected))
     throw new RowKeyError("Analytics account ownership requires its declared physical primary key");
 }

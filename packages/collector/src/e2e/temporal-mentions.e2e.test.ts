@@ -275,10 +275,9 @@ describe("temporal query mentions — the worth gate on a stable gateway", () =>
 
       // Its tokens are recorded under their own mechanism.
       const spent = db
-        .prepare<
-          [],
-          { tokens: number | null }
-        >(`SELECT SUM(prompt_tokens) AS tokens FROM cognition_spend WHERE mechanism = 'mention-worth-gate'`)
+        .prepare<[], { tokens: number | null }>(
+          `SELECT SUM(prompt_tokens) AS tokens FROM cognition_spend WHERE mechanism = 'mention-worth-gate'`,
+        )
         .get();
       expect(spent?.tokens).toBe(decision.calls.length * 700);
 

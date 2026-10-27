@@ -349,10 +349,9 @@ describe("removed pages", () => {
   test("a page deleted for good is listed; one deleted as a copy only is not, and comes back", async () => {
     await pushPages("https://a.example/one", "https://a.example/two");
     const ids = db
-      .prepare<
-        [],
-        { id: string; external_id: string }
-      >("SELECT id, external_id FROM documents WHERE source_id = 'web' ORDER BY external_id")
+      .prepare<[], { id: string; external_id: string }>(
+        "SELECT id, external_id FROM documents WHERE source_id = 'web' ORDER BY external_id",
+      )
       .all();
     const [one, two] = ids;
 
@@ -419,10 +418,9 @@ describe("removed pages", () => {
     });
 
     const ids = db
-      .prepare<
-        [],
-        { id: string; external_id: string }
-      >("SELECT id, external_id FROM documents WHERE source_id = 'web' ORDER BY external_id")
+      .prepare<[], { id: string; external_id: string }>(
+        "SELECT id, external_id FROM documents WHERE source_id = 'web' ORDER BY external_id",
+      )
       .all();
     await call(`/documents/${ids[0].id}?tombstone=true`, browserToken, { method: "DELETE" });
     expect(await visitUrls()).toEqual(["https://a.example/two"]);

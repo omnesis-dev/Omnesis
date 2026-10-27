@@ -127,10 +127,9 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
       (db) => {
         const linked = (target: string): number =>
           db
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?")
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?",
+            )
             .get(target)?.n ?? 0;
         return (
           linked(UNKNOWN_PHONE) >= 2 &&
@@ -150,10 +149,9 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
   test("collector persists its OS-derived region on synthetic-universe documents", () => {
     withDb(harness, (db) => {
       const row = db
-        .prepare<
-          [string],
-          { metadata: string }
-        >("SELECT metadata FROM documents WHERE external_id = ? LIMIT 1")
+        .prepare<[string], { metadata: string }>(
+          "SELECT metadata FROM documents WHERE external_id = ? LIMIT 1",
+        )
         .get("synth-apple-contact-001");
       expect(JSON.parse(row!.metadata).ingestionContext).toEqual(GB_CONTEXT);
     });
@@ -183,10 +181,9 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
   test("national-format references create normalized, resolved shares-phone edges", () => {
     withDb(harness, (db) => {
       const rows = db
-        .prepare<
-          [string],
-          { normalized_target: string; target_doc_id: string | null }
-        >("SELECT normalized_target, target_doc_id FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?")
+        .prepare<[string], { normalized_target: string; target_doc_id: string | null }>(
+          "SELECT normalized_target, target_doc_id FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?",
+        )
         .all(UK_PHONE);
       expect(rows.length).toBeGreaterThanOrEqual(3);
       expect(rows.some((row) => row.target_doc_id !== null)).toBe(true);
@@ -197,10 +194,9 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
     withDb(harness, (db) => {
       expect(phoneAliasOwner(db, UNKNOWN_PHONE)).toBeUndefined();
       const rows = db
-        .prepare<
-          [string],
-          { target_doc_id: string | null }
-        >("SELECT target_doc_id FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?")
+        .prepare<[string], { target_doc_id: string | null }>(
+          "SELECT target_doc_id FROM document_links WHERE link_type = 'shares-phone' AND normalized_target = ?",
+        )
         .all(UNKNOWN_PHONE);
       expect(rows).toHaveLength(2);
       expect(rows.some((row) => row.target_doc_id !== null)).toBe(true);
@@ -240,10 +236,9 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
 
 function phoneAliasOwner(db: Database.Database, phone: string): string | undefined {
   return db
-    .prepare<
-      [string],
-      { person_id: string }
-    >("SELECT person_id FROM person_aliases WHERE alias_type = 'phone' AND alias = ? LIMIT 1")
+    .prepare<[string], { person_id: string }>(
+      "SELECT person_id FROM person_aliases WHERE alias_type = 'phone' AND alias = ? LIMIT 1",
+    )
     .get(phone)?.person_id;
 }
 

@@ -62,10 +62,9 @@ export function addPersonAliasAssertions(db: Db): void {
   // An install that has not created the aliases table yet has nothing to
   // carry across; the CREATE above is all it needs.
   const aliasTable = db
-    .prepare<
-      [],
-      { name: string }
-    >("SELECT name FROM sqlite_master WHERE type='table' AND name='person_aliases'")
+    .prepare<[], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='person_aliases'",
+    )
     .all();
   if (aliasTable.length === 0) return;
 
@@ -75,10 +74,9 @@ export function addPersonAliasAssertions(db: Db): void {
   `);
 
   const provenanceTables = db
-    .prepare<
-      [],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('documents', 'document_people')")
+    .prepare<[], { n: number }>(
+      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('documents', 'document_people')",
+    )
     .get();
   if (provenanceTables?.n !== 2) return;
   db.exec(`

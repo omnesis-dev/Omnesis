@@ -32,10 +32,9 @@ test("indexes pending credentials by age, idempotently", () => {
   indexPendingCredentials(db);
 
   const index = db
-    .prepare<
-      [],
-      { sql: string }
-    >("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_principal_credentials_pending_created'")
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_principal_credentials_pending_created'",
+    )
     .get();
   expect(index?.sql).toContain("WHERE status = 'pending'");
   // The orphan sweep walks pending rows oldest first; the planner must be

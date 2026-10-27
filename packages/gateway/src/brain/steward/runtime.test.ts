@@ -497,10 +497,9 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(loops).toHaveLength(1);
     expect(loops[0]!.createdByRun).toBe("run_create");
     const mirror = db
-      .prepare<
-        [string],
-        { content: string }
-      >("SELECT content FROM documents WHERE external_id = ? AND source_id = 'open-loops'")
+      .prepare<[string], { content: string }>(
+        "SELECT content FROM documents WHERE external_id = ? AND source_id = 'open-loops'",
+      )
       .get(loops[0]!.id);
     expect(mirror).toBeDefined();
     expect(mirror!.content).toContain("Reply to the venue quote");

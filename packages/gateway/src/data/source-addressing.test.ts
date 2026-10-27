@@ -33,10 +33,9 @@ function evaluateInSqlite(prefixes: readonly string[], ids: readonly string[]): 
   for (const id of ids) insert.run(id);
   const predicate = sourcePrefixPredicate("source_id", prefixes);
   const rows = db
-    .prepare<
-      unknown[],
-      { source_id: string }
-    >(`SELECT source_id FROM documents WHERE ${predicate.sql}`)
+    .prepare<unknown[], { source_id: string }>(
+      `SELECT source_id FROM documents WHERE ${predicate.sql}`,
+    )
     .all(...predicate.params);
   db.close();
   return new Set(rows.map((row) => row.source_id));
@@ -97,10 +96,9 @@ describe("sourcePrefixPredicate", () => {
     insert.run("web:local", 0);
     const predicate = sourcePrefixPredicate("source_id", ["gmail", "web:local"]);
     const rows = db
-      .prepare<
-        unknown[],
-        { source_id: string }
-      >(`SELECT source_id FROM documents WHERE kept = 1 AND ${predicate.sql}`)
+      .prepare<unknown[], { source_id: string }>(
+        `SELECT source_id FROM documents WHERE kept = 1 AND ${predicate.sql}`,
+      )
       .all(...predicate.params);
     db.close();
 

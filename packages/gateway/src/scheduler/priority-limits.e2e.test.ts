@@ -205,10 +205,9 @@ describe("A source wipe against a chunking page", () => {
     // only the page's final chunk would have written one.
     expect(
       handle
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM sync_state WHERE source_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM sync_state WHERE source_id = ?",
+        )
         .get(PAGE_SOURCE)?.n,
     ).toBe(0);
   }, 60_000);

@@ -99,17 +99,15 @@ describe("historical discovery: relevance gate", () => {
     expect(await bench.obs.runsForSource(MAILS[0]!.id)).toHaveLength(0);
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { status: string }
-        >("SELECT status FROM knowledge_work WHERE subject_id=? AND reason='discovery'")
+        .prepare<[string], { status: string }>(
+          "SELECT status FROM knowledge_work WHERE subject_id=? AND reason='discovery'",
+        )
         .get(MAILS[0]!.id)?.status,
     ).toBe("completed");
     const coverage = bench.sql
-      .prepare<
-        [string],
-        { phase: string; status: string }
-      >("SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?")
+      .prepare<[string], { phase: string; status: string }>(
+        "SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?",
+      )
       .all(MAILS[0]!.id);
     expect(coverage).toEqual(
       expect.arrayContaining([
@@ -143,10 +141,9 @@ describe("historical discovery: relevance gate", () => {
     expect(status.admission?.completed).toBe(2);
     expect(status.corpusCompletion).toBe("not-measured");
     const verdicts = bench.sql
-      .prepare<
-        [],
-        { score: number | null; rubric_version: string }
-      >("SELECT score,rubric_version FROM knowledge_decisions WHERE purpose='discovery'")
+      .prepare<[], { score: number | null; rubric_version: string }>(
+        "SELECT score,rubric_version FROM knowledge_decisions WHERE purpose='discovery'",
+      )
       .all();
     expect(verdicts.some((v) => v.score === 0)).toBe(true);
     expect(verdicts.every((v) => v.rubric_version === "knowledge-discovery-value-v8")).toBe(true);

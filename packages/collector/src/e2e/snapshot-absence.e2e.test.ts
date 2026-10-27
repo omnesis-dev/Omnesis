@@ -603,10 +603,9 @@ describe("snapshot absence (e2e-minimal universe, one collector)", () => {
       await harness.triggerSyncAndWait(NOTES, 60_000);
       const rows = readDb((db) =>
         db
-          .prepare<
-            [string],
-            { external_id: string; partition_key: string }
-          >("SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id")
+          .prepare<[string], { external_id: string; partition_key: string }>(
+            "SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id",
+          )
           .all(NOTES),
       );
       evenIds = rows.filter((r) => r.partition_key === "even").map((r) => r.external_id);

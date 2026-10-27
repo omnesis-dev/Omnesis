@@ -491,10 +491,9 @@ export function putPairedIntegrationOnLevel(
   now: number,
 ): void {
   const previous = db
-    .prepare<
-      [string],
-      { access_level_id: string | null }
-    >("SELECT access_level_id FROM devices WHERE id = ?")
+    .prepare<[string], { access_level_id: string | null }>(
+      "SELECT access_level_id FROM devices WHERE id = ?",
+    )
     .get(deviceId);
   if (!previous || previous.access_level_id === levelId) return;
   if (!getLiveLevelRow(db, levelId) || !levelHasUsableAnswer(db, levelId)) return;

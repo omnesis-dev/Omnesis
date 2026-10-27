@@ -676,10 +676,9 @@ export class WatchStateStore {
     // after an event this count was taken before, and the row would report a
     // watch as caught up on a population it no longer holds.
     const cursors = this.db
-      .prepare<
-        [],
-        { watch_id: string; last_seq: number }
-      >("SELECT watch_id, last_seq FROM consumer_cursor")
+      .prepare<[], { watch_id: string; last_seq: number }>(
+        "SELECT watch_id, last_seq FROM consumer_cursor",
+      )
       .all();
     for (const row of cursors) of(row.watch_id).cursorSeq = row.last_seq;
     return held;

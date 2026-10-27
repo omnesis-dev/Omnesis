@@ -129,10 +129,9 @@ describe("Link-extraction background jobs (e2e-minimal universe)", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const rows = db
-        .prepare<
-          [],
-          { c: number }
-        >("SELECT COUNT(*) AS c FROM pending_edges WHERE link_type = 'bookmarks' AND target_source_id = 'web'")
+        .prepare<[], { c: number }>(
+          "SELECT COUNT(*) AS c FROM pending_edges WHERE link_type = 'bookmarks' AND target_source_id = 'web'",
+        )
         .get();
       // The fixture carries three bookmarks, each declaring one edge.
       expect(rows?.c ?? 0).toBeGreaterThan(0);
@@ -148,10 +147,9 @@ describe("Link-extraction background jobs (e2e-minimal universe)", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const row = db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM pending_edges WHERE link_type = 'url' AND target_source_id = 'web'")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM pending_edges WHERE link_type = 'url' AND target_source_id = 'web'",
+        )
         .get();
       expect(row?.count ?? 0).toBe(0);
     } finally {

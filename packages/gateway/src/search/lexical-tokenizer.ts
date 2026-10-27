@@ -102,10 +102,9 @@ function createTokenizer(db: Db): Fts5Tokenizer {
   const clearWords = db.prepare("DELETE FROM temp.lexical_words");
   const insertWord = db.prepare("INSERT INTO temp.lexical_words(rowid, w) VALUES (?, ?)");
   const readWords = db
-    .prepare<
-      [],
-      [string, number]
-    >("SELECT term, doc FROM temp.lexical_words_tokens ORDER BY doc, offset")
+    .prepare<[], [string, number]>(
+      "SELECT term, doc FROM temp.lexical_words_tokens ORDER BY doc, offset",
+    )
     .raw();
   const clearChunks = db.prepare("DELETE FROM temp.lexical_chunks");
   const insertChunk = db.prepare(

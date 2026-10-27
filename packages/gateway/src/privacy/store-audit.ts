@@ -213,10 +213,9 @@ export function recordAnswerEgress(
     const responseJson = JSON.stringify(response);
     const digest = sha256(responseJson);
     const alreadyRecorded = db
-      .prepare<
-        [string, string],
-        { found: number }
-      >("SELECT 1 AS found FROM answer_egress_events WHERE task_id = ? AND response_digest = ?")
+      .prepare<[string, string], { found: number }>(
+        "SELECT 1 AS found FROM answer_egress_events WHERE task_id = ? AND response_digest = ?",
+      )
       .get(task.id, digest);
     if (alreadyRecorded) return { response, responseJson };
 
@@ -226,10 +225,9 @@ export function recordAnswerEgress(
     // does not amplify the durable ledger.
     const distinctResponseCount =
       db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT COUNT(DISTINCT response_digest) AS count FROM answer_egress_events WHERE task_id = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT COUNT(DISTINCT response_digest) AS count FROM answer_egress_events WHERE task_id = ?",
+        )
         .get(task.id)?.count ?? 0;
     if (distinctResponseCount >= MAX_DISTINCT_ANSWER_EGRESS_RESPONSES_PER_TASK) {
       throw new AnswerStoreError(
@@ -329,10 +327,9 @@ export function getPrivacyConversation(
   now = Date.now(),
 ): PrivacyConversationDetail | null {
   const row = db
-    .prepare<
-      [number, number, string],
-      ConversationRow
-    >(`${conversationProjectionSql()} WHERE c.id = ?`)
+    .prepare<[number, number, string], ConversationRow>(
+      `${conversationProjectionSql()} WHERE c.id = ?`,
+    )
     .get(now, now, conversationId);
   if (!row) return null;
   const latestOutcome = latestPrivacyExchangeOutcomes(db, [row.id], now).get(row.id) ?? "failed";
@@ -346,10 +343,9 @@ export function getPrivacyConversation(
 function privacyConversationExists(db: PrivacyDb, conversationId: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { found: number }
-      >("SELECT 1 AS found FROM answer_conversations WHERE id = ?")
+      .prepare<[string], { found: number }>(
+        "SELECT 1 AS found FROM answer_conversations WHERE id = ?",
+      )
       .get(conversationId) !== undefined
   );
 }
@@ -404,10 +400,9 @@ export function getPrivacyAuditEvent(
   if (!row) return null;
   const payloadRow = row.payload_id
     ? db
-        .prepare<
-          [string],
-          { payload_json: string }
-        >("SELECT payload_json FROM answer_audit_payloads WHERE id = ?")
+        .prepare<[string], { payload_json: string }>(
+          "SELECT payload_json FROM answer_audit_payloads WHERE id = ?",
+        )
         .get(row.payload_id)
     : null;
   const summary = projectAuditEvents(db, [row])[0];
@@ -417,10 +412,9 @@ export function getPrivacyAuditEvent(
     const digest = typeof payloadDigest === "string" ? payloadDigest : summary.display.digest;
     if (digest) {
       const egressPayload = db
-        .prepare<
-          [string],
-          { response_json: string }
-        >("SELECT response_json FROM answer_egress_payloads WHERE digest = ?")
+        .prepare<[string], { response_json: string }>(
+          "SELECT response_json FROM answer_egress_payloads WHERE digest = ?",
+        )
         .get(digest);
       if (egressPayload) {
         payload = {
@@ -446,10 +440,9 @@ export function loadPrivacyReviewerContext(
   cumulativeDisclosure: PrivacyCumulativeDisclosure;
 } {
   const conversation = db
-    .prepare<
-      [string],
-      { owner_id: string }
-    >("SELECT owner_id FROM answer_conversations WHERE id = ?")
+    .prepare<[string], { owner_id: string }>(
+      "SELECT owner_id FROM answer_conversations WHERE id = ?",
+    )
     .get(conversationId);
   if (!conversation) {
     throw new AnswerStoreError("conversation_not_found", "Answer conversation not found.");
@@ -479,10 +472,9 @@ export function loadPrivacyReviewerContext(
     });
   const totalMessages =
     db
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM answer_messages WHERE conversation_id = ?")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM answer_messages WHERE conversation_id = ?",
+      )
       .get(conversationId)?.count ?? priorExternalConversation.length;
   const cumulativeDisclosure = loadWorkflowCumulativeDisclosure(db, workflowId);
   return {
@@ -558,17 +550,15 @@ export function deletePrivacyConversation(
 ): boolean {
   return db.transaction(() => {
     const conversation = db
-      .prepare<
-        [string],
-        { owner_id: string }
-      >("SELECT owner_id FROM answer_conversations WHERE id = ?")
+      .prepare<[string], { owner_id: string }>(
+        "SELECT owner_id FROM answer_conversations WHERE id = ?",
+      )
       .get(input.conversationId);
     if (!conversation) return false;
     const running = db
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM answer_tasks WHERE conversation_id = ? AND status = 'running'")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM answer_tasks WHERE conversation_id = ? AND status = 'running'",
+      )
       .get(input.conversationId)?.count;
     if (running) {
       throw new AnswerStoreError(
@@ -686,10 +676,9 @@ function auditBytesUsed(
 ): { task: number; conversation: number; owner: number } {
   const sum = (where: string, value: string): number =>
     db
-      .prepare<
-        [string],
-        { bytes: number }
-      >(`SELECT COALESCE(SUM(payload_bytes), 0) AS bytes FROM answer_audit_events WHERE ${where} = ?`)
+      .prepare<[string], { bytes: number }>(
+        `SELECT COALESCE(SUM(payload_bytes), 0) AS bytes FROM answer_audit_events WHERE ${where} = ?`,
+      )
       .get(value)?.bytes ?? 0;
   return {
     task: sum("task_id", task.id),
@@ -935,10 +924,9 @@ function isReducedRelease(display: PrivacyAuditEventDisplay): boolean {
 function recordedAnswer(db: PrivacyDb, payloadId: string | null, field: string): string | null {
   if (!payloadId) return null;
   const row = db
-    .prepare<
-      [string],
-      { payload_json: string }
-    >("SELECT payload_json FROM answer_audit_payloads WHERE id = ?")
+    .prepare<[string], { payload_json: string }>(
+      "SELECT payload_json FROM answer_audit_payloads WHERE id = ?",
+    )
     .get(payloadId);
   if (!row) return null;
   const payload = parseUnknownJson(row.payload_json);

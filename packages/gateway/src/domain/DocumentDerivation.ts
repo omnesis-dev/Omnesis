@@ -157,10 +157,9 @@ export function derivationReadyDocIds(
   const placeholders = ids.map(() => "?").join(",");
   const incomplete = stages.map((s) => `${s.column} IS NULL`).join(" OR ");
   const rows = db
-    .prepare<
-      string[],
-      { id: string }
-    >(`SELECT id FROM documents WHERE id IN (${placeholders}) AND (${incomplete})`)
+    .prepare<string[], { id: string }>(
+      `SELECT id FROM documents WHERE id IN (${placeholders}) AND (${incomplete})`,
+    )
     .all(...ids);
   for (const row of rows) ready.delete(row.id);
   return ready;
@@ -191,10 +190,9 @@ export function oldestPendingDerivationMs(
   // Derivation stamps themselves do not advance this clock. This observation
   // does not change the cognition readiness barrier or its bounded wait.
   const row = db
-    .prepare<
-      [],
-      { oldest: string | null }
-    >(`SELECT MIN(updated_at) AS oldest FROM documents WHERE ${stage.column} IS NULL`)
+    .prepare<[], { oldest: string | null }>(
+      `SELECT MIN(updated_at) AS oldest FROM documents WHERE ${stage.column} IS NULL`,
+    )
     .get();
   if (!row?.oldest) return null;
   const parsed = Date.parse(row.oldest);

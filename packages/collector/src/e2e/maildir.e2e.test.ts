@@ -24,10 +24,9 @@ describe("Synthetic provider — Maildir", () => {
     const handle = db();
     try {
       return handle
-        .prepare<
-          [string],
-          { id: string; external_id: string; title: string; metadata: string }
-        >("SELECT id, external_id, title, metadata FROM documents WHERE source_id = ? ORDER BY title")
+        .prepare<[string], { id: string; external_id: string; title: string; metadata: string }>(
+          "SELECT id, external_id, title, metadata FROM documents WHERE source_id = ? ORDER BY title",
+        )
         .all(sourceId);
     } finally {
       handle.close();

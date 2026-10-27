@@ -69,10 +69,9 @@ export function withKnowledgeSourceReadReceipts(
   const offered = new Map<string, { fingerprint: string; revision: string }>();
   const snapshot = (id: string) =>
     db
-      .prepare<
-        [string],
-        { content: string; revision: string }
-      >(`SELECT content,${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`)
+      .prepare<[string], { content: string; revision: string }>(
+        `SELECT content,${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`,
+      )
       .get(id);
   const record = (id: string, revision: string, text: string, generation: number) => {
     const current = snapshot(id);

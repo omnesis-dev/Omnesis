@@ -26,10 +26,9 @@ export function readFreshKnowledgeProjection(
   maxBytes?: number,
 ): FreshKnowledgeProjection | null {
   const identity = db
-    .prepare<
-      [string],
-      { source_id: string; provider_id: string; size: number }
-    >(`SELECT source_id,provider_id,length(CAST(content AS BLOB))+length(CAST(title AS BLOB))+length(CAST(metadata AS BLOB)) AS size FROM documents WHERE id=?`)
+    .prepare<[string], { source_id: string; provider_id: string; size: number }>(
+      `SELECT source_id,provider_id,length(CAST(content AS BLOB))+length(CAST(title AS BLOB))+length(CAST(metadata AS BLOB)) AS size FROM documents WHERE id=?`,
+    )
     .get(id);
   if (
     !identity ||

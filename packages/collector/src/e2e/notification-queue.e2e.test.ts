@@ -774,10 +774,9 @@ describe("durable notification queue (fake APNs)", () => {
   /** The wake state on a device's newest delivery row. */
   function wakeStateFor(deviceId: string): string {
     const row = db
-      .prepare<
-        [string],
-        { wake_state: string }
-      >("SELECT wake_state FROM notification_deliveries WHERE device_id = ? ORDER BY rowid DESC LIMIT 1")
+      .prepare<[string], { wake_state: string }>(
+        "SELECT wake_state FROM notification_deliveries WHERE device_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
       .get(deviceId);
     if (!row) throw new Error(`no delivery row for ${deviceId}`);
     return row.wake_state;
@@ -786,10 +785,9 @@ describe("durable notification queue (fake APNs)", () => {
   function notificationExists(notificationId: string): boolean {
     return (
       db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM notifications WHERE id = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT COUNT(*) AS count FROM notifications WHERE id = ?",
+        )
         .get(notificationId)!.count > 0
     );
   }

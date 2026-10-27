@@ -282,10 +282,9 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
     .toMatchObject({ revision: 2 });
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
   const runs = bench.sql
-    .prepare<
-      [],
-      { run_id: string }
-    >("SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL")
+    .prepare<[], { run_id: string }>(
+      "SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL",
+    )
     .all();
   const executed = (
     await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))
@@ -336,10 +335,9 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
     ).toBe(false);
   }
   const node = bench.sql
-    .prepare<
-      [string],
-      { markdown: string; revision: number }
-    >("SELECT markdown,revision FROM knowledge_nodes WHERE id=?")
+    .prepare<[string], { markdown: string; revision: number }>(
+      "SELECT markdown,revision FROM knowledge_nodes WHERE id=?",
+    )
     .get(pageId)!;
   // The substantive edit must remain the second meaning revision. A later
   // background review may record a proof-only revision during drain; it must
@@ -349,10 +347,9 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
     .get(pageId) as { meaning_revision: number };
   expect(meaning.meaning_revision).toBe(2);
   const revisions = bench.sql
-    .prepare<
-      [string],
-      { revision: number; title: string; markdown: string; fields_json: string }
-    >("SELECT revision,title,markdown,fields_json FROM knowledge_revisions WHERE node_id=? AND revision>=2 ORDER BY revision")
+    .prepare<[string], { revision: number; title: string; markdown: string; fields_json: string }>(
+      "SELECT revision,title,markdown,fields_json FROM knowledge_revisions WHERE node_id=? AND revision>=2 ORDER BY revision",
+    )
     .all(pageId);
   expect(revisions[0]!.revision).toBe(2);
   expect(revisions.at(-1)!.revision).toBe(node.revision);

@@ -435,10 +435,9 @@ export function buildLegacyOwnerKnowledge(
   for (const id of owner.evidenceDocumentIds) {
     if (knowledgeEvidenceAvailability(db, id) !== "readable") continue;
     const doc = db
-      .prepare<
-        [string],
-        { content_hash: string }
-      >(`SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d WHERE id=?`)
+      .prepare<[string], { content_hash: string }>(
+        `SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d WHERE id=?`,
+      )
       .get(id);
     if (doc) versions[`source:${id}`] = doc.content_hash;
   }

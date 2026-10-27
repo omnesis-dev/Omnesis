@@ -198,10 +198,9 @@ function ensurePortalSessionHashes(db: Db): void {
   db.exec("UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL");
 
   const rows = db
-    .prepare<
-      [],
-      { id: string; session_hash: string | null }
-    >("SELECT id, session_hash FROM sessions")
+    .prepare<[], { id: string; session_hash: string | null }>(
+      "SELECT id, session_hash FROM sessions",
+    )
     .all();
   const update = db.prepare<[string, string, string]>(
     "UPDATE sessions SET id = ?, session_hash = ? WHERE id = ?",
@@ -255,10 +254,9 @@ function addNameFrequencyColumns(db: Db): void {
 function liveTableName(db: Db, legacy: string, current: string): string {
   const exists = (name: string): boolean =>
     db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
       .get(name) !== undefined;
   return exists(legacy) ? legacy : current;
 }
@@ -276,10 +274,9 @@ export const MIGRATIONS: readonly Migration[] = [
 
       const tableExists = (name: string): boolean => {
         const row = db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+          )
           .get(name);
         return row !== undefined;
       };
@@ -407,10 +404,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // If the live table already includes 'near_dup_df' in its CHECK
       // (idempotent re-application), skip.
       const ddl = db
-        .prepare<
-          [string],
-          { sql: string | null }
-        >("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .prepare<[string], { sql: string | null }>(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
         .get("refresh_meta");
       if (ddl?.sql && ddl.sql.includes("'near_dup_df'")) return;
 
@@ -1646,10 +1642,9 @@ export const MIGRATIONS: readonly Migration[] = [
       createTemporalAnnotationTables(db);
 
       const hasLegacy = db
-        .prepare<
-          [],
-          { one: number }
-        >("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = 'time_index_entries'")
+        .prepare<[], { one: number }>(
+          "SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = 'time_index_entries'",
+        )
         .get();
       if (hasLegacy) {
         // Live schema setup reflects the current head and therefore omits the
@@ -1799,10 +1794,9 @@ export const MIGRATIONS: readonly Migration[] = [
       const runs = liveTableName(db, "loop_agent_runs", "cognition_runs");
       const tableExists = (name: string): boolean =>
         db
-          .prepare<
-            [string],
-            { present: number }
-          >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { present: number }>(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .get(name) !== undefined;
 
       // Preserve generic source-URL maintenance state that used to share the
@@ -2112,10 +2106,9 @@ export const MIGRATIONS: readonly Migration[] = [
       ];
       const exists = (name: string): boolean =>
         db
-          .prepare<
-            [string],
-            { present: number }
-          >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { present: number }>(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .get(name) !== undefined;
       const columns = (name: string): string[] =>
         db
@@ -2335,10 +2328,9 @@ export const MIGRATIONS: readonly Migration[] = [
 
       const update = db.prepare(`UPDATE ${table} SET id = ? WHERE rowid = ?`);
       const withRowid = db
-        .prepare<
-          [],
-          { rowid: number; id: string; document_id: string; slot: string }
-        >(`SELECT rowid, id, document_id, slot FROM ${table}`)
+        .prepare<[], { rowid: number; id: string; document_id: string; slot: string }>(
+          `SELECT rowid, id, document_id, slot FROM ${table}`,
+        )
         .all();
       if (withRowid.length === 0) return;
 
@@ -2507,10 +2499,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // their absence is what makes the next pass re-probe the corpus instead
       // of trusting a verdict this schema no longer stands behind.
       const engineState = db
-        .prepare<
-          [],
-          { present: number }
-        >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'cognition_engine_state'")
+        .prepare<[], { present: number }>(
+          "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'cognition_engine_state'",
+        )
         .get();
       if (engineState) {
         db.exec(
@@ -2936,10 +2927,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // upgrade log is the only place they will ever be able to read it.
       const dropped = (table: string): number => {
         const present = db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .get(table);
         if (!present) return 0;
         return db.prepare<[], { n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? 0;
@@ -2949,10 +2939,9 @@ export const MIGRATIONS: readonly Migration[] = [
       const hadStorage = ["triggers", "trigger_firings", "trigger_state", "trigger_meta"].some(
         (table) =>
           db
-            .prepare<
-              [string],
-              { name: string }
-            >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .prepare<[string], { name: string }>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            )
             .get(table) !== undefined,
       );
 
@@ -3086,10 +3075,9 @@ export const MIGRATIONS: readonly Migration[] = [
       const marker = "migration:108:missing-prior-rechecks";
       if (
         db
-          .prepare<
-            [string],
-            { value: string }
-          >("SELECT value FROM cognition_engine_state WHERE key = ?")
+          .prepare<[string], { value: string }>(
+            "SELECT value FROM cognition_engine_state WHERE key = ?",
+          )
           .get(marker)
       )
         return;
@@ -3321,10 +3309,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // SQLite cannot drop an FK in place, so the table is rebuilt.
       const tableExists = (name: string): boolean =>
         db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .get(name) !== undefined;
       if (!tableExists("temporal_annotation_documents")) return;
 
@@ -3571,10 +3558,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // would correct themselves — but only when something touches them, and
       // a fully-settled source is exactly the row nothing touches again.
       const tables = db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cognition_coverage'")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cognition_coverage'",
+        )
         .all();
       if (tables.length === 0) return;
       db.prepare("UPDATE cognition_coverage SET status = 'settled' WHERE status = 'covered'").run();
@@ -3592,18 +3578,16 @@ export const MIGRATIONS: readonly Migration[] = [
       // dated to its first run rather than to now, which is when the operator
       // actually began.
       const tables = db
-        .prepare<
-          [string],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .prepare<[string], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
         .all("cognition_engine_state");
       if (tables.length === 0) return;
       const total = Number(
         db
-          .prepare<
-            [string],
-            { value: string }
-          >("SELECT value FROM cognition_engine_state WHERE key = ?")
+          .prepare<[string], { value: string }>(
+            "SELECT value FROM cognition_engine_state WHERE key = ?",
+          )
           .get("bootstrap_total_enqueued")?.value ?? "0",
       );
       if (!Number.isFinite(total) || total <= 0) return;
@@ -3612,17 +3596,15 @@ export const MIGRATIONS: readonly Migration[] = [
       // answer than failing the upgrade.
       const hasRuns =
         db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .all("cognition_runs").length > 0;
       const firstRun = hasRuns
         ? db
-            .prepare<
-              [],
-              { at: number | null }
-            >("SELECT MIN(enqueued_at) AS at FROM cognition_runs WHERE kind = 'bootstrap'")
+            .prepare<[], { at: number | null }>(
+              "SELECT MIN(enqueued_at) AS at FROM cognition_runs WHERE kind = 'bootstrap'",
+            )
             .get()?.at
         : null;
       db.prepare(
@@ -3650,10 +3632,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // reads exactly like a table missing the column.
       const has = (table: string): boolean =>
         db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .all(table).length > 0;
       if (!has("documents")) return;
       const columns = new Set(
@@ -3708,17 +3689,15 @@ export const MIGRATIONS: readonly Migration[] = [
       // because the pruned history it already counts is real.
       const has = (table: string): boolean =>
         db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .all(table).length > 0;
       if (!has("cognition_engine_state") || !has("cognition_runs")) return;
       const onLedger = db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'bootstrap'",
+        )
         .get()!.n;
       if (onLedger <= 0) return;
       db.prepare(
@@ -3763,10 +3742,9 @@ export const MIGRATIONS: readonly Migration[] = [
           // Partial fixture databases carry only some of these tables.
           const present =
             db
-              .prepare<
-                [string],
-                { name: string }
-              >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+              .prepare<[string], { name: string }>(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+              )
               .get(table) !== undefined;
           if (!present) continue;
           const violations = db
@@ -3932,10 +3910,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // shape, so there is nothing here to rebuild.
       const present =
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'refresh_meta'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'refresh_meta'",
+          )
           .get() !== undefined;
       if (!present) return;
       // `refresh_meta.job` carries a CHECK listing the jobs that may use it,
@@ -3979,10 +3956,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // meta row points at, so the table stays live throughout.
       const dfPresent =
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'near_dup_df'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'near_dup_df'",
+          )
           .get() !== undefined;
       // Guarded on the column, not the table: re-running the rebuild on a
       // table that already has generations would copy every one of them to
@@ -4014,10 +3990,9 @@ export const MIGRATIONS: readonly Migration[] = [
 
       const metaPresent =
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'near_dup_df_meta'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'near_dup_df_meta'",
+          )
           .get() !== undefined;
       if (metaPresent) {
         const hasColumn = db
@@ -4345,10 +4320,9 @@ export const MIGRATIONS: readonly Migration[] = [
         for (const table of ["oauth_execution_bindings", "oauth_authorization_requests"]) {
           const present =
             db
-              .prepare<
-                [string],
-                { name: string }
-              >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+              .prepare<[string], { name: string }>(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+              )
               .get(table) !== undefined;
           if (!present) continue;
           const violations = db
@@ -4926,10 +4900,9 @@ export const MIGRATIONS: readonly Migration[] = [
 function rebuildForSourceMembership(db: Db): void {
   const has = (table: string): boolean =>
     db
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
       .all(table).length > 0;
   const columns = (table: string): Set<string> =>
     new Set(
@@ -5006,10 +4979,9 @@ function rebuildForSourceMembership(db: Db): void {
   if (has("document_temporal_projection_sources")) {
     const hasFk =
       db
-        .prepare<
-          [],
-          { table: string }
-        >(`SELECT "table" FROM pragma_foreign_key_list('document_temporal_projection_sources')`)
+        .prepare<[], { table: string }>(
+          `SELECT "table" FROM pragma_foreign_key_list('document_temporal_projection_sources')`,
+        )
         .all().length > 0;
     if (hasFk) {
       db.exec("ALTER TABLE document_temporal_projection_sources RENAME TO dtps_old");

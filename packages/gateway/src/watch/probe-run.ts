@@ -107,10 +107,9 @@ function candidates(
 function hasChunks(indexDb: Db, documentId: string): boolean {
   return (
     indexDb
-      .prepare<
-        [string],
-        { found: number }
-      >("SELECT 1 AS found FROM chunks WHERE document_id = ? AND embedding IS NOT NULL LIMIT 1")
+      .prepare<[string], { found: number }>(
+        "SELECT 1 AS found FROM chunks WHERE document_id = ? AND embedding IS NOT NULL LIMIT 1",
+      )
       .get(documentId) !== undefined
   );
 }

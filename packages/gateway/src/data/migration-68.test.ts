@@ -64,10 +64,9 @@ describe("migration 68 — firing evidence and Answer egress binding", () => {
     ).toContain("subscription_firing_id");
     expect(
       db
-        .prepare<
-          [],
-          { evidence_json: string; evidence_count: number }
-        >("SELECT evidence_json, evidence_count FROM subscription_firings WHERE id = 'sfiring_m68'")
+        .prepare<[], { evidence_json: string; evidence_count: number }>(
+          "SELECT evidence_json, evidence_count FROM subscription_firings WHERE id = 'sfiring_m68'",
+        )
         .get(),
     ).toEqual({
       evidence_json: "[]",
@@ -77,10 +76,9 @@ describe("migration 68 — firing evidence and Answer egress binding", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { firing_id: string; document_id: string }
-        >("SELECT firing_id, document_id FROM subscription_firing_evidence")
+        .prepare<[], { firing_id: string; document_id: string }>(
+          "SELECT firing_id, document_id FROM subscription_firing_evidence",
+        )
         .all(),
     ).toEqual([{ firing_id: "sfiring_m68", document_id: "doc_m68_survives" }]);
   });

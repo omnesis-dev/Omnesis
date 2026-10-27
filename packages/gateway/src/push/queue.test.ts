@@ -63,10 +63,9 @@ function message(
 
 function state(deliveryId: string): string | undefined {
   return db
-    .prepare<
-      [string, string],
-      { state: string }
-    >("SELECT state FROM notification_deliveries WHERE id = ? OR lease_token = ?")
+    .prepare<[string, string], { state: string }>(
+      "SELECT state FROM notification_deliveries WHERE id = ? OR lease_token = ?",
+    )
     .get(deliveryId, deliveryId)?.state;
 }
 

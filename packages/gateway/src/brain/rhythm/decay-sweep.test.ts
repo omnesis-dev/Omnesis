@@ -187,10 +187,9 @@ describe("decay sweep", () => {
   function pendingCheck(loopId: string): { next_attempt_at: number; payload_json: string } | null {
     return (
       db
-        .prepare<
-          [string],
-          { next_attempt_at: number; payload_json: string }
-        >("SELECT next_attempt_at, payload_json FROM cognition_runs WHERE status = 'pending' AND dedupe_key = ?")
+        .prepare<[string], { next_attempt_at: number; payload_json: string }>(
+          "SELECT next_attempt_at, payload_json FROM cognition_runs WHERE status = 'pending' AND dedupe_key = ?",
+        )
         .get(decayCheckRunDedupeKey(loopId)) ?? null
     );
   }
@@ -293,10 +292,9 @@ describe("decay sweep", () => {
     updateOpenLoop(db, loopId, { description: "still moving" }, clockNow);
     await sweep();
     const rows = db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
+      )
       .get(decayCheckRunDedupeKey(loopId));
     expect(rows?.n).toBe(1);
     expect(pendingCheck(loopId)!.next_attempt_at).toBe(10_050 + 100);

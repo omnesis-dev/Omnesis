@@ -265,9 +265,9 @@ export function supersedeInterestSignals(db: Db, by: InterestSupersedeScope, now
   // `kind` alone names no signal; a scope needs the thing reacted to.
   if (where.length === 0 || (where.length === 1 && by.kind !== undefined)) return 0;
   return db
-    .prepare<
-      Array<string | number>
-    >(`UPDATE interest_signals SET superseded_at = ? WHERE superseded_at IS NULL AND ${where.join(" AND ")}`)
+    .prepare<Array<string | number>>(
+      `UPDATE interest_signals SET superseded_at = ? WHERE superseded_at IS NULL AND ${where.join(" AND ")}`,
+    )
     .run(...args).changes;
 }
 
@@ -381,10 +381,9 @@ export function listLiveInterestSignals(
 /** Every signal, superseded included, newest first — the audit view. */
 export function listInterestSignals(db: Db, opts: { limit: number }): InterestSignal[] {
   return db
-    .prepare<
-      [number],
-      SignalRow
-    >(`SELECT ${SIGNAL_COLUMNS} FROM interest_signals ORDER BY created_at DESC, id DESC LIMIT ?`)
+    .prepare<[number], SignalRow>(
+      `SELECT ${SIGNAL_COLUMNS} FROM interest_signals ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
     .all(opts.limit)
     .map(toSignal);
 }
@@ -426,10 +425,9 @@ export function listUnembeddedInterestSignals(
 export function countUnembeddedInterestSignals(db: Db, now: number): number {
   return (
     db
-      .prepare<
-        [number],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM interest_signals WHERE embedding IS NULL AND superseded_at IS NULL AND embed_after <= ?")
+      .prepare<[number], { n: number }>(
+        "SELECT COUNT(*) AS n FROM interest_signals WHERE embedding IS NULL AND superseded_at IS NULL AND embed_after <= ?",
+      )
       .get(now)?.n ?? 0
   );
 }
@@ -446,26 +444,25 @@ export function setInterestSignalEmbedding(
 ): boolean {
   if (!embedding) {
     const current = db
-      .prepare<
-        [string],
-        { embed_attempts: number }
-      >("SELECT embed_attempts FROM interest_signals WHERE id = ?")
+      .prepare<[string], { embed_attempts: number }>(
+        "SELECT embed_attempts FROM interest_signals WHERE id = ?",
+      )
       .get(id);
     if (!current) return false;
     const attempts = current.embed_attempts + 1;
     return (
       db
-        .prepare<
-          [number, number, string]
-        >("UPDATE interest_signals SET embed_attempts = ?, embed_after = ? WHERE id = ?")
+        .prepare<[number, number, string]>(
+          "UPDATE interest_signals SET embed_attempts = ?, embed_after = ? WHERE id = ?",
+        )
         .run(attempts, interestEmbedRetryAt(attempts, now), id).changes > 0
     );
   }
   return (
     db
-      .prepare<
-        [Buffer, string, string]
-      >("UPDATE interest_signals SET embedding = ?, embedding_model = ?, embed_attempts = embed_attempts + 1, embed_after = 0 WHERE id = ?")
+      .prepare<[Buffer, string, string]>(
+        "UPDATE interest_signals SET embedding = ?, embedding_model = ?, embed_attempts = embed_attempts + 1, embed_after = 0 WHERE id = ?",
+      )
       .run(embeddingToBlob(embedding.vector), embedding.model, id).changes > 0
   );
 }
@@ -474,9 +471,9 @@ export function setInterestSignalEmbedding(
 export function hasInterestEmbeddingsNotFrom(db: Db, model: string): boolean {
   return (
     db
-      .prepare<
-        [string]
-      >("SELECT 1 FROM interest_signals WHERE embedding IS NOT NULL AND superseded_at IS NULL AND embedding_model IS NOT ? LIMIT 1")
+      .prepare<[string]>(
+        "SELECT 1 FROM interest_signals WHERE embedding IS NOT NULL AND superseded_at IS NULL AND embedding_model IS NOT ? LIMIT 1",
+      )
       .get(model) !== undefined
   );
 }
@@ -487,9 +484,9 @@ export function hasInterestEmbeddingsNotFrom(db: Db, model: string): boolean {
  */
 export function resetInterestEmbeddingsNotFrom(db: Db, model: string): number {
   return db
-    .prepare<
-      [string]
-    >("UPDATE interest_signals SET embedding = NULL, embedding_model = NULL, embed_attempts = 0, embed_after = 0 WHERE embedding IS NOT NULL AND embedding_model IS NOT ?")
+    .prepare<[string]>(
+      "UPDATE interest_signals SET embedding = NULL, embedding_model = NULL, embed_attempts = 0, embed_after = 0 WHERE embedding IS NOT NULL AND embedding_model IS NOT ?",
+    )
     .run(model).changes;
 }
 
@@ -681,10 +678,9 @@ export function applyBriefReaction(
     if (input.reaction === null) {
       deleteBriefItemReaction(db, input.observationId);
       const current = db
-        .prepare<
-          [string],
-          { user_action: string | null }
-        >("SELECT user_action FROM observations WHERE id = ?")
+        .prepare<[string], { user_action: string | null }>(
+          "SELECT user_action FROM observations WHERE id = ?",
+        )
         .get(input.observationId);
       if (
         current?.user_action &&
@@ -726,10 +722,9 @@ export function deleteBriefItemReaction(db: Db, observationId: string): boolean 
 
 export function getBriefItemReaction(db: Db, observationId: string): BriefItemReaction | null {
   const row = db
-    .prepare<
-      [string],
-      ReactionRow
-    >("SELECT * FROM interest_brief_reactions WHERE observation_id = ?")
+    .prepare<[string], ReactionRow>(
+      "SELECT * FROM interest_brief_reactions WHERE observation_id = ?",
+    )
     .get(observationId);
   return row ? toReaction(row) : null;
 }
@@ -786,10 +781,9 @@ export function listWithheldSuggestions(db: Db, limit = 100): WithheldSuggestion
 /** Whether the latest change in a loop's history is the gate withholding it. */
 export function isWithheldSuggestion(db: Db, loopId: string): boolean {
   const latest = db
-    .prepare<
-      [string],
-      { event_json: string }
-    >("SELECT event_json FROM open_loop_ledger WHERE loop_id = ? AND event_json IS NOT NULL ORDER BY seq DESC LIMIT 1")
+    .prepare<[string], { event_json: string }>(
+      "SELECT event_json FROM open_loop_ledger WHERE loop_id = ? AND event_json IS NOT NULL ORDER BY seq DESC LIMIT 1",
+    )
     .get(loopId);
   return latest !== undefined && (JSON.parse(latest.event_json) as TaskEvent).kind === "withheld";
 }

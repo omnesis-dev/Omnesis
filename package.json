@@ -94,7 +94,7 @@
     "brace-expansion@^5.0.0": "^5.0.12",
     "ip-address": "^10.7.4",
     "nanoid@^5.0.0": "^5.1.16",
-    "qs": "^6.16.0",
+    "qs": "^6.17.0",
     "tar@^7.0.0": "^7.5.22",
     "nx": {
       "@zkochan/js-yaml": "^0.0.11",
@@ -103,7 +103,7 @@
     "simple-git": "^4.0.2"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/client": "2.3.1",
     "@playwright/test": "^1.52.0",
@@ -111,7 +111,7 @@
     "@types/node": "^22.0.0",
     "@types/picomatch": "^4.0.3",
     "eslint": "^10.4.0",
-    "eslint-config-prettier": "^9.1.0",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^3.7.0",
     "eslint-plugin-import-x": "^4.6.0",
     "eslint-plugin-unicorn": "^74.0.0",
@@ -120,7 +120,7 @@
     "lefthook": "^2.1.9",
     "nx": "23.3.0",
     "patch-package": "^8.0.1",
-    "prettier": "3.8.3",
+    "prettier": "3.9.10",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.18.0",

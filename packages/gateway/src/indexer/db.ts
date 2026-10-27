@@ -13,6 +13,7 @@ type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
+import { withScanPageCache } from "./scan-page-cache.js";
 
 const log = createLogger("indexer:db");
 
@@ -105,10 +106,9 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
 
   const hadChunksFts =
     db
-      .prepare<
-        [],
-        { present: number }
-      >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'")
+      .prepare<[], { present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'",
+      )
       .get()?.present === 1;
   db.exec(`
     CREATE TABLE IF NOT EXISTS chunks (
@@ -249,6 +249,41 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_prune AFTER INSERT ON chunks_fts_changes
       WHEN new.seq % 10000 = 0 BEGIN
       DELETE FROM chunks_fts_changes WHERE seq <= new.seq - 500000;
+    END;
+  `);
+
+  // Change log of chunk vectors for the HNSW graph (see `catchUpFromChangeLog`
+  // in usearch-index.ts): every insert, delete and embedding update appends the
+  // chunk's rowid, so a graph persisted at log position N is brought up to date
+  // by re-reading exactly the rowids logged after N — instead of rebuilding the
+  // whole graph after a crash or an unsaved write. Checkpoints prune what every
+  // persisted graph already covers (`pruneVectorChanges`); the self-prune bounds
+  // a log no checkpoint drains (semantic search degraded for a long time) and
+  // records how far it pruned, so a graph older than the log rebuilds.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vector_changes (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      chunk_rowid INTEGER NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS vector_changes_ai AFTER INSERT ON chunks
+      WHEN new.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (new.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_au AFTER UPDATE OF embedding ON chunks
+      WHEN old.embedding IS NOT NULL OR new.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (new.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_ad AFTER DELETE ON chunks
+      WHEN old.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (old.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_prune AFTER INSERT ON vector_changes
+      WHEN new.seq % 10000 = 0 BEGIN
+      DELETE FROM vector_changes WHERE seq <= new.seq - ${VECTOR_CHANGES_RETAINED};
+      INSERT INTO index_meta (key, value, updated_at)
+        VALUES ('${VECTOR_CHANGES_PRUNED_THROUGH_KEY}', CAST(new.seq - ${VECTOR_CHANGES_RETAINED} AS TEXT), datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        WHERE CAST(index_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER);
     END;
   `);
 
@@ -655,6 +690,89 @@ export function setUsearchSavedSeq(db: Db, seq: number): void {
   ).run(USEARCH_SAVED_SEQ_KEY, String(seq), new Date().toISOString());
 }
 
+/** Newest entries the vector change log keeps when no checkpoint prunes it. */
+const VECTOR_CHANGES_RETAINED = 2_000_000;
+/** `index_meta` key: the highest `vector_changes.seq` already pruned from the log. */
+const VECTOR_CHANGES_PRUNED_THROUGH_KEY = "vector_changes_pruned_through";
+/**
+ * `index_meta` key: the change-log position the on-disk plaintext graph was
+ * last saved at — every change logged at or below it is in the file, or still
+ * queued in `pending_vector_deletes`. Absent on a graph saved before the log
+ * existed; such a graph can only be trusted by the exact `usearch_saved_seq`.
+ */
+const USEARCH_SAVED_CHANGE_SEQ_KEY = "usearch_saved_change_seq";
+/**
+ * `index_meta` key: the last chunk rowid a cold rebuild had added when the
+ * on-disk graph was saved. Absent once the build completed; present, the graph
+ * holds rowids up to it and the build resumes after it.
+ */
+const USEARCH_BACKFILL_CURSOR_KEY = "usearch_backfill_cursor";
+
+function getMetaInt(db: Db, key: string): number | null {
+  const row = db
+    .prepare<[string], { value: string }>("SELECT value FROM index_meta WHERE key = ?")
+    .get(key);
+  if (!row) return null;
+  const n = Number(row.value);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function setMetaInt(db: Db, key: string, value: number | null): void {
+  if (value === null) {
+    db.prepare("DELETE FROM index_meta WHERE key = ?").run(key);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO index_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, String(value), new Date().toISOString());
+}
+
+/** The newest position in the vector change log (0 before the first change). */
+export function getVectorChangeHead(db: Db): number {
+  const row = db
+    .prepare<[], { seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'vector_changes'")
+    .get();
+  return row?.seq ?? 0;
+}
+
+export function getVectorChangesPrunedThrough(db: Db): number {
+  return getMetaInt(db, VECTOR_CHANGES_PRUNED_THROUGH_KEY) ?? 0;
+}
+
+/**
+ * Drop log entries every persisted graph already reflects. Callers pass the
+ * change position of the oldest graph a restart could load; never past it.
+ */
+export function pruneVectorChanges(db: Db, throughSeq: number): void {
+  if (throughSeq <= getVectorChangesPrunedThrough(db)) return;
+  db.transaction(() => {
+    db.prepare("DELETE FROM vector_changes WHERE seq <= ?").run(throughSeq);
+    setMetaInt(db, VECTOR_CHANGES_PRUNED_THROUGH_KEY, throughSeq);
+  })();
+}
+
+export function getUsearchSavedChangeSeq(db: Db): number | null {
+  return getMetaInt(db, USEARCH_SAVED_CHANGE_SEQ_KEY);
+}
+
+export function setUsearchSavedChangeSeq(db: Db, seq: number | null): void {
+  setMetaInt(db, USEARCH_SAVED_CHANGE_SEQ_KEY, seq);
+}
+
+export function getUsearchBackfillCursor(db: Db): number | null {
+  return getMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY);
+}
+
+export function setUsearchBackfillCursor(db: Db, rowid: number | null): void {
+  setMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY, rowid);
+}
+
+/** Whether a main-thread vector removal still waits for the worker to apply and save it. */
+export function hasPendingVectorDeletes(db: Db): boolean {
+  return db.prepare("SELECT 1 FROM pending_vector_deletes LIMIT 1").get() !== undefined;
+}
+
 /** Read one index generation's row, or null if absent. */
 export function getIndexVersion(db: Db, version: number): IndexVersionRow | null {
   return (
@@ -680,10 +798,9 @@ export function listIndexVersions(db: Db): IndexVersionRow[] {
 export function getBuildingIndexVersion(db: Db): IndexVersionRow | null {
   return (
     db
-      .prepare<
-        [],
-        IndexVersionRow
-      >("SELECT * FROM index_versions WHERE state = 'building' ORDER BY version ASC LIMIT 1")
+      .prepare<[], IndexVersionRow>(
+        "SELECT * FROM index_versions WHERE state = 'building' ORDER BY version ASC LIMIT 1",
+      )
       .get() ?? null
   );
 }
@@ -776,10 +893,9 @@ export function getBuildingEmbeddingsPage(
   limit: number,
 ): Array<{ chunk_rowid: number; embedding: Buffer }> {
   return db
-    .prepare<
-      [number, number],
-      { chunk_rowid: number; embedding: Buffer }
-    >("SELECT chunk_rowid, embedding FROM chunk_embeddings_building WHERE chunk_rowid > ? ORDER BY chunk_rowid LIMIT ?")
+    .prepare<[number, number], { chunk_rowid: number; embedding: Buffer }>(
+      "SELECT chunk_rowid, embedding FROM chunk_embeddings_building WHERE chunk_rowid > ? ORDER BY chunk_rowid LIMIT ?",
+    )
     .all(afterRowid, limit);
 }
 
@@ -1262,10 +1378,9 @@ export function setWatermark(db: Db, key: string, value: string): void {
 export function getIndexedDocument(db: Db, documentId: string): IndexedDocumentRow | null {
   return (
     db
-      .prepare<
-        [string],
-        IndexedDocumentRow
-      >("SELECT * FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], IndexedDocumentRow>(
+        "SELECT * FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId) ?? null
   );
 }
@@ -1289,10 +1404,9 @@ export function getIndexedContentHashes(db: Db, documentIds: string[]): Map<stri
     const chunk = documentIds.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        string[],
-        { document_id: string; content_hash: string }
-      >(`SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`)
+      .prepare<string[], { document_id: string; content_hash: string }>(
+        `SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const r of rows) out.set(r.document_id, r.content_hash);
   }
@@ -1415,10 +1529,9 @@ export function adoptIndexedDocumentSourceEvent(
  */
 function nextIndexedEventAt(db: Db, proposed: string): string {
   const current = db
-    .prepare<
-      [],
-      { max_event_at: string | null }
-    >("SELECT MAX(event_indexed_at) AS max_event_at FROM indexed_documents")
+    .prepare<[], { max_event_at: string | null }>(
+      "SELECT MAX(event_indexed_at) AS max_event_at FROM indexed_documents",
+    )
     .get()?.max_event_at;
   if (!current || proposed > current) return proposed;
   const currentMs = Date.parse(current);
@@ -1507,7 +1620,7 @@ function removeOrEnqueueVectors(
   options?: IndexWriteOptions,
 ): void {
   if (rowids.length === 0) return;
-  if (options?.usearch) {
+  if (options?.usearch && !options.usearch.isDetached) {
     options.usearch.removeBatch(rowids as bigint[]);
     return;
   }
@@ -1539,8 +1652,8 @@ export function preparePendingVectorDeletes(
   usearch: import("./usearch-index.js").UsearchWriteHandle | undefined,
   limit?: number,
 ): PendingVectorDelete[] {
-  // Lexical writers retain graph obligations until a vector writer can publish them.
-  if (!usearch) return [];
+  // Missing or memory-shed graphs cannot publish removals; retain their obligations.
+  if (!usearch || usearch.isDetached) return [];
   const bounded = limit === undefined ? null : Math.max(1, Math.floor(limit));
   const rows = db
     .prepare<[number | null], { chunk_rowid: number; generation: number; reused: number }>(
@@ -1722,10 +1835,9 @@ export function upsertChunksAndMarkIndexed(
   const txn = db.transaction(() => {
     // Check whether this is a new document or an update (re-index).
     const existing = db
-      .prepare<
-        [string],
-        { chunk_count: number }
-      >("SELECT chunk_count FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], { chunk_count: number }>(
+        "SELECT chunk_count FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId);
 
     upsertChunks(db, chunks, options);
@@ -1783,10 +1895,9 @@ export function upsertChunksAndMarkIndexedBatch(
     ) => {
       for (const { documentId, contentHash, chunks, isUpdate, sourceEventAt } of items) {
         const existing = db
-          .prepare<
-            [string],
-            { chunk_count: number }
-          >("SELECT chunk_count FROM indexed_documents WHERE document_id = ?")
+          .prepare<[string], { chunk_count: number }>(
+            "SELECT chunk_count FROM indexed_documents WHERE document_id = ?",
+          )
           .get(documentId);
 
         if (isUpdate) {
@@ -1845,16 +1956,14 @@ export function deleteChunksByDocument(
     // Capture the source_id before deleting chunks so we can adjust
     // per-source stats. All chunks for a document share the same source.
     const sourceRow = db
-      .prepare<
-        [string],
-        { source_id: string }
-      >("SELECT source_id FROM chunks WHERE document_id = ? LIMIT 1")
+      .prepare<[string], { source_id: string }>(
+        "SELECT source_id FROM chunks WHERE document_id = ? LIMIT 1",
+      )
       .get(documentId);
     const hadIndexedRow = db
-      .prepare<
-        [string],
-        { document_id: string }
-      >("SELECT document_id FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], { document_id: string }>(
+        "SELECT document_id FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId);
 
     const rowids = db
@@ -1871,7 +1980,7 @@ export function deleteChunksByDocument(
     // With a usearch handle, defer the vector removal until after the txn
     // commits (usearch isn't transactional with SQLite). Without one (the
     // HTTP path), enqueue the rowids atomically with the chunk delete.
-    if (options?.usearch) {
+    if (options?.usearch && !options.usearch.isDetached) {
       usearchRowids = rowids;
     } else {
       removeOrEnqueueVectors(db, rowids, options);
@@ -1923,10 +2032,9 @@ export function deleteChunksByDocumentBatch(
   let usearchRowids: bigint[] | undefined;
   const txn = db.transaction(() => {
     const chunkRows = db
-      .prepare<
-        [string, number],
-        { rowid: number; source_id: string }
-      >("SELECT rowid, source_id FROM chunks WHERE document_id = ? ORDER BY rowid LIMIT ?")
+      .prepare<[string, number], { rowid: number; source_id: string }>(
+        "SELECT rowid, source_id FROM chunks WHERE document_id = ? ORDER BY rowid LIMIT ?",
+      )
       .all(documentId, safeLimit + 1);
     if (!sourceDeleted && chunkRows.length <= safeLimit) {
       // Keep the final searchable rows and indexed_documents summary as a
@@ -1956,10 +2064,9 @@ export function deleteChunksByDocumentBatch(
 
     const remaining =
       db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM chunks WHERE document_id = ? LIMIT 1")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM chunks WHERE document_id = ? LIMIT 1",
+        )
         .get(documentId) !== undefined;
     complete = sourceDeleted && !remaining;
     if (complete) {
@@ -2084,9 +2191,9 @@ export function repointChunkSource(db: Db, documentIds: string[], newSourceId: s
       const slice = ids.slice(i, i + CHUNK);
       const placeholders = slice.map(() => "?").join(", ");
       changed += db
-        .prepare<
-          string[]
-        >(`UPDATE chunks SET source_id = ? WHERE source_id <> ? AND document_id IN (${placeholders})`)
+        .prepare<string[]>(
+          `UPDATE chunks SET source_id = ? WHERE source_id <> ? AND document_id IN (${placeholders})`,
+        )
         .run(newSourceId, newSourceId, ...slice).changes;
     }
   });
@@ -2333,10 +2440,9 @@ export function getIndexDateRangeBySource(
   db: Db,
 ): Record<string, { earliest: string; latest: string }> {
   const rows = db
-    .prepare<
-      [],
-      { source_id: string; earliest: string | null; latest: string | null }
-    >("SELECT source_id, earliest_source_date AS earliest, latest_source_date AS latest FROM source_index_stats")
+    .prepare<[], { source_id: string; earliest: string | null; latest: string | null }>(
+      "SELECT source_id, earliest_source_date AS earliest, latest_source_date AS latest FROM source_index_stats",
+    )
     .all();
   const result: Record<string, { earliest: string; latest: string }> = {};
   for (const row of rows) {
@@ -2424,10 +2530,9 @@ export function clearIndexError(db: Db, documentId: string): void {
 /** Per-source count of hard-failing (un-indexed) documents. */
 export function getIndexErrorCountsBySource(db: Db): Record<string, number> {
   const rows = db
-    .prepare<
-      [],
-      { source_id: string; count: number }
-    >("SELECT source_id, COUNT(*) AS count FROM indexing_errors WHERE severity = 'error' GROUP BY source_id")
+    .prepare<[], { source_id: string; count: number }>(
+      "SELECT source_id, COUNT(*) AS count FROM indexing_errors WHERE severity = 'error' GROUP BY source_id",
+    )
     .all();
   const result: Record<string, number> = {};
   for (const row of rows) result[row.source_id] = row.count;
@@ -2473,10 +2578,9 @@ export function getIndexStatsBySource(
   db: Db,
 ): Record<string, { indexedDocs: number; chunks: number }> {
   const cached = db
-    .prepare<
-      [],
-      { source_id: string; docs: number; chunks: number }
-    >("SELECT source_id, indexed_docs AS docs, chunks FROM source_index_stats")
+    .prepare<[], { source_id: string; docs: number; chunks: number }>(
+      "SELECT source_id, indexed_docs AS docs, chunks FROM source_index_stats",
+    )
     .all();
   if (cached.length > 0) {
     const result: Record<string, { indexedDocs: number; chunks: number }> = {};
@@ -2506,25 +2610,27 @@ export function getIndexStatsBySource(
 export function refreshIndexStats(db: Db): void {
   const now = new Date().toISOString();
 
-  const perSource = db
-    .prepare<
-      [],
-      {
-        source_id: string;
-        docs: number;
-        chunks: number;
-        earliest: string | null;
-        latest: string | null;
-      }
-    >(
-      `SELECT source_id,
+  const perSource = withScanPageCache(db, () =>
+    db
+      .prepare<
+        [],
+        {
+          source_id: string;
+          docs: number;
+          chunks: number;
+          earliest: string | null;
+          latest: string | null;
+        }
+      >(
+        `SELECT source_id,
               COUNT(DISTINCT document_id) AS docs,
               COUNT(*) AS chunks,
               MIN(source_created_at) AS earliest,
               MAX(source_created_at) AS latest
        FROM chunks GROUP BY source_id`,
-    )
-    .all();
+      )
+      .all(),
+  );
 
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM source_index_stats").run();
@@ -2537,10 +2643,9 @@ export function refreshIndexStats(db: Db): void {
     }
 
     const totalsRow = db
-      .prepare<
-        [],
-        { docs: number; chunks: number }
-      >("SELECT COUNT(*) AS docs FROM indexed_documents")
+      .prepare<[], { docs: number; chunks: number }>(
+        "SELECT COUNT(*) AS docs FROM indexed_documents",
+      )
       .get();
     const totalIndexed = totalsRow?.docs ?? 0;
     const totalChunks = perSource.reduce((s, r) => s + Number(r.chunks), 0);
@@ -2557,12 +2662,12 @@ export function refreshIndexStats(db: Db): void {
   tx();
 }
 
-/** Durable evidence that indexed hashes may describe text without vectors. */
+/** Durable evidence that semantic invalidation is required or interrupted. */
 export function hasLexicalWrites(db: Db): boolean {
   return db.prepare("SELECT 1 FROM index_meta WHERE key = 'lexical_writes'").get() != null;
 }
 
-/** Set before the lexical writer starts; clear only after semantic invalidation succeeds. */
+/** Set before lexical writes or invalidation; clear after SQL and obsolete graph removal succeed. */
 export function setLexicalWrites(db: Db, pending: boolean): void {
   if (pending) {
     db.prepare(

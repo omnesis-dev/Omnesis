@@ -322,10 +322,9 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
     for (const mail of JUDGED) {
       const id = ids.get(mail.key)!;
       const coverage = bench.sql
-        .prepare<
-          [string],
-          { status: string }
-        >("SELECT status FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='organization'")
+        .prepare<[string], { status: string }>(
+          "SELECT status FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='organization'",
+        )
         .get(id);
       expect(coverage?.status).toBe(passesWorthGate(mail) ? "considered" : "gated");
       if (passesWorthGate(mail))
@@ -333,10 +332,9 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
       else expect(await bench.obs.runsForSource(id)).toEqual([]);
     }
     const decisions = bench.sql
-      .prepare<
-        [],
-        { purpose: string; score: number | null; rubric_version: string }
-      >("SELECT purpose,score,rubric_version FROM knowledge_decisions")
+      .prepare<[], { purpose: string; score: number | null; rubric_version: string }>(
+        "SELECT purpose,score,rubric_version FROM knowledge_decisions",
+      )
       .all();
     expect(decisions.length).toBeGreaterThan(0);
     expect(

@@ -686,8 +686,7 @@ function liveStats(
   latestDate: string | null;
 } {
   const countRow = db.prepare(`SELECT COUNT(*) AS n FROM ${def.tableName}`).get() as
-    | { n: number | bigint }
-    | undefined;
+    { n: number | bigint } | undefined;
   const recordCount = Number(countRow?.n ?? 0);
 
   let earliestDate: string | null = null;
