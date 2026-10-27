@@ -53,6 +53,7 @@
         "src/near-dupes/index.ts",
         "portal/index.html",
         "portal/js/app.js",
+        "portal/js/agent-presentation.js",
         "portal/vendor/*.js",
         "scripts/*.mjs"
       ],
