@@ -8,6 +8,7 @@ import {
 import { KnowledgeStorageError } from "../knowledge/types.js";
 import { captureOutcomeWriteFence } from "../storage/outcome-write-fence.js";
 import type { OpenLoopRow } from "../storage/types.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 import type Database from "better-sqlite3";
 
 export type OutcomeProposal = Pick<
@@ -71,6 +72,8 @@ export function prepareOutcomeRecordContext(
     supportingNodeIds?: readonly string[];
     proposed: OutcomeProposal;
     now: number;
+    /** A background run's excluded sources: their documents are never evidence for the judge. */
+    sourceFence?: BrainSourceFence;
   },
 ) {
   if (input.proposed.actors.length > 100)
@@ -99,7 +102,10 @@ export function prepareOutcomeRecordContext(
           .map((subject) => subject.id),
       ]),
     ];
-    const allowed = new Set(capturedIds);
+    // With no readable evidence left the judge has no context, as for no evidence at all.
+    const excluded = input.sourceFence?.excludedDocuments(capturedIds);
+    const readableIds = capturedIds.filter((id) => !excluded?.has(id));
+    const allowed = new Set(readableIds);
     const priority = [...new Set(input.priorityDocumentIds ?? ids)].filter((id) => allowed.has(id));
     const prior = [...new Set(input.priorDocumentIds ?? [])].filter((id) => allowed.has(id));
     // Preserve room for both sides of a revision instead of letting a broad
@@ -107,7 +113,7 @@ export function prepareOutcomeRecordContext(
     const preferred = Array.from({ length: Math.max(priority.length, prior.length) }, (_, i) =>
       [priority[i], prior[i]].filter((id): id is string => id !== undefined),
     ).flat();
-    const evidenceIds = [...new Set([...preferred, ...capturedIds])];
+    const evidenceIds = [...new Set([...preferred, ...readableIds])];
     if (!evidenceIds.length) return null;
     const hasPeople = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='people'")

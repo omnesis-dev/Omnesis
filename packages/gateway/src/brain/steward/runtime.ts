@@ -245,7 +245,7 @@ export interface CognitionToolsetDeps {
   ) => (input: ObservationScoringInput) => Promise<ObservationScoringResult>;
   /**
    * Sources excluded from the Brain, for a background run: their documents
-   * never seed it. Omitted, nothing is excluded.
+   * never seed it or reach its outcome judgments. Omitted, nothing is excluded.
    */
   sourceFence?: BrainSourceFence;
 }
@@ -416,6 +416,7 @@ function ownToolsInput(
     clock: deps.clock,
     runId: opts.runId,
     seedDocIds: opts.seedDocIds,
+    ...(deps.sourceFence ? { sourceFence: deps.sourceFence } : {}),
     ...(deps.createObservationScorer
       ? { scoreObservation: deps.createObservationScorer(opts.runId) }
       : {}),

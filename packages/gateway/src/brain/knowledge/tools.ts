@@ -606,6 +606,7 @@ export function buildKnowledgeTools(
       node,
       signal,
       runFence,
+      context.sourceFence,
     );
     const result =
       context.batchId && context.engine && node.expectedRevision > 0
@@ -1311,6 +1312,7 @@ export function buildKnowledgeTools(
               node,
               signal,
               runFence,
+              context.sourceFence,
             );
             return service.save(
               context.sourceFence ? { ...node, sourceFence: context.sourceFence } : node,

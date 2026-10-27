@@ -11,6 +11,7 @@ import { captureOutcomeWriteFence } from "../storage/outcome-write-fence.js";
 import { outcomeProposal } from "../record-check/outcome-context.js";
 import { RECORD_CHECK_RUBRIC_VERSION } from "../record-check/rubric.js";
 import { resolveBrainSettings } from "../config.js";
+import { createBrainSourceFence } from "../source-exclusion.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
@@ -24,6 +25,7 @@ import {
 } from "./outcome-assessment.js";
 import { recordKnowledgeSourceDeletion } from "./storage-invalidation.js";
 import type { KnowledgeRunFence } from "./run-fence.js";
+import type { CheckRecord } from "../record-check/check.js";
 
 let db: Database.Database, service: KnowledgeService, now: number;
 beforeEach(() => {
@@ -232,4 +234,54 @@ it("keeps generic knowledge schema usable without canonical loop tables", () => 
   } finally {
     standalone.close();
   }
+});
+it("never shows the outcome judge a linked document of an excluded source", async () => {
+  db.exec(
+    "ALTER TABLE documents ADD COLUMN source_id TEXT NOT NULL DEFAULT 'gmail:maya@example.com'; INSERT INTO documents(id,content,content_hash,source_id) VALUES('log','Session notes: the tide sensor was calibrated on Monday.','l1','codex:local')",
+  );
+  createOpenLoop(
+    db,
+    {
+      id: "survey",
+      title: "Tide survey",
+      description: "Calibrate the tide sensor before the survey.",
+      createdByRun: "run",
+      docs: ["source", "log"],
+      importance: 0.4,
+      confidence: 0.8,
+    },
+    1,
+  );
+  convertKnowledgeOwner(db, "loop", "survey", 1);
+  let excluded = ["codex"];
+  const fence = createBrainSourceFence(db, () => excluded);
+  const node = service.fetch("survey", true)!;
+  const input = {
+    id: node.id,
+    kind: "loop" as const,
+    ownerId: "survey",
+    title: node.title,
+    markdown: node.markdown,
+    expectedRevision: node.revision,
+    inputVersions: { "source:source": "s1" },
+  };
+  // The judge answers as the record check does when it has no source context.
+  const check = vi.fn<CheckRecord>(async (request) =>
+    request.outcomeContext ? pass() : { save: true as const },
+  );
+  await checkKnowledgeOutcome(service, check, input, undefined, undefined, fence);
+  expect(check.mock.calls[0]![0].outcomeContext?.sources.map((source) => source.id)).toEqual([
+    "source",
+  ]);
+  // With every linked document excluded nothing is judged, and the review waits as unavailable.
+  excluded = ["codex", "gmail"];
+  db.exec("DELETE FROM knowledge_outcome_assessments");
+  await expect(
+    checkKnowledgeOutcome(service, check, input, undefined, undefined, fence),
+  ).rejects.toThrow("Outcome assessment is unavailable");
+  expect(check.mock.calls[1]![0].outcomeContext).toBeUndefined();
+  expect(JSON.stringify(check.mock.calls)).not.toContain("Session notes");
+  expect(
+    db.prepare("SELECT status FROM knowledge_outcome_assessments WHERE owner_id='survey'").all(),
+  ).toEqual([{ status: "unavailable" }]);
 });

@@ -15,6 +15,7 @@ import { getKnowledgeNode } from "./storage-read.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { KnowledgeRunFence } from "./run-fence.js";
 import type { KnowledgeService } from "./service.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 
 export class KnowledgeOutcomeRejected extends Error {
   constructor(
@@ -33,6 +34,7 @@ export async function checkKnowledgeOutcome(
   node: { id: string; kind: string; ownerId?: string | null; title: string; markdown: string },
   signal?: AbortSignal,
   run?: KnowledgeRunFence,
+  sourceFence?: BrainSourceFence,
 ): Promise<OutcomeWriteFence | undefined> {
   if (node.kind !== "loop" || !check) return;
   const enforcePolicy = check.enforcesOutcomePolicy?.() ?? true;
@@ -105,6 +107,7 @@ export async function checkKnowledgeOutcome(
       outcomeId: loop.id,
       supportingNodeIds,
       now: service.deps.clock(),
+      ...(sourceFence ? { sourceFence } : {}),
     });
     const documentId = prepared?.documentId ?? documentIds[0];
     if (!documentId)

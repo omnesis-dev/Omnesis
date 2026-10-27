@@ -347,7 +347,10 @@ any source of it is installed. Every consumer reads the list live
   unchanged when it saves the page. A claim whose own reference changed or was
   deleted is still offered, because a real change is the Brain's to judge.
   The wiki value and factual-repair judgement a page save asks for is not shown
-  an excluded reference's text, only counted among omitted references. The
+  an excluded reference's text, only counted among omitted references. An
+  outcome judgement (a loop's creation, update or synthesis save) is judged on
+  its readable linked documents only; with none left it has no source context
+  and is recorded unavailable without a model call, as for missing evidence. The
   morning recheck does not show the salience gate an excluded citation, and an
   observation citing one ships with its claims unchecked rather than going to
   the verifier.
