@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
+// @ts-expect-error — the portal is plain JS, no .d.ts ships alongside.
 import { reducer, initialState } from "./agent-reducer.js";
 
 const r = reducer;
@@ -27,7 +28,7 @@ describe("portal reducer — a send shows before the gateway confirms it", () =>
   it("renames the placeholder when the user-message event carries its submission id", () => {
     let s = sent("hi", "sub-1");
     expect(s.busy).toBe(true);
-    expect(s.turns.map((t) => t.id)).toEqual(["sub-1"]);
+    expect(s.turns.map((t: { id: string }) => t.id)).toEqual(["sub-1"]);
     s = r(s, userMessage("u-1", "hi", ["sub-1"]));
     expect(s.turns).toHaveLength(1);
     expect(s.turns[0]).toMatchObject({ id: "u-1", role: "user", parts: [{ kind: "text", text: "hi" }] });
@@ -45,7 +46,7 @@ describe("portal reducer — a send shows before the gateway confirms it", () =>
     s = r(s, { kind: "user-send", text: "second", optimisticId: "sub-2" });
     s = r(s, { kind: "user-send", text: "third", optimisticId: "sub-3" });
     s = r(s, userMessage("u-1", "second\n\nthird", ["sub-2", "sub-3"]));
-    expect(s.turns.map((t) => t.id)).toEqual(["sub-1", "m-0", "u-1"]);
+    expect(s.turns.map((t: { id: string }) => t.id)).toEqual(["sub-1", "m-0", "u-1"]);
     expect(s.turns[2].parts).toEqual([{ kind: "text", text: "second\n\nthird" }]);
   });
 
@@ -54,7 +55,7 @@ describe("portal reducer — a send shows before the gateway confirms it", () =>
     s = r(s, userMessage("u-1", "hi", ["sub-1"]));
     s = r(s, userMessage("u-2", "from my phone", ["someone-elses-id"]));
     s = r(s, userMessage("u-3", "legacy gateway, no ids"));
-    expect(s.turns.map((t) => t.id)).toEqual(["u-1", "u-2", "u-3"]);
+    expect(s.turns.map((t: { id: string }) => t.id)).toEqual(["u-1", "u-2", "u-3"]);
   });
 
   it("delivers a stamped turn once however many times the event repeats", () => {
@@ -76,7 +77,7 @@ describe("portal reducer — a send shows before the gateway confirms it", () =>
     s = r(s, { kind: "agent.message.start", payload: { sessionId: sid, messageId: "m-1" } });
     s = r(s, { kind: "user-send", text: "no, do this instead", optimisticId: "sub-1" });
     s = r(s, { kind: "user-send-rejected", optimisticId: "sub-1" });
-    expect(s.turns.map((t) => t.id)).toEqual(["m-1"]);
+    expect(s.turns.map((t: { id: string }) => t.id)).toEqual(["m-1"]);
     expect(s.busy).toBe(true);
   });
 
