@@ -120,7 +120,7 @@
     "lefthook": "^2.1.9",
     "nx": "23.3.0",
     "patch-package": "^8.0.1",
-    "prettier": "3.8.3",
+    "prettier": "3.9.10",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.18.0",
