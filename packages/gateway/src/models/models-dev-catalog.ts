@@ -125,10 +125,93 @@ function readBounded(body: ReadableStream<Uint8Array> | null, limit: number): Pr
   })();
 }
 
+/**
+ * Editor metadata Inkscape and similar tools leave behind in an SVG: a leading
+ * comment, elements and attributes in their own XML namespaces, `<metadata>`
+ * blocks, and paint written as `style="fill:…"` instead of presentation
+ * attributes. Browsers ignore all of it, but the strict validator below would
+ * refuse the file, and Models.dev logos are contributed as exported. Strip the
+ * metadata and rewrite paint styles into attributes; anything not understood is
+ * left in place for the validator to refuse.
+ */
+const EDITOR_NAMESPACE = /^(?:inkscape|sodipodi)$/i;
+const STYLE_PAINT_PROPERTIES = new Set([
+  "fill",
+  "fill-opacity",
+  "fill-rule",
+  "stroke",
+  "stroke-width",
+  "stroke-linecap",
+  "stroke-linejoin",
+  "stroke-miterlimit",
+  "stroke-opacity",
+  "stroke-dasharray",
+  "stroke-dashoffset",
+  "opacity",
+]);
+const STYLE_PAINT_NUMBER = String.raw`-?\d*\.?\d+(?:e[-+]?\d+)?(?:px|pt|mm|%)?`;
+const STYLE_PAINT_VALUE = new RegExp(
+  `^(?:#[0-9a-f]{3,8}|[a-z-]+|rgba?\\([\\d.%\\s,]+\\)|${STYLE_PAINT_NUMBER}(?:[\\s,]+${STYLE_PAINT_NUMBER})*)$`,
+  "i",
+);
+
+export function normalizeProviderSvg(svg: string): string {
+  let out = svg.replace(/<!--[\s\S]*?-->/g, "");
+  out = out.replace(/<(?:inkscape|sodipodi):[\w.-]+\b[^>]*?\/>/gi, "");
+  out = out.replace(/<(inkscape|sodipodi):([\w.-]+)\b[^>]*>[\s\S]*?<\/\1:\2\s*>/gi, "");
+  out = out.replace(/<metadata\b[^>]*\/>/gi, "");
+  out = out.replace(/<metadata\b[^>]*>[\s\S]*?<\/metadata\s*>/gi, "");
+  // Rewrite each start tag whose attributes are all double-quoted pairs; any
+  // other tag is left untouched for the validator to judge.
+  return out.replace(
+    /<([a-z][\w-]*)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/gi,
+    (whole: string, tag: string, attrText: string, close: string) => {
+      const plain: Array<[string, string]> = [];
+      const styled = new Map<string, string>();
+      let changed = false;
+      for (const match of attrText.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) {
+        const name = match[1]!;
+        const value = match[2]!;
+        const colon = name.indexOf(":");
+        const prefix = colon === -1 ? null : name.slice(0, colon);
+        const local = colon === -1 ? name : name.slice(colon + 1);
+        if (
+          (prefix !== null && EDITOR_NAMESPACE.test(prefix)) ||
+          (prefix === "xmlns" && EDITOR_NAMESPACE.test(local))
+        ) {
+          changed = true;
+          continue;
+        }
+        if (name.toLowerCase() !== "style") {
+          plain.push([name, value]);
+          continue;
+        }
+        changed = true;
+        for (const declaration of value.split(";")) {
+          const trimmed = declaration.trim();
+          if (!trimmed) continue;
+          const separator = trimmed.indexOf(":");
+          if (separator === -1) return whole;
+          const property = trimmed.slice(0, separator).trim().toLowerCase();
+          const paint = trimmed.slice(separator + 1).trim();
+          if (!STYLE_PAINT_PROPERTIES.has(property) || !STYLE_PAINT_VALUE.test(paint)) return whole;
+          styled.set(property, paint);
+        }
+      }
+      if (!changed) return whole;
+      // A style declaration outranks the presentation attribute of the same name.
+      const attrs = plain.filter(([name]) => !styled.has(name.toLowerCase()));
+      for (const [property, paint] of styled) attrs.push([property, paint]);
+      const serialized = attrs.map(([name, value]) => ` ${name}="${value}"`).join("");
+      return `<${tag}${serialized}${close ? " /" : ""}>`;
+    },
+  );
+}
+
 /** Restrict cached SVGs to passive path-based logos, not active browser content. */
 export function validateProviderSvg(input: Buffer): Buffer {
   if (input.length === 0 || input.length > MAX_SVG_BYTES) throw new Error("invalid SVG size");
-  const svg = input.toString("utf8");
+  const svg = normalizeProviderSvg(input.toString("utf8"));
   if (!/^\s*(?:<\?xml[^>]*>\s*)?<svg\b[\s\S]*<\/svg>\s*$/i.test(svg)) {
     throw new Error("response is not an SVG document");
   }
@@ -168,7 +251,7 @@ export function validateProviderSvg(input: Buffer): Buffer {
   if (/\bstyle\s*=|\b(?:src|formaction)\s*=/i.test(svg)) {
     throw new Error("SVG contains active or external content");
   }
-  return input;
+  return Buffer.from(svg, "utf8");
 }
 
 function assignmentId(resolved: ResolvedAssignment): string | null {
