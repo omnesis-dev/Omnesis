@@ -35,8 +35,11 @@ const DAY = 86_400_000;
 let db: Database.Database, engine: KnowledgeEngine, service: KnowledgeService;
 /** Everything the fake entailment verifier was asked to read. */
 const verified: string[] = [];
+/** While set, the fake verifier is unavailable and saves keep claims unverified. */
+let verifierDown = false;
 const verifier: EntailCapability = {
   async verify(request) {
+    if (verifierDown) throw new Error("synthetic verifier outage");
     verified.push(JSON.stringify(request));
     return { label: "entailment", probability: 1 };
   },
@@ -76,6 +79,7 @@ beforeEach(() => {
   configure([], false);
   writeGate = directKnowledgeGate(db);
   verified.length = 0;
+  verifierDown = false;
   service = new KnowledgeService({
     db,
     writeGate,
@@ -335,15 +339,16 @@ describe("brain.excludedSources page citations", () => {
   });
 
   /** The background run's knowledge tools, fenced as the steward fences them. */
-  async function fencedTools() {
+  async function fencedTools(pageId = "workshop") {
+    const sourceFence = createBrainSourceFence(db, () => settings.excludedSources);
     const tools = fenceExcludedDocumentArguments(
-      buildKnowledgeTools(service, { runId: "run" }),
-      createBrainSourceFence(db, () => settings.excludedSources),
+      buildKnowledgeTools(service, { runId: "run", sourceFence }),
+      sourceFence,
       existingPageCitations(db),
     );
     const call = (name: string, args: unknown) =>
       tools.find((tool) => tool.name === name)!.invoke(args, invocation);
-    expect(await call("knowledge_fetch", { id: "workshop", editing: true })).toMatchObject({
+    expect(await call("knowledge_fetch", { id: pageId, editing: true })).toMatchObject({
       kind: "structured",
     });
     return call;
@@ -396,5 +401,54 @@ describe("brain.excludedSources page citations", () => {
     expect(result).toMatchObject({ kind: "structured" });
     expect(verified.join("\n")).toContain("Saturday");
     expect(verified.join("\n")).not.toContain("north hall");
+  });
+
+  it("never shows the verifier an unverified claim it carries through on an excluded document", async () => {
+    // Saved while the verifier was unavailable, before the session was excluded.
+    configure([], false);
+    verifierDown = true;
+    await service.save({
+      id: "venue",
+      kind: "wiki",
+      title: "Workshop venue",
+      expectedRevision: 0,
+      markdown: PAGE,
+      inputVersions: { "source:session": "v1", "source:mail": "v1" },
+    });
+    expect(getKnowledgeClaims(db, "venue").map((claim) => claim.verification)).toEqual([
+      "unverified",
+      "unverified",
+    ]);
+    verifierDown = false;
+    configure(["codex"], false);
+
+    const call = await fencedTools("venue");
+    expect(await call("knowledge_reference", { ref: "source:mail-update" })).toMatchObject({
+      kind: "structured",
+    });
+    const result = await call("knowledge_edit", {
+      node: {
+        id: "venue",
+        expectedRevision: 1,
+        edits: [
+          {
+            op: "replace_text",
+            old: '<claim id="day" refs="source:mail">',
+            new: '<claim id="day" refs="source:mail-update">',
+          },
+          { op: "replace_text", old: "begins Friday", new: "begins Saturday" },
+        ],
+      },
+    });
+    expect(result).toMatchObject({ kind: "structured" });
+    // The readable claim is verified; the excluded one is carried through unexamined.
+    expect(verified.join("\n")).toContain("Saturday");
+    expect(verified.join("\n")).not.toContain("north hall");
+    expect(
+      getKnowledgeClaims(db, "venue").map(({ id, verification }) => ({ id, verification })),
+    ).toEqual([
+      { id: "hall", verification: "unverified" },
+      { id: "day", verification: "verified" },
+    ]);
   });
 });

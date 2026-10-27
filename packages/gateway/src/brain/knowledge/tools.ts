@@ -57,6 +57,7 @@ import {
   wikiSectionShape,
 } from "./wiki-page-shape.js";
 import type { CheckRecord } from "../record-check/check.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 import type { ToolResult } from "@omnesis/core";
 import type { KnowledgeService } from "./service.js";
 import type { KnowledgeEngine, KnowledgeFrontierView } from "./engine.js";
@@ -393,6 +394,8 @@ export function buildKnowledgeTools(
     markTemporalPresented?: (ids: readonly string[], runId: string) => Promise<void>;
     /** Retrieval over current knowledge, so page saves are reconciled with records they do not cite. */
     relatedKnowledge?: KnowledgeMirrorSearch;
+    /** A background run's excluded sources, whose documents its saves never show the verifier. */
+    sourceFence?: BrainSourceFence;
   },
 ): ToolHandle[] {
   const personReview = new PersonEditorialReview(
@@ -404,7 +407,7 @@ export function buildKnowledgeTools(
     decisionPayloadErasureGeneration(service.deps.db),
   );
   const publicationReads = new WikiPublicationReads(service.deps.db);
-  const wikiValue = new WikiValueCheck(service, context.checkRecord);
+  const wikiValue = new WikiValueCheck(service, context.checkRecord, context.sourceFence);
   const queueLogReview = oneTimePageReview(service, CHRONOLOGICAL_LOG_REVIEW);
   /** Request the one consolidation review a log-shaped page gets, logging when it is queued. */
   const requestLogReview = async (pageId: string, detail: string, again = false) => {
@@ -615,6 +618,7 @@ export function buildKnowledgeTools(
               ...node,
               personReviewFence,
               ...(wikiRepairAssessment ? { wikiRepairAssessment } : {}),
+              ...(context.sourceFence ? { sourceFence: context.sourceFence } : {}),
             },
             input.reviewedClaimIds,
             fence,
@@ -623,7 +627,7 @@ export function buildKnowledgeTools(
             input.curationDeferral,
           )
         : await service.save(
-            node,
+            context.sourceFence ? { ...node, sourceFence: context.sourceFence } : node,
             candidate
               ? {
                   candidateId: candidate.id,
@@ -1308,7 +1312,12 @@ export function buildKnowledgeTools(
               signal,
               runFence,
             );
-            return service.save(node, undefined, runFence, outcomeFence);
+            return service.save(
+              context.sourceFence ? { ...node, sourceFence: context.sourceFence } : node,
+              undefined,
+              runFence,
+              outcomeFence,
+            );
           },
         ),
       ),

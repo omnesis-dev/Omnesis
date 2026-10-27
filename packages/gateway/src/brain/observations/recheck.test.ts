@@ -36,6 +36,7 @@ import {
   type CreateObservationInput,
 } from "../storage/observations.js";
 import { appendOpenLoopLedger, createOpenLoop } from "../storage/open-loops.js";
+import { createBrainSourceFence } from "../source-exclusion.js";
 import {
   observationSources,
   recheckObservations,
@@ -581,6 +582,46 @@ describe("recheckObservations", () => {
       const result = await run(deps({ getEntailmentVerifier: async () => v.capability }));
       expect(result.shipped.map((o) => o.id)).toEqual(["obs_uncited"]);
       expect(v.verify).not.toHaveBeenCalled();
+    });
+
+    test("an observation citing an excluded source ships unexamined, its evidence unread", async () => {
+      upsertDocuments(db, [
+        {
+          ...doc("log", "Session notes: the studio lease renews in March.", "Studio session log"),
+          sourceId: SourceId("assistant-log:workstation"),
+        },
+      ]);
+      const logId = docId("log");
+      note("obs_excluded", {
+        citations: [docA, logId],
+        claims: [
+          ...claims(),
+          { docId: logId, quote: "studio lease renews in March", verification: "unverified" },
+        ],
+      });
+      note("obs_readable", { claims: claims() });
+      const { decision, requests } = scriptedDecision({
+        obs_excluded: { consequence: 3, timing: 0, already_known: 0 },
+        obs_readable: { consequence: 3, timing: 0, already_known: 0 },
+      });
+      const v = verifier({ label: "entailment" });
+      const result = await run(
+        deps({
+          getDecision: () => decision,
+          getEntailmentVerifier: async () => v.capability,
+          sourceFence: createBrainSourceFence(db, () => ["assistant-log"]),
+        }),
+      );
+      expect(result.shipped.map((o) => o.id).sort()).toEqual(["obs_excluded", "obs_readable"]);
+      expect(v.verify).toHaveBeenCalledTimes(1);
+      expect(v.verify.mock.calls[0]![0].claim).toContain("obs_readable");
+      expect(JSON.stringify(v.verify.mock.calls)).not.toContain("lease");
+      expect(JSON.stringify(requests)).not.toContain("Studio session log");
+      expect(getObservation(db, "obs_excluded")?.claims.map((c) => c.verification)).toEqual([
+        "unverified",
+        "unverified",
+      ]);
+      expect(getObservation(db, "obs_readable")?.claims[0]!.verification).toBe("entailed");
     });
 
     test("held and already-known observations are never sent to the verifier", async () => {

@@ -335,7 +335,10 @@ any source of it is installed. Every consumer reads the list live
   through unchanged — the same text, references and claim state as the
   revision it names; the resulting page is compared claim by claim, so a new or
   changed claim citing one is refused even when the call never names the
-  document, before the verifier could read it.
+  document, before the verifier could read it. The save never shows the
+  verifier a claim whose supporting references include an excluded document:
+  it keeps its verification only while its stored one still holds, and is
+  otherwise saved unverified, unexamined (`knowledge/service.ts`).
 - **Maintenance.** A run cannot re-check a claim that cites an excluded
   document, and that is not evidence against the claim. While none of the
   claim's own references changed, maintenance does not offer it for review: the
@@ -343,6 +346,11 @@ any source of it is installed. Every consumer reads the list live
   offering the page (`knowledge/unreadable-support.ts`), and the run keeps it
   unchanged when it saves the page. A claim whose own reference changed or was
   deleted is still offered, because a real change is the Brain's to judge.
+  The wiki value and factual-repair judgement a page save asks for is not shown
+  an excluded reference's text, only counted among omitted references. The
+  morning recheck does not show the salience gate an excluded citation, and an
+  observation citing one ships with its claims unchecked rather than going to
+  the verifier.
 
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain

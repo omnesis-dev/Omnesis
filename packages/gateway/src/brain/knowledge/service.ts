@@ -47,12 +47,20 @@ import type Database from "better-sqlite3";
 import type { KnowledgeRunFence } from "./run-fence.js";
 import type { KnowledgeWriteGate } from "./writer.js";
 import type { ResolvedBrainSettings } from "../config.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 
 export type KnowledgeProposal = Omit<
   SaveKnowledgeNodeInput,
   "claims" | "canonicalFields" | "rootMaxChars" | "enforceClaimPreservation" | "outcomeFence"
 > & {
   claims?: Omit<KnowledgeClaimState, "verification">[];
+  /**
+   * A background run's fence around sources excluded from the Brain; never
+   * accepted from model arguments. A claim whose support cites one of their
+   * documents is kept as it is, unverified unless its verification still
+   * holds, and never shown to the verifier.
+   */
+  sourceFence?: BrainSourceFence;
 };
 export interface KnowledgeServiceDeps {
   db: Database.Database;
@@ -136,7 +144,7 @@ export class KnowledgeService {
 
   /** Internal grounded seeding/repair seam; model-created wikis must use candidate publication. */
   async save(
-    input: KnowledgeProposal,
+    { sourceFence, ...input }: KnowledgeProposal,
     publication?: {
       candidateId: string;
       expectedCandidateRevision: number;
@@ -239,18 +247,27 @@ export class KnowledgeService {
       this.deps.log.warn("Knowledge verifier unavailable; retaining unverified claims");
     }
     const allRefs = () => parsed.claims.flatMap((claim) => claim.refs.map((ref) => ref.raw));
+    const excludedDocuments =
+      sourceFence?.excludedDocuments(
+        parsed.claims.flatMap((claim) =>
+          claim.refs.flatMap((ref) => (ref.kind === "source" ? [ref.id] : [])),
+        ),
+      ) ?? new Set<string>();
     const currentRevision = (ref: string) => this.verificationReference(ref).revision;
     for (const claim of parsed.claims) {
       const previous = previousClaims.get(claim.id);
       const state = effectiveStates.get(claim.id)!;
       const support: VerificationReferenceView[] = [];
+      let unreadableSupport = false;
       const versions = new KnowledgeDependencyVersions(input.inputVersions);
       versions.run(
         () => {
           for (const ref of claim.refs) {
             const view = this.verificationReference(ref.raw);
             versions.check(ref.raw, view.revision);
-            if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);
+            if ((state.relations?.[ref.raw] ?? "supports") !== "supports") continue;
+            support.push(view);
+            if (ref.kind === "source" && excludedDocuments.has(ref.id)) unreadableSupport = true;
           }
         },
         allRefs,
@@ -297,7 +314,9 @@ export class KnowledgeService {
       }
       // Verification of a generated prior requires verified support all the way
       // back to evidence. A relation-only or context-only reference is not proof.
-      if (verifier && sufficientSupport) {
+      // Evidence the run may not read is never shown to the verifier, and being
+      // unable to re-check the claim is not a verdict on it.
+      if (verifier && sufficientSupport && !unreadableSupport) {
         const pieces =
           state.supportLogic === "any"
             ? verifiedSupport.map((view) => ({

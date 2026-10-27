@@ -696,7 +696,13 @@ export async function createCognitionRuntime(
       // composition only ever sees its ranked list.
       if (deps.observations)
         await recheckObservations(
-          { ...deps.observations.recheck, db: deps.db, clock, log: deps.log.child("observations") },
+          {
+            ...deps.observations.recheck,
+            db: deps.db,
+            sourceFence,
+            clock,
+            log: deps.log.child("observations"),
+          },
           { runId: run.id, day: digest.date },
         );
       return readDigestInputs(deps.db, clock(), deps.getSettings(), horizon, digest.date).hasInputs
@@ -795,6 +801,7 @@ export async function createCognitionRuntime(
           ...withGrantedMutationsOnly(
             buildKnowledgeTools(deps.knowledge.service, {
               runId: run.id,
+              sourceFence,
               personProfileReads,
               incompleteRetrievalBoundary: () => incompleteRetrievalBoundary,
               checkRecord:
