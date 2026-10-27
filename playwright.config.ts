@@ -47,8 +47,19 @@ export default defineConfig({
   use: {
     baseURL,
     headless: true,
-    // Trust the gateway's self-signed cert for every browser request.
+    // Trust the gateway's self-signed cert for the `request` fixture and the
+    // browser context.
     ignoreHTTPSErrors: true,
+    // ...and accept it in Chromium's network stack itself. `ignoreHTTPSErrors`
+    // alone overrides the certificate error per request, after the TLS
+    // connection has failed verification: the request is restarted with the
+    // certificate allowed. When the host's socket pool is full (a navigation
+    // away from a busy page), the restarted request is handed the next TLS
+    // connection another request started — which fails verification again —
+    // and after 32 such restarts Chromium gives up with
+    // ERR_TOO_MANY_RETRIES. A stylesheet lost that way left a page unstyled.
+    // With the switch, no connection reports a certificate error at all.
+    launchOptions: { args: ["--ignore-certificate-errors"] },
   },
   projects: [
     {
