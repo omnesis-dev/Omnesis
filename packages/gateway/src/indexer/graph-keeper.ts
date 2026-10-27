@@ -64,15 +64,20 @@ export function planGraphAdmission(opts: {
   dim: number;
   budget: MemoryBudget;
   headroom: number;
+  /** Whether the graph comes from a complete file rather than a (resumed) build. */
+  loading: boolean;
 }): { admitted: true } | { admitted: false; reason: string } {
-  const estimate = estimateHnswGraphBytes(opts.vectors, opts.dim);
+  const estimate = estimateHnswGraphBytes(opts.vectors, opts.dim, opts.loading ? "load" : "build");
   const reserve = graphAdmissionReserve(opts.budget);
   if (estimate + reserve <= opts.headroom) return { admitted: true };
+  const free =
+    opts.headroom > 0
+      ? `${formatMemory(opts.headroom)} of the ${describeMemoryBudget(opts.budget)} memory budget is free`
+      : `the gateway already uses all of its ${describeMemoryBudget(opts.budget)} memory budget`;
   return {
     admitted: false,
     reason:
-      `the HNSW graph needs about ${formatMemory(estimate)} and ${formatMemory(Math.max(0, opts.headroom))} ` +
-      `of the ${describeMemoryBudget(opts.budget)} memory budget is free, short of that plus the ` +
+      `the HNSW graph needs about ${formatMemory(estimate)} and ${free}, short of that plus the ` +
       `${formatMemory(reserve)} kept for the rest of the gateway`,
   };
 }

@@ -47,6 +47,7 @@ import {
   listPendingDocumentIndexPurges,
   completeDocumentIndexPurges,
   getChunkCount,
+  getUsearchBackfillCursor,
 } from "../indexer/db.js";
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
@@ -611,15 +612,16 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // bring it level with index.db (see GraphKeeper). A graph that does not
     // fit is left on disk untouched and search stays keyword-only.
     const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
+    const graphFileExisted = existsSync(init.usearchIndexPath);
     const admission = init.memoryBudget
       ? planGraphAdmission({
           vectors: getChunkCount(indexDb),
           dim: init.embedDim,
           budget: init.memoryBudget,
           headroom: memoryHeadroom(init.memoryBudget),
+          loading: graphFileExisted && getUsearchBackfillCursor(indexDb) === null,
         })
       : ({ admitted: true } as const);
-    const graphFileExisted = existsSync(init.usearchIndexPath);
     const usearchHandle = new UsearchWriteHandle(init.usearchIndexPath, init.embedDim, {
       detached: !admission.admitted,
     });

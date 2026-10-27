@@ -36,17 +36,54 @@ describe("planGraphAdmission", () => {
   const budget = { bytes: 4 * GIB, source: "cgroup" as const };
 
   it("admits a graph that fits with the reserve to spare", () => {
-    expect(planGraphAdmission({ vectors: 100_000, dim: 768, budget, headroom: 3 * GIB })).toEqual({
-      admitted: true,
-    });
+    expect(
+      planGraphAdmission({ vectors: 100_000, dim: 768, budget, headroom: 3 * GIB, loading: false }),
+    ).toEqual({ admitted: true });
   });
 
   it("refuses one that does not, naming the sizes and the budget's origin", () => {
-    const plan = planGraphAdmission({ vectors: 500_000, dim: 1024, budget, headroom: 2 * GIB });
+    const plan = planGraphAdmission({
+      vectors: 500_000,
+      dim: 1024,
+      budget,
+      headroom: 2 * GIB,
+      loading: false,
+    });
     expect(plan.admitted).toBe(false);
     expect(!plan.admitted && plan.reason).toMatch(
       /needs about 2\.8 GiB and 2\.0 GiB of the 4\.0 GiB \(container memory limit\) memory budget is free/,
     );
+  });
+
+  it("sizes a graph loaded from a complete file at its load cost, not its build cost", () => {
+    // 1.8 GiB to load plus the 819 MiB reserve fits in 3 GiB; the 2.3 GiB build does not.
+    const fits = { vectors: 400_000, dim: 1024, budget, headroom: 3 * GIB };
+    expect(planGraphAdmission({ ...fits, loading: true })).toEqual({ admitted: true });
+    expect(planGraphAdmission({ ...fits, loading: false }).admitted).toBe(false);
+  });
+
+  it("keeps a bounded reserve on a large host instead of a fifth of its memory", () => {
+    const large = { bytes: 128 * GIB, source: "host" as const };
+    expect(
+      planGraphAdmission({
+        vectors: 500_000,
+        dim: 1024,
+        budget: large,
+        headroom: 8 * GIB,
+        loading: false,
+      }),
+    ).toEqual({ admitted: true });
+  });
+
+  it("says so when the gateway already uses its whole budget", () => {
+    const plan = planGraphAdmission({
+      vectors: 1_000,
+      dim: 1024,
+      budget,
+      headroom: -100 * MIB,
+      loading: false,
+    });
+    expect(!plan.admitted && plan.reason).toMatch(/already uses all of its 4\.0 GiB/);
   });
 });
 

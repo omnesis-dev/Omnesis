@@ -40,6 +40,7 @@ const readText: ReadText = (path) => {
 };
 
 const MIB = 1024 * 1024;
+const GIB = 1024 * MIB;
 
 /** A cgroup v1 "unlimited" is a page-rounded LONG_MAX; anything this large is no limit. */
 const UNLIMITED_FLOOR = 2 ** 52;
@@ -103,43 +104,53 @@ function statusField(text: string | null, key: string): number | null {
  * How much more anonymous memory the process can take before it reaches its
  * budget or the host runs out, whichever comes first. Process-wide, so it
  * answers the same from any thread. The host term matters when the budget is
- * the host's own memory and other services share it: there `MemAvailable` is
- * the only signal that they are using it. Off Linux there is no anonymous
- * figure, so the whole resident set counts, and no reliable host figure.
+ * derived and other services share the host: there `MemAvailable` is the only
+ * signal that they are using it. A configured budget is the operator's word for
+ * what the gateway may use, so it is not second-guessed by the host figure. Off
+ * Linux there is no anonymous figure, so the whole resident set counts, and no
+ * reliable host figure.
  */
 export function memoryHeadroom(budget: MemoryBudget, read: ReadText = readText): number {
   const used = statusField(read("/proc/self/status"), "RssAnon") ?? process.memoryUsage().rss;
-  const available = statusField(read("/proc/meminfo"), "MemAvailable");
   const toBudget = budget.bytes - used;
+  if (budget.source === "config") return toBudget;
+  const available = statusField(read("/proc/meminfo"), "MemAvailable");
   return available === null ? toBudget : Math.min(toBudget, available);
 }
 
 /**
  * Anonymous memory a writable HNSW graph of `vectors` vectors at `dim`
- * float32 dimensions takes once built: the vectors, their links (connectivity
- * 16 adds about 200 bytes a vector), and what the allocator keeps from
- * building it — a graph built in this process measures about 1.35 times its
- * file, one loaded from a file about 1.05 times. Sized for the build.
+ * float32 dimensions takes: the vectors, their links (connectivity 16 adds
+ * about 200 bytes a vector), and what the allocator keeps. A graph built in
+ * this process measures about 1.35 times its file; one loaded from a complete
+ * file about 1.05 times.
  */
-export function estimateHnswGraphBytes(vectors: number, dim: number): number {
-  return Math.ceil(vectors * (dim * 4 + 256) * 1.4);
+export function estimateHnswGraphBytes(
+  vectors: number,
+  dim: number,
+  how: "build" | "load" = "build",
+): number {
+  return Math.ceil(vectors * (dim * 4 + 256) * (how === "load" ? 1.1 : 1.4));
 }
 
 /**
  * Memory the rest of the gateway may still grow into after the graph is
  * admitted — page caches filling, the keyword index, analytics queries. A
  * graph is admitted only if this much headroom remains with it in memory.
+ * A fifth of the budget, between 512 MiB and 4 GiB: what the rest grows into
+ * is bounded by its own caches, not by the size of the host.
  */
 export function graphAdmissionReserve(budget: MemoryBudget): number {
-  return Math.max(512 * MIB, Math.floor(budget.bytes * 0.2));
+  return Math.max(512 * MIB, Math.min(Math.floor(budget.bytes * 0.2), 4 * GIB));
 }
 
 /**
- * Headroom below which the graph is shed. Lower than the admission reserve,
- * so a graph admitted at boot is not shed by the next ordinary allocation.
+ * Headroom below which the graph is shed: a twentieth of the budget, between
+ * 256 MiB and 1 GiB. Below the admission reserve at every budget, so a graph
+ * admitted at boot is not shed by the next ordinary allocation.
  */
 export function graphShedFloor(budget: MemoryBudget): number {
-  return Math.max(256 * MIB, Math.floor(budget.bytes * 0.05));
+  return Math.max(256 * MIB, Math.min(Math.floor(budget.bytes * 0.05), GIB));
 }
 
 export function formatMemory(bytes: number): string {

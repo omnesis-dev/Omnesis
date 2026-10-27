@@ -269,9 +269,11 @@ export class SearchPipeline {
   setEmbedder(embedder: Embedder | undefined): void {
     this.embedder = embedder;
     log.info(
-      embedder
-        ? "Search pipeline: embedder attached, vector search enabled"
-        : "Search pipeline: embedder cleared, vector search degraded to BM25-only",
+      !embedder
+        ? "Search pipeline: embedder cleared, vector search degraded to BM25-only"
+        : this.vectorUnavailableReason
+          ? "Search pipeline: embedder attached, vector search stays off (semantic search degraded)"
+          : "Search pipeline: embedder attached, vector search enabled",
     );
   }
 

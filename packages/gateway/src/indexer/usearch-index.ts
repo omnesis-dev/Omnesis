@@ -494,7 +494,7 @@ export class UsearchWriteHandle {
     const resumedWith = resumeAfter === undefined ? 0 : currentSize;
     let added = 0;
     let nextProgressLog = 50_000;
-    const checkpointEvery = opts?.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_INTERVAL_MS;
+    let checkpointEvery = opts?.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_INTERVAL_MS;
     let lastCheckpointAt = Date.now();
     while (true) {
       const rows = stmt.all(lastRowid, PAGE_SIZE);
@@ -553,8 +553,12 @@ export class UsearchWriteHandle {
         return "stopped";
       }
       if (Date.now() - lastCheckpointAt >= checkpointEvery) {
+        // A checkpoint rewrites the whole graph on this thread, which also
+        // embeds queries; keep it to a tenth of the build's time at most.
+        const savingSince = Date.now();
         this.checkpoint(opts);
         lastCheckpointAt = Date.now();
+        checkpointEvery = Math.max(checkpointEvery, (lastCheckpointAt - savingSince) * 10);
       }
       // Cooperative callers yield here. Deletions that land after this page
       // remove its vectors synchronously; keyset pagination means deleting

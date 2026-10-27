@@ -113,11 +113,25 @@ describe("memoryHeadroom", () => {
     });
     expect(memoryHeadroom(budget, read)).toBe(GIB);
   });
+
+  it("takes a configured budget at its word, without the host figure", () => {
+    const read = files({
+      "/proc/self/status": `RssAnon:\t${2 * 1024 * 1024} kB\n`,
+      "/proc/meminfo": `MemAvailable:\t${1024 * 1024} kB\n`,
+    });
+    expect(memoryHeadroom({ bytes: 8 * GIB, source: "config" }, read)).toBe(6 * GIB);
+  });
 });
 
 describe("graph sizing", () => {
+  it("caps the reserve and the shed floor however large the host", () => {
+    const large = { bytes: 256 * GIB, source: "host" as const };
+    expect(graphAdmissionReserve(large)).toBe(4 * GIB);
+    expect(graphShedFloor(large)).toBe(GIB);
+  });
+
   it("sheds below the admission reserve, so an admitted graph is not shed at once", () => {
-    for (const bytes of [GIB, 4 * GIB, 64 * GIB]) {
+    for (const bytes of [GIB, 4 * GIB, 64 * GIB, 256 * GIB]) {
       const b = { bytes, source: "host" as const };
       expect(graphShedFloor(b)).toBeLessThan(graphAdmissionReserve(b));
     }
