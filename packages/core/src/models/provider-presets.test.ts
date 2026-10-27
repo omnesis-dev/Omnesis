@@ -105,6 +105,16 @@ describe("PROVIDER_PRESETS", () => {
     expect(openrouter?.capabilities).not.toContain("embed");
   });
 
+  it("Regolo AI uses its OpenAI-compatible host and Models.dev alias", () => {
+    expect(getPreset("regolo")).toEqual({
+      id: "regolo",
+      modelsDevId: "regolo-ai",
+      name: "Regolo AI",
+      defaultUrl: "https://api.regolo.ai",
+      capabilities: ["agent", "embed"],
+    });
+  });
+
   it("every preset id has a matching brand so its glyph resolves", () => {
     // A backend added from a preset keeps the preset id as its key, and
     // `httpProviderId` resolves the brand by that key. A preset without a

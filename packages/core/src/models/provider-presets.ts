@@ -120,6 +120,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     capabilities: ["agent"],
   },
   {
+    id: "regolo",
+    modelsDevId: "regolo-ai",
+    name: "Regolo AI",
+    defaultUrl: "https://api.regolo.ai",
+    capabilities: ["agent", "embed"],
+  },
+  {
     id: "openrouter",
     name: "OpenRouter",
     // Aggregator — one key routes to many upstream providers. The OpenAI

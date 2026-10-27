@@ -357,6 +357,7 @@ export class ModelsDevCatalog {
         "xai",
         "meta",
         "moonshot",
+        "regolo",
         "openrouter",
       ]) {
         const item = getPreset(id);
