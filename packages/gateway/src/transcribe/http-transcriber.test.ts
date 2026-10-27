@@ -6,10 +6,12 @@ import {
   HttpTranscriber,
   MAX_CHUNK_SAMPLES,
   encodeMultipart,
+  chunkSamples,
   encodeWav,
   parseTranscriptText,
   splitPcm,
 } from "./http-transcriber.js";
+import { PCM_SAMPLE_RATE } from "./audio-decode.js";
 import type { TranscriptionVocabulary } from "@omnesis/core";
 
 interface Captured {
@@ -222,6 +224,40 @@ describe("splitPcm", () => {
     expect(chunks[0]!.length).toBeGreaterThanOrEqual(silenceAt);
     expect(chunks[0]!.length).toBeLessThanOrEqual(silenceAt + 640);
     expect(chunks[0]!.length + chunks[1]!.length).toBe(pcm.length);
+  });
+});
+
+describe("splitPcm with a short window", () => {
+  test("splits a recording at the window, even one shorter than the quiet-moment search", () => {
+    const pcm = new Float32Array(PCM_SAMPLE_RATE * 12).fill(0.3);
+    const chunks = splitPcm(pcm, PCM_SAMPLE_RATE * 5);
+    expect(chunks).toHaveLength(3);
+    expect(chunks.reduce((n, c) => n + c.length, 0)).toBe(pcm.length);
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(chunk.length).toBeLessThanOrEqual(PCM_SAMPLE_RATE * 5);
+      expect(chunk.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("chunkSamples caps at the upload limit and defaults to it", () => {
+    expect(chunkSamples(undefined)).toBe(MAX_CHUNK_SAMPLES);
+    expect(chunkSamples(0)).toBe(MAX_CHUNK_SAMPLES);
+    expect(chunkSamples(60)).toBe(60 * PCM_SAMPLE_RATE);
+    expect(chunkSamples(5_000)).toBe(MAX_CHUNK_SAMPLES);
+  });
+
+  test("an HTTP transcriber with a window sends a recording in that many pieces", async () => {
+    const { requests, fetchFn } = backend();
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8011",
+      model: "qwen3-asr",
+      maxChunkSeconds: 60,
+      fetchFn,
+      decodeAudio: async () => new Float32Array(PCM_SAMPLE_RATE * 130).fill(0.2),
+    });
+    const result = await transcriber.transcribe(audio, "audio/ogg");
+    expect(requests).toHaveLength(3);
+    expect(result.text).toBe("hello there hello there hello there");
   });
 });
 
