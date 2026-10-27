@@ -1,0 +1,1990 @@
+{
+  "release": "v0.6.0",
+  "revision": "7b56bd0ee1bad5ad52cfc17a530ae5c734ff1f4e",
+  "schema": 188,
+  "tables": {
+    "access_audit_events": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "occurred_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "event_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "principal_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "grant_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "grant_revision", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "credential_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "oauth_client_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "actor_token_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "detail", "type": "TEXT", "notnull": 1, "default": "'{}'" }
+      ]
+    },
+    "access_grant_capabilities": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "grant_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "capability", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_mode", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_ids", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "release_mode", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "policy_family_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "access_grants": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "principal_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "level_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "access_level_capabilities": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "level_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "capability", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_mode", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_ids", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "release_mode", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "policy_family_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "access_levels": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "access_principals": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "agent_messages": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "harness", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "channel", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "chat_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "chat_name", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "chat_type", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "day", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "role", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "occurred_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "provenance", "type": "TEXT", "notnull": 1, "default": "'harness-pushed'" }
+      ]
+    },
+    "answer_approvals": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "candidate_digest", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "candidate_answer", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "candidate_citations_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "release_status", "type": "TEXT", "notnull": 1, "default": "'released'" },
+        { "name": "reductions_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "resolved_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "answer_audit_events": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "sequence", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "conversation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "event_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "display_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "payload_digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "payload_bytes", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "original_payload_bytes", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "payload_truncated", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_audit_payloads": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "event_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_json", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_completion_deliveries": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "integration_device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "native_conversation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "claim_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "claimed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "claim_expires_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "next_attempt_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "accepted_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "local_run_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_conversation_tombstones": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "deleted_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "egress_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_egress_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "release_digests_json", "type": "TEXT", "notnull": 1, "default": "'[]'" }
+      ]
+    },
+    "answer_conversations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "active_task_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_egress_events": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "conversation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "endpoint", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "http_status", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "response_digest", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_firing_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_egress_payloads": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "response_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "response_bytes", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_messages": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "conversation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "role", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "content", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_releases": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "task_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "answer", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "reductions_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "citations_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_request_tombstones": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_request_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "request_fingerprint", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "deleted_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_tasks": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "conversation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_request_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "request_fingerprint", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_firing_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "completion_device_id", "type": "TEXT", "notnull": 0, "default": null },
+        {
+          "name": "completion_native_conversation_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "default": null
+        },
+        { "name": "question", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "candidate_answer", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "candidate_digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "review_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "reductions_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "release_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "approval_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "denial_reason", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "resolved_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "answer_workflow_disclosure": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "workflow_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "released_turns", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "released_characters", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "answer_workflow_grants": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "approval_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "category", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "category_key", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subject", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "max_detail_level", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "answer_workflows": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "purpose", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'active'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "closed_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "brief_citations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "brief_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "position", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "brief_claims": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "brief_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_basis", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "confidence", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "verification_state", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "invalidated_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "brief_related_loops": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "brief_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "loop_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "briefs": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_by_run", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "title", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "description", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "body", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "confidence", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "urgency", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "relevant_until", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "next_show", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "event_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "user_feedback", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "state", "type": "TEXT", "notnull": 1, "default": "'unread'" },
+        { "name": "read_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "thread_conversation_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "canonicalization_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "key", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "value", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "catalog_table_stats": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "table_name", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "row_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "earliest_date", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_date", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_computed_at", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "cognition_consumption_edges": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "prior_store", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "prior_annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "dependent_kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "dependent_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "run_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "cognition_coverage": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_version", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "eligible", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "processed", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "skipped", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "prompt_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "completion_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_progress_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'live'" }
+      ]
+    },
+    "cognition_decisions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "run_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subject_document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "purpose", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "lane", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "rubric_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "content_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "requested_model_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "model_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "score", "type": "REAL", "notnull": 0, "default": null },
+        { "name": "threshold", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "verdict", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "reused_from", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "record_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "enforced", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "latency_ms", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "input_tokens", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "request_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "response_json", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "cognition_engine_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "key", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "value", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "cognition_notes": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "content", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "cognition_run_attribution": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "run_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_version", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "model_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "settled_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "cognition_runs": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_json", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "dedupe_key", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "failure_code", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "next_attempt_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "enqueued_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "cycle_anchor_at", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_attempt_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "completed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "usage_json", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "cognition_spend": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "day", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "mechanism", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "model_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "runs", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "prompt_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "completion_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cache_read_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cache_creation_tokens", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "cognition_spend_daily": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "day", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "runs", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "prompt_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "completion_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cache_read_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cache_creation_tokens", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "cognition_sweep_tally": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "sweep_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "runs", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "failed_runs", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "prompt_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "completion_tokens", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "briefs_created", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "briefs_held", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "loops_created", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "loops_touched", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "annotations_created", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "first_run_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "last_run_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "conversation_read_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "conversation_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "unread_since", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "date_mention_judgements": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "document_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "verdict", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "next_attempt_at", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "subject_document_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "content_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "rubric_version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "score", "type": "REAL", "notnull": 0, "default": null },
+        { "name": "judged_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "dev_annotations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "target_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "target_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "note", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "context_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "deep_link", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "client", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'open'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "resolved_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "resolved_note", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "device_doctor_runs": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "run_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "state", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "requested_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "started_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "deadline_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "completed_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "detail", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "report_json", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "device_pairings": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "pairing_code", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scopes", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "self_emails", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "self_phones", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "repair_device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "access_level_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "devices": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "capabilities", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "paired_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_seen_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "install_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "self_emails", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "self_phones", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "access_level_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "apns_device_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "apns_environment", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "apns_bundle_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "apns_token_updated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "fcm_registration_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "fcm_token_updated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "push_transport", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "relay_url", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "relay_credential", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "relay_consent_app_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "relay_consented_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "notification_delivery_health", "type": "TEXT", "notnull": 0, "default": null },
+        {
+          "name": "notification_delivery_health_updated_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null
+        },
+        { "name": "version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "version_seen_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "protocol_version", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "desired_version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "update_state", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "update_detail", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "update_state_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "direct_audit_events": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "sequence", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "session_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "tool", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "outcome", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "request_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "display_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "payload_digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "payload_bytes", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "original_payload_bytes", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "payload_truncated", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "direct_audit_payloads": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "event_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_json", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "direct_audit_sessions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "principal_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "credential_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "grant_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "explicit_key", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "heuristic_key", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_event_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "event_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "bytes_total", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "doc_annotation_evidence": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "position", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "evidence_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "broken_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "doc_annotations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "confidence", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "claim_basis", "type": "TEXT", "notnull": 1, "default": "'quoted'" },
+        { "name": "llm_derived", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "created_by_run", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "invalidated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "verification_state", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_verified_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "superseded_by", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "document_absence_observations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "observation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "document_absence_scopes": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "document_absences": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "document_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "first_absent_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_absent_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "observations", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "observed_by", "type": "TEXT", "notnull": 1, "default": "''" }
+      ]
+    },
+    "document_extracted_dates": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "resolved_start", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "resolved_end", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "mod", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "relative", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "matched_text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "timex", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "char_start", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "char_end", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "mention_start_day", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "mention_end_day", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "mention_deadline", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "thread_key", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "document_links": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "source_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "link_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "raw_target", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "normalized_target", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "target_doc_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "resolved_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "metadata_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "provenance_kind", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "provenance_origin", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "provenance_version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "declared_at", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "document_people": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "person_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "role", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "document_temporal_projection_sources": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "slots_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "last_materialized_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_sync_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "document_temporal_projections": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "slot", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "start_ms", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "end_exclusive_ms", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "start_canonical", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "end_canonical", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "precision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "all_day", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "time_zone", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "label", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "modality", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_updated_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "projected_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "documents": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "title", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "content", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "content_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "extracted_content_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "metadata", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "source_created_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_updated_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "ingested_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_url", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "people_resolved_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "links_extracted_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "dates_extracted_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "dates_truncated", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "bootstrap_processed_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "bootstrap_failed_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "partition_key", "type": "TEXT", "notnull": 1, "default": "''" }
+      ]
+    },
+    "link_reconcile_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": "1" },
+        { "name": "cursor", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "url_cycle_max_id", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cycle_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_wrapped_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "ownership_link_cursor", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "ownership_link_max_id", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "ownership_document_cursor", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "ownership_document_max_rowid", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "link_stats": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": "1" },
+        { "name": "total_links", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "resolved_links", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "by_type_json", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "last_computed_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "link_stats_counters": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "link_type", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "total", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "resolved", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "merge_candidates": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "side_a_alias_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_a_alias", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_b_alias_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_b_alias", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "score", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "detection_kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "matched_tokens", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "match_strength", "type": "REAL", "notnull": 0, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "detected_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "decided_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "rule_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "adjudicated_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "adjudication_verdict", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "adjudication_reason", "type": "TEXT", "notnull": 0, "default": null },
+        {
+          "name": "adjudication_evidence_fingerprint",
+          "type": "TEXT",
+          "notnull": 0,
+          "default": null
+        },
+        { "name": "adjudication_count", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "merge_rules": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_a_alias_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_a_alias", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_b_alias_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "side_b_alias", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "winner_side", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "reason", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_by", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "active", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "deactivated_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "group_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "mobile_permission_health": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "checked_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "received_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "valid_until", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "validity_anchored", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "aggregate_state", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "capabilities_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "episode_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "episode_reason", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "episode_driver_ids_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "episode_started_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "last_notified_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "notify_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "reservation_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "reserved_until", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "mutable_list_revisions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "scope", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "near_dup_df": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "algo_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "shingle", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "df", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "near_dup_df_meta": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "algo_version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "total_docs", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "unique_shingles", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "built_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "sweep_watermark", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "live_generation", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "near_dup_edges": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "doc_a", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "doc_b", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "algo_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "jaccard", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "pair_unique_df2", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "pair_unique_df5", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "containment_min", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "gate_family", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "computed_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "near_dup_inbox": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "enqueued_reason", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "enqueued_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "near_dup_lsh_buckets": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "algo_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "band_idx", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "bucket_hash", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "near_dup_signatures": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "algo_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "signature", "type": "BLOB", "notnull": 1, "default": null },
+        { "name": "shingle_count", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "computed_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "non_identifying_emails": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "email", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "reason", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "name_count", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "detected_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "note_entries": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "day", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "captured_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "surface", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latitude", "type": "REAL", "notnull": 0, "default": null },
+        { "name": "longitude", "type": "REAL", "notnull": 0, "default": null },
+        { "name": "place_name", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "captured_time_zone_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "captured_utc_offset_seconds", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "received_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "capture_context", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "transcribed_at", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "notification_deliveries": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "notification_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "state", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "lease_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "leased_until", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "claimed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "delivered_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "wake_state", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "wake_attempt_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "wake_lease_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "wake_leased_until", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "wake_next_attempt_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "wake_last_attempt_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "wake_last_success_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "wake_last_error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "wake_last_transport", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "notifications": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "target_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "route_data", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "title", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "body", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "collapse_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "oauth_access_tokens": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "credential_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "token_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "audience", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scope", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "grant_revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "oauth_authorization_requests": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "browser_handle_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "user_code", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_uri", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "redirect_uri", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "state", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "code_challenge", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "resource", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scope", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "selection_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "execution_device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "decision_token_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "decision_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "authorization_code_hash", "type": "TEXT", "notnull": 0, "default": null },
+        {
+          "name": "authorization_code_expires_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null
+        },
+        {
+          "name": "authorization_code_issued_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null
+        },
+        {
+          "name": "authorization_code_consumed_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null
+        },
+        { "name": "credential_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_grant_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_principal_id", "type": "TEXT", "notnull": 0, "default": null },
+        {
+          "name": "access_notification_reserved_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null
+        },
+        { "name": "access_notification_sent_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "created_level_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "oauth_clients": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "client_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "client_name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "redirect_uris", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "grant_types", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "response_types", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "token_endpoint_auth_method", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_secret_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "client_uri", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "jwks_uri", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "token_endpoint_auth_signing_alg", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "oauth_execution_bindings": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "binding_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "oauth_client_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "harness", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "used_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "oauth_refresh_tokens": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "credential_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "family_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "token_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "audience", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scope", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "used_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "replacement_ciphertext", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "retry_until", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "open_loop_docs": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "loop_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "doc_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "open_loop_ledger": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "seq", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "loop_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "run_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "note", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "open_loop_people": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "loop_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "person_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "role", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "open_loops": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_by_run", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "state", "type": "TEXT", "notnull": 1, "default": "'open'" },
+        { "name": "confidence", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "importance", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "title", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "description", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "deadline_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "actors_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "involved_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "blocked_by_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_update", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_decay_check", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "decay_check_count", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "pairing_redemption_receipts": {
+      "recreatedOnOpen": false,
+      "columns": [
+        { "name": "idempotency_key_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "pairing_code_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "request_fingerprint", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "sealed_response", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "pending_edges": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "source_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "link_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "target_source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "target_external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "provenance_origin", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "provenance_version", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "metadata_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "declared_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "last_attempt_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "attempt_count", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "pending_source_page_observations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "page_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "ordinal", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "matured_keys", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "pending_source_pages": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "cursor_row", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "prepared_by", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "page_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "cursor_committed", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "people": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "canonical_name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "merged_into", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "source", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "is_self", "type": "BOOLEAN", "notnull": 0, "default": "FALSE" },
+        { "name": "first_seen", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "last_seen", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "doc_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "alias_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "inbound_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "outbound_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "inbound_score", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "outbound_score", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "interaction_score", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "inbound_score_recent", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "outbound_score_recent", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "interaction_score_recent", "type": "REAL", "notnull": 1, "default": "0" },
+        { "name": "interaction_scores_at", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "person_alias_assertions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "alias_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "first_seen", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "last_seen", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "person_aliases": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "person_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "alias", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "alias_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "occurrence_count", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "is_primary", "type": "INTEGER", "notnull": 1, "default": "1" }
+      ]
+    },
+    "person_annotation_evidence": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "position", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "evidence_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "broken_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "person_annotations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "person_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "claim_text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_doc_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "evidence_quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "confidence", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "claim_basis", "type": "TEXT", "notnull": 1, "default": "'quoted'" },
+        { "name": "llm_derived", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "created_by_run", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "invalidated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "verification_state", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_verified_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "superseded_by", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "person_equivalences": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "from_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "to_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "applied_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "principal_credentials": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "grant_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "oauth_client_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'active'" },
+        { "name": "label", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_secret_hash", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "execution_device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_used_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "approved_audience", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "approved_scope", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "privacy_policy_families": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "name", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "name_key", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "archived_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "privacy_policy_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "family_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "digest", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "previous_digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "mirror_synced", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "privacy_policy_versions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "generation", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "family_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "family_version", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "digest", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "policy", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "action", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "origin_revision", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "origin_template_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "reauth_reminders": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "principal", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "first_needed_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_notified_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "notify_count", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "reservation_token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "reserved_until", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "refresh_meta": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "job", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "dirty_version", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_computed_version", "type": "INTEGER", "notnull": 1, "default": "-1" },
+        { "name": "last_computed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "needs_refresh", "type": "INTEGER", "notnull": 1, "default": "1" }
+      ]
+    },
+    "removed_documents": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "removed_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "original_document_id", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "removed_sources": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "removed_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "cleanup_done_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "replica_deletion_claims": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "namespace", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "external_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "role", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "omissions", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "first_omitted_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "last_omitted_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "retired_loops": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "title", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "title_norm", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "description", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "actors_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "involved_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "outcome", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "importance", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "deadline_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "retired_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "cadence_days", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "recurrence_count", "type": "INTEGER", "notnull": 1, "default": "1" }
+      ]
+    },
+    "schema_migrations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "version", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "description", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "run_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "duration_ms", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "sessions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "session_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "token_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scopes", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_active_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "snapshot_absence_cascade_outbox": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "document_ids", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "index_done", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "cognition_done", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "snapshot_absence_deletions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "deleted_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "provider_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "external_ids", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_count", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "source_devices": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "added_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "config_override", "type": "TEXT", "notnull": 1, "default": "'{}'" }
+      ]
+    },
+    "source_document_profiles": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_type", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "profile_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "published_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "source_family_meta": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_type", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "icon", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "label", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "bg_color", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "accent_color", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "updated_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "source_member_config_contracts": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "param_names", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "source_mode_transition_publications": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "completed_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "source_mode_transitions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "from_mode", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "to_mode", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "prepared_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "source_stats": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "doc_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "data_size_bytes", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "total_units", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "earliest_source_date", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_source_date", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "needs_refresh", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "last_computed_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "dirty_version", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "latest_doc_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_title", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_source_created_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_ingested_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_updated_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "latest_source_updated_at", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "source_stream_cleanups": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "queued_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "completed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "source_sync_issues": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "issues_json", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "source_watermarks": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "stream_id", "type": "TEXT", "notnull": 1, "default": "'default'" },
+        { "name": "guarantee", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "semantic_time_through", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "observed_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "upstream_cut_digest", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "detail", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "generation", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "committed_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "source_wipe_epoch": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "epoch", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "source_wire_contracts": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "minimum_version", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "sources": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "account_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "account", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "config", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "enabled", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "multi_device_mode", "type": "TEXT", "notnull": 1, "default": "'exclusive'" },
+        { "name": "replica_version_policy", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_approvals": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "resolved_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "resolved_by_device_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "resolved_by_token_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "privacy_review_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "disclosure_categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" }
+      ]
+    },
+    "subscription_audit_events": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "sequence", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "firing_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "event_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "display_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "payload_json", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_deliveries": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "firing_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "integration_device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "claim_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "claimed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "claim_expires_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "next_attempt_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "accepted_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "local_run_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_firing_answer_authorities": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "token_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "delivery_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "firing_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "first_used_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "last_used_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "use_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "consumed_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "subscription_firing_evidence": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "firing_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_firing_outcome_authorities": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "token_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "delivery_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "firing_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "subscription_firing_outcomes": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "firing_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "delivery_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "report", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "runs", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "first_reported_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "reported_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_firings": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "index_event_key", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending'" },
+        { "name": "evidence_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "evidence_count", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "observation_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "fired_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscription_grants": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "integration_device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "approval_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "push_detail", "type": "TEXT", "notnull": 1, "default": "'existence'" },
+        { "name": "categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "disclosure_categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "subscription_revisions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "subscription_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "condition_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "reaction_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "interpretation_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "grounding_json", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "compile_run_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "compiled_plan_json", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "compiler_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "privacy_categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "policy_revision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "subscription_workflow_disclosure": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "workflow_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "existence_signals", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "categories_json", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    },
+    "subscriptions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "integration_device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "owner_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "workflow_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "client_request_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "request_fingerprint", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "current_revision", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "status", "type": "TEXT", "notnull": 1, "default": "'pending_approval'" },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "revoked_reason", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "sync_state": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "source_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": "''" },
+        { "name": "cursor", "type": "TEXT", "notnull": 1, "default": "'{}'" },
+        { "name": "last_synced_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "icon", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "label", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "url_patterns", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_error", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "errored_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_error_remediation", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "bg_color", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "accent_color", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "content_retention", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "consent_expires_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "last_document_at", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "minimum_gateway_version", "type": "INTEGER", "notnull": 1, "default": "0" }
+      ]
+    },
+    "temporal_annotation_documents": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "temporal_annotation_evidence": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "position", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "quote", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "broken_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "temporal_annotation_loops": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "loop_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "temporal_annotation_people": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "person_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "temporal_annotation_projections": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "annotation_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "projection_id", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "temporal_annotations": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "interval_start_ms", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "interval_end_ms", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "precision", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "canonical", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "sentence", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "kind", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_by_run", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "updated_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "revision", "type": "INTEGER", "notnull": 1, "default": "1" },
+        { "name": "invalidated_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "invalidation_cause", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "refile_presented_run", "type": "TEXT", "notnull": 0, "default": null }
+      ]
+    },
+    "token_identity_labels": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "token", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "label", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "domain_spread", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "classified_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "tokens": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "device_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "token_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "scopes", "type": "TEXT", "notnull": 1, "default": "'[]'" },
+        { "name": "name", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "created_at", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "last_used_at", "type": "INTEGER", "notnull": 0, "default": null },
+        { "name": "expires_at", "type": "INTEGER", "notnull": 0, "default": null }
+      ]
+    },
+    "voice_note_transcriptions": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "note_id", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "audio", "type": "BLOB", "notnull": 1, "default": null },
+        { "name": "mime_type", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "language", "type": "TEXT", "notnull": 0, "default": null },
+        { "name": "saved_text", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "placeholder", "type": "INTEGER", "notnull": 1, "default": null },
+        { "name": "attempts", "type": "INTEGER", "notnull": 1, "default": "0" },
+        { "name": "next_attempt_at", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "created_at", "type": "TEXT", "notnull": 1, "default": null }
+      ]
+    },
+    "worth_answers": {
+      "recreatedOnOpen": true,
+      "columns": [
+        { "name": "subject_document_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "content_hash", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "rubric_version", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "requested_model_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "model_id", "type": "TEXT", "notnull": 1, "default": null },
+        { "name": "score", "type": "REAL", "notnull": 1, "default": null },
+        { "name": "answered_at", "type": "INTEGER", "notnull": 1, "default": null }
+      ]
+    }
+  }
+}

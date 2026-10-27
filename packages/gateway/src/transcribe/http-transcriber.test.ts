@@ -11,7 +11,8 @@ import {
 import { MAX_CHUNK_SAMPLES, chunkSamples, splitPcm } from "./chunks.js";
 import { computeTranscriptionTimeoutMs } from "./deadline.js";
 import { PCM_SAMPLE_RATE } from "./audio-decode.js";
-import type { TranscriptionVocabulary } from "@omnesis/core";
+import { TranscribeService } from "./transcribe-service.js";
+import type { ResolvedAssignment, TranscriptionVocabulary } from "@omnesis/core";
 
 interface Captured {
   url: string;
@@ -79,6 +80,16 @@ const vocabulary: TranscriptionVocabulary = {
     { text: "Northstar", score: 0.9 },
     { text: "QX", score: 0.8 },
   ],
+};
+
+const httpAssignment: ResolvedAssignment = {
+  role: "transcriber",
+  kind: "http",
+  backendKey: "whisper-gpu",
+  model: "whisper-large-v3-turbo",
+  url: "http://127.0.0.1:8003",
+  allowRemoteInference: false,
+  available: true,
 };
 
 describe("HttpTranscriber", () => {
@@ -296,6 +307,30 @@ describe("HttpTranscriber", () => {
     await expect(pending).rejects.toThrow("caller left");
     expect(signals).toHaveLength(2);
   });
+
+  test("a hung backend's deadline frees the transcription queue for the next clip", async () => {
+    const deadlines = heldDeadlines();
+    const hung = hangsAfter(0);
+    let calls = 0;
+    const service = new TranscribeService({
+      resolveAssignment: () => httpAssignment,
+      deps: {
+        decodeAudio: oneSecond,
+        fetchFn: ((input: string | URL | Request, init?: RequestInit) =>
+          ++calls === 1
+            ? hung.fetchFn(input, init)
+            : Promise.resolve(Response.json({ text: "second clip" }))) as typeof fetch,
+      },
+    });
+    const first = service.transcribe(audio, "audio/ogg");
+    const second = service.transcribe(audio, "audio/ogg");
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 10_000 });
+    expect(deadlines).toHaveLength(1);
+    deadlines[0]!.expire();
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toMatchObject({ text: "second clip" });
+    expect(calls).toBe(2);
+  }, 20_000);
 });
 
 describe("splitPcm with a short window", () => {

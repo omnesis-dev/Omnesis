@@ -126,7 +126,7 @@ const end = (events: AgentEvent[]) =>
     stopReason: string;
     usage?: Record<string, number>;
     context: Record<string, unknown>;
-    failure?: { code: string; backend: string; model: string; retryable: boolean };
+    failure?: { code: string; message: string; backend: string; model: string; retryable: boolean };
   };
 
 describe("Claude Code session lockdown", () => {
@@ -529,6 +529,44 @@ describe("Claude Code runtime against a scripted CLI", () => {
       expect(end(events).failure?.code).toBe("claude_code_native_tool_unavailable");
     },
   );
+
+  it("passes over the frames a newer CLI adds around a text turn", async () => {
+    const { runtime } = setup({ OMNESIS_FAKE_CLAUDE_NEWER_CLI: "1" });
+    const events = await collect(
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input()),
+    );
+    expect(end(events).failure?.message).toBeUndefined();
+    expect(end(events).stopReason).toBe("end_turn");
+    expect(text(events)).toBe("Working… Echo: Find the synthetic budget review.");
+  });
+
+  it("passes over the frames a newer CLI adds around an Omnesis tool call", async () => {
+    const { runtime } = setup({
+      OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
+      OMNESIS_FAKE_CLAUDE_NEWER_CLI: "1",
+      OMNESIS_FAKE_CLAUDE_TOOL_ARGS: JSON.stringify({ query: "budget" }),
+    });
+    const outcome: ToolResult = {
+      kind: "error",
+      code: "synthetic",
+      message: "three synthetic hits",
+    };
+    const calls: unknown[] = [];
+    const search = tool("search", (args) => {
+      calls.push(args);
+      return outcome;
+    });
+    const events = await collect(
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [search] })),
+    );
+    expect(end(events).failure?.message).toBeUndefined();
+    expect(end(events).stopReason).toBe("end_turn");
+    expect(calls).toEqual([{ query: "budget" }]);
+    expect(events.filter((e) => e.type === "agent.tool.result").map((e) => e.payload)).toEqual([
+      expect.objectContaining({ toolCallId: "toolu_fake_1", result: outcome }),
+    ]);
+    expect(text(events)).toBe(`Tool said: ${JSON.stringify(outcome)} (error)`);
+  });
 
   it("accepts a plugin built into the CLI that adds no tools", async () => {
     const { runtime } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "builtin-plugin" });

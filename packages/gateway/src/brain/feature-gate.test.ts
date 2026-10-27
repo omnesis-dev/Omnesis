@@ -839,6 +839,30 @@ describe("GET /status advertises the brain gate", () => {
     // Apps that predate the Morning brief read `briefs`; it always reads off.
     expect((await statusBody(app)).briefs).toMatchObject({ visible: false, active: false });
   });
+
+  it("never offers Briefs to a 0.6.0 app, whatever the gate's state", async () => {
+    // 0.6.0 apps open their Briefs screen from these three fields, and the
+    // `/briefs` routes that screen calls are gone.
+    const states = [
+      { name: "nothing wired", experimental: false, resolver: undefined },
+      { name: "model only", experimental: false, resolver: assignedResolver },
+      { name: "experimental without model", experimental: true, resolver: unassignedResolver },
+      { name: "experimental with model", experimental: true, resolver: assignedResolver },
+    ];
+    for (const { name, experimental, resolver } of states) {
+      if (experimental) process.env.OMNESIS_EXPERIMENTAL = "1";
+      else delete process.env.OMNESIS_EXPERIMENTAL;
+      const app = createServer(db, undefined, {
+        ...sourceRuntimeHooks(),
+        ...(resolver && { getBriefsStatus: () => briefsFeatureStatus(resolver, READY_DEPS) }),
+      });
+      expect((await statusBody(app)).briefs, name).toMatchObject({
+        enabled: false,
+        visible: false,
+        active: false,
+      });
+    }
+  });
 });
 
 describe("maintenanceContextBudget", () => {

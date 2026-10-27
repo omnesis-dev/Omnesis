@@ -400,26 +400,52 @@ describe("every contract route is mounted on the gateway app", () => {
   });
 });
 
+/** The credential the extension sends to a contract route, or none for a public route. */
+function credentialFor(route: ContractRoute): string | null {
+  const recipe = recipeFor(route);
+  if (!route.authenticated) return null;
+  if (recipe.editCredential) return editToken;
+  if (recipe.notesCredential) return notesToken;
+  if (recipe.findCredential) return findToken;
+  return browserToken;
+}
+
 describe("a well-formed request is served", () => {
   test.each(contract.gatewayRoutes)("$method $path", async (route) => {
     const recipe = recipeFor(route);
     const { path, init } = await recipe.build();
-    const res = await call(
-      path,
-      route.authenticated
-        ? recipe.editCredential
-          ? editToken
-          : recipe.notesCredential
-            ? notesToken
-            : recipe.findCredential
-              ? findToken
-              : browserToken
-        : null,
-      init,
-    );
+    const res = await call(path, credentialFor(route), init);
     expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
       recipe.expected,
     );
+  });
+});
+
+describe("a field from a newer extension does not change the answer", () => {
+  // A store build ships ahead of the gateways it talks to; an optional field
+  // it adds must not turn a served request into a 400.
+  const withBody = contract.gatewayRoutes.filter((r) => !["GET", "DELETE"].includes(r.method));
+
+  test.each(withBody)("$method $path ignores an unknown body field", async (route) => {
+    const recipe = recipeFor(route);
+    const { path, init } = await recipe.build();
+    const body: unknown = JSON.parse(String(init.body));
+    expect(body, `${keyOf(route)} sends a JSON object`).toBeTypeOf("object");
+    const res = await call(path, credentialFor(route), {
+      ...init,
+      body: JSON.stringify({ ...(body as object), fieldFromANewerExtension: true }),
+    });
+    expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
+      recipe.expected,
+    );
+  });
+
+  test("GET /browser/notes/edit ignores an unknown query parameter", async () => {
+    const res = await call(
+      "/browser/notes/edit?url=https%3A%2F%2Fexample.org%2Farticle&fieldFromANewerExtension=1",
+      findToken,
+    );
+    expect(res.status, await res.text()).toBe(200);
   });
 });
 

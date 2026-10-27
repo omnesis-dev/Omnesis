@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   createIndexDatabase,
+  deleteChunksByDocument,
   EMBEDDING_DIM,
   openIndexDb,
   setIndexedDocument,
@@ -494,6 +495,63 @@ describe("search worker — real thread parity", () => {
     expect(viaMemory.results.map((r) => r.documentId)).toEqual(
       viaFts.results.map((r) => r.documentId),
     );
+  });
+
+  test("a worker's ranker follows chunks written after the shared index was built", async () => {
+    const index = LexicalIndex.build(inProcDb, { shared: true });
+    const writer = openIndexDb(dbPath);
+    try {
+      upsertChunks(writer, [
+        {
+          id: "chunk-4",
+          documentId: "doc-memo-1",
+          chunkIndex: 0,
+          content: "Quokka budget forecast for the next quarter",
+          embedding: dummyEmbedding,
+          sourceId: "apple-notes:local",
+          documentType: "note",
+          title: "Quokka forecast",
+          sourceCreatedAt: "2026-03-12T08:00:00Z",
+        },
+        {
+          id: "chunk-2",
+          documentId: "doc-note-1",
+          chunkIndex: 0,
+          content: "Personal notes on the marathon training plan",
+          embedding: dummyEmbedding,
+          sourceId: "apple-notes:local",
+          documentType: "note",
+          title: "Marathon plan",
+          sourceCreatedAt: "2026-01-20T08:00:00Z",
+        },
+      ]);
+      setIndexedDocument(writer, "doc-memo-1", "hash-d", 1);
+      deleteChunksByDocument(writer, "doc-chat-1");
+    } finally {
+      writer.close();
+    }
+    pool.setLexicalIndex(index.data);
+    const inline = {
+      indexDb: inProcDb,
+      usearchRead: new UsearchReadRegistry(inProcDb, configDir),
+    };
+
+    // One word per query: the common-token filter leaves single words alone.
+    for (const [bm25Text, expected] of [
+      ["budget", ["doc-email-1", "doc-memo-1"]],
+      ["quokka", ["doc-memo-1"]],
+      ["marathon", ["doc-note-1"]],
+    ] as const) {
+      const req = { ...noEmbedderRequest(), bm25Text };
+      const viaMemory = await pool.candidateGen(req);
+      const viaFts = runCandidateGen(inline, req);
+      expect(viaMemory.stageReports.bm25?.engine).toBe("memory");
+      expect(viaFts.stageReports.bm25?.engine).toBe("fts5");
+      expect(viaMemory.results.map((r) => r.documentId)).toEqual(
+        viaFts.results.map((r) => r.documentId),
+      );
+      expect(viaMemory.results.map((r) => r.documentId).sort()).toEqual(expected);
+    }
   });
 
   test("saturation gate on the real pool exposes a truthful inflight count", async () => {

@@ -41,6 +41,11 @@
  *   OMNESIS_FAKE_CLAUDE_RESULT_TEXT text of the `text` scenario's result (its
  *                                  `errors` for an error subtype) and of its
  *                                  API error message
+ *   OMNESIS_FAKE_CLAUDE_NEWER_CLI  "1" wraps the `text` and `tool` scenarios in
+ *                                  what a newer CLI adds: rate-limit, retry,
+ *                                  compaction and status frames, an unknown
+ *                                  top-level event, and the partial-message
+ *                                  frames around each streamed block
  *   OMNESIS_FAKE_CLAUDE_RECORD     file that receives one JSON line per run:
  *                                  argv, the environment keys, and the frames
  *                                  Omnesis sent; `<file>.frames` gets each
@@ -120,12 +125,68 @@ function mcp(method, params) {
   return new Promise((resolve) => pending.set(requestId, resolve));
 }
 
-const textDelta = (text) =>
+const streamEvent = (event) => send({ type: "stream_event", event, session_id: sessionId });
+const textDelta = (text, index = 0) =>
+  streamEvent({ type: "content_block_delta", index, delta: { type: "text_delta", text } });
+
+const newerCli = env.OMNESIS_FAKE_CLAUDE_NEWER_CLI === "1";
+
+/** Frames a newer CLI sends between messages that carry nothing for the host. */
+function newerCliStatus() {
+  if (!newerCli) return;
   send({
-    type: "stream_event",
-    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+    type: "rate_limit_event",
+    rate_limit_info: { status: "allowed", rateLimitType: "five_hour", resetsAt: 1_900_000_000 },
+    uuid: randomUUID(),
     session_id: sessionId,
   });
+  send({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 500,
+    error_status: 529,
+    error: "overloaded",
+    session_id: sessionId,
+  });
+  send({ type: "system", subtype: "status", status: "compacting", session_id: sessionId });
+  send({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto", pre_tokens: 12_000 },
+    session_id: sessionId,
+  });
+  send({ type: "system", subtype: "status", status: null, session_id: sessionId });
+  send({ type: "future_event", session_id: sessionId });
+}
+
+/** Partial-message frames opening a streamed message whose first block is `block`. */
+function openMessage(block, index = 0) {
+  if (!newerCli) return;
+  streamEvent({
+    type: "message_start",
+    message: {
+      id: `msg_stream_${randomUUID()}`,
+      role: "assistant",
+      model: "claude-fake",
+      content: [],
+    },
+  });
+  streamEvent({ type: "content_block_start", index, content_block: block });
+}
+
+/** Partial-message frames closing block `index` and its message. */
+function closeMessage(index, stopReason) {
+  if (!newerCli) return;
+  streamEvent({ type: "content_block_stop", index });
+  streamEvent({
+    type: "message_delta",
+    delta: { stop_reason: stopReason, stop_sequence: null },
+    usage: { output_tokens: 30 },
+  });
+  streamEvent({ type: "message_stop" });
+}
 
 let assistantMessages = 0;
 const assistant = (content, extra = {}) =>
@@ -338,12 +399,28 @@ async function runTurn() {
   if (scenario === "tool" && tools.length > 0) {
     const first = tools.find((tool) => tool.name === env.OMNESIS_FAKE_CLAUDE_TOOL) ?? tools[0];
     const toolUseId = "toolu_fake_1";
+    const toolArgs = env.OMNESIS_FAKE_CLAUDE_TOOL_ARGS ?? "{}";
+    newerCliStatus();
+    openMessage({
+      type: "tool_use",
+      id: toolUseId,
+      name: `mcp__omnesis__${first.name}`,
+      input: {},
+    });
+    if (newerCli) {
+      streamEvent({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: toolArgs },
+      });
+    }
+    closeMessage(0, "tool_use");
     assistant([
       {
         type: "tool_use",
         id: toolUseId,
         name: `mcp__omnesis__${first.name}`,
-        input: JSON.parse(env.OMNESIS_FAKE_CLAUDE_TOOL_ARGS ?? "{}"),
+        input: JSON.parse(toolArgs),
       },
     ]);
     if (env.OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS) {
@@ -368,7 +445,10 @@ async function runTurn() {
     });
     const text = called.result?.content?.[0]?.text ?? "";
     const answer = `Tool said: ${text}${called.result?.isError ? " (error)" : ""}`;
+    newerCliStatus();
+    openMessage({ type: "text", text: "" });
     textDelta(answer);
+    closeMessage(0, "end_turn");
     assistant([{ type: "text", text: answer }]);
     result({ result: answer });
     return;
@@ -381,8 +461,25 @@ async function runTurn() {
   if (env.OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR) {
     apiErrorMessage(env.OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR);
   }
-  textDelta("Working… ");
-  textDelta(answer);
+  newerCliStatus();
+  openMessage({ type: "thinking", thinking: "", signature: "" });
+  if (newerCli) {
+    streamEvent({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "signature_delta", signature: "c2lnbmF0dXJl" },
+    });
+    streamEvent({ type: "content_block_stop", index: 0 });
+    streamEvent({
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "text", text: "" },
+    });
+  }
+  const textIndex = newerCli ? 1 : 0;
+  textDelta("Working… ", textIndex);
+  textDelta(answer, textIndex);
+  closeMessage(textIndex, "end_turn");
   assistant([{ type: "text", text: `Working… ${answer}` }]);
   if (env.OMNESIS_FAKE_CLAUDE_API_ERROR) apiErrorMessage(env.OMNESIS_FAKE_CLAUDE_API_ERROR);
   const subtype = env.OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE ?? "success";
