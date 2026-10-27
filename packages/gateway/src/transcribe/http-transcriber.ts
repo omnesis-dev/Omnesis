@@ -56,6 +56,12 @@ export interface HttpTranscriberOptions {
   fetchFn?: typeof fetch;
   /** Injectable audio decoder (tests). */
   decodeAudio?: AudioDecoder;
+  /**
+   * Longest stretch of audio per request, in seconds. Defaults to ten
+   * minutes, the upload limit; a speech model that takes about a minute at a
+   * time (Qwen3-ASR behind llama-server or Ollama) is given one.
+   */
+  maxChunkSeconds?: number;
 }
 
 interface TranscriptionResponse {
@@ -73,6 +79,7 @@ export class HttpTranscriber implements TranscribeCapability {
   private readonly allowRemoteInference: boolean;
   private readonly fetchFn: typeof fetch;
   private readonly decodeAudio: AudioDecoder;
+  private readonly maxChunkSamples: number;
 
   constructor(opts: HttpTranscriberOptions) {
     this.endpoint = `${opts.url.replace(/\/+$/, "")}${normalizeApiPathPrefix(opts.apiPathPrefix)}/audio/transcriptions`;
@@ -83,6 +90,7 @@ export class HttpTranscriber implements TranscribeCapability {
     this.allowRemoteInference = opts.allowRemoteInference === true;
     this.fetchFn = opts.fetchFn ?? fetchAllowingSlowResponse;
     this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
+    this.maxChunkSamples = chunkSamples(opts.maxChunkSeconds);
   }
 
   async transcribe(
@@ -113,7 +121,7 @@ export class HttpTranscriber implements TranscribeCapability {
     const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     const texts: string[] = [];
     let language: string | undefined;
-    for (const chunk of splitPcm(pcm)) {
+    for (const chunk of splitPcm(pcm, this.maxChunkSamples)) {
       const part = await this.transcribeChunk(chunk, fields, signal);
       if (part.text) texts.push(part.text);
       language ??= part.language;
@@ -196,6 +204,12 @@ export class HttpTranscriber implements TranscribeCapability {
  * 19.2 MB, under the 25 MB upload limit OpenAI and vLLM apply.
  */
 export const MAX_CHUNK_SAMPLES = 600 * PCM_SAMPLE_RATE;
+
+/** Samples per request for a chunk length in seconds, the ten-minute limit when unset. */
+export function chunkSamples(maxChunkSeconds: number | undefined): number {
+  if (maxChunkSeconds === undefined || !(maxChunkSeconds > 0)) return MAX_CHUNK_SAMPLES;
+  return Math.min(MAX_CHUNK_SAMPLES, Math.round(maxChunkSeconds * PCM_SAMPLE_RATE));
+}
 /** How far back from a chunk's limit to look for a quiet place to split. */
 const SPLIT_SEARCH_SAMPLES = 10 * PCM_SAMPLE_RATE;
 /** 20 ms frames: short enough to land in the gap between two words. */
@@ -205,15 +219,18 @@ const SPLIT_FRAME_SAMPLES = 320;
  * Split PCM into chunks of at most `MAX_CHUNK_SAMPLES`, each ending at the
  * quietest 20 ms frame in its last ten seconds so a split rarely cuts a word.
  */
-export function splitPcm(pcm: Float32Array): Float32Array[] {
+export function splitPcm(
+  pcm: Float32Array,
+  maxSamples: number = MAX_CHUNK_SAMPLES,
+): Float32Array[] {
   const chunks: Float32Array[] = [];
   let start = 0;
-  while (pcm.length - start > MAX_CHUNK_SAMPLES) {
-    const limit = start + MAX_CHUNK_SAMPLES;
+  while (pcm.length - start > maxSamples) {
+    const limit = start + maxSamples;
     let split = limit;
     let quietest = Infinity;
     for (
-      let frame = limit - SPLIT_SEARCH_SAMPLES;
+      let frame = Math.max(start, limit - SPLIT_SEARCH_SAMPLES);
       frame + SPLIT_FRAME_SAMPLES <= limit;
       frame += SPLIT_FRAME_SAMPLES
     ) {

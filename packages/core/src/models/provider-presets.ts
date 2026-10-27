@@ -34,13 +34,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     id: "openai",
     name: "OpenAI",
     defaultUrl: "https://api.openai.com",
-    capabilities: ["agent", "embed"],
+    capabilities: ["agent", "embed", "transcribe"],
   },
   {
     id: "groq",
     name: "Groq",
     defaultUrl: "https://api.groq.com/openai",
-    capabilities: ["agent"],
+    capabilities: ["agent", "transcribe"],
   },
   {
     id: "cerebras",
@@ -66,7 +66,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     id: "mistral",
     name: "Mistral",
     defaultUrl: "https://api.mistral.ai",
-    capabilities: ["agent", "embed"],
+    capabilities: ["agent", "embed", "transcribe"],
   },
   {
     id: "deepseek",
