@@ -889,7 +889,9 @@
           gateway's version before pairing and refuses only a gateway older than the oldest one its
           page capture works with; a newer extension on an older gateway keeps capturing pages and
           simply does not offer what that gateway lacks. Within a minor release, what the gateway
-          accepts only grows, which is why the gateway is always updated first.
+          accepts only grows, which is why the gateway is always updated first. A CLI that has not
+          been updated yet keeps working against it: a model backend, certificate source or other
+          value newer than the CLI is shown by its name instead of stopping the command.
         </p>
         <p>
           <code>GET /health</code> needs no token and returns the gateway's version and a

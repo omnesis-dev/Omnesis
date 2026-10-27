@@ -174,6 +174,18 @@ describe("watches CLI", () => {
     expect(lines).toEqual([JSON.stringify({ subscriptions: [] })]);
   });
 
+  test("lists a watch whose reaction kind this CLI does not know", async () => {
+    // A newer gateway may deliver a firing some way added after this CLI shipped.
+    const lines: string[] = [];
+    (console.log as Mock).mockImplementation((line: string) => lines.push(String(line)));
+    (gatewayJson as Mock).mockResolvedValue({
+      subscriptions: [{ ...subscription, reaction: { kind: "future-delivery" } }],
+    });
+    await command("list").run({ args: {} });
+
+    expect(lines).toContain("  Reaction:  future-delivery");
+  });
+
   test("list and get offer machine-readable output", async () => {
     (gatewayJson as Mock)
       .mockResolvedValueOnce({ subscriptions: [subscription] })

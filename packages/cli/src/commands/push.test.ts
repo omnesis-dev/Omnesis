@@ -63,6 +63,10 @@ describe("push command surface", () => {
     expect(deliveryHealthLabel("not-determined")).toMatch(/not been decided/);
     expect(deliveryHealthLabel("alerts-disabled")).toMatch(/disabled/);
     expect(deliveryHealthLabel("healthy")).toBe("healthy");
+    // A state a newer app reports through a newer gateway reads as it was reported.
+    expect(deliveryHealthLabel("future-state" as Parameters<typeof deliveryHealthLabel>[0])).toBe(
+      "future-state",
+    );
   });
 
   test("summarises the active phone transports", () => {

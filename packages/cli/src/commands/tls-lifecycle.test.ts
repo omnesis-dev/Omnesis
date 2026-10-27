@@ -115,6 +115,20 @@ describe("renderTlsStatus", () => {
     expect(text).toContain("a replacement was not activated: The private key does not belong");
     expect(text).not.toContain("not covered");
   });
+
+  test("names an ownership and a renewal mode this CLI does not know as the gateway reported them", () => {
+    // A newer gateway may serve material, or renew it, in a way added after this CLI shipped.
+    renderTlsStatus(
+      snapshot({
+        ownership: "future-issuer",
+        renewal: { ...snapshot().renewal, mode: "future-renewal" },
+      } as unknown as Partial<TlsLifecycleSnapshot>),
+      print,
+    );
+    const text = lines.join("\n");
+    expect(text).toContain("ownership    future-issuer");
+    expect(text).toContain("renewal      future-renewal");
+  });
 });
 
 describe("commands", () => {

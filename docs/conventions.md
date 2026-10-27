@@ -1061,7 +1061,7 @@ caller holds a slot while it waits, so sharing it could deadlock.
 
 ### `assertNever` for discriminated-union exhaustiveness
 
-Every internal-discriminator switch ends with `default: assertNever(x);` so adding a new variant breaks the build at every switch that hasn't been updated. External-data switches (parsing user/network input) use typed defaults instead — `assertNever` only applies when the type system guarantees a closed union.
+Every internal-discriminator switch ends with `default: assertNever(x);` so adding a new variant breaks the build at every switch that hasn't been updated. External-data switches (parsing user/network input) use typed defaults instead — `assertNever` only applies when the type system guarantees a closed union. A union that crosses a wire from a peer that may be newer — what a CLI reads from its gateway is the common case — keeps the compile-time check without the throw: `default: { const _exhaustive: never = x; return <fallback>; }`, rendering the value by its name.
 
 - Helper: `packages/core/src/utils.ts`
 

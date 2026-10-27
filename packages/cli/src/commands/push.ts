@@ -616,6 +616,11 @@ export function deliveryHealthLabel(
       return "notification alerts are disabled";
     case "healthy":
       return "healthy";
+    default: {
+      // A state a newer app reports through a newer gateway.
+      const _exhaustive: never = status;
+      return String(status);
+    }
   }
 }
 

@@ -10,7 +10,6 @@
  * renewed by different hands.
  */
 
-import { assertNever } from "../utils.js";
 import { deviceTlsTrust, type TlsTrustDeviceFacts } from "../tls-device-trust.js";
 import type { TlsLifecycleSnapshot, TlsOwnership } from "../tls-material.js";
 
@@ -23,6 +22,8 @@ export interface TlsCheckSink {
 
 const GATEWAY = "Gateway";
 const FLEET = "Fleet";
+/** The remedy for a snapshot from a gateway newer than this evaluator. */
+const NEWER_GATEWAY = "Run `omnesis update` on this machine to read what the gateway reports.";
 
 function ownershipNoun(ownership: TlsOwnership): string {
   switch (ownership) {
@@ -34,8 +35,10 @@ function ownershipNoun(ownership: TlsOwnership): string {
       return "the mkcert certificate";
     case "external":
       return "the operator-managed certificate";
-    default:
-      return assertNever(ownership);
+    default: {
+      const _exhaustive: never = ownership;
+      return `the ${String(ownership)} certificate`;
+    }
   }
 }
 
@@ -54,8 +57,10 @@ function renewalRemedy(snapshot: TlsLifecycleSnapshot): string {
       return `This gateway runs in a container, so ${ownershipNoun(ownership)} is renewed on the host: re-run its issuer into ${certPath}, then \`omnesis tls reload\` (the gateway also picks it up within the hour).`;
     case "external":
       return `Renew it with the tool that issued it, keeping the paths in ${certPath}'s directory, then \`omnesis tls reload\` (the gateway also picks it up within the hour).`;
-    default:
-      return assertNever(renewal.mode);
+    default: {
+      const _exhaustive: never = renewal.mode;
+      return `${NEWER_GATEWAY}${failed}`;
+    }
   }
 }
 
@@ -68,8 +73,10 @@ function namesRemedy(snapshot: TlsLifecycleSnapshot): string {
       return "Run `omnesis tls refresh` on the gateway host to re-provision it for the current names.";
     case "external":
       return "Issue a certificate that covers these names, then `omnesis tls reload`.";
-    default:
-      return assertNever(snapshot.ownership);
+    default: {
+      const _exhaustive: never = snapshot.ownership;
+      return NEWER_GATEWAY;
+    }
   }
 }
 
@@ -83,8 +90,10 @@ function renewalRemedyAfterFailure(snapshot: TlsLifecycleSnapshot): string {
       return "Make sure `mkcert` is on the gateway's PATH, or run `omnesis tls refresh` on the gateway host; the gateway retries every hour.";
     case "external":
       return "Renew it with the tool that issued it, then `omnesis tls reload`.";
-    default:
-      return assertNever(snapshot.ownership);
+    default: {
+      const _exhaustive: never = snapshot.ownership;
+      return NEWER_GATEWAY;
+    }
   }
 }
 
@@ -144,8 +153,15 @@ export function checkGatewayTls(
         renewalRemedy(snapshot),
       );
       break;
-    default:
-      assertNever(served.state);
+    default: {
+      const _exhaustive: never = served.state;
+      ck.warn(
+        GATEWAY,
+        "gateway.tls",
+        `${capitalize(noun)} is ${String(served.state)}, which this version of Omnesis does not know`,
+        NEWER_GATEWAY,
+      );
+    }
   }
 
   if (served.uncoveredHosts.length > 0) {

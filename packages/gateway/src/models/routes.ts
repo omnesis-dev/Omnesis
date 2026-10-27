@@ -501,7 +501,7 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     }
     const parsed = agentSetupBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new BadRequestError("body must contain only model (a non-empty string)");
+      throw new BadRequestError("body must include model, a non-empty string");
     }
     try {
       const result = await opts.setupCodexAgent(parsed.data.model);
@@ -530,7 +530,7 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     }
     const parsed = agentSetupBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new BadRequestError("body must contain only model (a non-empty string)");
+      throw new BadRequestError("body must include model, a non-empty string");
     }
     try {
       const result = await opts.setupClaudeCodeAgent(parsed.data.model);

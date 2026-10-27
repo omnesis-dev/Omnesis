@@ -17,12 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { defineCommand } from "citty";
-import {
-  DEFAULT_CONFIG_DIR,
-  assertNever,
-  retrustGateway,
-  type TlsLifecycleSnapshot,
-} from "@omnesis/core";
+import { DEFAULT_CONFIG_DIR, retrustGateway, type TlsLifecycleSnapshot } from "@omnesis/core";
 import {
   c,
   CliError,
@@ -66,8 +61,10 @@ function ownershipLabel(snapshot: TlsLifecycleSnapshot): string {
       return "mkcert, minted by Omnesis";
     case "external":
       return "operator-managed";
-    default:
-      return assertNever(snapshot.ownership);
+    default: {
+      const _exhaustive: never = snapshot.ownership;
+      return String(snapshot.ownership);
+    }
   }
 }
 
@@ -82,8 +79,10 @@ function renewalLabel(snapshot: TlsLifecycleSnapshot): string {
       return "by the tool that issued it; `omnesis tls reload` activates a replacement";
     case "disabled":
       return "switched off (gateway.tls.autoRenew); `omnesis tls renew` renews on request";
-    default:
-      return assertNever(renewal.mode);
+    default: {
+      const _exhaustive: never = renewal.mode;
+      return String(renewal.mode);
+    }
   }
 }
 

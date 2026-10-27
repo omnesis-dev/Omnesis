@@ -18,7 +18,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
-  assertNever,
   CATALOG,
   CATALOG_ROLE_CAPABILITY,
   catalogForRole,
@@ -85,7 +84,10 @@ async function getSystemInfo(): Promise<SystemInfo> {
   return gatewayJson<SystemInfo>("/admin/system-info");
 }
 
-/** Extract the active catalog id from a resolved assignment. */
+/**
+ * Extract the active catalog id from a resolved assignment. The assignment is
+ * the gateway's, so a kind added after this CLI shipped names no catalog entry.
+ */
 function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
   switch (resolved.kind) {
     case "local":
@@ -106,8 +108,10 @@ function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
       return undefined;
     case "typesafe":
       return undefined;
-    default:
-      return assertNever(resolved);
+    default: {
+      const _exhaustive: never = resolved;
+      return undefined;
+    }
   }
 }
 
@@ -755,6 +759,11 @@ const modelStatusCommand = defineCommand({
   },
 });
 
+/** An assignment of a kind added after this CLI shipped, as the gateway reported it. */
+function unknownAssignmentLabel(resolved: { kind: string; model?: unknown }): string {
+  return typeof resolved.model === "string" ? `${resolved.kind}: ${resolved.model}` : resolved.kind;
+}
+
 function printRoleLine(
   role: string,
   resolved: ResolvedAssignment,
@@ -776,7 +785,9 @@ function printRoleLine(
               ? `Claude Code: ${resolved.model}`
               : resolved.kind === "typesafe"
                 ? `TypeSafe: ${resolved.model}`
-                : "(none)";
+                : resolved.kind === "unresolved"
+                  ? "(none)"
+                  : unknownAssignmentLabel(resolved);
   const available =
     resolved.kind === "replay" ||
     (resolved.kind !== "disabled" && resolved.kind !== "unresolved" && resolved.available);
