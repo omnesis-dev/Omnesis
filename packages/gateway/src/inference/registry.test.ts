@@ -2134,8 +2134,8 @@ describe("InferenceRegistry.verifyModel", () => {
     await expect(reg.vetAssignment("transcriber", "new-gpu/whisper")).resolves.toEqual({
       ok: true,
     });
-    // A backend that does not answer is let through; the role then reads
-    // unavailable with the reason until a later verification succeeds.
+    // A backend that does not answer is let through and stays usable: the
+    // verdict is not kept, and the role awaits verification until it answers.
     globalThis.fetch = vi.fn(async (url: string | URL) => {
       if (String(url).endsWith("/audio/transcriptions")) throw new Error("ECONNREFUSED");
       return jsonRes({ data: [] });
@@ -2150,8 +2150,44 @@ describe("InferenceRegistry.verifyModel", () => {
       },
     } as OmnesisConfig);
     const resolved = reg.resolve("transcriber") as { available: boolean; reason?: string };
-    expect(resolved.available).toBe(false);
-    expect(resolved.reason).toMatch(/has not answered a transcription yet: ECONNREFUSED/);
+    expect(resolved.available).toBe(true);
+    expect(resolved.reason).toBeUndefined();
+    expect(reg.getOverview().backends["ollama"]!.verdicts).toBeUndefined();
+    expect(reg.transcriberAwaitsVerification()).toBe(true);
+  });
+
+  it("asks again after an unanswered probe, and stops once the backend answers", async () => {
+    const reg = ollamaLike(["whisper"]);
+    await reg.probeBackends();
+    globalThis.fetch = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/audio/transcriptions")) throw new Error("fetch failed");
+      return jsonRes({ data: [{ id: "whisper" }] });
+    }) as unknown as typeof globalThis.fetch;
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:11434" } },
+        assignments: { transcriber: "ollama/whisper" },
+      },
+    } as OmnesisConfig);
+    await reg.probeBackends();
+    expect(reg.transcriberAwaitsVerification()).toBe(true);
+    await expect(reg.verifyAssignedTranscriber()).resolves.toMatchObject({ inconclusive: true });
+    // Not cached: the next verification runs the probe again.
+    expect(reg.transcriberAwaitsVerification()).toBe(true);
+    const answering = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/audio/transcriptions")) return jsonRes({ text: "hi" });
+      return jsonRes({ data: [{ id: "whisper" }] });
+    });
+    globalThis.fetch = answering as unknown as typeof globalThis.fetch;
+    await expect(reg.verifyAssignedTranscriber()).resolves.toMatchObject({ supported: true });
+    expect(reg.transcriberAwaitsVerification()).toBe(false);
+    // Cached now: asking again sends nothing.
+    answering.mockClear();
+    await reg.verifyAssignedTranscriber();
+    expect(answering).not.toHaveBeenCalled();
+    // A local or unset transcriber never awaits verification.
+    reg.loadConfig({ inference: {} } as OmnesisConfig);
+    expect(reg.transcriberAwaitsVerification()).toBe(false);
   });
 
   it("forgets a transcriber verdict when the backend's address changes", async () => {

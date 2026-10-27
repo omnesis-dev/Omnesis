@@ -39,6 +39,13 @@ export interface BackendReprobeOpts {
   startDelayMs?: number;
   /** Reconcile any boot-disabled HTTP agent after registry state changes. */
   reconcileAgent?: () => Promise<void>;
+  /**
+   * Verify the assigned transcriber's backend again. Called on every tick
+   * while `registry.transcriberAwaitsVerification()`: the boot probe got no
+   * answer (the server was still loading its model), so the role has no
+   * verdict yet and the Models page cannot yet say whether it can run.
+   */
+  verifyTranscriber?: () => Promise<void>;
 }
 
 export interface BackendReprobeBundle {
@@ -100,10 +107,27 @@ export function createBackendReprobeTask(
           }`,
         );
       }
+      // A transcriber whose backend has not answered a transcription probe
+      // yet is asked again on the active cadence, until it answers.
+      let transcriberPending = false;
+      if (opts.verifyTranscriber && opts.registry.transcriberAwaitsVerification?.()) {
+        try {
+          await opts.verifyTranscriber();
+        } catch (err) {
+          opts.log.warn(
+            `transcriber verification failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        transcriberPending = opts.registry.transcriberAwaitsVerification();
+      }
       // Stay on the active cadence while anything is down (so per-backend
-      // backoff windows are re-evaluated); idle only when all are now healthy
-      // and reconciliation did not need a prompt retry.
-      return { kind: "done", value: { idle: down === recovered && !reconciliationFailed } };
+      // backoff windows are re-evaluated) or a verdict is still owed; idle
+      // only when all are now healthy and reconciliation did not need a
+      // prompt retry.
+      return {
+        kind: "done",
+        value: { idle: down === recovered && !reconciliationFailed && !transcriberPending },
+      };
     },
   };
 

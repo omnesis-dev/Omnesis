@@ -777,7 +777,11 @@ export class InferenceRegistry {
       );
 
     const verdict = await this.runCapabilityProbe(role, model, send);
-    this.verifyCache.set(cacheKey, verdict);
+    // A verdict reached without an answer from the backend is not knowledge
+    // about it; it is reported but not kept, so the next verification asks
+    // again instead of repeating a timeout from boot for the gateway's life.
+    if (!verdict.inconclusive) this.verifyCache.set(cacheKey, verdict);
+    else this.verifyCache.delete(cacheKey);
     this.stateRevision += 1;
     log.info(
       `verify ${key}/${model} as ${role}: ${verdict.supported ? "supported" : verdict.inconclusive ? "inconclusive" : "unsupported"} — ${verdict.detail}`,
@@ -817,13 +821,26 @@ export class InferenceRegistry {
   /**
    * Verify the transcriber the config assigns, when it is an HTTP backend
    * with a model, so its resolution carries the verdict. Run after the boot
-   * probe and whenever the assignment or a backend changes; a verdict already
+   * probe, whenever the assignment or a backend changes, and by the re-probe
+   * task while {@link transcriberAwaitsVerification}; a verdict already
    * cached is reused.
    */
   async verifyAssignedTranscriber(): Promise<CapabilityVerdict | null> {
     const resolved = this.resolve("transcriber");
     if (resolved.kind !== "http" || !resolved.model || !resolved.available) return null;
     return this.verifyModel(resolved.backendKey, resolved.model, "transcriber");
+  }
+
+  /**
+   * Whether the assigned transcriber is an HTTP backend that answers its
+   * model list but has not answered a transcription probe yet: a backend that
+   * was still loading its model at boot, or unreachable for the probe only.
+   * The re-probe task verifies it again until it answers.
+   */
+  transcriberAwaitsVerification(): boolean {
+    const resolved = this.resolve("transcriber");
+    if (resolved.kind !== "http" || !resolved.model || !resolved.available) return false;
+    return !this.verifyCache.has(`${resolved.backendKey}::${resolved.model}::transcriber`);
   }
 
   private async runCapabilityProbe(
@@ -1199,12 +1216,14 @@ export class InferenceRegistry {
       // something: the verdict of the transcription probe, when there is one,
       // decides. A chat-only server (Ollama, LM Studio) lists models fine and
       // would otherwise read as a working transcriber.
+      // Only a refusal the backend itself gave counts; a probe that got no
+      // answer is not cached (see `verifyModel`) and the re-probe task asks
+      // again, while the assignment stays usable in the meantime: the backend
+      // answered its model list, and a transcription that fails is retried.
       const verdict = this.verifyCache.get(`${backendKey}::${resolvedModel}::transcriber`);
       if (verdict && !verdict.supported) {
         available = false;
-        reason = verdict.inconclusive
-          ? `Backend "${backendKey}" has not answered a transcription yet: ${verdict.detail}`
-          : `Backend "${backendKey}" cannot transcribe with ${resolvedModel}: ${verdict.detail}`;
+        reason = `Backend "${backendKey}" cannot transcribe with ${resolvedModel}: ${verdict.detail}`;
       }
     }
 

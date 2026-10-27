@@ -3363,6 +3363,7 @@ const backendReprobeBundle = createBackendReprobeTask(
     reconcileAgent: async () => {
       await agentLifecycle.reactivateAgentIfAvailable();
     },
+    verifyTranscriber: () => verifyTranscriberAssignment(inferenceRegistry),
   },
   scheduler,
 );
