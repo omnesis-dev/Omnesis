@@ -1981,12 +1981,15 @@ describe("InferenceRegistry.verifyModel", () => {
   });
 
   it("refuses a chat-only backend (Ollama) that 404s the transcription endpoint", async () => {
-    routeFetch({ "/audio/transcriptions": () => jsonRes({ error: "not found" }, 404) });
+    routeFetch({
+      "/audio/transcriptions": () => jsonRes({ error: "not found" }, 404),
+      "/chat/completions": () => jsonRes({ error: "model does not support multimodal" }, 400),
+    });
     const v = await withBackend().verifyModel("vllm", "frozenlab/qwen3-asr:1.7b", "transcriber");
     expect(v.supported).toBe(false);
     expect(v.inconclusive).toBeUndefined();
-    expect(v.detail).toMatch(/no transcription endpoint/);
-    expect(v.detail).toMatch(/404/);
+    expect(v.detail).toMatch(/no transcription endpoint, and the chat API refused the audio/);
+    expect(v.detail).toMatch(/400/);
   });
 
   it("shows the server's words for a 404 that names the model (speaches before a download)", async () => {
@@ -2057,6 +2060,11 @@ describe("InferenceRegistry.verifyModel", () => {
       const u = String(url);
       if (u.endsWith("/models")) return jsonRes({ data: models.map((id) => ({ id })) });
       if (u.endsWith("/audio/transcriptions")) return jsonRes({ error: "404 page not found" }, 404);
+      if (u.endsWith("/chat/completions"))
+        return jsonRes(
+          { error: "Multimodal data provided, but model does not support multimodal requests." },
+          400,
+        );
       return jsonRes({});
     }) as unknown as typeof globalThis.fetch;
     const reg = makeRegistry();
@@ -2080,7 +2088,7 @@ describe("InferenceRegistry.verifyModel", () => {
     const resolved = reg.resolve("transcriber");
     expect(resolved).toMatchObject({ kind: "http", available: false });
     expect((resolved as { reason?: string }).reason).toMatch(
-      /Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint/,
+      /Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint, and the chat API refused the audio/,
     );
     // The verdict rides along in the overview, for the picker.
     expect(reg.getOverview().backends["ollama"]!.verdicts).toEqual([
@@ -2094,6 +2102,146 @@ describe("InferenceRegistry.verifyModel", () => {
       },
     } as OmnesisConfig);
     expect(reg.resolve("agent")).toMatchObject({ kind: "http", available: true });
+  });
+
+  // ── the chat-audio fallback: a speech model behind a chat API only ──
+
+  it("falls back to a chat completion with the audio when the transcription endpoint is missing", async () => {
+    const fn = routeFetch({
+      "/audio/transcriptions": () => jsonRes({ error: "404 page not found" }, 404),
+      "/chat/completions": () =>
+        jsonRes({ choices: [{ message: { content: "language English<asr_text>hum" } }] }),
+    });
+    const v = await withBackend().verifyModel("vllm", "frozenlab/qwen3-asr:1.7b", "transcriber");
+    expect(v.supported).toBe(true);
+    expect(v.detail).toMatch(/chat completion transcribed/);
+    expect(v.transcription).toEqual({ protocol: "chat-audio", maxChunkSeconds: 60 });
+    const chat = fn.mock.calls.find((c) => String(c[0]).endsWith("/chat/completions"))!;
+    const body = JSON.parse(String((chat[1] as RequestInit).body)) as {
+      model: string;
+      messages: Array<{ content: Array<{ type: string }> }>;
+    };
+    expect(body.model).toBe("frozenlab/qwen3-asr:1.7b");
+    expect(body.messages[0]!.content.map((p) => p.type)).toEqual(["input_audio", "text"]);
+  });
+
+  it("refuses a chat-only model when the chat API refuses the audio too", async () => {
+    routeFetch({
+      "/audio/transcriptions": () => jsonRes({ error: "404 page not found" }, 404),
+      "/chat/completions": () =>
+        jsonRes({ error: { message: "model does not support audio input" } }, 400),
+    });
+    const v = await withBackend().verifyModel("vllm", "qwen2.5:0.5b", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toMatch(/no transcription endpoint, and the chat API refused the audio/);
+    expect(v.detail).toMatch(/model does not support audio input/);
+    expect(v.transcription).toBeUndefined();
+  });
+
+  it("records the transcription API with a one-minute window for a Qwen3-ASR-style answer", async () => {
+    routeFetch({
+      "/audio/transcriptions": () => jsonRes({ text: "language English<asr_text>" }),
+    });
+    const v = await withBackend().verifyModel("vllm", "qwen3-asr", "transcriber");
+    expect(v.transcription).toEqual({ protocol: "audio", maxChunkSeconds: 60 });
+    routeFetch({ "/audio/transcriptions": () => jsonRes({ text: " ." }) });
+    const w = await withBackend().verifyModel("vllm", "whisper-large-v3-turbo", "transcriber");
+    expect(w.transcription).toEqual({ protocol: "audio" });
+  });
+
+  it("probes only the pinned protocol", async () => {
+    const chatOnly = routeFetch({
+      "/audio/transcriptions": () => jsonRes({ text: "hi" }),
+      "/chat/completions": () => jsonRes({ choices: [{ message: { content: "hi" } }] }),
+    });
+    const reg = makeRegistry();
+    reg.loadConfig({
+      inference: {
+        backends: {
+          vllm: {
+            type: "http",
+            url: "http://localhost:8000",
+            transcription: { protocol: "chat-audio", maxChunkSeconds: 20 },
+          },
+        },
+      },
+    } as OmnesisConfig);
+    const v = await reg.verifyModel("vllm", "audio-llm", "transcriber");
+    expect(v.transcription).toEqual({ protocol: "chat-audio", maxChunkSeconds: 60 });
+    expect(chatOnly.mock.calls.some((c) => String(c[0]).endsWith("/audio/transcriptions"))).toBe(
+      false,
+    );
+
+    const audioOnly = routeFetch({
+      "/audio/transcriptions": () => jsonRes({ error: "404 page not found" }, 404),
+      "/chat/completions": () => jsonRes({ choices: [{ message: { content: "hi" } }] }),
+    });
+    reg.loadConfig({
+      inference: {
+        backends: {
+          vllm: {
+            type: "http",
+            url: "http://localhost:8000",
+            transcription: { protocol: "audio" },
+          },
+        },
+      },
+    } as OmnesisConfig);
+    const w = await reg.verifyModel("vllm", "audio-llm", "transcriber", { force: true });
+    expect(w.supported).toBe(false);
+    expect(w.detail).toMatch(/no transcription endpoint/);
+    expect(audioOnly.mock.calls.some((c) => String(c[0]).endsWith("/chat/completions"))).toBe(
+      false,
+    );
+  });
+
+  it("resolves the transcriber with the protocol and window the probe found, or the config pins", async () => {
+    routeFetch({
+      "/models": () => jsonRes({ data: [{ id: "qwen3-asr" }] }),
+      "/audio/transcriptions": () => jsonRes({ error: "404 page not found" }, 404),
+      "/chat/completions": () => jsonRes({ choices: [{ message: { content: "hum" } }] }),
+    });
+    const reg = makeRegistry();
+    const config = (transcription?: Record<string, unknown>) =>
+      ({
+        inference: {
+          backends: {
+            ollama: {
+              type: "http",
+              url: "http://localhost:11434",
+              ...(transcription ? { transcription } : {}),
+            },
+          },
+          assignments: { transcriber: "ollama/qwen3-asr" },
+        },
+      }) as OmnesisConfig;
+    reg.loadConfig(config());
+    await reg.probeBackends();
+    // Before any verdict: the transcription API with its default window.
+    expect(reg.resolve("transcriber")).toMatchObject({
+      kind: "http",
+      available: true,
+      transcription: { protocol: "audio" },
+    });
+    await reg.verifyAssignedTranscriber();
+    expect(reg.resolve("transcriber")).toMatchObject({
+      available: true,
+      transcription: { protocol: "chat-audio", maxChunkSeconds: 60 },
+    });
+    // The operator's settings win over the probe's finding.
+    reg.loadConfig(config({ maxChunkSeconds: 30 }));
+    expect(reg.resolve("transcriber")).toMatchObject({
+      transcription: { protocol: "chat-audio", maxChunkSeconds: 30 },
+    });
+    // Another role on the same backend carries no transcription settings.
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:11434" } },
+        assignments: { agent: "ollama/qwen3-asr" },
+      },
+    } as OmnesisConfig);
+    expect((reg.resolve("agent") as { transcription?: unknown }).transcription).toBeUndefined();
   });
 
   it("verifies nothing for a local, unset or unreachable transcriber", async () => {
@@ -2117,7 +2265,7 @@ describe("InferenceRegistry.verifyModel", () => {
     expect(verdict).toEqual({
       ok: false,
       reason: expect.stringMatching(
-        /^Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint/,
+        /^Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint, and the chat API refused the audio/,
       ),
     });
   });

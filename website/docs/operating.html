@@ -772,6 +772,31 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           loading its model, is assigned and asked again until it does. The Models page marks a
           model the backend has refused, and <code>omnesis model status</code> prints the reason.
         </p>
+        <p>
+          A speech model served only through a chat API, such as Qwen3-ASR behind Ollama or
+          llama-server, or an audio language model on vLLM, works too: when a backend has no
+          transcription endpoint the check sends the same audio as a chat completion, and a backend
+          that transcribes it is used that way, a minute of audio per request. The hosted
+          transcription APIs of OpenAI, Groq and Mistral serve the role with remote inference
+          enabled. To pin the protocol or the chunk length for a backend, set
+          <code>transcription</code> on it:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+"inference": {
+  "backends": {
+    "ollama": {
+      "type": "http",
+      "url": "http://127.0.0.1:11434",
+      "transcription": { "protocol": "chat-audio", "maxChunkSeconds": 45 }
+    }
+  }
+}</pre
+            >
+          </div>
+        </div>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">

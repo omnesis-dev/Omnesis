@@ -79,6 +79,8 @@ export type {
   ModelTokenLimits,
   HttpBackendConfig,
   AgentProtocol,
+  TranscriptionProtocol,
+  TranscriptionBackendOptions,
   AssignmentValue,
   ResolvedAssignment,
   ResolvedLocal,

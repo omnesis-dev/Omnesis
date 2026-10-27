@@ -30,6 +30,7 @@ import {
   type AssignmentValue,
   type ResolvedAssignment,
   type ResolvedLocal,
+  type ResolvedHttp,
   type OcrNativeRuntime,
   type ResolvedAnthropic,
   type ResolvedReplay,
@@ -39,11 +40,18 @@ import {
   type InferenceOverview,
   type BackendStatus,
   type CapabilityVerdict,
+  type TranscriptionProtocol,
   type HttpBackendConfig,
   type CatalogEntry,
 } from "@omnesis/core";
 import { PCM_SAMPLE_RATE } from "../transcribe/audio-decode.js";
-import { encodeMultipart, encodeWav } from "../transcribe/http-transcriber.js";
+import { encodeMultipart, encodeWav, parseTranscriptText } from "../transcribe/http-transcriber.js";
+import {
+  DEFAULT_CHAT_AUDIO_CHUNK_SECONDS,
+  TRANSCRIBE_INSTRUCTION,
+  chatAudioRequestBody,
+  transcriptFromChatCompletion,
+} from "../transcribe/chat-audio-transcriber.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const log = createLogger("inference:registry");
@@ -60,12 +68,16 @@ const PROBE_TIMEOUT_MS = 10_000;
 const TRANSCRIBE_PROBE_TIMEOUT_MS = 60_000;
 
 /** One second of a quiet 440 Hz tone at 16 kHz, the audio the transcription probe sends. */
-function probeWav(): Uint8Array {
+function probePcm(): Float32Array {
   const pcm = new Float32Array(PCM_SAMPLE_RATE);
   for (let i = 0; i < pcm.length; i += 1) {
     pcm[i] = 0.1 * Math.sin((2 * Math.PI * 440 * i) / PCM_SAMPLE_RATE);
   }
-  return encodeWav(pcm);
+  return pcm;
+}
+
+function probeWav(): Uint8Array {
+  return encodeWav(probePcm());
 }
 
 /** How often the starvation sampler checks in while a probe is in flight. */
@@ -776,7 +788,12 @@ export class InferenceRegistry {
         { allowRemoteInference: this.allowRemoteInference },
       );
 
-    const verdict = await this.runCapabilityProbe(role, model, send);
+    const verdict = await this.runCapabilityProbe(
+      role,
+      model,
+      send,
+      entry.config.transcription?.protocol,
+    );
     // A verdict reached without an answer from the backend is not knowledge
     // about it; it is reported but not kept, so the next verification asks
     // again instead of repeating a timeout from boot for the gateway's life.
@@ -849,6 +866,7 @@ export class InferenceRegistry {
       path: string,
       init: { headers: Record<string, string>; body: BodyInit; timeoutMs: number },
     ) => Promise<Response>,
+    pinnedTranscription?: TranscriptionProtocol,
   ): Promise<CapabilityVerdict> {
     const post = (path: string, body: unknown): Promise<Response> =>
       send(path, {
@@ -920,38 +938,7 @@ export class InferenceRegistry {
       }
 
       if (role === "transcriber") {
-        // One second of a quiet tone, as WAV: the request every
-        // OpenAI-compatible transcription server accepts. The verdict is about
-        // the endpoint and the model, not the words, so the transcript itself
-        // is not inspected beyond being present.
-        const { body, contentType } = encodeMultipart(
-          [
-            ["model", model],
-            ["response_format", "json"],
-          ],
-          { name: "file", filename: "probe.wav", contentType: "audio/wav", data: probeWav() },
-        );
-        const res = await send("/audio/transcriptions", {
-          headers: { "Content-Type": contentType },
-          body,
-          timeoutMs: TRANSCRIBE_PROBE_TIMEOUT_MS,
-        });
-        if (res.status === 404 || res.status === 405 || res.status === 501) {
-          // A 404 is the route missing (a chat-only server) unless the body
-          // names the model: speaches answers 404 for a model it has not
-          // downloaded yet, and that message is the one to show.
-          const detail = await errorDetail(res);
-          return /model/i.test(detail)
-            ? fail(detail)
-            : fail(
-                `no transcription endpoint (HTTP ${res.status} from /audio/transcriptions). This backend serves chat or embeddings only; a transcriber needs a server that implements the OpenAI audio transcription API, such as whisper-server, speaches or vLLM.`,
-              );
-        }
-        if (!res.ok) return fail(await errorDetail(res));
-        const json = (await res.json().catch(() => null)) as { text?: unknown } | null;
-        return typeof json?.text === "string"
-          ? ok("transcription endpoint returned a transcript")
-          : fail("transcription endpoint answered without a transcript");
+        return await this.probeTranscriber(model, send, ok, fail, errorDetail, pinnedTranscription);
       }
 
       return fail(`behavioral probe not supported for the "${role}" role`);
@@ -961,6 +948,97 @@ export class InferenceRegistry {
       // its model, or blocked by the URL policy until the operator allows it.
       return role === "transcriber" ? inconclusive(detail) : fail(detail);
     }
+  }
+
+  /**
+   * One second of a quiet tone, as WAV, to the protocol the backend config
+   * pins or, unset, to the transcription API first and then to a chat
+   * completion carrying the audio. The verdict is about the endpoint and the
+   * model, not the words, so the transcript is not inspected beyond being
+   * present, except that an answer in Qwen3-ASR's own format shows a model
+   * that takes about a minute at a time, which the verdict records.
+   */
+  private async probeTranscriber(
+    model: string,
+    send: (
+      path: string,
+      init: { headers: Record<string, string>; body: BodyInit; timeoutMs: number },
+    ) => Promise<Response>,
+    ok: (detail: string) => CapabilityVerdict,
+    fail: (detail: string) => CapabilityVerdict,
+    errorDetail: (res: Response) => Promise<string>,
+    pinned?: TranscriptionProtocol,
+  ): Promise<CapabilityVerdict> {
+    const wav = probeWav();
+    const found = (
+      protocol: TranscriptionProtocol,
+      detail: string,
+      text: string,
+    ): CapabilityVerdict => {
+      const shortWindow =
+        protocol === "chat-audio" || parseTranscriptText(text).language !== undefined;
+      return {
+        ...ok(detail),
+        transcription: {
+          protocol,
+          ...(shortWindow ? { maxChunkSeconds: DEFAULT_CHAT_AUDIO_CHUNK_SECONDS } : {}),
+        },
+      };
+    };
+
+    if (pinned !== "chat-audio") {
+      const { body, contentType } = encodeMultipart(
+        [
+          ["model", model],
+          ["response_format", "json"],
+        ],
+        { name: "file", filename: "probe.wav", contentType: "audio/wav", data: wav },
+      );
+      const res = await send("/audio/transcriptions", {
+        headers: { "Content-Type": contentType },
+        body,
+        timeoutMs: TRANSCRIBE_PROBE_TIMEOUT_MS,
+      });
+      if (res.ok) {
+        const json = (await res.json().catch(() => null)) as { text?: unknown } | null;
+        return typeof json?.text === "string"
+          ? found("audio", "transcription endpoint returned a transcript", json.text)
+          : fail("transcription endpoint answered without a transcript");
+      }
+      const detail = await errorDetail(res);
+      // A 404 is the route missing (a chat-only server) unless the body
+      // names the model: speaches answers 404 for a model it has not
+      // downloaded yet, and that message is the one to show.
+      const routeMissing =
+        (res.status === 404 || res.status === 405 || res.status === 501) && !/model/i.test(detail);
+      if (!routeMissing || pinned === "audio") {
+        return fail(
+          routeMissing
+            ? `no transcription endpoint (HTTP ${res.status} from /audio/transcriptions). This backend serves chat or embeddings only; a transcriber needs a server that implements the OpenAI audio transcription API, such as whisper-server, speaches or vLLM.`
+            : detail,
+        );
+      }
+      // No transcription endpoint: the model may still be a speech model
+      // behind the chat API.
+    }
+
+    const res = await send("/chat/completions", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(chatAudioRequestBody(model, probePcm(), TRANSCRIBE_INSTRUCTION)),
+      timeoutMs: TRANSCRIBE_PROBE_TIMEOUT_MS,
+    });
+    if (res.ok) {
+      const text = transcriptFromChatCompletion(await res.json().catch(() => null));
+      return text !== null
+        ? found("chat-audio", "chat completion transcribed the audio", text)
+        : fail("chat completion answered without a transcript");
+    }
+    const detail = await errorDetail(res);
+    return fail(
+      pinned === "chat-audio"
+        ? detail
+        : `no transcription endpoint, and the chat API refused the audio (${detail}). This backend serves chat or embeddings only; a transcriber needs a speech model, served through the OpenAI audio transcription API (whisper-server, speaches, vLLM) or a chat API that accepts audio.`,
+    );
   }
 
   /**
@@ -1201,6 +1279,7 @@ export class InferenceRegistry {
     const usable = entry.status.status === "ok" || entry.status.status === "reachable";
     let available = usable && resolvedModel !== "";
     let reason: string | undefined;
+    let transcription: ResolvedHttp["transcription"];
     if (!usable) {
       reason = entry.status.reason
         ? `Backend "${backendKey}" is ${entry.status.status}: ${entry.status.reason}`
@@ -1220,6 +1299,18 @@ export class InferenceRegistry {
       // again, while the assignment stays usable in the meantime: the backend
       // answered its model list, and a transcription that fails is retried.
       const verdict = this.verifyCache.get(`${backendKey}::${resolvedModel}::transcriber`);
+      transcription = {
+        protocol:
+          entry.config.transcription?.protocol ?? verdict?.transcription?.protocol ?? "audio",
+        ...((entry.config.transcription?.maxChunkSeconds ??
+          verdict?.transcription?.maxChunkSeconds) !== undefined
+          ? {
+              maxChunkSeconds:
+                entry.config.transcription?.maxChunkSeconds ??
+                verdict?.transcription?.maxChunkSeconds,
+            }
+          : {}),
+      };
       if (verdict && !verdict.supported) {
         available = false;
         reason = `Backend "${backendKey}" cannot transcribe with ${resolvedModel}: ${verdict.detail}`;
@@ -1233,6 +1324,7 @@ export class InferenceRegistry {
       url: entry.config.url,
       apiPathPrefix: entry.config.apiPathPrefix,
       protocol: entry.config.protocol,
+      ...(transcription ? { transcription } : {}),
       model: resolvedModel,
       ...(this.getModelControls
         ? {

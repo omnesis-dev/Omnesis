@@ -3211,6 +3211,18 @@ const httpBackendConfig = z
       .optional(),
     // Per-request agent generation timeout.
     agentTimeoutMs: z.number().int().positive().optional(),
+    // How the transcriber role reaches this backend's speech model. Unset,
+    // the transcription probe finds out: the OpenAI transcription API first,
+    // then a chat completion with an `input_audio` part. `maxChunkSeconds`
+    // caps the audio sent per request (ten minutes on the transcription API,
+    // one minute for a chat audio model, unless set).
+    transcription: z
+      .object({
+        protocol: z.enum(["audio", "chat-audio"]).optional(),
+        maxChunkSeconds: z.number().int().min(5).max(600).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

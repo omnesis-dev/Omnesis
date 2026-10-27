@@ -287,7 +287,7 @@ describe("WhisperTranscriber duration-scaled timeout", () => {
         modelPath: "/m.bin",
         modelId: "whisper-tiny",
         spawnWorker: () => hung,
-        decodeAudio: async () => new Float32Array(16_000 * 200), // 200s → 690_000ms budget
+        decodeAudio: async () => new Float32Array(16_000 * 200), // 200s → the 1_800_000ms ceiling
         // no requestTimeoutMs override → duration-scaled
       });
       setTimeout(() => hung.emitReady(), 0);
@@ -303,7 +303,7 @@ describe("WhisperTranscriber duration-scaled timeout", () => {
       expect(settled).toBe("pending"); // would have been killed here before the fix
       expect(hung.killed).toBe(false);
 
-      await vi.advanceTimersByTimeAsync(600_000); // cross the 690_000ms scaled budget
+      await vi.advanceTimersByTimeAsync(1_700_000); // cross the 1_800_000ms ceiling
       expect(settled).toBe("rejected");
       expect(hung.killed).toBe(true);
       await transcriber.dispose();

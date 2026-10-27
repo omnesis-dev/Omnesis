@@ -487,6 +487,41 @@ describe("validateConfig — happy paths", () => {
     expect(res.ok).toBe(false);
   });
 
+  test("accepts transcription options on an HTTP backend", () => {
+    const res = validateConfig({
+      inference: {
+        backends: {
+          ollama: {
+            type: "http",
+            url: "http://127.0.0.1:11434",
+            transcription: { protocol: "chat-audio", maxChunkSeconds: 45 },
+          },
+        },
+      },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.config.inference?.backends?.ollama?.transcription).toEqual({
+        protocol: "chat-audio",
+        maxChunkSeconds: 45,
+      });
+    }
+  });
+
+  test.each([
+    ["an unknown transcription protocol", { protocol: "images" }],
+    ["a chunk shorter than five seconds", { maxChunkSeconds: 2 }],
+    ["a chunk longer than the upload limit", { maxChunkSeconds: 900 }],
+    ["an unknown transcription key", { window: 60 }],
+  ])("rejects %s", (_label, transcription) => {
+    const res = validateConfig({
+      inference: {
+        backends: { cloud: { type: "http", url: "https://api.example.com", transcription } },
+      },
+    });
+    expect(res.ok).toBe(false);
+  });
+
   test("does not accept operator-maintained reasoning model lists", () => {
     const res = validateConfig({
       inference: {

@@ -34,14 +34,51 @@ The `transcriber` role resolves to one of:
   `POST {url}{apiPathPrefix}/audio/transcriptions` (`HttpTranscriber`).
   Known to work: whisper.cpp's `whisper-server` started with
   `--inference-path /v1/audio/transcriptions`, speaches, vLLM serving a
-  Whisper model, llama.cpp's `llama-server` with Qwen3-ASR, Ollama 0.40 and
-  later serving `frozenlab/qwen3-asr`, and OpenAI. A backend off loopback
+  Whisper model, llama.cpp's `llama-server` with Qwen3-ASR (both protocols),
+  Ollama 0.40 and later serving `frozenlab/qwen3-asr` (both protocols), and
+  the hosted transcription APIs of OpenAI (`whisper-1`, `gpt-4o-transcribe`),
+  Groq (`whisper-large-v3-turbo`) and Mistral (`voxtral-mini-latest`), which
+  the backend presets mark as transcribing providers. A backend off loopback
   needs `inference.allowRemoteInference`, and personal vocabulary hints are
   sent only to a loopback backend;
 - the **replay** transcriber for tests.
 
 The chat backends (Anthropic, Codex, Claude Code) have no transcription
 model and resolve to nothing with a log line.
+
+### Two wire protocols
+
+An HTTP backend reaches its speech model one of two ways
+(`TranscriptionProtocol`):
+
+- **`audio`**: `POST /audio/transcriptions`, multipart with a WAV file
+  (`HttpTranscriber`). Ten-minute chunks, the upload limit.
+- **`chat-audio`**: `POST /chat/completions` with an `input_audio` content
+  part carrying the WAV as base64 and a short instruction
+  (`ChatAudioTranscriber`). For a speech model served only through a chat
+  API: an audio language model on vLLM or llama-server, Ollama's chat API,
+  OpenAI's audio chat models. One-minute chunks, since an audio language model
+  is accurate over a short stretch at a time (Qwen3-ASR holds to about a
+  minute and falls off by two).
+
+The operator can pin either, and the chunk length, per backend:
+
+```json
+"inference": {
+  "backends": {
+    "ollama": {
+      "type": "http",
+      "url": "http://127.0.0.1:11434",
+      "transcription": { "protocol": "chat-audio", "maxChunkSeconds": 45 }
+    }
+  }
+}
+```
+
+Unset, the transcription probe finds out (below) and the resolved assignment
+carries `transcription: { protocol, maxChunkSeconds? }`, which the loader
+reads to build the right client. Both clients split at the quietest moment
+near each chunk limit (`splitPcm`) and join the chunks' words.
 
 Qwen3-ASR writes its detected language ahead of the words
 (`language English<asr_text>…`), and a server that passes the model's output
@@ -57,10 +94,17 @@ embedder: `InferenceRegistry.verifyModel(key, model, "transcriber")` sends one
 second of a quiet tone as WAV to the backend's transcription endpoint and
 records a `CapabilityVerdict`:
 
-- `supported` when the endpoint answered with a `text` field;
-- refused, with the backend's words, on a 4xx or 5xx — a 404, 405 or 501
-  whose body does not name the model reads "no transcription endpoint",
-  since that is a server without the route (Ollama before 0.40, LM Studio);
+- `supported` when the endpoint answered with a `text` field; an answer in
+  Qwen3-ASR's `language …<asr_text>` format marks the model as one that takes
+  a minute at a time, and the verdict records a one-minute chunk;
+- when the transcription endpoint is missing (a 404, 405 or 501 whose body
+  does not name the model) and no protocol is pinned, the probe sends the
+  same second of audio as a chat completion with an `input_audio` part. A
+  transcript back means `chat-audio`; a refusal (vLLM, llama-server and
+  Ollama all answer 400 for a model without audio input) is conclusive and
+  names both failures;
+- refused, with the backend's words, on any other 4xx or 5xx (a model the
+  server does not have, a rejected key);
 - `inconclusive` when there was no answer at all (a timeout, a refused
   connection, a URL the inference policy blocks). The probe waits up to a
   minute because speaches loads the model on the first request. An
