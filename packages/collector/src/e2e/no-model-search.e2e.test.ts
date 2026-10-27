@@ -115,6 +115,23 @@ describe("lexical and semantic assignment transitions", () => {
       body: JSON.stringify({ inference: { assignments: { embedder: value } } }),
     });
   }
+  async function waitForKeywordIndexing(): Promise<void> {
+    await expect
+      .poll(
+        async () =>
+          (
+            await harness.gatewayJson<{
+              indexer: { status: string; reason?: string; keywordIndexingActive?: boolean };
+            }>("/search/readiness")
+          ).indexer,
+        { timeout: 20_000 },
+      )
+      .toMatchObject({
+        status: "disabled",
+        keywordIndexingActive: true,
+        reason: expect.stringContaining("keyword indexing active"),
+      });
+  }
   async function waitForRows(text: string, embedded: number): Promise<void> {
     await expect
       .poll(
@@ -137,14 +154,7 @@ describe("lexical and semantic assignment transitions", () => {
     await waitForRows("Amberprism", 1);
     await waitForRows("Cobaltspire", 1);
     await assignment(null);
-    await expect
-      .poll(
-        async () =>
-          (await harness.gatewayJson<{ indexer: { reason?: string } }>("/search/readiness")).indexer
-            .reason,
-        { timeout: 20_000 },
-      )
-      .toContain("keyword indexing active");
+    await waitForKeywordIndexing();
     const afterOff = harness.getEmbedCount();
     await harness.pushDocument({
       externalId: "retained",
@@ -173,6 +183,7 @@ describe("lexical and semantic assignment transitions", () => {
     const model = harness.getFakeEmbedder();
     if (!model) throw new Error("Missing scripted embedder fixture");
     await assignment(null);
+    await waitForKeywordIndexing();
     await harness.pushDocument({
       externalId: "fresh-lexical",
       content: "Violetspire fictional instrument",

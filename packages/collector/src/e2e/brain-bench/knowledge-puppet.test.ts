@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { knowledgePuppet } from "./knowledge-puppet.js";
 import { type RunContext, type ToolStep, call } from "./puppet-plan.js";
 const ctx: RunContext = {
@@ -601,4 +601,220 @@ it("settles omitted fingerprints only from an actual matching saved revision", (
     expect(next(ctx, [offer, { ...save, result }])).not.toMatchObject({
       name: "knowledge_next_frontier",
     });
+});
+
+describe("source discovery phase contract", () => {
+  it.each([{ requiredPhases: [] }, { requiredPhases: ["organization"] }])(
+    "does not repeat interpretation or target callbacks for covered interpretation (%j)",
+    ({ requiredPhases }) => {
+      const plan = vi.fn(() => ({
+        calls: [call("open_loop_create", { title: "Fictional workshop outcome" })],
+      }));
+      const targets = vi.fn(() => ["old-outcome"]);
+      const next = knowledgePuppet({ plan, targets });
+      const offered = frontier([{ ...source, completionRequirements: { requiredPhases } }]);
+      expect(next(ctx, [offered])).toEqual({
+        kind: "tool",
+        name: "knowledge_discovery_complete",
+        args: {
+          id: source.id,
+          inputFingerprint: source.inputFingerprint,
+          targets: [],
+          phases: requiredPhases,
+        },
+      });
+      expect(plan).not.toHaveBeenCalled();
+      expect(targets).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { requiredPhases: ["interpretation"] },
+    { requiredPhases: ["interpretation", "organization"] },
+  ])(
+    "still interprets newly-required source facts and attests only offered phases (%j)",
+    ({ requiredPhases }) => {
+      const plan = vi.fn(() => ({
+        calls: [call("open_loop_create", { title: "Fictional workshop outcome" })],
+      }));
+      const targets = vi.fn(() => ["new-outcome"]);
+      const next = knowledgePuppet({ plan, targets });
+      const offered = frontier([{ ...source, completionRequirements: { requiredPhases } }]);
+      expect(next(ctx, [offered])).toMatchObject({ name: "open_loop_create" });
+      const created: ToolStep = {
+        name: "open_loop_create",
+        args: { title: "Fictional workshop outcome" },
+        result: { kind: "structured", data: { loop: { id: "new-outcome" } } },
+      };
+      expect(next(ctx, [offered, created])).toEqual({
+        kind: "tool",
+        name: "knowledge_discovery_complete",
+        args: {
+          id: source.id,
+          inputFingerprint: source.inputFingerprint,
+          targets: ["new-outcome"],
+          phases: requiredPhases,
+        },
+      });
+      expect(targets).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("preserves source re-read and exact organization-only phase after a receipt refusal", () => {
+    const plan = vi.fn(() => ({ calls: [call("open_loop_create", { title: "Must not repeat" })] }));
+    const targets = vi.fn(() => ["must-not-redeclare"]);
+    const next = knowledgePuppet({ plan, targets });
+    const offered = frontier([
+      { ...source, completionRequirements: { requiredPhases: ["organization"] } },
+    ]);
+    const refused: ToolStep = {
+      name: "knowledge_discovery_complete",
+      args: { id: source.id, inputFingerprint: source.inputFingerprint, phases: ["organization"] },
+      result: { kind: "error", code: "source_read_required", message: "Read again" },
+    };
+    expect(next(ctx, [offered, refused])).toMatchObject({
+      name: "fetch_many",
+      args: { documents: [{ documentId: "doc" }] },
+    });
+    const fetched: ToolStep = {
+      name: "fetch_many",
+      args: { documents: [{ documentId: "doc" }] },
+      result: { kind: "document.batch", items: [] },
+    };
+    expect(next(ctx, [offered, refused, fetched])).toMatchObject({
+      name: "knowledge_discovery_complete",
+      args: { phases: ["organization"], targets: [] },
+    });
+    expect(plan).not.toHaveBeenCalled();
+    expect(targets).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass a required full source fetch when interpretation is already covered", () => {
+    const next = knowledgePuppet({
+      plan: () => {
+        throw new Error("Interpretation must not run");
+      },
+    });
+    const offered = frontier([
+      {
+        ...source,
+        completionRequirements: { requiredPhases: ["organization"] },
+        fetchRequired: { id: "doc", kind: "source" },
+      },
+    ]);
+    expect(next(ctx, [offered])).toMatchObject({
+      name: "knowledge_reference",
+      args: { ref: "source:doc" },
+    });
+    const fetched: ToolStep = {
+      name: "knowledge_reference",
+      args: { ref: "source:doc" },
+      result: { kind: "structured", data: { text: source.source.content, revision: "v1" } },
+    };
+    expect(next(ctx, [offered, fetched])).toMatchObject({
+      name: "knowledge_discovery_complete",
+      args: { phases: ["organization"] },
+    });
+    expect(
+      next(ctx, [
+        offered,
+        {
+          ...fetched,
+          result: { kind: "structured", data: { text: source.source.content, revision: "stale" } },
+        },
+      ]),
+    ).toMatchObject({ kind: "final", text: expect.stringContaining("Source changed") });
+  });
+
+  it("still runs the separate joint organization policy after source interpretation is covered", () => {
+    const plan = vi.fn(() => ({ calls: [call("open_loop_create", { title: "Must not repeat" })] }));
+    const organize = vi.fn(() => ({
+      calls: [call("search_many", { queries: [{ query: "fictional workshop" }] })],
+    }));
+    const next = knowledgePuppet({ plan, organize });
+    const ready: ToolStep = {
+      name: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: {
+          batchId: "joint",
+          done: false,
+          items: [],
+          organization: {
+            id: "cohort",
+            inputFingerprint: "joint-fp",
+            sourceIds: ["doc", "second"],
+            readyToComplete: true,
+          },
+        },
+      },
+    };
+    expect(next(ctx, [ready])).toMatchObject({ name: "search_many" });
+    const searched: ToolStep = {
+      name: "search_many",
+      args: { queries: [{ query: "fictional workshop" }] },
+      result: { kind: "structured", data: {} },
+    };
+    expect(next(ctx, [ready, searched])).toMatchObject({
+      name: "knowledge_organization_complete",
+      args: { id: "cohort", inputFingerprint: "joint-fp" },
+    });
+    expect(plan).not.toHaveBeenCalled();
+    expect(organize).toHaveBeenCalled();
+  });
+
+  it("fails closed on an unsupported required phase rather than invoking interpretation", () => {
+    const plan = vi.fn(() => ({ calls: [call("open_loop_create", { title: "Must not run" })] }));
+    const next = knowledgePuppet({ plan });
+    expect(
+      next(ctx, [
+        frontier([{ ...source, completionRequirements: { requiredPhases: ["unknown-phase"] } }]),
+      ]),
+    ).toMatchObject({ kind: "final", text: expect.stringContaining("validation") });
+    expect(plan).not.toHaveBeenCalled();
+  });
+});
+
+it("honors explicitly required interpretation even for an original cohort member", () => {
+  const plan = vi.fn(() => ({
+    calls: [call("open_loop_create", { title: "Fictional required interpretation" })],
+  }));
+  const targets = vi.fn(() => ["required-owner"]);
+  const next = knowledgePuppet({ plan, targets });
+  const offered: ToolStep = {
+    name: "knowledge_next_frontier",
+    args: {},
+    result: {
+      kind: "structured",
+      data: {
+        batchId: "joint",
+        done: false,
+        items: [{ ...source, completionRequirements: { requiredPhases: ["interpretation"] } }],
+        organization: {
+          id: "joint",
+          inputFingerprint: "joint-fp",
+          sourceIds: ["doc"],
+          readyToComplete: false,
+        },
+      },
+    },
+  };
+  expect(next(ctx, [offered])).toMatchObject({ name: "open_loop_create" });
+  expect(plan).toHaveBeenCalledOnce();
+  const created: ToolStep = {
+    name: "open_loop_create",
+    args: { title: "Fictional required interpretation" },
+    result: { kind: "structured", data: { loop: { id: "required-owner" } } },
+  };
+  expect(next(ctx, [offered, created])).toMatchObject({
+    name: "knowledge_discovery_complete",
+    args: {
+      id: source.id,
+      inputFingerprint: source.inputFingerprint,
+      targets: ["required-owner"],
+      phases: ["interpretation"],
+    },
+  });
+  expect(targets).toHaveBeenCalledOnce();
 });

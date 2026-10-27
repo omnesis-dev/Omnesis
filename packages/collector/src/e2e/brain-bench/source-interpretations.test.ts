@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   sourceInterpretations,
   preserveCurrentOwner,
@@ -541,4 +541,31 @@ it("reads every current profile page before an explicitly scheduled person revie
   expect(
     preserveCurrentOwner(item, ctx, [first, page("exact-next-cursor", null), offered]).calls,
   ).toEqual([call("annotation_search", { personId: "profile-person" })]);
+});
+
+it("does not replay a static source create plan on an organization-only publication offer", () => {
+  const targets = vi.fn(() => ["already-created"]);
+  const policy = sourceInterpretations({
+    targets,
+    sources: [
+      {
+        docTitle: "Workshop",
+        plan: { calls: [call("open_loop_create", { title: "Fictional workshop reservation" })] },
+      },
+    ],
+  });
+  expect(
+    policy(ctx, [
+      frontier([
+        {
+          ...source,
+          completionRequirements: { requiredPhases: ["organization"] },
+        },
+      ]),
+    ]),
+  ).toMatchObject({
+    name: "knowledge_discovery_complete",
+    args: { id: source.id, targets: [], phases: ["organization"] },
+  });
+  expect(targets).not.toHaveBeenCalled();
 });
