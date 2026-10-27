@@ -219,10 +219,9 @@ describe("first semantic assignment after lexical-only startup", () => {
     const db = new Database(join(harness.getConfigDir(), "index.db"), { readonly: true });
     try {
       const counts = db
-        .prepare<
-          [],
-          { chunks: number; embedded: number }
-        >("SELECT count(*) AS chunks, coalesce(sum(embedding IS NOT NULL), 0) AS embedded FROM chunks WHERE source_id = 'synthetic:test@example.com'")
+        .prepare<[], { chunks: number; embedded: number }>(
+          "SELECT count(*) AS chunks, coalesce(sum(embedding IS NOT NULL), 0) AS embedded FROM chunks WHERE source_id = 'synthetic:test@example.com'",
+        )
         .get();
       if (!counts) throw new Error("Missing first-assignment counters");
       const metadata = db.prepare<[string], { value: string }>(
