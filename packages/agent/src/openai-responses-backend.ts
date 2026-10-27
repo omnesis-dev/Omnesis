@@ -37,6 +37,7 @@ import {
   fetchWithInferenceUrlPolicy,
   normalizeApiPathPrefix,
   retryRateLimitedRequest,
+  sanitizeProviderFailureField,
   type AgentContextAssessment,
   type AgentEvent,
   type ToolResult,
@@ -66,7 +67,11 @@ import {
   isContextWindowHttpError,
   type DecodedHttpError,
 } from "./http-error.js";
-import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
+import {
+  CONTEXT_WINDOW_EXCEEDED_MESSAGE,
+  OUTPUT_TRUNCATED_MESSAGE,
+  RESPONSE_INCOMPLETE_MESSAGE,
+} from "./turn-outcome.js";
 import {
   initialHttpOutputBudget,
   ORDINARY_HTTP_TIMEOUT_MS,
@@ -229,7 +234,9 @@ export class OpenAIResponsesBackend implements ChatBackend {
         stopReason: "error",
         usage: totalUsage,
         context: contextAssessment,
-        failure: { code, message, retryable: false, backend: this.name, model: this.model },
+        // The configured controls, not the turn, are at fault: once the
+        // operator changes them the same turn succeeds.
+        failure: { code, message, retryable: true, backend: this.name, model: this.model },
       });
       return;
     }
@@ -716,9 +723,10 @@ export class OpenAIResponsesBackend implements ChatBackend {
             sessionId,
             messageId,
             code: "http_response_incomplete",
-            message: "The model response ended before it completed.",
+            message: RESPONSE_INCOMPLETE_MESSAGE,
           });
         }
+        const reason = sanitizeProviderFailureField(incompleteReason);
         yield wrapEvent("agent.message.end", {
           sessionId,
           messageId,
@@ -727,12 +735,13 @@ export class OpenAIResponsesBackend implements ChatBackend {
           context: contextAssessment,
           failure: {
             code: outputTruncated ? "output_truncated" : "http_response_incomplete",
-            message: outputTruncated
-              ? OUTPUT_TRUNCATED_MESSAGE
-              : "The model response ended before it completed.",
-            retryable: !outputTruncated,
+            message: outputTruncated ? OUTPUT_TRUNCATED_MESSAGE : RESPONSE_INCOMPLETE_MESSAGE,
+            // Neither the output ceiling nor a content filter changes when
+            // the same turn is sent again.
+            retryable: !outputTruncated && incompleteReason !== "content_filter",
             backend: this.name,
             model: this.model,
+            ...(!outputTruncated && reason ? { provider: { code: reason } } : {}),
           },
         });
         return;

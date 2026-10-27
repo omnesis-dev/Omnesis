@@ -1187,12 +1187,20 @@ policy. Resuming revisits changed inputs and explicitly deferred work.
 
 ## When a provider fails
 
-A failure is judged by what it blames. A malformed or over-long payload is the
-request's fault, and its run retires after its retry budget. Anything else —
-no credit, a rejected key, a rate limit, an unreachable backend — is the
-environment's fault, and the run **keeps its place**: its attempt is refunded
-and it waits, because the same payload will succeed once the environment is
-repaired.
+A failure is judged by what it blames. A malformed or over-long payload, or one
+a content filter stopped, is the request's fault, and its run retires after its
+retry budget. Anything else — no credit, a rejected key, a rate limit, an
+unreachable backend, a signed-out, missing or outdated Claude Code, an unknown
+model, invalid reasoning controls, a server whose context length cut the prompt
+— is the environment's fault, and the run **keeps its place**: its attempt is
+refunded and it waits, because the same payload will succeed once the
+environment is repaired.
+
+Backends say which is which on their terminal failure: `retryable: false` is
+reserved for failures the same payload can never get past (it no longer fits,
+it ran out of output, a filter refused it). A fault only an operator can clear
+is still `retryable`, since the run succeeds unchanged after the repair; an
+interactive turn fails at once either way, with the message naming the fix.
 
 After three consecutive backend failures the drainer stops claiming altogether
 and backs off from one minute to fifteen. The Bootstrap panel shows a **Model

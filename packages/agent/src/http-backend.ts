@@ -7,6 +7,7 @@ import {
   fetchWithInferenceUrlPolicy,
   normalizeApiPathPrefix,
   retryRateLimitedRequest,
+  sanitizeProviderFailureField,
   type AgentContextAssessment,
   type AgentEvent,
   type AgentProviderFailureDetail,
@@ -43,7 +44,7 @@ import {
   providerFailureDetail,
   type DecodedHttpError,
 } from "./http-error.js";
-import { OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
+import { OUTPUT_TRUNCATED_MESSAGE, RESPONSE_INCOMPLETE_MESSAGE } from "./turn-outcome.js";
 import {
   initialHttpOutputBudget,
   outputBudgetForSelectedReasoning,
@@ -221,6 +222,31 @@ type CompletionAttempt =
     }
   | { kind: "error"; code: string; message: string; provider?: AgentProviderFailureDetail };
 
+/**
+ * `finish_reason` values that end a response normally. Beyond OpenAI's own
+ * `stop` and `tool_calls` (and the legacy `function_call`), compatible servers
+ * spell the same end `eos`, or pass an Anthropic-style `end_turn` or
+ * `stop_sequence` through; a missing value is also read as a normal end.
+ */
+const COMPLETE_FINISH_REASONS = new Set([
+  "stop",
+  "tool_calls",
+  "function_call",
+  "eos",
+  "end_turn",
+  "stop_sequence",
+]);
+
+/**
+ * Read `finish_reason` case-insensitively, with `model_length` — the context
+ * filled before the answer did — as the `length` it is.
+ */
+function normalizeFinishReason(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  const normalized = reason.toLowerCase();
+  return normalized === "model_length" ? "length" : normalized;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────
 
 export interface HttpChatBackendOptions {
@@ -341,7 +367,9 @@ export class HttpChatBackend implements ChatBackend {
         messageId,
         stopReason: "error",
         usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
-        failure: { code, message, retryable: false, backend: this.name, model: this.model },
+        // The configured controls, not the turn, are at fault: once the
+        // operator changes them the same turn succeeds.
+        failure: { code, message, retryable: true, backend: this.name, model: this.model },
       });
       return;
     }
@@ -432,9 +460,7 @@ export class HttpChatBackend implements ChatBackend {
           failure: {
             code: attempt.code,
             message: attempt.message,
-            retryable:
-              attempt.code !== "context_window_exceeded" &&
-              attempt.code !== "http_reasoning_options_invalid",
+            retryable: attempt.code !== "context_window_exceeded",
             backend: this.name,
             model: this.model,
             ...(attempt.provider ? { provider: attempt.provider } : {}),
@@ -512,7 +538,7 @@ export class HttpChatBackend implements ChatBackend {
             if (!choice) continue;
 
             if (choice.finish_reason) {
-              finishReason = choice.finish_reason;
+              finishReason = normalizeFinishReason(choice.finish_reason);
             }
 
             const delta = choice.delta;
@@ -674,7 +700,7 @@ export class HttpChatBackend implements ChatBackend {
       } else {
         // Non-streamed fallback: adapt the single response into the same events
         // and state the streaming path produces.
-        finishReason = attempt.finishReason;
+        finishReason = normalizeFinishReason(attempt.finishReason);
         reportedPromptTokens = attempt.usage.prompt;
         totalUsage.inputTokens += Math.max(0, attempt.usage.prompt - attempt.usage.cachedInput);
         totalUsage.cacheReadTokens += attempt.usage.cachedInput;
@@ -769,9 +795,50 @@ export class HttpChatBackend implements ChatBackend {
           failure: {
             code: "prompt_truncated",
             message,
-            retryable: false,
+            // The server's configured context length cut it, not the request:
+            // once the operator raises it the same request succeeds.
+            retryable: true,
             backend: this.name,
             model: this.model,
+          },
+        });
+        return;
+      }
+
+      // A response the server stopped short of its end — a content filter, an
+      // aborted or failed generation — is not an answer, however much of one
+      // already streamed, and its tool calls may be cut off mid-list. Saving
+      // it as a complete turn would be silent corruption, so an unrecognised
+      // reason fails too: that is loud and names the value, where the opposite
+      // mistake is invisible.
+      if (
+        finishReason !== null &&
+        finishReason !== "length" &&
+        !COMPLETE_FINISH_REASONS.has(finishReason)
+      ) {
+        const reason = sanitizeProviderFailureField(finishReason);
+        log.warn(`model=${this.model} ended a response with finish_reason=${reason ?? "unknown"}`);
+        yield wrapEvent("agent.error", {
+          sessionId,
+          messageId,
+          code: "http_response_incomplete",
+          message: RESPONSE_INCOMPLETE_MESSAGE,
+        });
+        yield wrapEvent("agent.message.end", {
+          sessionId,
+          messageId,
+          stopReason: "error",
+          usage: totalUsage,
+          context: contextAssessment,
+          failure: {
+            code: "http_response_incomplete",
+            message: RESPONSE_INCOMPLETE_MESSAGE,
+            // A filter judged this turn's own content, so sending it again
+            // changes nothing; the rest are the server's own trouble.
+            retryable: finishReason !== "content_filter",
+            backend: this.name,
+            model: this.model,
+            ...(reason ? { provider: { code: reason } } : {}),
           },
         });
         return;

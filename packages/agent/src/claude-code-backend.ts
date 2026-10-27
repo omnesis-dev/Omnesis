@@ -56,7 +56,7 @@ import {
 import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
-import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
+import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 
 const execFileAsync = promisify(execFile);
@@ -560,7 +560,12 @@ class ClaudeCodeTurn {
   private readonly requestUsage = new Map<string, Usage>();
   private contextInputTokens: number | undefined;
   private peakContextInputTokens: number | undefined;
-  /** Error the CLI attached to an assistant message (`authentication_failed`, …). */
+  /**
+   * Error the CLI attached to the latest assistant message
+   * (`authentication_failed`, …). Only the latest: the CLI recovers from some
+   * (a retried rate limit, a resumed output limit) and carries on, so an
+   * earlier one says nothing about why the turn finally failed.
+   */
   private apiError: string | undefined;
   private startupTimer: ReturnType<typeof setTimeout> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -750,8 +755,7 @@ class ClaudeCodeTurn {
   }
 
   private onAssistant(message: Record<string, unknown>): void {
-    const error = stringField(message, "error");
-    if (error) this.apiError = error;
+    this.apiError = stringField(message, "error") ?? undefined;
     const body = asRecord(message.message);
     const content = Array.isArray(body?.content) ? body.content : [];
     for (const block of content.map(asRecord)) {
@@ -848,14 +852,19 @@ class ClaudeCodeTurn {
     }
     if (result.is_error === true || result.subtype !== "success") {
       // The result text is the model's or the CLI's prose, so it classifies
-      // nothing beyond an overflowing prompt; the API error is authoritative.
+      // nothing beyond an overflowing prompt; a recognised API error is
+      // authoritative. The CLI files an overflowing prompt under the generic
+      // `invalid_request`, so that one still falls through to the prose.
       const errors = Array.isArray(result.errors) ? result.errors.filter(isString) : [];
       const detail = stringField(result, "result") || errors.join("; ");
-      const code = this.apiError
-        ? claudeCodeApiErrorCode(this.apiError)
-        : isContextWindowError(detail)
-          ? "context_window_exceeded"
-          : "claude_code_runtime_error";
+      const code =
+        claudeCodeApiErrorCode(this.apiError) ??
+        (isContextWindowError(detail) ? "context_window_exceeded" : "claude_code_runtime_error");
+      if (code === "output_truncated") {
+        // Reported as the other backends report it: a stop, not an error.
+        this.complete("max_tokens", { code, message: OUTPUT_TRUNCATED_MESSAGE });
+        return;
+      }
       this.fail(code, friendlyClaudeCodeError(detail || code, code));
       return;
     }
@@ -1025,7 +1034,7 @@ class ClaudeCodeTurn {
   }
 
   private complete(
-    stopReason: "end_turn" | "canceled" | "error",
+    stopReason: "end_turn" | "canceled" | "error" | "max_tokens",
     failure?: { code: string; message: string },
   ): void {
     if (this.completed) return;
@@ -1458,7 +1467,7 @@ function mcpToolResult(result: ToolResult, timeZone?: string): Record<string, un
 }
 
 /** Failure codes for the `error` the CLI attaches to an assistant message. */
-function claudeCodeApiErrorCode(error: string): string {
+function claudeCodeApiErrorCode(error: string | undefined): string | undefined {
   switch (error) {
     case "authentication_failed":
       return "claude_code_not_authenticated";
@@ -1471,7 +1480,7 @@ function claudeCodeApiErrorCode(error: string): string {
     case "overloaded":
       return "claude_code_overloaded";
     default:
-      return "claude_code_runtime_error";
+      return undefined;
   }
 }
 
@@ -1507,26 +1516,27 @@ function friendlyClaudeCodeError(
       return "Claude Code rejected the configured model. Assign a model listed under Models > Backends > Claude Code.";
     case "claude_code_overloaded":
       return "Claude is temporarily overloaded. Try again shortly.";
-    case "output_truncated":
-      return "The model reached its output limit before completing this response.";
     default:
       return "Claude Code failed to complete the turn.";
   }
 }
 
-/** Failures that retrying the same turn cannot fix without the operator acting first. */
-const PERMANENT_FAILURES = new Set([
-  "context_window_exceeded",
-  "claude_code_native_tool_unavailable",
-  "claude_code_not_authenticated",
-  "claude_code_binary_missing",
-  "claude_code_unsupported_version",
-  "claude_code_invalid_model",
-  "claude_code_managed_policy",
-]);
+/**
+ * Failures the same turn can never get past, because its own payload is the
+ * problem.
+ *
+ * Everything else is retryable, including the faults only an operator clears —
+ * a lapsed login, a missing or outdated CLI, an unknown model, a managed
+ * policy, a CLI offering tools Omnesis did not configure. Those blame the
+ * environment, not the turn: once it is repaired the same turn succeeds, so a
+ * background queue must wait them out (as it does a Codex sign-out or an HTTP
+ * 401) rather than retire its work. An interactive turn still fails at once
+ * with the message saying what to fix.
+ */
+const PAYLOAD_FAILURES = new Set(["context_window_exceeded", "output_truncated"]);
 
 function isRetryableFailure(code: string): boolean {
-  return !PERMANENT_FAILURES.has(code);
+  return !PAYLOAD_FAILURES.has(code);
 }
 
 function isContextWindowError(message: string): boolean {

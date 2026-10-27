@@ -370,7 +370,9 @@
           failed turn and any partial answer, makes the conversation read-only, and asks you to
           start a new one. It stays read-only on every device, and changing the assigned model does
           not reopen it. When only a single answer reaches the model's output limit, Omnesis marks
-          that answer as truncated and you can ask a follow-up.
+          that answer as truncated and you can ask a follow-up. An answer the model server stops for
+          another reason, such as a content filter or an aborted generation, fails the turn rather
+          than being kept as a complete answer.
         </p>
 
         <h2 id="times-and-time-zones">Times and time zones</h2>

@@ -9,6 +9,8 @@ export const CONTEXT_WINDOW_EXCEEDED_MESSAGE =
 export const OUTPUT_TRUNCATED_MESSAGE =
   "The model reached its output limit before completing this response.";
 
+export const RESPONSE_INCOMPLETE_MESSAGE = "The model response ended before it completed.";
+
 export type AgentTurnOutcome =
   | {
       status: "succeeded";

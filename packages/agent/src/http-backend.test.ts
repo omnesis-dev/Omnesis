@@ -7,6 +7,7 @@ import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import { HttpChatBackend, convertHistoryToOpenAI, convertToolsToOpenAI } from "./http-backend.js";
+import { agentFailureScope } from "./http-error.js";
 import type { LlmRequestTiming, ToolHandle } from "./backend.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -1780,6 +1781,74 @@ describe("HttpChatBackend", () => {
     }
   });
 
+  const incomplete = (retryable: boolean, reason: string) => ({
+    code: "http_response_incomplete",
+    retryable,
+    provider: { code: reason },
+  });
+
+  it.each([
+    // An ordinary end, however the server spells it.
+    ["stop", "end_turn", undefined],
+    ["eos", "end_turn", undefined],
+    ["stop_sequence", "end_turn", undefined],
+    ["end_turn", "end_turn", undefined],
+    ["STOP", "end_turn", undefined],
+    [null, "end_turn", undefined],
+    // The context filled before the answer did.
+    ["model_length", "max_tokens", { code: "output_truncated", retryable: false }],
+    // Cut off: the partial answer must not be saved as a complete one. A
+    // filter judged this turn's own content; the others are the server's.
+    ["content_filter", "error", incomplete(false, "content_filter")],
+    ["abort", "error", incomplete(true, "abort")],
+    ["error", "error", incomplete(true, "error")],
+    ["insufficient_system_resource", "error", incomplete(true, "insufficient_system_resource")],
+    ["a_future_reason", "error", incomplete(true, "a_future_reason")],
+  ] as const)(
+    "a stream ending with finish_reason %s after partial content ends %s",
+    async (finishReason, stopReason, failure) => {
+      const chunks: Array<Record<string, unknown> | "[DONE]"> = [
+        { choices: [{ delta: { content: "partial" }, finish_reason: null }] },
+        {
+          choices: [{ delta: {}, finish_reason: finishReason }],
+          usage: { prompt_tokens: 100, completion_tokens: 2 },
+        },
+        "[DONE]",
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(chunks)));
+
+      const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+      const events: AgentEvent[] = [];
+      for await (const e of backend.runTurn(baseInput())) events.push(e);
+
+      const end = events.at(-1);
+      if (end?.type !== "agent.message.end") throw new Error("expected message end");
+      expect(end.payload.stopReason).toBe(stopReason);
+      if (failure) expect(end.payload.failure).toMatchObject(failure);
+      else expect(end.payload.failure).toBeUndefined();
+    },
+  );
+
+  it("never runs a tool call from a response the server cut off", async () => {
+    let invoked = 0;
+    const tool = fakeToolHandle("search", () => {
+      invoked += 1;
+      return { kind: "error", code: "x", message: "x" };
+    });
+    const chunks = toolUseSSE("call_cut", "search", { query: "q" });
+    chunks[2] = { choices: [{ delta: {}, finish_reason: "abort" }] };
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(chunks)));
+
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ tools: [tool] }))) events.push(e);
+
+    expect(invoked).toBe(0);
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected message end");
+    expect(end.payload.failure?.code).toBe("http_response_incomplete");
+  });
+
   it("sends Authorization header when apiKey is provided", async () => {
     const fetchSpy = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(textOnlySSE(["ok"]))));
     globalThis.fetch = fetchSpy;
@@ -2322,7 +2391,11 @@ describe("HttpChatBackend — a server that truncates the prompt", () => {
     if (end?.type !== "agent.message.end") throw new Error("expected end");
     expect(end.payload.stopReason).toBe("error");
     expect(end.payload.failure?.code).toBe("prompt_truncated");
-    expect(end.payload.failure?.retryable).toBe(false);
+    // The server's configuration cut it, not the request: once the operator
+    // raises the context length the same request succeeds, so a background
+    // queue waits for that instead of retiring the work.
+    expect(end.payload.failure?.retryable).toBe(true);
+    expect(agentFailureScope(end.payload.failure!)).toBe("provider");
     expect(end.payload.usage.inputTokens).toBe(2_050);
   });
 

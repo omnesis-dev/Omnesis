@@ -214,8 +214,17 @@ turn and does not walk the compatibility ladder. Provider bodies are never
 copied into client events or transcripts. Streaming usage fields are cumulative:
 the last usage value for each request wins, then tool-loop request totals are
 summed. A Responses `incomplete_details.reason` of `max_output_tokens` and a Chat
-Completions `finish_reason` of `length` are explicit output-truncation failures,
-not successful turns.
+Completions `finish_reason` of `length` (or Mistral's `model_length`) are
+explicit output-truncation failures, not successful turns. Any other Responses
+incomplete reason, and any Chat Completions `finish_reason` outside the normal
+ends (`stop`, `tool_calls`, `function_call`, `eos`, `end_turn`,
+`stop_sequence`, or none at all, compared case-insensitively), fails the turn
+as `http_response_incomplete` with the reason as its provider code, before any
+of its tool calls run: `content_filter`, vLLM's `abort`, `error`, and values
+Omnesis does not know. An unknown value fails rather than passes because a
+cut-off answer saved as complete is silent, while a false failure names the
+value. A content filter is not retryable, since it judged the turn's own
+content; the others are.
 
 **Tools.** OpenAI function-calling schema; multi-round tool loop (default max 50,
 `maxToolIterations`). Each round replays the **full** message list — the assistant

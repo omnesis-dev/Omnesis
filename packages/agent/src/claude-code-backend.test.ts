@@ -32,6 +32,7 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeCodeCommand,
 } from "./claude-code-backend.js";
+import { agentFailureScope } from "./http-error.js";
 import type { ToolHandle, TurnInput } from "./backend.js";
 import type { AgentEvent, ToolResult } from "@omnesis/core";
 
@@ -480,14 +481,14 @@ describe("Claude Code runtime against a scripted CLI", () => {
     ["unknown-block", "produces a block type Omnesis does not accept"],
     ["stream-native-tool", "streams the start of a built-in tool call"],
     ["unknown-omnesis-tool", "calls an mcp__omnesis__ tool Omnesis did not provide"],
-  ])("fails closed, without retry, when the CLI %s (%s)", async (scenario) => {
+  ])("fails closed when the CLI %s (%s)", async (scenario) => {
     const { runtime, dir } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: scenario });
     const events = await collect(
       new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [searchTool()] })),
     );
     expect(end(events)).toMatchObject({
       stopReason: "error",
-      failure: { code: "claude_code_native_tool_unavailable", retryable: false },
+      failure: { code: "claude_code_native_tool_unavailable" },
     });
     if (scenario === "own-agents") {
       // The conversation never left Omnesis.
@@ -525,10 +526,7 @@ describe("Claude Code runtime against a scripted CLI", () => {
           input({ tools: [searchTool()] }),
         ),
       );
-      expect(end(events).failure).toMatchObject({
-        code: "claude_code_native_tool_unavailable",
-        retryable: false,
-      });
+      expect(end(events).failure?.code).toBe("claude_code_native_tool_unavailable");
     },
   );
 
@@ -550,10 +548,7 @@ describe("Claude Code runtime against a scripted CLI", () => {
     const events = await collect(
       new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [searchTool()] })),
     );
-    expect(end(events).failure).toMatchObject({
-      code: "claude_code_managed_policy",
-      retryable: false,
-    });
+    expect(end(events).failure?.code).toBe("claude_code_managed_policy");
     expect(existsSync(join(dir, "record.jsonl.frames"))).toBe(false);
     await expect(runtime.listModels()).rejects.toThrow(/managed policy/);
   });
@@ -649,11 +644,174 @@ describe("Claude Code runtime against a scripted CLI", () => {
     };
     expect(error.code).toBe("claude_code_not_authenticated");
     expect(error.message).toContain("claude auth login");
-    expect(end(events).failure).toMatchObject({
-      model: "sonnet",
-      backend: "claude-code",
-      retryable: false,
-    });
+    expect(end(events).failure).toMatchObject({ model: "sonnet", backend: "claude-code" });
+  });
+
+  /** Run one turn and return its terminal failure. */
+  async function failureOf(runtime: ClaudeCodeRuntime, tools: ToolHandle[] = []) {
+    const events = await collect(
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools })),
+    );
+    return end(events);
+  }
+
+  it.each([
+    // The environment: an operator repairs it and the same turn then succeeds,
+    // so a background queue waits for that instead of retiring the work.
+    [
+      "a lapsed login",
+      () => setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "auth-error" }).runtime,
+      "claude_code_not_authenticated",
+      true,
+      "provider",
+    ],
+    [
+      "a missing CLI",
+      () => {
+        const dir = scratch();
+        return new ClaudeCodeRuntime({
+          workspaceDir: join(dir, "workspace"),
+          managedSettingsDirs: [],
+          env: { PATH: dir, HOME: dir },
+        });
+      },
+      "claude_code_binary_missing",
+      true,
+      "provider",
+    ],
+    [
+      "an unknown model",
+      () => setup({ OMNESIS_FAKE_CLAUDE_API_ERROR: "model_not_found" }).runtime,
+      "claude_code_invalid_model",
+      true,
+      "provider",
+    ],
+    [
+      "a managed policy that runs commands",
+      () => {
+        const policyDir = scratch();
+        writeFileSync(join(policyDir, "managed-settings.json"), JSON.stringify({ hooks: {} }));
+        return setup({}, undefined, [policyDir]).runtime;
+      },
+      "claude_code_managed_policy",
+      true,
+      "provider",
+    ],
+    [
+      "a CLI offering tools Omnesis did not configure",
+      () => setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "foreign-tools" }).runtime,
+      "claude_code_native_tool_unavailable",
+      true,
+      "provider",
+    ],
+    [
+      "a usage limit",
+      () => setup({ OMNESIS_FAKE_CLAUDE_API_ERROR: "rate_limit" }).runtime,
+      "claude_code_usage_limited",
+      true,
+      "provider",
+    ],
+    // The payload: the same turn can never get past these.
+    [
+      "a prompt too long for the model",
+      () =>
+        setup({
+          OMNESIS_FAKE_CLAUDE_API_ERROR: "invalid_request",
+          OMNESIS_FAKE_CLAUDE_RESULT_TEXT: "Prompt is too long",
+        }).runtime,
+      "context_window_exceeded",
+      false,
+      "request",
+    ],
+    [
+      "an answer past the output limit",
+      () => setup({ OMNESIS_FAKE_CLAUDE_API_ERROR: "max_output_tokens" }).runtime,
+      "output_truncated",
+      false,
+      "request",
+    ],
+  ] as const)("classifies %s", async (_label, runtime, code, retryable, scope) => {
+    const { failure } = await failureOf(runtime(), [searchTool()]);
+    expect(failure).toMatchObject({ code, retryable });
+    expect(agentFailureScope(failure!)).toBe(scope);
+  });
+
+  it.each([
+    [
+      { OMNESIS_FAKE_CLAUDE_API_ERROR: "authentication_failed" },
+      "claude_code_not_authenticated",
+      true,
+      "error",
+    ],
+    [{ OMNESIS_FAKE_CLAUDE_API_ERROR: "rate_limit" }, "claude_code_usage_limited", true, "error"],
+    [{ OMNESIS_FAKE_CLAUDE_API_ERROR: "overloaded" }, "claude_code_overloaded", true, "error"],
+    [
+      { OMNESIS_FAKE_CLAUDE_API_ERROR: "model_not_found" },
+      "claude_code_invalid_model",
+      true,
+      "error",
+    ],
+    // As the HTTP and Anthropic backends report the same failure.
+    [
+      { OMNESIS_FAKE_CLAUDE_API_ERROR: "max_output_tokens" },
+      "output_truncated",
+      false,
+      "max_tokens",
+    ],
+    [{ OMNESIS_FAKE_CLAUDE_API_ERROR: "server_error" }, "claude_code_runtime_error", true, "error"],
+    // The CLI files a prompt the model cannot take under `invalid_request`.
+    [
+      {
+        OMNESIS_FAKE_CLAUDE_API_ERROR: "invalid_request",
+        OMNESIS_FAKE_CLAUDE_RESULT_TEXT: "Prompt is too long",
+      },
+      "context_window_exceeded",
+      false,
+      "error",
+    ],
+    [
+      { OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE: "error_max_turns" },
+      "claude_code_runtime_error",
+      true,
+      "error",
+    ],
+    [
+      { OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE: "error_during_execution" },
+      "claude_code_runtime_error",
+      true,
+      "error",
+    ],
+    [
+      {
+        OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE: "error_during_execution",
+        OMNESIS_FAKE_CLAUDE_RESULT_TEXT: "Prompt is too long: 210000 tokens > 200000 maximum",
+      },
+      "context_window_exceeded",
+      false,
+      "error",
+    ],
+    // An error the CLI recovered from does not label a later, unrelated failure.
+    [
+      {
+        OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR: "rate_limit",
+        OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE: "error_during_execution",
+      },
+      "claude_code_runtime_error",
+      true,
+      "error",
+    ],
+  ] as const)("maps %j to %s", async (env, code, retryable, stopReason) => {
+    const terminal = await failureOf(setup(env).runtime);
+    expect(terminal.stopReason).toBe(stopReason);
+    expect(terminal.failure).toMatchObject({ code, retryable });
+  });
+
+  it("completes a turn that recovered from an earlier API error", async () => {
+    const terminal = await failureOf(
+      setup({ OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR: "max_output_tokens" }).runtime,
+    );
+    expect(terminal.stopReason).toBe("end_turn");
+    expect(terminal.failure).toBeUndefined();
   });
 
   it("reports a CLI that dies mid-turn", async () => {

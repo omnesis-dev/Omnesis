@@ -999,11 +999,13 @@
         </p>
         <p>
           When a model call fails, Brain looks at what the failure blames. A malformed or oversized
-          request is the run's fault, and the run is retired after its retries. Anything else (no
-          credit, a rejected key, a rate limit, an unreachable backend) is the environment's fault:
-          the run keeps its place and its attempt is refunded. After three consecutive backend
-          failures the drainer stops claiming work and backs off from one minute to fifteen, and the
-          Bootstrap tab shows a
+          request, or one a content filter stopped, is the run's fault, and the run is retired after
+          its retries. Anything else is the environment's fault: no credit, a rejected key, a rate
+          limit, an unreachable backend, a signed-out or missing Claude Code, a model the backend
+          does not offer, or a server whose context length cut the prompt short. Then the run keeps
+          its place and its attempt is refunded until you fix the cause. After three consecutive
+          backend failures the drainer stops claiming work and backs off from one minute to fifteen,
+          and the Bootstrap tab shows a
           <strong>Model backend — Failing</strong> banner with the provider's own error. Nothing is
           lost while it lasts.
         </p>

@@ -30,6 +30,17 @@
  *                                  suffixed `-heartbeat-N`), "foreign" and
  *                                  "foreign-heartbeat" do the same for a
  *                                  call Omnesis did not make
+ *   OMNESIS_FAKE_CLAUDE_API_ERROR  the `text` scenario ends with the CLI's synthetic
+ *                                  assistant message carrying this API error
+ *                                  (`rate_limit`, `max_output_tokens`, …) and an
+ *                                  error result
+ *   OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR the `text` scenario opens with such a
+ *                                  message, as for an error the CLI recovered from
+ *   OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE subtype of the `text` scenario's result; any
+ *                                  other than `success` is an error result
+ *   OMNESIS_FAKE_CLAUDE_RESULT_TEXT text of the `text` scenario's result (its
+ *                                  `errors` for an error subtype) and of its
+ *                                  API error message
  *   OMNESIS_FAKE_CLAUDE_RECORD     file that receives one JSON line per run:
  *                                  argv, the environment keys, and the frames
  *                                  Omnesis sent; `<file>.frames` gets each
@@ -367,10 +378,38 @@ async function runTurn() {
   const content = user?.message?.content ?? [];
   const images = content.filter((block) => block.type === "image").length;
   const answer = `Echo: ${content.find((block) => block.type === "text")?.text ?? ""}${images ? ` [${images} image]` : ""}`;
+  if (env.OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR) {
+    apiErrorMessage(env.OMNESIS_FAKE_CLAUDE_EARLIER_API_ERROR);
+  }
   textDelta("Working… ");
   textDelta(answer);
   assistant([{ type: "text", text: `Working… ${answer}` }]);
-  result({ result: answer });
+  if (env.OMNESIS_FAKE_CLAUDE_API_ERROR) apiErrorMessage(env.OMNESIS_FAKE_CLAUDE_API_ERROR);
+  const subtype = env.OMNESIS_FAKE_CLAUDE_RESULT_SUBTYPE ?? "success";
+  const text = env.OMNESIS_FAKE_CLAUDE_RESULT_TEXT ?? answer;
+  result({
+    subtype,
+    ...(subtype === "success" ? { result: text } : { errors: [text] }),
+    ...(env.OMNESIS_FAKE_CLAUDE_API_ERROR || subtype !== "success" ? { is_error: true } : {}),
+  });
+}
+
+/** The message the CLI synthesizes for a failed API request, its `error` set. */
+function apiErrorMessage(error) {
+  send({
+    type: "assistant",
+    message: {
+      id: `msg_fake_${++assistantMessages}`,
+      model: "<synthetic>",
+      role: "assistant",
+      content: [
+        { type: "text", text: env.OMNESIS_FAKE_CLAUDE_RESULT_TEXT ?? `API Error: ${error}` },
+      ],
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+    session_id: sessionId,
+    error,
+  });
 }
 
 const rl = createInterface({ input: process.stdin });
