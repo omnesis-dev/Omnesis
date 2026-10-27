@@ -30,7 +30,11 @@ init_volume() {
   docker volume create "$1" >/dev/null
   # Disposable unlock material stays in its private test volume, never logs.
   docker run --rm --mount "type=volume,source=$1,target=/var/lib/omnesis" \
-    --entrypoint node "$image" -e 'require("node:fs").writeFileSync("/var/lib/omnesis/keyring.pass", require("node:crypto").randomBytes(48).toString("hex"), {mode:0o600})'
+    --entrypoint node "$image" -e '
+      const fs=require("node:fs");
+      fs.writeFileSync("/var/lib/omnesis/keyring.pass", require("node:crypto").randomBytes(48).toString("hex"), {mode:0o600});
+      fs.writeFileSync("/var/lib/omnesis/omnesis.json", JSON.stringify({inference:{assignments:{embedder:null}}}), {mode:0o600});
+    '
   docker run --rm --mount "type=volume,source=$1,target=/var/lib/omnesis" \
     "${keyring_env[@]}" --entrypoint omnesis "$image" keyring init --backend passphrase >/dev/null
 }
@@ -184,14 +188,17 @@ fixture() {
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import { primeSecretFileKeyCache, readTokenFile } from '/app/packages/core/dist/index.js';
 await primeSecretFileKeyCache({configDir:'/var/lib/omnesis'});
+assert.equal(JSON.parse(readFileSync('/var/lib/omnesis/omnesis.json','utf8')).inference.assignments.embedder,null);
 const token=readTokenFile('/var/lib/omnesis');
 const title='container-persistence-fixture';
 const content='An invented guide to sorting toy blocks by shape and colour.';
-const call=async (path,body)=>{
+const call=async (path,body,timeout=10_000)=>{
   const result=await fetch('https://localhost:7600'+path,{
     method:body ? 'POST':'GET',
+    signal:AbortSignal.timeout(timeout),
     headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
     ...(body ? {body:JSON.stringify(body)}:{})
   });
@@ -216,6 +223,28 @@ assert.equal(document.content,content);
 const marker='/var/lib/omnesis/.smoke-document-id';
 if(process.argv[2]==='seed') writeFileSync(marker,document.id,{mode:0o600});
 else assert.equal(document.id,readFileSync(marker,'utf8'));
+// The raw-document check above does not prove the asynchronous keyword index.
+// Exercise the ordinary search pipeline with no embedding model, after every boot.
+const deadline=performance.now()+90_000;
+const requestBudget=()=>{
+  const remaining=Math.ceil(deadline-performance.now());
+  assert(remaining>0,'Keyword worker and persistent search result did not become ready within 90s');
+  return Math.min(10_000,remaining);
+};
+for (;;) {
+  const stats=await call('/index/stats',undefined,requestBudget());
+  if(stats.keywordIndexingActive===true) {
+    assert.equal(stats.model,null,'No-model smoke unexpectedly enabled an embedding model');
+    const search=await call('/search',{text:'sorting toy blocks',limit:10},requestBudget());
+    assert(Array.isArray(search.results),'Search did not return a results array');
+    if(search.results.length) {
+      assert.deepEqual(search.results.map(hit=>({id:hit.documentId,title:hit.title})),[{id:document.id,title}],
+        'Keyword search lost, duplicated or replaced the persistent document');
+      break;
+    }
+  }
+  await delay(Math.min(500,Math.max(0,deadline-performance.now())));
+}
 NODE
 }
 start
