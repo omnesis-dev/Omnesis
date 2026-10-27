@@ -130,6 +130,7 @@ const VERIFIABLE_ROLES = new Set<CapabilityRole>([
   "background-agent",
   "watch-judge",
   "entailment-verifier",
+  "transcriber",
 ]);
 
 const reasoningRoleSchema = z.enum([

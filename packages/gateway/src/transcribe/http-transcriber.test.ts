@@ -7,6 +7,7 @@ import {
   MAX_CHUNK_SAMPLES,
   encodeMultipart,
   encodeWav,
+  parseTranscriptText,
   splitPcm,
 } from "./http-transcriber.js";
 import type { TranscriptionVocabulary } from "@omnesis/core";
@@ -251,5 +252,65 @@ describe("encodeMultipart", () => {
     expect(form.get("model")).toBe("whisper-1");
     const file = form.get("file") as File;
     expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 13, 10, 45, 45, 255]);
+  });
+});
+
+describe("parseTranscriptText", () => {
+  test("keeps a plain transcript as it is", () => {
+    expect(parseTranscriptText("  hello there \n")).toEqual({ text: "hello there" });
+  });
+
+  test("drops the language Qwen3-ASR writes ahead of the words and keeps it as a code", () => {
+    // Ollama and llama-server pass the model's output through verbatim.
+    expect(
+      parseTranscriptText("language English<asr_text>And so, my fellow Americans, ask not."),
+    ).toEqual({ text: "And so, my fellow Americans, ask not.", language: "en" });
+    expect(parseTranscriptText("language German<asr_text>Hallo, wie geht's?")).toEqual({
+      text: "Hallo, wie geht's?",
+      language: "de",
+    });
+    expect(parseTranscriptText("language Klingon<asr_text>nuqneH")).toEqual({
+      text: "nuqneH",
+      language: "klingon",
+    });
+  });
+
+  test("leaves a transcript that merely starts with the word language alone", () => {
+    expect(parseTranscriptText("language is a virus")).toEqual({ text: "language is a virus" });
+  });
+});
+
+describe("HttpTranscriber with a server that passes Qwen3-ASR output through", () => {
+  test("returns the words and the detected language", async () => {
+    const { fetchFn } = backend(() =>
+      Response.json({ text: "language French<asr_text>Bonjour à tous." }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:11434",
+      model: "frozenlab/qwen3-asr:1.7b",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toEqual({
+      text: "Bonjour à tous.",
+      language: "fr",
+      durationSec: 1,
+    });
+  });
+
+  test("prefers the language the server reports over the one in the text", async () => {
+    const { fetchFn } = backend(() =>
+      Response.json({ text: "language English<asr_text>Hi.", language: "en-GB" }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8080",
+      model: "m",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toMatchObject({
+      text: "Hi.",
+      language: "en-GB",
+    });
   });
 });

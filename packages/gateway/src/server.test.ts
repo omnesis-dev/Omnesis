@@ -9735,6 +9735,62 @@ describe("admin config endpoints", () => {
     expect(getBody.config.indexer?.cycleInterval).toBe("10m");
   });
 
+  test("PATCH /admin/config refuses an assignment the gateway can tell will not work", async () => {
+    // The vetting hook is the registry's transcription probe in production;
+    // here it refuses one assignment with a reason, so the config is never
+    // written and the client gets that reason as the error.
+    const vetted: Array<[string, string | null]> = [];
+    const vetApp = createServer(db, undefined, {
+      configDir,
+      configStore,
+      vetAssignment: async (role, value) => {
+        vetted.push([role, value]);
+        return role === "transcriber" && value === "ollama/qwen3-asr"
+          ? {
+              ok: false,
+              reason:
+                'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
+            }
+          : { ok: true };
+      },
+    });
+    const vetReq = (body: unknown) =>
+      vetApp.request("/admin/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
+        body: JSON.stringify(body),
+      });
+
+    const refused = await vetReq({
+      inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
+    });
+    expect(refused.status).toBe(400);
+    const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
+    expect(refusal.code).toBe("VALIDATION_ERROR");
+    expect(refusal.error).toBe(
+      'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
+    );
+    expect(refusal.detail).toEqual([
+      { path: "/inference/assignments/transcriber", message: refusal.error },
+    ]);
+    const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
+    expect(unchanged.config).toEqual({});
+
+    // Every assignment the body sets is vetted; one the hook accepts is written.
+    const accepted = await vetReq({
+      inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
+    });
+    expect(accepted.status).toBe(200);
+    expect(vetted).toEqual([
+      ["transcriber", "ollama/qwen3-asr"],
+      ["transcriber", "local/whisper-base"],
+      ["agent", null],
+    ]);
+    // A body that sets no assignment is not vetted at all.
+    expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
+    expect(vetted).toHaveLength(3);
+  });
+
   test("PATCH /admin/config stores inference backend apiKey as a config secret reference", async () => {
     const res = await cfgReq("/admin/config", {
       method: "PATCH",

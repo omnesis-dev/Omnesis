@@ -1666,6 +1666,14 @@ export const removeHttpBackend = (key) =>
 export const probeBackend = (key) =>
   request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/probe`);
 
+// Behavioral check that `model` on backend `key` can serve `role` — the
+// gateway issues one minimal call for the role (a transcription of a
+// one-second clip for the transcriber) and caches the verdict.
+export const verifyBackendModel = (key, model, role, force = false) =>
+  request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/verify`, {
+    body: { model, role, force },
+  });
+
 export const refreshCodexBackend = () =>
   request("POST", "/admin/inference/codex/refresh");
 

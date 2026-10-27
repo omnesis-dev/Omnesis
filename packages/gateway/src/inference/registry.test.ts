@@ -1947,14 +1947,231 @@ describe("InferenceRegistry.verifyModel", () => {
     expect(fn.mock.calls.some((call) => String(call[0]).endsWith("/responses"))).toBe(false);
   });
 
-  it("reports unsupported for roles that aren't behaviorally probed (transcriber/ocr)", async () => {
+  it("reports unsupported for roles that aren't behaviorally probed (ocr)", async () => {
     routeFetch({});
-    const reg = withBackend();
-    for (const role of ["transcriber", "ocr"] as const) {
-      const v = await reg.verifyModel("vllm", "whisper", role);
-      expect(v.supported).toBe(false);
-      expect(v.detail).toMatch(/not supported/i);
-    }
+    const v = await withBackend().verifyModel("vllm", "dots-ocr", "ocr");
+    expect(v.supported).toBe(false);
+    expect(v.detail).toMatch(/not supported/i);
+  });
+
+  // ── transcriber: one second of audio to /audio/transcriptions ──
+
+  it("confirms a transcriber when the transcription endpoint returns a transcript", async () => {
+    const fn = routeFetch({ "/audio/transcriptions": () => jsonRes({ text: "" }) });
+    const v = await withBackend().verifyModel("vllm", "whisper-large-v3-turbo", "transcriber");
+    expect(v.supported).toBe(true);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toMatch(/transcript/);
+    const call = fn.mock.calls.find((c) => String(c[0]).endsWith("/audio/transcriptions"))!;
+    const init = call[1] as RequestInit;
+    expect(String(new Headers(init.headers).get("content-type"))).toMatch(/^multipart\/form-data/);
+    // The body carries the model and a WAV file, the shape every
+    // OpenAI-compatible transcription server accepts.
+    const form = await new Request("http://x/", {
+      method: "POST",
+      headers: init.headers,
+      body: init.body as BodyInit,
+    }).formData();
+    expect(form.get("model")).toBe("whisper-large-v3-turbo");
+    const file = form.get("file") as File;
+    expect(file.type).toBe("audio/wav");
+    expect(new TextDecoder().decode(new Uint8Array(await file.arrayBuffer()).subarray(0, 4))).toBe(
+      "RIFF",
+    );
+  });
+
+  it("refuses a chat-only backend (Ollama) that 404s the transcription endpoint", async () => {
+    routeFetch({ "/audio/transcriptions": () => jsonRes({ error: "not found" }, 404) });
+    const v = await withBackend().verifyModel("vllm", "frozenlab/qwen3-asr:1.7b", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toMatch(/no transcription endpoint/);
+    expect(v.detail).toMatch(/404/);
+  });
+
+  it("shows the server's words for a 404 that names the model (speaches before a download)", async () => {
+    routeFetch({
+      "/audio/transcriptions": () =>
+        jsonRes(
+          {
+            detail:
+              "Model 'Systran/faster-whisper-tiny' is not installed locally. You can download the model using `POST /v1/models`",
+          },
+          404,
+        ),
+    });
+    const v = await withBackend().verifyModel("vllm", "Systran/faster-whisper-tiny", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toMatch(
+      /^HTTP 404: Model 'Systran\/faster-whisper-tiny' is not installed locally/,
+    );
+    expect(v.detail).not.toMatch(/no transcription endpoint/);
+  });
+
+  it("refuses a model the transcription server does not serve, with the server's words", async () => {
+    routeFetch({
+      "/audio/transcriptions": () => jsonRes({ error: { message: "model 'nope' not found" } }, 400),
+    });
+    const v = await withBackend().verifyModel("vllm", "nope", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toBe("HTTP 400: model 'nope' not found");
+  });
+
+  it("refuses a 200 that carries no transcript", async () => {
+    routeFetch({ "/audio/transcriptions": () => jsonRes({ choices: [] }) });
+    const v = await withBackend().verifyModel("vllm", "m", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBeUndefined();
+    expect(v.detail).toMatch(/without a transcript/);
+  });
+
+  it("is inconclusive, not a refusal, when the backend gives no answer", async () => {
+    const fn = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/audio/transcriptions")) throw new Error("fetch failed");
+      return jsonRes({ data: [] });
+    });
+    globalThis.fetch = fn as unknown as typeof globalThis.fetch;
+    const v = await withBackend().verifyModel("vllm", "m", "transcriber");
+    expect(v).toMatchObject({ supported: false, inconclusive: true, detail: "fetch failed" });
+  });
+
+  it("is inconclusive when the inference URL policy blocks a remote backend", async () => {
+    routeFetch({ "/audio/transcriptions": () => jsonRes({ text: "hi" }) });
+    const reg = makeRegistry();
+    reg.loadConfig({
+      inference: { backends: { cloud: { type: "http", url: "https://api.example.com" } } },
+    } as OmnesisConfig);
+    const v = await reg.verifyModel("cloud", "whisper-1", "transcriber");
+    expect(v.supported).toBe(false);
+    expect(v.inconclusive).toBe(true);
+    expect(v.detail).toMatch(/policy/i);
+  });
+
+  // ── the transcriber verdict in resolution, the overview and assignment vetting ──
+
+  /** The shape of a chat-only server: it lists models and has no transcription endpoint. */
+  function ollamaLike(models: string[]): InferenceRegistry {
+    globalThis.fetch = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/models")) return jsonRes({ data: models.map((id) => ({ id })) });
+      if (u.endsWith("/audio/transcriptions")) return jsonRes({ error: "404 page not found" }, 404);
+      return jsonRes({});
+    }) as unknown as typeof globalThis.fetch;
+    const reg = makeRegistry();
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:11434" } },
+        assignments: { transcriber: "ollama/frozenlab/qwen3-asr:1.7b" },
+      },
+    } as OmnesisConfig);
+    return reg;
+  }
+
+  it("resolves a reachable backend as a working transcriber until a verdict says otherwise", async () => {
+    const reg = ollamaLike(["frozenlab/qwen3-asr:1.7b"]);
+    await reg.probeBackends();
+    expect(reg.resolve("transcriber")).toMatchObject({ kind: "http", available: true });
+
+    const verdict = await reg.verifyAssignedTranscriber();
+    expect(verdict).toMatchObject({ supported: false, model: "frozenlab/qwen3-asr:1.7b" });
+
+    const resolved = reg.resolve("transcriber");
+    expect(resolved).toMatchObject({ kind: "http", available: false });
+    expect((resolved as { reason?: string }).reason).toMatch(
+      /Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint/,
+    );
+    // The verdict rides along in the overview, for the picker.
+    expect(reg.getOverview().backends["ollama"]!.verdicts).toEqual([
+      expect.objectContaining({ role: "transcriber", supported: false }),
+    ]);
+    // Other roles on the same backend are untouched by a transcriber verdict.
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:11434" } },
+        assignments: { agent: "ollama/frozenlab/qwen3-asr:1.7b" },
+      },
+    } as OmnesisConfig);
+    expect(reg.resolve("agent")).toMatchObject({ kind: "http", available: true });
+  });
+
+  it("verifies nothing for a local, unset or unreachable transcriber", async () => {
+    const reg = makeRegistry();
+    reg.loadConfig({ inference: {} } as OmnesisConfig);
+    await expect(reg.verifyAssignedTranscriber()).resolves.toBeNull();
+    reg.loadConfig({
+      inference: {
+        backends: { down: { type: "http", url: "http://localhost:1" } },
+        assignments: { transcriber: "down/whisper" },
+      },
+    } as OmnesisConfig);
+    // Never probed: the backend is still "probing", so not available.
+    await expect(reg.verifyAssignedTranscriber()).resolves.toBeNull();
+  });
+
+  it("vets a transcriber assignment: a backend that answers it cannot transcribe is refused", async () => {
+    const reg = ollamaLike(["frozenlab/qwen3-asr:1.7b"]);
+    await reg.probeBackends();
+    const verdict = await reg.vetAssignment("transcriber", "ollama/frozenlab/qwen3-asr:1.7b");
+    expect(verdict).toEqual({
+      ok: false,
+      reason: expect.stringMatching(
+        /^Backend "ollama" cannot transcribe with frozenlab\/qwen3-asr:1.7b: no transcription endpoint/,
+      ),
+    });
+  });
+
+  it("lets through an assignment it cannot judge: other roles, disabled, unknown backend, no answer", async () => {
+    const reg = ollamaLike([]);
+    await reg.probeBackends();
+    await expect(reg.vetAssignment("agent", "ollama/qwen3")).resolves.toEqual({ ok: true });
+    await expect(reg.vetAssignment("transcriber", null)).resolves.toEqual({ ok: true });
+    await expect(reg.vetAssignment("transcriber", "local/whisper-base")).resolves.toEqual({
+      ok: true,
+    });
+    // Declared in the same config write: the registry has not loaded it yet.
+    await expect(reg.vetAssignment("transcriber", "new-gpu/whisper")).resolves.toEqual({
+      ok: true,
+    });
+    // A backend that does not answer is let through; the role then reads
+    // unavailable with the reason until a later verification succeeds.
+    globalThis.fetch = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/audio/transcriptions")) throw new Error("ECONNREFUSED");
+      return jsonRes({ data: [] });
+    }) as unknown as typeof globalThis.fetch;
+    await expect(reg.vetAssignment("transcriber", "ollama/whisper")).resolves.toEqual({
+      ok: true,
+    });
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:11434" } },
+        assignments: { transcriber: "ollama/whisper" },
+      },
+    } as OmnesisConfig);
+    const resolved = reg.resolve("transcriber") as { available: boolean; reason?: string };
+    expect(resolved.available).toBe(false);
+    expect(resolved.reason).toMatch(/has not answered a transcription yet: ECONNREFUSED/);
+  });
+
+  it("forgets a transcriber verdict when the backend's address changes", async () => {
+    const reg = ollamaLike(["whisper"]);
+    await reg.probeBackends();
+    await reg.verifyAssignedTranscriber();
+    expect(reg.resolve("transcriber")).toMatchObject({ available: false });
+    globalThis.fetch = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/models")) return jsonRes({ data: [{ id: "whisper" }] });
+      return jsonRes({ text: "hello" });
+    }) as unknown as typeof globalThis.fetch;
+    reg.loadConfig({
+      inference: {
+        backends: { ollama: { type: "http", url: "http://localhost:8003" } },
+        assignments: { transcriber: "ollama/whisper" },
+      },
+    } as OmnesisConfig);
+    await reg.probeBackends();
+    expect(reg.resolve("transcriber")).toMatchObject({ available: true });
+    await expect(reg.verifyAssignedTranscriber()).resolves.toMatchObject({ supported: true });
   });
 
   it("invalidates the cache when the backend is removed", async () => {

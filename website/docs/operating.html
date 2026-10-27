@@ -753,13 +753,24 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </p>
         <p>
           To transcribe on an NVIDIA or other GPU, run an OpenAI-compatible transcription server on
-          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, or vLLM
-          serving a Whisper model. Add it as a backend and assign the <code>transcriber</code> role
-          to <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and
-          sends it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV
-          file. A server on another machine needs remote inference enabled. Whichever engine runs
-          it, one recording gets up to 30 minutes, which a long recording on a CPU can need, and the
-          gateway stops the work when the collector that asked stops waiting.
+          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, speaches,
+          vLLM serving a Whisper model, or llama.cpp's <code>llama-server</code> with Qwen3-ASR. Add
+          it as a backend and assign the <code>transcriber</code> role to
+          <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and sends
+          it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV file. A
+          server on another machine needs remote inference enabled. Whichever engine runs it, one
+          recording gets up to 30 minutes, which a long recording on a CPU can need, and the gateway
+          stops the work when the collector that asked stops waiting.
+        </p>
+        <p>
+          A backend serves the <code>transcriber</code> role only if it implements that endpoint: a
+          chat or embedding server that merely lists a model with a speech-like name does not. When
+          the role is assigned to an HTTP backend, the gateway first asks it to transcribe one
+          second of audio. A backend that answers it cannot, because the endpoint is missing or the
+          model is unknown to it, is refused with its answer, in the portal and from
+          <code>omnesis model assign</code>; a backend that gives no answer is assigned and shows as
+          <em>configured, but unavailable</em> with the reason until it does. The Models page marks
+          a model the backend has refused, and <code>omnesis model status</code> prints the reason.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

@@ -79,6 +79,16 @@ export async function loadTranscriberFromResolved(
         );
         return null;
       }
+      if (!resolved.available) {
+        // The registry has a reason: the backend is down, or its transcription
+        // probe found it cannot transcribe (a chat-only server such as Ollama).
+        // Building a transcriber for it would only turn every voice note into
+        // a failed request.
+        log.warn(
+          `Transcriber HTTP backend "${resolved.backendKey}" cannot run: ${resolved.reason ?? "backend unavailable"}. Assign a local Whisper model or a backend that serves the OpenAI audio transcription API (whisper-server, speaches, vLLM).`,
+        );
+        return null;
+      }
       return new HttpTranscriber({
         url: resolved.url,
         apiPathPrefix: resolved.apiPathPrefix,

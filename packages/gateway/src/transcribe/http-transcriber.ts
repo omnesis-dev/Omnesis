@@ -167,10 +167,9 @@ export class HttpTranscriber implements TranscribeCapability {
     if (typeof json.text !== "string") {
       throw new Error(`transcription backend ${this.model} returned no text`);
     }
-    return {
-      text: json.text.trim(),
-      ...(typeof json.language === "string" ? { language: json.language } : {}),
-    };
+    const parsed = parseTranscriptText(json.text);
+    const language = typeof json.language === "string" ? json.language : parsed.language;
+    return { text: parsed.text, ...(language ? { language } : {}) };
   }
 
   /** Personal vocabulary stays on the machine: only a loopback backend gets it. */
@@ -230,6 +229,63 @@ export function splitPcm(pcm: Float32Array): Float32Array[] {
   }
   chunks.push(pcm.subarray(start));
   return chunks;
+}
+
+/**
+ * Qwen3-ASR answers with its detected language ahead of the words, as
+ * `language English<asr_text>the words`, and a server that passes the model's
+ * output through (Ollama, llama-server) puts that whole string in `text`. Keep
+ * the words; the language is useful when the server reported none.
+ */
+const QWEN3_ASR_PREFIX = /^\s*language\s+([A-Za-z-]+)\s*<asr_text>/;
+
+/** The transcript's words, and a language the model wrote ahead of them. */
+export function parseTranscriptText(raw: string): { text: string; language?: string } {
+  const match = QWEN3_ASR_PREFIX.exec(raw);
+  if (!match) return { text: raw.trim() };
+  return {
+    text: raw.slice(match[0].length).trim(),
+    language: languageCodeFromName(match[1]!),
+  };
+}
+
+/** ISO-639-1 code for the language names Qwen3-ASR writes, or the name itself. */
+function languageCodeFromName(name: string): string {
+  const key = name.toLowerCase();
+  const code: Record<string, string> = {
+    english: "en",
+    chinese: "zh",
+    mandarin: "zh",
+    cantonese: "yue",
+    french: "fr",
+    german: "de",
+    spanish: "es",
+    italian: "it",
+    portuguese: "pt",
+    japanese: "ja",
+    korean: "ko",
+    russian: "ru",
+    arabic: "ar",
+    dutch: "nl",
+    polish: "pl",
+    turkish: "tr",
+    vietnamese: "vi",
+    thai: "th",
+    indonesian: "id",
+    hindi: "hi",
+    ukrainian: "uk",
+    swedish: "sv",
+    danish: "da",
+    norwegian: "no",
+    finnish: "fi",
+    czech: "cs",
+    greek: "el",
+    hebrew: "he",
+    hungarian: "hu",
+    romanian: "ro",
+    malay: "ms",
+  };
+  return code[key] ?? key;
 }
 
 /** 16-bit little-endian mono WAV for 16 kHz float PCM in [-1, 1]. */

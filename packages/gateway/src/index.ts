@@ -120,7 +120,7 @@ import { ModelsDevCatalog } from "./models/models-dev-catalog.js";
 import { EntailmentVerifierService } from "./inference/entailment-service.js";
 import { withSpendRecording } from "./inference/spend-recording-completer.js";
 import { loadCompletionFromResolved } from "./inference/completion-loader.js";
-import { TranscribeService } from "./transcribe/index.js";
+import { TranscribeService, verifyTranscriberAssignment } from "./transcribe/index.js";
 import { TranscriptionVocabularyService } from "./transcribe/vocabulary/service.js";
 import { resolveVocabularySettings } from "./transcribe/vocabulary/config.js";
 import {
@@ -459,9 +459,12 @@ inferenceRegistry.loadConfig(config);
 // startIndexer() can await it before resolving assignments — this
 // ensures the registry has up-to-date backend status (including
 // discovered models) when the indexer boots.
-const initialProbe = inferenceRegistry.probeBackends().catch((err) => {
-  log.warn(`Backend probe failed: ${err instanceof Error ? err.message : String(err)}`);
-});
+const initialProbe = inferenceRegistry
+  .probeBackends()
+  .then(() => verifyTranscriberAssignment(inferenceRegistry))
+  .catch((err) => {
+    log.warn(`Backend probe failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
 const indexerStatus = new IndexerStatusReporter();
 
@@ -2569,6 +2572,7 @@ const app = createServer(db, DB_PATH, {
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
   verifyModel: (key, model, role, vopts) => inferenceRegistry.verifyModel(key, model, role, vopts),
+  vetAssignment: (role, value) => inferenceRegistry.vetAssignment(role, value),
   transcribeService,
   transcriptionVocabularyService,
   ocrService,
@@ -2874,6 +2878,26 @@ configOrchestrator.register(configStore);
 // always reflects the latest assignments and backends.
 configStore.onChange((_before, after) => {
   inferenceRegistry.loadConfig(after);
+});
+
+// Re-verify the transcriber when its assignment or any backend changes, so
+// the role's "configured, but unavailable" reason is current and the log says
+// at once that a new backend cannot transcribe. The registry's reload above
+// has already dropped the verdicts of every backend whose address changed.
+configStore.onChange((before, after) => {
+  const changed = (read: (c: OmnesisConfig) => unknown) =>
+    JSON.stringify(read(before)) !== JSON.stringify(read(after));
+  if (
+    changed((c) => c.inference?.assignments?.transcriber) ||
+    changed((c) => c.inference?.backends) ||
+    changed((c) => c.inference?.allowRemoteInference)
+  ) {
+    void verifyTranscriberAssignment(inferenceRegistry).catch((err) => {
+      log.warn(
+        `Transcriber verification failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
 });
 
 // Remember replaced model assignments for the picker's "Recently used"

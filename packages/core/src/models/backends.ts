@@ -333,6 +333,14 @@ export interface BackendStatus {
    * since `/v1/models` never advertises purpose.
    */
   modelRoles?: Record<string, CapabilityRole[]>;
+  /**
+   * Behavioral verdicts the gateway has reached for this backend's models
+   * (see {@link CapabilityVerdict}): every `(model, role)` pair it has
+   * verified since boot or since the backend's config last changed. A picker
+   * reads them to mark a model the backend has already proved it cannot serve
+   * for a role, instead of letting the user find out after assigning it.
+   */
+  verdicts?: CapabilityVerdict[];
   /** Whether an API key is configured for this backend (value never exposed). */
   hasApiKey?: boolean;
   /** Where the effective API key came from, when the backend can report it. */
@@ -554,6 +562,14 @@ export interface CapabilityVerdict {
   supported: boolean;
   /** One-line human-readable explanation (endpoint hit, dim, or error). */
   detail: string;
+  /**
+   * The probe never got an answer (a timeout, a refused connection, a URL the
+   * policy blocks), so `supported: false` says nothing about what the backend
+   * can do. A conclusive refusal is one the backend itself gave, such as a 404
+   * for the endpoint or a 400 for the model; only those are grounds to refuse
+   * an assignment.
+   */
+  inconclusive?: boolean;
 }
 
 // ── Inference overview (API response snapshot) ────────────────────────

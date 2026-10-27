@@ -23,6 +23,7 @@ import { createLogger, assertNever } from "@omnesis/core";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
 import type {
+  CapabilityVerdict,
   ResolvedAssignment,
   TranscribeCapability,
   TranscriptionResult,
@@ -68,6 +69,30 @@ function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): 
       return "unresolved";
     default:
       return assertNever(resolved);
+  }
+}
+
+/**
+ * Verify the assigned transcriber's HTTP backend by transcribing one second of
+ * audio, and say in one log line what the operator should do about a backend
+ * that cannot. Runs after the boot probe and after a config change touching
+ * the assignment or a backend; a local or unset assignment verifies nothing.
+ */
+export async function verifyTranscriberAssignment(registry: {
+  verifyAssignedTranscriber(): Promise<CapabilityVerdict | null>;
+}): Promise<void> {
+  const verdict = await registry.verifyAssignedTranscriber();
+  if (!verdict) return;
+  if (verdict.supported) {
+    log.info(`Transcriber backend verified for ${verdict.model}: ${verdict.detail}`);
+  } else if (verdict.inconclusive) {
+    log.warn(
+      `Could not confirm the transcriber backend for ${verdict.model} yet: ${verdict.detail}. Voice notes wait until it answers.`,
+    );
+  } else {
+    log.warn(
+      `The assigned transcriber cannot transcribe: ${verdict.detail}. Voice notes are not transcribed until the transcriber role is assigned a local Whisper model or a backend that serves the OpenAI audio transcription API (see docs/transcription.md).`,
+    );
   }
 }
 

@@ -13857,6 +13857,7 @@ div.source-activity-popover-link:hover {
 .picker-tag.warn { background: rgba(210, 153, 34, 0.18); color: var(--warning); cursor: help; }
 .picker-others { display: flex; flex-direction: column; }
 .picker-note { font-size: 11.5px; color: var(--text-muted); padding: 4px 4px 2px; line-height: 1.5; }
+.picker-note--warn { color: var(--warning, #b7791f); }
 .picker-link {
   align-self: flex-start;
   background: none;

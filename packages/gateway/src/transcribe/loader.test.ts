@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { loadTranscriberFromResolved } from "./loader.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import type { ResolvedAssignment } from "@omnesis/core";
@@ -38,6 +38,25 @@ describe("loadTranscriberFromResolved", () => {
 
   test("an http assignment without a model loads nothing", async () => {
     await expect(loadTranscriberFromResolved({ ...http, model: "" })).resolves.toBeNull();
+  });
+
+  test("an http assignment the registry marked unavailable loads nothing", async () => {
+    // The registry's reason may be a down backend or a transcription probe
+    // that found the backend cannot transcribe (a chat-only server); either
+    // way a transcriber built for it would fail every voice note.
+    const fetchFn = vi.fn();
+    await expect(
+      loadTranscriberFromResolved(
+        {
+          ...http,
+          available: false,
+          reason:
+            'Backend "gpu" cannot transcribe with whisper-large-v3-turbo: no transcription endpoint',
+        },
+        { fetchFn: fetchFn as unknown as typeof fetch },
+      ),
+    ).resolves.toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   test("chat-agent backends offer no transcriber", async () => {

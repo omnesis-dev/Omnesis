@@ -652,8 +652,18 @@ const modelAssignCommand = defineCommand({
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
+      // The gateway's refusal carries the reason as `error` (an assignment it
+      // can already tell will not work, such as a transcriber on a backend
+      // with no transcription endpoint). Show that sentence, not the envelope.
+      let message = txt;
+      try {
+        const parsed = JSON.parse(txt) as { error?: unknown };
+        if (typeof parsed.error === "string") message = parsed.error;
+      } catch {
+        /* not JSON — show the raw body */
+      }
       throw new CliError(
-        `${c.red}Assign rejected: ${res.status} ${txt}${c.reset}`,
+        `${c.red}Assign rejected: ${res.status} ${message}${c.reset}`,
         pickGatewayExitCode(res.status),
       );
     }

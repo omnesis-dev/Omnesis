@@ -234,6 +234,9 @@ classified into privacy-safe Omnesis failures by `decodeHttpError`.
 
 ### Transcriber — `HttpTranscriber`
 
+The audio paths, the transcription probe that vets an assignment, and the
+servers known to work are in `docs/transcription.md`.
+
 **Request.** `POST {url}{apiPathPrefix}/audio/transcriptions` as
 `multipart/form-data`: `file` (the recording decoded by ffmpeg to 16 kHz mono
 16-bit WAV, the one format every such server accepts), `model`,

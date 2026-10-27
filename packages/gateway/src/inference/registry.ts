@@ -42,12 +42,31 @@ import {
   type HttpBackendConfig,
   type CatalogEntry,
 } from "@omnesis/core";
+import { PCM_SAMPLE_RATE } from "../transcribe/audio-decode.js";
+import { encodeMultipart, encodeWav } from "../transcribe/http-transcriber.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const log = createLogger("inference:registry");
 
 /** Timeout for HTTP backend probe requests. */
 const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * Timeout for the transcription probe. A transcription server may load its
+ * model on the first request (speaches does), which takes longer than a
+ * model-list call; a verdict reached early against a server that was only
+ * slow would refuse a backend that works.
+ */
+const TRANSCRIBE_PROBE_TIMEOUT_MS = 60_000;
+
+/** One second of a quiet 440 Hz tone at 16 kHz, the audio the transcription probe sends. */
+function probeWav(): Uint8Array {
+  const pcm = new Float32Array(PCM_SAMPLE_RATE);
+  for (let i = 0; i < pcm.length; i += 1) {
+    pcm[i] = 0.1 * Math.sin((2 * Math.PI * 440 * i) / PCM_SAMPLE_RATE);
+  }
+  return encodeWav(pcm);
+}
 
 /** How often the starvation sampler checks in while a probe is in flight. */
 const LOOP_LAG_SAMPLE_MS = 250;
@@ -738,36 +757,98 @@ export class InferenceRegistry {
 
     const url = entry.config.url.replace(/\/+$/, "");
     const prefix = normalizeApiPathPrefix(entry.config.apiPathPrefix);
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (entry.config.apiKey) headers["Authorization"] = `Bearer ${entry.config.apiKey}`;
+    const auth: Record<string, string> = entry.config.apiKey
+      ? { Authorization: `Bearer ${entry.config.apiKey}` }
+      : {};
 
-    const post = (path: string, body: unknown): Promise<Response> =>
+    const send = (
+      path: string,
+      init: { headers: Record<string, string>; body: BodyInit; timeoutMs: number },
+    ): Promise<Response> =>
       fetchWithInferenceUrlPolicy(
         `${url}${prefix}${path}`,
         {
           method: "POST",
-          headers,
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+          headers: { ...auth, ...init.headers },
+          body: init.body,
+          signal: AbortSignal.timeout(init.timeoutMs),
         },
         { allowRemoteInference: this.allowRemoteInference },
       );
 
-    const verdict = await this.runCapabilityProbe(role, model, post);
+    const verdict = await this.runCapabilityProbe(role, model, send);
     this.verifyCache.set(cacheKey, verdict);
+    this.stateRevision += 1;
     log.info(
-      `verify ${key}/${model} as ${role}: ${verdict.supported ? "supported" : "unsupported"} — ${verdict.detail}`,
+      `verify ${key}/${model} as ${role}: ${verdict.supported ? "supported" : verdict.inconclusive ? "inconclusive" : "unsupported"} — ${verdict.detail}`,
     );
     return verdict;
+  }
+
+  /**
+   * Whether an assignment may be written. Today only the transcriber is
+   * vetted: an HTTP backend is asked to transcribe one second of audio, and a
+   * backend that answers it cannot (no transcription endpoint, an unknown
+   * model, a rejected key) is refused with that answer, so the operator learns
+   * it at assignment time rather than from a log line after voice notes have
+   * gone untranscribed. A backend that gives no answer (down, still loading)
+   * is let through: the role then reads "configured, but unavailable" with
+   * the reason until a later verification succeeds. A backend the registry
+   * has not loaded yet (declared in the same config write) is let through
+   * too; the reload verifies it.
+   */
+  async vetAssignment(
+    role: CapabilityRole,
+    value: AssignmentValue,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (role !== "transcriber" || value === null) return { ok: true };
+    const resolved = this.resolveValue(role, value);
+    if (resolved.kind !== "http" || !resolved.model) return { ok: true };
+    const verdict = await this.verifyModel(resolved.backendKey, resolved.model, role, {
+      force: true,
+    });
+    if (verdict.supported || verdict.inconclusive) return { ok: true };
+    return {
+      ok: false,
+      reason: `Backend "${resolved.backendKey}" cannot transcribe with ${resolved.model}: ${verdict.detail}`,
+    };
+  }
+
+  /**
+   * Verify the transcriber the config assigns, when it is an HTTP backend
+   * with a model, so its resolution carries the verdict. Run after the boot
+   * probe and whenever the assignment or a backend changes; a verdict already
+   * cached is reused.
+   */
+  async verifyAssignedTranscriber(): Promise<CapabilityVerdict | null> {
+    const resolved = this.resolve("transcriber");
+    if (resolved.kind !== "http" || !resolved.model || !resolved.available) return null;
+    return this.verifyModel(resolved.backendKey, resolved.model, "transcriber");
   }
 
   private async runCapabilityProbe(
     role: CapabilityRole,
     model: string,
-    post: (path: string, body: unknown) => Promise<Response>,
+    send: (
+      path: string,
+      init: { headers: Record<string, string>; body: BodyInit; timeoutMs: number },
+    ) => Promise<Response>,
   ): Promise<CapabilityVerdict> {
+    const post = (path: string, body: unknown): Promise<Response> =>
+      send(path, {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        timeoutMs: PROBE_TIMEOUT_MS,
+      });
     const fail = (detail: string): CapabilityVerdict => ({ role, model, supported: false, detail });
     const ok = (detail: string): CapabilityVerdict => ({ role, model, supported: true, detail });
+    const inconclusive = (detail: string): CapabilityVerdict => ({
+      role,
+      model,
+      supported: false,
+      detail,
+      inconclusive: true,
+    });
     const errorDetail = async (res: Response): Promise<string> => {
       const body = await res.text().catch(() => "");
       let msg = body.trim().slice(0, 160);
@@ -822,9 +903,47 @@ export class InferenceRegistry {
         return fail(await errorDetail(res));
       }
 
+      if (role === "transcriber") {
+        // One second of a quiet tone, as WAV: the request every
+        // OpenAI-compatible transcription server accepts. The verdict is about
+        // the endpoint and the model, not the words, so the transcript itself
+        // is not inspected beyond being present.
+        const { body, contentType } = encodeMultipart(
+          [
+            ["model", model],
+            ["response_format", "json"],
+          ],
+          { name: "file", filename: "probe.wav", contentType: "audio/wav", data: probeWav() },
+        );
+        const res = await send("/audio/transcriptions", {
+          headers: { "Content-Type": contentType },
+          body,
+          timeoutMs: TRANSCRIBE_PROBE_TIMEOUT_MS,
+        });
+        if (res.status === 404 || res.status === 405 || res.status === 501) {
+          // A 404 is the route missing (a chat-only server) unless the body
+          // names the model: speaches answers 404 for a model it has not
+          // downloaded yet, and that message is the one to show.
+          const detail = await errorDetail(res);
+          return /model/i.test(detail)
+            ? fail(detail)
+            : fail(
+                `no transcription endpoint (HTTP ${res.status} from /audio/transcriptions). This backend serves chat or embeddings only; a transcriber needs a server that implements the OpenAI audio transcription API, such as whisper-server, speaches or vLLM.`,
+              );
+        }
+        if (!res.ok) return fail(await errorDetail(res));
+        const json = (await res.json().catch(() => null)) as { text?: unknown } | null;
+        return typeof json?.text === "string"
+          ? ok("transcription endpoint returned a transcript")
+          : fail("transcription endpoint answered without a transcript");
+      }
+
       return fail(`behavioral probe not supported for the "${role}" role`);
     } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+      const detail = err instanceof Error ? err.message : String(err);
+      // No answer is not a refusal: the backend may be down, still loading
+      // its model, or blocked by the URL policy until the operator allows it.
+      return role === "transcriber" ? inconclusive(detail) : fail(detail);
     }
   }
 
@@ -884,9 +1003,13 @@ export class InferenceRegistry {
     const backends: Record<string, BackendStatus> = {};
     backends["local"] = { type: "local", status: "ok" };
     for (const [key, entry] of this.httpBackends) {
+      const verdicts = [...this.verifyCache.entries()]
+        .filter(([cacheKey]) => cacheKey.startsWith(`${key}::`))
+        .map(([, verdict]) => verdict);
       backends[key] = {
         ...entry.status,
         modelRoles: this.classifyBackendModels(key, entry),
+        ...(verdicts.length > 0 ? { verdicts } : {}),
         apiPathPrefix: entry.config.apiPathPrefix,
         protocol: entry.config.protocol,
       };
@@ -1060,7 +1183,7 @@ export class InferenceRegistry {
     // can't auto-pick a single model — but an explicitly-assigned model still
     // works for inference. Treat it as usable when a model is named.
     const usable = entry.status.status === "ok" || entry.status.status === "reachable";
-    const available = usable && resolvedModel !== "";
+    let available = usable && resolvedModel !== "";
     let reason: string | undefined;
     if (!usable) {
       reason = entry.status.reason
@@ -1071,6 +1194,18 @@ export class InferenceRegistry {
         entry.status.status === "reachable"
           ? `Backend "${backendKey}" didn't return a model list — set the model id explicitly`
           : `No model specified and backend "${backendKey}" serves multiple models — set model explicitly`;
+    } else if (role === "transcriber") {
+      // A reachable backend is not a transcriber until it has transcribed
+      // something: the verdict of the transcription probe, when there is one,
+      // decides. A chat-only server (Ollama, LM Studio) lists models fine and
+      // would otherwise read as a working transcriber.
+      const verdict = this.verifyCache.get(`${backendKey}::${resolvedModel}::transcriber`);
+      if (verdict && !verdict.supported) {
+        available = false;
+        reason = verdict.inconclusive
+          ? `Backend "${backendKey}" has not answered a transcription yet: ${verdict.detail}`
+          : `Backend "${backendKey}" cannot transcribe with ${resolvedModel}: ${verdict.detail}`;
+      }
     }
 
     return {

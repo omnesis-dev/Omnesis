@@ -391,6 +391,12 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
   // endpoint 500s). There's nothing to suggest beyond preset hints — point the
   // user at the free-text box so they can name the model directly.
   const noModelList = role !== "speech-to-speech" && status?.status === "reachable";
+  // A model the backend has already refused for this role (the gateway asked
+  // it to transcribe and it answered it cannot) is shown with that answer
+  // instead of a Use button, so the user does not try it again.
+  const refusal = (m) =>
+    (status?.verdicts ?? []).find((v) => v.role === role && v.model === m && !v.supported && !v.inconclusive);
+  const backendRefusesRole = curated.suggested.length > 0 && curated.suggested.every((m) => refusal(m));
 
   return html`
     <div class="picker-pane">
@@ -400,13 +406,25 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
       </div>
       <input class="picker-search" type="text" placeholder="Search models…" value=${query} onInput=${(e) => setQuery(e.target.value)} autofocus />
       <div class="picker-scroll">
+        ${role === "transcriber"
+          ? html`<div class="picker-note">A transcriber backend must serve the OpenAI audio transcription API (whisper-server, speaches, vLLM, llama-server, Ollama with a speech model, OpenAI) and the model must be a speech model: a chat or embedding model cannot transcribe. The backend is checked before it is assigned.</div>`
+          : null}
+        ${backendRefusesRole ? html`<div class="picker-note picker-note--warn">This backend cannot serve ${role}: ${refusal(curated.suggested[0]).detail}</div>` : null}
         ${probing && curated.suggested.length === 0 ? html`<div class="picker-note">Probing the backend for its model list…</div>` : null}
         ${noModelList ? html`<div class="picker-note">This backend didn't return a model list${status?.reason ? html` (${status.reason})` : null} — type the exact model id below.</div>` : null}
         ${curated.suggested.map(
-          (m) => html`<div class="picker-row" key=${m}>
-            <div class="picker-row-info"><div class="picker-row-name">${m}</div></div>
-            <button class="btn-tiny" onClick=${() => onPick(backendKey, m)}>Use</button>
-          </div>`,
+          (m) => {
+            const refused = refusal(m);
+            return refused
+              ? html`<div class="picker-row picker-row--muted" key=${m}>
+                  <div class="picker-row-info"><div class="picker-row-name">${m}</div><div class="picker-row-meta"><span>cannot serve ${role}: ${refused.detail}</span></div></div>
+                  <button class="btn-tiny" disabled title=${refused.detail}>Cannot use</button>
+                </div>`
+              : html`<div class="picker-row" key=${m}>
+                  <div class="picker-row-info"><div class="picker-row-name">${m}</div></div>
+                  <button class="btn-tiny" onClick=${() => onPick(backendKey, m)}>Use</button>
+                </div>`;
+          },
         )}
         ${curated.suggestedTruncated
           ? html`<div class="picker-note">Showing ${curated.suggested.length} of ${curated.suggestedCount} matching models — refine the search to narrow.</div>`
