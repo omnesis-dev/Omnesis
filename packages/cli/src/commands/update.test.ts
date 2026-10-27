@@ -335,8 +335,13 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "" },
     ]);
     const confirm = vi.fn(() => Promise.resolve());
-    await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner, { confirm }));
+    const saveNewerSettings = vi.fn();
+    await updateNpmGlobal(
+      { channel: "stable", dryRun: false },
+      makeDeps(runner, { confirm, saveNewerSettings }),
+    );
 
+    expect(saveNewerSettings).not.toHaveBeenCalled();
     expect(confirm).toHaveBeenCalledOnce();
     expect(runner.calls).toHaveLength(2);
     // The dist-tag resolves the target; the install pins it, so a tag that
@@ -473,13 +478,16 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "" },
     ]);
     const confirm = vi.fn(() => Promise.resolve());
+    const saveNewerSettings = vi.fn(() => expect(runner.calls).toHaveLength(1));
     await updateNpmGlobal(
       { channel: "stable", dryRun: false, force: true },
-      makeDeps(runner, { currentVersion: "0.2.0", confirm }),
+      makeDeps(runner, { currentVersion: "0.2.0", confirm, saveNewerSettings }),
     );
     expect(confirm).toHaveBeenCalledOnce();
     expect(runner.calls).toHaveLength(2);
     expect(runner.calls[1].spec.args).toEqual(["install", "-g", "omnesis@0.1.0"]);
+    // Saved for the next upgrade before the older release is installed.
+    expect(saveNewerSettings).toHaveBeenCalledExactlyOnceWith(["0.2.0"]);
   });
 
   test("dry-run downgrade warns about --force but does not throw", async () => {
@@ -1041,10 +1049,14 @@ describe("updateSourceCheckout", () => {
         clean,
         clean,
       ]);
+      const saveNewerSettings = vi.fn(() =>
+        expect(executed(runner)).not.toContain("git checkout --detach v0.3.0"),
+      );
       await updateSourceCheckout(
         { rootDir, edge: false, dryRun: false, [flag]: true },
-        makeDeps(runner),
+        makeDeps(runner, { saveNewerSettings }),
       );
+      expect(saveNewerSettings).toHaveBeenCalledExactlyOnceWith(["0.2.0"]);
       expect(executed(runner)).toContain("git checkout --detach v0.3.0");
       expect(output()).toContain("Moving back to v0.3.0");
       expect(output()).toContain("abcd123 Exercise an unmerged rollout");
@@ -1887,6 +1899,67 @@ describe("updateDocker", () => {
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
     expect(output()).toContain("Dry run");
     expect(output()).toContain(`docker compose -f ${composeFile} pull`);
+  });
+
+  describe("saving the gateway's settings for a later upgrade", () => {
+    const saving = (events: string[]) =>
+      vi.fn((releases: readonly string[]) => {
+        events.push(`save settings ${releases.join(" ")}`);
+      });
+
+    test("a downgrade saves them before the tag moves", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ targetVersion: "0.4.0", force: true }),
+        dockerDeps(events, runner, { saveNewerSettings: saving(events) }),
+      );
+      expect(events.slice(0, 4)).toEqual([
+        "backup",
+        "save settings 0.4.1",
+        "select 0.4.0",
+        `docker compose -f ${composeFile} pull`,
+      ]);
+    });
+
+    test("an upgrade does not", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const saveNewerSettings = saving(events);
+      await updateDocker(opts(), dockerDeps(events, runner, { saveNewerSettings }));
+      expect(saveNewerSettings).not.toHaveBeenCalled();
+    });
+
+    test("an upgrade's rollback saves them, from either build, before the tag goes back", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events, {
+        line: `docker compose -f ${composeFile} up -d --no-deps gateway`,
+        nth: 1,
+      });
+      await expect(
+        updateDocker(opts(), dockerDeps(events, runner, { saveNewerSettings: saving(events) })),
+      ).rejects.toBeInstanceOf(CliError);
+      const saved = events.indexOf("save settings 0.4.2 0.4.1");
+      expect(saved).toBeGreaterThan(events.indexOf(`docker compose -f ${composeFile} pull`));
+      expect(events[saved + 1]).toBe("select 0.4.1");
+    });
+
+    test("a downgrade that cannot save them changes nothing", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await expect(
+        updateDocker(
+          opts({ targetVersion: "0.4.0", force: true }),
+          dockerDeps(events, runner, {
+            saveNewerSettings: () => {
+              throw new Error("EACCES: permission denied");
+            },
+          }),
+        ),
+      ).rejects.toThrow(/Could not save the gateway's settings .*EACCES.*Nothing was changed/);
+      expect(events).toEqual(["backup"]);
+      expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
+    });
   });
 
   test("a downgrade is refused without --force", async () => {

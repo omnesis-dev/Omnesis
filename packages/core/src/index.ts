@@ -171,6 +171,12 @@ export {
 } from "./mail-markup.js";
 
 export { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
+export {
+  newerSettingsPath,
+  restoreNewerSettings,
+  saveNewerSettings,
+  type NewerSettingsRestore,
+} from "./newer-settings.js";
 
 export {
   acquireGatewayLock,

@@ -387,7 +387,10 @@ if (scaffoldDotEnv(configDir)) {
 // editor or the portal reaches the next run with no restart.
 const operatorInstructions = new OperatorInstructionsStore(configDir);
 
-const configStore = new ConfigStore({ filePath: defaultConfigPath(configDir) });
+const configStore = new ConfigStore({
+  filePath: defaultConfigPath(configDir),
+  release: GATEWAY_VERSION,
+});
 try {
   await configStore.load();
 } catch (err) {

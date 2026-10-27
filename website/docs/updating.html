@@ -391,6 +391,16 @@
           Skip that backup with <code>--no-backup</code> only when you have taken one yourself.
         </p>
         <p>
+          An older release does not know the settings a newer one added, and drops them from
+          <code>omnesis.json</code> the next time it changes the configuration, for example when you
+          add a source or assign a model. So before a rollback or a move to an older release, the
+          update saves the configuration beside it as <code>omnesis.json.newer-settings</code>. When
+          a release that knows those settings next starts its gateway, it puts back each one the
+          configuration lacks, logs which, and removes the saved copy. A setting you changed on the
+          older release keeps your change. A setting the older release knew and you removed there is
+          also put back, because the gateway cannot tell it from one that release dropped.
+        </p>
+        <p>
           If the update was cut short by a power loss or a forced kill, run
           <code>omnesis update</code> again: it notices the unfinished run, says what it will do,
           and completes or repeats it.
@@ -491,9 +501,10 @@
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
                   are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote. An OpenClaw or Hermes plugin that has followed a certificate renewal
-                  stops connecting when moved back to a release whose plugin pins the certificate;
-                  afterwards, run
+                  one wrote. Settings it does not know are saved for the next upgrade, as described
+                  under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes plugin
+                  that has followed a certificate renewal stops connecting when moved back to a
+                  release whose plugin pins the certificate; afterwards, run
                   <code
                     >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
                     sha256:&lt;served&gt;</code

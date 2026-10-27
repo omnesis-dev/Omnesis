@@ -69,6 +69,7 @@ import {
   DEFAULT_CONFIG_DIR,
   ensureGatewayTrust,
   readPackageVersion,
+  saveNewerSettings,
   SOURCE_COMMIT_PATTERN,
   UPDATE_LOCK_ENV,
   UpdateLockBusyError,
@@ -462,6 +463,13 @@ export interface UpdateFlowDeps {
   /** Take an online pre-update backup through the gateway's API. */
   backup(note: string, purpose: "pre-update"): Promise<void>;
   /**
+   * Save this host's gateway config beside it for the newer release that
+   * restores it (`saveNewerSettings`), before a build that may be older takes
+   * it over and drops the settings it does not know. `releases` are those
+   * whose settings it may hold. Absent where no gateway config lives here.
+   */
+  saveNewerSettings?(releases: readonly string[]): void;
+  /**
    * Copy the closed stores of this host's gateway into a backup, for a
    * gateway role known not to be running. Absent where no local copy is
    * possible; the online backup is then the only one.
@@ -770,6 +778,17 @@ async function rollBackAndFail(
     }
   }
 
+  // The build being restored may be older than the one whose gateway wrote
+  // the config last. Best effort: the rollback is the recovery and goes on.
+  try {
+    deps.saveNewerSettings?.([applyPlan.target, deps.currentVersion]);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.log(
+      `${c.yellow}! Could not save the gateway's settings for a later upgrade: ${detail}. ` +
+        `Settings ${applyPlan.previous} does not know are dropped when it next writes its config.${c.reset}`,
+    );
+  }
   await deps.select?.(applyPlan.previous);
   // The previous build runs under the unit it was installed with, so a unit
   // this run rewrote goes back before anything of that build starts again.
@@ -1086,6 +1105,11 @@ interface HostPlanPhase {
    * run, and its record written, by the process that offered the rest.
    */
   applied?: boolean;
+  /**
+   * The target is older than the installed build, or does not contain it, so
+   * its gateway may drop settings this one saved: they are saved first.
+   */
+  downgrade?: boolean;
 }
 
 /**
@@ -1275,6 +1299,18 @@ async function executeHostPlan(
             await rollBackIfInterrupted(false);
             if (index === commitIndex) commit();
             break;
+          }
+          if (phase.downgrade && applyPlan.apply.length > 0) {
+            try {
+              deps.saveNewerSettings?.([deps.currentVersion]);
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              throw new CliError(
+                `${c.red}Could not save the gateway's settings before moving to ${targetLabel}, ` +
+                  `which would drop the ones it does not know: ${detail}. Nothing was changed.${c.reset}`,
+                EXIT_FAILURE,
+              );
+            }
           }
           // The record goes down before anything moves — before the tag a
           // container install pulls from is rewritten — so a process killed
@@ -1845,7 +1881,10 @@ export async function updateNpmGlobal(
   }
 
   await deps.confirm(`Update ${CLI_PACKAGE} to ${target}?`);
-  await executeHostPlan(steps, applyPlan, target, target, deps, offer ? { offer } : {});
+  await executeHostPlan(steps, applyPlan, target, target, deps, {
+    ...(offer ? { offer } : {}),
+    downgrade: assessment.direction === "downgrade",
+  });
   return target;
 }
 
@@ -2332,7 +2371,11 @@ export async function updateSourceCheckout(
     targetLabel,
     opts.edge || opts.targetCommit ? null : versionFromStableTag(target),
     deps,
-    offer ? { offer } : {},
+    {
+      ...(offer ? { offer } : {}),
+      // A target that does not contain the last completed build lacks some of it.
+      downgrade: assessment?.direction === "downgrade" || ancestry.code === 1,
+    },
   );
   return opts.edge || opts.targetCommit ? null : versionFromStableTag(target);
 }
@@ -2611,14 +2654,10 @@ export async function updateDocker(
   }
 
   await flowDeps.confirm(`Update the containers in ${opts.composeFile} to ${target}?`);
-  await executeHostPlan(
-    steps,
-    applyPlan,
-    target,
-    opts.edge ? null : target,
-    flowDeps,
-    offer ? { offer } : {},
-  );
+  await executeHostPlan(steps, applyPlan, target, opts.edge ? null : target, flowDeps, {
+    ...(offer ? { offer } : {}),
+    downgrade: assessment?.direction === "downgrade",
+  });
   return opts.edge ? null : target;
 }
 
@@ -3084,6 +3123,15 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     confirm: (message) => confirmInteractive(message, yes),
     approve: (message) => approveInteractive(message, yes),
     roles,
+    saveNewerSettings:
+      roles.gateway.present && !roles.gateway.hardened
+        ? (releases) => {
+            saveNewerSettings(join(configDir, "omnesis.json"), [
+              ...releases,
+              readPackageVersion(import.meta.url),
+            ]);
+          }
+        : undefined,
     backup: async (note, purpose) => {
       await ensureTrust();
       // index.db is derivable from omnesis.db and is the largest file in a

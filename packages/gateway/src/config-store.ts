@@ -12,7 +12,12 @@ import {
 } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { createLogger, speechToSpeechAssignment } from "@omnesis/core";
+import {
+  createLogger,
+  newerSettingsPath,
+  restoreNewerSettings,
+  speechToSpeechAssignment,
+} from "@omnesis/core";
 import {
   applyMergePatch,
   diffConfigPaths,
@@ -81,6 +86,12 @@ export interface ConfigStoreOptions {
   filePath: string;
   /** Debounce window for file-watcher events (ms). Defaults to 150ms. */
   watchDebounceMs?: number;
+  /**
+   * The running release. Given, boot first restores the settings an update
+   * saved beside the file before an older release took it over
+   * (`restoreNewerSettings`).
+   */
+  release?: string;
 }
 
 /**
@@ -105,6 +116,7 @@ export interface ConfigStoreOptions {
 export class ConfigStore {
   private readonly filePath: string;
   private readonly watchDebounceMs: number;
+  private readonly release: string | undefined;
 
   private current: OmnesisConfig = {};
   private rawText = "";
@@ -126,10 +138,12 @@ export class ConfigStore {
   constructor(opts: ConfigStoreOptions) {
     this.filePath = opts.filePath;
     this.watchDebounceMs = opts.watchDebounceMs ?? 150;
+    this.release = opts.release;
   }
 
   /** Read + validate the file (or start with {} when missing). Starts the watcher. */
   async load(): Promise<void> {
+    if (this.release !== undefined) this.restoreNewerSettings(this.release);
     this.readAndApply({ source: "boot" });
     this.startWatcher();
   }
@@ -189,6 +203,29 @@ export class ConfigStore {
   }
 
   // ── internals ────────────────────────────────────────────────────────────
+
+  private restoreNewerSettings(release: string): void {
+    const copy = newerSettingsPath(this.filePath);
+    try {
+      const outcome = restoreNewerSettings(this.filePath, release);
+      if (outcome.kind === "unusable") {
+        log.warn(
+          `Ignoring ${copy}: ${outcome.reason}. Settings a newer release saved there before a ` +
+            `downgrade were not restored; delete the file once nothing in it is needed.`,
+        );
+      } else if (outcome.kind === "restored" && outcome.restored.length > 0) {
+        log.info(
+          `Restored ${outcome.restored.length} setting(s) an older release had dropped from ` +
+            `${basename(this.filePath)}: ${outcome.restored.join(", ")}`,
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `Could not restore the settings saved in ${copy}; keeping it for the next start: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   private async acquire<T>(fn: () => Promise<T>): Promise<T> {
     const previous = this.writeChain;

@@ -51,7 +51,9 @@ import type { DeviceKind } from "@omnesis/types";
  *   schemas structured sources declare at runtime; recovery is a source
  *   re-sync, not an internal job (`analytics.db`).
  * - `in-place` — zod-validated on every load; retired keys are stripped while
- *   valid neighboring values are preserved (`omnesis.json`).
+ *   valid neighboring values are preserved (`omnesis.json`). Before an older
+ *   build takes the file over, the updater saves it for the next upgrade to
+ *   restore what that build dropped (`newer-settings.ts`).
  * - `provider-owned` — the shape is the source's contract; each provider
  *   validates and migrates its own cursor / local store.
  */

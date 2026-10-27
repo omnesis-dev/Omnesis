@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { LogLevel, setLogLevel } from "@omnesis/core";
 import { ConfigBootError, ConfigStore } from "./config-store.js";
 
 let dir: string;
@@ -309,5 +318,79 @@ describe("speech-to-speech assignment mutations", () => {
     expect(
       (await store.patch({ inference: { assignments: { "speech-to-speech": null } } })).ok,
     ).toBe(true);
+  });
+});
+
+describe("ConfigStore — settings kept across a downgrade", () => {
+  // What a newer updater saves beside the config before an older release
+  // takes it over: that release drops the keys it does not know on its next
+  // config write.
+  const saved = {
+    release: "0.7.0",
+    config: {
+      agent: { noteAgent: false },
+      brain: { excludedSources: ["codex"] },
+      inference: { allowRemoteInference: false, transcriptionVocabulary: { enabled: false } },
+      indexer: { cycleInterval: "5m" },
+    },
+  };
+
+  test("boot restores what the older release dropped and keeps what was changed there", async () => {
+    writeFileSync(`${path}.newer-settings`, JSON.stringify(saved));
+    // The older release rewrote the file without the keys it did not know,
+    // after the operator changed two settings it did.
+    writeFileSync(
+      path,
+      JSON.stringify({
+        inference: { allowRemoteInference: true },
+        indexer: { cycleInterval: "15m" },
+      }),
+    );
+    // The unit runner sets OMNESIS_LOG_LEVEL=warn; the restore line is info.
+    setLogLevel(LogLevel.INFO);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    store = new ConfigStore({ filePath: path, watchDebounceMs: 40, release: "0.7.0" });
+    let lines: string;
+    try {
+      await store.load();
+      lines = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    } finally {
+      stderr.mockRestore();
+      setLogLevel(LogLevel.WARN);
+    }
+
+    const expected = {
+      inference: { allowRemoteInference: true, transcriptionVocabulary: { enabled: false } },
+      indexer: { cycleInterval: "15m" },
+      agent: { noteAgent: false },
+      brain: { excludedSources: ["codex"] },
+    };
+    expect(store.get()).toMatchObject(expected);
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual(expected);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(existsSync(`${path}.newer-settings`)).toBe(false);
+    expect(lines).toContain(
+      "Restored 3 setting(s) an older release had dropped from omnesis.json: " +
+        "/agent, /brain, /inference/transcriptionVocabulary",
+    );
+    expect(lines).not.toContain("codex");
+  });
+
+  test("a saved copy that cannot be read is ignored with a warning, and the config loads as it is", async () => {
+    writeFileSync(`${path}.newer-settings`, "{ truncated");
+    writeFileSync(path, JSON.stringify({ indexer: { cycleInterval: "15m" } }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    store = new ConfigStore({ filePath: path, watchDebounceMs: 40, release: "0.7.0" });
+    let warned: string;
+    try {
+      await store.load();
+      warned = warn.mock.calls.flat().join(" ");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(store.get()).toEqual({ indexer: { cycleInterval: "15m" } });
+    expect(readFileSync(`${path}.newer-settings`, "utf-8")).toBe("{ truncated");
+    expect(warned).toMatch(/Ignoring .*omnesis\.json\.newer-settings: not valid JSON/);
   });
 });
