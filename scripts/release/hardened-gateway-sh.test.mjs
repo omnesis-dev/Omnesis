@@ -95,6 +95,8 @@ describe("hardened-gateway.sh options", () => {
     [["install", "--repo-url", "ssh://example.com/omnesis.git"], "https://"],
     [["install", "--version"], "--version needs a value"],
     [["install", "--sideways"], "Unknown option: --sideways"],
+    [["install", "--purge"], "--purge belongs to uninstall"],
+    [["update", "--purge"], "--purge belongs to uninstall"],
     [["reinstall"], "Unknown command: reinstall"],
   ])("%j is refused before anything else happens", (args, message) => {
     const res = run(args);
@@ -107,6 +109,75 @@ describe("hardened-gateway.sh options", () => {
     expect(res.status).not.toBe(0);
     expect(res.output).toContain("run it as root");
     expect(res.output).not.toContain("Fetching");
+  });
+});
+
+describe("hardened gateway uninstall", () => {
+  /** Lay out the root-owned tree in a fixture and run cmd_uninstall against it. */
+  function uninstall(flags) {
+    const root = mkdtempSync(join(scratch, "uninstall-"));
+    const paths = {
+      unit: join(root, "etc/systemd/system/omnesis-gateway.service"),
+      admin: join(root, "usr/local/sbin/omnesis-gateway-admin"),
+      etc: join(root, "etc/omnesis-gateway"),
+      releases: join(root, "opt/omnesis-gateway/releases/v0.4.9-0123456789ab"),
+      state: join(root, "var/lib/private/omnesis-gateway"),
+      stateLink: join(root, "var/lib/omnesis-gateway"),
+      build: join(root, "var/lib/private/omnesis-gateway-build"),
+      cache: join(root, "var/cache/private/omnesis-gateway-build"),
+    };
+    for (const dir of [paths.etc, paths.releases, paths.state, paths.build, paths.cache]) {
+      mkdirSync(dir, { recursive: true });
+    }
+    mkdirSync(dirname(paths.unit), { recursive: true });
+    mkdirSync(dirname(paths.admin), { recursive: true });
+    writeFileSync(paths.unit, "[Service]\n");
+    writeFileSync(paths.admin, "#!/bin/sh\n");
+    writeFileSync(join(paths.etc, "install.env"), "OMNESIS_HARDENED_PORT=7600\n");
+    writeFileSync(join(paths.etc, "keyring.pass"), "fictional passphrase\n");
+    writeFileSync(join(paths.state, "omnesis.db"), "fictional corpus");
+    symlinkSync(paths.state, paths.stateLink);
+    const res = sourced(`
+      ETC_DIR="${paths.etc}"
+      INSTALL_ENV="$ETC_DIR/install.env"
+      PASS_FILE="$ETC_DIR/keyring.pass"
+      RELEASE_ROOT="${join(root, "opt/omnesis-gateway")}"
+      ADMIN_LINK="${paths.admin}"
+      STATE_DIR="${paths.stateLink}"
+      STATE_PRIVATE_DIR="${paths.state}"
+      UNIT_PATH="${paths.unit}"
+      BUILD_DIR="${paths.build}"
+      BUILD_VIEW="${join(root, "var/lib/omnesis-gateway-build")}"
+      BUILD_CACHE="${paths.cache}"
+      BUILD_CACHE_VIEW="${join(root, "var/cache/omnesis-gateway-build")}"
+      require_linux_systemd() { :; }
+      systemctl() { :; }
+      main_command=uninstall
+      parse_options ${flags}
+      cmd_uninstall
+    `);
+    return { res, paths, root };
+  }
+
+  test("removes the service, releases, admin link and build cache, and keeps the corpus", () => {
+    const { res, paths } = uninstall("");
+    expect(res.status, res.output).toBe(0);
+    expect(existsSync(paths.unit)).toBe(false);
+    expect(existsSync(paths.admin)).toBe(false);
+    expect(existsSync(join(paths.releases, ".."))).toBe(false);
+    expect(existsSync(paths.build)).toBe(false);
+    expect(existsSync(paths.cache)).toBe(false);
+    expect(existsSync(join(paths.state, "omnesis.db"))).toBe(true);
+    expect(existsSync(join(paths.etc, "keyring.pass"))).toBe(true);
+    expect(res.output).toContain("uninstall --purge");
+  });
+
+  test("--purge deletes the corpus and the passphrase too", () => {
+    const { res, paths } = uninstall("--purge");
+    expect(res.status, res.output).toBe(0);
+    expect(existsSync(paths.stateLink)).toBe(false);
+    expect(existsSync(paths.state)).toBe(false);
+    expect(existsSync(paths.etc)).toBe(false);
   });
 });
 

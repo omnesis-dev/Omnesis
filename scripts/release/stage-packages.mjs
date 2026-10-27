@@ -48,6 +48,7 @@ const EXTRA_ASSETS = {
     { from: "portal", to: "portal" },
     { from: "models-dev", to: "models-dev" },
     { from: "../../scripts/native-runtime-preflight.mjs", to: "native-runtime-preflight.mjs" },
+    { from: "../../scripts/native-vector-compat.mjs", to: "native-vector-compat.mjs" },
   ],
 };
 

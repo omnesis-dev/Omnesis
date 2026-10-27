@@ -177,7 +177,9 @@
               <tr>
                 <td>Source</td>
                 <td><em>(default)</em></td>
-                <td>Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux</td>
+                <td>
+                  Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux and Intel macOS
+                </td>
                 <td>You want the default: a checkout of the release, built on the machine.</td>
               </tr>
               <tr>
@@ -197,7 +199,9 @@
         <ul>
           <li>
             <strong>macOS</strong>, Apple silicon or Intel. Every source is available, and local
-            embeddings use Metal acceleration on Apple silicon.
+            embeddings use Metal acceleration on Apple silicon. Intel Macs also need Xcode Command
+            Line Tools (<code>xcode-select --install</code>): installation checks the native vector
+            engine and builds it locally when its bundled binary is incompatible.
           </li>
           <li>
             <strong>Linux</strong>, amd64 or arm64. Source installs need glibc 2.35 or newer; Docker
@@ -487,7 +491,8 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td><code>--build</code></td>
                 <td>
                   With <code>--docker</code>: build the images from the checkout this script came
-                  from instead of pulling published ones.
+                  from instead of pulling published ones. The build needs about 25 GB free where
+                  Docker stores images; the installer checks before writing anything.
                 </td>
               </tr>
               <tr>
@@ -783,21 +788,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
 
         <h2 id="docker">Docker</h2>
-        <div class="callout warn">
-          <p>
-            The gateway and collector images are not published yet, so
-            <code>--docker</code> cannot pull them and the install stops. Until they are, use the
-            default source install. To try the Docker stack anyway, run the installer from a
-            checkout of this repository with <code>sh scripts/install.sh --docker --build</code>,
-            which builds the images on the machine.
-          </p>
-        </div>
         <p>
           The Docker install is the same installer with a flag. The gateway and the collector run as
           containers from published images tagged by release. The host needs Docker with the Compose
           plugin, <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The installer
           uses release images only, so it refuses <code>--edge</code>;
-          <code>--version X.Y.Z</code> selects an exact release.
+          <code>--version X.Y.Z</code> selects an exact release. From a checkout,
+          <code>sh scripts/install.sh --docker --build</code> builds the images locally.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -897,6 +894,109 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           </div>
         </div>
 
+        <h3 id="docker-topologies">Choose a topology</h3>
+        <p>
+          The default <code>--docker</code> install runs a gateway and a collector as separate
+          containers. Use <code>--docker --combined</code> for one container running both, or
+          <code>--docker --gateway-only</code> when every collector will run elsewhere. A combined
+          container stops both processes if either fails and drains the collector before stopping
+          the gateway. Every topology accepts additional native collectors: on a Mac, run the
+          installer with <code>--collector --gateway-url https://&lt;server&gt;:7600</code>
+          and redeem a fresh collector pairing code from the gateway. macOS sources need a native
+          Mac collector; mounting Mac files into a Linux container does not supply macOS APIs.
+        </p>
+        <p>
+          On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
+          Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
+          on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
+          Bridge mode is the default and needs an explicit gateway URL on other devices. Publishing
+          UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use
+          an explicit URL there. Only run one gateway on each chosen port.
+        </p>
+        <p>
+          OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider
+          redirect to localhost refers to the computer running the browser. For a headless server
+          use the portal authentication flow where offered, or forward each needed port over SSH
+          (for example <code>ssh -L 3000:127.0.0.1:3000 user@&lt;server&gt;</code>) before opening
+          the authorization URL locally. Do not expose callback ports to the internet.
+        </p>
+        <p>
+          A collector sees only files mounted into its container. For a filesystem source, add a
+          read-only bind mount to the <code>collector</code> service (or <code>gateway</code> in
+          combined mode), such as <code>/srv/source-data:/sources/data:ro</code>, then configure the
+          source with its container path, <code>/sources/data</code>. Grant the container UID read
+          and directory traversal permissions on that source directory. Mount only the directories
+          that source needs. Store credentials, writable source caches and databases inside the
+          persistent config directory, rather than in the image or the read-only source mount.
+          Ordinary updates preserve Compose edits; rerunning the installer regenerates the file, so
+          retain and reapply your additional mounts when reconfiguring.
+        </p>
+        <h3 id="docker-compose">Standalone Compose</h3>
+        <p>
+          The repository includes <code>compose.yaml</code> for a combined container, independent of
+          the installer. Set <code>OMNESIS_IMAGE_TAG</code> to an exact published version and
+          <code>OMNESIS_PASSPHRASE_PATH</code> to an absolute path outside the repository containing
+          a strong random passphrase. The container runs as UID/GID 10001:10001; grant that identity
+          read access to the file without making it readable by other users. Compose file secrets
+          are bind mounts, not an encrypted secret store. Set <code>OMNESIS_TLS_EXTRA_NAMES</code>
+          to the server DNS names/IP addresses clients will use before first boot.
+        </p>
+        <p>
+          Before starting the daemons, run
+          <code
+            >docker compose run --rm --no-deps --entrypoint omnesis gateway keyring init --backend
+            passphrase</code
+          >, then
+          <code
+            >docker compose run --rm --no-deps --entrypoint omnesis gateway keyring export-recovery
+            --backend passphrase</code
+          >. Store the recovery material offline, then run <code>docker compose up -d</code>. The
+          named <code>state</code> volume contains the complete configuration directory. Stop with
+          <code>docker compose down</code>; adding <code>--volumes</code> destroys it. This
+          standalone example is managed through Compose; use the installer for its host CLI wrapper
+          and transactional <code>omnesis update</code> integration.
+        </p>
+        <h3 id="docker-unraid">Unraid</h3>
+        <p>
+          Enable Docker in Unraid Settings, then open the server terminal. Choose a persistent
+          appdata directory on a local pool, such as <code>/mnt/cache/appdata/omnesis</code>; keep
+          SQLite databases off SMB/NFS shares and do not let a mover relocate active database files.
+          Check the pool name on your server. Run
+          <code
+            >curl -fsSL https://omnesis.dev/install.sh |
+            OMNESIS_CONFIG_DIR=/mnt/cache/appdata/omnesis sh -s -- --docker --combined
+            --docker-network host</code
+          >. Follow the encryption prompts and store recovery material away from the server.
+        </p>
+        <p>
+          The generated Compose file stays in appdata. Manage it with
+          <code>docker compose -f /mnt/cache/appdata/omnesis/docker-compose.yml</code> and use
+          <code>omnesis update</code> for updates. If Compose is unavailable, install the Compose
+          plugin through your Unraid administration tooling before running the installer. A manual
+          Unraid Docker template can use the combined image, host networking, UID/GID 10001:10001
+          and an appdata mount at <code>/var/lib/omnesis</code>. Set
+          <code>OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1</code> with host networking to keep callback
+          listeners on loopback; initialize its passphrase keyring before starting, as in the
+          standalone Compose instructions. Never enable privileged mode or mount the Docker socket
+          into the daemon.
+        </p>
+        <p>
+          Persist and back up the <em>entire</em> config directory: all databases and sidecars,
+          attachments, source caches, credentials, tokens, TLS keys/certificates, sealed keyring,
+          configuration and Compose metadata. Stop both daemons for a filesystem backup, or use the
+          documented backup command. Include separately mounted passphrase files and supplied TLS
+          material in your recovery plan. A passphrase stored beside encrypted data protects neither
+          against theft of that complete directory nor a host administrator. Keep an offline
+          recovery copy; losing both unlock and recovery material loses encrypted data.
+        </p>
+        <p>
+          Tailscale can run on the Docker host (including the Unraid host); no privileged VPN
+          container is required. Pair other machines using its reachable DNS name and the TLS
+          configuration below. External MCP clients use the same gateway HTTPS endpoint as native
+          installs. A self-signed certificate needs explicit client trust; clients that require
+          publicly trusted HTTPS need a Tailscale or domain certificate and a reachable route.
+        </p>
+
         <h3 id="docker-tls">TLS in Docker</h3>
         <p>
           Under Docker the gateway serves its own self-signed certificate unless you give it one.
@@ -982,6 +1082,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>sudo</code> belongs to root, so <code>chown</code> both files to your user before
           installing. A publicly chained certificate like this one needs no <code>--tls-ca</code>,
           and phones paired against it keep working when it renews.
+        </p>
+        <p>
+          The renewal hook must preserve the container account's read access. Keep private keys mode
+          0600 and owned by the daemon UID/GID (10001:10001 for root-run Docker installs), or use an
+          equally restricted group grant. A renewal command running as root can replace a key with a
+          root-owned file the container cannot read. Mount the certificate directory so an atomic
+          file replacement is visible, and check <code>omnesis tls status</code>
+          after renewing.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1144,76 +1252,152 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
 
         <h2 id="uninstall">Uninstall</h2>
         <p>
-          Removing Omnesis reverses the install you made. Your data stays in the config directory
-          until you delete it, so take a <a href="/docs/updating#backup">backup</a> first if you may
-          want it back.
+          <code>omnesis uninstall</code> removes Omnesis from the machine it runs on: everything it
+          finds, or only the parts you name. Your data stays in the config directory unless you add
+          <code>--purge</code>, so take a <a href="/docs/updating#backup">backup</a> first if you
+          may want it back.
         </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># see what would go, then remove it</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall --dry-run</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall</span>
+            </p>
+            <p class="t-dim"># only the OpenClaw integration</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall openclaw</span>
+            </p>
+            <p class="t-dim"># everything, with the data and keys</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis uninstall --purge</span>
+            </p>
+          </div>
+        </div>
         <p>
-          <strong>1. On a second machine, remove its device from the gateway first.</strong> For a
-          collector, move or detach the sources it hosts (see
-          <a href="/docs/sources#managing-sources">Managing sources</a>), then on the gateway host
-          run <code>omnesis devices revoke &lt;device&gt; --forget</code>, which deletes the device
-          and is refused while it still hosts sources. Revoking a harness machine's device also
-          signs its agent out of its connection.
+          Without a component it lists what it found, lets you pick, and asks before it changes
+          anything. Name components to remove only those:
         </p>
-        <p><strong>2. Stop and remove the services and the software</strong>, by install shape:</p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Install</th>
-                <th>Remove it with</th>
+                <th>Component</th>
+                <th>What it removes</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Source (default)</td>
+                <td><code>gateway</code></td>
                 <td>
-                  <code>omnesis service uninstall</code>, then
-                  <code>rm -rf ~/omnesis ~/.local/lib/omnesis</code> and
-                  <code>rm -f ~/.local/bin/omnesis</code> (use your <code>--source-dir</code> if you
-                  set one).
+                  The gateway service: the systemd user unit or LaunchAgent, a
+                  <a href="/docs/security#hardened-gateway">hardened gateway</a> (its service,
+                  releases and admin command, through <code>sudo</code>), or a Docker install.
                 </td>
               </tr>
               <tr>
-                <td>Docker</td>
+                <td><code>collector</code></td>
+                <td>The collector service.</td>
+              </tr>
+              <tr>
+                <td><code>openclaw</code>, <code>hermes</code></td>
                 <td>
-                  <code
-                    >docker compose -f ~/.config/omnesis/docker-compose.yml --profile update down
-                    --rmi all</code
-                  >, then <code>rm -f ~/.local/bin/omnesis</code>.
+                  The agent integration <code>omnesis connect</code> installed: the plugin
+                  (unregistered through OpenClaw's own command), the skill, the integration's state
+                  and credentials, and the Omnesis entries in the harness's config and
+                  <code>.env</code>. Everything else in those files stays as it was.
                 </td>
               </tr>
               <tr>
-                <td>Hardened gateway</td>
+                <td><code>claude-code</code>, <code>codex</code></td>
                 <td>
-                  <code>sudo omnesis-gateway-admin uninstall</code>, which removes the service and
-                  the releases but keeps <code>/var/lib/omnesis-gateway</code> and the passphrase in
-                  <code>/etc/omnesis-gateway</code>. Delete both yourself when you no longer need
-                  the data. Remove your own collector and CLI as for a source install.
+                  The Omnesis plugin, its marketplace and the <code>omnesis</code> MCP server,
+                  through each tool's own <code>plugin</code> and <code>mcp</code> commands.
                 </td>
               </tr>
               <tr>
-                <td>Client only</td>
-                <td>As for a source install; there are no services.</td>
+                <td><code>cli</code></td>
+                <td>
+                  The <code>omnesis</code> command: the installer's source checkout, the global
+                  package, <code>~/.local/bin/omnesis</code>, <code>~/.local/lib/omnesis</code>, and
+                  the installer's PATH line (marked <code># Added by the Omnesis installer</code>)
+                  when nothing else lives in <code>~/.local/bin</code>.
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p>Flags:</p>
+        <ul>
+          <li>
+            <code>--purge</code> also deletes the config directory (data, tokens, credentials and
+            keys), the service logs and the <code>dev.omnesis</code> entries in the macOS Keychain
+            or Linux Secret Service, and a hardened gateway's
+            <code>/var/lib/omnesis-gateway</code> and <code>/etc/omnesis-gateway</code>. It is
+            refused while anything that uses the config directory would stay. The keyring's root key
+            is shared by every Omnesis config directory of your account, so it stays while another
+            one remains, such as a named instance's.
+          </li>
+          <li><code>--dry-run</code> prints the plan and changes nothing.</li>
+          <li>
+            <code>--yes</code> skips the confirmation; without a terminal it is required.
+            <code>--json</code> reports every step and its outcome.
+          </li>
+          <li>
+            <code>--instance &lt;name&gt;</code> removes a named parallel instance instead of the
+            default one; <code>--dir &lt;path&gt;</code> names a harness home outside its default,
+            with <code>openclaw</code> or <code>hermes</code>.
+          </li>
+          <li>
+            <code>--discard-local-changes</code> removes the installer's source checkout even when
+            it has local changes. A checkout the installer did not clone, a git worktree, and a
+            launcher or PATH line of your own are never removed.
+          </li>
+        </ul>
         <p>
-          The installer may also have added a PATH line to your shell profile, under the comment
-          <code># Added by the Omnesis installer</code>; delete both lines. On a harness machine,
-          remove the Omnesis plugin from OpenClaw or Hermes the way that harness removes plugins.
+          Every step is independent and safe to repeat: a step that fails is reported with what is
+          left and how to finish it, the others still run, and running the command again picks up
+          where it stopped. It waits for nothing on the network and works with the gateway gone. If
+          the installed <code>omnesis</code> no longer starts, <code>npx omnesis uninstall</code>
+          finds the install from what is on disk and removes it the same way.
         </p>
         <p>
-          <strong>3. Delete the data and keys, if you want them gone.</strong>
-          <code>rm -rf ~/.config/omnesis</code> removes the data, tokens, credentials and, with a
-          passphrase file, the key that opens them. With an OS keyring, the root key is stored there
-          under the service name <code>dev.omnesis</code>: on macOS, run
-          <code>security delete-generic-password -s dev.omnesis</code> until it reports that nothing
-          was found; on Linux, run <code>secret-tool clear service dev.omnesis</code>. On a Mac,
-          also remove the collector from <strong>Full Disk Access</strong> in System Settings.
+          <strong>Docker.</strong> On a Docker host, <code>omnesis uninstall</code> runs in the
+          launcher on the host, not in a container: it takes the containers and images down (<code
+            >docker compose … down --rmi all</code
+          >), removes the compose file and the launcher, and with <code>--purge</code> the config
+          directory. An install is removed as a whole.
         </p>
+        <p>
+          <strong>What only you can do.</strong> The command says which of these apply when it
+          finishes:
+        </p>
+        <ul>
+          <li>
+            On a second machine, remove its device from the gateway as well. For a collector, first
+            move or detach the sources it hosts (see
+            <a href="/docs/sources#managing-sources">Managing sources</a>); then, on the gateway
+            host, run <code>omnesis devices revoke &lt;device&gt; --forget</code>. Revoking a
+            harness machine's device also signs its agent out of its connection.
+          </li>
+          <li>Restart OpenClaw or Hermes so the running harness stops loading the plugin.</li>
+          <li>
+            On a Mac, remove the collector from <strong>Full Disk Access</strong> in System
+            Settings.
+          </li>
+          <li>
+            The prerequisites the installer may have added (Node, git, build tools) and the
+            <code>mkcert</code> certificate authority stay; <code>mkcert -uninstall</code> removes
+            the authority if nothing else uses it.
+          </li>
+        </ul>
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/"
             ><span class="pager-label">Previous</span><span class="pager-title">Overview</span></a

@@ -80,6 +80,7 @@ import {
   type ServiceComponent,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
+import { dockerReleaseImages, newestCommonDockerTag } from "../update/docker-registry.js";
 import { assertSourceTargetNode } from "../update/source-node.js";
 import { approveInteractive } from "../approve.js";
 import { restartHarness } from "../harness-restart.js";
@@ -138,7 +139,6 @@ import {
   normalizeVersion,
   npmGlobalApplyPlan,
   npmViewVersionSpec,
-  packageIndexUrl,
   planHostUpdate,
   planUpdate,
   readImageTag,
@@ -514,8 +514,8 @@ export interface UpdateFlowDeps {
    * the commands themselves and leave this undefined.
    */
   select?(version: string): Promise<void>;
-  /** Newest published version for a dist-tag, for installs with no npm binary. */
-  latestPublished?(distTag: string): Promise<string>;
+  /** Highest stable release shared by every image in this Compose project. */
+  latestDockerVersion?(composeFile: string): Promise<string>;
   /**
    * How to run the installed CLI for the harness refresh, read when the
    * refresh runs so it is the build the update installed. By path: the
@@ -666,9 +666,9 @@ class StoppedForBuild {
     this.held = true;
   }
 
-  async startAll(): Promise<void> {
+  async startAll(pick: (component: ServiceComponent) => boolean = () => true): Promise<void> {
     if (this.held || !this.deps.startService) return;
-    for (const component of this.components) {
+    for (const component of this.components.filter(pick)) {
       this.stopped.delete(component);
       try {
         await this.deps.startService(component);
@@ -684,8 +684,10 @@ class StoppedForBuild {
   }
 }
 
-/** What a rollback knows about the memory the build it undoes had. */
+/** What a rollback knows about the incomplete build and the memory it had. */
 interface RollbackMemory {
+  /** An unsuccessful dependency install can leave root workspace packages partly written. */
+  resetDependencies?: boolean;
   /** Daemons stopped for a build: stopped for the rebuild too, and brought back. */
   daemons?: StoppedForBuild;
   /** The apply's install or build was killed, most likely for want of memory. */
@@ -705,6 +707,8 @@ function describeStep(step: UpdateStep, targetLabel: string): string {
         : "back up the gateway's databases through its API";
     case "pause-collector":
       return "stop the collector while the build runs, so the build has this machine's memory, and start it again after";
+    case "pause-gateway":
+      return "stop the gateway while the build runs, so the build has this machine's memory; it is down until its restart";
     case "apply":
       return `move this installation to ${targetLabel}`;
     case "service-definition":
@@ -789,7 +793,12 @@ async function rollBackAndFail(
       for (const component of stopping) await daemons.stop(component);
     }
   }
-  for (const spec of applyPlan.rollback) {
+  const rollback = applyPlan.rollback.flatMap((spec) =>
+    memory.resetDependencies && isDependencyInstall(spec) && spec.retry
+      ? [spec.retry.reset, spec]
+      : [spec],
+  );
+  for (const spec of rollback) {
     console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
     // The transaction signal is already aborted; rollback is the recovery
     // work that must still run after the interrupted process tree is gone.
@@ -1103,14 +1112,22 @@ async function executeHostPlan(
   const applyState = applyPlan.apply.length > 0 || phase.applied ? applyPlan.applyState : undefined;
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
-  const pausedForBuild = steps.some((step) => step.kind === "pause-collector");
+  const pausedForBuild = steps.some(
+    (step) => step.kind === "pause-collector" || step.kind === "pause-gateway",
+  );
+  let dependencyInstallIncomplete = false;
   const rollBack = (
     reason: string,
     booted = false,
     exitCode: number = EXIT_FAILURE,
     killed = false,
   ): Promise<never> =>
-    rollBackAndFail(applyPlan, deps, reason, booted, exitCode, { daemons, killed, pausedForBuild });
+    rollBackAndFail(applyPlan, deps, reason, booted, exitCode, {
+      daemons,
+      killed,
+      pausedForBuild,
+      resetDependencies: dependencyInstallIncomplete,
+    });
 
   // The transaction: from the first thing that moves the host to the point
   // of no return, which is the gateway serving the target — the health wait
@@ -1177,6 +1194,14 @@ async function executeHostPlan(
               "it starts again once the new build is in place.",
           );
           await daemons.stop("collector");
+          break;
+        }
+        case "pause-gateway": {
+          console.log(
+            "Stopping the gateway while the build runs, so the build has this machine's memory; " +
+              "it is down until it restarts on the new build.",
+          );
+          await daemons.stop("gateway");
           break;
         }
         case "backup": {
@@ -1273,6 +1298,9 @@ async function executeHostPlan(
               signal: controller.signal,
               onProcessGroup: (pid) => deps.updateLock?.setProcessGroup(pid),
             });
+            if (isDependencyInstall(spec))
+              dependencyInstallIncomplete =
+                controller.signal.aborted || result.code !== 0 || Boolean(result.signal);
             await rollBackIfInterrupted(false);
             if (result.code !== 0) {
               await rollBack(
@@ -1298,15 +1326,15 @@ async function executeHostPlan(
               ? `${c.green}✔${c.reset} Already on ${targetLabel}.`
               : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
           );
-          // A collector no later step restarts comes back once the build is in place.
-          if (
-            !steps.some(
-              (later, at) =>
-                at > index && later.kind === "restart" && later.component === "collector",
-            )
-          ) {
-            await daemons.startAll();
-          }
+          // A daemon no later step restarts comes back once the build is in
+          // place; one that a later step restarts waits for that step.
+          await daemons.startAll(
+            (component) =>
+              !steps.some(
+                (later, at) =>
+                  at > index && later.kind === "restart" && later.component === component,
+              ),
+          );
           if (index === commitIndex) commit();
           if (phase.offer && deps.continueAfterApply && applyPlan.apply.length > 0) {
             release?.();
@@ -1318,7 +1346,22 @@ async function executeHostPlan(
               ...(deps.updateLock ? { lock: deps.updateLock } : {}),
               targetLabel,
             });
-            if (handed.finished) return;
+            if (handed.finished) {
+              // The installed build ran the restarts that bring these back;
+              // starting them again here would only report a start that did
+              // nothing, after the fact.
+              for (const component of daemons.components) {
+                if (
+                  steps.some(
+                    (later, at) =>
+                      at > index && later.kind === "restart" && later.component === component,
+                  )
+                ) {
+                  daemons.forget(component);
+                }
+              }
+              return;
+            }
             if (!committed) release = deps.interruptions.claim(onSignal);
             if (handed.signal) {
               if (committed) throw new CliError("", signalExitCode(handed.signal));
@@ -2043,7 +2086,7 @@ export async function updateSourceCheckout(
       backup: opts.backup !== false,
       restart: deps.restart,
       serviceDefinitions: deps.serviceDefinitions !== undefined,
-      pauseCollectorForBuild: deps.buildMemoryTight?.() === true,
+      pauseDaemonsForBuild: deps.buildMemoryTight?.() === true,
     });
     // A preview fetches nothing, so an edge target's manifest version is not
     // known here and its preview shows the order without a hand-over.
@@ -2234,7 +2277,7 @@ export async function updateSourceCheckout(
   const alreadyOnTarget = evidence.complete;
   const planned = planHostUpdate(deps.roles, {
     backup: opts.backup !== false && !alreadyOnTarget,
-    pauseCollectorForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
+    pauseDaemonsForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
     restart: deps.restart,
     serviceDefinitions: deps.serviceDefinitions !== undefined,
     ...(alreadyOnTarget ? { runningBuild: await runningBuilds(deps) } : {}),
@@ -2407,24 +2450,23 @@ export async function updateDocker(
   } else if (opts.targetVersion) {
     target = normalizeVersion(opts.targetVersion);
   } else {
-    // The product versions are lockstep, so the published CLI version is the
-    // tag every Omnesis image is published under. Resolved over the package
-    // index's HTTP API because the updater container carries no npm binary.
-    const resolve = deps.latestPublished;
+    // Docker releases may be published without npm packages. Resolve the
+    // actual project's complete image set, including its updater, from the
+    // container registries before any tag or state is changed.
+    const resolve = deps.latestDockerVersion;
     if (!resolve) {
       throw new CliError(
         `${c.red}No way to resolve the newest release. Pass --target-version to name one.${c.reset}`,
         EXIT_FAILURE,
       );
     }
-    const distTag = channelToDistTag("stable");
     let published: string;
     try {
-      published = await resolve(distTag);
+      published = await resolve(opts.composeFile);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new CliError(
-        `${c.red}Could not resolve ${CLI_PACKAGE}@${distTag}: ${detail}${c.reset}`,
+        `${c.red}Could not resolve a common container release: ${detail}${c.reset}`,
         EXIT_FAILURE,
       );
     }
@@ -2434,7 +2476,7 @@ export async function updateDocker(
     // registry answer, not something to act on.
     if (!isResolvedVersion(target)) {
       throw new CliError(
-        `${c.red}${CLI_PACKAGE}@${distTag} did not resolve to a version: ${target}${c.reset}`,
+        `${c.red}Container registry discovery did not resolve to a version: ${target}${c.reset}`,
         EXIT_FAILURE,
       );
     }
@@ -2761,26 +2803,35 @@ export function parseWaitForLockMinutes(raw: unknown): number | null | undefined
 /** A day: past that, a wait is a stuck update rather than a busy one. */
 const MAX_WAIT_FOR_LOCK_MINUTES = 24 * 60;
 
-/** How long a registry lookup may hang before it counts as no answer. */
-const REGISTRY_REQUEST_TIMEOUT_MS = 10_000;
-
-/**
- * The newest published version for a dist-tag, read from the package index's
- * HTTP API. A container install has no npm binary to ask, and the product
- * versions are lockstep, so the CLI package's version is the tag every
- * Omnesis image is published under. The index is the one the installer
- * resolves the same number from, `OMNESIS_PACKAGE_INDEX_URL` included, so a
- * fork or a mirror answers for the install and for every update after it.
- */
-async function latestPublishedVersion(distTag: string): Promise<string> {
-  const url = packageIndexUrl(distTag);
-  const res = await fetch(url, { signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
-  const body = (await res.json()) as { version?: string };
-  if (typeof body.version !== "string" || !body.version) {
-    throw new Error(`${url} returned no version`);
-  }
-  return body.version;
+/** Resolve exactly the images Compose will pull, including profile services. */
+async function latestDockerVersion(composeFile: string): Promise<string> {
+  const config = async (raw: boolean): Promise<string> => {
+    const result = await spawnRunner(
+      {
+        command: "docker",
+        args: [
+          "compose",
+          "-f",
+          composeFile,
+          "--profile",
+          "update",
+          "config",
+          ...(raw ? ["--no-interpolate"] : []),
+          "--format",
+          "json",
+        ],
+      },
+      "capture",
+    );
+    if (result.code !== 0)
+      throw new Error(
+        "Could not resolve the Compose project's images. Repair its configuration before updating.",
+      );
+    return result.stdout;
+  };
+  const raw = await config(true);
+  const rendered = await config(false);
+  return newestCommonDockerTag(dockerReleaseImages(raw, rendered));
 }
 
 /**
@@ -3108,7 +3159,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
           })
         : undefined,
     select: plan.kind === "docker" ? (tag) => selectImageTag(plan.projectDir, tag) : undefined,
-    latestPublished: latestPublishedVersion,
+    latestDockerVersion,
     awaitHealth: async (expectVersion, signal) => {
       await ensureTrust();
       await awaitGatewayHealth(
@@ -3214,6 +3265,18 @@ export async function continueOffer(run: ContinuationRun): Promise<void> {
             `${c.yellow}Stopped by ${early.signal} before taking over the update.${c.reset}`,
             signalExitCode(early.signal),
           );
+        }
+        // The offering build prepared its own launcher before checkout. Refresh
+        // it with this target build's renderer while the inherited lock is held,
+        // before accepting the offer or restarting any service.
+        if (offer.subject.method === "source") {
+          await deps.prepareSourceLauncher?.(offer.subject.rootDir);
+          if (early.signal) {
+            throw new CliError(
+              `${c.yellow}Stopped by ${early.signal} before taking over the update.${c.reset}`,
+              signalExitCode(early.signal),
+            );
+          }
         }
         releaseEarly?.();
         releaseEarly = null;

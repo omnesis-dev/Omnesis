@@ -280,7 +280,7 @@ describe("rhythm: the daily boundary", () => {
       (r) => bench.runPayload(r.id) as { sourceId: string; dateFrom: string; dateTo: string },
     );
     for (const p of payloads) {
-      expect(p.dateFrom).toBe(new Date(BOUNDARY - DAY).toISOString());
+      expect(p.dateFrom).toBe(new Date(localHour(D0_NOON, DAILY_HOUR)).toISOString());
       expect(p.dateTo).toBe(new Date(BOUNDARY).toISOString());
     }
   }, 240_000);

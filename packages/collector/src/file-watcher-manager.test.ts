@@ -93,11 +93,21 @@ describe("FileWatcherManager", () => {
 
       const sessionFile = join(sessionsDir, "active.jsonl");
       realFs.writeFileSync(sessionFile, "{}\n");
-      await waitForCondition(() => changed.includes("late-jsonl-source"));
+      // The recursive watch was promoted a moment ago; macOS can expose its
+      // FSEvents subscription late under load, so keep appending until it fires.
+      await waitForCondition(
+        () => changed.includes("late-jsonl-source"),
+        5000,
+        () => realFs.appendFileSync(sessionFile, "{}\n"),
+      );
       changed.length = 0;
 
       realFs.appendFileSync(sessionFile, "{}\n");
-      await waitForCondition(() => changed.includes("late-jsonl-source"));
+      await waitForCondition(
+        () => changed.includes("late-jsonl-source"),
+        5000,
+        () => realFs.appendFileSync(sessionFile, "{}\n"),
+      );
     } finally {
       manager.stopAll();
     }

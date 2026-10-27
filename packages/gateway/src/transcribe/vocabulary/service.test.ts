@@ -25,14 +25,21 @@ function fixture(initialConfig: unknown) {
   };
 }
 
-describe("transcription vocabulary service opt-in", () => {
-  test.each([
-    {},
-    { inference: {} },
-    { inference: { transcriptionVocabulary: {} } },
-    { inference: { transcriptionVocabulary: { enabled: false } } },
-  ])("returns no dictionary and performs no IO without opt-in: %j", async (config) => {
-    const { service, read } = fixture(config);
+describe("transcription vocabulary service enablement", () => {
+  test.each([{}, { inference: {} }, { inference: { transcriptionVocabulary: {} } }])(
+    "an omitted setting serves the dictionary: %j",
+    async (config) => {
+      const { service, read } = fixture(config);
+      expect(service.enabled()).toBe(true);
+      expect(await service.getDictionary({ purpose: "dictation" })).toEqual(vocabulary);
+      expect(read).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("returns no dictionary and performs no IO when disabled", async () => {
+    const { service, read } = fixture({
+      inference: { transcriptionVocabulary: { enabled: false } },
+    });
     expect(service.enabled()).toBe(false);
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual({ entries: [] });
     expect(await service.getSnapshot({ purpose: "agent" })).toEqual({
@@ -44,12 +51,14 @@ describe("transcription vocabulary service opt-in", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  test("live opt-in reads vocabulary and removing it stops reads again", async () => {
-    const { service, read, setConfig } = fixture({});
-    setConfig({ inference: { transcriptionVocabulary: { enabled: true } } });
+  test("live re-enable reads vocabulary and disabling it stops reads again", async () => {
+    const { service, read, setConfig } = fixture({
+      inference: { transcriptionVocabulary: { enabled: false } },
+    });
+    setConfig({ inference: { transcriptionVocabulary: {} } });
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual(vocabulary);
     expect(read).toHaveBeenCalledTimes(1);
-    setConfig({ inference: { transcriptionVocabulary: {} } });
+    setConfig({ inference: { transcriptionVocabulary: { enabled: false } } });
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual({ entries: [] });
     expect(read).toHaveBeenCalledTimes(1);
   });
@@ -89,7 +98,7 @@ describe("transcription vocabulary service opt-in", () => {
       inference: { transcriptionVocabulary: { enabled: true } },
     });
     read.mockImplementation(() => {
-      setConfig({});
+      setConfig({ inference: { transcriptionVocabulary: { enabled: false } } });
       return Promise.resolve(vocabulary);
     });
     expect(await service.getSnapshot({ purpose: "dictation" })).toMatchObject({

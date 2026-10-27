@@ -32,11 +32,14 @@ export interface NoteAgentDeps {
     | "transitionObservation"
     | "setObservationUserAction"
     | "enqueueNewNotes"
+    | "skipNewNotes"
     | "claimDueNote"
     | "finishNoteRun"
   >;
   /** The background-agent model; null while none is runnable. */
   resolveBackend: () => ChatBackend | null;
+  /** The owner's `agent.noteAgent` setting, read live; undefined while unset. */
+  getSetting: () => boolean | undefined;
   /** Memory tools (person and self annotations), stamped with the run id. */
   buildMemoryTools?: (runId: string) => ToolHandle[];
   /** Read-only corpus tools (search, fetch, calendar). */
@@ -108,6 +111,19 @@ function budgeted(
   }));
 }
 
+/** The note agent as `GET /status` advertises it under `noteAgent`. */
+export interface NoteAgentStatus {
+  /** The owner leaves the note agent on: the setting, or its default. */
+  enabled: boolean;
+  /** A background-agent model is runnable. */
+  modelAssigned: boolean;
+  /** Notes are read: enabled AND a runnable model. */
+  active: boolean;
+}
+
+/** The note agent's state while `agent.noteAgent` is unset. */
+export const DEFAULT_NOTE_AGENT_ENABLED = true;
+
 export class NoteAgent {
   private running = false;
 
@@ -117,15 +133,27 @@ export class NoteAgent {
     return (this.deps.clock ?? Date.now)();
   }
 
-  /** True when a background-agent model is runnable. */
+  /** Whether the owner leaves the note agent on. */
+  enabled(): boolean {
+    return this.deps.getSetting() ?? DEFAULT_NOTE_AGENT_ENABLED;
+  }
+
+  /** True when the note agent is on and a background-agent model is runnable. */
   active(): boolean {
-    return this.deps.resolveBackend() !== null;
+    return this.enabled() && this.deps.resolveBackend() !== null;
+  }
+
+  status(): NoteAgentStatus {
+    const enabled = this.enabled();
+    const modelAssigned = this.deps.resolveBackend() !== null;
+    return { enabled, modelAssigned, active: enabled && modelAssigned };
   }
 
   /**
    * Record where reading starts, before the gateway accepts captures: a note
    * the owner captures from here on is read even if it arrives before the
-   * first drain. Does nothing while no background-agent model is runnable.
+   * first drain. Records no start while the note agent is off or no
+   * background-agent model is runnable.
    */
   async start(): Promise<void> {
     if (this.active()) await this.deps.writeGate.enqueueNewNotes(this.now());
@@ -133,16 +161,24 @@ export class NoteAgent {
 
   /**
    * Queue new notes and process those that are due, one at a time. Returns
-   * the number of notes processed. Concurrent calls return 0 at once.
+   * the number of notes processed. Concurrent calls return 0 at once. While
+   * the owner has the note agent off, new notes are settled as skipped
+   * instead, and nothing is processed.
    */
   async drain(maxNotes = 5): Promise<number> {
     if (this.running) return 0;
-    if (!this.active()) return 0;
+    const enabled = this.enabled();
+    if (enabled && this.deps.resolveBackend() === null) return 0;
     this.running = true;
     try {
+      if (!enabled) {
+        await this.deps.writeGate.skipNewNotes(this.now());
+        return 0;
+      }
       await this.deps.writeGate.enqueueNewNotes(this.now());
       let processed = 0;
-      while (processed < maxNotes) {
+      // Switching the note agent off stops a drain between notes.
+      while (processed < maxNotes && this.enabled()) {
         const row = await this.deps.writeGate.claimDueNote(this.now());
         if (!row) break;
         await this.process(row);

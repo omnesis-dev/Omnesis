@@ -166,6 +166,7 @@ const SAFE_TABLES = new Set([
   "index_versions",
   "indexed_documents",
   "indexing_errors",
+  "live_voice_usage",
   // The owner's reactions to morning-brief items and the interest examples
   // the Brain's decision gates read: feedback, with nothing to redeem.
   "interest_brief_reactions",
@@ -336,6 +337,8 @@ const SAFE_ROW_FILTERS = new Map([
   // Doctor runs are transient observations about one installation's hosts.
   // Preserve the table shape without cloning host-local health details.
   ["device_doctor_runs", "0"],
+  // Call-duration accounting belongs to one installation, never its clones.
+  ["live_voice_usage", "0"],
   ["snapshot_absence_cascade_outbox", "0"],
   ["snapshot_absence_deletions", "0"],
   // Replica deletion verdicts describe one installation's members disagreeing

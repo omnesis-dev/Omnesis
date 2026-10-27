@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer } from "node:http";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   _iconNormalizerCacheSize,
   _requestPinnedIconForTest,
   _resetIconNormalizerCache,
   _shutdownIconRasterizeWorker,
   normalizeIcon,
+  normalizeSourceMetaIcons,
 } from "./icon-normalizer.js";
 import { SOURCE_ICON_MAX_BYTES } from "./icon-limits.js";
 import type { AddressInfo } from "node:net";
@@ -299,15 +300,113 @@ describe("normalizeIcon", () => {
     expect(calls).toBe(before + 1);
   });
 
-  it("does NOT memoize failures (allows retry on next push)", async () => {
-    let calls = 0;
-    const fetcher = (async () => {
-      calls += 1;
-      return new Response("", { status: 500 });
+  it("fetches no hosted icon in a spawned E2E gateway, but still converts data URIs", async () => {
+    vi.stubEnv("OMNESIS_E2E_DISABLE_ICON_FETCH", "1");
+    try {
+      let lookups = 0;
+      let fetches = 0;
+      const fetcher = (async () => {
+        fetches += 1;
+        return new Response(SAMPLE_SVG, { headers: { "content-type": "image/svg+xml" } });
+      }) as unknown as typeof fetch;
+      const lookup = async () => {
+        lookups += 1;
+        return publicLookup();
+      };
+      expect(await normalizeIcon("https://example.com/logo.svg", fetcher, lookup)).toBeNull();
+      expect(await normalizeIcon("http://example.com/logo.png", fetcher, lookup)).toBeNull();
+      expect(lookups).toBe(0);
+      expect(fetches).toBe(0);
+      expect(await normalizeIcon(SAMPLE_SVG_DATA_URI)).toMatch(/^data:image\/png;base64,/);
+      expect(await normalizeIcon(SAMPLE_PNG_DATA_URI)).toBe(SAMPLE_PNG_DATA_URI);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("remembers a failure for five minutes, then tries again", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      let calls = 0;
+      let status = 500;
+      const fetcher = (async () => {
+        calls += 1;
+        return status === 200
+          ? new Response(Buffer.from(SAMPLE_PNG_BASE64, "base64"), {
+              headers: { "content-type": "image/png" },
+            })
+          : new Response("", { status });
+      }) as unknown as typeof fetch;
+      const url = "https://example.com/will-retry.png";
+      expect(await normalizeIcon(url, fetcher, publicLookup)).toBeNull();
+      vi.advanceTimersByTime(4 * 60_000);
+      expect(await normalizeIcon(url, fetcher, publicLookup)).toBeNull();
+      expect(calls).toBe(1);
+      status = 200;
+      vi.advanceTimersByTime(60_000);
+      expect(await normalizeIcon(url, fetcher, publicLookup)).toBe(SAMPLE_PNG_DATA_URI);
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("normalizeSourceMetaIcons", () => {
+  /** A fetcher whose responses wait until `release()`, counting requests per URL. */
+  function heldFetcher(response: () => Response) {
+    const started: string[] = [];
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const fetcher = (async (url: string) => {
+      started.push(String(url));
+      await released;
+      return response();
     }) as unknown as typeof fetch;
-    const url = "https://example.com/will-retry.svg";
-    expect(await normalizeIcon(url, fetcher, publicLookup)).toBeNull();
-    expect(await normalizeIcon(url, fetcher, publicLookup)).toBeNull();
-    expect(calls).toBe(2);
+    return { fetcher, started, release };
+  }
+
+  it("fetches a family icon at the source icon's URL once, even when it fails", async () => {
+    const { fetcher, started, release } = heldFetcher(() => new Response("", { status: 503 }));
+    const url = "https://cdn.example.com/app.png";
+    const pending = normalizeSourceMetaIcons(
+      { label: "App", icon: url, family: { label: "App", icon: url } },
+      fetcher,
+      publicLookup,
+    );
+    try {
+      await vi.waitFor(() => expect(started).toHaveLength(1));
+    } finally {
+      release();
+    }
+    const meta = await pending;
+    expect(meta.icon).toBeUndefined();
+    expect(meta.family?.icon).toBeUndefined();
+    expect(started).toEqual([url]);
+  });
+
+  it("fetches a source icon and a different family icon at the same time", async () => {
+    const pngBytes = Buffer.from(SAMPLE_PNG_BASE64, "base64");
+    const { fetcher, started, release } = heldFetcher(
+      () => new Response(pngBytes, { headers: { "content-type": "image/png" } }),
+    );
+    const pending = normalizeSourceMetaIcons(
+      {
+        label: "App",
+        icon: "https://cdn.example.com/app.png",
+        family: { label: "Suite", icon: "https://cdn.example.com/suite.png" },
+      },
+      fetcher,
+      publicLookup,
+    );
+    // Both requests are in flight before either answers.
+    try {
+      await vi.waitFor(() => expect(started).toHaveLength(2));
+    } finally {
+      release();
+    }
+    const meta = await pending;
+    expect(meta.icon).toBe(SAMPLE_PNG_DATA_URI);
+    expect(meta.family?.icon).toBe(SAMPLE_PNG_DATA_URI);
   });
 });

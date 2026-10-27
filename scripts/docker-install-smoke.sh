@@ -115,7 +115,7 @@ trap cleanup EXIT INT TERM
 
 step "starting a throwaway registry on $IMAGE_REPO"
 docker rm -f "$REGISTRY_CONTAINER" >/dev/null 2>&1 || true
-docker run -d --name "$REGISTRY_CONTAINER" -p "$REGISTRY_PORT:5000" registry:2 >/dev/null
+docker run -d --name "$REGISTRY_CONTAINER" -p "127.0.0.1:$REGISTRY_PORT:5000" registry:2 >/dev/null
 for _ in $(seq 1 30); do
   curl -sf "http://$IMAGE_REPO/v2/" >/dev/null 2>&1 && break
   sleep 1
@@ -296,6 +296,31 @@ grep -q "OMNESIS_IMAGE_TAG=$TAG_B" "$CONFIG_DIR/.env" \
 wait_served "$TAG_B" 120 || die "the rollback did not bring $TAG_B back"
 ok "the recorded tag and the running gateway are both back on $TAG_B"
 
+# Automatic discovery must use the container registry, even when npm has no
+# matching release. Only the one-shot updater needs host networking to reach
+# this fixture's loopback-only registry; the running daemons stay bridged.
+step "automatic registry discovery selects $TAG_C and rolls back its failed gateway"
+node - "$COMPOSE_FILE" "$GATEWAY_PORT" <<'NODE'
+const fs = require('node:fs');
+const [path, port] = process.argv.slice(2);
+const text = fs.readFileSync(path, 'utf8');
+const split = text.indexOf('  updater:\n');
+if (split < 0) throw new Error('Missing updater service');
+const service = text.slice(split)
+  .replace('    profiles:', '    network_mode: host\n    profiles:')
+  .replace('- OMNESIS_GATEWAY_URL=https://gateway:7600', `- OMNESIS_GATEWAY_URL=https://localhost:${port}`);
+fs.writeFileSync(path, text.slice(0, split) + service);
+NODE
+if "${omnesis_env[@]}" "$OMNESIS" update --yes --no-backup --health-timeout 60 > "$WORK/automatic.out" 2>&1; then
+  die "the automatically selected broken release was reported successful"
+fi
+grep -Fq "$TAG_B → $TAG_C" "$WORK/automatic.out" \
+  || { cat "$WORK/automatic.out" >&2; die "registry discovery did not select the newest shared image tag"; }
+grep -Fq "Rolled back to $TAG_B" "$WORK/automatic.out" \
+  || { cat "$WORK/automatic.out" >&2; die "automatic update did not recover the prior image"; }
+wait_served "$TAG_B" 120 || die "the automatic update rollback did not restore the gateway"
+ok "registry-based automatic release discovery and rollback"
+
 # ── a certificate the operator supplies ─────────────────────────────────────
 
 # The second topology this lane proves: a certificate issued on the host,
@@ -409,6 +434,28 @@ echo "images under test:"
 docker compose -f "$TLS_COMPOSE_FILE" --profile update config --images | while read -r image; do
   echo "  $image $(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || echo '(id unavailable)')"
 done
+
+step "omnesis uninstall --purge removes the second install from this host"
+# The first install shares these images; take its containers down first so
+# the second install's `--rmi all` is not refused an image still in use.
+docker compose -f "$COMPOSE_FILE" --profile update down >/dev/null 2>&1 || true
+TLS_IMAGES="$(docker compose -f "$TLS_COMPOSE_FILE" --profile update config --images)"
+TLS_PROJECT="$(docker compose -f "$TLS_COMPOSE_FILE" config --format json | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).name)')"
+"${omnesis_env[@]}" "$OMNESIS" uninstall --dry-run >/dev/null || die "omnesis uninstall --dry-run failed"
+[[ -f "$TLS_COMPOSE_FILE" && -x "$OMNESIS" ]] || die "the dry run changed something"
+"${omnesis_env[@]}" "$OMNESIS" uninstall --yes --purge || die "omnesis uninstall --purge failed"
+[[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$TLS_PROJECT")" ]] \
+  || die "containers of $TLS_PROJECT are still there after the uninstall"
+while read -r image; do
+  [[ -z "$image" ]] && continue
+  docker image inspect "$image" >/dev/null 2>&1 && die "$image is still on this host after the uninstall"
+done <<<"$TLS_IMAGES"
+[[ ! -e "$TLS_CONFIG_DIR" ]] || die "$TLS_CONFIG_DIR is still there after --purge"
+[[ ! -e "$OMNESIS" ]] || die "the launcher $OMNESIS is still there"
+if [[ -f "$HOME_DIR/.bashrc" ]] && grep -qxF "# Added by the Omnesis installer" "$HOME_DIR/.bashrc"; then
+  die "the installer's PATH line is still in $HOME_DIR/.bashrc"
+fi
+ok "the containers, images, config directory, launcher and PATH line are gone"
 
 echo
 echo "docker-install-smoke: passed"

@@ -9,7 +9,7 @@ import { isKnowledgeOwnerReadable } from "./storage-fence.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { getKnowledgeNode } from "./storage-read.js";
 import { recordKnowledgeDiscoveryTargets } from "./work-lifecycle.js";
-import { enqueueKnowledgeWork } from "./work.js";
+import { enqueueKnowledgeWork, reserveKnowledgeRegion } from "./work.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeCanonicalFence } from "./canonical-fence.js";
 import type Database from "better-sqlite3";
@@ -96,6 +96,12 @@ export function enrollCanonicalMutation(
   reconcileKnowledgeOwner(db, owner.kind, owner.id, now);
   const node = getKnowledgeNode(db, owner.id);
   if (!node || node.canonicalFields.withdrawn === true) return;
+  // The run that persists an owner keeps it for the rest of its turn. Without
+  // this reservation the planner could start a maintenance batch on the fresh
+  // node (its review below is due at once) while this run is still working,
+  // and the run's next canonical call on its own owner would be handed off.
+  // The reservation ends with the batch; the queued review then proceeds.
+  reserveOwnerForRun(db, fence.batchId, node.id);
   const evidence = new Set(owner.evidenceDocumentIds);
   const sources = fence.inputs.filter(
     (input) => input.nodeId.startsWith("source:") && evidence.has(input.nodeId.slice(7)),
@@ -125,4 +131,16 @@ export function enrollCanonicalMutation(
       },
       now,
     );
+}
+
+/** Reserve a freshly persisted owner for its creating batch, unless another active batch already holds it. */
+function reserveOwnerForRun(db: Database.Database, batchId: string, nodeId: string): void {
+  const held = db
+    .prepare<[string, string], { batch_id: string }>(
+      `SELECT r.batch_id FROM knowledge_batch_regions r JOIN knowledge_batches b ON b.id=r.batch_id
+       WHERE r.node_id=? AND r.batch_id!=? AND b.status NOT IN ('completed','abandoned') LIMIT 1`,
+    )
+    .get(nodeId, batchId);
+  if (held) return;
+  reserveKnowledgeRegion(db, batchId, [nodeId]);
 }

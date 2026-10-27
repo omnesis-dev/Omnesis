@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "./realtime/live-voice-usage.js";
 import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "./brain/storage/morning-brief-items.js";
 import {
@@ -19,6 +20,7 @@ import {
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
+  skipNewNotes,
   type NoteAgentRow,
 } from "./brain/note-agent/storage.js";
 import {
@@ -1698,6 +1700,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): Promise<void>;
+  /** Record a duration snapshot without fabricating token usage or a dollar cost. */
+  recordLiveVoiceUsage(input: LiveVoiceUsageSample): Promise<void>;
   /** Append one decision-model answer to the decision ledger (idempotent on id). */
   recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
   // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
@@ -2054,6 +2058,8 @@ export interface WriteGate extends KnowledgeWriteGate {
   clearMorningBriefMessageItems(messageId: string): Promise<number>;
   /** Queue notes captured since the note agent started; returns how many. */
   enqueueNewNotes(now: number): Promise<number>;
+  /** Settle notes captured while the note agent is switched off as skipped; returns how many. */
+  skipNewNotes(now: number): Promise<number>;
   /** Claim the next settled note for the note agent, or null. */
   claimDueNote(now: number): Promise<NoteAgentRow | null>;
   finishNoteRun(
@@ -2678,6 +2684,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     cancelScheduledRunsForLoop: (loopId) => call("cognition.cancelScheduledForLoop", [loopId]),
     setCognitionEngineState: (key, value) => call("cognition.engineStateSet", [key, value]),
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
+    recordLiveVoiceUsage: (input) => call("live.recordVoiceUsage", [input]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
       call("cognition.recordCognitionSpend", [day, mechanism, modelId, usage, opts]),
     recordCognitionDecision: (record) => call("cognition.recordDecision", [record]),
@@ -2803,6 +2810,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     resetInterestEmbeddingsNotFrom: (model) => call("interest.resetEmbeddings", [model]),
     setBriefItemReaction: (input, now) => call("interest.reaction", [input, now]),
     enqueueNewNotes: (now) => call("noteAgent.enqueue", [now]),
+    skipNewNotes: (now) => call("noteAgent.skip", [now]),
     clearMorningBriefMessageItems: (messageId) =>
       call("cognition.morningBriefItemsClear", [messageId]),
     claimDueNote: (now) => call("noteAgent.claim", [now]),
@@ -3342,6 +3350,7 @@ export function directWriteGate(db: Db): WriteGate {
     addToCognitionEngineCounter: async (key, delta) => {
       addToCognitionEngineCounter(db, key, delta);
     },
+    recordLiveVoiceUsage: (input) => Promise.resolve().then(() => recordLiveVoiceUsage(db, input)),
     recordCognitionSpend: async (day, mechanism, modelId, usage, opts) => {
       recordCognitionSpend(db, day, mechanism, modelId, usage, opts);
     },
@@ -3495,6 +3504,7 @@ export function directWriteGate(db: Db): WriteGate {
     resetInterestEmbeddingsNotFrom: async (model) => resetInterestEmbeddingsNotFrom(db, model),
     setBriefItemReaction: async (input, now) => applyBriefReaction(db, input, now),
     enqueueNewNotes: async (now) => enqueueNewNotes(db, now),
+    skipNewNotes: async (now) => skipNewNotes(db, now),
     clearMorningBriefMessageItems: async (messageId) =>
       clearMorningBriefMessageItems(db, messageId),
     claimDueNote: async (now) => claimDueNote(db, now),

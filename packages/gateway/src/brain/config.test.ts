@@ -200,7 +200,8 @@ describe("brain config schema", () => {
     expect(validateConfig({ brain: { dailyRunHour: 24 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 0 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 32 } }).ok).toBe(true);
-    expect(validateConfig({ brain: { workerConcurrency: 33 } }).ok).toBe(false);
+    const capped = validateConfig({ brain: { workerConcurrency: 33 } });
+    expect(capped.ok && capped.config.brain?.workerConcurrency).toBe(32);
     expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.99 } } }).ok).toBe(false);
     expect(validateConfig({ brain: { knowledge: { contextHandoffTokens: 1000 } } }).ok).toBe(false);
     expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.05 } } }).ok).toBe(false);

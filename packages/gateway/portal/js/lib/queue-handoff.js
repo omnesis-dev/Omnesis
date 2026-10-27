@@ -16,6 +16,34 @@ export function visibleQueueControls(controls, hiddenIds, consumedIds) {
   };
 }
 
+/** Show a queued follow-up the instant it is sent; the next controls snapshot replaces it. */
+export function withOptimisticQueuedMessage(controls, sessionId, submission) {
+  if (!controls || controls.sessionId !== sessionId || controls.unsupported) return controls;
+  if (controls.queuedMessages?.some((message) => message.id === submission.clientMessageId)) return controls;
+  return {
+    ...controls,
+    queuedMessages: [
+      ...(controls.queuedMessages ?? []),
+      {
+        id: submission.clientMessageId,
+        text: submission.text,
+        status: "queued",
+        ...(submission.deepResearch ? { deepResearch: true } : {}),
+      },
+    ],
+  };
+}
+
+/** A refused submission leaves the queue card; the unconfirmed card owns its retry. */
+export function withoutOptimisticQueuedMessage(controls, sessionId, clientMessageId) {
+  if (!controls || controls.sessionId !== sessionId) return controls;
+  if (!controls.queuedMessages?.some((message) => message.id === clientMessageId)) return controls;
+  return {
+    ...controls,
+    queuedMessages: controls.queuedMessages.filter((message) => message.id !== clientMessageId),
+  };
+}
+
 /** An emitted user turn consumes exact receipts independently of a Send now request. */
 export function recordConsumedQueueReceipts(bySession, action) {
   if (action.kind !== "agent.user.message") return bySession;

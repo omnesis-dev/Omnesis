@@ -60,6 +60,11 @@ export function noteAgentActive(status) {
   return status?.tasks?.noteAgent === true;
 }
 
+/** The config change that switches the note agent on or off. */
+export function noteAgentSettingPatch(on) {
+  return { agent: { noteAgent: on === true } };
+}
+
 /**
  * Whether a re-read copy of a note carries news for the list: its agent
  * state or receipt changed, or its gateway transcript arrived.

@@ -4,7 +4,7 @@
   "license": "AGPL-3.0-or-later",
   "main": "src/index.ts",
   "dependencies": {
-    "@azure/msal-node": "^5.3.0",
+    "@azure/msal-node": "^7.1.1",
     "@omnesis/core": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*"

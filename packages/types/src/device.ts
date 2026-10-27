@@ -463,8 +463,10 @@ export function hasPerDeviceCursor(mode: MultiDeviceMode): boolean {
 
 /**
  * How a device verifies the gateway's certificate; see `DeviceCapability.tls`.
- * `pinned-ca` trusts one private authority, so it follows renewals that the
- * authority signs. Readers treat any other value as unreported.
+ * `pinned-ca` pins a certificate that could also act as an issuer; an agent
+ * integration reports it and still checks the exact leaf, so a renewal
+ * replaces what it trusts as surely as under `pinned-leaf`. Readers treat any
+ * other value as unreported.
  */
 export type DeviceTlsTrustMode = "system" | "pinned-leaf" | "pinned-ca" | "legacy";
 
@@ -514,11 +516,13 @@ export interface DeviceCapability {
   /**
    * How this device verifies the gateway's TLS certificate. `pinned-leaf`
    * trusts one exact leaf and breaks when that certificate is replaced;
-   * `system` verifies the gateway's name through public roots. Absent from
-   * clients that do not report it. Validated leniently on the wire, so a
-   * newer client's mode never fails its hello.
+   * `system` verifies the gateway's name through public roots.
+   * `followsPublicRenewal` says a pin gives way to public trust the first
+   * time a publicly trusted certificate for the gateway's name replaces it.
+   * Absent from clients that do not report it. Validated leniently on the
+   * wire, so a newer client's mode never fails its hello.
    */
-  tls?: { mode: DeviceTlsTrustMode | (string & {}) };
+  tls?: { mode: DeviceTlsTrustMode | (string & {}); followsPublicRenewal?: boolean };
   /** Device hostname, for display. */
   hostname?: string;
   /** Platform: "macos" | "linux" | "ios" | "web" | ... */

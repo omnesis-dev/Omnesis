@@ -135,6 +135,9 @@
 #                                  pins an exact released image. `--edge` is
 #                                  refused because the installer resolves images
 #                                  cut at releases, not branch images.
+#   --combined                     (--docker) gateway and collector in one container
+#   --gateway-only                 (--docker) run only the gateway
+#   --docker-network host|bridge   (--docker) host enables Linux LAN discovery
 #   --build                        (--docker) build the images from the checkout
 #                                  this script came from instead of pulling the
 #                                  published ones
@@ -294,6 +297,12 @@ LOG_LEVEL="${OMNESIS_LOG_LEVEL:-info}"
 # The Docker role: containers instead of user services.
 DOCKER=0
 DOCKER_BUILD_FLAG=0
+DOCKER_COMBINED=0
+DOCKER_GATEWAY_ONLY=0
+DOCKER_NETWORK=bridge
+DOCKER_NETWORK_FLAG=0
+DOCKER_DAEMON_UID=""
+DOCKER_DAEMON_GID=""
 # A certificate the gateway container serves instead of minting its own, with
 # its key and, for a private CA, the CA the containers verify it against.
 TLS_CERT_PATH=""
@@ -396,6 +405,8 @@ stage() {
 show_install_plan() {
   if [ "$DOCKER" = 1 ]; then
     if [ "$COLLECTOR" = 1 ]; then PLAN_ROLE="Docker collector"
+    elif [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then PLAN_ROLE="Docker gateway"
+    elif [ "$DOCKER_COMBINED" = 1 ]; then PLAN_ROLE="Docker gateway and collector in one container"
     else PLAN_ROLE="Docker gateway and collector"; fi
     if [ -n "$PIN_VERSION" ]; then PLAN_RELEASE="release $PIN_VERSION"
     else PLAN_RELEASE="newest complete stable image release (resolved during install)"; fi
@@ -1698,6 +1709,18 @@ try {
 # replaces anything at the same path.
 render_source_wrapper() {
   SOURCE_ROOT="$1"
+  SOURCE_DEPENDENCY_KIND=f
+  SOURCE_DEPENDENCY_PATH=node_modules/tsx/dist/loader.mjs
+  SOURCE_CLI_COMMAND='node --import "$SOURCE_LOADER_URL"'
+  case "${2:-current}" in
+    current) ;;
+    legacy)
+      SOURCE_DEPENDENCY_KIND=x
+      SOURCE_DEPENDENCY_PATH=node_modules/.bin/tsx
+      SOURCE_CLI_COMMAND='"$SOURCE_ROOT/node_modules/.bin/tsx"'
+      ;;
+    *) return 1 ;;
+  esac
   SOURCE_ROOT_LITERAL="$(shell_single_quote "$SOURCE_ROOT")"
   CONFIG_DIR_LITERAL="$(shell_single_quote "$CONFIG_DIR")"
   UPDATE_LOCK_HELPER_LITERAL="$(shell_single_quote "$UPDATE_LOCK_HELPER")"
@@ -1877,9 +1900,9 @@ if update_unfinished; then
     printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
     exit 1
   }
-elif [ ! -x "\$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
+elif [ ! -$SOURCE_DEPENDENCY_KIND "\$SOURCE_ROOT/$SOURCE_DEPENDENCY_PATH" ]; then
   if [ "\$UPDATE_LOCK_ACQUIRED" != "1" ]; then acquire_update_lock; fi
-  if [ ! -x "\$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
+  if [ ! -$SOURCE_DEPENDENCY_KIND "\$SOURCE_ROOT/$SOURCE_DEPENDENCY_PATH" ]; then
     printf '%s\n' "Source recovery: restoring missing CLI dependencies before continuing..." >&2
     install_source_dependencies || {
       printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
@@ -1887,8 +1910,17 @@ elif [ ! -x "\$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
     }
   fi
 fi
+EOF
+  if [ "${2:-current}" = current ]; then
+    cat <<'SOURCE_LOADER_EOF'
+# Import the loader in the daemon itself: the tsx CLI parent force-kills a
+# slow signal handler before the daemon's graceful shutdown can complete.
+SOURCE_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs")" || exit 1
+SOURCE_LOADER_EOF
+  fi
+  cat <<EOF
 if [ "\$UPDATE_LOCK_HANDOFF" = "1" ]; then
-  "\$SOURCE_ROOT/node_modules/.bin/tsx" "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
+  $SOURCE_CLI_COMMAND "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
   UPDATE_STATUS=\$?
   finish_update_lock "\$UPDATE_STATUS"
 fi
@@ -1900,8 +1932,35 @@ if [ "\$UPDATE_LOCK_ACQUIRED" = "1" ]; then
   fi
   trap - EXIT HUP INT TERM
 fi
-exec "\$SOURCE_ROOT/node_modules/.bin/tsx" "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
+exec $SOURCE_CLI_COMMAND "\$SOURCE_ROOT/packages/cli/src/index.ts" "\$@"
 EOF
+}
+
+# After dependencies and build succeed, the installed release is authoritative:
+# old CLIs require their exact canonical launcher for update and migration.
+render_installed_source_wrapper() {
+  INSTALLED_RENDERER_PATH=packages/cli/src/update/source-launcher.ts
+  INSTALLED_RENDERER_ENTRY="$(git -C "$1" ls-tree --name-only HEAD -- "$INSTALLED_RENDERER_PATH")" || return 1
+  if [ -z "$INSTALLED_RENDERER_ENTRY" ]; then
+    # Releases predating this export keep their legacy front door. Check the
+    # actual target tree, so a deleted modern helper cannot trigger fallback.
+    render_source_wrapper "$1" legacy
+    return
+  fi
+  [ "$INSTALLED_RENDERER_ENTRY" = "$INSTALLED_RENDERER_PATH" ] || return 1
+  INSTALLED_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$1/node_modules/tsx/dist/loader.mjs")" || return 1
+  node --import "$INSTALLED_LOADER_URL" --input-type=module - "$1" "$CONFIG_DIR" "$UPDATE_LOCK_HELPER" <<'SOURCE_RENDERER_EOF'
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, config, helper] = process.argv.slice(2);
+const { sourceRecoveryLauncher } = await import(pathToFileURL(join(root, 'packages/cli/src/update/source-launcher.ts')).href);
+if (typeof sourceRecoveryLauncher !== 'function') throw new Error('Installed source launcher renderer is unavailable');
+const content = sourceRecoveryLauncher(root, config, helper);
+if (typeof content !== 'string' || !content.startsWith('#!/bin/sh\n') ||
+    content.includes(String.fromCharCode(0)) || Buffer.byteLength(content) > 1024 * 1024)
+  throw new Error('Installed source launcher renderer returned invalid content');
+process.stdout.write(content);
+SOURCE_RENDERER_EOF
 }
 
 # Install the stable front door before mutating an existing checkout. Paths
@@ -1915,13 +1974,24 @@ write_source_wrapper() {
   OMNESIS_BIN="$BIN_DIR/omnesis"
   SOURCE_WRAPPER_TMP="$(mktemp "$BIN_DIR/.omnesis.XXXXXX")" || fail "Could not create a private temporary source launcher."
   chmod 600 "$SOURCE_WRAPPER_TMP"
-  render_source_wrapper "$SOURCE_ROOT" > "$SOURCE_WRAPPER_TMP"
+  if [ "${2:-legacy}" = installed ]; then
+    render_installed_source_wrapper "$SOURCE_ROOT" > "$SOURCE_WRAPPER_TMP" || fail "Could not render the installed source recovery launcher. Re-run this installer to recover."
+  else
+    render_source_wrapper "$SOURCE_ROOT" legacy > "$SOURCE_WRAPPER_TMP" || fail "Could not render the source recovery launcher."
+  fi
   chmod 755 "$SOURCE_WRAPPER_TMP"
   node -e '
 const fs = require("node:fs");
 const [scratch, target, dir] = process.argv.slice(1);
 const fd = fs.openSync(scratch, "r");
-try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+try {
+  const stat = fs.fstatSync(fd);
+  if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("Invalid source recovery launcher output");
+  const bytes = fs.readFileSync(fd);
+  if (!bytes.subarray(0, 10).equals(Buffer.from("#!/bin/sh\n")) || bytes.includes(0))
+    throw new Error("Invalid source recovery launcher output");
+  fs.fsyncSync(fd);
+} finally { fs.closeSync(fd); }
 fs.renameSync(scratch, target);
 try {
   const dirFd = fs.openSync(dir, "r");
@@ -1982,8 +2052,9 @@ try {
   UPDATE_LOCK_HELPER="$HOME/.local/lib/omnesis/update-lock.cjs"
   SOURCE_WRAPPER_EXPECTED_TMP="$(mktemp "$HOME/.local/bin/.omnesis-source-expected.XXXXXX")" || return 1
   chmod 600 "$SOURCE_WRAPPER_EXPECTED_TMP"
-  render_source_wrapper "$SOURCE_WRAPPER_ROOT" > "$SOURCE_WRAPPER_EXPECTED_TMP"
-  node -e '
+  for SOURCE_WRAPPER_FORMAT in current legacy; do
+    render_source_wrapper "$SOURCE_WRAPPER_ROOT" "$SOURCE_WRAPPER_FORMAT" > "$SOURCE_WRAPPER_EXPECTED_TMP" || return 1
+    if node -e '
 const fs = require("node:fs");
 const [candidate, expected] = process.argv.slice(1);
 try {
@@ -1991,7 +2062,11 @@ try {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) process.exit(1);
   if (!fs.readFileSync(candidate).equals(fs.readFileSync(expected))) process.exit(1);
 } catch { process.exit(1); }
-' "$SOURCE_WRAPPER" "$SOURCE_WRAPPER_EXPECTED_TMP"
+' "$SOURCE_WRAPPER" "$SOURCE_WRAPPER_EXPECTED_TMP"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 package_wrapper_parent_is_safe() {
@@ -2383,6 +2458,7 @@ install_source() {
     source_step_failed "$BUILD_STATUS" "The build" "The build failed — its error is above. Its dependencies were reinstalled from scratch first, so this is the code or this machine, not a half-finished earlier run. Fix the error above and re-run; it continues from the checkout it already made."
   SOURCE_ROOT="$(cd "$SOURCE_DIR" && pwd -P)"
   SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+  write_source_wrapper "$SOURCE_ROOT" installed
   write_source_update_state "complete" "$SOURCE_ROOT" "$SOURCE_COMMIT"
   kill "$INSTALL_UPDATE_HEARTBEAT_PID" >/dev/null 2>&1 || true
   wait "$INSTALL_UPDATE_HEARTBEAT_PID" 2>/dev/null || true
@@ -2789,6 +2865,7 @@ set_env() {
   else
     printf '%s=%s\n' "$KEY" "$VALUE" >> "$CONFIG_DIR/.env"
   fi
+  docker_own_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR"
 }
@@ -2800,6 +2877,7 @@ unset_env() {
   ENV_TMP="$CONFIG_DIR/.env.$$"
   ( umask 077; grep -Ev "^[[:space:]]*(export[[:space:]]+)?$KEY[[:space:]]*=" "$CONFIG_DIR/.env" > "$ENV_TMP" || true )
   mv "$ENV_TMP" "$CONFIG_DIR/.env"
+  docker_own_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR"
 }
@@ -2816,6 +2894,7 @@ append_env() {
     warn "$KEY already set in $CONFIG_DIR/.env — leaving it alone."
   else
     printf '%s=%s\n' "$KEY" "$VALUE" >> "$CONFIG_DIR/.env"
+    docker_own_path "$CONFIG_DIR/.env"
     sync_path "$CONFIG_DIR/.env"
     sync_path "$CONFIG_DIR"
   fi
@@ -3306,6 +3385,7 @@ arm_passphrase_keyring() {
   if [ -n "$PASS_MODE" ] && [ "$PASS_MODE" != 600 ]; then
     warn "$PASS_FILE is mode $PASS_MODE — every local account can read the passphrase that unseals your index. Restrict it (chmod 600) and re-run."
   fi
+  docker_own_path "$PASS_FILE"
   if OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$PASS_FILE" \
        "$OMNESIS_BIN" keyring init --backend passphrase; then
     KEYRING_READY=1
@@ -4795,7 +4875,13 @@ docker_registry_prepare() {
   if [ "$COLLECTOR" = 1 ]; then
     REGISTRY_REQUIRED_IMAGES="omnesis-collector omnesis-updater"
   else
-    REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-collector omnesis-updater"
+    if [ "$DOCKER_COMBINED" = 1 ]; then
+      REGISTRY_REQUIRED_IMAGES="omnesis-combined omnesis-updater"
+    elif [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+      REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-updater"
+    else
+      REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-collector omnesis-updater"
+    fi
   fi
 }
 
@@ -5065,6 +5151,35 @@ docker_resolve_build_context() {
 # Create the directories the containers mount, before they are mounted. Docker
 # would otherwise create a missing one itself, owned by root, and every write
 # from the container's unprivileged account into it would fail.
+# Only files explicitly managed by this installer change ownership. Existing
+# databases and provider state are never recursively reassigned.
+docker_own_path() {
+  [ "$DOCKER" = 1 ] && [ -n "$DOCKER_DAEMON_UID" ] && [ "$(id -u)" = 0 ] || return 0
+  [ -e "$1" ] || return 0
+  [ ! -L "$1" ] || fail "Refusing to change ownership through symlink $1. Use a real file or directory for Docker state."
+  chown -h "$DOCKER_DAEMON_UID:$DOCKER_DAEMON_GID" "$1" || fail "Could not grant container ownership of $1."
+}
+
+docker_runtime_identity() {
+  HOST_UID="$(id -u)"
+  HOST_GID="$(id -g)"
+  DOCKER_DAEMON_UID="$HOST_UID"
+  DOCKER_DAEMON_GID="$HOST_GID"
+  if [ "$HOST_UID" = 0 ]; then
+    # Earlier root installs ran the daemons as root, so their databases,
+    # token and keys belong to root. Only the paths this installer manages
+    # change owner, so such a project keeps running its daemons as root
+    # rather than lose access to its own state.
+    if [ -f "$CONFIG_DIR/docker-compose.yml" ] &&
+      grep -Eq '^[[:space:]]+user: "0:0"' "$CONFIG_DIR/docker-compose.yml" &&
+      ! grep -Eq '^[[:space:]]+user: "10001:10001"' "$CONFIG_DIR/docker-compose.yml"; then
+      return 0
+    fi
+    DOCKER_DAEMON_UID=10001
+    DOCKER_DAEMON_GID=10001
+  fi
+}
+
 docker_prepare_dirs() {
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
@@ -5076,6 +5191,10 @@ docker_prepare_dirs() {
   # exist before it is mounted or Docker creates it as root. A host that only
   # collects has no gateway and mints nothing.
   [ "$COLLECTOR" = 1 ] || mkdir -p "$CONFIG_DIR/tls"
+  docker_own_path "$CONFIG_DIR"
+  docker_own_path "$CONFIG_DIR/tls"
+  docker_own_path "$CONFIG_DIR/collector"
+  docker_own_path "$CONFIG_DIR/.env"
 }
 
 # The directory the collector container calls its own. On a gateway host that
@@ -5098,6 +5217,12 @@ docker_collector_config_dir() {
 docker_collector_gateway_url() {
   if [ "$COLLECTOR" = 1 ]; then
     printf '%s' "$PAIR_GATEWAY_URL"
+  elif [ -n "$TLS_PRIMARY_NAME" ] && [ "$DOCKER_NETWORK" = host ]; then
+    printf 'https://%s:%s' "$TLS_PRIMARY_NAME" "$GATEWAY_PORT"
+  elif [ "$DOCKER_NETWORK" = host ]; then
+    printf 'https://localhost:%s' "$GATEWAY_PORT"
+  elif [ "${1:-}" = local ] && [ "$DOCKER_COMBINED" = 1 ] && [ -z "$TLS_PRIMARY_NAME" ]; then
+    printf 'https://localhost:7600'
   elif [ -n "$TLS_PRIMARY_NAME" ]; then
     # A certificate the operator supplied covers its own names, not the
     # service name; the gateway answers to them on the compose network.
@@ -5130,14 +5255,17 @@ docker_project_name() {
 
 docker_compose_gateway_service() {
   printf '  gateway:\n'
-  printf '    image: "%s/omnesis-gateway:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO"
+  DOCKER_GATEWAY_IMAGE=omnesis-gateway
+  DOCKER_GATEWAY_TARGET=gateway-runtime
+  if [ "$DOCKER_COMBINED" = 1 ]; then DOCKER_GATEWAY_IMAGE=omnesis-combined; DOCKER_GATEWAY_TARGET=combined-runtime; fi
+  printf '    image: "%s/%s:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO" "$DOCKER_GATEWAY_IMAGE"
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
-    printf '    build:\n      context: %s\n      target: gateway-runtime\n' "$DOCKER_BUILD_CONTEXT"
+    printf '    build:\n      context: %s\n      target: %s\n' "$DOCKER_BUILD_CONTEXT" "$DOCKER_GATEWAY_TARGET"
   fi
   # The certificate the gateway mints for itself carries `DNS:gateway`, so the
   # collector verifies the name it dials instead of waving the check through.
   printf '    hostname: gateway\n'
-  if [ -n "$TLS_ALIAS_NAMES" ]; then
+  if [ -n "$TLS_ALIAS_NAMES" ] && [ "$DOCKER_NETWORK" != host ]; then
     # A supplied certificate covers the operator's names instead; the gateway
     # answers to every one of them on the compose network, so the collector
     # dials one and verifies it against the certificate as any client would.
@@ -5146,8 +5274,14 @@ docker_compose_gateway_service() {
       printf '          - %s\n' "$TLS_ALIAS"
     done
   fi
-  printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
-  printf '    ports:\n      - "%s:7600"\n' "$GATEWAY_PORT"
+  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
+  if [ "$DOCKER_NETWORK" = host ]; then
+    printf '    network_mode: host\n'
+  else
+    printf '    ports:\n      - "%s:7600"\n' "$GATEWAY_PORT"
+    [ "$DOCKER_COMBINED" = 0 ] || docker_compose_oauth_ports
+  fi
   printf '    volumes:\n'
   printf '      # Mounted at the same absolute path it has on this host, so every path\n'
   printf '      # this install records means the same thing on both sides of the\n'
@@ -5156,6 +5290,11 @@ docker_compose_gateway_service() {
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_GATEWAY_PORT=%s\n' "$GATEWAY_PORT"
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url local)"
+  fi
   if [ -n "$DOCKER_EXTRA_NAMES" ]; then
     # The host's own names, which the container cannot see, for the
     # certificate the gateway mints for itself: another machine dials those.
@@ -5166,12 +5305,29 @@ docker_compose_gateway_service() {
   # A first boot builds indexes, so the start period is generous: a check that
   # fails inside it does not count against the retries.
   printf '    healthcheck:\n'
-  printf '      test: ["CMD", "curl", "-sfk", "https://localhost:7600/health"]\n'
+  DOCKER_HEALTH_PORT=7600
+  [ "$DOCKER_NETWORK" != host ] || DOCKER_HEALTH_PORT="$GATEWAY_PORT"
+  printf '      test: ["CMD", "curl", "-sfk", "https://localhost:%s/health"]\n' "$DOCKER_HEALTH_PORT"
   printf '      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 120s\n'
   # The gateway drains and closes its stores on SIGTERM within its own budget;
-  # Docker's default 10 s grace would SIGKILL it mid-close.
-  printf '    stop_grace_period: 90s\n'
+  # Docker's default 10 s grace would SIGKILL it mid-close. A combined image
+  # drains its collector first, so both sequential budgets must fit.
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    printf '    stop_grace_period: 120s\n'
+  else
+    printf '    stop_grace_period: 90s\n'
+  fi
   printf '    restart: unless-stopped\n'
+}
+
+docker_compose_oauth_ports() {
+  for OAUTH_PORT in 3000 3001 3002 3003; do
+    if [ "$OAUTH_HOST_PORTS" = ephemeral ]; then
+      printf '      - "127.0.0.1:0:%s"\n' "$OAUTH_PORT"
+    else
+      printf '      - "127.0.0.1:%s:%s"\n' "$OAUTH_PORT" "$OAUTH_PORT"
+    fi
+  done
 }
 
 docker_compose_collector_service() {
@@ -5180,19 +5336,14 @@ docker_compose_collector_service() {
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: collector-runtime\n' "$DOCKER_BUILD_CONTEXT"
   fi
-  printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
-  printf '    ports:\n'
-  printf '      # OAuth callback ports. A provider redirects the browser to\n'
-  printf '      # http://localhost:<port>, so the host side has to be the port that\n'
-  printf '      # provider is registered against, and cannot be moved without\n'
-  printf '      # re-registering every OAuth client.\n'
-  for OAUTH_PORT in 3000 3001 3002 3003; do
-    if [ "$OAUTH_HOST_PORTS" = ephemeral ]; then
-      printf '      - "0:%s"\n' "$OAUTH_PORT"
-    else
-      printf '      - "%s:%s"\n' "$OAUTH_PORT" "$OAUTH_PORT"
-    fi
-  done
+  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
+  if [ "$DOCKER_NETWORK" = host ]; then
+    printf '    network_mode: host\n'
+  else
+    printf '    ports:\n'
+    docker_compose_oauth_ports
+  fi
   printf '    volumes:\n'
   printf '      # The whole config directory, even when this collector keeps its own\n'
   printf '      # subdirectory: the passphrase that unseals its secrets lives beside\n'
@@ -5202,6 +5353,7 @@ docker_compose_collector_service() {
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$(docker_collector_config_dir)"
   printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url)"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
   docker_compose_ca_env
   if [ -n "$PAIR_FINGERPRINT" ]; then
     printf '      - OMNESIS_TRUST_FINGERPRINT=%s\n' "$PAIR_FINGERPRINT"
@@ -5224,6 +5376,7 @@ docker_compose_updater_service() {
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: updater\n' "$DOCKER_BUILD_CONTEXT"
   fi
+  [ "$DOCKER_NETWORK" != host ] || printf '    network_mode: host\n'
   printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
   if [ -n "$DOCKER_SOCKET_GID" ]; then
     printf '    group_add:\n      - "%s"\n' "$DOCKER_SOCKET_GID"
@@ -5530,8 +5683,6 @@ docker_tls_prepare() {
 docker_write_compose() {
   COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
   COMPOSE_PROJECT="$(docker_project_name)"
-  HOST_UID="$(id -u)"
-  HOST_GID="$(id -g)"
   {
     printf '# Generated by the Omnesis installer (install.sh --docker). Re-running the\n'
     printf '# installer rewrites it.\n'
@@ -5540,7 +5691,7 @@ docker_write_compose() {
     printf 'name: %s\n' "$COMPOSE_PROJECT"
     printf 'services:\n'
     [ "$COLLECTOR" = 1 ] || docker_compose_gateway_service
-    docker_compose_collector_service
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_compose_collector_service; fi
     docker_compose_updater_service
   } > "$COMPOSE_FILE"
   set_env OMNESIS_IMAGE_TAG "$IMAGE_TAG"
@@ -5552,6 +5703,7 @@ docker_write_compose() {
 # install is not — the CLI it runs lives inside an image — so it is recorded.
 docker_record_method() {
   printf 'docker\n' > "$CONFIG_DIR/install-method"
+  docker_own_path "$CONFIG_DIR/install-method"
 }
 
 # The `omnesis` this host gets: a wrapper that runs the CLI in a container.
@@ -5577,6 +5729,109 @@ SERVICE='$DOCKER_CLI_SERVICE'
 EOF
   cat >> "$OMNESIS_BIN" <<'WRAPPER_EOF' || fail "Could not write $OMNESIS_BIN. Check that $BIN_DIR is writable and re-run."
 set -eu
+
+# `uninstall` removes this install from the host — the containers and images,
+# the compose project, this launcher and the installer's PATH line — which no
+# container can do to the host it runs on, so it runs here, in the launcher.
+# The data in the config directory stays unless --purge.
+if [ "${1:-}" = uninstall ]; then
+  shift
+  UNINSTALL_YES=0
+  UNINSTALL_PURGE=0
+  UNINSTALL_DRY_RUN=0
+  for ARG in "$@"; do
+    case "$ARG" in
+      -y|--yes) UNINSTALL_YES=1 ;;
+      --purge) UNINSTALL_PURGE=1 ;;
+      --dry-run) UNINSTALL_DRY_RUN=1 ;;
+      all) ;;
+      -h|--help)
+        printf '%s\n' "Usage: omnesis uninstall [--purge] [--yes] [--dry-run]" \
+          "Removes this Docker install: its containers and images, the compose project and this launcher." \
+          "--purge also deletes the config directory: the data, tokens and keys."
+        exit 0 ;;
+      *)
+        printf 'omnesis uninstall: a Docker install is removed as a whole; %s is not something it can remove on its own.\n' "$ARG" >&2
+        exit 2 ;;
+    esac
+  done
+  UNINSTALL_DIR="$(dirname "$COMPOSE_FILE")"
+  UNINSTALL_BIN="$HOME/.local/bin"
+  UNINSTALL_LAUNCHER="$UNINSTALL_BIN/omnesis"
+  printf '%s\n' "Omnesis uninstall — this Docker install:"
+  printf '  - %s\n' "Stop and remove the containers and images of $COMPOSE_FILE"
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    printf '  - %s\n' "Delete the data, tokens and keys in $UNINSTALL_DIR"
+  else
+    printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
+  fi
+  printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
+  if [ "$UNINSTALL_DRY_RUN" = 1 ]; then
+    printf '%s\n' "Dry run: nothing was changed."
+    exit 0
+  fi
+  if [ "$UNINSTALL_YES" != 1 ]; then
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+      printf '%s' "Remove these? [y/N] "
+      IFS= read -r UNINSTALL_REPLY </dev/tty || UNINSTALL_REPLY=""
+      case "$UNINSTALL_REPLY" in
+        y|Y|yes|YES) ;;
+        *) printf '%s\n' "Cancelled."; exit 130 ;;
+      esac
+    else
+      printf '%s\n' "Refusing to uninstall without confirmation. Re-run with --yes, or --dry-run to see the plan." >&2
+      exit 2
+    fi
+  fi
+  if [ -f "$COMPOSE_FILE" ]; then
+    docker compose -f "$COMPOSE_FILE" --profile update down --rmi all --remove-orphans || {
+      printf '%s\n' "omnesis uninstall: docker compose down failed; nothing else was removed. Fix the error above and re-run." >&2
+      exit 1
+    }
+  fi
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    case "$UNINSTALL_DIR" in
+      /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
+    esac
+    rm -rf "$UNINSTALL_DIR"
+  else
+    rm -f "$COMPOSE_FILE" "$UNINSTALL_DIR/install-method"
+  fi
+  rm -f "$UNINSTALL_LAUNCHER"
+  # The installer's PATH line goes too, unless other programs share the directory.
+  if [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null)" ]; then
+    for UNINSTALL_PROFILE in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+      [ -f "$UNINSTALL_PROFILE" ] && grep -qxF '# Added by the Omnesis installer' "$UNINSTALL_PROFILE" || continue
+      awk -v marker='# Added by the Omnesis installer' \
+        -v sh_line="export PATH=\"$UNINSTALL_BIN:\$PATH\"" -v fish_line="fish_add_path $UNINSTALL_BIN" '
+        { line[NR] = $0 }
+        END {
+          n = 0
+          for (i = 1; i <= NR; i++) {
+            if (line[i] == marker && i < NR && (line[i + 1] == sh_line || line[i + 1] == fish_line)) {
+              # With no blank line before it, the newline the installer wrote
+              # ended a last line that had none; at the end it goes again.
+              if (n > 0 && out[n] == "") n--
+              else if (i + 1 == NR) bare = 1
+              i++
+              continue
+            }
+            out[++n] = line[i]
+            bare = 0
+          }
+          for (i = 1; i <= n; i++) if (i < n || !bare) print out[i]; else printf "%s", out[i]
+        }' "$UNINSTALL_PROFILE" > "$UNINSTALL_PROFILE.omnesis-uninstall" &&
+        cat "$UNINSTALL_PROFILE.omnesis-uninstall" > "$UNINSTALL_PROFILE"
+      rm -f "$UNINSTALL_PROFILE.omnesis-uninstall"
+    done
+  fi
+  if [ "$UNINSTALL_PURGE" = 1 ]; then
+    printf '%s\n' "Removed the Docker install and its data."
+  else
+    printf '%s\n' "Removed the Docker install. Your data stays in $UNINSTALL_DIR; delete it with: rm -rf '$UNINSTALL_DIR'"
+  fi
+  exit 0
+fi
 
 [ -f "$COMPOSE_FILE" ] || {
   printf 'omnesis: %s is gone — this host no longer has a Docker install.\n' "$COMPOSE_FILE" >&2
@@ -5652,6 +5907,30 @@ WRAPPER_EOF
       export PATH
       ;;
   esac
+}
+
+# Building the images needs about this much free where Docker keeps them: the
+# workspace install, its compiled closure and every image's layers land there
+# together, and a builder that runs out fails while exporting an image, with a
+# containerd mount error that does not say the disk is full. Measured: a 20 GB
+# Ubuntu host with about 15 GB free failed exporting the first image; one with
+# about 31 GB free built all three. OMNESIS_DOCKER_BUILD_DISK_GB states another
+# requirement, 0 to skip the check.
+DOCKER_BUILD_DISK_GB="${OMNESIS_DOCKER_BUILD_DISK_GB:-25}"
+
+# Refuse a --build whose Docker storage cannot hold it, before anything is
+# written. A daemon whose storage this shell cannot see (Docker Desktop's VM, a
+# remote context) is not checked.
+docker_require_build_disk() {
+  [ "$DOCKER_BUILD_FLAG" = 1 ] || return 0
+  case "$DOCKER_BUILD_DISK_GB" in ''|*[!0-9]*|0) return 0 ;; esac
+  BUILD_DISK_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [ -n "$BUILD_DISK_ROOT" ] && [ -d "$BUILD_DISK_ROOT" ] || return 0
+  BUILD_DISK_KB="$(df -Pk "$BUILD_DISK_ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  case "$BUILD_DISK_KB" in ''|*[!0-9]*) return 0 ;; esac
+  BUILD_DISK_FREE_GB=$((BUILD_DISK_KB / 1048576))
+  [ "$BUILD_DISK_FREE_GB" -lt "$DOCKER_BUILD_DISK_GB" ] || return 0
+  fail "Building the images needs about ${DOCKER_BUILD_DISK_GB} GB free where Docker stores them ($BUILD_DISK_ROOT), and it has ${BUILD_DISK_FREE_GB} GB. Free space (\`docker builder prune\` removes build cache) or grow the disk, then re-run. Nothing was built. OMNESIS_DOCKER_BUILD_DISK_GB=0 skips this check."
 }
 
 # Bring the images onto this host. Pulling is the normal path — they are built
@@ -5746,6 +6025,7 @@ docker_propagate_keyring() {
     printf 'OMNESIS_SECRET_STORE=passphrase\n' >> "$COLLECTOR_ENV"
   grep -q '^OMNESIS_KEYRING_PASSPHRASE_FILE=' "$COLLECTOR_ENV" 2>/dev/null || \
     printf 'OMNESIS_KEYRING_PASSPHRASE_FILE=%s\n' "$KEYRING_CRED_FILE" >> "$COLLECTOR_ENV"
+  docker_own_path "$COLLECTOR_ENV"
 }
 
 print_docker_banner() {
@@ -5770,7 +6050,11 @@ print_docker_banner() {
   echo ""
   printf '\033[1mThe CLI runs in the containers:\033[0m\n'
   echo ""
-  echo "    omnesis sources add gmail"
+  if [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+    echo "    omnesis devices pair --kind collector"
+  else
+    echo "    omnesis sources add gmail"
+  fi
   echo "    omnesis status"
   echo ""
   if [ "$COLLECTOR" != 1 ]; then
@@ -5796,8 +6080,10 @@ print_docker_banner() {
     print_docker_self_signed_join
   fi
   echo ""
-  echo "  - Multicast does not cross the Docker bridge, so a container collector"
-  echo "    cannot discover a gateway; name it with --gateway-url."
+  if [ "$DOCKER_NETWORK" = bridge ]; then
+    echo "  - Multicast does not cross the Docker bridge. For Linux LAN discovery,"
+    echo "    use --docker-network host; collectors can always use --gateway-url."
+  fi
   if [ "$KEYRING_READY" = 1 ]; then
     echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
     echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
@@ -5821,19 +6107,52 @@ docker_warn_native_install() {
 }
 
 # One line turns this host into an Omnesis machine running in containers.
+# Use the existing project's exact file and service list before replacing it.
+# A split collector must stop before a combined process can open its state.
+docker_validate_topology_transition() {
+  PREVIOUS_COMPOSE="$CONFIG_DIR/docker-compose.yml"
+  [ -f "$PREVIOUS_COMPOSE" ] || return 0
+  PREVIOUS_SERVICES="$(docker compose -f "$PREVIOUS_COMPOSE" config --services)" ||
+    fail "Could not inspect $PREVIOUS_COMPOSE. Repair the existing Compose project before changing its topology."
+  if printf '%s\n' "$PREVIOUS_SERVICES" | grep -qx gateway; then
+    [ "$COLLECTOR" = 0 ] || fail "This config directory holds a Docker gateway. A collector-only installation needs a separate OMNESIS_CONFIG_DIR; changing roles here would mix gateway and remote collector state."
+  else
+    [ "$COLLECTOR" = 1 ] || fail "This config directory holds a collector-only Docker installation. A gateway needs a separate OMNESIS_CONFIG_DIR; changing roles here does not migrate its state."
+  fi
+}
+
+docker_prepare_topology_transition() {
+  [ -f "$PREVIOUS_COMPOSE" ] || return 0
+  if [ "$DOCKER_COMBINED" = 1 ] || [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+    if printf '%s\n' "$PREVIOUS_SERVICES" | grep -qx collector; then
+      info "Stopping the previous project's separate collector before changing topology..."
+      docker compose -f "$PREVIOUS_COMPOSE" stop -t 90 collector || fail "Could not stop the previous collector; the existing Compose file was preserved."
+      docker compose -f "$PREVIOUS_COMPOSE" rm -f collector || fail "Could not remove the stopped collector; the existing Compose file was preserved."
+    fi
+  fi
+}
+
 docker_install() {
   ensure_docker
+  if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_runtime_identity
   docker_registry_prepare
   docker_warn_native_install
   docker_resolve_tag
   docker_resolve_build_context
+  docker_require_build_disk
   docker_preflight_images
+  docker_validate_topology_transition
   docker_prepare_dirs
   docker_tls_adopt
+  docker_own_path "$TLS_CERT_PATH"
+  docker_own_path "$TLS_KEY_PATH"
+  docker_own_path "$TLS_CA_PATH"
   docker_tls_prepare
   docker_self_signed_names
+  docker_prepare_topology_transition
   docker_write_compose
   docker_write_wrapper
   docker_record_method
@@ -5859,12 +6178,12 @@ docker_install() {
   docker_up gateway
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
-    docker_up collector
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
     install_model
   else
     # Compose holds the collector until the gateway is healthy, so starting it
     # now lets it follow the gateway once that recovers.
-    docker_up collector
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
     fail_unhealthy_gateway
   fi
   print_docker_banner
@@ -6550,6 +6869,9 @@ parse_args() {
       --trust-fingerprint) PAIR_FINGERPRINT="$2"; PAIR_FINGERPRINT_FLAG=1; shift 2 ;;
       --code)       PAIR_CODE="$2"; PAIR_CODE_FLAG=1; shift 2 ;;
       --docker)     DOCKER=1; shift ;;
+      --combined) DOCKER_COMBINED=1; shift ;;
+      --gateway-only) DOCKER_GATEWAY_ONLY=1; shift ;;
+      --docker-network) DOCKER_NETWORK="$2"; DOCKER_NETWORK_FLAG=1; shift 2 ;;
       --build)      DOCKER_BUILD_FLAG=1; shift ;;
       --tls-cert)   TLS_CERT_PATH="$2"; TLS_FILES_FLAG=1; shift 2 ;;
       --tls-key)    TLS_KEY_PATH="$2"; TLS_FILES_FLAG=1; shift 2 ;;
@@ -6578,6 +6900,14 @@ main() {
   parse_args "$@"
   valid_gateway_port "$GATEWAY_PORT" || fail "--port must be a whole number from 1 through 65535."
   validate_hardened_flags
+  if [ "$DOCKER_COMBINED" = 1 ] || [ "$DOCKER_GATEWAY_ONLY" = 1 ] || [ "$DOCKER_NETWORK_FLAG" = 1 ]; then
+    [ "$DOCKER" = 1 ] || fail "--combined, --gateway-only and --docker-network are only meaningful with --docker."
+  fi
+  case "$DOCKER_NETWORK" in host|bridge) ;; *) fail "--docker-network must be host or bridge." ;; esac
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    [ "$COLLECTOR" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ] || fail "--combined cannot be used with --collector or --gateway-only."
+  fi
+  [ "$DOCKER_GATEWAY_ONLY" = 0 ] || [ "$COLLECTOR" = 0 ] || fail "--gateway-only cannot be used with --collector."
   if [ "$DOCKER" = 1 ]; then
     [ -z "$PIN_COMMIT" ] || \
       fail "--commit is source-only; Docker installs published images."

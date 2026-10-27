@@ -48,3 +48,6 @@ ios/build/
 # The CLA action rewrites this file in its own shape; formatting it would
 # make the next signature fail format-check for whoever pushes after it.
 signatures/
+
+# Preserve bundled upstream copyright and license text byte for byte.
+ios/Resources/ThirdParty/

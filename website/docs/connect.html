@@ -953,6 +953,9 @@
           <code>claude plugin update omnesis@omnesis</code> after updating Omnesis. Claude Code in
           VS Code and in the Claude desktop app cannot ask for the plugin's URL; set it from a
           terminal as above, or add the server by hand.
+          <code>omnesis uninstall claude-code</code> removes the plugin, the
+          <code>omnesis</code> marketplace and an <code>omnesis</code> MCP server again, through
+          Claude Code's own commands.
         </p>
 
         <h3 id="claude-desktop">Claude Desktop and Cowork</h3>
@@ -1043,6 +1046,8 @@
           <a href="#no-browser">Sign in without a browser</a>. To sign in again later, run
           <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
+          <code>omnesis uninstall codex</code>
+          signs Codex out and removes the MCP entry, the plugin and its marketplace.
         </p>
         <div class="callout">
           <strong>For Codex, the plugin is guidance, not a connection.</strong> It teaches Codex how
@@ -1242,11 +1247,13 @@
         <p>
           A refresh keeps the paired device, repairs the sign-in when needed, and uses no pairing
           code. It also re-establishes TLS trust. An agent that verifies a Tailscale or domain
-          certificate by name follows its renewals without one; an agent that pinned a self-signed
-          certificate needs a refresh after it changes, not a new pairing, and
-          <code>omnesis doctor</code> prints the command with the new fingerprint so it runs
-          unattended. When a refresh does need a new approval, the approval screen suggests
-          replacing the integration's existing connection, which keeps its name and access level.
+          certificate by name follows its renewals without one; an agent that pinned the certificate
+          (by address, or against a certificate no public authority issued) needs a refresh after it
+          changes, not a new pairing. The portal's Devices page and <code>omnesis doctor</code>
+          name such an agent before the gateway renews its certificate, and afterwards the doctor
+          prints the command with the new fingerprint so it runs unattended. When a refresh does
+          need a new approval, the approval screen suggests replacing the integration's existing
+          connection, which keeps its name and access level.
         </p>
         <p>
           A refresh asks for a new approval only as a last resort. It first collects an approval you
@@ -1303,6 +1310,19 @@
           that kept its Omnesis identity but lost its credentials is refused, and the command names
           the card's <em>Reconnect</em> choice. A machine with no Omnesis files left pairs as a new
           device; to keep the old one, create the code with <em>Reconnect</em> instead.
+        </p>
+
+        <h3 id="harness-remove">Remove the integration</h3>
+        <p>
+          On the harness machine, <code>omnesis uninstall openclaw</code> or
+          <code>omnesis uninstall hermes</code> removes what <code>connect</code> installed: the
+          plugin (OpenClaw unregisters it through <code>openclaw plugins uninstall</code>), the
+          skill, the integration's credentials and state, and the Omnesis entries in the harness's
+          config and <code>.env</code>, leaving every other setting as it was. Add
+          <code>--dir</code> for a harness home outside its default. Restart the harness afterwards
+          so it stops loading the plugin, and revoke the agent device on the gateway host, as the
+          command reminds you, to end its pairing and sign-in there too. The rest of
+          <a href="/docs/install#uninstall">uninstalling</a> covers the other components.
         </p>
 
         <h3 id="harness-access">Pairing and corpus access</h3>

@@ -40,6 +40,7 @@ export const LANES = [
   "docker_image",
   "docker_smoke",
   "install_smoke",
+  "installer_coverage",
   "topology",
   "docker_security",
   "harness",
@@ -72,17 +73,18 @@ const sharedInputs =
 const any = (files, pattern) => files.some((file) => pattern.test(file));
 
 // The packaging and install surface every deployment lane exercises: the image
-// build, the installer and updater, release staging and dependency patches.
+// build, the installer, updater and uninstaller, release staging and dependency
+// patches.
 const deployment =
-  /^(?:Dockerfile$|\.dockerignore$|patches\/|scripts\/release\/|scripts\/install\.sh$|website\/install\.sh$|scripts\/hardened-gateway[^/]*\.sh$|packages\/cli\/src\/(?:service|update)\/)/;
+  /^(?:Dockerfile$|\.dockerignore$|patches\/|scripts\/release\/|scripts\/install\.sh$|website\/install\.sh$|scripts\/hardened-gateway[^/]*\.sh$|packages\/cli\/src\/(?:service|update|uninstall)\/|packages\/cli\/src\/commands\/uninstall\.ts$)/;
 const appleOnly =
   /^(?:ios\/|\.swiftlint|\.swiftformat|scripts\/run-ios-e2e\.sh$|scripts\/ios-|scripts\/synth-gateway\.sh$|evals\/universes\/e2e-minimal\/)/;
 const nodeMacOS =
-  /^(?:scripts\/install\.sh$|website\/install\.sh$|packages\/cli\/src\/(?:service|update)\/|packages\/providers\/apple-[^/]+\/)/;
+  /^(?:scripts\/install\.sh$|website\/install\.sh$|packages\/cli\/src\/(?:service|update|uninstall)\/|packages\/cli\/src\/commands\/uninstall\.ts$|packages\/providers\/apple-[^/]+\/)/;
 const securitySensitive =
   /^packages\/(?:cli|gateway|collector)\/src\/.*(?:keyring|secret|encrypt|backup|restore|recovery|passphrase)/i;
 const harnessPaths =
-  /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
+  /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/cli\/src\/uninstall\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
 const sourceCode = /\.(?:[cm]?[jt]sx?)$/;
 
 /** Split the selected E2E files round-robin across as few shards as keep each short. */
@@ -126,14 +128,19 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
     apple: any(files, appleOnly),
     android: any(files, /^android\//) || plan.bundles.some((name) => name.startsWith("android-")),
     android_render: any(files, /^android\//),
-    docker_image: deploys,
+    docker_image: deploys || any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/),
     docker_smoke:
       deploys ||
+      any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/) ||
       any(
         files,
         /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
       ),
     install_smoke: deploys,
+    installer_coverage:
+      deploys ||
+      any(files, /^scripts\/install-e2e\//) ||
+      any(files, /^packages\/cli\/src\/commands\/(?:update|service)\./),
     topology: deploys || any(files, /^scripts\/docker-topology\//),
     docker_security:
       deploys || any(files, /^scripts\/docker-e2e\//) || any(files, securitySensitive),

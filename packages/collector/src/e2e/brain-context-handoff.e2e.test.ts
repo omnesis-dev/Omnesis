@@ -10,6 +10,7 @@
  */
 
 import "./synth-env.js";
+import { promptText, promptTokenFloor } from "@omnesis/agent";
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -103,7 +104,14 @@ async function startScenario(opts: {
         ? { kind: "tool", name: turn.name, args: turn.args }
         : { kind: "text", text: turn.text };
     },
-    promptTokens: (messages) => tokensPerToolResult * (1 + toolResults(messages)),
+    // The scripted count never drops under what the messages could tokenize
+    // to: the agent backend reads a count below that floor as a server that
+    // cut the prompt to its window and fails the turn, as it would a real one.
+    promptTokens: (messages) =>
+      Math.max(
+        promptTokenFloor(promptText(messages)),
+        tokensPerToolResult * (1 + toolResults(messages)),
+      ),
   });
   return BrainBench.start({
     experimental: true,

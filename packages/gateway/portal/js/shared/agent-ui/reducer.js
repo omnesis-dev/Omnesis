@@ -1684,21 +1684,47 @@ export function reducer(state, action) {
         turns: state.turns.map((t) => (t.id === optimisticId ? { ...t, id: userMessageId } : t)),
       };
     }
-    case "agent.user.message": {
-      // Cross-device user-message sync. The originator already has an
-      // optimistic bubble (stamped or pending) — `stamp-user-message`
-      // gives it the same id this event carries, so we skip our own
-      // send. Bubbles from another device watching the same session
-      // land via this branch.
-      const { userMessageId, text } = action.payload;
-      if (state.turns.some((t) => t.id === userMessageId)) return state;
+    case "user-send-rejected": {
+      // The gateway refused (or never acknowledged) a send the transcript
+      // already shows. The unconfirmed-message card takes over the retry, so
+      // drop the placeholder and release `busy` unless an assistant turn is
+      // still streaming.
+      const turns = state.turns.filter((t) => t.id !== action.optimisticId);
+      if (turns.length === state.turns.length) return state;
       return {
         ...state,
-        turns: [
-          ...state.turns,
-          { id: userMessageId, role: "user", parts: [{ kind: "text", text }], done: true },
-        ],
+        turns,
+        busy: turns.some((t) => t.role === "assistant" && t.done === false),
       };
+    }
+    case "agent.user.message": {
+      // Cross-device user-message sync. The originator already has an
+      // optimistic bubble keyed by its submission id (or stamped by the
+      // legacy send response), so its own send is recognised and renamed
+      // rather than appended. The gateway may coalesce several queued
+      // submissions into one turn: every matching placeholder collapses into
+      // the single stamped bubble at the first one's position. Bubbles from
+      // another device watching the same session land as new turns.
+      const { userMessageId, text, submissionIds } = action.payload;
+      if (state.turns.some((t) => t.id === userMessageId)) return state;
+      const ids = new Set(Array.isArray(submissionIds) ? submissionIds : []);
+      const first = ids.size
+        ? state.turns.findIndex((t) => t.role === "user" && ids.has(t.id))
+        : -1;
+      if (first === -1) {
+        return {
+          ...state,
+          turns: [
+            ...state.turns,
+            { id: userMessageId, role: "user", parts: [{ kind: "text", text }], done: true },
+          ],
+        };
+      }
+      const turns = state.turns.filter(
+        (t, i) => i === first || !(t.role === "user" && ids.has(t.id)),
+      );
+      turns[first] = { ...turns[first], id: userMessageId, parts: [{ kind: "text", text }] };
+      return { ...state, turns };
     }
     case "agent.message.start": {
       // Anthropic + the gateway both occasionally re-deliver `message.start`

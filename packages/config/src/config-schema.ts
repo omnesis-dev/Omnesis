@@ -2318,6 +2318,12 @@ const agent = z
       )
       .optional(),
     replay: agentReplay.optional(),
+    noteAgent: z
+      .boolean()
+      .describe(
+        "The note agent: one background-agent turn reads each Tell Omnesis note you capture from the portal, the apps or the CLI and acts on it — adds, completes or moves tasks, remembers facts, answers questions. On by default; needs a background-agent model. Set false to only save notes; notes captured while it is off are never read later.",
+      )
+      .optional(),
   })
   .strict();
 
@@ -3020,13 +3026,15 @@ const brain = z
         "Characters of a document body a Brain run receives per read unless it asks for a range; longer bodies are paged with contentOffset.",
       )
       .optional(),
+    // 0.6.0 accepted any count; a larger one is capped rather than refused so
+    // an upgraded gateway still boots on the configuration it was given.
     workerConcurrency: z
-      .number()
-      .int()
-      .min(1)
-      .max(32)
+      .preprocess(
+        (value) => (typeof value === "number" && value > 32 ? 32 : value),
+        z.number().int().min(1).max(32),
+      )
       .describe(
-        "Concurrent region-fenced knowledge maintenance runs (default 4, maximum 32). Root and legacy runs execute exclusively.",
+        "Concurrent region-fenced knowledge maintenance runs (default 4, maximum 32; a larger value runs as 32). Root and legacy runs execute exclusively.",
       )
       .optional(),
     conversationDebounce: duration
@@ -3269,6 +3277,7 @@ const inferenceAssignmentsObject = z
     // default: unset means the mention worth gate and the Brain's worth gate
     // are both absent.
     decision: assignmentValue.optional(),
+    "speech-to-speech": assignmentValue.optional(),
   })
   .strict();
 const inferenceAssignments = z.preprocess(withoutRetiredRoles, inferenceAssignmentsObject);
@@ -3342,27 +3351,22 @@ const dictationSettings = z
   })
   .strict();
 
-// `typesafe` is not reserved here: a configured backend of that name keeps
-// serving the roles it did, and the built-in TypeSafe backend answers only the
-// decision role (see the inference registry). Clients avoid it for new names.
+// `typesafe` and `claude-code` are not reserved here: 0.6.0 accepted both, so
+// a configured backend of either name keeps serving the roles it did (see the
+// inference registry). Clients avoid them for new names.
 const backendKey = z
   .string()
   .min(1)
-  .refine(
-    (k) =>
-      !["local", "anthropic", "codex", "claude-code", "replay"].includes(k) && !k.includes("/"),
-    {
-      message:
-        "Backend name cannot be 'local', 'anthropic', 'codex', 'claude-code', 'replay', or contain '/'",
-    },
-  );
+  .refine((k) => !["local", "anthropic", "codex", "replay"].includes(k) && !k.includes("/"), {
+    message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
+  });
 
 const transcriptionVocabularySettings = z
   .object({
     enabled: z
       .boolean()
       .describe(
-        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Disabled by default; requires enabled: true.",
+        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Enabled by default; set enabled: false to turn it off.",
       )
       .optional(),
     authoredWeight: z
@@ -3887,6 +3891,15 @@ function isPlainObject(x: unknown): x is Record<string, unknown> {
 export function sourceSettingKeys(sourceId: string): string[] {
   const type = sourceTypeOf(sourceId);
   return type === sourceId ? [sourceId] : [type, sourceId];
+}
+
+/**
+ * Whether personal transcription vocabulary is on. It is on unless the
+ * operator sets `inference.transcriptionVocabulary.enabled: false`; the
+ * gateway and collector both gate on this so they never disagree.
+ */
+export function isTranscriptionVocabularyEnabled(config: OmnesisConfig): boolean {
+  return config.inference?.transcriptionVocabulary?.enabled !== false;
 }
 
 /**

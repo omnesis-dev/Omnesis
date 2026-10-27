@@ -34,6 +34,8 @@ export interface KnowledgeReviewMetadata {
   reviewDecision?: "now" | "defer" | "dormant";
   reviewReason?: string;
   reviewDecidedAt?: number;
+  /** When a one-time review was last requested, by request reason. */
+  reviewRequests?: Record<string, number>;
 }
 
 export interface KnowledgeNode {

@@ -43,7 +43,7 @@ function score(vocabulary: TranscriptionVocabulary, text: string): number {
 describe("transcription vocabulary materialization and API (E2E)", () => {
   let harness: SyntheticE2EHarness;
   let db: Database.Database;
-  let omittedSettingBoot: {
+  let disabledBoot: {
     dictionary: TranscriptionVocabulary;
     processedDocuments: number;
     vocabularyRows: number;
@@ -56,7 +56,14 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
       gatewayMode: "synthetic",
       universe: "e2e-minimal",
       extraGatewayConfig: {
-        inference: { transcriptionVocabulary: { maxTerms: 8, periodMs: 100, idlePeriodMs: 1000 } },
+        inference: {
+          transcriptionVocabulary: {
+            enabled: false,
+            maxTerms: 8,
+            periodMs: 100,
+            idlePeriodMs: 1000,
+          },
+        },
       },
       initialDocuments: [
         {
@@ -150,7 +157,7 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     db = new Database(harness.getDbPath(), { readonly: true });
     await tick(harness);
     const readCount = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
-    omittedSettingBoot = {
+    disabledBoot = {
       dictionary: await dictionary(harness, { purpose: "dictation" }),
       processedDocuments: readCount(
         "SELECT count(*) AS count FROM documents WHERE vocabulary_processed_at IS NOT NULL",
@@ -165,10 +172,10 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
         const snapshot = await harness.gatewayJson<{
           jobs: Array<{ id: string; observation: { state: string } }>;
         }>("/admin/background-jobs");
-        omittedSettingBoot.jobState =
+        disabledBoot.jobState =
           snapshot.jobs.find((job) => job.id === "transcription.vocabularyBackfill")?.observation
             .state ?? "";
-        expect(omittedSettingBoot.jobState).toBe("disabled");
+        expect(disabledBoot.jobState).toBe("disabled");
       },
       { timeout: 15_000, interval: 250 },
     );
@@ -196,8 +203,8 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     await harness?.destroy();
   }, 15_000);
 
-  test("omitted opt-in starts with no materialization, hints, or active background job", () => {
-    expect(omittedSettingBoot).toEqual({
+  test("disabled vocabulary starts with no materialization, hints, or active background job", () => {
+    expect(disabledBoot).toEqual({
       dictionary: {
         enabled: false,
         entries: [],

@@ -75,7 +75,7 @@ function prepareState(directory) {
   );
 }
 
-function runGateway(name, state, extra = []) {
+function runGateway(name, state, extra = [], configDir = "/var/lib/omnesis") {
   docker(
     "run",
     "-d",
@@ -87,7 +87,9 @@ function runGateway(name, state, extra = []) {
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001",
     "--mount",
-    `type=bind,source=${state},target=/var/lib/omnesis`,
+    `type=bind,source=${state},target=${configDir}`,
+    "--env",
+    `OMNESIS_CONFIG_DIR=${configDir}`,
     ...extra,
     image,
   );
@@ -236,7 +238,9 @@ try {
   shell(updaterImage, "command -v docker >/dev/null && docker compose version >/dev/null");
 
   prepareState(firstState);
-  runGateway(firstContainer, firstState);
+  // A root install mounts its config below the image's /root directory while
+  // the daemon remains UID 10001. The host data stays in this owned scratch.
+  runGateway(firstContainer, firstState, [], "/root/.config/omnesis");
   await waitForHealth(firstContainer);
   if (docker("inspect", "--format", "{{.Config.User}}", firstContainer).trim() !== "10001:10001") {
     throw new Error("compiled gateway did not run as the fixed non-root user");

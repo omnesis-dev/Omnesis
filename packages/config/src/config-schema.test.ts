@@ -6,6 +6,7 @@ import {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_PUSH_RELAY_URL,
   validateConfig,
+  isTranscriptionVocabularyEnabled,
   applyMergePatch,
   changedPathsFromPatch,
   toJsonPointer,
@@ -69,6 +70,17 @@ describe("validateConfig — brain.excludedSources", () => {
 });
 
 describe("validateConfig — transcriptionVocabulary", () => {
+  test.each([
+    [{}, true],
+    [{ inference: { transcriptionVocabulary: { maxTerms: 32 } } }, true],
+    [{ inference: { transcriptionVocabulary: { enabled: true } } }, true],
+    [{ inference: { transcriptionVocabulary: { enabled: false } } }, false],
+  ])("is on unless explicitly disabled: %j", (input, expected) => {
+    const result = validateConfig(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(isTranscriptionVocabularyEnabled(result.config)).toBe(expected);
+  });
+
   test("accepts disabling hints independently of the transcriber assignment", () => {
     const result = validateConfig({
       inference: {
@@ -1364,8 +1376,18 @@ describe("validateConfig — inference backend names", () => {
     ).toBe(true);
   });
 
+  test("a backend named claude-code stays valid, since 0.6.0 accepted the name", () => {
+    expect(
+      validateConfig({
+        inference: {
+          backends: { "claude-code": { type: "http", url: "http://127.0.0.1:18998/v1" } },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
   test("the built-in backend names stay reserved", () => {
-    for (const name of ["local", "anthropic", "codex", "claude-code", "replay"]) {
+    for (const name of ["local", "anthropic", "codex", "replay"]) {
       expect(
         validateConfig({
           inference: { backends: { [name]: { type: "http", url: "http://127.0.0.1:18998/v1" } } },
@@ -1374,4 +1396,23 @@ describe("validateConfig — inference backend names", () => {
       ).toBe(false);
     }
   });
+});
+
+test("speech is an optional independent assignment and has no chat behavior settings", () => {
+  const parsed = validateConfig({
+    inference: { assignments: { agent: "replay", "speech-to-speech": "cloud/gpt-live-1" } },
+  });
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok)
+    expect(parsed.config.inference?.assignments).toEqual({
+      agent: "replay",
+      "speech-to-speech": "cloud/gpt-live-1",
+    });
+  expect(
+    validateConfig({
+      inference: {
+        modelSettings: { "speech-to-speech": { assignment: "cloud/gpt-live-1", values: {} } },
+      },
+    }).ok,
+  ).toBe(false);
 });

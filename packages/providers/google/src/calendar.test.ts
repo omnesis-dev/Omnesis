@@ -961,21 +961,55 @@ describe("GoogleCalendarSource", () => {
       expect(call.timeMin).toBe(new Date(cutoff).toISOString());
     });
 
-    test("bootstrap falls back to 1-year-ago timeMin when no cutoff set", async () => {
-      const cal = makeCalendarListEntry("cal-1");
-      calendar.calendarList.list = vi.fn(() => Promise.resolve({ data: { items: [cal] } }));
-      calendar.events.list = vi.fn(() =>
-        Promise.resolve({ data: { items: [], nextSyncToken: "sync-1" } }),
-      );
+    test.each([
+      {
+        label: "London across DST",
+        timezone: "Europe/London",
+        now: "2026-10-25T12:34:56.789Z",
+        expected: "2025-10-25T12:34:56.789Z",
+      },
+      {
+        label: "UTC baseline",
+        timezone: "UTC",
+        now: "2026-10-25T12:34:56.789Z",
+        expected: "2025-10-25T12:34:56.789Z",
+      },
+      {
+        label: "UTC leap-day rollover",
+        timezone: "UTC",
+        now: "2024-02-29T12:34:56.789Z",
+        expected: "2023-03-01T12:34:56.789Z",
+      },
+      {
+        label: "UTC year containing leap day",
+        timezone: "UTC",
+        now: "2025-02-28T12:34:56.789Z",
+        expected: "2024-02-28T12:34:56.789Z",
+      },
+    ])(
+      "bootstrap uses a UTC calendar-year fallback ($label)",
+      async ({ timezone, now, expected }) => {
+        vi.stubEnv("TZ", timezone);
+        try {
+          vi.useFakeTimers({ toFake: ["Date"] });
+          vi.setSystemTime(new Date(now));
+          const cal = makeCalendarListEntry("cal-1");
+          calendar.calendarList.list = vi.fn(() => Promise.resolve({ data: { items: [cal] } }));
+          calendar.events.list = vi.fn(() =>
+            Promise.resolve({ data: { items: [], nextSyncToken: "sync-1" } }),
+          );
 
-      await source.sync(null);
+          await source.sync(null);
 
-      const call = calendar.events.list.mock.calls[0][0];
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-      // Within 5s of "1 year ago at sync time".
-      expect(Math.abs(new Date(call.timeMin).getTime() - oneYearAgo.getTime())).toBeLessThan(5000);
-    });
+          // The API window is UTC, independent of the host's civil-time offset.
+          // Literal dates also distinguish a calendar year from a fixed 365 days.
+          expect(calendar.events.list.mock.calls[0][0].timeMin).toBe(expected);
+        } finally {
+          vi.useRealTimers();
+          vi.unstubAllEnvs();
+        }
+      },
+    );
 
     test("events exactly at cutoff boundary are kept", async () => {
       const cutoff = "2025-01-15T00:00:00Z";

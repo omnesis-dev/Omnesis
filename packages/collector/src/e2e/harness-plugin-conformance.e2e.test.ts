@@ -3,8 +3,17 @@
 
 import "./synth-env.js";
 
-import { join, resolve } from "node:path";
-import { existsSync, globSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { delimiter, join, resolve } from "node:path";
+import {
+  existsSync,
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 
 import { fetchPeerCert } from "@omnesis/core";
@@ -15,6 +24,7 @@ import {
   assertHarnessRuntimeConformance,
   isolatedHarnessEnvironment,
 } from "./harness-runtime-conformance.js";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { enrollManagedIntegration, type ManagedHarness } from "./managed-integration-enrollment.js";
 import { MultiCollectorHarness } from "./multi-collector-harness.js";
 
@@ -51,7 +61,7 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
     }
   }, 15_000);
 
-  test("connect installs the plugin and its real host exposes exactly its expected tools", async () => {
+  test("connect installs the plugin, its real host exposes exactly its expected tools, and uninstall takes it all off", async () => {
     if (!requestedHarness) throw new Error("the conformance harness was not selected");
     const root = mkdtempSync(join(tmpdir(), `omnesis-${requestedHarness}-conformance-`));
     const home = join(root, "harness");
@@ -125,6 +135,37 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
         environment,
       });
       expect(toolInvocationAuditCount(gateway.getDbPath())).toBe(0);
+
+      // `omnesis uninstall <harness>` against the same real host: the plugin
+      // is unregistered through the harness's own CLI, every file connect
+      // wrote is gone, and the operator's own settings are untouched.
+      const uninstall = runCli(["uninstall", requestedHarness, "--yes"], environment, cliConfig);
+      expect(uninstall.status, uninstall.output).toBe(0);
+      expect(installedPluginExists(requestedHarness, home)).toBe(false);
+      expect(existsSync(join(home, "omnesis"))).toBe(false);
+      const skill =
+        requestedHarness === "openclaw"
+          ? join(home, "skills", "omnesis")
+          : join(home, "skills", "productivity", "omnesis");
+      expect(existsSync(skill)).toBe(false);
+      if (requestedHarness === "openclaw") {
+        const config = JSON.parse(readFileSync(join(home, "openclaw.json"), "utf8"));
+        expect(config.update).toEqual({ checkOnStart: false });
+        expect(JSON.stringify(config)).not.toContain("omnesis");
+        const listed = spawnSync("openclaw", ["plugins", "list"], {
+          env: environment,
+          encoding: "utf8",
+        });
+        expect(listed.status, listed.stderr).toBe(0);
+        expect(listed.stdout).not.toContain("omnesis-integration");
+      } else {
+        const config = readFileSync(join(home, "config.yaml"), "utf8");
+        expect(config).toContain("background_process_notifications: all");
+        expect(config).not.toContain("omnesis-integration");
+      }
+      const again = runCli(["uninstall", requestedHarness, "--yes"], environment, cliConfig);
+      expect(again.status, again.output).toBe(0);
+      expect(again.output).toContain("Nothing of Omnesis to remove");
     } catch (error) {
       primaryError = error;
     } finally {
@@ -137,6 +178,27 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
     if (primaryError) throw primaryError;
   }, 240_000);
 });
+
+/** Run the checkout's CLI in the harness's isolated environment. */
+function runCli(
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  configDir: string,
+): { status: number | null; output: string } {
+  const command = e2eTsxCommand(join(repositoryRoot, "packages/cli/src/index.ts"));
+  const res = spawnSync(command.command, [...command.args, ...args], {
+    cwd: repositoryRoot,
+    env: {
+      ...environment,
+      PATH: [join(repositoryRoot, "node_modules", ".bin"), environment.PATH ?? ""].join(delimiter),
+      OMNESIS_CONFIG_DIR: configDir,
+      NO_COLOR: "1",
+    },
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  return { status: res.status, output: `${res.stdout}${res.stderr}` };
+}
 
 function parseRequestedHarness(): ManagedHarness | undefined {
   const value = process.env.OMNESIS_HARNESS_CONFORMANCE;

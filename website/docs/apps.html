@@ -796,7 +796,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           notification. Reading starts the first time a <code>background-agent</code> model is
           assigned; notes captured before then are never read. If the model is later unassigned,
           notes captured in the meantime are read once a model is assigned again.
-          <code>GET /status</code> reports whether notes are read as <code>tasks.noteAgent</code>.
+        </p>
+        <p>
+          <strong>Act on Tell Omnesis notes</strong>, in the <code>background-agent</code> details
+          under <strong>Settings → Models</strong>, switches the note agent on or off (the
+          <code>agent.noteAgent</code> setting). While it is off, notes are only saved, and notes
+          captured in that time are never read, even after it is switched back on. It is on by
+          default. <code>GET /status</code> reports whether notes are read as
+          <code>tasks.noteAgent</code>, and the setting as <code>noteAgent</code>.
         </p>
         <p>
           Notes are grouped by capture day, with a <strong>View combined note</strong> link to the

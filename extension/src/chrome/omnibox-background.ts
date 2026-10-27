@@ -44,7 +44,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
             : mode === "agentic"
               ? "Agentic search in Omnesis"
               : "Find in Omnesis"
-          : "<dim>Find is unavailable on this paired gateway</dim>",
+          : "<dim>Find is unavailable on this gateway; Enter searches the web</dim>",
       })
       .catch(() => undefined);
   };
@@ -150,6 +150,22 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
       if (!exists && request === generation) await chrome.tabs.create({ url });
     }
   }
+  /**
+   * The keyword is registered whether or not the paired gateway offers Find,
+   * so Chrome hands us `om …` text on every gateway. Without Find, give the
+   * text back to the default search engine rather than dropping it.
+   */
+  async function searchTheWeb(
+    text: string,
+    disposition: chrome.omnibox.OnInputEnteredDisposition,
+    tabId: number | undefined,
+    request: number,
+  ): Promise<void> {
+    if (request !== generation || typeof chrome.search === "undefined") return;
+    await (disposition === "currentTab" && tabId !== undefined
+      ? chrome.search.query({ text, tabId })
+      : chrome.search.query({ text, disposition: "NEW_TAB" }));
+  }
   chrome.omnibox.onInputEntered.addListener((text, disposition) => {
     const selectedUrl = browserUrl(text);
     // Capture the session's pending lookup before Enter ends the input session.
@@ -181,19 +197,27 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
       return;
     }
     const query = text.trim();
-    if (
-      view?.enabled === false ||
-      text.startsWith("omnesis-result:") ||
-      !query ||
-      query.length > 1024
-    )
+    const offered = view?.enabled;
+    if (text.startsWith("omnesis-result:") || !query) return;
+    const fallBack = async (): Promise<void> =>
+      searchTheWeb(query, disposition, await originId, selectionGeneration);
+    if (offered === false) {
+      void fallBack().catch(() => undefined);
       return;
+    }
+    if (query.length > 1024) return;
     // Full-page Find does not depend on a native side-panel gesture. Verify
     // the gateway before opening Find; the page runs the normal search.
     void find
       .ensureRead()
       .then(async (current) => {
-        if (!current.enabled || selectionGeneration !== generation) return;
+        if (selectionGeneration !== generation) return;
+        if (!current.enabled) {
+          // Only when Chrome showed the web-search line: a query typed while
+          // Find was on stays private if the gateway turns Find off meanwhile.
+          if (offered !== true) await fallBack();
+          return;
+        }
         const url = new URL(chrome.runtime.getURL("find.html"));
         const parsed = parseFindQuery(query);
         url.searchParams.set("q", parsed.text);

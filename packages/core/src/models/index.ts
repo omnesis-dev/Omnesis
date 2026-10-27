@@ -160,7 +160,7 @@ export {
 } from "./decision-cassette.js";
 
 export type { ProviderPreset } from "./provider-presets.js";
-export { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
+export { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
 
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,
@@ -190,3 +190,5 @@ export type {
   RecentModelCurrent,
   RecentModelCandidate,
 } from "./recent-models.js";
+
+export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./speech-to-speech.js";

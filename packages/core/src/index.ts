@@ -699,6 +699,7 @@ export {
   type TlsRenewalMode,
 } from "./tls-material.js";
 export {
+  deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
   deviceTlsTrustMode,
   type DeviceTlsTrust,
@@ -1095,6 +1096,7 @@ export {
   parseDecisionCassette,
   PROVIDER_PRESETS,
   getPreset,
+  getPresetByUrl,
   PROVIDER_BRANDS,
   getProviderBrand,
   resolveModelDisplay,
@@ -1278,3 +1280,7 @@ export {
 
 export { browserUrlIdentity } from "./url-normalize.js";
 export type { BrowserUrlIdentitySpec } from "./url-normalize.js";
+
+export { oauthCallbackHost } from "./oauth-callback-host.js";
+
+export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";

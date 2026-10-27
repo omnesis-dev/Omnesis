@@ -101,9 +101,13 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
     harness = new SyntheticE2EHarness({ gatewayMode: "synthetic", universe: "e2e-minimal" });
     await harness.start();
     await harness.syncAllSources();
-    // People resolution is a background writer-handler — wait until
-    // Jane Doe is findable before any per-person assertions run.
-    await waitForPersonByName(harness, "Jane Doe", 30_000);
+    // People resolution is a background writer-handler that works through
+    // the synced documents after the sync returns, so each person appears
+    // on its own schedule: one being findable says nothing about another.
+    // Wait for every person the suite names before any assertion runs.
+    await Promise.all(
+      ["Jane Doe", "Emma Park"].map((name) => waitForPersonByName(harness, name, 30_000)),
+    );
   }, 180_000);
 
   afterAll(async () => {
@@ -126,14 +130,10 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
     // got picked as the flickering canonical_name). Both have
     // bidirectional WhatsApp threads and dedicated contact entries
     // in the e2e-minimal cast.
-    const [janeHits, emmaHits] = await Promise.all([
-      harness.gatewayJson<PeopleSearchResp>("/people/search?q=Jane%20Doe&limit=1"),
-      harness.gatewayJson<PeopleSearchResp>("/people/search?q=Emma%20Park&limit=1"),
+    const [jane, emma] = await Promise.all([
+      waitForPersonByName(harness, "Jane Doe", 30_000),
+      waitForPersonByName(harness, "Emma Park", 30_000),
     ]);
-    const jane = janeHits.items[0];
-    const emma = emmaHits.items[0];
-    expect(jane, "Jane Doe should resolve in the people graph").toBeDefined();
-    expect(emma, "Emma Park should resolve in the people graph").toBeDefined();
     expect(jane.id).not.toBe(emma.id);
 
     // Wait for both people to have their name alias attached. The
@@ -240,17 +240,19 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
+/** Poll `/people/search` until `name` resolves; returns the top hit. */
 async function waitForPersonByName(
   harness: SyntheticE2EHarness,
   name: string,
   timeoutMs: number,
-): Promise<void> {
+): Promise<PersonSummary> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const res = await harness.gatewayJson<{ items?: unknown[] }>(
-      `/people/search?q=${encodeURIComponent(name)}&limit=3`,
+    const res = await harness.gatewayJson<PeopleSearchResp>(
+      `/people/search?q=${encodeURIComponent(name)}&limit=1`,
     );
-    if ((res.items ?? []).length > 0) return;
+    const hit = res.items?.[0];
+    if (hit) return hit;
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`waitForPersonByName: ${name} did not appear within ${timeoutMs}ms`);

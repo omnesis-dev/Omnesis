@@ -7370,6 +7370,35 @@ extension PreviewMocks {
         return session
     }
 
+    @MainActor static var liveOverlappingSpeech: RealtimeCallSession {
+        let session = realtimeListening
+        session.isLive = true
+        session.liveCaptions = [
+            LiveVoiceCaption(
+                id: "user-start",
+                speaker: .user,
+                startMilliseconds: 100,
+                endMilliseconds: 600,
+                text: "Find the workshop notes"
+            ),
+            LiveVoiceCaption(
+                id: "assistant-ack",
+                speaker: .assistant,
+                startMilliseconds: 400,
+                endMilliseconds: 900,
+                text: "I'll check the notes."
+            ),
+            LiveVoiceCaption(
+                id: "user-detail",
+                speaker: .user,
+                startMilliseconds: 600,
+                endMilliseconds: 1200,
+                text: " and the table arrangement."
+            ),
+        ]
+        return session
+    }
+
     static let realtimeLongCaption = (1 ... 12).map { index in
         "Workshop section \(index). The studio has four worktables, a shelf for finished pieces, " +
             "and a quiet corner for drawing. Set out the clay and tools before the group arrives. " +
@@ -7503,6 +7532,20 @@ extension PreviewMocks {
         let session = RealtimeCallSession()
         session.status = "Call ended"
         session.error = URLError(.notConnectedToInternet)
+        return session
+    }
+
+    @MainActor static var realtimeCreditFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        let failure = RealtimeCallFailure(code: "quota_exhausted", fatal: true, retryable: false)
+        session.status = failure.title
+        session.error = failure
+        return session
+    }
+
+    @MainActor static var realtimeRateLimited: RealtimeCallSession {
+        let session = realtimeListening
+        session.replyFailure = RealtimeCallFailure(code: "rate_limited", fatal: false, retryable: true)
         return session
     }
 }

@@ -93,7 +93,7 @@ interface DeviceListItem extends DeviceRecord {
     | { status: "needs-reauthorization"; remedy: string };
   /** Set when the device pins a certificate the gateway replaces or has replaced. */
   tlsTrust?:
-    | { status: "pinned-renews"; renewsAt: string; remedy: string }
+    | { status: "pinned-renews"; renewsAt: string; remedy: string; updateFollows?: true }
     | { status: "stranded"; rotatedAt: string; remedy: string };
   /** Agent connections whose sign-in this device revoke would end. */
   revocationImpact?: {

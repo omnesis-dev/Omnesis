@@ -60,6 +60,10 @@ final class RoutingStubProtocol: URLProtocol {
     nonisolated(unsafe) static var sendResponses: [ScriptedMessageResponse] = []
     nonisolated(unsafe) static var messageResponses: [ScriptedMessageResponse] = []
     nonisolated(unsafe) static var cancelResponses: [ScriptedMessageResponse] = []
+    /// `POST /agent/sessions/:id/submissions`; falls back to `jsonBody` when empty.
+    nonisolated(unsafe) static var submissionResponses: [ScriptedMessageResponse] = []
+    /// `GET /agent/sessions/:id/controls`; a nil body answers 404 like a 0.6.x gateway.
+    nonisolated(unsafe) static var controlsBody: Data?
     nonisolated(unsafe) static var conversationActionResponses: [ScriptedMessageResponse] = []
     nonisolated(unsafe) static var eventRequestCount = 0
     nonisolated(unsafe) static var conversationRequestCount = 0
@@ -84,6 +88,8 @@ final class RoutingStubProtocol: URLProtocol {
         sendResponses = []
         messageResponses = []
         cancelResponses = []
+        submissionResponses = []
+        controlsBody = nil
         conversationActionResponses = []
         eventRequestCount = 0
         conversationRequestCount = 0
@@ -251,6 +257,22 @@ final class RoutingStubProtocol: URLProtocol {
                     status = scripted.status
                     body = scripted.body
                     responseGate = scripted.gate
+                }
+            } else if path?.hasPrefix("/agent/sessions/") == true,
+                      path?.hasSuffix("/submissions") == true {
+                if !Self.submissionResponses.isEmpty {
+                    let scripted = Self.submissionResponses.removeFirst()
+                    delay = scripted.delay
+                    status = scripted.status
+                    body = scripted.body
+                    responseGate = scripted.gate
+                }
+            } else if path?.hasPrefix("/agent/sessions/") == true,
+                      path?.hasSuffix("/controls") == true {
+                if let controls = Self.controlsBody {
+                    body = controls
+                } else {
+                    status = 404
                 }
             } else if path?.hasPrefix("/agent/sessions/") == true,
                       path?.hasSuffix("/cancel") == true {

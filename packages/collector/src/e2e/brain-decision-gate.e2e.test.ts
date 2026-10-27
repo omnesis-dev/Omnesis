@@ -347,7 +347,7 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
         (entry) =>
           entry.rubric_version ===
           (entry.purpose === "discovery"
-            ? "knowledge-discovery-value-v7"
+            ? "knowledge-discovery-value-v8"
             : entry.purpose === "urgency"
               ? "knowledge-decisions-v3"
               : "knowledge-decisions-v2"),

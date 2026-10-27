@@ -93,6 +93,7 @@ export class LexicalIndexService {
     }
   }
 
+  // See #514 — planned: skip a build the host does not have the memory for.
   private async rebuild(reason: string): Promise<void> {
     if (this.stopped || this.building) return;
     log.info(`lexical index build started (${reason})`);

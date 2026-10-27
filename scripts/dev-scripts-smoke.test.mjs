@@ -125,9 +125,12 @@ describe("developer hooks", () => {
 });
 
 const cleanups = [];
+// Stopping gateway and collector can each consume the owned-tree helper's
+// five-second TERM grace, followed by forced-exit confirmation and a scoped
+// generation sweep. Give that bounded teardown time to complete.
 afterEach(() => {
   while (cleanups.length) cleanups.pop()();
-});
+}, 30_000);
 
 function tmpDir(prefix) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -1772,8 +1775,8 @@ describe("release.yml verification permissions", () => {
       ],
       [
         "images",
-        "Build ${{ needs.verify.outputs.armed == 'true' && 'and push' || '(no push — not armed)' }}",
-        "needs.verify.outputs.armed == 'true'",
+        "Build ${{ needs.verify.outputs.images_armed == 'true' && 'and push' || '(no push — not armed)' }}",
+        "needs.verify.outputs.images_armed == 'true'",
       ],
     ]) {
       const steps = workflow.jobs[jobName].steps;
@@ -2001,6 +2004,7 @@ describe("full-validation workflow topology", () => {
       android: "android",
       "docker-smoke": "docker_smoke",
       "install-smoke": "install_smoke",
+      "installer-coverage": "installer_coverage",
       topology: "topology",
       harness: "harness",
       "docker-security": "docker_security",
@@ -2445,11 +2449,27 @@ describe("full-validation workflow topology", () => {
         const runsOn = job["runs-on"];
         // A matrix-chosen runner is checked through every value the matrix offers.
         const key = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/u.exec(runsOn ?? "")?.[1];
+        let matrix = job.strategy?.matrix;
+        if (key && typeof matrix === "string") {
+          // Resolve the actual closed boolean generator; every permitted row
+          // still passes the same hosted-label check below.
+          expect({ filename, jobName, matrix }).toEqual({
+            filename: "installer-coverage.yml",
+            jobName: "macos",
+            matrix: "${{ fromJSON(needs.plan.outputs.macos) }}",
+          });
+          const producer = workflow.jobs.plan.steps.find((step) => step.id === "matrix");
+          expect(producer.run).toBe("node scripts/install-e2e/coverage-matrix.mjs");
+          const { installerCoverageMatrix } = await import("./install-e2e/coverage-matrix.mjs");
+          matrix = {
+            include: [
+              ...installerCoverageMatrix(false).include,
+              ...installerCoverageMatrix(true).include,
+            ],
+          };
+        }
         const labels = key
-          ? [
-              ...(job.strategy?.matrix?.[key] ?? []),
-              ...(job.strategy?.matrix?.include ?? []).map((entry) => entry[key]),
-            ]
+          ? [...(matrix?.[key] ?? []), ...(matrix?.include ?? []).map((entry) => entry[key])]
           : [runsOn];
         expect(labels.length, `${filename}:${jobName}`).toBeGreaterThan(0);
         for (const label of labels) expect(label, `${filename}:${jobName}`).toMatch(hosted);

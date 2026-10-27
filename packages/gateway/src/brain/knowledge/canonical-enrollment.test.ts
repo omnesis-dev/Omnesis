@@ -17,6 +17,7 @@ import { captureKnowledgeCanonicalFence } from "./canonical-fence.js";
 import { captureCanonicalEnrollment, enrollCanonicalMutation } from "./canonical-enrollment.js";
 import { getKnowledgeNode } from "./storage-read.js";
 import { installKnowledgeOwnerTriggers } from "./owner-triggers.js";
+import { reserveKnowledgeRegion } from "./work.js";
 
 let db: Database.Database;
 const run = { batchId: "batch", runId: "run" };
@@ -96,6 +97,27 @@ it("queues independent review when no offered source is persisted as evidence", 
   expect(hints()).toEqual([]);
   expect(db.prepare("SELECT subject_id,reason,status FROM knowledge_work").all()).toEqual([
     { subject_id: "task", reason: "review", status: "pending" },
+  ]);
+});
+it("keeps a newly persisted owner reserved for its creating batch until that batch ends", () => {
+  // The review queued for an owner without offered evidence is due at once. The
+  // creating run must still own the node, or the planner could claim it between
+  // two of the run's own canonical calls and hand the run off mid-turn.
+  create({ docs: [] });
+  expect(db.prepare("SELECT batch_id,node_id FROM knowledge_batch_regions").all()).toEqual([
+    { batch_id: "batch", node_id: "task" },
+  ]);
+  db.exec(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('review','run-2','fp-2','immediate','pending',2,2)",
+  );
+  expect(() => reserveKnowledgeRegion(db, "review", ["task"])).toThrow("overlaps an active batch");
+  db.exec("UPDATE knowledge_batches SET status='completed' WHERE id='batch'");
+  expect(() => reserveKnowledgeRegion(db, "review", ["task"])).not.toThrow();
+});
+it("also reserves an owner enrolled against offered evidence for its creating batch", () => {
+  create();
+  expect(db.prepare("SELECT batch_id,node_id FROM knowledge_batch_regions").all()).toEqual([
+    { batch_id: "batch", node_id: "task" },
   ]);
 });
 it("does not publish phantom owners on a failed dependency gate", () => {

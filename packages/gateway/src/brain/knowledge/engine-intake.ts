@@ -24,6 +24,41 @@ import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 /** Bounded writer ops one tick spends withdrawing excluded work; the rest waits a tick. */
 const MAX_RETIRE_PASSES = 8;
+/**
+ * How long a source whose admission scan found nothing is left unscanned.
+ * When every document of a source within the horizon is covered or queued,
+ * its backlog query reads every one of them before returning empty, on the
+ * main thread. An idle engine ticks every few seconds, so rescanning on each
+ * tick would block the event loop over and over to learn nothing new. Arrivals
+ * and edits are admitted by intake, not by these scans; a later page of the
+ * source's initial inventory and a changed horizon, recent window or exclusion
+ * list end the rest at once. What remains — coverage that expires, work
+ * withdrawn without coverage — is not owed within minutes by routine lanes.
+ */
+export const EXHAUSTED_SOURCE_REST_MS = 30 * 60_000;
+/** In-memory rest per (lane, source); a restart rescans every source once. */
+class ExhaustedSources {
+  private readonly rests = new Map<string, { until: number; mark: number }>();
+  private scope = "";
+  /** Forget every rest when the settings that bound eligibility change. */
+  syncScope(scope: string): void {
+    if (scope === this.scope) return;
+    this.scope = scope;
+    this.rests.clear();
+  }
+  /** `mark` is the source's inventory watermark; a newer one ends the rest. */
+  isResting(lane: string, sourceId: string, mark: number, now: number): boolean {
+    const key = `${lane}\0${sourceId}`;
+    const rest = this.rests.get(key);
+    if (!rest) return false;
+    if (rest.until > now && rest.mark === mark) return true;
+    this.rests.delete(key);
+    return false;
+  }
+  rest(lane: string, sourceId: string, mark: number, now: number): void {
+    this.rests.set(`${lane}\0${sourceId}`, { until: now + EXHAUSTED_SOURCE_REST_MS, mark });
+  }
+}
 interface IntakeContext {
   deps: KnowledgeEngineDeps;
   id: (prefix: string) => string;
@@ -39,7 +74,20 @@ interface IntakeContext {
 }
 /** Incremental interpretation and operator-authorized historical admission share durable work. */
 export class KnowledgeIntake {
+  private readonly exhausted = new ExhaustedSources();
   constructor(private readonly context: IntakeContext) {}
+  /** Latest page any initial inventory of the source recorded; 0 without one. */
+  private inventoryMark(sourceId: string, hasInventory: boolean): number {
+    if (!hasInventory) return 0;
+    return (
+      this.context.deps.db
+        .prepare<
+          [string],
+          { mark: number | null }
+        >("SELECT MAX(observed_at) AS mark FROM source_inventories WHERE source_id=?")
+        .get(sourceId)?.mark ?? 0
+    );
+  }
   async intake(): Promise<void> {
     const cfg = this.context.deps.getSettings().knowledge;
     const changes = listKnowledgeChanges(this.context.deps.db, { limit: cfg.discoveryBatchSize });
@@ -280,6 +328,8 @@ export class KnowledgeIntake {
       >(`SELECT DISTINCT source_id AS sourceId FROM source_inventories WHERE ${included.sql} ORDER BY source_id<=?,source_id LIMIT ?`)
       .all(...included.params, after, Math.min(cfg.bootstrapBatchSize, room));
     for (const { sourceId } of sources) {
+      const mark = this.inventoryMark(sourceId, true);
+      if (this.exhausted.isResting("inventory", sourceId, mark, deps.clock())) continue;
       const docs = listKnowledgeDiscoveryBacklog(deps.db, {
         phase: "organization",
         sourceId,
@@ -289,6 +339,7 @@ export class KnowledgeIntake {
         limit: 1,
         now: deps.clock(),
       });
+      if (!docs.length) this.exhausted.rest("inventory", sourceId, mark, deps.clock());
       for (const doc of docs) {
         const now = deps.clock();
         await deps.writeGate["knowledge.enqueue"](
@@ -348,6 +399,13 @@ export class KnowledgeIntake {
     // One floor for the whole pass, recomputed every tick: documents age past
     // it while they wait, and the operator can move it without a restart.
     const notBefore = historyHorizonFloor(this.context.deps.clock(), backfill.horizonMs);
+    this.exhausted.syncScope(
+      JSON.stringify([
+        backfill.horizonMs,
+        cfg.recentWindowMs,
+        [...settings.excludedSources].sort(),
+      ]),
+    );
     // Retired whether or not admission is open: pausing must not leave work
     // the horizon already excludes queued for the moment it resumes.
     if (hasHistoricalKnowledgeWorkBeyond(this.context.deps.db, notBefore)) {
@@ -424,6 +482,9 @@ export class KnowledgeIntake {
       for (const source of remaining) {
         if (admitted >= limit) break;
         lastSourceId = source.source_id;
+        const mark = this.inventoryMark(source.source_id, hasInventory);
+        if (this.exhausted.isResting("history", source.source_id, mark, this.context.deps.clock()))
+          continue;
         const [doc] = listKnowledgeDiscoveryBacklog(this.context.deps.db, {
           phase: "organization",
           sourceId: source.source_id,
@@ -433,7 +494,10 @@ export class KnowledgeIntake {
           limit: 1,
           now: this.context.deps.clock(),
         });
-        if (!doc) continue;
+        if (!doc) {
+          this.exhausted.rest("history", source.source_id, mark, this.context.deps.clock());
+          continue;
+        }
         const now = this.context.deps.clock();
         await this.context.deps.writeGate["knowledge.enqueue"](
           {

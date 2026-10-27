@@ -132,7 +132,7 @@ const VERIFIABLE_ROLES = new Set<CapabilityRole>([
   "entailment-verifier",
 ]);
 
-const REASONING_ROLES = new Set<CapabilityRole>([
+const reasoningRoleSchema = z.enum([
   "agent",
   "privacy-reviewer",
   "background-agent",
@@ -144,9 +144,12 @@ const codexRuntimeUpdateBodySchema = z.strictObject({
   dryRun: z.boolean().optional(),
 });
 
-const agentSetupBodySchema = z.strictObject({
-  model: z.string().trim().min(1).max(200),
-});
+// A newer CLI may send more than the model; unknown keys are dropped.
+const agentSetupBodySchema = z
+  .object({
+    model: z.string().trim().min(1).max(200),
+  })
+  .strip();
 
 const behaviorValuesSchema = z.strictObject({
   reasoningEnabled: z.boolean().optional(),
@@ -171,6 +174,35 @@ function sameBehaviorValues(
   );
 }
 
+/**
+ * The 0.6.0 CLI sends this bare User-Agent (later CLIs add their version) and
+ * switches exhaustively on assignment kinds, so `omnesis model list` threw on
+ * the `claude-code` kind added since. It is shown those assignments in the HTTP
+ * shape it already renders.
+ */
+const PRE_CLAUDE_CODE_CLI_USER_AGENT = "omnesis";
+
+export function inferenceForPreClaudeCodeCli(inference: InferenceOverview): InferenceOverview {
+  const assignments = Object.fromEntries(
+    Object.entries(inference.assignments).map(([role, resolved]) => [
+      role,
+      resolved.kind === "claude-code"
+        ? {
+            role: resolved.role,
+            kind: "http" as const,
+            backendKey: "claude-code",
+            url: "",
+            model: `claude-code/${resolved.model}`,
+            allowRemoteInference: resolved.allowRemoteInference,
+            available: resolved.available,
+            ...(resolved.reason ? { reason: resolved.reason } : {}),
+          }
+        : resolved,
+    ]),
+  ) as InferenceOverview["assignments"];
+  return { ...inference, assignments };
+}
+
 export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void {
   const { modelManager, configStore, getSystemInfo: sysInfo, getInferenceOverview } = opts;
   const modelInferenceOverview = (): InferenceOverview => {
@@ -190,6 +222,9 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     const recentModels = getRecentModels
       ? Object.fromEntries(CAPABILITY_ROLES.map((role) => [role, getRecentModels(role).entries]))
       : {};
+    if (c.req.header("User-Agent") === PRE_CLAUDE_CODE_CLI_USER_AGENT) {
+      overview.inference = inferenceForPreClaudeCodeCli(overview.inference);
+    }
     return c.json({ ...overview, ...behavior, recentModels });
   });
 
@@ -214,13 +249,15 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
   });
 
   app.patch("/admin/models/behavior/:role", scope.admin(), async (c) => {
-    const role = c.req.param("role") as CapabilityRole;
-    if (!(CAPABILITY_ROLES as readonly string[]).includes(role)) {
+    const requestedRole = c.req.param("role");
+    if (!(CAPABILITY_ROLES as readonly string[]).includes(requestedRole)) {
       throw new BadRequestError(`unsupported capability: ${c.req.param("role")}`);
     }
-    if (!REASONING_ROLES.has(role)) {
-      throw new BadRequestError(`reasoning controls are unavailable for ${role}`);
+    const parsedRole = reasoningRoleSchema.safeParse(requestedRole);
+    if (!parsedRole.success) {
+      throw new BadRequestError(`reasoning controls are unavailable for ${requestedRole}`);
     }
+    const role = parsedRole.data;
     if (!opts.modelsDevCatalog) throw new BadRequestError("Model controls unavailable");
     const parsed = behaviorBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) throw new BadRequestError("assignment and valid values required");

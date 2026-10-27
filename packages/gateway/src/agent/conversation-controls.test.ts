@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ConversationControls,
   restoreConversationControls,
+  sendQueuedInputSchema,
+  submissionInputSchema,
   type ConversationControlState,
 } from "./conversation-controls.js";
 
@@ -316,4 +318,54 @@ it("drains oversized queues saved by an older gateway in bounded turns", async (
   expect(h.starts[1]).toBe("two".repeat(2000));
   h.turns[1]!.resolve();
   await h.controls.settle();
+});
+
+it("appends trusted owned stream fragments under the canonical lock and advances admission without new receipts", async () => {
+  const h = harness();
+  const first = await h.controls.submit("s", input("first", "Start"));
+  const revision = h.controls.admissionRevision("s");
+  const appended = await h.controls.submit("s", input("fragment", " tail"), undefined, {
+    appendToPending: new Set([first.submission.id]),
+  });
+  expect(appended.submission.id).toBe("first");
+  expect(h.durable().submissions).toHaveLength(1);
+  expect(h.durable().submissions[0]?.text).toBe("Start tail");
+  expect(h.controls.admissionRevision("s")).toBe(revision + 1);
+  const unrelated = await h.controls.submit("s", input("unrelated", "Other"), undefined, {
+    appendToPending: new Set(["foreign"]),
+  });
+  expect(unrelated.submission.id).toBe("unrelated");
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["Start tail\n\nOther"]));
+  const fresh = await h.controls.submit("s", input("fresh", "New"), undefined, {
+    appendToPending: new Set(["first"]),
+  });
+  expect(fresh.submission.id).toBe("fresh");
+  h.stop();
+  h.turns[0]!.resolve();
+  await h.controls.settle();
+});
+
+it("retains the ordinary 32-receipt queue cap without trusted stream ownership", async () => {
+  const h = harness();
+  for (let index = 0; index < 32; index++)
+    await h.controls.submit("s", input(`message-${index}`, "Invented request"));
+  await expect(h.controls.submit("s", input("overflow"))).rejects.toThrow("queue is full");
+  expect(h.durable().submissions).toHaveLength(32);
+});
+
+describe("submission bodies from a newer app", () => {
+  it("ignore fields this gateway does not know", () => {
+    const submission = submissionInputSchema.safeParse({
+      clientMessageId: "m-1",
+      text: "Remind me tomorrow",
+      mode: "queue",
+      attachments: [],
+    });
+    expect(submission.success).toBe(true);
+    expect(submission.data).not.toHaveProperty("attachments");
+    expect(sendQueuedInputSchema.safeParse({ submissionIds: ["m-1"], reason: "tap" }).success).toBe(
+      true,
+    );
+  });
 });

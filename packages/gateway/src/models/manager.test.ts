@@ -76,6 +76,7 @@ describe("ModelManager", () => {
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: { role: "agent", kind: "disabled" },
       },
@@ -109,7 +110,7 @@ describe("ModelManager", () => {
     const origSynthetic = process.env.OMNESIS_SYNTHETIC;
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
-      assignments: {},
+      assignments: { "speech-to-speech": { role: "speech-to-speech", kind: "disabled" } },
     };
 
     beforeEach(() => {
@@ -133,6 +134,7 @@ describe("ModelManager", () => {
       expect(roles).toContain("decision");
       // The background agent serves the note agent, a stable feature.
       expect(roles).toContain("background-agent");
+      expect(roles).not.toContain("speech-to-speech");
       expect(roles).not.toContain("watch-judge");
       expect(roles).not.toContain("entailment-verifier");
     });
@@ -142,6 +144,7 @@ describe("ModelManager", () => {
       const mgr = new ModelManager({ modelsDir: dir });
       const roles = mgr.getOverview(fakeInference).capabilities.map((c) => c.role);
       expect(roles).toContain("background-agent");
+      expect(roles).toContain("speech-to-speech");
       expect(roles).toContain("watch-judge");
       expect(roles).toContain("entailment-verifier");
     });
@@ -273,6 +276,7 @@ describe("ModelManager", () => {
         anthropic: { type: "anthropic", status: "ok" },
       },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: {
           role: "agent",
@@ -308,6 +312,7 @@ describe("ModelManager", () => {
     const fakeInference: InferenceOverview = {
       backends: { local: { type: "local", status: "ok" } },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         embedder: { role: "embedder", kind: "disabled" },
         agent: { role: "agent", kind: "disabled" },
       },

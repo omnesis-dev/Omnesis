@@ -25,6 +25,7 @@ import {
 import {
   DEFAULT_CONFIG_DIR,
   localGatewayRequestUrl,
+  readPackageVersion,
   resolveSourcePatterns,
   resolvesToLoopback,
   resolveToken,
@@ -137,6 +138,12 @@ export type { SerializedDescriptor } from "@omnesis/source-sdk";
  * Make an authenticated request to the gateway, picking the bearer token
  * from OMNESIS_TOKEN or ~/.config/omnesis/token.
  */
+/**
+ * Carries the version so the gateway can tell this CLI from 0.6.0, which sent a
+ * bare `omnesis` and is shown older response shapes it can decode.
+ */
+const CLI_USER_AGENT = `omnesis/${readPackageVersion(import.meta.url)}`;
+
 export async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = resolveToken();
   if (!token) {
@@ -151,7 +158,7 @@ export async function gatewayFetch(path: string, init: RequestInit = {}): Promis
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "omnesis",
+      "User-Agent": CLI_USER_AGENT,
       ...(init.headers ?? {}),
     },
   });

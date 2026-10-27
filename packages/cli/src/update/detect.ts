@@ -831,9 +831,9 @@ export function planUpdate(detection: InstallMethod, flags: UpdateFlags): Update
         kind: "refuse",
         message:
           "--registry selects the npm registry a package install is installed from. " +
-          "This installation runs from container images: it reads the newest release number " +
-          "from the package index (OMNESIS_PACKAGE_INDEX_URL overrides it) and pulls that tag " +
-          "from a container registry, and --registry selects neither.",
+          "This installation runs from container images: it finds the newest stable tag " +
+          "shared by the images declared in its Compose project. Change the project's image " +
+          "repositories to select a container registry; --registry only selects an npm registry.",
       };
     }
     if (channel !== "stable") {
@@ -1259,6 +1259,11 @@ export type UpdateStep =
    * memory the build needs all of, and start it again after.
    */
   | { kind: "pause-collector" }
+  /**
+   * Stop this account's gateway for the same reason, once its backup is
+   * taken. Its restart step starts it again on the new build.
+   */
+  | { kind: "pause-gateway" }
   /** Move the installation to the target, rolling back if it fails. */
   | { kind: "apply" }
   /**
@@ -1326,10 +1331,12 @@ export interface HostPlanOptions {
   serviceDefinitions?: boolean;
   /**
    * True when the apply builds on a machine whose memory leaves the build no
-   * room beside a running collector. A supervised collector is stopped for the
-   * apply; a gateway is not, since it serves through the build.
+   * room beside a running daemon. The supervised collector and gateway are
+   * stopped for the apply: on such a machine a gateway left serving through
+   * the build gets the build killed beside it, and the rollback then stops it
+   * anyway, so the update could never finish there.
    */
-  pauseCollectorForBuild?: boolean;
+  pauseDaemonsForBuild?: boolean;
 }
 
 /**
@@ -1376,12 +1383,24 @@ export function planHostUpdate(roles: HostRoles, opts: HostPlanOptions): UpdateS
   }
   // Never on a run that restarts nothing: there this command is the collector's child.
   if (
-    opts.pauseCollectorForBuild &&
+    opts.pauseDaemonsForBuild &&
     restarting &&
     roles.collector.present &&
     roles.collector.supervised
   ) {
     steps.push({ kind: "pause-collector" });
+  }
+  // Only a gateway this run restarts onto the new build: that restart is what
+  // brings it back. A hardened gateway is root's, and is left alone.
+  if (
+    opts.pauseDaemonsForBuild &&
+    restarting &&
+    roles.gateway.present &&
+    roles.gateway.supervised &&
+    !roles.gateway.stopped &&
+    !roles.gateway.hardened
+  ) {
+    steps.push({ kind: "pause-gateway" });
   }
   steps.push({ kind: "apply" });
 

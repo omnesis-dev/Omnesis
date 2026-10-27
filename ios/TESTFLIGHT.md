@@ -79,12 +79,20 @@ and Apple account; they are never committed.
 
 ## Export compliance
 
-`ITSAppUsesNonExemptEncryption` is `false` because the app uses only encryption
-provided by or within Apple's operating system, including HTTPS, Keychain, and
-CryptoKit for app functionality. The binary does not include proprietary
-cryptography and does not use an ATS arbitrary-load exemption. Answer App Store
-Connect's current questions against the generated archive rather than copying
-historical questionnaire wording.
+The app uses Apple's HTTPS, Keychain, and CryptoKit APIs, and its bundled
+WebRTC framework implements standard DTLS/SRTP transport encryption through
+BoringSSL. Encryption is therefore not limited to Apple's operating system.
+The app does not use an ATS arbitrary-load exemption.
+
+Review the generated archive, including linked third-party libraries, against
+[Apple's export compliance requirements](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/).
+Apple distinguishes standard algorithms implemented outside its operating system
+and requires a French encryption declaration when distributing such an app on the
+App Store in France. Do not assume standard encryption is automatically exempt.
+The main app targets omit `ITSAppUsesNonExemptEncryption` so App Store Connect
+asks its current export-compliance questions for each uploaded build. Complete
+that determination for the intended distribution and obtain any requested
+documentation before making the build available to testers.
 
 ## TestFlight
 

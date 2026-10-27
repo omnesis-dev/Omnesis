@@ -405,7 +405,7 @@ interface SchedulerMetricsSnap {
  * are stable across many consecutive reads.
  *
  * People resolution runs as a background writer-handler, and on top of
- * that the gateway runs four background tasks that can move or rank people
+ * that the gateway runs five background tasks that can move or rank people
  * around the graph and silently empty `/people/search` (which filters
  * `WHERE merged_into IS NULL`):
  *
@@ -417,6 +417,8 @@ interface SchedulerMetricsSnap {
  *     materialized `people.doc_count`
  *   - `backfill.interactionScoresRefresh` — refreshes the default ranking
  *     used by the unfiltered people search below
+ *   - `backfill.mergeCandidatesDetect` (startDelayMs=90s) — auto-approves
+ *     high-confidence fuzzy name matches as system merge rules
  *
  * Just waiting for a single person to be findable was too weak — the
  * graph kept mutating after the wait returned and snapshots picked up
@@ -495,7 +497,8 @@ async function waitForPeopleGraphConvergence(
   const deadline = Date.now() + timeoutMs;
   let lastAutoResult: PeriodicResult | undefined;
   let mutationGeneration: number | undefined;
-  for (let pass = 1; pass <= 5 && Date.now() < deadline; pass += 1) {
+  let approvedByLastDetection = 0;
+  for (let pass = 1; pass <= 6 && Date.now() < deadline; pass += 1) {
     lastAutoResult = await runPeriodic(
       harness,
       "backfill.autoDetect",
@@ -516,8 +519,9 @@ async function waitForPeopleGraphConvergence(
 
     // A zero-generation change after the prior merge pass proves that neither
     // a pre-existing in-flight auto tick nor its awaited trailing tick found
-    // work. The previous pass already refreshed all derived state.
-    if (pass > 1 && !mutatedSinceLastStage) return;
+    // work. Together with a candidate detection that approved nothing, the
+    // previous pass already applied every rule and refreshed all derived state.
+    if (pass > 1 && !mutatedSinceLastStage && approvedByLastDetection === 0) return;
 
     await runOccPeriodicToCaughtUp(harness, "backfill.mergeRulesEval", "merge_rules", deadline);
     await Promise.all([
@@ -529,9 +533,18 @@ async function waitForPeopleGraphConvergence(
       ),
       runSweepToCompletion(harness, "backfill.peopleCountsRefresh", deadline),
     ]);
+
+    // Fuzzy candidate detection auto-approves high-confidence name matches as
+    // system merge rules — in this corpus a contact and the GitHub login of
+    // the same person, and the owner's second mailbox. Its own first tick
+    // waits out a fixed start delay measured from gateway boot, so leaving it
+    // to the cadence makes the snapshot depend on whether setup outlasts that
+    // delay. Driving it here on the settled graph makes its rules part of the
+    // fixed point; the next pass applies them and refreshes derived state.
+    approvedByLastDetection = await runMergeCandidatesDetect(harness, deadline);
   }
   throw new Error(
-    `waitForPeopleGraphConvergence: no fixed point after 5 passes (last auto result ${JSON.stringify(lastAutoResult)})`,
+    `waitForPeopleGraphConvergence: no fixed point after 6 passes (last auto result ${JSON.stringify(lastAutoResult)})`,
   );
 }
 
@@ -540,6 +553,8 @@ interface PeriodicResult {
   successful?: true;
   inserted?: number;
   mutationGeneration?: number;
+  detected?: true;
+  approved?: number;
 }
 
 async function runPeriodic(
@@ -578,6 +593,38 @@ async function runOccPeriodicToCaughtUp(
   }
   throw new Error(
     `${taskName} did not catch up before the convergence deadline (result=${JSON.stringify(lastResult)}, meta=${lastMeta})`,
+  );
+}
+
+/**
+ * Run one candidate detection over the settled graph and return how many
+ * candidates it auto-approved. Detection defers while merge rules or
+ * interaction scores are behind; a deferred tick catches both up and retries.
+ */
+async function runMergeCandidatesDetect(
+  harness: SyntheticE2EHarness,
+  deadline: number,
+): Promise<number> {
+  let lastResult: PeriodicResult | undefined;
+  while (Date.now() < deadline) {
+    lastResult = await runPeriodic(
+      harness,
+      "backfill.mergeCandidatesDetect",
+      Math.max(1, deadline - Date.now()),
+    );
+    if (lastResult.detected === true && typeof lastResult.approved === "number") {
+      return lastResult.approved;
+    }
+    await runOccPeriodicToCaughtUp(harness, "backfill.mergeRulesEval", "merge_rules", deadline);
+    await runOccPeriodicToCaughtUp(
+      harness,
+      "backfill.interactionScoresRefresh",
+      "interaction_scores",
+      deadline,
+    );
+  }
+  throw new Error(
+    `backfill.mergeCandidatesDetect did not run before the convergence deadline (${JSON.stringify(lastResult)})`,
   );
 }
 

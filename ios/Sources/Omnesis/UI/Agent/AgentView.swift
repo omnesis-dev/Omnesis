@@ -280,8 +280,10 @@ public struct AgentView: View {
             .task(id: store.agent.sessionId) {
                 guard store.agent.sessionId != nil else { return }
                 while !Task.isCancelled {
-                    await store.agent.refreshConversationControls()
-                    try? await Task.sleep(for: .seconds(2))
+                    let supported = await store.agent.refreshConversationControls()
+                    try? await Task.sleep(for: supported
+                        ? AgentCoordinator.conversationControlsPollInterval
+                        : AgentCoordinator.unsupportedConversationControlsPollInterval)
                 }
             }
             .onChange(of: composerFocusRequest) { _, _ in

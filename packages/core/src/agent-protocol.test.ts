@@ -42,6 +42,7 @@ describe("agent-protocol", () => {
   it("publishes stable context-window terminal codes", () => {
     expect(KNOWN_AGENT_ERROR_CODES).toContain("context_window_exceeded");
     expect(KNOWN_AGENT_ERROR_CODES).toContain("output_truncated");
+    expect(KNOWN_AGENT_ERROR_CODES).toContain("prompt_truncated");
   });
 
   it("registers every agent command in the typed WS registry", () => {

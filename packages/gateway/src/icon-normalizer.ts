@@ -42,9 +42,17 @@ const TARGET_PIXEL_SIZE = 64;
 // (gstatic, notion, microsoft, …) at gateway boot all complete before
 // the first /admin/sources/descriptors response is built. 5s would
 // frequently abort half of them under cold-cache concurrent load,
-// leaving the Add-Source modal with Lucide fallbacks until the next
-// reload trips the memo retry path.
+// leaving the Add-Source modal with Lucide fallbacks until the failed
+// icon's retry window below passes.
 const FETCH_TIMEOUT_MS = 15000;
+/**
+ * How long a failed conversion is remembered before the next request tries
+ * again. Source meta pushes and descriptor listings wait for their icons, so
+ * without it every push from a source whose icon host is down or unreachable
+ * waited a full `FETCH_TIMEOUT_MS` again (#523). Within the window the icon
+ * normalises to null at once, which leaves the stored icon as it was.
+ */
+const FAILED_ICON_RETRY_MS = 5 * 60_000;
 const ICON_FETCH_USER_AGENT = "omnesis-gateway/icon-normalizer";
 const MAX_REDIRECTS = 5;
 type IconHostLookup = (hostname: string, opts: { all: true }) => Promise<LookupAddress[]>;
@@ -63,6 +71,8 @@ const MEMO_LRU_CAP = 256;
  * iteration head is the oldest live entry, evicted when over cap.
  */
 const memo = new Map<string, Promise<string | null>>();
+/** Key → time before which a failed conversion is not retried. Capped like `memo`. */
+const failedUntil = new Map<string, number>();
 
 function memoGet(key: string): Promise<string | null> | undefined {
   const value = memo.get(key);
@@ -84,9 +94,23 @@ function memoSet(key: string, value: Promise<string | null>): void {
   }
 }
 
+/**
+ * Spawned E2E gateways never fetch a hosted icon, so a test run stays
+ * hermetic. Every source meta push waits for its icons, and each fetch may
+ * take up to `FETCH_TIMEOUT_MS`: one stalled third-party host held every
+ * synthetic gateway boot for 30 s per pass and timed out the suites that boot
+ * one in a 60 s hook. A hosted icon then
+ * normalises to null, which leaves the stored icon as it was — exactly what a
+ * failed fetch does. Embedded data URIs are still converted.
+ */
+function hostedIconFetchDisabled(): boolean {
+  return process.env.OMNESIS_E2E_DISABLE_ICON_FETCH === "1";
+}
+
 /** Drop the in-process URL → PNG-data-URI cache. Test-only. */
 export function _resetIconNormalizerCache(): void {
   memo.clear();
+  failedUntil.clear();
 }
 
 /** Test-only: introspect the current memo size. */
@@ -123,6 +147,7 @@ export async function normalizeIcon(
     return await normalizeDataUri(trimmed);
   }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    if (hostedIconFetchDisabled()) return null;
     return normalizeUrl(trimmed, fetcher, lookup);
   }
   // Legacy raw base64 PNG (no prefix). Wrap with the canonical PNG prefix
@@ -143,15 +168,24 @@ export async function normalizeIcon(
  * than an error. An icon that cannot be normalised is dropped, so the stored
  * value is left as it was.
  */
-export async function normalizeSourceMetaIcons<T extends SourceSyncMeta>(meta: T): Promise<T> {
-  const icon =
-    meta.icon !== undefined ? ((await normalizeIcon(meta.icon)) ?? undefined) : undefined;
-  if (!meta.family) return { ...meta, icon };
-  const familyIcon =
-    meta.family.icon !== undefined
-      ? ((await normalizeIcon(meta.family.icon)) ?? undefined)
-      : undefined;
-  return { ...meta, icon, family: { ...meta.family, icon: familyIcon } };
+export async function normalizeSourceMetaIcons<T extends SourceSyncMeta>(
+  meta: T,
+  fetcher: typeof fetch = fetch,
+  lookup?: IconHostLookup,
+): Promise<T> {
+  // Both start together: a family icon at the source icon's URL joins its
+  // in-flight fetch instead of fetching again once the first has failed, and
+  // two slow hosts cost one timeout rather than two.
+  const [icon, familyIcon] = await Promise.all([
+    meta.icon !== undefined ? normalizeIcon(meta.icon, fetcher, lookup) : null,
+    meta.family?.icon !== undefined ? normalizeIcon(meta.family.icon, fetcher, lookup) : null,
+  ]);
+  if (!meta.family) return { ...meta, icon: icon ?? undefined };
+  return {
+    ...meta,
+    icon: icon ?? undefined,
+    family: { ...meta.family, icon: familyIcon ?? undefined },
+  };
 }
 
 async function normalizeDataUri(uri: string): Promise<string | null> {
@@ -205,19 +239,37 @@ async function normalizeUrl(
 
 /**
  * The memoised conversion for `key`. A conversion that yields null is dropped
- * from the memo, so the next request for the same icon tries again.
+ * from the memo and remembered for `FAILED_ICON_RETRY_MS`: requests in that
+ * window get null at once, and the first one after it tries again.
  */
 function memoized(key: string, convert: () => Promise<string | null>): Promise<string | null> {
   const cached = memoGet(key);
   if (cached) return cached;
+  const retryAt = failedUntil.get(key);
+  if (retryAt !== undefined) {
+    if (Date.now() < retryAt) return Promise.resolve(null);
+    failedUntil.delete(key);
+  }
   const promise = convert();
   memoSet(key, promise);
   promise
     .then((result) => {
-      if (result === null) memo.delete(key);
+      if (result !== null) return;
+      memo.delete(key);
+      rememberFailure(key);
     })
     .catch(() => {});
   return promise;
+}
+
+function rememberFailure(key: string): void {
+  failedUntil.delete(key);
+  failedUntil.set(key, Date.now() + FAILED_ICON_RETRY_MS);
+  while (failedUntil.size > MEMO_LRU_CAP) {
+    const oldest = failedUntil.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    failedUntil.delete(oldest);
+  }
 }
 
 async function fetchAndConvert(

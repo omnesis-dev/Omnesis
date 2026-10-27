@@ -725,7 +725,7 @@ describe("content script — storage changes", () => {
     });
     await waitForState(page, "watching");
     await page.clock.tick(5_000);
-    expect(page.chrome.captures()).toHaveLength(1);
+    await vi.waitFor(() => expect(page.chrome.captures()).toHaveLength(1));
 
     excluded = true;
     page.chrome.storageChanged({
@@ -747,7 +747,7 @@ describe("content script — storage changes", () => {
     const page = openPage();
     await waitForState(page, "watching");
     await page.clock.tick(5_000);
-    expect(page.chrome.captures()).toHaveLength(1);
+    await vi.waitFor(() => expect(page.chrome.captures()).toHaveLength(1));
 
     // A settings change that says nothing new about this page: it is judged a
     // second time, but keeps its dwell and what it already emitted, so no

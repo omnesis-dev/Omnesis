@@ -57,6 +57,7 @@ import {
   loopsWithMarker,
   openHarnessDb,
   pushArcDoc,
+  pushEditsTogether,
   runsForDoc,
   seedLoopAndEnqueueDailyRun,
   sleep,
@@ -565,6 +566,29 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
       return done.length >= 1 ? true : null;
     });
 
+    // Initial interpretation can hand work to another run before it commits.
+    // Count successful writes across every source run and attempt, rather than
+    // model emissions that may have received a control-flow refusal.
+    const obs = new BrainObs(harness);
+    const committedConfirmationNotes = async () =>
+      (await Promise.all(runsForDoc(db, fulfilmentDocId).map((run) => obs.executedTools(run.id))))
+        .flat()
+        .filter(
+          (step) =>
+            step.tool === "observation_note" &&
+            step.result?.kind === "structured" &&
+            step.result.resultType === "observation.noted",
+        );
+    const notesBeforeReview = await committedConfirmationNotes();
+    expect(notesBeforeReview).toHaveLength(1);
+    expect(notesBeforeReview[0]!.result?.data?.id).toEqual(expect.any(String));
+    const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
+    if (fulfilmentAction.kind !== "resolve") {
+      throw new Error("request arc fulfilment step must be a resolution");
+    }
+    expect(notesBeforeReview[0]!.args.summary).toBe(fulfilmentAction.confirmObservation);
+    expect(notesBeforeReview[0]!.args.citations).toContain(fulfilmentDocId);
+
     // Reoffer the already interpreted source explicitly. A repeated frontier
     // must adopt the current confirmation, without another observation write.
     let reviewId: string;
@@ -598,20 +622,26 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     } finally {
       writer.close();
     }
-    await waitFor("completed confirmation source review", () =>
-      db.prepare("SELECT 1 FROM knowledge_work WHERE id=? AND status='completed'").get(reviewId)
-        ? true
-        : null,
-    );
+    // Frontier completion settles the work before the model turn is finalized.
+    // Observe the exact review's run, rather than only its completed work receipt.
+    const completedReview = await waitFor("completed confirmation source review", () => {
+      const review = db
+        .prepare<[string, string], { runId: string }>(
+          `SELECT batch.run_id AS runId FROM knowledge_work work
+           JOIN knowledge_batches batch ON batch.id=work.batch_id
+           JOIN cognition_runs run ON run.id=batch.run_id
+           WHERE work.id=? AND work.subject_kind='source' AND work.subject_id=?
+           AND work.status='completed' AND run.status='completed'`,
+        )
+        .get(reviewId, fulfilmentDocId);
+      return review && completedSourceRuns(fulfilmentDocId).length >= 2 ? review : null;
+    });
     expect(completedSourceRuns(fulfilmentDocId).length).toBeGreaterThanOrEqual(2);
-    expect(
-      server.calls.filter(
-        (call) =>
-          call.docId === fulfilmentDocId &&
-          call.emitted.kind === "tool" &&
-          call.emitted.name === "observation_note",
-      ),
-    ).toHaveLength(1);
+    expect(completedSourceRuns(fulfilmentDocId).map((run) => run.id)).toContain(
+      completedReview.runId,
+    );
+    // A review must retain the exact same single committed confirmation.
+    expect(await committedConfirmationNotes()).toEqual(notesBeforeReview);
 
     const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
       observations: Array<{ state: string; summary: string; closeReason: string | null }>;
@@ -620,10 +650,6 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     const active = detail.observations.filter((o) => o.state === "live" || o.state === "held");
     expect(active).toHaveLength(1);
     expect(detail.observations.filter((o) => o.closeReason === "superseded")).toHaveLength(1);
-    const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
-    if (fulfilmentAction.kind !== "resolve") {
-      throw new Error("request arc fulfilment step must be a resolution");
-    }
     expect(active[0]!.summary).toBe(fulfilmentAction.confirmObservation);
 
     // Still exactly one loop, still open — ambiguity never closes silently.
@@ -743,27 +769,59 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
       return done.length >= 1 ? true : null;
     });
 
-    // Two edits inside the 2s update debounce → ONE folded updated run.
-    await pushArcDoc(harness, doc, { content: rev1 });
-    await pushArcDoc(harness, doc, { content: rev2 });
+    // Edits fold while the source's change work is still pending: the second
+    // revision joins the first one's work instead of getting its own run. That
+    // window is the maintenance delay (1s here), so a slow second push could
+    // land after the first edit was batched; both land while dispatch is held.
+    await pushEditsTogether(harness, async () => {
+      await pushArcDoc(harness, doc, { content: rev1 });
+      await pushArcDoc(harness, doc, { content: rev2 });
+    });
+
+    // Runs that carried this source's change work. Ambient historical
+    // discovery (started earlier in this suite) may also read the source
+    // for organization at any time; those runs are not edit interpretations.
+    const changeRuns = () =>
+      runsForDoc(db, docId).filter((run) =>
+        db
+          .prepare(
+            `SELECT 1 FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id
+             WHERE w.subject_kind='source' AND w.subject_id=? AND w.reason='change'
+             AND (b.run_id=? OR b.id=json_extract(?,'$.batchId'))`,
+          )
+          .get(docId, run.id, run.payload_json),
+      );
+    // Settled means the current revision is interpreted and no change work
+    // for the source is still waiting or running, so a late successor run
+    // cannot appear after the count below.
     await waitFor(
       () =>
-        `folded update run for ${doc.externalId} — rows at timeout: ${JSON.stringify(
+        `current revision of ${doc.externalId} interpreted — work at timeout: ${JSON.stringify(
           db
-            .prepare<
-              [string],
-              Record<string, unknown>
-            >("SELECT id, kind, status, attempts, last_error, next_attempt_at FROM cognition_runs WHERE dedupe_key = ?")
-            .all(`data:doc:${docId}`),
+            .prepare(
+              "SELECT reason,status,input_revision,batch_id FROM knowledge_work WHERE subject_id=?",
+            )
+            .all(docId),
         )}; model calls for doc: ${JSON.stringify(
           server.calls.filter((c) => c.docId === docId).map((c) => c.emitted),
         )}`,
-      () => {
-        const done = completedSourceRuns(docId);
-        return done.length >= 2 ? true : null;
-      },
+      () =>
+        db
+          .prepare(
+            `SELECT 1 FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id
+             WHERE d.id=? AND c.phase='interpretation' AND c.input_revision=${knowledgeSourceRevisionSql("d")} AND c.status='considered'`,
+          )
+          .get(docId) &&
+        !db
+          .prepare(
+            "SELECT 1 FROM knowledge_work WHERE subject_kind='source' AND subject_id=? AND reason='change' AND status IN ('pending','batched')",
+          )
+          .get(docId) &&
+        changeRuns().every((run) => run.status === "completed")
+          ? true
+          : null,
     );
-    const runs = runsForDoc(db, docId);
+    const runs = changeRuns();
     expect(runs).toHaveLength(2);
 
     // Current maintenance delivers the latest exact source snapshot, rather
@@ -781,9 +839,10 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
       content: rev2,
     });
     // No prior version outlives the queue row: settling strips the fold
-    // snapshot + diff text; the reference-shaped rest is retained.
-    for (const run of runs) {
-      expect(run.status).toBe("completed");
+    // snapshot + diff text; the reference-shaped rest is retained. This holds
+    // for every run that touched the source, including ambient discovery.
+    for (const run of runs) expect(run.status).toBe("completed");
+    for (const run of runsForDoc(db, docId)) {
       expect(run.payload_json).not.toContain("snapshot");
       expect(run.payload_json).not.toContain("diff");
       expect(run.payload_json).not.toContain("rev-alpha");

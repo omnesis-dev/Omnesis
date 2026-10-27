@@ -9,6 +9,9 @@ const DEFAULT_GATEWAY_TRUST_EXEMPT_COMMANDS = new Set([
   "help",
   "service",
   "update",
+  // Removes this machine's install; it reads only the disk and must work
+  // when the gateway is gone or the install no longer starts.
+  "uninstall",
   "agent",
   // `connect` parses its target gateway and performs TOFU against that URL.
   "connect",

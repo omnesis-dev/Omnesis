@@ -11,12 +11,21 @@ describe("transcription vocabulary settings", () => {
     { inference: {} },
     { inference: { transcriptionVocabulary: {} } },
     { inference: { transcriptionVocabulary: { maxTerms: 8 } } },
-    { inference: { transcriptionVocabulary: { enabled: false } } },
-  ])("omitted or disabled opt-in does not activate vocabulary: %j", (config) => {
-    expect(resolveVocabularySettings(omnesisConfigSchema.parse(config)).enabled).toBe(false);
+  ])("an omitted setting activates vocabulary: %j", (config) => {
+    expect(resolveVocabularySettings(omnesisConfigSchema.parse(config)).enabled).toBe(true);
   });
 
-  test("explicit opt-in preserves bounded settings", () => {
+  test("an explicit enabled: false turns vocabulary off", () => {
+    expect(
+      resolveVocabularySettings(
+        omnesisConfigSchema.parse({
+          inference: { transcriptionVocabulary: { enabled: false, maxTerms: 8 } },
+        }),
+      ),
+    ).toMatchObject({ enabled: false, maxTerms: 8 });
+  });
+
+  test("explicit enablement preserves bounded settings", () => {
     expect(
       resolveVocabularySettings(
         omnesisConfigSchema.parse({

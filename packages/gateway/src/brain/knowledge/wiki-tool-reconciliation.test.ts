@@ -388,6 +388,49 @@ it("requires the publication candidate itself to have been returned by a read", 
   });
 });
 
+it("reports a candidate another run published after this run proposed it as contention", async () => {
+  const first = tools("first");
+  const second = tools("second");
+  const assessment = {
+    reason: "The workshop reference synthesizes timing and approved materials allocation.",
+    relatedPageIds: [],
+  };
+  // Both runs inspect an empty library and propose the same identity.
+  await reconcile(first);
+  const proposed = await call(first, "knowledge_propose_page", proposal);
+  if (proposed.kind !== "structured") throw new Error("Expected candidate result");
+  const candidateId = (proposed.data as { id: string }).id;
+  await reconcile(second);
+  expect(await call(second, "knowledge_propose_page", proposal)).toMatchObject({
+    kind: "structured",
+    data: { id: candidateId, status: "proposed" },
+  });
+  // The first run publishes the shared candidate before the second saves.
+  expect(
+    await call(first, "knowledge_save", { node, candidateId, creationAssessment: assessment }),
+  ).toMatchObject({ kind: "structured" });
+  const save = () =>
+    call(second, "knowledge_save", {
+      node,
+      candidateId,
+      creationAssessment: assessment,
+    });
+  expect(await save()).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+    message: expect.stringContaining('knowledge_list({kind:"wiki"})'),
+  });
+  // Once the run has read the published candidate, a further attempt to
+  // publish it again is its own mistake, not contention.
+  await reconcile(second);
+  expect(await save()).toMatchObject({
+    kind: "error",
+    code: "claim_invalid",
+    message: "A new wiki needs a reconciled proposed candidate",
+  });
+  expect(getKnowledgeNode(db, node.id)?.revision).toBe(1);
+});
+
 it("requires an unfiltered initial candidate read and permits an explicit refreshed proposal", async () => {
   const entries = tools("run");
   await call(entries, "knowledge_list", { kind: "wiki" });

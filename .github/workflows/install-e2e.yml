@@ -6,11 +6,12 @@ run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workfl
 # Installs, updates and rolls back Omnesis on real GitHub-hosted machines,
 # under each OS's real service supervisor. See docs/install-e2e.md.
 #
-# Single-host lanes (S1 Linux, S2 macOS) run on pull requests and on pushes to
-# main that touch the installer, the updater or the service definitions. They
+# Single-host lanes (S1 Linux, S2 macOS) and the uninstall lanes (X1 Linux,
+# X2 macOS) run on pull requests and on pushes to main that touch the
+# installer, the updater, the uninstaller or the service definitions. They
 # need no secrets, so they also run for fork pull requests.
 #
-# Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet) join a dedicated CI
+# Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet, T3 Docker + native Mac) join a dedicated CI
 # tailnet through workload identity federation. They run nightly and on manual
 # dispatch, only on main or a release tag of this repository: the
 # `tailnet-e2e` environment that holds the credential admits nothing else.
@@ -26,6 +27,8 @@ on:
       - packages/cli/src/update/**
       - packages/cli/src/commands/update.ts
       - packages/cli/src/service/**
+      - packages/cli/src/uninstall/**
+      - packages/cli/src/commands/uninstall.ts
       - scripts/install-e2e/**
       - .github/workflows/install-e2e.yml
   push:
@@ -38,6 +41,8 @@ on:
       - packages/cli/src/update/**
       - packages/cli/src/commands/update.ts
       - packages/cli/src/service/**
+      - packages/cli/src/uninstall/**
+      - packages/cli/src/commands/uninstall.ts
       - scripts/install-e2e/**
       - .github/workflows/install-e2e.yml
   schedule:
@@ -47,7 +52,7 @@ on:
       lanes:
         description: Which lanes to run
         type: choice
-        options: [all, single-host, tailnet]
+        options: [all, single-host, tailnet, coverage, vector-compat]
         default: all
 
 permissions: {}
@@ -68,7 +73,7 @@ env:
 jobs:
   single-host:
     name: ${{ matrix.lane }} single host (${{ matrix.os }})
-    if: github.event_name != 'workflow_dispatch' || inputs.lanes != 'tailnet'
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes == 'all' || inputs.lanes == 'single-host'
     strategy:
       fail-fast: false
       matrix:
@@ -95,12 +100,94 @@ jobs:
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
 
+  vector-compat:
+    name: Intel vector compatibility diagnosis
+    if: github.event_name == 'workflow_dispatch' && inputs.lanes == 'vector-compat'
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify fixed source and actual Intel platform
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(uname -m)" = x86_64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+      - name: Compare native builds on Node 24.19.0
+        run: python3 scripts/install-e2e/macos-vector-compat.py --work "$RUNNER_TEMP/vector-compat"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: always()
+        with:
+          node-version: 24.22.1
+      - name: Compare native builds on Node 24.22.1
+        if: always()
+        run: python3 scripts/install-e2e/macos-vector-compat.py --work "$RUNNER_TEMP/vector-compat"
+      - name: Retain content-free diagnostic results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: vector-compat-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vector-compat/result.json
+          if-no-files-found: error
+          retention-days: 7
+
+  installer-coverage:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'coverage'))
+    permissions:
+      contents: read
+    uses: ./.github/workflows/installer-coverage.yml
+    with:
+      target_sha: ${{ github.sha }}
+      extended: true
+
+  # Install, uninstall keeping the data, reinstall over it, then uninstall
+  # with --purge: every piece the installer put down comes off again, under
+  # the same real supervisors.
+  uninstall:
+    name: ${{ matrix.lane }} uninstall (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes == 'all' || inputs.lanes == 'single-host'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: X1
+            os: ubuntu-22.04
+          - lane: X2
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Install, uninstall, reinstall over the kept data, uninstall --purge
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/uninstall.sh
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+
   # The update away from the newest release runs that release's own `npm ci`
   # over its own node_modules, so a lockfile npm cannot reconcile in place
   # strands every source install on it. Minutes, not the lanes' hour.
   lockfile-upgrade:
     name: U1 npm ci over the newest release (${{ matrix.os }})
-    if: github.event_name != 'workflow_dispatch' || inputs.lanes != 'tailnet'
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes == 'all' || inputs.lanes == 'single-host'
     strategy:
       fail-fast: false
       matrix:
@@ -122,7 +209,7 @@ jobs:
 
   tailnet-plan:
     name: Tailnet lanes — eligibility
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.lanes != 'single-host')
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'tailnet'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -216,11 +303,20 @@ jobs:
       matrix:
         include:
           - lane: T1
+            node: t1
+            fixture: fresh
             mode: fresh
             os: ubuntu-24.04
           - lane: T2
+            node: t2
+            fixture: upgrade
             mode: upgrade
             os: ubuntu-24.04-arm
+          - lane: T3
+            node: t3
+            fixture: fresh
+            mode: docker
+            os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
     # Up to four hours waiting for the partner's runner, then the lane.
     timeout-minutes: 330
@@ -231,7 +327,8 @@ jobs:
       id-token: write
     env:
       E2E_MODE: ${{ matrix.mode }}
-      NODE_NAME: omnesis-ci-gw-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_FIXTURE_MODE: ${{ matrix.fixture }}
+      NODE_NAME: omnesis-ci-gw-${{ matrix.node }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -255,6 +352,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/fixtures"
           tar -C "$RUNNER_TEMP/fixtures" -xzf "$RUNNER_TEMP/fixtures.tgz"
+      - name: Verify disposable T3 runner before tailnet changes
+        if: matrix.mode == 'docker'
+        run: node scripts/install-e2e/docker-tailnet-host.mjs guard linux "$RUNNER_TEMP/install-e2e" "$GITHUB_WORKSPACE"
       - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
@@ -275,8 +375,10 @@ jobs:
         timeout-minutes: 60
         run: |
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
-          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
-            scripts/install-e2e/tailnet-gateway.sh
+          script=scripts/install-e2e/tailnet-gateway.sh
+          if [ "$E2E_MODE" = docker ]; then script=scripts/install-e2e/docker-tailnet-gateway.sh; fi
+          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_FIXTURE_MODE" \
+            "$script"
       - name: Tell the collector this job failed
         if: failure() || cancelled()
         run: |
@@ -297,11 +399,20 @@ jobs:
       matrix:
         include:
           - lane: T1
+            node: t1
+            fixture: fresh
             mode: fresh
             os: macos-15
           - lane: T2
+            node: t2
+            fixture: upgrade
             mode: upgrade
             os: macos-14
+          - lane: T3
+            node: t3
+            fixture: fresh
+            mode: docker
+            os: macos-15
     runs-on: ${{ matrix.os }}
     # Up to four hours waiting for the partner's runner, then the lane.
     timeout-minutes: 330
@@ -312,8 +423,9 @@ jobs:
       id-token: write
     env:
       E2E_MODE: ${{ matrix.mode }}
-      NODE_NAME: omnesis-ci-col-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
-      E2E_GATEWAY_HOST: omnesis-ci-gw-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_FIXTURE_MODE: ${{ matrix.fixture }}
+      NODE_NAME: omnesis-ci-col-${{ matrix.node }}-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_GATEWAY_HOST: omnesis-ci-gw-${{ matrix.node }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -339,6 +451,9 @@ jobs:
           tar -C "$RUNNER_TEMP/fixtures" -xzf "$RUNNER_TEMP/fixtures.tgz"
       # Before the Tailscale action repoints them; tailnet-collector.sh
       # puts them back.
+      - name: Verify disposable T3 runner before tailnet changes
+        if: matrix.mode == 'docker'
+        run: node scripts/install-e2e/docker-tailnet-host.mjs guard mac "$RUNNER_TEMP/install-e2e" "$GITHUB_WORKSPACE"
       - name: Remember the Mac's DNS settings
         run: |
           mkdir -p "$RUNNER_TEMP/install-e2e"
@@ -366,7 +481,7 @@ jobs:
         timeout-minutes: 60
         run: |
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
-          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
+          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_FIXTURE_MODE" \
             scripts/install-e2e/tailnet-collector.sh
       - name: Tell the gateway this job failed
         if: failure() || cancelled()

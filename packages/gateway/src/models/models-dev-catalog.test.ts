@@ -5,7 +5,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ModelsDevCatalog, validateProviderSvg } from "./models-dev-catalog.js";
+import {
+  ModelsDevCatalog,
+  normalizeProviderSvg,
+  validateProviderSvg,
+} from "./models-dev-catalog.js";
 import type { InferenceOverview } from "@omnesis/core";
 
 const dirs: string[] = [];
@@ -94,6 +98,7 @@ const inference = {
     },
   },
   assignments: {
+    "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
     agent: {
       role: "agent",
       kind: "http",
@@ -130,6 +135,7 @@ describe("Models.dev gateway catalog", () => {
         ],
       },
       assignments: {
+        "speech-to-speech": { role: "speech-to-speech", kind: "disabled" },
         agent: {
           role: "agent",
           kind: "codex",
@@ -165,6 +171,30 @@ describe("Models.dev gateway catalog", () => {
         codexInference,
       ),
     ).toThrow(/advertised effort values/);
+  });
+
+  it("resolves Regolo aliases, renamed backends and logos through its catalog identity", () => {
+    const service = new ModelsDevCatalog({
+      configDir: dir(),
+      bundled: {
+        ...BUNDLED,
+        "regolo-ai": {
+          name: "Regolo AI",
+          models: { "chat-example": { tool_call: true, reasoning: false } },
+        },
+      },
+    });
+    expect(service.providerId("regolo")).toBe("regolo-ai");
+    expect(service.providerId("regolo-ai")).toBe("regolo-ai");
+    expect(service.providerId("custom-regolo", "https://api.regolo.ai/")).toBe("regolo-ai");
+    expect(service.controlsForBackend("regolo", "chat-example")).toMatchObject({
+      providerId: "regolo-ai",
+      providerName: "Regolo AI",
+      source: "models.dev",
+      toolCall: true,
+      logoUrl: "/model-logos/regolo-ai.svg",
+    });
+    expect(service.controlsForBackend("regolo", "unknown-example").source).toBe("unknown");
   });
 
   it("does not confuse inherited object names with exact provider or model IDs", async () => {
@@ -484,5 +514,105 @@ describe("Models.dev gateway catalog", () => {
     await expect(service.logo("openai")).resolves.toEqual(Buffer.from(svg));
     await expect(service.logo("openai")).resolves.toEqual(Buffer.from(svg));
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("does not advertise chat reasoning controls or saved settings for speech media", () => {
+  const service = new ModelsDevCatalog({
+    configDir: dir(),
+    bundled: BUNDLED,
+    bundledFetchedAt: Date.now(),
+  });
+  const speech: InferenceOverview = {
+    ...inference,
+    assignments: {
+      ...inference.assignments,
+      "speech-to-speech": {
+        role: "speech-to-speech",
+        kind: "http",
+        backendKey: "cloud",
+        url: "https://api.openai.com",
+        model: "gpt-live-1",
+        allowRemoteInference: true,
+        available: true,
+      },
+    },
+  };
+  const view = service.overview(speech, {
+    inference: {
+      entailment: { promptStyle: "judge" },
+      assignments: { "speech-to-speech": "cloud/gpt-live-1" },
+    },
+  });
+  expect(view.modelSettings["speech-to-speech"]).toBeUndefined();
+});
+
+// The shape of an Inkscape save, as Models.dev receives some logos: a leading
+// comment, editor namespaces, a `<metadata>` block and paint in `style`.
+const INKSCAPE_LOGO = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="32"
+   height="32"
+   viewBox="0 0 32 32"
+   version="1.1"
+   id="svg1"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     inkscape:document-units="px" />
+  <metadata id="metadata1"><rdf:RDF><cc:Work rdf:about="" /></rdf:RDF></metadata>
+  <defs id="defs1" />
+  <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1">
+    <path class="cls-1" d="M1 1h2v2H1z" id="path1" fill="#ffffff" style="fill:#303030;stroke-width:0.287356" />
+    <path d="M4 4h2v2H4z" style="fill:#000000" />
+  </g>
+</svg>
+`;
+
+describe("provider logo editor metadata", () => {
+  it("strips Inkscape metadata and rewrites paint styles into attributes", () => {
+    const cleaned = validateProviderSvg(Buffer.from(INKSCAPE_LOGO)).toString("utf8");
+    expect(cleaned).not.toMatch(/<!--|sodipodi|inkscape|<metadata|style=/i);
+    expect(cleaned).toContain(
+      '<path class="cls-1" d="M1 1h2v2H1z" id="path1" fill="#303030" stroke-width="0.287356" />',
+    );
+    expect(cleaned).toContain('<path d="M4 4h2v2H4z" fill="#000000" />');
+    expect(cleaned).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(cleaned).toMatch(/^<\?xml[^>]*>\s*<svg\b/);
+  });
+
+  it("leaves a plain logo untouched", () => {
+    const plain =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M1 1h2v2H1z"/></svg>';
+    expect(normalizeProviderSvg(plain)).toBe(plain);
+    expect(validateProviderSvg(Buffer.from(plain)).toString("utf8")).toBe(plain);
+  });
+
+  it("still refuses styles that are not plain paint", () => {
+    for (const style of [
+      "fill:url(#gradient)",
+      "cursor:pointer",
+      "fill:#000;behavior:url(x.htc)",
+      "fill: expression(alert(1))",
+      "nonsense",
+    ]) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 1h2v2H1z" style="${style}" /></svg>`;
+      expect(() => validateProviderSvg(Buffer.from(svg)), style).toThrow(/active/);
+    }
+  });
+
+  it("serves and caches the cleaned bytes, not the export", async () => {
+    const path = dir();
+    const fetcher = vi.fn(() => Promise.resolve(new Response(INKSCAPE_LOGO, { status: 200 })));
+    const service = new ModelsDevCatalog({ configDir: path, bundled: BUNDLED, fetcher });
+    const served = (await service.logo("openai")).toString("utf8");
+    expect(served).not.toMatch(/sodipodi|inkscape|style=/i);
+    expect(served).toContain('fill="#303030"');
+    expect(readFileSync(join(path, "models-dev", "logos", "openai.svg"), "utf8")).toBe(served);
   });
 });

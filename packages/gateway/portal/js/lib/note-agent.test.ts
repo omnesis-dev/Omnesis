@@ -6,6 +6,7 @@ import {
   noteAgentActive,
   noteAgentDisplay,
   noteAgentPending,
+  noteAgentSettingPatch,
   noteChangeHref,
   noteRefreshChanged,
   noteUndoErrorMessage,
@@ -57,6 +58,11 @@ describe("note agent display", () => {
     expect(noteAgentActive({ tasks: { available: true, noteAgent: true } })).toBe(true);
     expect(noteAgentActive({ tasks: { available: true, noteAgent: false } })).toBe(false);
     expect(noteAgentActive(null)).toBe(false);
+  });
+
+  it("writes the setting as a config patch", () => {
+    expect(noteAgentSettingPatch(true)).toEqual({ agent: { noteAgent: true } });
+    expect(noteAgentSettingPatch(false)).toEqual({ agent: { noteAgent: false } });
   });
 
   it("spots a refreshed copy with news", () => {

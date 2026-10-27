@@ -33,6 +33,7 @@ import { inactiveDictationStatus, type DictationFeatureStatus } from "../../dict
 import type { ReleaseCheckSnapshot } from "@omnesis/core/release-check";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { BriefsFeatureStatus } from "../../brain/index.js";
+import type { NoteAgentStatus } from "../../brain/note-agent/runner.js";
 import type { DeviceService } from "../services/DeviceService.js";
 import type { ConfigStore } from "../../config-store.js";
 import type { StatusCache } from "../services/StatusCache.js";
@@ -72,8 +73,8 @@ export interface StatusRoutesDeps {
    * the feature inactive, so clients keep on-device dictation.
    */
   getDictationStatus?: () => DictationFeatureStatus;
-  /** Whether a Tell Omnesis note runs an agent turn that can change tasks. */
-  getNoteAgentActive?: () => boolean;
+  /** Whether a Tell Omnesis note runs an agent turn that can change tasks, and why not. */
+  getNoteAgentStatus?: () => NoteAgentStatus;
   /** Corpus vocabulary is independent of whether the gateway transcribes audio. */
   getTranscriptionVocabularyEnabled?: () => boolean;
   /**
@@ -110,7 +111,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getReleaseCheck,
     getBriefsStatus,
     getDictationStatus,
-    getNoteAgentActive,
+    getNoteAgentStatus,
     getTranscriptionVocabularyEnabled,
     getDiskUsage,
   } = deps;
@@ -467,6 +468,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
           modelAssigned: false,
           active: false,
         };
+    const noteAgent: NoteAgentStatus = getNoteAgentStatus?.() ?? {
+      enabled: false,
+      modelAssigned: false,
+      active: false,
+    };
     return c.json({
       documents: { total, bySource, unitCountBySource },
       analyticsCountByType,
@@ -509,7 +515,10 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
       // Tasks are available on every install; `noteAgent` says whether a Tell
       // Omnesis note is read by an agent that can add and change them.
-      tasks: { available: true, noteAgent: getNoteAgentActive?.() ?? false },
+      tasks: { available: true, noteAgent: noteAgent.active },
+      // The note agent's setting beside that verdict: whether the owner leaves
+      // it on, and whether a background-agent model can run.
+      noteAgent,
       // The optional wire features an authenticated client decides about,
       // the same entries `/health` names.
       capabilities: GENERAL_CAPABILITIES,

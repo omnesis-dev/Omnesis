@@ -25,6 +25,9 @@ const E2E_GATEWAY_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
 const E2E_INTERNAL_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
   // Spawned gateways must never turn a test run into a release-network probe.
   OMNESIS_E2E_DISABLE_RELEASE_CHECK: "1",
+  // Nor wait on a third-party icon host: synthetic sources inherit their real
+  // providers' hosted icons, and every source meta push fetches them.
+  OMNESIS_E2E_DISABLE_ICON_FETCH: "1",
 };
 
 const require = createRequire(import.meta.url);

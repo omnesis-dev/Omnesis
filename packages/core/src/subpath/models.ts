@@ -122,3 +122,5 @@ export type {
   InferenceUrlPolicy,
   HttpRateLimitRetryOptions,
 } from "../models/index.js";
+
+export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "../models/speech-to-speech.js";

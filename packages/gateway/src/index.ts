@@ -2554,7 +2554,7 @@ const app = createServer(db, DB_PATH, {
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
-  getNoteAgentActive: () => noteAgent.active(),
+  getNoteAgentStatus: () => noteAgent.status(),
   getDictationStatus: () =>
     dictationFeatureStatus({
       transcriberReadiness: () => transcribeService.readiness(),
@@ -2678,12 +2678,14 @@ agentLifecycle.setInteractiveMemoryProfile(interactiveMemoryProfile);
 agentLifecycle.setDailyBriefContextProvider((latest) => renderDailyBriefContext(db, latest));
 agentLifecycle.setDailyBriefDetailReader((brief) => readDailyBriefDetail(db, brief));
 // The note agent: one bounded background-agent turn per Tell Omnesis note.
-// On whenever a background-agent model is runnable; no experimental gate.
+// On whenever a background-agent model is runnable, unless the owner switched
+// it off (`agent.noteAgent`); no experimental gate.
 const noteAgent = new NoteAgent({
   db,
   tasks: taskService,
   writeGate,
   resolveBackend: resolveBackgroundAgentBackend,
+  getSetting: () => configStore.get().agent?.noteAgent,
   buildMemoryTools: (runId) => interactiveMemoryProfile.buildOwnTools(runId),
   readTools: () => {
     const service = agentLifecycle.routeDeps.agentService;
@@ -2716,8 +2718,9 @@ const noteAgentDrainTask: PeriodicTask<undefined, undefined> = {
   startDelayMs: 10_000,
   latencyBudgetMs: 60_000,
   initialArgs: undefined,
-  // Every tick queues new notes; the faster cadence only matters while some are waiting.
-  isIdle: () => !hasPendingNotes(db),
+  // Every tick queues new notes (or, while switched off, settles them as
+  // skipped); the faster cadence only matters while some wait to be read.
+  isIdle: () => !noteAgent.active() || !hasPendingNotes(db),
   async run() {
     // A note turn takes seconds to minutes: run it off the scheduler's runner.
     void noteAgent.drain().catch((err: unknown) => {
@@ -2961,6 +2964,7 @@ const realtimeService = new RealtimeService({
         log.warn("Could not record realtime voice usage");
       });
   },
+  recordLiveUsage: (sample) => writeGate.recordLiveVoiceUsage(sample),
 });
 mountRealtimeRoutes(app, realtimeService, upgradeWebSocket);
 
@@ -3519,8 +3523,8 @@ const doShutdown = async (): Promise<void> => {
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
   wsServer.stop();
-  realtimeService.dispose();
-  const httpDrained = await httpShutdown.close(server, 5_000);
+  const httpDrain = httpShutdown.close(server, 5_000);
+  const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   // A warm still scanning competes with the sidecar persist below for I/O and
   // the shutdown budget; its thread is throwaway, so stop it first — after the

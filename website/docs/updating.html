@@ -398,20 +398,27 @@
         <p>
           On a machine with less than about 5 GB of memory in total (or a container limited to
           less), a source build (which needs at least 3 GB for itself and about 2 GB beside it)
-          stops this account's collector while it builds and starts it again afterwards; the gateway
-          keeps serving. If the system stops the gateway for memory instead, it stays down until the
-          build is in place, and the update's own restart brings it up on the new release, however
-          often its service manager had tried to start it meanwhile. If the build is still killed,
-          the update says the machine most likely ran out of memory and rolls back. Stop the
-          collector and gateway (<code>omnesis service stop collector</code>,
-          <code>omnesis service stop gateway</code>), add swap or free memory, and run
-          <code>omnesis update</code> again.
+          stops this account's collector and gateway while it builds. The gateway is down until the
+          build is in place, and the update's own restart brings it up on the new release; the
+          collector starts again afterwards. If the build is still killed, the update says the
+          machine most likely ran out of memory and rolls back. Stop the collector and gateway
+          (<code>omnesis service stop collector</code>, <code>omnesis service stop gateway</code>),
+          add swap or free memory, and run <code>omnesis update</code> again.
         </p>
         <p>
           On a source install, <code>npm ci</code> installs over the <code>node_modules</code> the
           running release left. If that install fails, the update removes
           <code>node_modules</code> and installs once more before it rolls back, and the rollback's
-          own install is retried the same way.
+          own install is retried the same way. If dependency installation is interrupted, killed, or
+          still fails after its retry, rollback removes the incomplete dependency tree before
+          reinstalling the previous release. If removing that tree fails, recovery stops and reports
+          the failed step.
+        </p>
+        <p>
+          On Intel macOS, dependency installation also verifies the native vector engine and builds
+          it locally when the bundled binary is incompatible. This applies to fresh installations,
+          updates and rollback reinstalls. Keep Xcode Command Line Tools installed; see
+          <a href="/docs/install#requirements">Requirements</a>.
         </p>
 
         <h3 id="update-flags">Options</h3>
@@ -484,7 +491,15 @@
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
                   are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote.
+                  one wrote. An OpenClaw or Hermes plugin that has followed a certificate renewal
+                  stops connecting when moved back to a release whose plugin pins the certificate;
+                  afterwards, run
+                  <code
+                    >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
+                    sha256:&lt;served&gt;</code
+                  >
+                  on its machine, with the fingerprint <code>omnesis tls status</code> shows on the
+                  gateway machine.
                 </td>
               </tr>
               <tr>
@@ -714,6 +729,32 @@
           trusting the recorded tag.
         </p>
 
+        <p>
+          Stable Docker updates select the newest release tag present in every image controlled by
+          <code>OMNESIS_IMAGE_TAG</code> in the Compose file, including the updater. This lookup
+          uses the container registry rather than npm, so a release does not need npm packages.
+          Independently versioned sidecars do not participate in release discovery. The combined
+          image is updated through its <code>gateway</code> service, preserving the mounted config
+          directory and paired collector identity. An updater image from before registry discovery
+          looks the release up on npm instead and stops with
+          <code>Could not resolve omnesis@latest</code>; name the release once with
+          <code>omnesis update --target-version X.Y.Z</code>, and later updates find it on their
+          own.
+        </p>
+        <p>
+          Registry tag discovery is anonymous. For a private registry, authenticate Docker on the
+          host and rerun the installer with <code>--docker --version X.Y.Z</code> and the same
+          topology flags, config directory and image repository. A one-shot updater cannot use the
+          host's credential helper through the Docker socket alone. If you explicitly mount a
+          self-contained Docker credential configuration into the updater, you can instead use
+          <code>omnesis update --target-version X.Y.Z</code>; keep that credential mount out of the
+          running daemons. For a registry addressed as localhost, use Linux host networking or an
+          explicit target version; bridge-network registry discovery reaches the updater container’s
+          loopback, rather than the host’s. Standalone Compose installations update with a pinned
+          <code>OMNESIS_IMAGE_TAG</code>, <code>docker compose pull</code>, then
+          <code>docker compose up -d</code>, after a backup.
+        </p>
+
         <h2 id="adopt-source">Adopting a hand-made source install</h2>
         <p>
           A source checkout that you cloned and built by hand has no marker saying the installer
@@ -845,9 +886,10 @@
         <p>
           What the gateway does refuse is a device speaking a different connection protocol: both
           sides exchange a protocol number when they connect. The browser extension checks the
-          gateway's version before pairing and refuses a gateway on an older minor release than its
-          own. Within a minor release, what the gateway accepts only grows, which is why the gateway
-          is always updated first.
+          gateway's version before pairing and refuses only a gateway older than the oldest one its
+          page capture works with; a newer extension on an older gateway keeps capturing pages and
+          simply does not offer what that gateway lacks. Within a minor release, what the gateway
+          accepts only grows, which is why the gateway is always updated first.
         </p>
         <p>
           <code>GET /health</code> needs no token and returns the gateway's version and a

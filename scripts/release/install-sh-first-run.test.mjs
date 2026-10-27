@@ -8,7 +8,7 @@
  * `tailscale` the test decides the answers for.
  *
  * The seam is the shim: a source install always runs the CLI through
- * `<checkout>/node_modules/.bin/tsx`, so a recorder written there sees every
+ * the exact checkout’s `tsx/dist/loader.mjs` preload, so a recorder written there sees every
  * command the installer issues, with its arguments.
  *
  * Two run modes:
@@ -1741,6 +1741,17 @@ describe("install.sh workspace build", () => {
     expect(existsSync(partial)).toBe(false);
     // And the tree the successful attempt built is there.
     expect(
+      existsSync(
+        join(
+          fixturePath(`checkout-npm-ci-retry-clears`),
+          "node_modules",
+          "tsx",
+          "dist",
+          "loader.mjs",
+        ),
+      ),
+    ).toBe(true);
+    expect(
       existsSync(join(fixturePath(`checkout-npm-ci-retry-clears`), "node_modules", ".bin", "tsx")),
     ).toBe(true);
   });
@@ -2317,7 +2328,7 @@ describe("install.sh embedding model question", () => {
     // A re-run or an upgrade: the previous install's binary is on PATH, so the
     // catalog is readable up front.
     // The shim drops its first argument, which is the entry file the wrapper
-    // passes to tsx; a binary called directly needs that placeholder.
+    // passes to the source loader; a binary called directly needs that placeholder.
     writeExecutable(
       fixturePath("fake-bin", "omnesis"),
       `#!/bin/sh\nexec "${fixturePath("cli-shim.sh")}" entry.ts "$@"\n`,

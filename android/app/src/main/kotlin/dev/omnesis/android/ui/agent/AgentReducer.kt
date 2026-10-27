@@ -90,8 +90,17 @@ object AgentReducer {
         return when (event) {
             is AgentEvent.UserMessage -> {
                 val have = state.turns.any { it is AgentTurn.User && it.id == event.userMessageId }
-                if (have) state.copy(dismissToolsUntilUserMessage = false)
-                else state.copy(turns = state.turns + AgentTurn.User(event.userMessageId, event.text), dismissToolsUntilUserMessage = false)
+                if (have) return state.copy(dismissToolsUntilUserMessage = false)
+                // The originator's bubble is keyed by its submission id. The gateway may coalesce
+                // several queued submissions into one turn, so every matching placeholder collapses
+                // into the stamped bubble at the first one's position.
+                val stamped = AgentTurn.User(event.userMessageId, event.text)
+                val placeholder = { turn: AgentTurn -> turn is AgentTurn.User && turn.id in event.submissionIds }
+                val first = state.turns.indexOfFirst(placeholder)
+                val turns = if (first == -1) state.turns + stamped
+                else state.turns.filterIndexed { index, turn -> index == first || !placeholder(turn) }
+                    .toMutableList().also { it[first] = stamped }
+                state.copy(turns = turns, dismissToolsUntilUserMessage = false)
             }
 
             is AgentEvent.MessageStart ->

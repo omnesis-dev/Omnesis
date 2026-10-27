@@ -15,7 +15,7 @@ import { createObservation } from "../storage/observations.js";
 import { replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { resolveBrainSettings } from "../config.js";
 import { cognitionSpendDay } from "../storage/spend.js";
-import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
+import { WIKI_AUTHORING_GUIDANCE, WIKI_LOG_CURATION_TASK } from "../knowledge/wiki-authoring.js";
 import {
   insertTemporalAnnotation,
   markTemporalAnnotationsRefilePresented,
@@ -1702,6 +1702,14 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("There is no page quota");
     expect(prompt).toContain("knowledge_organization_complete");
     expect(prompt).toContain("not the joint organization decision");
+    expect(prompt).toContain("Never write a section about the cohort, its date range or its batch");
+    expect(prompt).toContain(
+      "Name an existing page as a target only when this source changes what the page should state",
+    );
+    expect(prompt).toContain(
+      "Members that only repeat routine outcomes an existing page already records settle as no_page or already_organized",
+    );
+    expect(prompt).toContain("update that page's statement of the current state in place");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {
@@ -2887,5 +2895,43 @@ test("separates actor and quoted context from current obligations in the shared 
   );
   expect(WIKI_AUTHORING_GUIDANCE).toContain(
     "When sources give one quantity different values (a fee, price, balance, size or date), never state both as facts.",
+  );
+});
+
+test("wiki guidance keeps status streams out of dated sections and names pages for subjects", () => {
+  // Phrased in categories, never for one kind of source.
+  for (const stream of [
+    "build and deployment results",
+    "monitoring and uptime alerts",
+    "shipping and delivery updates",
+    "account, billing and transaction alerts",
+  ])
+    expect(WIKI_AUTHORING_GUIDANCE).toContain(stream);
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("Most of their notifications change nothing durable");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "never add a section named for the notification's date or batch",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "update the passage it changes in place rather than appending another source-shaped or date-named section",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).not.toContain("Treat dated episodes as sections");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "complete such a source without naming the page among its discovery targets",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("Give node.title a short name for the page's subject");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "A document's subject line, an issue or ticket title, or a notification headline names that document, not the subject",
+  );
+});
+
+test("a log-shaped page's review steers a notification record to retirement", () => {
+  expect(WIKI_LOG_CURATION_TASK).toContain("retire it with knowledge_retire and a reason");
+  expect(WIKI_LOG_CURATION_TASK).toContain("One save may remove at most half of the page's claims");
+  expect(WIKI_LOG_CURATION_TASK).toContain("queues the next review");
+  expect(WIKI_LOG_CURATION_TASK).toContain(
+    "does not expand the offered claim or mutation authority",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "retire it with knowledge_retire when it only records routine notifications",
   );
 });

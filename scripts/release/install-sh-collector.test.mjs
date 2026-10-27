@@ -8,7 +8,7 @@
  * role reads from `/dev/tty`.
  *
  * The seam is the shim: a source install always runs the CLI through
- * `<checkout>/node_modules/.bin/tsx`, so a recorder written there sees every
+ * the exact checkout’s `tsx/dist/loader.mjs` preload, so a recorder written there sees every
  * command the installer issues, with its arguments. It also stands in for the
  * collector daemon: registering the service writes the pairing record a real
  * collector writes once the gateway has accepted it, which is what the

@@ -12,16 +12,29 @@
  * them, so this lock is taken before the first store opens and released as
  * the last thing on the way out.
  *
- * The lock is a file holding the owner's PID, its process start time and the
- * host name. A holder that no longer exists — or whose PID now belongs to a
- * different process — is stale and is replaced. A live holder is waited for
+ * Linux holds a kernel advisory lease for the gateway's entire lifetime, so
+ * containers sharing a directory do not mistake each other's PID namespaces
+ * or hostnames for process liveness. The record holds the owner's identity
+ * for diagnostics. macOS and legacy records use PID/start-time liveness.
+ * A live holder is waited for
  * up to `waitMs`, which is how a replacement gateway rides out its
  * predecessor's shutdown under a supervisor that restarts on exit.
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { linkSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  linkSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 export const GATEWAY_LOCK_FILE = "gateway.lock";
@@ -44,7 +57,14 @@ export interface GatewayLockHolder {
   processStart: string | null;
   hostname: string;
   startedAt: string;
+  /** Linux ownership is a kernel lease, independent of container PID/host names. */
+  locking?: "flock-v1";
+  leaseId?: string;
 }
+
+// Only paths obtained by reading the requested config directory are probed.
+// A JSON record cannot redirect an offline tool to a different lease file.
+const holderPaths = new WeakMap<GatewayLockHolder, string>();
 
 export interface GatewayLock {
   readonly path: string;
@@ -97,16 +117,61 @@ export async function acquireGatewayLock(
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       continue;
     }
-    const attempt = await withClaimGuard(path, () => {
-      if (tryClaim(path, pid, now)) return { claimed: true as const };
-      const holder = readHolder(path);
-      if (!holder || !holderIsAlive(holder)) {
-        retire(path, pid);
-        return { claimed: tryClaim(path, pid, now) };
-      }
-      return { claimed: false as const, holder };
-    });
-    if (attempt.claimed) return handle(path, pid);
+    let pendingLease: number | undefined;
+    let attempt;
+    try {
+      attempt = await withClaimGuard(path, () => {
+        // flock's FD mode locks the inherited open-file description. The parent
+        // retains that description after the utility exits, so only closing our
+        // FD (including SIGKILL) releases ownership. No keeper process can die
+        // independently and leave a still-writing gateway without its lease.
+        if (process.platform === "linux" && opts.pid === undefined) {
+          const lease = takeLease(path);
+          if (lease === null) {
+            return {
+              claimed: false as const,
+              holder: readHolder(path) ?? {
+                pid: 1,
+                processStart: null,
+                hostname: "",
+                startedAt: "",
+                locking: "flock-v1" as const,
+              },
+            };
+          }
+          try {
+            const holder = readHolder(path);
+            // An older gateway does not hold the lifetime lease. Preserve its
+            // PID/host evidence instead of stealing its stores during upgrade.
+            if (holder && holder.locking !== "flock-v1" && holderIsAlive(holder)) {
+              closeSync(lease);
+              return { claimed: false as const, holder };
+            }
+            retire(path, pid);
+            if (!tryClaim(path, pid, now, true))
+              throw new Error("Gateway claim changed while guarded");
+            pendingLease = lease;
+            return { claimed: true as const, lease };
+          } catch (error) {
+            closeSync(lease);
+            throw error;
+          }
+        }
+        if (tryClaim(path, pid, now)) return { claimed: true as const };
+        const holder = readHolder(path);
+        if (!holder || !holderIsAlive(holder)) {
+          retire(path, pid);
+          return { claimed: tryClaim(path, pid, now) };
+        }
+        return { claimed: false as const, holder };
+      });
+    } catch (error) {
+      // Ownership transfers only after the guard has exited successfully.
+      // A failed guard must not leave a lease behind in a caller that retries.
+      if (pendingLease !== undefined) closeSync(pendingLease);
+      throw error;
+    }
+    if (attempt.claimed) return handle(path, pid, "lease" in attempt ? attempt.lease : undefined);
     const holder = "holder" in attempt ? attempt.holder : readHolder(path);
     if (!holder) continue;
     if (!announced) {
@@ -210,15 +275,24 @@ export function liveGatewayHolder(configDir: string): GatewayLockHolder | null {
 
 /** Whether the recorded holder is still the process that took the lock. */
 export function holderIsAlive(holder: GatewayLockHolder): boolean {
-  if (holder.pid === process.pid) {
-    // A lock naming this very process was left by an earlier life of the
-    // same PID — a container restart, typically — never by us.
+  if (holder.locking === "flock-v1") {
+    const path = holderPaths.get(holder);
+    if (!path || process.platform !== "linux") return true;
+    const lease = takeLease(path);
+    if (lease === null) return true;
+    closeSync(lease);
     return false;
   }
   if (holder.hostname !== hostname()) {
     // A lock from another host (a config dir on shared storage) cannot be
     // probed; treat it as live rather than steal a store in use elsewhere.
     return true;
+  }
+  if (holder.pid === process.pid) {
+    // A same-host legacy record naming this process is from an earlier life
+    // of this PID. Foreign-host records must stay conservative even when
+    // their namespace happens to assign the same PID as ours.
+    return false;
   }
   return sameProcess(holder.pid, holder.processStart);
 }
@@ -229,12 +303,13 @@ export function holderIsAlive(holder: GatewayLockHolder): boolean {
  * into place, so a competing reader never sees a claim before its content:
  * `link` is atomic and fails with EEXIST when a holder exists.
  */
-function tryClaim(path: string, pid: number, now: () => Date): boolean {
+function tryClaim(path: string, pid: number, now: () => Date, advisory = false): boolean {
   const owner: GatewayLockHolder = {
     pid,
     processStart: processStart(pid),
     hostname: hostname(),
     startedAt: now().toISOString(),
+    ...(advisory ? { locking: "flock-v1" as const, leaseId: randomUUID() } : {}),
   };
   const record = `${JSON.stringify(owner)}\n`;
   const draft = `${path}.${pid}.claim`;
@@ -259,13 +334,21 @@ function tryClaim(path: string, pid: number, now: () => Date): boolean {
   }
 }
 
-function handle(path: string, pid: number): GatewayLock {
+function handle(path: string, pid: number, lease?: number): GatewayLock {
+  let released = false;
+  const leaseId = readHolder(path)?.leaseId;
   return {
     path,
     release() {
+      if (released) return;
+      released = true;
       const holder = readHolder(path);
-      if (holder && holder.pid !== pid) return;
-      rmSync(path, { force: true });
+      try {
+        if (holder && (holder.pid !== pid || holder.leaseId !== leaseId)) return;
+        rmSync(path, { force: true });
+      } finally {
+        if (lease !== undefined) closeSync(lease);
+      }
     },
   };
 }
@@ -282,14 +365,38 @@ function readHolder(path: string): GatewayLockHolder | null {
     if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
       return null;
     }
-    return {
+    const holder: GatewayLockHolder = {
       pid: parsed.pid,
       processStart: typeof parsed.processStart === "string" ? parsed.processStart : null,
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : "",
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "",
+      ...(parsed.locking === "flock-v1" ? { locking: "flock-v1" as const } : {}),
+      ...(typeof parsed.leaseId === "string" ? { leaseId: parsed.leaseId } : {}),
     };
+    holderPaths.set(holder, path);
+    return holder;
   } catch {
     return null;
+  }
+}
+
+/** A nonblocking kernel lease; caller owns the returned FD until close. */
+function takeLease(path: string): number | null {
+  const fd = openSync(
+    `${path}.lease`,
+    constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    0o600,
+  );
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("Gateway lease must be a regular file");
+    execFileSync("flock", ["-n", "-x", "-E", "73", "3"], {
+      stdio: ["ignore", "ignore", "pipe", fd],
+    });
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    if ((error as { status?: number }).status === 73) return null;
+    throw error;
   }
 }
 

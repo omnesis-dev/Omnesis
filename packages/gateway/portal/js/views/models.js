@@ -71,12 +71,13 @@ import {
   cliBackendAssignments,
 } from "./model-config.js";
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
+import { noteAgentSettingPatch } from "../lib/note-agent.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
 
 /** Assignment kinds whose reasoning/behavior controls the portal can edit. */
 const BEHAVIOR_KINDS = ["http", "codex", "claude-code"];
-const NO_BEHAVIOR_ROLES = ["embedder", "transcriber", "ocr"];
+const NO_BEHAVIOR_ROLES = ["embedder", "transcriber", "ocr", "speech-to-speech"];
 
 function hasBehaviorControls(role, assignment) {
   return BEHAVIOR_KINDS.includes(assignment?.kind) && !NO_BEHAVIOR_ROLES.includes(role);
@@ -410,6 +411,7 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
         ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
             <${GatewayDictationSetting} />`
         : null}
+      ${role === "background-agent" ? html`<${NoteAgentSetting} />` : null}
       ${role === "ocr"
         ? html`<div class="cap-detail-hint">Images and scanned PDFs are OCR'd as sources sync. Already-ingested attachments are <strong>not</strong> re-OCR'd automatically; resync a source to reprocess them.</div>`
         : null}
@@ -512,6 +514,68 @@ export function GatewayDictationSetting() {
       ${dictation.enabled && !dictation.modelAssigned
         ? html`<div class="cap-detail-hint">
             <strong>Not in use yet.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
+          </div>`
+        : null}
+      ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}
+    </div>
+  `;
+}
+
+// The note agent's on/off setting, beside the model that runs it. The
+// gateway's `noteAgent` verdict says whether the owner leaves it on and whether
+// a background-agent model can run. A gateway without the verdict hides the
+// section.
+export function NoteAgentSetting() {
+  const [noteAgent, setNoteAgent] = useState(null); // null = loading or hidden
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  // A failed read keeps the last verdict, so one transient error never hides
+  // the section.
+  async function refresh() {
+    try {
+      const status = await getStatus();
+      setNoteAgent(status?.noteAgent ?? null);
+    } catch {
+      // keep the current verdict
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  if (!noteAgent) return null;
+
+  async function toggle() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await patchAdminConfig(noteAgentSettingPatch(!noteAgent.enabled));
+      if (!res.ok) setError(res.body?.error ?? "Failed to save the setting.");
+      await refresh();
+    } catch {
+      setError("Failed to save the setting.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <div class="detail-section cap-note-agent">
+      <div class="models-cloud-control">
+        <h2>Act on Tell Omnesis notes</h2>
+        <button type="button" class="models-cloud-switch" role="switch"
+          aria-checked=${noteAgent.enabled}
+          aria-label="Act on Tell Omnesis notes" disabled=${busy}
+          onClick=${toggle}>
+          <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
+        </button>
+        <span role="status">${busy ? "Saving…" : noteAgent.enabled ? "On" : "Off"}</span>
+      </div>
+      <p class="cap-detail-desc">
+        When on, this model reads each note you tell Omnesis from the portal, the apps or the CLI, in one short turn per note, and acts on it: it adds, completes or moves your tasks, remembers facts you state and answers questions. Notes told while it is off are only saved, and are not read later.
+      </p>
+      ${noteAgent.enabled && !noteAgent.modelAssigned
+        ? html`<div class="cap-detail-hint">
+            <strong>Not in use yet.</strong> No background-agent model can run, so notes are only saved.
           </div>`
         : null}
       ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}

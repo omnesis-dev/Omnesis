@@ -272,6 +272,8 @@ export interface DeviceEntry {
   harness?: string | null;
   /** How the device verifies the gateway's certificate, as its hello reported it. */
   tlsMode?: DeviceTlsTrustMode | null;
+  /** The device reported that its pin gives way to public trust at a publicly trusted renewal. */
+  tlsFollowsPublicRenewal?: boolean;
   /** Set when the device pins a certificate the gateway replaces or has replaced. */
   tlsTrust?: DeviceTlsTrust;
   /** For an agent device, whether its corpus access needs a human to re-authorize it. */

@@ -30,14 +30,14 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
     "identifyingName": "Jane Doe",
   },
   {
-    "aliasCount": 3,
-    "documentCount": 14,
-    "identifyingName": "Emma Park",
+    "aliasCount": 4,
+    "documentCount": 19,
+    "identifyingName": "John Smith",
   },
   {
-    "aliasCount": 3,
-    "documentCount": 13,
-    "identifyingName": "John Smith",
+    "aliasCount": 5,
+    "documentCount": 17,
+    "identifyingName": "Emma Park",
   },
   {
     "aliasCount": 5,
@@ -45,9 +45,9 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
     "identifyingName": "Alex Chen",
   },
   {
-    "aliasCount": 1,
-    "documentCount": 6,
-    "identifyingName": "john.smith@icloud.example",
+    "aliasCount": 5,
+    "documentCount": 5,
+    "identifyingName": "Dave Ortiz",
   },
   {
     "aliasCount": 4,
@@ -63,16 +63,6 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
     "aliasCount": 3,
     "documentCount": 3,
     "identifyingName": "Daniel Harper",
-  },
-  {
-    "aliasCount": 3,
-    "documentCount": 3,
-    "identifyingName": "Dave Ortiz",
-  },
-  {
-    "aliasCount": 2,
-    "documentCount": 3,
-    "identifyingName": "Emma Park",
   },
 ]
 `;

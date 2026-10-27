@@ -3,7 +3,6 @@
 
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
-import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 
 import {
   type SyncIssue,
@@ -56,6 +55,7 @@ type Db = Database.Database;
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
   applyBriefReaction,
   recordInterestSignal,
@@ -68,7 +68,12 @@ import {
   type InterestSupersedeScope,
   type NewInterestSignal,
 } from "../brain/storage/interest.js";
-import { claimDueNote, enqueueNewNotes, finishNoteRun } from "../brain/note-agent/storage.js";
+import {
+  claimDueNote,
+  enqueueNewNotes,
+  finishNoteRun,
+  skipNewNotes,
+} from "../brain/note-agent/storage.js";
 import { advanceOccWatermark } from "../data/occ-materialized.js";
 import {
   preparePendingSourcePage,
@@ -1506,6 +1511,8 @@ export const writerHandlers = {
     cancelScheduledRunsForLoop(db, loopId),
   "cognition.engineStateSet": (db: Db, key: string, value: string): void =>
     setCognitionEngineState(db, key, value),
+  "live.recordVoiceUsage": (db: Db, input: LiveVoiceUsageSample): void =>
+    recordLiveVoiceUsage(db, input),
   // Non-run spend accounting: fold one mechanism call's token usage into its
   // (day, mechanism, model) bucket. Run-settling spend goes through
   // `cognition.finalize`; this op serves mechanisms with no run row (the
@@ -1804,6 +1811,7 @@ export const writerHandlers = {
   "cognition.observationUserAction": (db: Db, id: string, userAction: string | null, now: number) =>
     setObservationUserAction(db, id, userAction, now),
   "noteAgent.enqueue": (db: Db, now: number) => enqueueNewNotes(db, now),
+  "noteAgent.skip": (db: Db, now: number) => skipNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
     clearMorningBriefMessageItems(db, messageId),
   "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
@@ -1959,6 +1967,7 @@ export const writerHandlers = {
  */
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 import type {
   ProposedTaskChange,
   ObservationClaim,

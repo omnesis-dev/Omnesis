@@ -487,9 +487,11 @@ export class RealtimeBackend implements ChatBackend {
                 }
               }
               const failure = this.modelFailure(realtimeFailureCode(detail));
-              if (detail.code || detail.type)
+              const providerCode =
+                detail.code ?? (detail.reason === "content_filter" ? "content_filter" : undefined);
+              if (providerCode || detail.type)
                 failure.provider = {
-                  ...(detail.code ? { code: detail.code } : {}),
+                  ...(providerCode ? { code: providerCode } : {}),
                   ...(detail.type ? { type: detail.type } : {}),
                 };
               yield wrapEvent("agent.message.end", {

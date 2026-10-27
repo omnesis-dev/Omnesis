@@ -13,10 +13,10 @@ import {
   setLogLevel,
   writeConfigSecretSync,
 } from "@omnesis/core";
+import { validateConfig, type OmnesisConfig } from "@omnesis/config";
 import { InferenceRegistry } from "./registry.js";
 import type { LookupAddress } from "node:dns";
 import type { BackendStatus, CatalogEntry, Manifest } from "@omnesis/core";
-import type { OmnesisConfig } from "@omnesis/config";
 
 // This suite intentionally drives many probe FAILURES, each emitting a WARN log.
 // Under the fork pool, that flood of console output can still be mid-RPC when the
@@ -2452,6 +2452,22 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     });
   });
 
+  it("leaves a configured HTTP backend named claude-code serving its assignments", () => {
+    const reg = registryWithTypeSafeKey(true);
+    reg.loadConfig({
+      inference: {
+        allowRemoteInference: true,
+        backends: { "claude-code": { url: "http://127.0.0.1:18998/v1" } },
+        assignments: { "background-agent": "claude-code/some-chat-model" },
+      },
+    } as OmnesisConfig);
+    expect(reg.resolve("background-agent")).toMatchObject({
+      kind: "http",
+      backendKey: "claude-code",
+      model: "some-chat-model",
+    });
+  });
+
   it("refuses TypeSafe for every other role", () => {
     const reg = registryWithTypeSafeKey(true);
     reg.loadConfig({
@@ -2464,5 +2480,99 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
       kind: "unresolved",
       reason: "TypeSafe serves only the Decision model capability.",
     });
+  });
+});
+
+describe("explicit experimental speech-to-speech assignment", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const speechConfig = (inference: unknown): OmnesisConfig => {
+    const parsed = validateConfig({ inference });
+    if (!parsed.ok) throw new Error("Invalid speech capability fixture");
+    return parsed.config;
+  };
+  it("never auto-enables and resolves the supported media model without a model-list probe", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const reg = makeRegistry();
+    const inference = {
+      allowRemoteInference: true,
+      backends: {
+        cloud: { type: "http", url: "https://api.openai.com", apiKey: "fixture-key" },
+      },
+    };
+    reg.loadConfig(speechConfig(inference));
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
+    reg.loadConfig(
+      speechConfig({
+        ...inference,
+        assignments: { "speech-to-speech": "cloud/gpt-live-1", agent: "cloud/chat-fixture" },
+      }),
+    );
+    expect(reg.resolve("speech-to-speech")).toMatchObject({
+      kind: "http",
+      model: "gpt-live-1",
+      backendKey: "cloud",
+      available: true,
+    });
+    expect(reg.resolve("agent")).toMatchObject({ kind: "http", model: "chat-fixture" });
+    expect(reg.getOverview().backends.cloud?.modelRoles?.["gpt-live-1"]).toEqual([
+      "speech-to-speech",
+    ]);
+    reg.loadConfig(speechConfig({ ...inference, assignments: { "speech-to-speech": null } }));
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "disabled" });
+  });
+  it.each([
+    {
+      experimental: "0",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: false,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: undefined,
+      url: "https://api.openai.com",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://example.org",
+      value: "cloud/gpt-live-1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "cloud/gpt-4.1",
+    },
+    {
+      experimental: "1",
+      remote: true,
+      key: "fixture-key",
+      url: "https://api.openai.com",
+      value: "replay",
+    },
+  ])("refuses an unusable speech assignment %#", ({ experimental, remote, key, url, value }) => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", experimental);
+    const reg = makeRegistry();
+    reg.loadConfig(
+      speechConfig({
+        allowRemoteInference: remote,
+        backends: { cloud: { type: "http", url, apiKey: key } },
+        assignments: { "speech-to-speech": value },
+      }),
+    );
+    expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "unresolved" });
   });
 });

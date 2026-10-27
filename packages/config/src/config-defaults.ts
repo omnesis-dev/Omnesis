@@ -45,6 +45,7 @@ export const CONFIG_DEFAULTS = {
     subagentDepthCap: 2,
     subagentConcurrencyCap: 4,
     maxToolIterations: 50,
+    noteAgent: true,
   },
   backupRetention: {
     preUpdateCount: 2,

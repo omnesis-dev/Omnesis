@@ -285,9 +285,13 @@ export function scheduleKnowledgeReview(
     decision?: "now" | "defer" | "dormant";
     workId?: string;
     reason?: string;
+    /** Also record this one-time request under `reviewRequests`, so it is not repeated. */
+    request?: string;
   },
   now: number,
 ): void {
+  if (input.request !== undefined && !/^[a-z][a-z0-9_]*$/.test(input.request))
+    throw new KnowledgeStorageError("claim_invalid", "Review request keys are snake_case names");
   db.transaction(() => {
     const result = db
       .prepare(
@@ -302,6 +306,10 @@ export function scheduleKnowledgeReview(
         input.id,
         input.expectedRevision,
       );
+    if (result.changes === 1 && input.request !== undefined)
+      db.prepare(
+        `UPDATE knowledge_nodes SET metadata_json=json_set(metadata_json,'$.reviewRequests.${input.request}',?) WHERE id=?`,
+      ).run(now, input.id);
     if (result.changes !== 1)
       throw new KnowledgeStorageError(
         "revision_conflict",

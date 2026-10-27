@@ -88,6 +88,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   // ── Lifecycle (install/update/supervise) ─────────────────────────────
   service: () => import("./commands/service.js").then((m) => m.serviceCommand),
   update: () => import("./commands/update.js").then((m) => m.updateCommand),
+  uninstall: () => import("./commands/uninstall.js").then((m) => m.uninstallCommand),
   "_portal-fleet-update-run": () =>
     import("./commands/portal-fleet-update-run.js").then((m) => m.portalFleetUpdateRunCommand),
 

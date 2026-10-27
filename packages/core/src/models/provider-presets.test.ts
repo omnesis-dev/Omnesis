@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, it, expect } from "vitest";
-import { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
+import { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
 import { PROVIDER_BRANDS } from "./provider-brands.js";
 
 describe("PROVIDER_PRESETS", () => {
@@ -105,6 +105,16 @@ describe("PROVIDER_PRESETS", () => {
     expect(openrouter?.capabilities).not.toContain("embed");
   });
 
+  it("Regolo AI uses its OpenAI-compatible host and Models.dev alias", () => {
+    expect(getPreset("regolo")).toEqual({
+      id: "regolo",
+      modelsDevId: "regolo-ai",
+      name: "Regolo AI",
+      defaultUrl: "https://api.regolo.ai",
+      capabilities: ["agent", "embed"],
+    });
+  });
+
   it("every preset id has a matching brand so its glyph resolves", () => {
     // A backend added from a preset keeps the preset id as its key, and
     // `httpProviderId` resolves the brand by that key. A preset without a
@@ -126,5 +136,18 @@ describe("getPreset", () => {
 
   it("returns undefined for an unknown id", () => {
     expect(getPreset("nonexistent-provider")).toBeUndefined();
+  });
+});
+
+describe("getPresetByUrl", () => {
+  it("finds every preset by its default URL, with or without a trailing slash", () => {
+    for (const p of PROVIDER_PRESETS) {
+      expect(getPresetByUrl(p.defaultUrl)?.id, p.id).toBe(p.id);
+      expect(getPresetByUrl(`${p.defaultUrl}/`)?.id, p.id).toBe(p.id);
+    }
+  });
+
+  it("returns undefined for a URL no preset uses", () => {
+    expect(getPresetByUrl("https://llm.example.com")).toBeUndefined();
   });
 });

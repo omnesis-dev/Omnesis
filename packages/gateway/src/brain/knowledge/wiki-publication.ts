@@ -71,6 +71,26 @@ export class WikiPublicationReads {
   nodeRead(node: { id: string; kind: string; revision: number } | null): void {
     if (node?.kind === "wiki") this.nodes.set(node.id, node.revision);
   }
+  /**
+   * Refuse publishing a candidate that is no longer proposed. When this run
+   * was shown it and the library has changed since, a concurrent run
+   * published, merged or dismissed it in between: that is contention, so the
+   * run is told to read the library again rather than that its request was
+   * malformed.
+   */
+  refuseUnproposed(candidateId: string | undefined): never {
+    if (
+      candidateId !== undefined &&
+      this.candidateIds.has(candidateId) &&
+      this.inventoryRevision !== undefined &&
+      this.inventoryRevision !== readKnowledgeCollectionRevision(this.db, "wiki_scope")
+    )
+      throw knowledgeReconciliationConflict("wiki_scope");
+    throw new KnowledgeStorageError(
+      "claim_invalid",
+      "A new wiki needs a reconciled proposed candidate",
+    );
+  }
   assertInspected(): number {
     assertKnowledgeReconciliation(this.db, {
       collection: "wiki_scope",

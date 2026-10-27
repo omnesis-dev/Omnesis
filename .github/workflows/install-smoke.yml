@@ -259,6 +259,24 @@ jobs:
             || { echo "auto install did not get the newest published version"; exit 1; }
           rm -rf "$AUTO_HOME"
 
+      # The package install's own CLI removes itself: npm uninstalls the
+      # package from the prefix the launcher names, and --purge takes the
+      # config directory with it.
+      - name: lane [uninstall-package]
+        run: |
+          CONFIG="$TEST_HOME/.config/omnesis"
+          [ -d "$TEST_HOME/.npm-global/lib/node_modules/omnesis" ] || { echo "no package to uninstall"; exit 1; }
+          HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" "$OMNESIS_BIN" uninstall --dry-run
+          [ -d "$TEST_HOME/.npm-global/lib/node_modules/omnesis" ] || { echo "the dry run removed the package"; exit 1; }
+          HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" "$OMNESIS_BIN" uninstall --yes --purge
+          for path in "$TEST_HOME/.npm-global/lib/node_modules/omnesis" "$TEST_HOME/.npm-global/bin/omnesis" \
+            "$TEST_HOME/.local/bin/omnesis" "$CONFIG"; do
+            if [ -e "$path" ] || [ -L "$path" ]; then
+              echo "$path is still there after omnesis uninstall --purge"
+              exit 1
+            fi
+          done
+
       - name: Cleanup
         if: always()
         run: |

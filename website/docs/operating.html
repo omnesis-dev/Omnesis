@@ -172,9 +172,13 @@
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
           <code>status</code>, <code>logs</code> (<code>-f</code> to follow, <code>-n</code> for the
-          number of lines) and <code>uninstall</code>; a bare <code>omnesis service</code> shows
-          status. <code>stop</code> returns only once the daemon has exited and released its stores,
-          and the service stays down until <code>start</code> or the next login on macOS, so offline
+          number of lines) and <code>uninstall</code>, which removes only the units (<a
+            href="/docs/install#uninstall"
+            ><code>omnesis uninstall</code></a
+          >
+          removes the rest of the install too); a bare <code>omnesis service</code> shows status.
+          <code>stop</code> returns only once the daemon has exited and released its stores, and the
+          service stays down until <code>start</code> or the next login on macOS, so offline
           maintenance such as <code>omnesis restore</code> can rely on it.
         </p>
         <p>
@@ -574,8 +578,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </li>
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
-            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI
-            and OpenRouter.
+            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI,
+            Regolo AI and OpenRouter.
           </li>
           <li>
             <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
@@ -1331,6 +1335,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
                 <td>Back up, restore, export and update</td>
                 <td><a href="/docs/updating">Backup &amp; updates</a></td>
+              </tr>
+              <tr>
+                <td><code>uninstall</code></td>
+                <td>Remove Omnesis from this machine, all of it or the parts named</td>
+                <td><a href="/docs/install#uninstall">Uninstall</a></td>
               </tr>
               <tr>
                 <td><code>gateway</code>, <code>collector</code></td>

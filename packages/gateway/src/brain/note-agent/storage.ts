@@ -7,7 +7,9 @@
  * Notes the owner's own clients capture after the note agent first ran are
  * queued as they appear; a note from an external agent or the browser
  * extension is never read, so a notes-only grant cannot change tasks or
- * memory through it. Earlier notes are not processed retroactively. A row
+ * memory through it. Earlier notes are not processed retroactively, and notes
+ * captured while the owner has the note agent switched off are settled as
+ * skipped, so switching it back on never acts on them. A row
  * waits until its note has settled (no edits for a short while, its voice transcript in),
  * runs once, and keeps the receipt the user sees under the note. Deleting a
  * note deletes its row.
@@ -111,22 +113,38 @@ export const NOTE_AGENT_MAX_ATTEMPTS = 3;
  * notes that arrived since the previous one.
  */
 export function enqueueNewNotes(db: Db, now: number): number {
+  return scanNewNotes(db, now, "pending");
+}
+
+/**
+ * Settle the owner's notes received since the last scan as skipped, and
+ * return how many: what is told while the note agent is switched off is
+ * never read, even once it is switched back on. Before the note agent first
+ * ran there is no scan to continue, and nothing is recorded.
+ */
+export function skipNewNotes(db: Db, now: number): number {
+  return scanNewNotes(db, now, "skipped");
+}
+
+function scanNewNotes(db: Db, now: number, state: "pending" | "skipped"): number {
   return db.transaction(() => {
-    db.prepare<[string]>(
-      "INSERT OR IGNORE INTO note_agent_meta (key, value) VALUES ('scanned', ?)",
-    ).run(new Date(now).toISOString());
+    if (state === "pending")
+      db.prepare<[string]>(
+        "INSERT OR IGNORE INTO note_agent_meta (key, value) VALUES ('scanned', ?)",
+      ).run(new Date(now).toISOString());
     const scanned = db
       .prepare<[], { value: string }>("SELECT value FROM note_agent_meta WHERE key = 'scanned'")
-      .get()!.value;
+      .get()?.value;
+    if (scanned === undefined) return 0;
     const res = db
-      .prepare<[number, number, number, string]>(
+      .prepare<[string, number, number, number, string]>(
         `INSERT OR IGNORE INTO note_agent_runs (entry_id, state, run_after, created_at, updated_at)
-         SELECT n.id, 'pending', ?, ?, ?
+         SELECT n.id, ?, ?, ?, ?
            FROM note_entries n
           WHERE n.from_owner = 1 AND n.received_at >= ?
             AND NOT EXISTS (SELECT 1 FROM note_agent_runs r WHERE r.entry_id = n.id)`,
       )
-      .run(now, now, now, scanned);
+      .run(state, now, now, now, scanned);
     const latest = db
       .prepare<
         [string],

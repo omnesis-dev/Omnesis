@@ -149,6 +149,10 @@ describe("every consumer reads the shared budget", () => {
      */
     const containerBoot = [
       "scripts/docker-e2e/lib.sh",
+      // These checks boot compiled images, including encrypted state and
+      // container recreation, rather than a gateway under the tsx harness.
+      "scripts/docker/compose-smoke.sh",
+      "scripts/docker/image-smoke.sh",
       // The topology lane waits for a gateway that a real `install.sh` run has
       // just cloned, installed and built inside a container. That wait is not
       // the one this budget describes, and holding it to a number sized for a

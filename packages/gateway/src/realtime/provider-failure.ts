@@ -6,6 +6,17 @@ import { z } from "zod";
 import type { AgentTerminalFailure } from "@omnesis/core";
 
 const codes = new Set([
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+  "slow_down",
+  "server_is_overloaded",
+  "ip_not_authorized",
+  "invalid_api_key",
+  "authentication_error",
+  "permission_denied",
+  "rate_limited",
+  "output_truncated",
   "credit_balance_exhausted",
   "server_error",
   "internal_error",
@@ -23,6 +34,9 @@ const codes = new Set([
   "content_filter",
 ]);
 const errorTypes = new Set([
+  "authentication_error",
+  "permission_denied",
+  "ip_not_authorized",
   "server_error",
   "invalid_request_error",
   "rate_limit_error",
@@ -62,21 +76,35 @@ export function realtimeFailureDetails(value: unknown): {
   };
 }
 
+const quotaCodes = new Set([
+  "insufficient_quota",
+  "credit_balance_exhausted",
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+]);
 export function realtimeQuotaExhausted(detail: ReturnType<typeof realtimeFailureDetails>): boolean {
-  return (
-    detail.code === "insufficient_quota" ||
-    detail.code === "credit_balance_exhausted" ||
-    detail.type === "insufficient_quota"
-  );
+  return quotaCodes.has(detail.code ?? "") || detail.type === "insufficient_quota";
 }
 
 export function realtimeFailureCode(detail: ReturnType<typeof realtimeFailureDetails>): string {
-  return realtimeQuotaExhausted(detail)
-    ? detail.code === "credit_balance_exhausted"
-      ? detail.code
-      : "insufficient_quota"
-    : (detail.code ?? detail.reason ?? detail.type ?? "provider_error");
+  if (detail.code && quotaCodes.has(detail.code)) return detail.code;
+  if (detail.type === "insufficient_quota") return "insufficient_quota";
+  return detail.code ?? detail.reason ?? detail.type ?? "provider_error";
 }
+
+export const realtimeProviderActionMessages = {
+  credit_balance_exhausted:
+    "The provider API credit balance is exhausted. Add API credit before trying again.",
+  project_spend_limit_exceeded:
+    "The OpenAI project spend limit was reached. Raise that project's limit before trying again.",
+  organization_spend_limit_exceeded:
+    "The OpenAI organization spend limit was reached. Check the organization's billing limits before trying again.",
+  organization_usage_limit_exceeded:
+    "The OpenAI organization usage limit was reached. Check its assigned usage limit before trying again.",
+  insufficient_quota:
+    "The provider API credit or quota is exhausted. Check billing or limits before trying again.",
+} as const;
 
 export function realtimeModelFailure(
   code: string,
@@ -91,7 +119,10 @@ export function realtimeModelFailure(
         : code === "rate_limit_exceeded"
           ? "rate_limited"
           : "provider_error";
-  const quotaExhausted = code === "insufficient_quota" || code === "credit_balance_exhausted";
+  const quotaExhausted = quotaCodes.has(code);
+  const actionMessage = Object.entries(realtimeProviderActionMessages).find(
+    ([key]) => key === code,
+  )?.[1];
   return {
     code: kind,
     message:
@@ -101,10 +132,13 @@ export function realtimeModelFailure(
           ? OUTPUT_TRUNCATED_MESSAGE
           : kind === "rate_limited"
             ? "The realtime model is temporarily rate-limited. Please try again shortly."
-            : quotaExhausted
-              ? "The provider API credit or quota is exhausted. Check billing or limits before trying again."
-              : "The realtime model could not complete this reply.",
-    retryable: (kind === "provider_error" || kind === "rate_limited") && !quotaExhausted,
+            : code === "content_filter"
+              ? "The voice provider could not answer this request. Try rephrasing it."
+              : (actionMessage ?? "The realtime model could not complete this reply."),
+    retryable:
+      (kind === "provider_error" || kind === "rate_limited") &&
+      !quotaExhausted &&
+      code !== "content_filter",
     backend,
     model,
   };
