@@ -810,7 +810,13 @@ export type {
   TranscriptionVocabulary,
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
-export { MAX_TRANSCRIPTION_MS } from "./transcription.js";
+export {
+  MAX_TRANSCRIPTION_MS,
+  TRANSCRIBER_UNAVAILABLE,
+  transcriptionPlaceholderNote,
+  transcriptionSyncIssues,
+} from "./transcription.js";
+export type { TranscriptionBacklog, TranscriptionPlaceholderState } from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 

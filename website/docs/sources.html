@@ -269,13 +269,17 @@
                   Messages as conversational documents, live as they arrive, plus an optional
                   one-time full-history import from an iPhone backup. Media text is extracted, and
                   voice notes are transcribed
-                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Message
-                  sync continues when media processing is disabled or unavailable. Pending media
-                  stays in the local archive for later retries, within the source's date range. The
-                  add flow shows a QR code; scan it under WhatsApp
-                  <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
-                  starts syncing without a restart. WhatsApp may unlink a device after roughly two
-                  weeks without activity; run
+                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Until a
+                  note is transcribed its placeholder says why (<code
+                    >[Voice note, 0:12 — awaiting transcription]</code
+                  >, <code>no transcriber available</code>, <code>no speech detected</code> or
+                  <code>audio unavailable</code>), and the source's notice on the Sources page
+                  counts the notes still waiting. Message sync continues when media processing is
+                  disabled or unavailable. Pending media stays in the local archive for later
+                  retries, within the source's date range. The add flow shows a QR code; scan it
+                  under WhatsApp <strong>Settings → Linked Devices → Link a Device</strong>, and the
+                  collector starts syncing without a restart. WhatsApp may unlink a device after
+                  roughly two weeks without activity; run
                   <code>omnesis sources reauth whatsapp:&lt;account&gt;</code> and scan a new QR
                   code to reconnect it.
                 </td>
@@ -289,7 +293,9 @@
                   Messages as conversational documents, with attachment text inline, and voice-clip
                   transcripts
                   <a href="/docs/operating#models">when a transcriber model is assigned</a>;
-                  participants feed the people graph.
+                  participants feed the people graph. A clip without a transcript says why in its
+                  placeholder and is retried on a schedule; the source's notice on the Sources page
+                  counts the clips still waiting.
                 </td>
               </tr>
             </tbody>

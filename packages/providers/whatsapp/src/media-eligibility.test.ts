@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { resolveAttachmentConfig } from "@omnesis/core";
-import { MessageStore } from "./message-store.js";
+import { MessageStore, type MediaHealthStats } from "./message-store.js";
 import { WhatsAppMessagesSource, type WhatsAppMessagesSourceOptions } from "./messages.js";
 import type { StoredMessage } from "./types.js";
 
@@ -32,6 +32,8 @@ const cases: {
   name: string;
   options?: WhatsAppMessagesSourceOptions;
   message?: (message: StoredMessage) => StoredMessage;
+  /** Pending media the health stats report; they only count media the source will ever sync. */
+  reportedPending?: number;
 }[] = [
   {
     name: "disabled attachments",
@@ -47,6 +49,7 @@ const cases: {
   {
     name: "media before source cutoff",
     options: { dataCutoff: "2025-09-01T00:00:00.000Z" },
+    reportedPending: 0,
   },
   {
     name: "non-voice audio",
@@ -57,6 +60,14 @@ const cases: {
     message: (m) => ({ ...m, media: { ...m.media, mimetype: undefined } }),
   },
 ];
+
+/** Voice notes and attachments together, for a test that mixes both. */
+function mediaTotals(stats: MediaHealthStats): { pending: number; unavailable: number } {
+  return {
+    pending: stats.voiceNotes.pending + stats.attachments.pending,
+    unavailable: stats.voiceNotes.unavailable + stats.attachments.unavailable,
+  };
+}
 
 describe("WhatsApp media retry eligibility", () => {
   let store: MessageStore;
@@ -122,7 +133,10 @@ describe("WhatsApp media retry eligibility", () => {
     expect(settled.documents).toHaveLength(0);
     expect(settled.hasMore).toBe(false);
     expect(downloadMedia).not.toHaveBeenCalled();
-    expect(store.mediaHealthStats()).toEqual({ pending: 201, unavailable: 0 });
+    expect(mediaTotals(store.mediaHealthStats())).toEqual({
+      pending: scenario.reportedPending ?? 201,
+      unavailable: 0,
+    });
     expect(store.totalMessages).toBe(202);
     expect(store.getMessageById(CHAT, old[0].id)).toEqual(pendingBefore);
 
@@ -178,7 +192,7 @@ describe("WhatsApp media retry eligibility", () => {
     const recovered = await restored.sync(settled.cursor);
     expect(recovered.documents.some((doc) => doc.content.includes("recovered image"))).toBe(true);
     expect(recovered.documents.some((doc) => doc.content.includes("recovered voice"))).toBe(true);
-    expect(store.mediaHealthStats()).toEqual({ pending: 0, unavailable: 0 });
+    expect(mediaTotals(store.mediaHealthStats())).toEqual({ pending: 0, unavailable: 0 });
   });
 
   test("ineligible media cannot consume the sweep limit ahead of an eligible retry", async () => {

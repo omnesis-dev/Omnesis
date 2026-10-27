@@ -14,6 +14,7 @@ export const syncIssueSchema = z.object({
   subject: z.string().max(512).optional(),
   message: z.string().max(2000),
   remediation: syncRemediationSchema.optional(),
+  severity: z.enum(["info", "warning"]).optional(),
 }) satisfies z.ZodType<SyncIssue>;
 export const syncIssuesSchema = z.array(syncIssueSchema).max(MAX_SYNC_ISSUES);
 export const syncIssueAssessmentsSchema = z

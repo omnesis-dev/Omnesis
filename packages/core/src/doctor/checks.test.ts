@@ -44,7 +44,13 @@ function healthyInference(): InferenceOverview {
         available: true,
       },
       "privacy-reviewer": { role: "privacy-reviewer", kind: "disabled" },
-      transcriber: { role: "transcriber", kind: "disabled" },
+      transcriber: {
+        role: "transcriber",
+        kind: "local",
+        catalogId: "whisper-small",
+        modelPath: "/models/ggml-small.bin",
+        available: true,
+      },
       ocr: { role: "ocr", kind: "disabled" },
       "background-agent": { role: "background-agent", kind: "disabled" },
       "watch-judge": { role: "watch-judge", kind: "disabled" },
@@ -921,7 +927,7 @@ describe("evaluateDoctor — device identity", () => {
 });
 
 describe("evaluateDoctor — missing embedder", () => {
-  test("unavailable embedder is a FAIL, agent unavailability is a WARN, and transcriber is ignored", () => {
+  test("unavailable embedder is a FAIL, agent and transcriber unavailability are WARNs", () => {
     const data = healthyData();
     const inf = data.models!.inference;
     inf.assignments.embedder = {
@@ -941,7 +947,11 @@ describe("evaluateDoctor — missing embedder", () => {
     expect(emb?.status).toBe("fail");
     expect(emb?.message).toContain("not available");
 
-    expect(findCheck(report.checks, "models.transcriber")).toBeUndefined();
+    const transcriber = findCheck(report.checks, "models.transcriber");
+    expect(transcriber?.status).toBe("warn");
+    expect(transcriber?.message).toBe("transcriber is not configured");
+    expect(transcriber?.hint).toContain("stay as placeholders until a transcriber is assigned");
+    expect(transcriber?.hint).toContain("omnesis model assign transcriber local/<id>");
     expect(findCheck(report.checks, "models.agent")?.status).toBe("warn");
 
     expect(report.ok).toBe(false);

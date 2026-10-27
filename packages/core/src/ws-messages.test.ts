@@ -280,6 +280,33 @@ describe("sync.status event", () => {
     expect(r.ok).toBe(false);
   });
 
+  test("keeps an issue's severity and remediation, and drops a report with an unknown severity", () => {
+    const issue = {
+      code: "transcription-awaiting",
+      scope: "item",
+      kind: "transient",
+      count: 3,
+      severity: "info",
+      message: "3 voice notes awaiting transcription",
+      remediation: { summary: "Nothing to do", steps: ["Wait."], restartRequired: false },
+    };
+    const kept = parseEventPayload("sync.status", {
+      sourceId: "gmail:a@b.com",
+      state: "completed",
+      issues: [issue],
+    });
+    expect(kept.ok).toBe(true);
+    if (kept.ok) expect(kept.value.issues).toEqual([issue]);
+
+    const unknown = parseEventPayload("sync.status", {
+      sourceId: "gmail:a@b.com",
+      state: "completed",
+      issues: [{ ...issue, severity: "critical" }],
+    });
+    expect(unknown.ok).toBe(true);
+    if (unknown.ok) expect(unknown.value.issues).toBeUndefined();
+  });
+
   test("rejects a missing sourceId", () => {
     const r = parseEventPayload("sync.status", { state: "syncing" });
     expect(r.ok).toBe(false);

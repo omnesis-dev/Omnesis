@@ -283,7 +283,14 @@ describe("MessageStore media lifecycle", () => {
       voiceMsg({ id: "c", timestamp: ts("2026-01-02") }),
     ]);
     store.recordMediaOutcome(CHAT, "c", { kind: "terminal", error: "gone" });
-    expect(store.mediaHealthStats()).toEqual({ pending: 2, unavailable: 1 });
+    store.recordMediaOutcome(CHAT, "b", {
+      kind: "process-failed",
+      error: "transcriber-unavailable",
+    });
+    expect(store.mediaHealthStats()).toEqual({
+      voiceNotes: { pending: 2, transcriberUnavailable: 1, unavailable: 1 },
+      attachments: { pending: 0, unavailable: 0 },
+    });
   });
 
   test("resetMediaForResync re-enrolls done/unavailable media as pending", () => {
@@ -651,7 +658,7 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     store.addMessages([voiceMsg({ id: "vn", timestamp: ts("2026-01-02") })]);
 
     const result = await src.sync(null);
-    expect(conversation(result.documents)).toContain("[Voice note, 0:07]");
+    expect(conversation(result.documents)).toContain("[Voice note, 0:07 — awaiting transcription]");
     expect((result.cursor as { committedSeq: number }).committedSeq).toBeGreaterThan(0);
     expect(store.getMessageById(CHAT, "vn")?.mediaState).toBe("pending");
     expect(store.getMessageById(CHAT, "vn")?.mediaNextAttempt).toBeGreaterThan(0);
@@ -680,7 +687,7 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     store.addMessages([voiceMsg({ id: "vn", timestamp: ts("2026-01-02") })]);
 
     const r1 = await src.sync(null);
-    expect(conversation(r1.documents)).toContain("[Voice note, 0:07]");
+    expect(conversation(r1.documents)).toContain("[Voice note, 0:07 — awaiting transcription]");
     expect(conversation(r1.documents)).not.toContain("recovered words");
 
     // Crucially: no new message is added to the chat. The retry sweep alone
@@ -689,6 +696,23 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     expect(downloadMedia).toHaveBeenCalledTimes(2);
     expect(conversation(r2.documents)).toContain("recovered words");
     expect(store.getMessageById(CHAT, "vn")?.mediaState).toBe("done");
+  });
+
+  test("the backlog counts only media inside the source's date range", () => {
+    store.setMediaRetryScope({
+      voiceNotes: true,
+      attachments: true,
+      minTimestamp: ts("2026-01-02"),
+    });
+    store.addMessages([
+      voiceMsg({ id: "old", timestamp: ts("2025-12-01") }),
+      voiceMsg({ id: "new", timestamp: ts("2026-01-03") }),
+    ]);
+    expect(store.mediaHealthStats().voiceNotes).toEqual({
+      pending: 1,
+      transcriberUnavailable: 0,
+      unavailable: 0,
+    });
   });
 
   test("a terminal download failure surfaces an explicit 'audio unavailable' placeholder", async () => {
@@ -701,14 +725,16 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
 
     store.addMessages([voiceMsg({ id: "vn", timestamp: ts("2026-01-02") })]);
 
-    await src.sync(null);
+    // The render that met the failure already says so.
+    const r1 = await src.sync(null);
+    expect(conversation(r1.documents)).toContain("[Voice note, 0:07 — audio unavailable]");
     expect(store.getMessageById(CHAT, "vn")?.mediaState).toBe("unavailable");
     expect(transcribeAudio).not.toHaveBeenCalled();
 
     // The terminal transition re-dirtied the day; the next sync renders the
-    // explicit placeholder (no new chat activity needed).
+    // explicit placeholder from the stored state (no new chat activity needed).
     const r2 = await src.sync(null);
-    expect(conversation(r2.documents)).toContain("audio unavailable");
+    expect(conversation(r2.documents)).toContain("[Voice note, 0:07 — audio unavailable]");
   });
 
   test("a voice note with no transcriber model yet recovers once one is assigned (never unavailable)", async () => {

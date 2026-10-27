@@ -86,8 +86,13 @@ const HEAP_USED_WARN_FRACTION = 0.9;
 /** Maximum length of an external label embedded in a one-line doctor message. */
 const DOCTOR_DISPLAY_NAME_MAX_LENGTH = 256;
 
-/** Roles doctor checks. Optional/advanced roles are not surfaced. */
-const CHECKED_ROLES: CapabilityRole[] = ["embedder", "agent"];
+/**
+ * Roles doctor checks. The embedder is load-bearing; the agent and the
+ * transcriber each unlock a feature an operator would otherwise find silently
+ * missing — no answers, or voice notes that stay placeholders. Other roles
+ * are optional or advanced and are not surfaced.
+ */
+const CHECKED_ROLES: CapabilityRole[] = ["embedder", "agent", "transcriber"];
 
 function doctorDisplayName(value: string, fallback: string): string {
   const normalized = value
@@ -490,7 +495,7 @@ function checkModels(d: DoctorData, ck: Checks): void {
     const a = assignments[role];
     const id = `models.${role}`;
     // Embedder is load-bearing for indexing + search; its absence is a
-    // hard failure. Agent availability only affects an optional feature.
+    // hard failure. Each other checked role only gates an optional feature.
     const severity: "fail" | "warn" = role === "embedder" ? "fail" : "warn";
     const emit = (message: string, hint: string) =>
       severity === "fail"
@@ -501,8 +506,10 @@ function checkModels(d: DoctorData, ck: Checks): void {
       emit(
         `${role} is not configured`,
         role === "embedder"
-          ? "Search and indexing cannot run without an embedder. Install one with `omnesis models install <id>` and assign it with `omnesis models use embedder <id>`."
-          : `Assign ${article(role)} ${role} model with \`omnesis models use ${role} <id>\` to enable it.`,
+          ? "Search and indexing cannot run without an embedder. Install one with `omnesis model install <id>` and assign it with `omnesis model assign embedder local/<id>`."
+          : role === "transcriber"
+            ? "Voice notes and audio clips stay as placeholders until a transcriber is assigned. Install one with `omnesis model install <id>` and assign it with `omnesis model assign transcriber local/<id>`."
+            : `Assign ${article(role)} ${role} model with \`omnesis model assign ${role} <backend>/<model>\` to enable it.`,
       );
       continue;
     }

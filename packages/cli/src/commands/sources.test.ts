@@ -79,6 +79,20 @@ describe("sources list", () => {
                     deviceId: "dev-mini",
                     state: "synced",
                     lastSyncAt: "2030-01-01T11:00:00.000Z",
+                    notices: [
+                      {
+                        kind: "sync-issue",
+                        severity: "warning",
+                        title: "3 voice notes waiting for a transcriber",
+                        detail: "No transcriber model is assigned",
+                        steps: ["Assign one under Settings → Models."],
+                      },
+                      {
+                        kind: "sync-issue",
+                        severity: "info",
+                        title: "2 voice notes awaiting transcription",
+                      },
+                    ],
                   },
                 ],
               },
@@ -110,6 +124,17 @@ describe("sources list", () => {
     expect(output).toContain("synced 5m ago");
     expect(output).toContain("Studio-Mini");
     expect(output).toContain("synced 1h ago");
+  });
+
+  test("prints the gateway's notices for a source under its members", async () => {
+    await run();
+
+    const output = logged.join("\n");
+    expect(output).toContain("⚠");
+    expect(output).toContain("3 voice notes waiting for a transcriber");
+    expect(output).toContain("No transcriber model is assigned");
+    expect(output).toContain("ℹ");
+    expect(output).toContain("2 voice notes awaiting transcription");
   });
 
   test("lists an exclusive source returned by a gateway that predates membership fields", async () => {

@@ -16,6 +16,8 @@ import {
   deriveAttachmentStableId,
   assignAttachmentSeqs,
   computeContentHash,
+  transcriptionSyncIssues,
+  TRANSCRIBER_UNAVAILABLE,
 } from "@omnesis/core";
 import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
 import { unavailableStorePage } from "./store-unavailable.js";
@@ -40,7 +42,7 @@ import type {
   AudioTranscribeFn,
 } from "@omnesis/core";
 import type { SyncCursor, SyncProgress, SyncResult } from "@omnesis/source-sdk";
-import type { DocumentInput } from "@omnesis/types";
+import type { DocumentInput, SyncIssue } from "@omnesis/types";
 import type { AppleProvider } from "./provider.js";
 import type {
   AppleIMessageSyncCursor,
@@ -56,6 +58,12 @@ type Db = Database.Database;
 const log = createLogger("source:apple-imessage");
 
 const PAGE_SIZE = 500;
+/**
+ * Day-chats re-rendered per run for voice clips due another transcription
+ * attempt. One backoff step brings every clip that failed together due at
+ * once; the rest follow on later runs so one run never renders them all.
+ */
+const MAX_DUE_TRANSCRIPTION_DAYS_PER_RUN = 25;
 
 // Messages' "Keep Messages" setting (30 Days / 1 Year / Forever, under
 // Settings > Messages) prunes chat.db locally and silently once it is set to
@@ -274,11 +282,19 @@ export class AppleIMessageSource {
         );
         daySignatures = newSnapshot.daySignatures;
       }
+      documents.push(
+        ...(await this.rebuildDueTranscriptionDays(
+          db,
+          cutoffNs,
+          newSnapshot.daySignatures,
+          emittedDayKeys,
+        )),
+      );
       return {
         documents,
         deletedExternalIds: [],
         presentExternalIds,
-        issues: [],
+        issues: this.transcriptionIssues(),
         // Persist the cutoff bump so subsequent syncs don't re-scan the
         // pre-cutoff range — once we've jumped past it, we never want
         // to look back.
@@ -446,6 +462,14 @@ export class AppleIMessageSource {
         );
         daySignatures = newSnapshot.daySignatures;
       }
+      documents.push(
+        ...(await this.rebuildDueTranscriptionDays(
+          db,
+          cutoffNs,
+          newSnapshot.daySignatures,
+          emittedDayKeys,
+        )),
+      );
     }
 
     log.info(
@@ -456,7 +480,7 @@ export class AppleIMessageSource {
       documents,
       deletedExternalIds: [], // iMessage hard-deletes rows; snapshot path catches them gateway-side
       presentExternalIds,
-      issues: hasMore ? undefined : [],
+      issues: hasMore ? undefined : this.transcriptionIssues(),
       cursor: {
         lastRowId: maxRowId,
         cycleQueueTotal: hasMore ? totalMessages : undefined,
@@ -676,7 +700,7 @@ export class AppleIMessageSource {
 
     // Transcribe voice clips inline before rendering, so the spoken text lands
     // in the conversation document and is searchable.
-    await this.transcribeDayAudio(dayParsed, info);
+    await this.transcribeDayAudio(dayParsed, info, `${chatIdentifier}:${date}`);
 
     const doc = normalizeDayChat(
       date,
@@ -892,6 +916,58 @@ export class AppleIMessageSource {
     return documents;
   }
 
+  /**
+   * Re-render the day-chats holding a voice clip whose next transcription
+   * attempt is due, so a clip is retried on its schedule rather than when its
+   * day happens to change. A day the snapshot no longer lists has nothing
+   * left to retry.
+   */
+  private async rebuildDueTranscriptionDays(
+    db: Db,
+    cutoffNs: number | null,
+    current: Record<string, string>,
+    alreadyEmitted: Set<string>,
+  ): Promise<DocumentInput[]> {
+    if (!this.transcribeAudio || !this.hasTranscriptSidecar()) return [];
+    const cache = this.getTranscriptCache();
+    const documents: DocumentInput[] = [];
+    for (const key of cache.dueDayKeys(Date.now(), MAX_DUE_TRANSCRIPTION_DAYS_PER_RUN)) {
+      if (alreadyEmitted.has(key)) continue;
+      const parsed = key in current ? parseDayExternalId(key) : null;
+      const dayDocuments = parsed
+        ? await this.buildDayDocuments(db, parsed.chatIdentifier, parsed.date, null, cutoffNs)
+        : [];
+      // A day that renders nothing has no clip left to retry.
+      if (dayDocuments.length === 0) {
+        cache.forgetDay(key);
+        continue;
+      }
+      documents.push(...dayDocuments);
+      alreadyEmitted.add(key);
+    }
+    return documents;
+  }
+
+  /** The voice-clip backlog as the sync issues a completed run reports. */
+  private transcriptionIssues(): SyncIssue[] {
+    if (!this.transcribeAudio || !this.hasTranscriptSidecar()) return [];
+    const backlog = this.getTranscriptCache().backlog();
+    return transcriptionSyncIssues({ ...backlog, unavailable: 0 }, "voice clips");
+  }
+
+  /**
+   * Whether a transcript sidecar exists to consult: opened by this instance,
+   * or left on disk by an earlier run. A source that has never met a voice
+   * clip has neither, and so has nothing pending and no sidecar to create.
+   */
+  private hasTranscriptSidecar(): boolean {
+    if (this.transcriptCache) return true;
+    return (
+      this.configDir !== undefined &&
+      existsSync(join(this.configDir, "apple-imessage", "transcripts.db"))
+    );
+  }
+
   private enumerateAttachmentExternalIdsForDay(
     parentExternalId: string,
     rows: ReadonlyArray<RawIMessage>,
@@ -940,17 +1016,21 @@ export class AppleIMessageSource {
   /**
    * Transcribe the audio attachments in a day-chat, setting `transcript` and
    * `durationSec` in place on each `IMessageAttachmentInfo` so the normalizer
-   * renders the spoken text inline. A no-op when no transcriber is wired (STT
-   * off) — audio then keeps its `[Audio: filename]` placeholder.
+   * renders the spoken text inline, and `transcription` on each clip left
+   * without one so the placeholder says why. A no-op when no transcriber is
+   * wired (STT off) — audio then keeps its `[Audio: filename]` placeholder.
    *
    * The transcript sidecar (`transcripts.db` under configDir) is consulted
    * first so a re-sync of the same day reuses prior transcripts rather than
-   * re-running Whisper. A `null` from the transcriber (unavailable / failed /
-   * no bytes) leaves the attachment untranscribed so a later sync retries.
+   * re-running Whisper. A clip the transcriber could not handle — no
+   * transcriber assigned, the backend down, a read that failed — is recorded
+   * there as pending with a backoff, is left alone until it is due, and has
+   * its day re-rendered then; the page it is on completes either way.
    */
   private async transcribeDayAudio(
     dayParsed: ParsedIMessage[],
     chat: IMessageChatInfo,
+    dayKey: string,
   ): Promise<void> {
     if (!this.transcribeAudio) return;
     const handles = [
@@ -964,19 +1044,28 @@ export class AppleIMessageSource {
       { isSelf: true },
       ...handles.map((handle) => ({ identifiers: imessagePersonIdentifiers(handle) })),
     ];
+    const now = Date.now();
+    /** Clips this pass left pending; the rest of the day's pending rows are stale. */
+    const stillPending: string[] = [];
+    let sawAudio = false;
 
     for (const msg of dayParsed) {
       if (msg.tapback) continue;
       for (const att of msg.attachments) {
         const mimeType = att.mimeType;
         if (!mimeType || !mimeType.startsWith("audio/")) continue;
-        if (att.transcript !== undefined) continue; // already set this run
+        if (att.transcript !== undefined) {
+          if (att.transcript === "") att.transcription = "no-speech";
+          continue; // already set this run
+        }
         if (!att.filePath) continue;
+        sawAudio = true;
 
         const filePath = resolveAttachmentPath(att.filePath);
         if (!filePath || !existsSync(filePath)) {
           if (filePath)
             log.debug(`Audio attachment file not found, skipping transcription: ${filePath}`);
+          att.transcription = "audio-missing";
           continue;
         }
 
@@ -993,17 +1082,25 @@ export class AppleIMessageSource {
         const cacheKey = att.guid ?? att.filePath;
         const legacyKey = att.guid && att.filePath ? att.filePath : undefined;
         const cached =
-          (cacheKey ? cache.get(cacheKey, att.totalBytes, mtimeMs) : undefined) ??
+          cache.get(cacheKey, att.totalBytes, mtimeMs) ??
           (legacyKey ? cache.get(legacyKey, att.totalBytes, mtimeMs) : undefined);
         if (cached) {
           att.transcript = cached.transcript;
           att.durationSec = cached.durationSec;
-          if (cacheKey && legacyKey) {
-            cache.set(cacheKey, att.totalBytes, mtimeMs, cached);
-          }
+          if (cached.transcript === "") att.transcription = "no-speech";
+          if (legacyKey) cache.set(cacheKey, att.totalBytes, mtimeMs, cached);
           continue;
         }
 
+        const pending = cache.pending(cacheKey);
+        if (pending && pending.nextAttemptMs > now) {
+          att.transcription =
+            pending.lastError === TRANSCRIBER_UNAVAILABLE ? "transcriber-unavailable" : "awaiting";
+          stillPending.push(cacheKey);
+          continue;
+        }
+
+        att.transcription = "awaiting";
         try {
           const data = new Uint8Array(await readFile(filePath));
           const result = await this.transcribeAudio(data, mimeType, {
@@ -1017,29 +1114,41 @@ export class AppleIMessageSource {
               recordedAt: msg.date.toISOString(),
             },
           });
-          // `null` = transcription unavailable/failed → leave unset to retry.
-          if (result === null) continue;
+          // `null` = no transcriber can run. The clip is retried on the
+          // backoff; it transcribes once a model is assigned.
+          if (result === null) {
+            cache.recordFailure(cacheKey, dayKey, TRANSCRIBER_UNAVAILABLE, now);
+            att.transcription = "transcriber-unavailable";
+            stillPending.push(cacheKey);
+            continue;
+          }
           const transcript = result.text.trim();
           att.transcript = transcript;
           att.durationSec = result.durationSec;
           // `""` (no speech detected) is a valid cached value and isn't retried.
-          if (cacheKey) {
-            cache.set(cacheKey, att.totalBytes, mtimeMs, {
-              transcript,
-              durationSec: result.durationSec,
-            });
-          }
+          if (transcript === "") att.transcription = "no-speech";
+          cache.set(cacheKey, att.totalBytes, mtimeMs, {
+            transcript,
+            durationSec: result.durationSec,
+          });
         } catch (err) {
-          // A transient transcription-backend blip (gateway unreachable / 5xx)
-          // fails the page so it retries — don't leave it unset as if the note
-          // were permanently untranscribable and advance the cursor.
-          if (isTransientSyncError(err)) throw err;
-          log.debug(
-            `Failed to transcribe audio ${att.filename}: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          // A transcription-backend blip (gateway unreachable / 5xx) or an
+          // unreadable file: the page goes on with the placeholder, and the
+          // clip is retried on its own schedule.
+          const message = err instanceof Error ? err.message : String(err);
+          log.debug(`Failed to transcribe audio ${att.filename}: ${message}`);
+          cache.recordFailure(cacheKey, dayKey, message, now);
+          stillPending.push(cacheKey);
         }
       }
     }
+
+    // Only the clips this pass saw and left pending keep the day due: a clip
+    // that left the chat, or was transcribed through its other key, must not
+    // hold it. A day with audio opened the sidecar; a due day without any
+    // audio left is cleared through the sidecar the sweep already opened.
+    const sidecar = sawAudio ? this.getTranscriptCache() : this.transcriptCache;
+    sidecar?.retainPendingForDay(dayKey, stillPending);
   }
 
   /** Lazily open the transcript sidecar on first use. */

@@ -866,22 +866,87 @@ describe("WhatsAppMessagesSource", () => {
       expect(transcribeAudio).toHaveBeenCalledTimes(1); // "" is a final result
     });
 
-    test("a null transcription result leaves the placeholder and retries (not persisted)", async () => {
+    test("a null transcription result says no transcriber is available and reports it as a warning", async () => {
       const downloadMedia = vi.fn(async () => ({
         kind: "ok" as const,
         data: new Uint8Array([1, 2, 3]),
       })) as MediaDownloadFn;
       const transcribeAudio = vi.fn(async () => null); // gateway disabled/unavailable
       const src = makeSource({ downloadMedia, transcribeAudio });
+      // The backlog is reported on the page that ends a run, which history
+      // still streaming never reaches.
+      store.setHistorySyncState("complete");
       store.addMessages([makeVoiceMsg()]);
 
       const result = await src.sync(null);
+      expect(result.hasMore).toBe(false);
       const doc = result.documents[0];
-      expect(doc.content).toContain("[Voice note, 0:07]");
-      expect(doc.content).not.toMatch(/\[Voice note, 0:07\]: ./);
+      expect(doc.content).toContain("[Voice note, 0:07 — no transcriber available]");
+      expect(doc.content).not.toMatch(/\[Voice note, 0:07[^\]]*\]: ./);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "transcription-awaiting",
+          count: 1,
+          severity: "warning",
+          message: "1 voice note waiting for a transcriber",
+          remediation: expect.objectContaining({ summary: "No transcriber model is assigned" }),
+        }),
+      ]);
     });
 
-    test("a failed download leaves the placeholder", async () => {
+    test("a note under backoff keeps saying no transcriber is available on a re-render", async () => {
+      const downloadMedia = vi.fn(async () => ({
+        kind: "ok" as const,
+        data: new Uint8Array([1, 2, 3]),
+      })) as MediaDownloadFn;
+      const transcribeAudio = vi.fn(async () => null);
+      const src = makeSource({ downloadMedia, transcribeAudio });
+      store.addMessages([makeVoiceMsg({ timestamp: 1709900000 })]);
+      const r1 = await src.sync(null);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+
+      // A new message re-renders the day while the note's backoff has not
+      // elapsed: no new attempt, and the placeholder still names the cause.
+      store.addMessages([makeMsg({ id: "txt", timestamp: 1709900100, text: "ok" })]);
+      const r2 = await src.sync(r1.cursor);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      const doc = r2.documents.find((d) => d.metadata.documentType === "conversation")!;
+      expect(doc.content).toContain("[Voice note, 0:07 — no transcriber available]");
+    });
+
+    test("a transcribed backlog reports nothing and a working transcriber's backlog is information", async () => {
+      const downloadMedia = vi.fn(async () => ({
+        kind: "ok" as const,
+        data: new Uint8Array([1, 2, 3]),
+      })) as MediaDownloadFn;
+      const transcribeAudio = vi.fn(async () => ({ text: "hello" }));
+      const src = makeSource({ downloadMedia, transcribeAudio });
+      store.setHistorySyncState("complete");
+      store.addMessages([
+        makeVoiceMsg({ id: "vn-1", timestamp: 1709900000 }),
+        makeVoiceMsg({ id: "vn-2", timestamp: 1709900010 }),
+      ]);
+
+      // One media attempt per page: the first page transcribes one note and
+      // continues the run, so the backlog is stated once, on the page that
+      // ends it.
+      const r1 = await src.sync(null);
+      expect(r1.hasMore).toBe(true);
+      expect(r1.issues).toBeUndefined();
+      const r2 = await src.sync(r1.cursor);
+      expect(r2.hasMore).toBe(false);
+      expect(r2.issues).toEqual([]);
+    });
+
+    test("no transcriber wired means a bare placeholder and no transcription report", async () => {
+      const src = makeSource({});
+      store.addMessages([makeVoiceMsg()]);
+      const result = await src.sync(null);
+      expect(result.documents[0].content).toContain("[Voice note, 0:07]");
+      expect(result.issues).toBeUndefined();
+    });
+
+    test("a failed download leaves the placeholder awaiting transcription", async () => {
       const downloadMedia = vi.fn(async () => ({
         kind: "transient" as const,
         error: "download-failed",
@@ -892,7 +957,20 @@ describe("WhatsAppMessagesSource", () => {
 
       const result = await src.sync(null);
       expect(transcribeAudio).not.toHaveBeenCalled();
-      expect(result.documents[0].content).toContain("[Voice note, 0:07]");
+      expect(result.documents[0].content).toContain("[Voice note, 0:07 — awaiting transcription]");
+    });
+
+    test("an empty transcript renders as no speech detected", async () => {
+      const downloadMedia = vi.fn(async () => ({
+        kind: "ok" as const,
+        data: new Uint8Array([1, 2, 3]),
+      })) as MediaDownloadFn;
+      const transcribeAudio = vi.fn(async () => ({ text: "   " }));
+      const src = makeSource({ downloadMedia, transcribeAudio });
+      store.addMessages([makeVoiceMsg()]);
+
+      const result = await src.sync(null);
+      expect(result.documents[0].content).toContain("[Voice note, 0:07 — no speech detected]");
     });
 
     test("skips a voice note lacking download descriptors (metadata-only / imported)", async () => {
@@ -912,7 +990,7 @@ describe("WhatsAppMessagesSource", () => {
       const result = await src.sync(null);
       expect(downloadMedia).not.toHaveBeenCalled();
       expect(transcribeAudio).not.toHaveBeenCalled();
-      expect(result.documents[0].content).toContain("[Voice note, 0:05]");
+      expect(result.documents[0].content).toContain("[Voice note, 0:05 — audio unavailable]");
     });
 
     test("resync re-transcribes existing voice notes with the new model", async () => {

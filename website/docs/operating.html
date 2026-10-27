@@ -555,7 +555,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               </tr>
               <tr>
                 <td><code>transcriber</code></td>
-                <td>Speech-to-text, so voice notes and audio become searchable.</td>
+                <td>
+                  Speech-to-text, so voice notes and audio become searchable. Without one, voice
+                  notes keep a placeholder that says no transcriber is available, the conversation
+                  sources that carry audio count the notes waiting in their notice on the Sources
+                  page, and <code>omnesis doctor</code> warns.
+                </td>
               </tr>
               <tr>
                 <td><code>ocr</code></td>

@@ -11,6 +11,7 @@ import {
   extractEmailsFromText,
   extractPhonesFromText,
   parseSourceKey,
+  transcriptionPlaceholderNote,
 } from "@omnesis/core";
 import type {
   DocumentInput,
@@ -417,17 +418,26 @@ function formatDuration(durationSec: number): string {
  * Audio is special-cased so a transcribed voice clip weaves its spoken text
  * into the conversation, making it searchable. A transcript with a known
  * duration renders `[Audio, M:SS]: <transcript>`; without a duration,
- * `[Audio]: <transcript>`. An untranscribed clip (STT off, or transcription
- * failed) keeps the plain `[Audio: filename]` placeholder. Non-audio
- * attachments render `[<Label>: filename]` as before.
+ * `[Audio]: <transcript>`. A clip without spoken text says why in its
+ * placeholder — `[Audio: filename — awaiting transcription]`, or
+ * `[Audio, M:SS — no speech detected]` for one that was transcribed and
+ * silent — when the source's transcription pass recorded a reason; with no
+ * transcriber wired at all it keeps the plain `[Audio: filename]`. Non-audio
+ * attachments render `[<Label>: filename]`.
  */
 function renderAttachment(att: IMessageAttachmentInfo): string {
   const isAudio = att.mimeType?.startsWith("audio/") ?? false;
-  if (isAudio && att.transcript !== undefined) {
-    const duration =
-      att.durationSec !== undefined ? `Audio, ${formatDuration(att.durationSec)}` : "Audio";
-    return `[${duration}]: ${att.transcript}`;
+  if (isAudio && att.transcript) {
+    return `[${audioLabel(att)}]: ${att.transcript}`;
+  }
+  if (isAudio && att.transcription) {
+    const head = att.transcript === "" ? audioLabel(att) : `Audio: ${att.filename}`;
+    return `[${head} — ${transcriptionPlaceholderNote(att.transcription)}]`;
   }
   const label = getAttachmentLabel(att.mimeType);
   return `[${label}: ${att.filename}]`;
+}
+
+function audioLabel(att: IMessageAttachmentInfo): string {
+  return att.durationSec !== undefined ? `Audio, ${formatDuration(att.durationSec)}` : "Audio";
 }

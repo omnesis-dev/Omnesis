@@ -83,7 +83,15 @@ export interface SyncIssue {
    * which is exactly the source that has one.
    */
   remediation?: SyncRemediation;
+  /**
+   * How loudly a client shows it. An issue is a warning unless the source
+   * says otherwise: `info` is for a report that costs the operator nothing to
+   * ignore — work still in progress, a count that will clear on its own.
+   */
+  severity?: SyncIssueSeverity;
 }
+
+export type SyncIssueSeverity = "info" | "warning";
 
 /** The gateway's first observation of an issue that has not yet recovered. */
 export interface SyncIssueStatus extends SyncIssue {

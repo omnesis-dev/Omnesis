@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { makeCursorValidator } from "@omnesis/source-sdk";
+import type { TranscriptionPlaceholderState } from "@omnesis/core";
 
 /**
  * Sync cursor for Apple iMessage source.
@@ -143,6 +144,12 @@ export interface IMessageAttachmentInfo {
   transcript?: string;
   /** Duration of the audio clip in seconds, when the transcriber reported it. */
   durationSec?: number;
+  /**
+   * Why an audio clip renders without its spoken text, set by the source's
+   * transcription pass for the normalizer's placeholder. `undefined` for a
+   * transcribed clip, for other attachments, and when no transcriber is wired.
+   */
+  transcription?: TranscriptionPlaceholderState;
 }
 
 /**

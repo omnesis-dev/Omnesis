@@ -177,7 +177,7 @@ function permissionNotice(status: DisplaySyncStatus): SourceNotice | null {
 function issueNotice(issue: SyncIssueStatus): SourceNotice {
   return {
     kind: "sync-issue",
-    severity: "warning",
+    severity: issue.severity ?? "warning",
     title: issue.message,
     ...(issue.remediation?.summary ? { detail: issue.remediation.summary } : {}),
     ...(issue.remediation ? { steps: remediationSteps(issue.remediation) } : {}),
