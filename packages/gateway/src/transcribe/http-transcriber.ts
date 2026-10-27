@@ -229,14 +229,19 @@ export function splitPcm(
     const limit = start + maxSamples;
     let split = limit;
     let quietest = Infinity;
+    // Look for the quiet moment in the last ten seconds of the chunk, or its
+    // second half when the window is shorter than that, so a short window
+    // never splits at its own start. The latest quietest frame wins a tie,
+    // which keeps chunks close to the window over steady audio.
+    const search = Math.min(SPLIT_SEARCH_SAMPLES, Math.floor(maxSamples / 2));
     for (
-      let frame = Math.max(start, limit - SPLIT_SEARCH_SAMPLES);
+      let frame = limit - search;
       frame + SPLIT_FRAME_SAMPLES <= limit;
       frame += SPLIT_FRAME_SAMPLES
     ) {
       let energy = 0;
       for (let i = frame; i < frame + SPLIT_FRAME_SAMPLES; i += 1) energy += pcm[i]! * pcm[i]!;
-      if (energy < quietest) {
+      if (energy <= quietest) {
         quietest = energy;
         split = frame + SPLIT_FRAME_SAMPLES / 2;
       }

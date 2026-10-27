@@ -100,6 +100,11 @@ describe("classifyModelRoles", () => {
       "openai/whisper-large-v3-turbo",
       "stt-model",
       "speech-to-text",
+      "voxtral-mini-latest",
+      "scribe_v1",
+      "nvidia/parakeet-tdt-0.6b-v2",
+      "canary-1b",
+      "frozenlab/qwen3-asr:1.7b",
     ]) {
       expect(classifyModelRoles(id), id).toEqual(["transcriber"]);
     }
