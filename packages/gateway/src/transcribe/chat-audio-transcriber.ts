@@ -11,7 +11,8 @@
  * The audio is decoded to 16 kHz mono PCM and sent as base64 WAV in chunks
  * of about a minute: an audio language model is accurate over a short stretch
  * at a time (Qwen3-ASR's accuracy holds to about a minute and falls off by
- * two), so each chunk ends at a quiet moment and the transcripts are joined. The
+ * two), so each chunk ends at a quiet moment, gets its own deadline
+ * (`chunks.ts`), and the transcripts are joined. The
  * model is asked for the words only; an answer in Qwen3-ASR's own
  * `language …<asr_text>` format is read the same way as on the transcription
  * API.
@@ -30,8 +31,8 @@ import {
   retryRateLimitedRequest,
 } from "@omnesis/core";
 import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
-import { computeTranscriptionTimeoutMs } from "./deadline.js";
-import { chunkSamples, encodeWav, parseTranscriptText, splitPcm } from "./http-transcriber.js";
+import { chunkSamples, transcribeInChunks, type ChunkTranscript } from "./chunks.js";
+import { encodeWav, parseTranscriptText } from "./http-transcriber.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type {
   TranscribeCapability,
@@ -149,18 +150,15 @@ export class ChatAudioTranscriber implements TranscribeCapability {
       : undefined;
     if (hints) instruction += ` Names and terms that may occur: ${hints}`;
 
-    const timeout = AbortSignal.timeout(
-      computeTranscriptionTimeoutMs(durationSec, opts?.minTimeoutMs),
+    const { text, language } = await transcribeInChunks(
+      pcm,
+      { maxChunkSamples: this.maxChunkSamples, minTimeoutMs: opts?.minTimeoutMs },
+      (chunk, ms) => {
+        const timeout = AbortSignal.timeout(ms);
+        const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+        return this.transcribeChunk(chunk, instruction, signal);
+      },
     );
-    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-    const texts: string[] = [];
-    let language: string | undefined;
-    for (const chunk of splitPcm(pcm, this.maxChunkSamples)) {
-      const part = await this.transcribeChunk(chunk, instruction, signal);
-      if (part.text) texts.push(part.text);
-      language ??= part.language;
-    }
-    const text = texts.join(" ");
     log.debug(
       `Transcribed ${durationSec.toFixed(1)}s of audio via chat ${this.model} → ${text.length} chars`,
     );
@@ -171,7 +169,7 @@ export class ChatAudioTranscriber implements TranscribeCapability {
     pcm: Float32Array,
     instruction: string,
     signal: AbortSignal,
-  ): Promise<{ text: string; language?: string }> {
+  ): Promise<ChunkTranscript> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
     const body = JSON.stringify(chatAudioRequestBody(this.model, pcm, instruction));

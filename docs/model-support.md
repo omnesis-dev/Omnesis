@@ -258,10 +258,12 @@ natively.
 **Parsing.** `text` (required; its absence is an error, not an empty
 transcript) and `language` when present. Any non-2xx is an error whose body is
 drained unread, since a backend can echo the audio; the collector retries the
-recording on a later sync. The deadline scales with the recording's duration up
-to `MAX_TRANSCRIPTION_MS`, and the request uses `fetchAllowingSlowResponse`
-because Node's built-in `fetch` abandons a response that takes longer than five
-minutes to start.
+recording on a later sync. A recording longer than its chunk limit is sent in
+chunks, each under its own deadline sized from that chunk's duration, within
+`MAX_TRANSCRIPTION_MS` for the whole recording (see `docs/transcription.md` §
+Deadlines). Each request uses `fetchAllowingSlowResponse` because Node's
+built-in `fetch` abandons a response that takes longer than five minutes to
+start.
 
 ## Model roles and presets
 

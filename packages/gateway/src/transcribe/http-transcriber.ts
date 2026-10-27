@@ -10,7 +10,8 @@
  * The audio is decoded to 16 kHz mono PCM first and sent as a WAV file, the
  * one format every such server accepts, whatever container the source used.
  * A recording longer than ten minutes is sent as consecutive chunks that each
- * fit a 25 MB upload limit, and their transcripts are joined.
+ * fit a 25 MB upload limit, each under its own deadline (`chunks.ts`), and
+ * their transcripts are joined.
  *
  * The assignment names an HTTP backend declared in `inference.backends`. Every
  * request goes through the inference URL policy: a loopback backend works by
@@ -31,7 +32,7 @@ import {
   retryRateLimitedRequest,
 } from "@omnesis/core";
 import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
-import { computeTranscriptionTimeoutMs } from "./deadline.js";
+import { chunkSamples, transcribeInChunks, type ChunkTranscript } from "./chunks.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type {
   TranscribeCapability,
@@ -115,18 +116,15 @@ export class HttpTranscriber implements TranscribeCapability {
       : undefined;
     if (prompt) fields.push(["prompt", prompt]);
 
-    const timeout = AbortSignal.timeout(
-      computeTranscriptionTimeoutMs(durationSec, opts?.minTimeoutMs),
+    const { text, language } = await transcribeInChunks(
+      pcm,
+      { maxChunkSamples: this.maxChunkSamples, minTimeoutMs: opts?.minTimeoutMs },
+      (chunk, ms) => {
+        const timeout = AbortSignal.timeout(ms);
+        const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+        return this.transcribeChunk(chunk, fields, signal);
+      },
     );
-    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-    const texts: string[] = [];
-    let language: string | undefined;
-    for (const chunk of splitPcm(pcm, this.maxChunkSamples)) {
-      const part = await this.transcribeChunk(chunk, fields, signal);
-      if (part.text) texts.push(part.text);
-      language ??= part.language;
-    }
-    const text = texts.join(" ");
     log.debug(
       `Transcribed ${durationSec.toFixed(1)}s of audio via ${this.model} → ${text.length} chars`,
     );
@@ -137,7 +135,7 @@ export class HttpTranscriber implements TranscribeCapability {
     pcm: Float32Array,
     fields: ReadonlyArray<readonly [string, string]>,
     signal: AbortSignal,
-  ): Promise<{ text: string; language?: string }> {
+  ): Promise<ChunkTranscript> {
     const { body, contentType } = encodeMultipart(fields, {
       name: "file",
       filename: "audio.wav",
@@ -197,60 +195,6 @@ export class HttpTranscriber implements TranscribeCapability {
   }
 
   async dispose(): Promise<void> {}
-}
-
-/**
- * Longest audio sent in one request. Ten minutes of 16 kHz 16-bit WAV is
- * 19.2 MB, under the 25 MB upload limit OpenAI and vLLM apply.
- */
-export const MAX_CHUNK_SAMPLES = 600 * PCM_SAMPLE_RATE;
-
-/** Samples per request for a chunk length in seconds, the ten-minute limit when unset. */
-export function chunkSamples(maxChunkSeconds: number | undefined): number {
-  if (maxChunkSeconds === undefined || !(maxChunkSeconds > 0)) return MAX_CHUNK_SAMPLES;
-  return Math.min(MAX_CHUNK_SAMPLES, Math.round(maxChunkSeconds * PCM_SAMPLE_RATE));
-}
-/** How far back from a chunk's limit to look for a quiet place to split. */
-const SPLIT_SEARCH_SAMPLES = 10 * PCM_SAMPLE_RATE;
-/** 20 ms frames: short enough to land in the gap between two words. */
-const SPLIT_FRAME_SAMPLES = 320;
-
-/**
- * Split PCM into chunks of at most `MAX_CHUNK_SAMPLES`, each ending at the
- * quietest 20 ms frame in its last ten seconds so a split rarely cuts a word.
- */
-export function splitPcm(
-  pcm: Float32Array,
-  maxSamples: number = MAX_CHUNK_SAMPLES,
-): Float32Array[] {
-  const chunks: Float32Array[] = [];
-  let start = 0;
-  while (pcm.length - start > maxSamples) {
-    const limit = start + maxSamples;
-    let split = limit;
-    let quietest = Infinity;
-    // Look for the quiet moment in the last ten seconds of the chunk, or its
-    // second half when the window is shorter than that, so a short window
-    // never splits at its own start. The latest quietest frame wins a tie,
-    // which keeps chunks close to the window over steady audio.
-    const search = Math.min(SPLIT_SEARCH_SAMPLES, Math.floor(maxSamples / 2));
-    for (
-      let frame = limit - search;
-      frame + SPLIT_FRAME_SAMPLES <= limit;
-      frame += SPLIT_FRAME_SAMPLES
-    ) {
-      let energy = 0;
-      for (let i = frame; i < frame + SPLIT_FRAME_SAMPLES; i += 1) energy += pcm[i]! * pcm[i]!;
-      if (energy <= quietest) {
-        quietest = energy;
-        split = frame + SPLIT_FRAME_SAMPLES / 2;
-      }
-    }
-    chunks.push(pcm.subarray(start, split));
-    start = split;
-  }
-  chunks.push(pcm.subarray(start));
-  return chunks;
 }
 
 /**

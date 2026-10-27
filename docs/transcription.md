@@ -80,6 +80,35 @@ carries `transcription: { protocol, maxChunkSeconds? }`, which the loader
 reads to build the right client. Both clients split at the quietest moment
 near each chunk limit (`splitPcm`) and join the chunks' words.
 
+### Deadlines
+
+Every engine that chunks, local Whisper included (ten-minute chunks, one
+worker request each), goes through `transcribeInChunks` in
+`packages/gateway/src/transcribe/chunks.ts`, which gives each chunk its own
+deadline from that chunk's duration (`computeTranscriptionTimeoutMs` in
+`deadline.ts`): 90 s for a cold load plus 15 s per second of audio, at least
+three minutes, at most 30 minutes (`MAX_CHUNK_TIMEOUT_MS`); a voice note's
+patience raises it within that ceiling. Fifteen seconds per second allows an
+audio language model on a CPU (Qwen3-ASR takes about twelve), so a one-minute
+chunk gets 990 s where it needs about 720. The ceiling binds from 114 s of
+audio, which only the ten-minute chunks of Whisper and the transcription API
+reach; they get three seconds per second, several times whisper.cpp's CPU
+rate. A `maxChunkSeconds` above about 110 for an audio language model on a CPU
+would outrun its ceiling.
+
+A hung chunk is therefore given up within its own budget, while a recording
+may take longer the longer it is. All chunks of one recording together stay
+within `MAX_TRANSCRIPTION_MS` (six hours, in `@omnesis/core`), which bounds how
+long one recording holds the gateway's single transcription queue; the
+collector waits that long plus a grace for `/inference/transcribe`. Six hours
+is about two hours of audio from Whisper on a CPU, but only about half an hour
+from an audio language model on a CPU; a longer recording on such an engine
+fails at the ceiling and is retried like any other failure.
+
+Before a recording's turn, `TranscribeService` waits at most three seconds for
+its vocabulary hints (`VOCABULARY_LOOKUP_TIMEOUT_MS`) and transcribes without
+them past that, or returns nothing at once when the caller stops waiting.
+
 Qwen3-ASR writes its detected language ahead of the words
 (`language English<asr_text>…`), and a server that passes the model's output
 through puts that whole string in `text`. `parseTranscriptText` keeps the

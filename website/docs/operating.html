@@ -722,9 +722,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           corroboration, although copies stored as separate documents can still count. Configured
           and contact-curated names for the current people supply separate identity hints. Linking a
           person to a document does not itself count as an occurrence of their name. Vocabulary
-          builds in bounded background batches; transcription does not wait for a full build. When
-          an extraction update requires a rebuild, the gateway temporarily supplies no hints while
-          it clears the old dictionary, then repopulates it incrementally. Evidence and spelling
+          builds in bounded background batches; transcription does not wait for a full build, and
+          waits at most three seconds for its hints before transcribing without them. When an
+          extraction update requires a rebuild, the gateway temporarily supplies no hints while it
+          clears the old dictionary, then repopulates it incrementally. Evidence and spelling
           refreshes enroll bounded pages without clearing the available dictionary. The gateway's
           local Whisper model uses these hints, and so does an HTTP transcription backend on the
           gateway's own machine; a transcription backend on another machine never receives them.
@@ -763,9 +764,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           it as a backend and assign the <code>transcriber</code> role to
           <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and sends
           it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV file. A
-          server on another machine needs remote inference enabled. Whichever engine runs it, one
-          recording gets up to 30 minutes, which a long recording on a CPU can need, and the gateway
-          stops the work when the collector that asked stops waiting.
+          server on another machine needs remote inference enabled. Whichever engine runs it, a
+          recording is sent in parts, ten minutes for Whisper and the transcription endpoint and a
+          minute for an audio language model, and each part gets its own time limit sized from its
+          length, up to 30 minutes. A long recording therefore gets more time the longer it is, up
+          to six hours in all: about two hours of audio from Whisper on a CPU, or about half an hour
+          from an audio language model on a CPU. A server that stops answering is given up within
+          one part's time, and the gateway stops the work when the collector that asked stops
+          waiting.
         </p>
         <p>
           A backend serves the <code>transcriber</code> role only if it implements that endpoint: a

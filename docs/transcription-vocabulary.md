@@ -3,7 +3,9 @@
 Vocabulary is on by default. Set `inference.transcriptionVocabulary.enabled` to
 `false` to turn it off. Selection runs in bounded background work. Transcription reads
 indexed summaries and never searches source documents or invokes another model
-to build a hint list.
+to build a hint list. A transcription waits at most three seconds for its hints
+(`VOCABULARY_LOOKUP_TIMEOUT_MS`) and otherwise runs without them, so a slow or
+stuck read worker never holds the transcription queue.
 
 ## Evidence and context
 

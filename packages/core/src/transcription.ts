@@ -52,12 +52,17 @@ export interface TranscriptionVocabulary {
 export type { TranscriptionResult } from "./models/capabilities.js";
 
 /**
- * The longest the gateway works on one transcription, whichever backend runs
- * it. A long recording on a CPU-only host can take many minutes, so a client
- * waiting on `/inference/transcribe` must allow at least this long rather
- * than an HTTP library's default response deadline.
+ * The longest the gateway works on one recording, whichever backend runs it.
+ * Each chunk has its own, shorter deadline, so a hung backend is given up long
+ * before this; it bounds the whole of a long recording on a slow host, and so
+ * how long one recording may hold the gateway's single transcription queue.
+ * Six hours covers two hours of audio from Whisper on a CPU (three seconds per
+ * second of audio), but only about half an hour from an audio language model
+ * on a CPU at twelve seconds per second. A client waiting on
+ * `/inference/transcribe` must allow at least this long rather than an HTTP
+ * library's default response deadline.
  */
-export const MAX_TRANSCRIPTION_MS = 30 * 60_000;
+export const MAX_TRANSCRIPTION_MS = 6 * 60 * 60_000;
 
 export type AudioTranscribeFn = (
   data: Uint8Array,

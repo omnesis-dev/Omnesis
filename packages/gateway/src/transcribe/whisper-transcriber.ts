@@ -16,7 +16,8 @@
  *     rejects the in-flight call, marks the worker dead, and respawns on the
  *     next call — so a single bad clip can't take the gateway down, and the
  *     caller (TranscribeService) sees the rejection translated to null;
- *   - applies a per-request timeout (a hung whisper.cpp) that kills + respawns;
+ *   - sends a long recording ten minutes at a time (`chunks.ts`), and applies
+ *     each request's own timeout (a hung whisper.cpp) that kills + respawns;
  *   - honors idle offload by forwarding `offloadSeconds` to the worker, where
  *     smart-whisper unloads the model weights after idle while the (cheap) JS
  *     process stays warm — so the next clip skips the ~50s model reload;
@@ -43,7 +44,7 @@ import {
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
-import { computeTranscriptionTimeoutMs } from "./deadline.js";
+import { transcribeInChunks, type ChunkTranscript } from "./chunks.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -148,8 +149,8 @@ export interface WhisperTranscriberOptions {
   offloadSeconds?: number;
   /**
    * Explicit per-request timeout override (ms). When unset (the default), the
-   * timeout is derived per request from the clip duration (see
-   * `computeTranscriptionTimeoutMs` in `deadline.ts`). Tests set it for deterministic, fast timeouts.
+   * timeout is derived per request from the chunk's duration (see `chunks.ts`
+   * and `deadline.ts`). Tests set it for deterministic, fast timeouts.
    */
   requestTimeoutMs?: number;
   /** Injectable for tests; defaults to spawning the real worker subprocess. */
@@ -160,7 +161,7 @@ export interface WhisperTranscriberOptions {
 
 interface PendingRequest {
   id: number;
-  resolve: (r: TranscriptionResult) => void;
+  resolve: (r: ChunkTranscript) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -243,7 +244,7 @@ export class WhisperTranscriber implements TranscribeCapability {
     this.pending.delete(msg.id);
     clearTimeout(pending.timer);
     if (msg.type === "result") {
-      pending.resolve({ text: msg.text, language: msg.language, durationSec: msg.durationSec });
+      pending.resolve({ text: msg.text, ...(msg.language ? { language: msg.language } : {}) });
     } else {
       pending.reject(new Error(msg.error));
     }
@@ -280,6 +281,38 @@ export class WhisperTranscriber implements TranscribeCapability {
     opts?: Parameters<TranscribeCapability["transcribe"]>[2],
   ): Promise<TranscriptionResult> {
     const pcm = await this.decodeAudio(audio, mimeType);
+    const vocabularyHint = opts?.vocabulary
+      ? adaptTranscriptionVocabulary(opts.vocabulary, {
+          runtime: this.vocabularyRuntime,
+          maxPromptTokens: opts.maxPromptTokens,
+        })
+      : undefined;
+    // Budget per chunk = explicit override (tests) or a duration-scaled value
+    // that covers a cold reload plus the inference itself — so a long clip on
+    // CPU isn't killed mid-transcribe — raised to the caller's `minTimeoutMs`.
+    const { text, language } = await transcribeInChunks(
+      pcm,
+      { minTimeoutMs: opts?.minTimeoutMs },
+      (chunk, ms) =>
+        this.request(
+          chunk,
+          opts?.language ?? "auto",
+          vocabularyHint,
+          this.requestTimeoutMs ?? ms,
+          opts?.signal,
+        ),
+    );
+    return { text, language, durationSec: pcm.length / PCM_SAMPLE_RATE };
+  }
+
+  /** Send one chunk to the worker and wait for its result, within `timeoutMs`. */
+  private async request(
+    pcm: Float32Array,
+    language: string,
+    vocabularyHint: WhisperRequestHeader["vocabularyHint"],
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+  ): Promise<ChunkTranscript> {
     let worker: WhisperWorkerProcess;
     try {
       worker = await this.ensureWorker();
@@ -294,25 +327,11 @@ export class WhisperTranscriber implements TranscribeCapability {
       type: "request",
       id,
       pcmBytes: pcm.byteLength,
-      language: opts?.language ?? "auto",
-      ...(opts?.vocabulary
-        ? {
-            vocabularyHint: adaptTranscriptionVocabulary(opts.vocabulary, {
-              runtime: this.vocabularyRuntime,
-              maxPromptTokens: opts.maxPromptTokens,
-            }),
-          }
-        : {}),
+      language,
+      ...(vocabularyHint ? { vocabularyHint } : {}),
     };
-    // Budget = explicit override (tests) or a duration-scaled value that covers
-    // a cold reload plus the inference itself — so a long clip on CPU isn't
-    // killed mid-transcribe — raised to the caller's `minTimeoutMs`.
-    const timeoutMs =
-      this.requestTimeoutMs ??
-      computeTranscriptionTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
-    const signal = opts?.signal;
     signal?.throwIfAborted();
-    return new Promise<TranscriptionResult>((resolve, reject) => {
+    return new Promise<ChunkTranscript>((resolve, reject) => {
       // whisper.cpp cannot be interrupted mid-call, so giving a request up
       // means killing the worker; it respawns on the next call. Nothing else
       // is in flight to lose, since rejecting removed this request first.

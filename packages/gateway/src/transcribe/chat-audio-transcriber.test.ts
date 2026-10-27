@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 import {
   ChatAudioTranscriber,
   TRANSCRIBE_INSTRUCTION,
@@ -9,6 +9,8 @@ import {
   transcriptFromChatCompletion,
 } from "./chat-audio-transcriber.js";
 import { PCM_SAMPLE_RATE } from "./audio-decode.js";
+import { splitPcm } from "./chunks.js";
+import { computeTranscriptionTimeoutMs } from "./deadline.js";
 
 interface Captured {
   url: string;
@@ -88,6 +90,48 @@ describe("ChatAudioTranscriber", () => {
     expect(requests).toHaveLength(3);
     expect(result.text).toMatch(/^chunk of (5[0-9]|60)s chunk of (5[0-9]|60)s chunk of \d+s$/);
     expect(result.durationSec).toBe(150);
+  });
+
+  test("gives each one-minute chunk its own deadline, and a hung one is given up at it", async () => {
+    const deadlines: Array<{ ms: number; expire: () => void }> = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      deadlines.push({
+        ms,
+        expire: () =>
+          controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      });
+      return controller.signal;
+    });
+    onTestFinished(() => timeout.mockRestore());
+    let requests = 0;
+    const fetchFn = ((_input: string | URL | Request, init?: RequestInit) => {
+      requests += 1;
+      if (requests === 1) return Promise.resolve(completion("first minute"));
+      const signal = init!.signal!;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+    }) as typeof fetch;
+    const transcriber = new ChatAudioTranscriber({
+      url: "http://127.0.0.1:8011",
+      model: "qwen3-asr",
+      fetchFn,
+      decodeAudio: seconds(150),
+    });
+    const pending = transcriber.transcribe(audio, "audio/ogg");
+    await vi.waitFor(() => expect(requests).toBe(2));
+    const chunks = splitPcm(new Float32Array(PCM_SAMPLE_RATE * 150), PCM_SAMPLE_RATE * 60);
+    // Each minute is sized by the slow-engine rate (about 990 s), not by the
+    // recording, whose 150 s would share one deadline at the ceiling.
+    expect(deadlines.map((d) => d.ms)).toEqual(
+      chunks
+        .slice(0, 2)
+        .map((chunk) => computeTranscriptionTimeoutMs(chunk.length / PCM_SAMPLE_RATE)),
+    );
+    deadlines[1]!.expire();
+    await expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(requests).toBe(2);
   });
 
   test("honors a configured chunk length and the API path prefix", async () => {

@@ -37,6 +37,15 @@ const log = createLogger("gateway:transcribe");
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
 /**
+ * How long a transcription waits for its vocabulary hints. The lookup is a
+ * bounded indexed read at user priority on the io worker (a 200 ms latency
+ * budget), which may first wait for a running background read (up to 2 s).
+ * Past this, the clip is transcribed without hints rather than holding the
+ * queue behind a slow or stuck io worker.
+ */
+export const VOCABULARY_LOOKUP_TIMEOUT_MS = 3_000;
+
+/**
  * Stable signature for a resolved assignment, to detect config changes. The
  * http arm folds in everything a backend edit can change under the same
  * backendKey — url, path prefix, the egress flag and an API-key fingerprint —
@@ -282,17 +291,18 @@ export class TranscribeService {
           capability.vocabularyRuntime &&
           this.vocabulary?.enabled()
         ) {
-          try {
-            vocabulary = await this.vocabulary.getDictionary(
-              opts?.context ?? {
-                purpose: "source-audio",
-                ...(opts?.language ? { languageHints: [opts.language] } : {}),
-              },
-            );
-          } catch {
-            // Vocabulary is optional; an unavailable read worker must not lose audio.
-            log.warn("Vocabulary lookup unavailable; transcribing without hints");
-          }
+          vocabulary = await this.lookupVocabulary(
+            this.vocabulary,
+            opts?.context ?? {
+              purpose: "source-audio",
+              ...(opts?.language ? { languageHints: [opts.language] } : {}),
+            },
+            opts?.signal,
+          );
+        }
+        if (opts?.signal?.aborted) {
+          log.info("Skipped a transcription whose caller stopped waiting");
+          return null;
         }
         return await capability.transcribe(audio, mimeType, {
           ...(opts?.language ? { language: opts.language } : {}),
@@ -316,6 +326,46 @@ export class TranscribeService {
         return null;
       }
     });
+  }
+
+  /**
+   * The vocabulary hints for one transcription, or none when the lookup fails,
+   * outlasts `VOCABULARY_LOOKUP_TIMEOUT_MS` or loses its caller. Hints are an
+   * enhancement, never a reason to hold the queue.
+   */
+  private async lookupVocabulary(
+    vocabulary: NonNullable<TranscribeService["vocabulary"]>,
+    context: TranscriptionContext,
+    signal: AbortSignal | undefined,
+  ): Promise<TranscriptionVocabulary | undefined> {
+    if (signal?.aborted) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      const lookup = vocabulary.getDictionary(context);
+      // An abandoned lookup settles unobserved: its result belonged to this call alone.
+      lookup.catch(() => {});
+      return await Promise.race([
+        lookup,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => {
+            log.warn(
+              `Vocabulary lookup took over ${VOCABULARY_LOOKUP_TIMEOUT_MS}ms; transcribing without hints`,
+            );
+            resolve(undefined);
+          }, VOCABULARY_LOOKUP_TIMEOUT_MS);
+          onAbort = () => resolve(undefined);
+          signal?.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+    } catch {
+      // An unavailable read worker must not lose audio.
+      log.warn("Vocabulary lookup unavailable; transcribing without hints");
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   /** Run `fn` after all previously-queued transcriptions complete. */

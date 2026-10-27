@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, vi } from "vitest";
-import { TranscribeService } from "./transcribe-service.js";
+import { TranscribeService, VOCABULARY_LOOKUP_TIMEOUT_MS } from "./transcribe-service.js";
 import {
   FrameDecoder,
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
 import type { WhisperWorkerProcess, WhisperWorkerSpawner } from "./whisper-transcriber.js";
-import type { ResolvedAssignment } from "@omnesis/core";
+import type { ResolvedAssignment, TranscriptionVocabulary } from "@omnesis/core";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -441,5 +441,103 @@ describe("TranscribeService", () => {
     const svc = new TranscribeService({ resolveAssignment: () => replay });
     await svc.transcribe(enc("hi"), "audio/ogg");
     await expect(svc.dispose()).resolves.toBeUndefined();
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * An http transcriber on loopback, so vocabulary reaches the request as its
+ * `prompt`, with a dictionary whose every lookup the test settles by hand.
+ */
+function withHeldLookups() {
+  const lookups: Array<ReturnType<typeof deferred<TranscriptionVocabulary>>> = [];
+  let lookupStarted = deferred<void>();
+  const prompts: Array<string | null> = [];
+  const svc = new TranscribeService({
+    resolveAssignment: () => httpAssignment,
+    vocabulary: {
+      enabled: () => true,
+      getDictionary: () => {
+        const lookup = deferred<TranscriptionVocabulary>();
+        lookups.push(lookup);
+        lookupStarted.resolve();
+        return lookup.promise;
+      },
+      maxPromptTokens: () => 224,
+    },
+    deps: {
+      decodeAudio: async () => new Float32Array(16_000),
+      fetchFn: (async (input: string | URL | Request, init?: RequestInit) => {
+        const form = await new Request(String(input), {
+          method: "POST",
+          headers: new Headers(init?.headers),
+          body: init?.body as BodyInit,
+        }).formData();
+        prompts.push(form.get("prompt") as string | null);
+        return Response.json({ text: `clip ${prompts.length}` });
+      }) as typeof fetch,
+    },
+  });
+  return {
+    svc,
+    lookups,
+    prompts,
+    /** Resolves once the next lookup has been asked for. */
+    nextLookup: () => {
+      const started = lookupStarted.promise;
+      return started.then(() => {
+        lookupStarted = deferred<void>();
+      });
+    },
+  };
+}
+
+const hints = (...words: string[]): TranscriptionVocabulary => ({
+  entries: words.map((text) => ({ text, score: 0.9 })),
+});
+
+describe("TranscribeService vocabulary lookup", () => {
+  test("a caller that stops waiting during the lookup gets null without waiting for it", async () => {
+    const { svc, lookups, prompts, nextLookup } = withHeldLookups();
+    const caller = new AbortController();
+    const pending = svc.transcribe(enc("one"), "audio/ogg", { signal: caller.signal });
+    await nextLookup();
+    caller.abort();
+    await expect(pending).resolves.toBeNull();
+    expect(prompts).toEqual([]);
+    // The abandoned lookup failing later is nobody's error.
+    lookups[0]!.reject(new Error("io worker gone"));
+  });
+
+  test("a lookup that overruns its bound transcribes without hints and frees the queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const { svc, lookups, prompts, nextLookup } = withHeldLookups();
+      const first = svc.transcribe(enc("one"), "audio/ogg");
+      const second = svc.transcribe(enc("two"), "audio/ogg");
+      await nextLookup();
+      await vi.advanceTimersByTimeAsync(VOCABULARY_LOOKUP_TIMEOUT_MS - 1);
+      expect(prompts).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(first).resolves.toMatchObject({ text: "clip 1" });
+
+      await nextLookup();
+      // The first clip's lookup answering late must not reach the second clip.
+      lookups[0]!.resolve(hints("Stalename"));
+      lookups[1]!.resolve(hints("Northstar"));
+      await expect(second).resolves.toMatchObject({ text: "clip 2" });
+      expect(prompts).toEqual([null, "Northstar"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

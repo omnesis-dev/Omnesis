@@ -95,9 +95,10 @@ export interface TranscribeCapability {
       /** ISO-639-1 hint to skip language auto-detection. */
       language?: string;
       /**
-       * The least time to allow before giving the transcription up. A caller
-       * nobody is waiting on (a queued voice note) may grant more than a
-       * backend's own deadline so a slow host still finishes.
+       * The least time to allow each request (each ten-minute chunk of a long
+       * recording) before giving the transcription up. A caller nobody is
+       * waiting on (a queued voice note) may grant more than a backend's own
+       * deadline so a slow host still finishes.
        */
       minTimeoutMs?: number;
       /** Ranked personal vocabulary; the backend owns its hint encoding. */
