@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, it, expect } from "vitest";
-import { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
+import { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
 import { PROVIDER_BRANDS } from "./provider-brands.js";
 
 describe("PROVIDER_PRESETS", () => {
@@ -136,5 +136,18 @@ describe("getPreset", () => {
 
   it("returns undefined for an unknown id", () => {
     expect(getPreset("nonexistent-provider")).toBeUndefined();
+  });
+});
+
+describe("getPresetByUrl", () => {
+  it("finds every preset by its default URL, with or without a trailing slash", () => {
+    for (const p of PROVIDER_PRESETS) {
+      expect(getPresetByUrl(p.defaultUrl)?.id, p.id).toBe(p.id);
+      expect(getPresetByUrl(`${p.defaultUrl}/`)?.id, p.id).toBe(p.id);
+    }
+  });
+
+  it("returns undefined for a URL no preset uses", () => {
+    expect(getPresetByUrl("https://llm.example.com")).toBeUndefined();
   });
 });

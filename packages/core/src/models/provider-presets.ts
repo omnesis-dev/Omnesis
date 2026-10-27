@@ -146,3 +146,9 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
 export function getPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.id === id);
 }
+
+/** Look up the provider preset whose default URL a backend uses, ignoring trailing slashes. */
+export function getPresetByUrl(url: string): ProviderPreset | undefined {
+  const normalized = url.replace(/\/+$/, "");
+  return PROVIDER_PRESETS.find((p) => p.defaultUrl.replace(/\/+$/, "") === normalized);
+}
