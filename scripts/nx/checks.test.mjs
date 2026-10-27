@@ -85,6 +85,36 @@ describe("Nx change selection", () => {
     );
   });
 
+  test("selects the native client bundles for the gateway wire the apps decode", () => {
+    const native = (file) =>
+      behavioralBundles([file]).filter((name) => /^(?:ios|android)-/.test(name));
+    const clients = ["android-e2e", "android-logic", "ios-e2e", "ios-logic"];
+    for (const file of [
+      "packages/gateway/src/http/routes/agent.ts",
+      "packages/gateway/src/ws.ts",
+      "packages/gateway/src/brain/tasks/http.ts",
+      "packages/gateway/src/realtime/route.ts",
+      "packages/gateway-client/src/gateway-ws-client.ts",
+      "packages/core/src/pairing-protocol.ts",
+      "packages/core/src/wire-fixtures.ts",
+      "packages/core/src/agent-tool-cards.ts",
+      "packages/core/src/push/message.ts",
+      "packages/gateway/src/auth-flows.ts",
+    ])
+      expect(native(file), file).toEqual(clients);
+    // Words that merely contain a wire word, the portal, and tests are not the wire.
+    for (const file of [
+      "packages/gateway/portal/js/views/agent.js",
+      "packages/gateway/src/http/routes/agent.test.ts",
+      "packages/gateway/src/brain/tasks/views.ts",
+      "packages/gateway/src/search/browse.ts",
+      "packages/gateway/src/brain/cognition/workflows.ts",
+      "packages/gateway/src/import-flows.ts",
+      "packages/gateway/src/sources/omnesis-notes/browser-note.ts",
+    ])
+      expect(native(file), file).toEqual([]);
+  });
+
   test("runs each native bridge in its native lane without unrelated backend E2E", () => {
     const bridges = {
       "scripts/ios-logic.sh": "ios-logic",

@@ -1999,7 +1999,7 @@ describe("full-validation workflow topology", () => {
     // Each gated lane job and the scope switch that runs it (scripts/nx/ci-scope.mjs).
     const switches = {
       knip: "knip",
-      swift: "apple",
+      swift: "swift_lint",
       ios: "apple",
       android: "android",
       "docker-smoke": "docker_smoke",

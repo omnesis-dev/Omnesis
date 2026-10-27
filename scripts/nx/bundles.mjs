@@ -183,6 +183,47 @@ const nativeBridgeBundles = new Map([
   ["scripts/run-android-e2e.sh", "android-e2e"],
 ]);
 
+// Words that name the gateway wire the iOS and Android apps decode: routes,
+// DTOs, the device WebSocket, pairing and the protocol gates. They match whole
+// path segments or words of a file name, so `views`, `browse` or `workflows`
+// is not `ws`.
+const nativeWireWords = new Set([
+  "ws",
+  "http",
+  "protocol",
+  "protocols",
+  "dto",
+  "dtos",
+  "pairing",
+  "device",
+  "devices",
+  "route",
+  "routes",
+  "wire",
+  "compat",
+]);
+// Wire contracts whose names carry none of those words: push payloads, the
+// tool-card table, and the cross-device auth-flow events.
+const nativeWireFiles =
+  /^packages\/(?:core\/src\/(?:push\/|agent-tool-cards\.ts$)|gateway\/src\/auth-flows\.ts$)/;
+
+/**
+ * Whether a change can alter what a native client decodes. The portal is not a
+ * native client, and a test-only change cannot break a client's decoding.
+ */
+function isNativeWire(path) {
+  if (!/^packages\/(?:core|types|gateway-client|gateway)\//.test(path)) return false;
+  if (path.startsWith("packages/gateway/portal/") || /\.test\.[cm]?[jt]sx?$/.test(path))
+    return false;
+  return (
+    nativeWireFiles.test(path) ||
+    path
+      .split("/")
+      .slice(2)
+      .some((segment) => segment.split(/[-_.]/).some((word) => nativeWireWords.has(word)))
+  );
+}
+
 const areas = [
   {
     test: (p) => /packages\/(?:core|types|config|source-sdk|gateway-client)\/src\//.test(p),
@@ -213,10 +254,7 @@ const areas = [
   { test: (p) => p.startsWith("extension/"), bundles: ["browser-capture"] },
   { test: (p) => p.startsWith("packages/gateway/portal/"), bundles: ["portal"] },
   {
-    test: (p) =>
-      /packages\/(?:core|types|gateway-client|gateway)\/.*(?:protocol|http|dto|ws|pairing|device)/.test(
-        p,
-      ),
+    test: isNativeWire,
     bundles: ["ios-logic", "android-logic", "ios-e2e", "android-e2e"],
   },
   {

@@ -7,15 +7,18 @@
  * A push to `main` and a manual run execute every lane. A pull request runs the
  * lanes its change affects: the Node lanes follow the same Nx affected plan as
  * `npm run checks:plan` (projects through the dependency graph, E2E files through
- * the declared behavioral bundles), and the native, install, Docker, harness and
- * security lanes follow path rules for what each one covers. Anything the plan
+ * the declared behavioral bundles), the Android lane runs when the plan selects
+ * an Android bundle, and the native, install, Docker, harness and security
+ * lanes follow path rules for what each one covers. Anything the plan
  * cannot decide narrowly — a global toolchain input, an unsupported path, a
  * change to `packages/core`, or a planner failure — runs every Linux lane. The
  * macOS lanes (`MACOS_LANES`) run on a pull request only for the paths they
  * cover: GitHub lends the repository a few macOS runners at a time, and `main`
  * runs them on every push, so a platform-only regression a pull request could
  * not see reddens `main` within the hour instead of queueing every pull
- * request behind a Mac.
+ * request behind a Mac. The one exception is iOS, which also runs when the plan
+ * selects an iOS bundle: a gateway wire change must run the Swift decoders and
+ * the live-gateway E2E before it merges.
  *
  * `node scripts/nx/ci-scope.mjs` writes the decision to `$GITHUB_OUTPUT`;
  * `node scripts/nx/ci-scope.mjs static` runs the pull-request floor of format
@@ -27,10 +30,17 @@ import { appendFileSync, existsSync } from "node:fs";
 export const E2E_SHARDS = 8;
 /**
  * The lanes that each take one of GitHub's few macOS runners: the macOS Node
- * lane, the Swift linters and the iOS app, the Android screenshot goldens and
- * the Mac installer scenarios. A pull request runs them by path rule only.
+ * lane, the Swift linters, the iOS app, the Android screenshot goldens and the
+ * Mac installer scenarios. A pull request runs them by path rule only, except
+ * `apple`, which also follows the plan's iOS bundles (`iosSelected`).
  */
-export const MACOS_LANES = ["node_macos", "apple", "android_render", "installer_coverage"];
+export const MACOS_LANES = [
+  "node_macos",
+  "apple",
+  "swift_lint",
+  "android_render",
+  "installer_coverage",
+];
 /** Keep a scoped shard no longer than a full-suite shard (~160 files / 8). */
 const FILES_PER_SHARD = 20;
 export const EMBEDDER_E2E = [
@@ -46,6 +56,7 @@ export const LANES = [
   "node_macos",
   "knip",
   "apple",
+  "swift_lint",
   "android",
   "android_render",
   "docker_image",
@@ -79,13 +90,24 @@ export function fullScope(reason) {
  * Every Linux lane of a pull request the plan cannot narrow, with the macOS
  * lanes by the path rules of `files`. Without a file list (the planner and
  * `git diff` both failed) the macOS lanes run: nothing says they are unneeded.
+ * `bundles` are the plan's own selection, when it made one.
  */
-export function pullRequestFullScope(reason, files) {
+export function pullRequestFullScope(reason, files, bundles = []) {
   const scope = fullScope(reason);
   if (files === null) return scope;
   const paths = pathLanes(files);
   for (const lane of MACOS_LANES) scope[lane] = String(paths[lane]);
+  if (iosSelected(bundles)) scope.apple = "true";
   return scope;
+}
+
+/**
+ * Whether the plan selected an iOS bundle — an `ios/` change or a gateway wire
+ * path the app decodes — so the iOS lane runs despite its macOS runner. A plan
+ * that fell back selects every bundle and so says nothing about iOS.
+ */
+function iosSelected(bundles) {
+  return bundles.some((name) => name.startsWith("ios-"));
 }
 
 // Inputs every lane depends on, or that decide the selection itself: the
@@ -117,6 +139,7 @@ export function pathLanes(files) {
   return {
     node_macos: any(files, nodeMacOS),
     apple: any(files, appleOnly),
+    swift_lint: any(files, appleOnly),
     android_render: any(files, /^android\//),
     docker_image: deploys || any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/),
     docker_smoke:
@@ -161,7 +184,11 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
     );
   const shared = files.filter((file) => sharedInputs.test(file));
   if (shared.length)
-    return pullRequestFullScope(`shared input changed: ${shared.slice(0, 5).join(", ")}`, files);
+    return pullRequestFullScope(
+      `shared input changed: ${shared.slice(0, 5).join(", ")}`,
+      files,
+      plan.bundles,
+    );
 
   const projects = plan.affectedProjects;
   const e2eFiles = [
@@ -172,6 +199,7 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
   const sharded = e2eFiles.filter((file) => !EMBEDDER_E2E.includes(file));
   const lanes = {
     ...pathLanes(files),
+    apple: any(files, appleOnly) || iosSelected(plan.bundles),
     unit: projects.length > 0,
     portal:
       projects.includes("@omnesis/gateway") ||

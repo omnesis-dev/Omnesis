@@ -130,17 +130,20 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
   plan as `checks:plan`: the privacy scan, format and lint of the changed files,
   the fast typecheck plus the affected projects' typechecks, and the affected
   projects' unit suites always run; the E2E files of the selected bundles, the
-  Playwright portal lane and the embedder lane run when selected; the native,
-  install, Docker, harness and security lanes run when the change touches the
-  paths they cover. The lockfile, a package manifest, a root toolchain config, a
-  workflow, `packages/core`, the check runners and planner, or an unsupported path
-  run every Linux lane. The macOS lanes (the macOS Node lane, Swift and iOS, the
-  Android screenshots, the Mac installer) run on a pull request only for the
-  paths they cover, never for a shared input: GitHub lends the repository a few
-  macOS runners at a time. `main` always runs everything, in its own run per
-  push, so a lane a pull request skipped still reddens `main` if the change
-  broke it. Before handoff, run the affected gate for the actual branch and
-  working tree: `npm run checks:plan -- --base origin/main`, then
+  Playwright portal lane and the embedder lane run when selected; the Android
+  lane runs when the plan selects an Android bundle; the native, install,
+  Docker, harness and security lanes run when the change touches the paths they
+  cover. The lockfile, a package manifest, a root toolchain config, a workflow,
+  `packages/core`, the check runners and planner, or an unsupported path run
+  every Linux lane. The macOS lanes (the macOS Node lane, the Swift linters and
+  iOS, the Android screenshots, the Mac installer) run on a pull request only
+  for the paths they cover, never for a shared input: GitHub lends the
+  repository a few macOS runners at a time. The one exception is iOS, which also
+  runs when the plan selects an iOS bundle for a gateway wire path the app
+  decodes. `main` always runs everything, in its own run per push, so a lane a
+  pull request skipped still reddens `main` if the change broke it. Before
+  handoff, run the affected gate for the actual branch and working tree:
+  `npm run checks:plan -- --base origin/main`, then
   `npm run checks:affected -- --base origin/main`. Nx selects package work
   through the dependency graph and adds declared behavioral E2E/native bundles.
   **A red `main` stops merging.** Whoever notices it fixes it forward or reverts

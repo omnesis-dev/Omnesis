@@ -82,6 +82,37 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     expect(JSON.parse(scope.e2e_matrix).length).toBeLessThan(E2E_SHARDS);
   });
 
+  test("a gateway wire change runs the native lanes its iOS and Android bundles select", () => {
+    const file = "packages/gateway/src/http/routes/agent.ts";
+    const plan = buildPlan({ base: "HEAD", files: [file] });
+    expect(plan.bundles).toEqual(expect.arrayContaining(["ios-logic", "ios-e2e", "android-e2e"]));
+    const scope = scopeOf([file]);
+    expect(scope.apple).toBe("true");
+    expect(scope.android).toBe("true");
+    // With no app source changed, the linters and screenshot goldens give main's verdict.
+    expect(scope.swift_lint).toBe("false");
+    expect(scope.android_render).toBe("false");
+  });
+
+  test.each([
+    "packages/gateway/src/search/hybrid.ts",
+    "packages/gateway/portal/js/views/agent.js",
+    "packages/gateway/src/http/routes/agent.test.ts",
+  ])("%s selects no native bundle and leaves the native lanes off", (file) => {
+    const plan = buildPlan({ base: "HEAD", files: [file] });
+    expect(plan.bundles.filter((name) => /^(?:ios|android)-/.test(name))).toEqual([]);
+    const scope = scopeOf([file]);
+    expect(scope.apple).toBe("false");
+    expect(scope.swift_lint).toBe("false");
+    expect(scope.android).toBe("false");
+  });
+
+  test("the device WebSocket selects both native lanes", () => {
+    const scope = scopeOf(["packages/gateway/src/ws.ts"]);
+    expect(scope.apple).toBe("true");
+    expect(scope.android).toBe("true");
+  });
+
   test("a change most projects depend on widens unit and typecheck to the whole repository", () => {
     const scope = scopeOf(["packages/types/src/privacy.ts"]);
     expect(scope.scope).toBe("affected");
@@ -107,7 +138,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
   });
 
   test.each([
-    ["ios/Sources/Omnesis/App.swift", ["apple"]],
+    ["ios/Sources/Omnesis/App.swift", ["apple", "swift_lint"]],
     ["android/app/src/main/java/dev/omnesis/Ui.kt", ["android_render"]],
     ["scripts/install.sh", ["installer_coverage", "node_macos"]],
     ["packages/providers/apple-notes/src/index.ts", ["node_macos"]],
@@ -124,21 +155,34 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     expect(failed.scope).toBe("full");
     expect(lanesOf(failed)).toEqual(linuxLanes);
     const ios = pullRequestFullScope("boom", ["ios/Sources/Omnesis/App.swift"]);
-    expect(lanesOf(ios)).toEqual([...linuxLanes, "apple"].sort());
+    expect(lanesOf(ios)).toEqual([...linuxLanes, "apple", "swift_lint"].sort());
     // Without a file list nothing says a macOS lane is unneeded, so they run.
     expect(lanesOf(pullRequestFullScope("boom", null))).toEqual([...LANES].sort());
     expect(lanesOf(fullScope("boom"))).toEqual([...LANES].sort());
   });
 
+  test("a core wire change runs the iOS lane its plan selects, beside every Linux lane", () => {
+    const scope = scopeOf(["packages/core/src/pairing-protocol.ts"]);
+    expect(scope.scope).toBe("full");
+    expect(lanesOf(scope)).toEqual([...linuxLanes, "apple"].sort());
+  });
+
+  test("a plan that falls back selects every bundle, so iOS stays path-ruled", () => {
+    const scope = scopeOf([".github/workflows/ci.yml", "packages/gateway/src/ws.ts"]);
+    expect(scope.scope).toBe("full");
+    expect(lanesOf(scope)).toEqual(linuxLanes);
+  });
+
   test("the macOS lanes are exactly the lanes that take a macOS runner", () => {
     expect([...MACOS_LANES].sort()).toEqual(
-      ["android_render", "apple", "installer_coverage", "node_macos"].sort(),
+      ["android_render", "apple", "installer_coverage", "node_macos", "swift_lint"].sort(),
     );
     for (const lane of MACOS_LANES) expect(LANES).toContain(lane);
   });
 
   test.each([
-    ["ios/Sources/Omnesis/App.swift", ["apple"]],
+    ["ios/Sources/Omnesis/App.swift", ["apple", "swift_lint"]],
+    ["scripts/ios-logic.sh", ["apple", "swift_lint"]],
     ["android/app/src/main/java/dev/omnesis/Ui.kt", ["android", "android_render"]],
     [
       "scripts/install.sh",
@@ -188,6 +232,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     expect(scope.scope).toBe("affected");
     const native = [
       "apple",
+      "swift_lint",
       "android",
       "android_render",
       "node_macos",
