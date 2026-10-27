@@ -1346,7 +1346,22 @@ async function executeHostPlan(
               ...(deps.updateLock ? { lock: deps.updateLock } : {}),
               targetLabel,
             });
-            if (handed.finished) return;
+            if (handed.finished) {
+              // The installed build ran the restarts that bring these back;
+              // starting them again here would only report a start that did
+              // nothing, after the fact.
+              for (const component of daemons.components) {
+                if (
+                  steps.some(
+                    (later, at) =>
+                      at > index && later.kind === "restart" && later.component === component,
+                  )
+                ) {
+                  daemons.forget(component);
+                }
+              }
+              return;
+            }
             if (!committed) release = deps.interruptions.claim(onSignal);
             if (handed.signal) {
               if (committed) throw new CliError("", signalExitCode(handed.signal));

@@ -4654,6 +4654,41 @@ describe("handing the rest of an update to the build it installed", () => {
       expect(events.slice(3)).toEqual(["npm run build", "copy", "restart collector"]);
     });
 
+    test("daemons stopped for the build are left to the installed build that restarts them", async () => {
+      const events: string[] = [];
+      const continueAfterApply = vi.fn((_offer: ContinuationOffer) => {
+        events.push("hand over");
+        return Promise.resolve(taken);
+      });
+      const startService = vi.fn((component: ServiceComponent) => {
+        events.push(`start ${component}`);
+        return Promise.resolve();
+      });
+      await updateSourceCheckout(
+        { rootDir, edge: false, dryRun: false },
+        sourceDeps(events, [...successfulUpdate, clean, clean, clean], {
+          roles: hostRoles({ gateway: supervised, collector: supervised }),
+          buildMemoryTight: () => true,
+          continueAfterApply,
+          stopService: vi.fn((component: ServiceComponent) => {
+            events.push(`stop ${component}`);
+            return Promise.resolve();
+          }),
+          startService,
+        }),
+      );
+      expect(events.slice(1)).toEqual([
+        "stop collector",
+        "stop gateway",
+        "git checkout --detach v0.5.0",
+        "npm ci",
+        "npm run build",
+        "hand over",
+      ]);
+      expect(startService).not.toHaveBeenCalled();
+      expect(output()).not.toContain("Started the");
+    });
+
     test("an edge build is handed over when its manifest declares a release that knows how", async () => {
       const events: string[] = [];
       const continueAfterApply = vi.fn((_offer: ContinuationOffer) => Promise.resolve(taken));
