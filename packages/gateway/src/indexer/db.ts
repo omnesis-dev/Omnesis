@@ -2142,11 +2142,12 @@ export function listPendingSourceIndexPurges(db: Db): string[] {
 }
 
 /**
- * Remove every queued source from the SQLite/FTS index while retaining the
- * durable obligations until the worker publishes the corresponding HNSW
- * removals. The gateway runs this before opening its search snapshot or
- * listener, so a crash between enqueue and delete cannot make removed content
- * lexically searchable during model or graph startup.
+ * Remove every queued source from SQLite/FTS while retaining its SQL re-apply
+ * obligation until the sole writer drains any stale in-flight writes. Vector
+ * removals are independently journaled in pending_vector_deletes until an
+ * actual graph save publishes them. The gateway runs this before opening its
+ * search snapshot or listener, so a crash between enqueue and delete cannot
+ * make removed content lexically searchable during model or graph startup.
  */
 export function scrubPendingSourceIndexPurges(db: Db): {
   sourceIds: string[];
@@ -2163,7 +2164,11 @@ export function scrubPendingSourceIndexPurges(db: Db): {
   return { sourceIds, deletedDocuments };
 }
 
-/** Clear only obligations whose delete and graph publication both succeeded. */
+/**
+ * Complete SQL re-apply after the source rows are gone and no stale in-flight
+ * write can restore them. Semantic owners save their graph first; lexical
+ * owners retain graph obligations in the independent vector-delete journal.
+ */
 export function completeSourceIndexPurges(db: Db, sourceIds: readonly string[]): void {
   if (sourceIds.length === 0) return;
   db.prepare(

@@ -353,7 +353,12 @@ function trySaveUsearchGraph(context: string): string | null {
 
 /**
  * Re-apply the deletes that landed while an exclusive job was writing, and
- * persist the result.
+ * persist the result. Source/document journals protect SQL against stale
+ * in-flight writes; once that owner drains and SQL is clean, their job is done.
+ * A lexical worker has no graph to publish: its independent vector-delete
+ * journal remains durable until a semantic owner actually removes and saves
+ * those keys. Keeping SQL-clean document entries here would starve later IDs
+ * behind the bounded queue prefix forever.
  *
  * The delete itself already ran and already answered its caller; this is the
  * pass that removes anything the job wrote for those documents afterwards.
@@ -384,7 +389,7 @@ function drainPendingSourcePurges(): string | null {
   try {
     state.usearchHandle?.save();
     refreshIndexStats(state.indexDb);
-    if (state.usearchHandle) completeSourceIndexPurges(state.indexDb, pending);
+    completeSourceIndexPurges(state.indexDb, pending);
     state.pendingSourcePurges.clear();
     return drainPendingDocumentPurges();
   } catch (err) {
@@ -397,8 +402,10 @@ function drainPendingSourcePurges(): string | null {
 
 /**
  * Re-apply one bounded batch per retained document after an exclusive index
- * job. The durable row stays until the authoritative source document is gone,
- * every chunk/summary row is gone, and the HNSW deletion is published.
+ * job. The SQL re-apply row stays until the authoritative source document and
+ * every chunk/summary row are gone, with no in-flight write left to restore them.
+ * Semantic owners also save the graph before completing it; lexical owners
+ * leave graph publication to the independent pending_vector_deletes journal.
  */
 function drainPendingDocumentPurges(): string | null {
   if (!state) return null;
@@ -428,7 +435,7 @@ function drainPendingDocumentPurges(): string | null {
     state.usearchHandle?.save();
     refreshIndexStats(state.indexDb);
     completePendingVectorDeletes(state.indexDb, preparedVectorDeletes);
-    if (state.usearchHandle) completeDocumentIndexPurges(state.indexDb, completed);
+    completeDocumentIndexPurges(state.indexDb, completed);
     return null;
   } catch (err) {
     const message = `re-applying document-index retention deletion failed: ${
@@ -457,7 +464,9 @@ function persistGraphAfterSourcePurges(
 
 /**
  * Finish all durable delete residue while the worker is starting, before the
- * model warmup/readiness boundary. This runs without `state` because the graph
+ * model warmup/readiness boundary. SQL re-apply entries can complete without
+ * a graph; pending_vector_deletes is never completed without an actual save.
+ * This runs without `state` because the graph
  * and index DB become available before the embedder/indexer do.
  */
 function publishStartupPurges(resources: StartupIndexResources): void {
@@ -503,8 +512,8 @@ function publishStartupPurges(resources: StartupIndexResources): void {
     usearchHandle?.save();
     refreshIndexStats(indexDb);
     completePendingVectorDeletes(indexDb, preparedVectorDeletes);
-    if (usearchHandle) completeSourceIndexPurges(indexDb, sourceIds);
-    if (usearchHandle) completeDocumentIndexPurges(indexDb, completedDocumentIds);
+    completeSourceIndexPurges(indexDb, sourceIds);
+    completeDocumentIndexPurges(indexDb, completedDocumentIds);
   } catch (err) {
     const kind =
       sourceIds.length > 0
@@ -1409,7 +1418,7 @@ function handleDeleteDocumentIndexBatch(
       resources.usearchHandle?.save();
       refreshIndexStats(resources.indexDb);
       completePendingVectorDeletes(resources.indexDb, preparedVectorDeletes);
-      if (resources.usearchHandle) completeDocumentIndexPurges(resources.indexDb, [documentId]);
+      completeDocumentIndexPurges(resources.indexDb, [documentId]);
     }
     post({ type: "deleteDocumentIndexBatchResult", id, ...result });
   } catch (err) {

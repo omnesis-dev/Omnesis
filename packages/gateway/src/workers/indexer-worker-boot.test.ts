@@ -15,6 +15,8 @@ import {
   createIndexDatabase,
   deleteChunksByDocument,
   enqueueSourceIndexPurge,
+  enqueueDocumentIndexPurge,
+  listPendingDocumentIndexPurges,
   getIndexedDocumentCount,
   getWatermark,
   getIndexEmbedModel,
@@ -1371,7 +1373,7 @@ test("lexical deletion retains old-graph obligations across restart until semant
     const lexicalDb = openIndexDb(paths.indexDbPath, { readonly: true });
     try {
       expect(hasLexicalWrites(lexicalDb)).toBe(true);
-      expect(listPendingSourceIndexPurges(lexicalDb)).toContain(sourceId);
+      expect(listPendingSourceIndexPurges(lexicalDb)).toEqual([]);
       expect(lexicalDb.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
         n: 1,
       });
@@ -1419,3 +1421,158 @@ test("lexical deletion retains old-graph obligations across restart until semant
     await closeServer(fake.server);
   }
 }, 60_000);
+
+test("a clean lexical purge prefix cannot starve a later stale document", async () => {
+  const sourceId = "synthetic:batch@example.com";
+  const paths = createFixture(
+    Array.from({ length: 129 }, (_, i) =>
+      makeDocument(`bounded-${i}`, `invented prism ledger ${i}`, sourceId),
+    ),
+  );
+  const fake = await startFakeEmbedder();
+  let proxy: IndexerWorkerProxy | undefined;
+  try {
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.dispose();
+    proxy = undefined;
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    const seed = openIndexDb(paths.indexDbPath);
+    let laterId: string;
+    try {
+      const ids = seed
+        .prepare<[], { document_id: string }>("SELECT document_id FROM chunks ORDER BY document_id")
+        .all()
+        .map((row) => row.document_id);
+      expect(ids).toHaveLength(129);
+      laterId = ids[128]!;
+      for (const id of ids.slice(0, 128)) {
+        enqueueDocumentIndexPurge(seed, id, true);
+        deleteChunksByDocument(seed, id);
+      }
+      enqueueDocumentIndexPurge(seed, laterId, true);
+      expect(
+        listPendingDocumentIndexPurges(seed, { limit: 128, sourceDeletedOnly: true }).some(
+          (item) => item.documentId === laterId,
+        ),
+      ).toBe(false);
+    } finally {
+      seed.close();
+    }
+    proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+      lexicalOnly: true,
+    });
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    // The document drain deliberately processes one ID per pass. Drive a
+    // finite number of completed cycles rather than assuming startup drains
+    // the whole queue; a retained clean prefix must not consume every pass.
+    for (let cycle = 2; cycle <= 130; cycle++) {
+      const pending = openIndexDb(paths.indexDbPath, { readonly: true });
+      let remaining: number;
+      try {
+        remaining = listPendingDocumentIndexPurges(pending).length;
+      } finally {
+        pending.close();
+      }
+      if (remaining === 0) break;
+      proxy.wake();
+      await waitForCycleRuns(proxy, cycle);
+    }
+    const lexical = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      // Reconcile is on a one-hour timer, so only bounded purge drains can do this.
+      expect(
+        lexical.prepare("SELECT count(*) AS n FROM chunks WHERE document_id = ?").get(laterId),
+      ).toEqual({ n: 0 });
+      expect(
+        lexical
+          .prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'prism'")
+          .get(),
+      ).toEqual({ n: 0 });
+      expect(listPendingDocumentIndexPurges(lexical)).toEqual([]);
+      expect(lexical.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 129,
+      });
+    } finally {
+      lexical.close();
+    }
+    await proxy.dispose();
+    proxy = undefined;
+    const oldGraph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(oldGraph.size()).toBe(129);
+    } finally {
+      oldGraph.close();
+    }
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    const published = openIndexDb(paths.indexDbPath, { readonly: true });
+    const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(published.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 0,
+      });
+      expect(graph.size()).toBe(0);
+    } finally {
+      published.close();
+      graph.close();
+    }
+  } finally {
+    await proxy?.dispose();
+    await closeServer(fake.server);
+  }
+}, 60_000);
+
+test("source and document reapply journals stay pending until the in-flight owner drains", async () => {
+  const sourceId = "synthetic:held-purge@example.com";
+  const holdText = "hold the pending purge write";
+  const paths = createFixture([makeDocument("held-purge", holdText, sourceId)]);
+  const gateway = createDatabase(paths.gatewayDbPath);
+  let documentId: string;
+  try {
+    const row = gateway.prepare<[], { id: string }>("SELECT id FROM documents").get();
+    if (!row) throw new Error("Missing held purge document");
+    documentId = row.id;
+  } finally {
+    gateway.close();
+  }
+  const fake = await startFakeEmbedder([holdText]);
+  const proxy = createProxy(paths, fake.url);
+  try {
+    await proxy.whenReady();
+    await fake.holds[0]!.started;
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    await expect(proxy.deleteDocumentIndexBatch(documentId, 64, true)).resolves.toMatchObject({
+      complete: false,
+    });
+    await proxy.deleteSourceIndex(sourceId);
+    const during = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(listPendingDocumentIndexPurges(during).map((item) => item.documentId)).toContain(
+        documentId,
+      );
+      expect(listPendingSourceIndexPurges(during)).toContain(sourceId);
+    } finally {
+      during.close();
+    }
+    fake.holds[0]!.release();
+    await waitForCycleRuns(proxy, 1);
+    const drained = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(listPendingDocumentIndexPurges(drained)).toEqual([]);
+      expect(listPendingSourceIndexPurges(drained)).toEqual([]);
+      expect(drained.prepare("SELECT count(*) AS n FROM chunks").get()).toEqual({ n: 0 });
+      expect(getIndexedDocumentCount(drained)).toBe(0);
+    } finally {
+      drained.close();
+    }
+  } finally {
+    fake.holds[0]!.release();
+    await proxy.dispose();
+    await closeServer(fake.server);
+  }
+}, 30_000);
