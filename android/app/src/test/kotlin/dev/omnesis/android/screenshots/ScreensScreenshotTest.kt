@@ -848,7 +848,7 @@ class ScreensScreenshotTest {
             modifier = Modifier.background(c.bgPrimary).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            listOf("anthropic", "openai", "codex", "google", "mistral", "groq", "cerebras", "together", "fireworks", "deepseek", "nvidia", "xai", "meta", "moonshot", "openrouter", "ollama", "local", "none").forEach { id ->
+            listOf("anthropic", "openai", "codex", "google", "mistral", "groq", "cerebras", "together", "fireworks", "deepseek", "nvidia", "xai", "meta", "moonshot", "regolo", "openrouter", "ollama", "local", "none").forEach { id ->
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,

@@ -20,6 +20,7 @@ export const PORTAL_PROVIDER_BRANDS = {
   xai: { id: "xai", label: "xAI" },
   meta: { id: "meta", label: "Meta" },
   moonshot: { id: "moonshot", label: "Moonshot AI" },
+  regolo: { id: "regolo", label: "Regolo AI" },
   openrouter: { id: "openrouter", label: "OpenRouter" },
   ollama: { id: "ollama", label: "Ollama" },
   local: { id: "local", label: "Local" },

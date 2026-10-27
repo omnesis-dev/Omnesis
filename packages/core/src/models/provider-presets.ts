@@ -123,6 +123,10 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     id: "regolo",
     modelsDevId: "regolo-ai",
     name: "Regolo AI",
+    // OpenAI-compatible Chat Completions and embeddings under `/v1`. Its
+    // `/models` list also serves rerankers, speech-to-text, OCR and image
+    // models; only the embedding models (e.g. `qwen3-embedding-8b`) suit the
+    // embedder role.
     defaultUrl: "https://api.regolo.ai",
     capabilities: ["agent", "embed"],
   },
