@@ -408,6 +408,8 @@ export function createServer(
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
     getNoteAgentStatus?: () => import("./brain/note-agent/runner.js").NoteAgentStatus;
+    /** The owner's note agent switch, read as each note is captured. */
+    isNoteAgentEnabled?: () => boolean;
     /** The cascades that follow a task change (loop mirror, scheduled checks, observations). */
     taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
@@ -1651,6 +1653,7 @@ export function createServer(
       readDb: db,
       isTranscriptionVocabularyEnabled: () =>
         opts?.transcriptionVocabularyService?.enabled() ?? false,
+      isNoteAgentEnabled: opts?.isNoteAgentEnabled,
       ingest: (docs) => documentService.ingest(docs),
       deleteByIds: (providerId, sourceId, externalIds) =>
         documentService.deleteByIds(providerId, sourceId, externalIds),

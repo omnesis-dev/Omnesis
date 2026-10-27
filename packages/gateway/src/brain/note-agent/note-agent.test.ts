@@ -3,12 +3,13 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { createLogger, type AgentEvent } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { insertNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
+import { bootOmnesisNotes, type OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import { insertPendingVoiceNote } from "../../voice-notes/storage.js";
 import { createOpenLoop, getOpenLoop, listOpenLoops } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
@@ -597,6 +598,150 @@ describe("note agent switch", () => {
     expect(await runner.drain()).toBe(0);
     expect(turns).toEqual([]);
     expect(getNoteRuns(db, ["early"]).size).toBe(0);
+  });
+
+  describe("notes captured while it is off", () => {
+    const runtimes: OmnesisNotesRuntime[] = [];
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+    });
+    afterEach(async () => {
+      for (const runtime of runtimes.splice(0)) {
+        await runtime.flushAll();
+        runtime.dispose();
+      }
+      vi.useRealTimers();
+    });
+
+    /** Capture an owner's note the way the gateway does, under the runner's switch. */
+    function capturer(runner: NoteAgent) {
+      const notes = bootOmnesisNotes({
+        writeGate: directWriteGate(db),
+        readDb: db,
+        ingest: async () => undefined,
+        deleteByIds: async () => undefined,
+        isNoteAgentEnabled: () => runner.enabled(),
+        debounceMs: 0,
+      });
+      runtimes.push(notes);
+      return async (id: string, text: string, at: number) => {
+        vi.setSystemTime(at);
+        await notes.capture({
+          id,
+          text,
+          capturedAt: new Date(at).toISOString(),
+          surface: "ios-app",
+          fromOwner: true,
+        });
+      };
+    }
+
+    /** A backend whose first turn waits until the test releases it. */
+    function heldBackend() {
+      const { backend: inner, turns } = countingBackend();
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let started!: () => void;
+      const turnStarted = new Promise<void>((resolve) => (started = resolve));
+      const backend: ChatBackend = {
+        ...inner,
+        async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+          started();
+          await released;
+          yield* inner.runTurn(input);
+        },
+      };
+      return { backend, turns, turnStarted, release };
+    }
+
+    test("switched back on before any drain, it never reads them", async () => {
+      let setting: boolean | undefined = true;
+      let now = T0;
+      const { backend, turns } = countingBackend();
+      const { runner } = agent(backend, { getSetting: () => setting, clock: () => now });
+      const capture = capturer(runner);
+      await runner.start();
+
+      setting = false;
+      await capture("while-off", "Buy stamps", T0 + 1_000);
+      setting = true;
+      now = T0 + 1_000 + NOTE_SETTLE_MS;
+      expect(await runner.drain()).toBe(0);
+      expect(turns).toEqual([]);
+      expect(getNoteRuns(db, ["while-off"]).get("while-off")?.state).toBe("skipped");
+    });
+
+    test("switched off and on again during a slow turn, it never reads them", async () => {
+      let setting: boolean | undefined = true;
+      let now = T0;
+      const { backend, turns, turnStarted, release } = heldBackend();
+      const { runner } = agent(backend, { getSetting: () => setting, clock: () => now });
+      const capture = capturer(runner);
+      await runner.start();
+      await capture("first", "Call the garage", T0 + 1_000);
+      now = T0 + 1_000 + NOTE_SETTLE_MS;
+      const draining = runner.drain();
+      await turnStarted;
+
+      setting = false;
+      await capture("while-off", "Buy stamps", T0 + 12_000);
+      expect(await runner.drain()).toBe(0);
+      setting = true;
+      release();
+      expect(await draining).toBe(1);
+
+      now = T0 + 12_000 + NOTE_SETTLE_MS;
+      expect(await runner.drain()).toBe(0);
+      expect(turns.map((turn) => turn.userMessage)).toEqual([
+        expect.stringContaining("Call the garage"),
+      ]);
+      const runs = getNoteRuns(db, ["first", "while-off"]);
+      expect(runs.get("first")?.state).toBe("done");
+      expect(runs.get("while-off")?.state).toBe("skipped");
+    });
+
+    test("a note captured while it is on waits behind a slow turn and is read", async () => {
+      let now = T0;
+      const { backend, turns, turnStarted, release } = heldBackend();
+      const { runner } = agent(backend, { clock: () => now });
+      const capture = capturer(runner);
+      await runner.start();
+      await capture("first", "Call the garage", T0 + 1_000);
+      now = T0 + 1_000 + NOTE_SETTLE_MS;
+      const draining = runner.drain();
+      await turnStarted;
+
+      await capture("behind", "Buy stamps", T0 + 12_000);
+      expect(await runner.drain()).toBe(0);
+      release();
+      expect(await draining).toBe(1);
+
+      now = T0 + 12_000 + NOTE_SETTLE_MS;
+      expect(await runner.drain()).toBe(1);
+      expect(turns.map((turn) => turn.userMessage)).toEqual([
+        expect.stringContaining("Call the garage"),
+        expect.stringContaining("Buy stamps"),
+      ]);
+    });
+
+    test("a restarted gateway with it on never reads them", async () => {
+      enqueueNewNotes(db, T0);
+      const { runner: before } = agent(countingBackend().backend, {
+        getSetting: () => false,
+        clock: () => T0,
+      });
+      await capturer(before)("while-off", "Buy stamps", T0 + 1_000);
+
+      const { backend, turns } = countingBackend();
+      const { runner: after } = agent(backend, {
+        getSetting: () => true,
+        clock: () => T0 + 1_000 + NOTE_SETTLE_MS,
+      });
+      await after.start();
+      expect(await after.drain()).toBe(0);
+      expect(turns).toEqual([]);
+      expect(getNoteRuns(db, ["while-off"]).get("while-off")?.state).toBe("skipped");
+    });
   });
 
   test("skipping before the note agent first ran records nothing", () => {

@@ -2555,6 +2555,7 @@ const app = createServer(db, DB_PATH, {
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
   getNoteAgentStatus: () => noteAgent.status(),
+  isNoteAgentEnabled: () => noteAgent.enabled(),
   getDictationStatus: () =>
     dictationFeatureStatus({
       transcriberReadiness: () => transcribeService.readiness(),

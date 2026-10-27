@@ -7,9 +7,9 @@
  * Notes the owner's own clients capture after the note agent first ran are
  * queued as they appear; a note from an external agent or the browser
  * extension is never read, so a notes-only grant cannot change tasks or
- * memory through it. Earlier notes are not processed retroactively, and notes
- * captured while the owner has the note agent switched off are settled as
- * skipped, so switching it back on never acts on them. A row
+ * memory through it. Earlier notes are not processed retroactively, and a
+ * note captured while the owner has the note agent switched off is settled as
+ * skipped with its capture, so switching it back on never acts on it. A row
  * waits until its note has settled (no edits for a short while, its voice transcript in),
  * runs once, and keeps the receipt the user sees under the note. Deleting a
  * note deletes its row.
@@ -114,6 +114,18 @@ export const NOTE_AGENT_MAX_ATTEMPTS = 3;
  */
 export function enqueueNewNotes(db: Db, now: number): number {
   return scanNewNotes(db, now, "pending");
+}
+
+/**
+ * Settle a note as skipped as it is captured, in the capture's transaction:
+ * the owner has the note agent switched off, so it is never read, however
+ * soon the agent is switched back on and whether or not a scan saw it off.
+ */
+export function skipNoteAtCapture(db: Db, entryId: string, now: number): void {
+  db.prepare<[string, number, number, number]>(
+    `INSERT OR IGNORE INTO note_agent_runs (entry_id, state, run_after, created_at, updated_at)
+     VALUES (?, 'skipped', ?, ?, ?)`,
+  ).run(entryId, now, now, now);
 }
 
 /**

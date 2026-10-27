@@ -16,6 +16,7 @@
 
 import { experimentalEnabled } from "@omnesis/core";
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
+import { skipNoteAtCapture } from "../../brain/note-agent/storage.js";
 import {
   browserNoteRevision,
   browserNoteContext,
@@ -89,6 +90,12 @@ export interface NoteEntry {
    * notes are read by the note agent. Written at capture; not read back.
    */
   fromOwner?: boolean;
+  /**
+   * Captured by the owner while the note agent was switched off: the note is
+   * settled as skipped together with its capture, so the note agent never
+   * reads it. Written at capture; not read back.
+   */
+  noteAgentOff?: boolean;
   /**
    * The task (open loop id) the note is about, when it was written while
    * accepting a suggestion from the Tasks view; the note agent applies it to
@@ -245,6 +252,14 @@ export function insertNoteEntry(
         throw error;
       }
       return insertNoteEntry(db, entry);
+    })();
+  }
+  if (entry.noteAgentOff) {
+    return db.transaction(() => {
+      const inserted = insertNoteEntry(db, { ...entry, noteAgentOff: false });
+      if (inserted)
+        skipNoteAtCapture(db, entry.id, Date.parse(entry.receivedAt ?? entry.capturedAt));
+      return inserted;
     })();
   }
   const result = db

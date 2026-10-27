@@ -67,6 +67,7 @@ const SCHEDULED_CREATE_NOTE = "I have to service the boiler, but not this week â
 const STRIKE_NOTE = "I've decided I won't repaint the fence.";
 const RESCHEDULE_NOTE = "Push the quarterly report to Friday.";
 const COUNTED_NOTE = "Watered the window boxes.";
+const SWITCHED_OFF_NOTE = "Remind me to collect the dry cleaning.";
 
 const PLUMBER_TITLE = "Pay the plumber";
 const INSURANCE_TITLE = "Renew the car insurance";
@@ -567,6 +568,22 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     const agent = await receiptFor(tellNotes, parked, today());
     expect(agent.receipt?.text).toBe("Added a task to call the optician.");
   }, 240_000);
+
+  test("a note told while the note agent is off is never read, even when switched straight back on", async () => {
+    const setNoteAgent = (on: boolean) =>
+      bench.harness.gatewayJson("/admin/config", {
+        method: "PATCH",
+        body: JSON.stringify({ agent: { noteAgent: on } }),
+      });
+    await setNoteAgent(false);
+    const unread = await capture(SWITCHED_OFF_NOTE);
+    await setNoteAgent(true);
+    // A note told once it is back on is read; the earlier one stays settled.
+    const control = await capture(CONTROL_NOTE);
+    await receiptFor(tellNotes, control, today());
+    expect((await tellNotes(today())).find((n) => n.id === unread)?.agent?.state).toBe("skipped");
+    expect(noteCalls().some((c) => c.prompt.includes(SWITCHED_OFF_NOTE))).toBe(false);
+  }, 180_000);
 });
 
 describe("the note agent with no background-agent model", () => {
