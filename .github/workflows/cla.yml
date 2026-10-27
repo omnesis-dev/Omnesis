@@ -24,9 +24,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Where signatures are stored, in this repo on the main branch.
+          # Where signatures are stored: this repo, on the dedicated cla-signatures branch.
           path-to-signatures: signatures/cla.json
-          branch: main
+          # Unprotected branch: the bot pushes signatures directly, and the
+          # "Protect main" ruleset's required `verdict` check rejects pushes to main.
+          branch: cla-signatures
           # The CLA document contributors read before signing.
           path-to-document: https://github.com/omnesis-dev/Omnesis/blob/main/CLA.md
           # Repo owner and bot accounts — never asked to sign.
