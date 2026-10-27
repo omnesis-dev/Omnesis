@@ -29,6 +29,8 @@ export const FAKE_EMBEDDER_DIM = 768;
 export const FAKE_EMBEDDER_MODEL_ID = "fake-embed-test-v1";
 
 export interface FakeEmbedderOptions {
+  /** Return HTTP 503 until release(), exercising the real backend retry path. */
+  initiallyUnavailable?: boolean;
   /** Embedding dimension. Defaults to 768 so the /search HNSW read handle works. */
   dim?: number;
   /** Model id advertised via /v1/models and echoed in /v1/embeddings. */
@@ -50,6 +52,10 @@ export interface FakeEmbedderServer {
    * which re-emits N day-docs re-embeds only the changed one's chunks.
    */
   embedCount: () => number;
+  /** All embedding HTTP requests, including refused readiness probes. */
+  embeddingRequestCount: () => number;
+  /** Make an initially unavailable backend ready; idempotent. */
+  release: () => void;
   /** Stop the server and resolve once fully closed. */
   close: () => Promise<void>;
 }
@@ -132,9 +138,10 @@ export function startFakeEmbedderServer(
   // Total inputs embedded across all /v1/embeddings POSTs. Boxed so the
   // request handler mutates the same counter the returned `embedCount()` reads.
   const embedCounter = { n: 0 };
+  const availability = { ready: !opts.initiallyUnavailable, embeddingRequests: 0 };
 
   const server: Server = createServer((req, res) => {
-    void handleRequest(req, res, dim, modelId, embedCounter);
+    void handleRequest(req, res, dim, modelId, embedCounter, availability);
   });
 
   return new Promise<FakeEmbedderServer>((resolve, reject) => {
@@ -147,6 +154,10 @@ export function startFakeEmbedderServer(
         modelId,
         dim,
         embedCount: () => embedCounter.n,
+        embeddingRequestCount: () => availability.embeddingRequests,
+        release: () => {
+          availability.ready = true;
+        },
         close: () =>
           new Promise<void>((res, rej) => {
             server.close((err) => (err ? rej(err) : res()));
@@ -162,9 +173,17 @@ async function handleRequest(
   dim: number,
   modelId: string,
   embedCounter: { n: number },
+  availability: { ready: boolean; embeddingRequests: number },
 ): Promise<void> {
   const url = req.url ?? "";
   const path = url.split("?")[0];
+  const isEmbedding = req.method === "POST" && path === "/v1/embeddings";
+  if (isEmbedding) availability.embeddingRequests++;
+  if (!availability.ready && (isEmbedding || (req.method === "GET" && path === "/v1/models"))) {
+    req.resume();
+    sendJson(res, 503, { error: { message: "scripted embedding backend is not ready" } });
+    return;
+  }
 
   if (req.method === "GET" && path === "/v1/models") {
     sendJson(res, 200, {
