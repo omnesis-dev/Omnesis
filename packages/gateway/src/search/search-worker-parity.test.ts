@@ -475,6 +475,27 @@ describe("search worker — real thread parity", () => {
     expect(viaMemory.results.length).toBeGreaterThan(0);
   });
 
+  test("a worker completes a type-ahead prefix that spells an operator word as FTS5 does", async () => {
+    const req: CandidateGenRequest = {
+      ...noEmbedderRequest(),
+      bm25Text: "not",
+      prefixLastToken: true,
+    };
+    const viaFts = await pool.candidateGen(req);
+    pool.setLexicalIndex(LexicalIndex.build(inProcDb, { shared: true }).data);
+    const viaMemory = await pool.candidateGen(req);
+
+    expect(viaMemory.stageReports.bm25?.engine).toBe("memory");
+    expect(viaFts.stageReports.bm25?.engine).toBe("fts5");
+    expect(viaMemory.results.map((r) => r.documentId).sort()).toEqual([
+      "doc-email-1",
+      "doc-note-1",
+    ]);
+    expect(viaMemory.results.map((r) => r.documentId)).toEqual(
+      viaFts.results.map((r) => r.documentId),
+    );
+  });
+
   test("saturation gate on the real pool exposes a truthful inflight count", async () => {
     expect(pool.isReady).toBe(true);
     expect(pool.inflightCount).toBe(0);

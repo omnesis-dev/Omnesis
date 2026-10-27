@@ -353,6 +353,36 @@ describe("LexicalIndex", () => {
   });
 });
 
+describe("bm25Search — type-ahead prefixes", () => {
+  test("a prefix that spells an operator word completes on both engines", () => {
+    upsertChunks(db, [
+      chunk({ id: "c1", documentId: "order", content: "order confirmation for the studio" }),
+      chunk({ id: "c2", documentId: "android", content: "android release checklist" }),
+      chunk({ id: "c3", documentId: "notes", content: "quarterly notes" }),
+      chunk({ id: "c4", documentId: "nearby", content: "nearby cafés" }),
+      chunk({ id: "c5", documentId: "budget", content: "budget review" }),
+    ]);
+    const index = LexicalIndex.build(db);
+    const cases: [string, string[]][] = [
+      ["or", ["order"]],
+      ["and", ["android"]],
+      ["not", ["notes"]],
+      ["near", ["nearby"]],
+      ["budget NOT and", ["android", "budget"]],
+    ];
+    for (const [typed, expected] of cases) {
+      const opts = { prefixLastToken: true, commonTokenThreshold: 0.5 };
+      const viaFts = bm25Search(db, typed, {}, 10, opts);
+      const viaMemory = bm25Search(db, typed, {}, 10, { ...opts, ranker: index });
+      expect(viaMemory.ranker).toBe("memory");
+      expect(viaFts.candidates.map((c) => c.documentId).sort()).toEqual(expected);
+      expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+        viaFts.candidates.map((c) => c.chunkRowid),
+      );
+    }
+  });
+});
+
 describe("bm25Search — rank-first", () => {
   test("returns the same candidates as joining every match first", () => {
     seedCorpus(600);
@@ -486,6 +516,72 @@ describe("bm25Search — rank-first", () => {
     expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
     expect(viaMemory.ranker).toBe("memory");
     expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+      viaFts.candidates.map((c) => c.chunkRowid),
+    );
+  });
+
+  test("the first query after writes drops common words by the counts it ranks with", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      upsertChunks(db, [
+        ...[0, 1, 2, 3].map((i) =>
+          chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
+        ),
+        chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
+        chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
+      ]);
+      const index = LexicalIndex.build(db);
+      const opts = { commonTokenThreshold: 0.5 };
+      // 6 chunks, cutoff 3: "budget" (4) is common, "quokka" (0) is not.
+      expect(
+        bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index }).droppedTokens,
+      ).toEqual(["budget"]);
+
+      // 14 chunks, cutoff 7: now "quokka" (8) is the common word and "budget" (4) is not.
+      upsertChunks(
+        db,
+        [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+          chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
+        ),
+      );
+      vi.advanceTimersByTime(1_000);
+      const viaMemory = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
+      const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
+      expect(viaMemory.ranker).toBe("memory");
+      expect(viaFts.droppedTokens).toEqual(["quokka"]);
+      expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
+      expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+        viaFts.candidates.map((c) => c.chunkRowid),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a ranker that cannot catch up leaves the common-word filter to FTS5 too", () => {
+    upsertChunks(db, [
+      ...[0, 1, 2, 3].map((i) =>
+        chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
+      ),
+      chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
+      chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
+    ]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: -1,
+    });
+    upsertChunks(
+      db,
+      [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+        chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
+      ),
+    );
+    const opts = { commonTokenThreshold: 0.5 };
+    const behind = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
+    const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
+    expect(behind.ranker).toBe("fts5");
+    expect(behind.droppedTokens).toEqual(["quokka"]);
+    expect(behind.candidates.map((c) => c.chunkRowid)).toEqual(
       viaFts.candidates.map((c) => c.chunkRowid),
     );
   });

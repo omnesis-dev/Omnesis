@@ -439,4 +439,26 @@ describe("typed lexical previews", () => {
       bm25Search(db, '"budg" OR title:review* NEAR(x)', {}, 5, { prefixLastToken: true }),
     ).not.toThrow();
   });
+
+  test("a last word that spells an operator stays the prefix; operators elsewhere are dropped", () => {
+    expect(toFts5Query("or", true)).toBe('"or"*');
+    expect(toFts5Query("NEAR", true)).toBe('"NEAR"*');
+    expect(toFts5Query("budget and", true)).toBe('"budget" OR "and"*');
+    expect(toFts5Query("not budget", true)).toBe('"budget"*');
+    expect(toFts5Query("budget and review")).toBe("budget OR review");
+  });
+
+  test("the common-word filter keeps a prefix that spells an operator", () => {
+    const rows: ChunkUpsertInput[] = [];
+    for (let i = 0; i < 8; i++) {
+      rows.push(chunk({ id: `r${i}`, documentId: `dr${i}`, content: "quarterly report data" }));
+    }
+    rows.push(chunk({ id: "w0", documentId: "dw0", content: "wombat sighting log" }));
+    upsertChunks(db, rows);
+    expect(filterCommonTokens(db, "report wombat or", 0.5, { prefixLastToken: true })).toEqual({
+      filtered: "wombat or",
+      dropped: ["report"],
+    });
+    expect(filterCommonTokens(db, "report wombat or", 0.5).filtered).toBe("wombat");
+  });
 });

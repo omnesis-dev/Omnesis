@@ -297,7 +297,9 @@ function lexicalQuery(
   if (words.trim() === "") return "";
   const filtered =
     options.commonTokenThreshold > 0
-      ? filterCommonTokens(db, words, options.commonTokenThreshold, options.ranker?.stats).filtered
+      ? filterCommonTokens(db, words, options.commonTokenThreshold, {
+          stats: options.ranker?.stats?.(db) ?? undefined,
+        }).filtered
       : words;
   return toFts5Query(filtered);
 }
