@@ -18,6 +18,7 @@ import {
   getBuildableDocumentCount,
   getBuildingIndexVersion,
   getChunkCount,
+  hasLexicalWrites,
   enqueueDocumentIndexPurge,
   enqueueSourceIndexPurge,
   nextIndexVersion,
@@ -117,6 +118,7 @@ function abortableWait<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> 
  * the SAME object — `IndexerLifecycle.modelInfo` returns the stored instance.
  */
 export interface IndexerModelInfo {
+  disabled?: boolean;
   name: string;
   path: string;
   present: boolean;
@@ -251,6 +253,7 @@ export class IndexerLifecycle {
   // embedder is an independent HTTP client, the worker is simply disposed — query
   // embedding is unaffected by the worker's lifecycle.
   private _queryEmbedderIsWorker = false;
+  private lexicalOnly = false;
 
   // The mode the coalesced follow-up swap will run with. Newest-wins: every
   // applyEmbedSwap that lands while a swap is in flight overwrites this, so a
@@ -425,6 +428,10 @@ export class IndexerLifecycle {
       return this.queuedSwap ?? this.embedSwapInFlight ?? Promise.resolve();
     }
 
+    // A ready lexical worker is still the sole writer. Promotion is a swap,
+    // never another bootstrap beside it.
+    if (this._indexerOwner) return Promise.resolve();
+
     const abort = new AbortController();
     this.startupAbort = abort;
     const run = this.startIndexerAttempt(abort.signal).finally(() => {
@@ -433,6 +440,18 @@ export class IndexerLifecycle {
     });
     this.startupInFlight = run;
     return run;
+  }
+
+  /** A completed download may arrive while the lexical boot is still awaiting readiness. */
+  resumeAfterModelInstall(): Promise<void> {
+    const readiness = this.statusReporter.getReadiness();
+    if (
+      !this.lexicalOnly &&
+      !(readiness.status === "disabled" && /model not found/i.test(readiness.reason))
+    ) {
+      return Promise.resolve();
+    }
+    return this.applyEmbedSwap();
   }
 
   private async startIndexerAttempt(signal: AbortSignal): Promise<void> {
@@ -467,19 +486,9 @@ export class IndexerLifecycle {
     this.deps.inferenceRegistry.loadConfig(this.deps.configStore.get());
     const embedResolved = this.deps.inferenceRegistry.resolve("embedder");
 
-    if (embedResolved.kind === "disabled") {
-      this.log.info("Embedder disabled — vector search unavailable; search runs on keywords alone");
-      this.statusReporter.setReadiness({
-        status: "disabled",
-        reason: "Embedder assignment disabled",
-      });
-      return;
-    }
-    if (embedResolved.kind === "unresolved") {
-      this.log.warn(`Embedder unresolved: ${embedResolved.reason}`);
-      this.statusReporter.setReadiness({ status: "disabled", reason: embedResolved.reason });
-      return;
-    }
+    let lexicalReason: string | undefined;
+    if (embedResolved.kind === "disabled") lexicalReason = "Embedder assignment disabled";
+    if (embedResolved.kind === "unresolved") lexicalReason = embedResolved.reason;
 
     // HTTP embedder: probe the server to discover model name + dimension.
     let httpEmbedderUrl: string | undefined;
@@ -487,7 +496,7 @@ export class IndexerLifecycle {
     let httpEmbedderApiPathPrefix: string | undefined;
     let httpEmbedderAllowRemoteInference = false;
     let httpProbeResult: { model: string; dim: number } | undefined;
-    let modelPath: string;
+    let modelPath = "";
 
     if (embedResolved.kind === "http") {
       httpEmbedderUrl = embedResolved.url;
@@ -518,42 +527,39 @@ export class IndexerLifecycle {
       modelPath = "(http)";
     } else if (embedResolved.kind === "local") {
       if (!embedResolved.available) {
-        this.log.warn(`Indexer paused — embedding model not found at ${embedResolved.modelPath}`);
-        this.log.warn(
-          `Semantic search disabled. Documents still ingest and stay searchable by keyword.`,
-        );
-        this.statusReporter.setReadiness({
-          status: "disabled",
-          reason: `Embedding model not found at ${embedResolved.modelPath}`,
-        });
-        return;
+        lexicalReason = `Embedding model not found at ${embedResolved.modelPath}`;
       }
       modelPath = embedResolved.modelPath;
-    } else {
-      // Anthropic embedder is not supported for the indexer pipeline.
-      this.log.warn("Anthropic embedder is not supported for the indexing pipeline");
-      this.statusReporter.setReadiness({
-        status: "disabled",
-        reason: "Anthropic models cannot be used for embedding",
-      });
-      return;
+    } else if (!lexicalReason) {
+      lexicalReason = "Assigned model cannot be used for embedding";
     }
+    const lexicalOnly = lexicalReason !== undefined;
+    this.lexicalOnly = lexicalOnly;
 
     // Canonical embed-model identity + effective dimension. Computed by the
     // SINGLE shared producer (`canonicalEmbedIdentity`) so the stamp the
     // worker writes here matches, byte-for-byte, the one the swap path
     // (`runEmbedSwap`) writes — no backend-prefixed-vs-bare or
     // native-vs-effective drift that would trigger a spurious re-wipe.
-    const { name: modelName, dim: embedDim } = canonicalEmbedIdentity(embedResolved, {
-      httpServedModel: httpProbeResult?.model,
-      httpNativeDim: httpProbeResult?.dim,
-    });
+    const { name: modelName, dim: embedDim } = lexicalOnly
+      ? { name: "keyword-only", dim: 1 }
+      : canonicalEmbedIdentity(embedResolved, {
+          httpServedModel: httpProbeResult?.model,
+          httpNativeDim: httpProbeResult?.dim,
+        });
 
     // Update the model info snapshot so /index/stats reports the correct
     // model name and doesn't show "model-missing" for HTTP backends.
-    this._modelInfo.name = modelName;
+    this._modelInfo.disabled = embedResolved.kind === "disabled";
+    this._modelInfo.name =
+      embedResolved.kind === "local"
+        ? canonicalEmbedIdentity(embedResolved).name
+        : lexicalOnly
+          ? this.deps.initialModelInfo.name
+          : modelName;
     this._modelInfo.path = modelPath;
-    this._modelInfo.present = embedResolved.kind === "http" || existsSync(modelPath);
+    this._modelInfo.present =
+      !lexicalOnly && (embedResolved.kind === "http" || existsSync(modelPath));
 
     // Crash-safe resume. A `building` generation present at boot
     // means a graceful rebuild was in flight when the gateway last stopped. The
@@ -572,12 +578,13 @@ export class IndexerLifecycle {
     // to a normal boot, which reconciles the active generation against the
     // current config.
     const building = getBuildingIndexVersion(this.deps.indexDb);
-    if (building) {
+    if (building && !lexicalOnly) {
       const activeVersion = getActiveIndexVersion(this.deps.indexDb);
       const targetResumable =
         embedResolved.kind === "http" ? httpProbeResult != null : embedResolved.kind === "local";
       const resumable =
         targetResumable &&
+        !hasLexicalWrites(this.deps.indexDb) &&
         activeVersion != null &&
         building.version !== activeVersion &&
         building.embed_model === modelName &&
@@ -624,7 +631,9 @@ export class IndexerLifecycle {
     //     (`search_query: ` / `search_document: `) regardless of model family,
     //     so already-indexed installs that were built under that default keep
     //     matching their corpus until they reindex.
-    const encoding = this.resolveEmbedderEncodingFor(embedResolved, embedId);
+    const encoding = lexicalOnly
+      ? { kind: "none" as const }
+      : this.resolveEmbedderEncodingFor(embedResolved, embedId);
     if (encoding.kind === "text-prefix" && encoding.query === "search_query: ") {
       this.log.info(
         `Embedder encoding DISABLED — using legacy nomic-style text-prefix query="search_query: " document="search_document: "`,
@@ -636,6 +645,7 @@ export class IndexerLifecycle {
     }
 
     const proxy = new IndexerWorkerProxy({
+      lexicalOnly,
       modelPath,
       modelName,
       embedDim,
@@ -745,7 +755,10 @@ export class IndexerLifecycle {
     // thread embedder calls the HTTP endpoint directly (~130ms), completely
     // independent of worker contention. For local (llama.cpp) embedders
     // the model is loaded inside the worker, so we still use the proxy.
-    if (httpEmbedderUrl) {
+    if (lexicalOnly) {
+      this.deps.searchPipeline.setEmbedder(undefined);
+      this._queryEmbedderIsWorker = false;
+    } else if (httpEmbedderUrl) {
       const { HttpEmbedder } = await import("./http-embedder.js");
       // Shutdown may detach the worker while the module loader is awaiting
       // filesystem I/O. Re-check ownership before creating or publishing any
@@ -789,7 +802,15 @@ export class IndexerLifecycle {
     // a null indexerProxy and skipped. Re-reading from the live store closes
     // the race.
     proxy.updateCutoffs(buildIndexerCutoffMap(this.deps.configStore.get()));
-    this.statusReporter.setReadiness({ status: "ready" });
+    this.statusReporter.setReadiness(
+      lexicalReason
+        ? {
+            status: "disabled",
+            reason: `${lexicalReason}; keyword indexing active`,
+            keywordIndexingActive: true,
+          }
+        : { status: "ready" },
+    );
   }
 
   /**
@@ -939,17 +960,17 @@ export class IndexerLifecycle {
     this.deps.inferenceRegistry.loadConfig(this.deps.configStore.get());
     const resolved = this.deps.inferenceRegistry.resolve("embedder");
 
-    if (resolved.kind === "disabled" || resolved.kind === "unresolved") {
-      this.log.error(
-        `Embed-switch requested but embedder is ${resolved.kind} — leaving previous indexer running`,
-      );
-      return;
-    }
-
-    if (resolved.kind === "local" && !resolved.available) {
-      this.log.error(
-        `Embed-switch requested for ${resolved.catalogId} but file not found at ${resolved.modelPath} — leaving previous indexer running`,
-      );
+    if (
+      resolved.kind === "disabled" ||
+      resolved.kind === "unresolved" ||
+      (resolved.kind === "local" && !resolved.available)
+    ) {
+      // Assignment removal must stop using the previous model, including for queries.
+      await this.retireStaleBootAfterSwapValidation();
+      if (signal.aborted) return;
+      this.deps.searchPipeline.setEmbedder(undefined);
+      await this.stopWorker();
+      if (!signal.aborted) await this.startIndexerAttempt(signal);
       return;
     }
 
@@ -979,6 +1000,16 @@ export class IndexerLifecycle {
         });
         return;
       }
+    }
+
+    if (this.lexicalOnly || hasLexicalWrites(this.deps.indexDb)) {
+      await this.retireStaleBootAfterSwapValidation();
+      if (signal.aborted) return;
+      // The next worker warms the model before resetting lexical-only hashes.
+      // A graceful generation swap assumes the old worker has a query embedder.
+      await this.stopWorker();
+      if (!signal.aborted) await this.startIndexerAttempt(signal);
+      return;
     }
 
     // Canonical identity + dimension — the SAME producer the fresh worker

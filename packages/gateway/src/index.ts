@@ -1452,16 +1452,16 @@ setInterval(() => {
 const tokenUsageBuffer = createTokenUsageBuffer();
 const principalCredentialUsageBuffer = createPrincipalCredentialUsageBuffer();
 
-// The embedder lives behind the indexer worker proxy and isn't ready until
-// startIndexer() finishes. Returning null while it loads is the contract every
+// Only the search pipeline's attached query embedder is a semantic capability;
+// a lexical-only indexer worker has none. Returning null is the contract every
 // caller expects: a watch's recall arm scores nothing and is retried on the
 // next pass rather than nominating the whole corpus.
 const getSemanticEmbedder = (): { embedQuery(text: string): Promise<number[]> } | null => {
-  const proxy = indexerLifecycle.indexerProxy;
-  return proxy
+  const embedder = searchPipeline.queryEmbedder();
+  return embedder
     ? {
         embedQuery: async (text: string): Promise<number[]> => {
-          const vec = await proxy.embedQuery(text);
+          const vec = await embedder.embedQuery(text);
           return Array.from(vec as Float32Array | number[]);
         },
       }
@@ -1692,15 +1692,13 @@ const modelManager = new ModelManager({
       const activeEmbedId = liveEmbed.kind === "local" ? liveEmbed.catalogId : undefined;
       if (activeEmbedId && event.modelId === activeEmbedId) {
         indexerLifecycle.modelInfo.present = existsSync(indexerLifecycle.modelInfo.path);
-        const r = indexerStatus.getReadiness();
-        if (r.status === "disabled" && /model not found/i.test(r.reason ?? "")) {
-          log.info(`Active embed model ${event.modelId} just installed — bootstrapping indexer`);
-          indexerLifecycle.startIndexer().catch((err) => {
-            log.error(
-              `Indexer auto-bootstrap after install failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-        }
+        // Serialize promotion even when the lexical worker is still booting.
+        // Calling startIndexer directly could create a second index.db writer.
+        indexerLifecycle.resumeAfterModelInstall().catch((err) => {
+          log.error(
+            `Indexer auto-bootstrap after install failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
       }
     }
   },

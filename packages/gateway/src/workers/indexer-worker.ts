@@ -28,6 +28,8 @@ import { DocumentChunker } from "../indexer/chunker.js";
 import { DirectDocumentSource } from "../indexer/direct-document-source.js";
 import {
   openIndexDb,
+  hasLexicalWrites,
+  setLexicalWrites,
   refreshIndexStats,
   getIndexEmbedModel,
   setIndexEmbedModel,
@@ -161,7 +163,7 @@ const rateHistory: IndexRateSample[] = [];
 
 type StartupIndexResources = {
   indexDb: Db;
-  usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle;
+  usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle | undefined;
 };
 
 type DeferredSourceDelete = {
@@ -204,7 +206,7 @@ function recordRateSample(indexDb: Db): number | undefined {
 }
 
 let state: {
-  embedder: import("../indexer/types.js").Embedder;
+  embedder: import("../indexer/types.js").Embedder | null;
   indexer: Indexer;
   gatewayDb: Db;
   indexDb: Db;
@@ -265,7 +267,7 @@ let state: {
    * disposed and a fresh one spawns on the new active generation).
    */
   paused: boolean;
-  usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle;
+  usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle | undefined;
   /** index.db path + low-disk floor (MB) for the per-cycle write guard. */
   indexDbPath: string;
   minFreeDiskMb: number;
@@ -340,7 +342,7 @@ function drainPendingWake(): void {
 function trySaveUsearchGraph(context: string): string | null {
   if (!state) return "indexer state unavailable";
   try {
-    state.usearchHandle.save();
+    state.usearchHandle?.save();
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -380,9 +382,9 @@ function drainPendingSourcePurges(): string | null {
     return message;
   }
   try {
-    state.usearchHandle.save();
+    state.usearchHandle?.save();
     refreshIndexStats(state.indexDb);
-    completeSourceIndexPurges(state.indexDb, pending);
+    if (state.usearchHandle) completeSourceIndexPurges(state.indexDb, pending);
     state.pendingSourcePurges.clear();
     return drainPendingDocumentPurges();
   } catch (err) {
@@ -423,10 +425,10 @@ function drainPendingDocumentPurges(): string | null {
       state.usearchHandle,
       PENDING_VECTOR_DELETE_BATCH,
     );
-    state.usearchHandle.save();
+    state.usearchHandle?.save();
     refreshIndexStats(state.indexDb);
     completePendingVectorDeletes(state.indexDb, preparedVectorDeletes);
-    completeDocumentIndexPurges(state.indexDb, completed);
+    if (state.usearchHandle) completeDocumentIndexPurges(state.indexDb, completed);
     return null;
   } catch (err) {
     const message = `re-applying document-index retention deletion failed: ${
@@ -498,11 +500,11 @@ function publishStartupPurges(resources: StartupIndexResources): void {
     return;
 
   try {
-    usearchHandle.save();
+    usearchHandle?.save();
     refreshIndexStats(indexDb);
     completePendingVectorDeletes(indexDb, preparedVectorDeletes);
-    completeSourceIndexPurges(indexDb, sourceIds);
-    completeDocumentIndexPurges(indexDb, completedDocumentIds);
+    if (usearchHandle) completeSourceIndexPurges(indexDb, sourceIds);
+    if (usearchHandle) completeDocumentIndexPurges(indexDb, completedDocumentIds);
   } catch (err) {
     const kind =
       sourceIds.length > 0
@@ -576,18 +578,24 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // missing). On mismatch, wipe + rebuild before any cycle runs.
     const stamped = getIndexEmbedModel(indexDb);
     let warmedUp = false;
-    if (stamped === null) {
+    if (init.lexicalOnly) {
+      setLexicalWrites(indexDb, true);
+    } else if (stamped === null && !hasLexicalWrites(indexDb)) {
       log(
         "info",
         "indexer-worker",
         `index_meta empty — stamping model=${init.modelName} dim=${init.embedDim} (existing embeddings assumed to match)`,
       );
       setIndexEmbedModel(indexDb, init.modelName, init.embedDim);
-    } else if (stamped.name !== init.modelName || stamped.dim !== init.embedDim) {
+    } else if (
+      hasLexicalWrites(indexDb) ||
+      stamped?.name !== init.modelName ||
+      stamped?.dim !== init.embedDim
+    ) {
       log(
         "warn",
         "indexer-worker",
-        `embedding model mismatch: stamped=${stamped.name}/${stamped.dim} live=${init.modelName}/${init.embedDim} — wiping vector index for re-embed`,
+        `embedding model mismatch: stamped=${stamped?.name}/${stamped?.dim} live=${init.modelName}/${init.embedDim} — wiping vector index for re-embed`,
       );
       // Prove the replacement embedder can embed BEFORE discarding the vectors
       // the previous one produced. The warm-up is not retried and a failure is
@@ -601,15 +609,18 @@ async function handleInit(init: IndexerInit): Promise<void> {
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
       warmedUp = true;
       wipeAndRecreateVectorIndex(indexDb, init.embedDim, init.modelName);
+      setLexicalWrites(indexDb, false);
     }
 
     // HNSW index: create write handle, backfill if needed.
     const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
-    const usearchHandle = new UsearchWriteHandle(init.usearchIndexPath, init.embedDim);
+    const usearchHandle = init.lexicalOnly
+      ? undefined
+      : new UsearchWriteHandle(init.usearchIndexPath, init.embedDim);
     // After every save, record the seq the on-disk plaintext graph now reflects,
     // so the gateway's shutdown can encrypt the sidecar with a fingerprint that
     // exactly matches the file — no dependency on a "clean shutdown" signal.
-    usearchHandle.setOnSaved(() => setUsearchSavedSeq(indexDb, getVectorWriteSeq(indexDb)));
+    usearchHandle?.setOnSaved(() => setUsearchSavedSeq(indexDb, getVectorWriteSeq(indexDb)));
     // Capture this before a queued startup delete can save the loaded graph and
     // advance its stamp. Such a save makes the deletion durable but cannot
     // certify unrelated stale same-cardinality vectors already in that graph.
@@ -618,7 +629,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     flushDeferredSourceDeletes();
     flushDeferredDocumentDeletes();
     post({ type: "bootProgress", stage: "hnsw-backfill", progress: 0 });
-    await usearchHandle.backfillFromDbCooperatively(indexDb, {
+    await usearchHandle?.backfillFromDbCooperatively(indexDb, {
       onProgress: (fraction) =>
         post({ type: "bootProgress", stage: "hnsw-backfill", progress: fraction }),
       forceRebuild: forceHnswRebuild,
@@ -634,7 +645,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
 
     const source = new DirectDocumentSource(gatewayDb);
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
-    const embedder = warmupEmbedder ?? (await buildEmbedder(init));
+    const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
     currentCutoffs = init.cutoffs;
     const indexer = new Indexer(indexDb, source, chunker, embedder, {
       getCutoff: (doc) => resolveCutoff(doc.sourceId),
@@ -697,7 +708,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // Warm-up embed so the model is fully loaded before we post ready.
     // The embedder applies the configured document-side prefix internally.
     // Skipped when the model-mismatch branch above already paid for it.
-    if (!warmedUp) {
+    if (embedder && !warmedUp) {
       post({ type: "bootProgress", stage: "warmup", progress: 0 });
       await embedder.embed(["warmup"]);
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
@@ -1223,7 +1234,7 @@ async function handleEmbedQuery(id: number, text: string, sentAtMs: number): Pro
   //     Metal/CPU work.
   const recvAtMs = Date.now();
   const ipcInMs = recvAtMs - sentAtMs;
-  if (!state) {
+  if (!state?.embedder) {
     post({ type: "embedQueryError", id, error: "embedder not ready" });
     return;
   }
@@ -1395,10 +1406,10 @@ function handleDeleteDocumentIndexBatch(
         resources.usearchHandle,
         PENDING_VECTOR_DELETE_BATCH,
       );
-      resources.usearchHandle.save();
+      resources.usearchHandle?.save();
       refreshIndexStats(resources.indexDb);
       completePendingVectorDeletes(resources.indexDb, preparedVectorDeletes);
-      completeDocumentIndexPurges(resources.indexDb, [documentId]);
+      if (resources.usearchHandle) completeDocumentIndexPurges(resources.indexDb, [documentId]);
     }
     post({ type: "deleteDocumentIndexBatchResult", id, ...result });
   } catch (err) {
@@ -1449,7 +1460,7 @@ async function handleShutdown(): Promise<void> {
   }
 
   try {
-    await state.embedder.dispose();
+    await state.embedder?.dispose();
   } catch {
     /* best-effort */
   }

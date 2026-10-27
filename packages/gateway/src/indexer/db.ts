@@ -1474,7 +1474,7 @@ export interface ChunkUpsertInput {
   documentId: string;
   chunkIndex: number;
   content: string;
-  embedding: Float32Array;
+  embedding: Float32Array | null;
   sourceId: string;
   documentType?: string;
   title: string;
@@ -1536,9 +1536,11 @@ export interface PendingVectorDelete {
  */
 export function preparePendingVectorDeletes(
   db: Db,
-  usearch: import("./usearch-index.js").UsearchWriteHandle,
+  usearch: import("./usearch-index.js").UsearchWriteHandle | undefined,
   limit?: number,
 ): PendingVectorDelete[] {
+  // Lexical writers retain graph obligations until a vector writer can publish them.
+  if (!usearch) return [];
   const bounded = limit === undefined ? null : Math.max(1, Math.floor(limit));
   const rows = db
     .prepare<[number | null], { chunk_rowid: number; generation: number; reused: number }>(
@@ -1619,10 +1621,10 @@ export function upsertChunks(
         author: c.author ?? null,
         tags: c.tags ? JSON.stringify(c.tags) : null,
         relevance_score: c.relevanceScore ?? null,
-        embedding: embeddingBlob(c.embedding),
+        embedding: c.embedding === null ? null : embeddingBlob(c.embedding),
       });
 
-      if (options?.usearch && getRowId) {
+      if (options?.usearch && getRowId && c.embedding) {
         const row = getRowId.get(c.documentId, c.chunkIndex);
         if (row) {
           options.usearch.add(BigInt(row.rowid), c.embedding);
@@ -2548,4 +2550,20 @@ export function refreshIndexStats(db: Db): void {
     ).run(totalIndexed, totalChunks, now);
   });
   tx();
+}
+
+/** Durable evidence that indexed hashes may describe text without vectors. */
+export function hasLexicalWrites(db: Db): boolean {
+  return db.prepare("SELECT 1 FROM index_meta WHERE key = 'lexical_writes'").get() != null;
+}
+
+/** Set before the lexical writer starts; clear only after semantic invalidation succeeds. */
+export function setLexicalWrites(db: Db, pending: boolean): void {
+  if (pending) {
+    db.prepare(
+      "INSERT OR REPLACE INTO index_meta (key, value, updated_at) VALUES ('lexical_writes', '1', ?)",
+    ).run(new Date().toISOString());
+  } else {
+    db.exec("DELETE FROM index_meta WHERE key = 'lexical_writes'");
+  }
 }

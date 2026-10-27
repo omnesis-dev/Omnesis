@@ -18,6 +18,7 @@ import {
   getIndexedDocumentCount,
   getWatermark,
   getIndexEmbedModel,
+  hasLexicalWrites,
   listPendingSourceIndexPurges,
   scrubPendingSourceIndexPurges,
   getUsearchSavedSeq,
@@ -1332,3 +1333,89 @@ describe("indexer worker boot persistence", () => {
     }
   }, 60_000);
 });
+
+test("lexical deletion retains old-graph obligations across restart until semantic publication", async () => {
+  const sourceId = "synthetic:prism@example.com";
+  const paths = createFixture([
+    makeDocument("old-vector", "Fictional prism calibration", sourceId),
+    makeDocument(
+      "retained-vector",
+      "fictional Moonpetal instrument",
+      "synthetic:retained@example.com",
+    ),
+  ]);
+  const fake = await startFakeEmbedder();
+  let proxy: IndexerWorkerProxy | undefined;
+  try {
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.dispose();
+    proxy = undefined;
+    const oldGraph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(oldGraph.size()).toBe(2);
+    } finally {
+      oldGraph.close();
+    }
+    proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+      lexicalOnly: true,
+    });
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    await expect(proxy.deleteSourceIndex(sourceId)).resolves.toBe(1);
+    await proxy.dispose();
+    proxy = undefined;
+    const lexicalDb = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(hasLexicalWrites(lexicalDb)).toBe(true);
+      expect(listPendingSourceIndexPurges(lexicalDb)).toContain(sourceId);
+      expect(lexicalDb.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 1,
+      });
+      expect(lexicalDb.prepare("SELECT count(*) AS n FROM chunks").get()).toEqual({ n: 1 });
+    } finally {
+      lexicalDb.close();
+    }
+    // A configured model can still fail during warmup. Keyword text and the
+    // lexical marker survive: no semantic reset may precede successful warmup.
+    proxy = createProxy(paths, "http://127.0.0.1:9");
+    await expect(proxy.whenReady()).rejects.toThrow();
+    await proxy.dispose();
+    proxy = undefined;
+    const failedDb = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(hasLexicalWrites(failedDb)).toBe(true);
+      expect(
+        failedDb
+          .prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Moonpetal'")
+          .get(),
+      ).toEqual({ n: 1 });
+    } finally {
+      failedDb.close();
+    }
+    // SAME semantic model and SAME graph path: the durable lexical marker must
+    // force reset/publication, not trust the unchanged model stamp.
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    const repairedDb = openIndexDb(paths.indexDbPath, { readonly: true });
+    const repairedGraph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(hasLexicalWrites(repairedDb)).toBe(false);
+      expect(listPendingSourceIndexPurges(repairedDb)).toEqual([]);
+      expect(repairedDb.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 0,
+      });
+      expect(repairedGraph.size()).toBe(1);
+    } finally {
+      repairedDb.close();
+      repairedGraph.close();
+    }
+  } finally {
+    await proxy?.dispose();
+    await closeServer(fake.server);
+  }
+}, 60_000);

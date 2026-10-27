@@ -56,6 +56,7 @@ export function buildIndexerCutoffMap(config: {
 }
 
 export interface IndexerWorkerOptions {
+  lexicalOnly?: boolean;
   modelPath: string;
   /** Identity of the embedding model. Used by the worker to detect a
    * swap that bypassed the runtime config-change path. */
@@ -254,6 +255,7 @@ export class IndexerWorkerProxy implements Embedder {
 
     const init: IndexerInit = {
       type: "init",
+      lexicalOnly: opts.lexicalOnly,
       modelPath: opts.modelPath,
       modelName: opts.modelName,
       embedDim: opts.embedDim,

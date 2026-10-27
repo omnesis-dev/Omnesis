@@ -24,6 +24,9 @@ import {
   refreshIndexStats,
   getWatermark,
   recordIndexError,
+  hasLexicalWrites,
+  setLexicalWrites,
+  wipeAndRecreateVectorIndex,
 } from "./db.js";
 import { Indexer } from "./indexer.js";
 import { DocumentChunker } from "./chunker.js";
@@ -1506,5 +1509,59 @@ describe("Indexer", () => {
       // Still attributed to the old source until reconcileDeletedDocuments runs.
       expect(chunkSourceIds("d1")).toEqual(["old-source"]);
     });
+  });
+});
+
+describe("lexical indexing", () => {
+  test("indexes, updates and deletes text without an embedder, then backfills unchanged hashes", async () => {
+    const lexical = new Indexer(db, source, new DocumentChunker(), null);
+    setLexicalWrites(db, true);
+    source.documents = [
+      makeDoc("lexical", "Zephyrseal fictional observatory"),
+      makeDoc("removed", "Retired prism"),
+    ];
+    source.allIds = source.documents.map((doc) => doc.id);
+    await lexical.indexUpdated();
+    expect(db.prepare("SELECT count(*) AS n FROM chunks WHERE embedding IS NULL").get()).toEqual({
+      n: 2,
+    });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Zephyrseal'").get(),
+    ).toEqual({ n: 1 });
+    source.documents = [
+      {
+        ...makeDoc("lexical", "Moonpetal fictional observatory"),
+        updatedAt: "2026-03-11T00:00:00Z",
+      },
+    ];
+    source.allIds = ["lexical"];
+    await lexical.indexUpdated();
+    await lexical.reconcileDeletedDocuments();
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Zephyrseal'").get(),
+    ).toEqual({ n: 0 });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Moonpetal'").get(),
+    ).toEqual({ n: 1 });
+    expect(getChunkCount(db)).toBe(1);
+    expect(hasLexicalWrites(db)).toBe(true);
+    wipeAndRecreateVectorIndex(db, EMBEDDING_DIM, "same-model");
+    setLexicalWrites(db, false);
+    await indexer.indexUpdated();
+    expect(embedder.embedCount).toBe(1);
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks WHERE embedding IS NOT NULL").get(),
+    ).toEqual({ n: 1 });
+    expect(hasLexicalWrites(db)).toBe(false);
+  });
+
+  test("reindex-missing indexes lexical chunks without reporting dropped embeddings", async () => {
+    source.documents = [makeDoc("lexical-missing", "Fictional violet telescope")];
+    source.allIds = ["lexical-missing"];
+    const lexical = new Indexer(db, source, new DocumentChunker(), null);
+    await lexical.reindexMissing();
+    expect(getIndexedDocumentCount(db)).toBe(1);
+    expect(getChunkCount(db)).toBe(1);
+    expect(getIndexErrorCountsBySource(db)).toEqual({});
   });
 });

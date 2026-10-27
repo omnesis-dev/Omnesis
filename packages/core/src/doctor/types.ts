@@ -363,6 +363,7 @@ export interface SystemInfoResult {
 /** `GET /index/stats`. `state`/`model.present` live alongside `IndexStats`. */
 export interface IndexStatsResult extends Partial<IndexStats> {
   enabled: boolean;
+  keywordIndexingActive?: boolean;
   state?: string;
   model?: { present: boolean; name?: string } | null;
 }

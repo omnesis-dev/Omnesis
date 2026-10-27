@@ -24,6 +24,7 @@ import {
   type ChunkUpsertInput,
 } from "./db.js";
 import { UsearchWriteHandle } from "./usearch-index.js";
+import type { Embedder } from "./types.js";
 import type { IndexerWorkerProxy } from "../workers/indexer-worker-proxy.js";
 
 // ── Mocks for the modules the lifecycle pulls in ──────────────────────────
@@ -226,9 +227,13 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
     get: vi.fn(() => ({ search: { embedderPrefixes: { enabled: false } } })),
   } as unknown as IndexerLifecycleDeps["configStore"];
 
-  const setEmbedder = vi.fn();
+  let queryEmbedder: Embedder | undefined;
+  const setEmbedder = vi.fn((value: Embedder | undefined) => {
+    queryEmbedder = value;
+  });
   const searchPipeline = {
     setEmbedder,
+    queryEmbedder: () => queryEmbedder,
   } as unknown as IndexerLifecycleDeps["searchPipeline"];
 
   const registerAll = vi.fn();
@@ -1251,7 +1256,7 @@ describe("IndexerLifecycle", () => {
     expect(proxy.flushSave).not.toHaveBeenCalled();
   });
 
-  test("startIndexer bails to disabled when embedder is unresolved (no worker, shutdownIndexer no-ops)", async () => {
+  test("starts a lexical worker for an unresolved embedder without exposing a query embedder", async () => {
     const { deps, statusReporter } = makeDeps();
     (deps.inferenceRegistry.resolve as ReturnType<typeof vi.fn>).mockReturnValue({
       kind: "unresolved",
@@ -1261,9 +1266,15 @@ describe("IndexerLifecycle", () => {
 
     await lifecycle.startIndexer();
 
-    expect(proxyInstances).toHaveLength(0);
-    expect(lifecycle.indexerProxy).toBeNull();
-    expect(statusReporter.getReadiness().status).toBe("disabled");
+    expect(proxyInstances).toHaveLength(1);
+    expect(proxyInstances[0].opts.lexicalOnly).toBe(true);
+    expect(lifecycle.indexerProxy).toBe(proxyInstances[0]);
+    expect(deps.searchPipeline.setEmbedder).toHaveBeenCalledWith(undefined);
+    expect(statusReporter.getReadiness()).toEqual({
+      status: "disabled",
+      reason: "no backend; keyword indexing active",
+      keywordIndexingActive: true,
+    });
     await expect(lifecycle.shutdownIndexer()).resolves.toBeUndefined();
   });
 });
@@ -1563,4 +1574,120 @@ describe("embedder swap — N-rapid-swap stress: bounded to two generations", ()
       }
     });
   }
+});
+
+test("explicit global indexing disable never starts a lexical worker", async () => {
+  const old = process.env.OMNESIS_INDEXER_ENABLED;
+  process.env.OMNESIS_INDEXER_ENABLED = "false";
+  const { deps, statusReporter } = makeDeps();
+  const lifecycle = new IndexerLifecycle(deps);
+  try {
+    await lifecycle.startIndexer();
+    expect(proxyInstances).toHaveLength(0);
+    expect(statusReporter.getReadiness()).toEqual({
+      status: "disabled",
+      reason: "OMNESIS_INDEXER_ENABLED=false",
+    });
+  } finally {
+    await lifecycle.shutdownIndexer();
+    if (old === undefined) delete process.env.OMNESIS_INDEXER_ENABLED;
+    else process.env.OMNESIS_INDEXER_ENABLED = old;
+  }
+});
+
+describe("lexical worker promotion on model installation", () => {
+  test("ordinary duplicate bootstrap is single-flight and never adds another owner", async () => {
+    const { deps } = makeDeps();
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      const first = lifecycle.startIndexer();
+      expect(lifecycle.startIndexer()).toBe(first);
+      await first;
+      await lifecycle.startIndexer();
+      expect(proxyInstances).toHaveLength(1);
+    } finally {
+      await lifecycle.shutdownIndexer();
+    }
+  });
+
+  test.each([false, true])(
+    "download completion promotes one lexical owner (boot in flight: %s)",
+    async (duringBoot) => {
+      const { deps, resolve } = makeDeps();
+      resolve.mockReturnValue({
+        kind: "local",
+        catalogId: "fictional-embedder",
+        modelPath: "/missing/fictional-embedder.gguf",
+        available: false,
+        embedDim: 64,
+      });
+      let release!: () => void;
+      if (duringBoot)
+        nextProxyReadyGate = new Promise<void>((done) => {
+          release = done;
+        });
+      const lifecycle = new IndexerLifecycle(deps);
+      const boot = lifecycle.startIndexer();
+      try {
+        await vi.waitFor(() => expect(proxyInstances).toHaveLength(1));
+        if (!duringBoot) await boot;
+        const lexical = proxyInstances[0];
+        expect(lexical.opts.lexicalOnly).toBe(true);
+        nextProxyReadyGate = null;
+        resolve.mockReturnValue({
+          kind: "local",
+          catalogId: "fictional-embedder",
+          modelPath: "/missing/fictional-embedder.gguf",
+          available: true,
+          embedDim: 64,
+        });
+        await lifecycle.resumeAfterModelInstall();
+        if (duringBoot) release();
+        await boot;
+        expect(proxyInstances).toHaveLength(2);
+        expect(lexical.dispose).toHaveBeenCalledOnce();
+        const semantic = proxyInstances[1];
+        expect(semantic.opts.lexicalOnly).toBe(false);
+        expect(lexical.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+          semantic.whenReady.mock.invocationCallOrder[0],
+        );
+        expect(lifecycle.indexerProxy).toBe(semantic);
+        expect(deps.searchPipeline.queryEmbedder()).toBe(semantic);
+        await lifecycle.startIndexer();
+        expect(proxyInstances).toHaveLength(2);
+      } finally {
+        if (duringBoot) release?.();
+        nextProxyReadyGate = null;
+        await boot;
+        await lifecycle.shutdownIndexer();
+      }
+    },
+  );
+
+  test("semantic consumers follow the attached query embedder, not a lexical worker's existence", async () => {
+    const { deps, resolve } = makeDeps();
+    resolve.mockReturnValue({ kind: "disabled" });
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      await lifecycle.startIndexer();
+      expect(lifecycle.indexerProxy).not.toBeNull();
+      expect(deps.searchPipeline.queryEmbedder()).toBeUndefined();
+      resolve.mockReturnValue({
+        kind: "http",
+        backendKey: "local-http",
+        url: "http://localhost:9/v1",
+        model: "",
+        allowRemoteInference: false,
+      });
+      await lifecycle.applyEmbedSwap();
+      expect(deps.searchPipeline.queryEmbedder()).toBeInstanceOf(FakeHttpEmbedder);
+      expect(deps.searchPipeline.queryEmbedder()).not.toBe(lifecycle.indexerProxy);
+      resolve.mockReturnValue({ kind: "disabled" });
+      await lifecycle.applyEmbedSwap();
+      expect(lifecycle.indexerProxy).not.toBeNull();
+      expect(deps.searchPipeline.queryEmbedder()).toBeUndefined();
+    } finally {
+      await lifecycle.shutdownIndexer();
+    }
+  });
 });

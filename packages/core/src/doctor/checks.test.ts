@@ -1360,6 +1360,19 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     expect(report.ok).toBe(false);
   });
 
+  test("missing semantic model keeps its failure without claiming keyword indexing is disabled", () => {
+    const data = healthyData();
+    data.indexStats = {
+      enabled: false,
+      state: "model-missing",
+      keywordIndexingActive: true,
+      model: { present: false },
+    };
+    const check = findCheck(evaluateDoctor(data).checks, "index.model");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("keyword indexing is active");
+  });
+
   test("low models-dir free space warns", () => {
     const data = healthyData();
     data.systemInfo!.modelsDirFreeGb = 2;

@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
-import { createIndexDatabase } from "./db.js";
+import { createIndexDatabase, upsertChunksAndMarkIndexed } from "./db.js";
 import { computeIndexStats } from "./stats.js";
 import type Database from "better-sqlite3";
 import type { OmnesisConfig } from "@omnesis/config";
@@ -201,4 +201,46 @@ describe("computeIndexStats — data cutoffs", () => {
     expect(stats.bySource?.["demo-notes:local"].gatewayDocs).toBe(1);
     expect(stats.totalGatewayDocs).toBe(1);
   });
+});
+
+test("missing semantic model still reports active keyword indexing and real chunk counts", () => {
+  upsertChunksAndMarkIndexed(
+    indexDb,
+    "fictional-prism",
+    "fictional-hash",
+    [0, 1, 2].map((chunkIndex) => ({
+      id: `fictional-prism-${chunkIndex}`,
+      documentId: "fictional-prism",
+      chunkIndex,
+      content: "Fictional prism calibration",
+      sourceId: "fictional:prism",
+      title: "Fictional instrument",
+      sourceCreatedAt: "2026-01-01T00:00:00Z",
+      embedding: null,
+    })),
+  );
+  expect(
+    computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: { ...MODEL, present: false },
+      indexerReadiness: () => ({ status: "disabled", keywordIndexingActive: true }),
+    }),
+  ).toMatchObject({
+    enabled: false,
+    state: "model-missing",
+    keywordIndexingActive: true,
+    totalChunks: 3,
+    model: { name: "test-embed", present: false },
+  });
+});
+test("intentional semantic disable is distinct from a missing model", () => {
+  expect(
+    computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: { ...MODEL, present: false, disabled: true },
+      indexerReadiness: () => ({ status: "disabled", keywordIndexingActive: true }),
+    }),
+  ).toMatchObject({ enabled: true, state: "running", keywordIndexingActive: true, model: null });
 });

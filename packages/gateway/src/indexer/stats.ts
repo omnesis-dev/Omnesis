@@ -44,7 +44,12 @@ export interface IndexStatsDeps {
   config?: OmnesisConfig;
   indexerModel?: IndexerModelInfo;
   getIndexRate?: () => number | null;
-  indexerReadiness?: () => { status: string; message?: string; reason?: string };
+  indexerReadiness?: () => {
+    status: string;
+    message?: string;
+    reason?: string;
+    keywordIndexingActive?: boolean;
+  };
 }
 
 /** Per-source index progress. */
@@ -63,6 +68,7 @@ interface IndexSourceStats {
 
 export interface IndexStatsPayload {
   enabled: boolean;
+  keywordIndexingActive?: boolean;
   state: "model-missing" | "disabled" | "spawning" | "running";
   model?: IndexerModelInfo | null;
   totalIndexed?: number;
@@ -88,12 +94,20 @@ export interface IndexStatsPayload {
 export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   const { db, indexDb, configStore, config, indexerModel, indexerReadiness, getIndexRate } = deps;
 
-  const model = indexerModel;
+  const model = indexerModel?.disabled ? null : indexerModel;
+  const keywordIndexingActive = indexerReadiness?.().keywordIndexingActive === true;
   if (model && !model.present) {
     return {
       enabled: false,
       state: "model-missing",
       model,
+      ...(keywordIndexingActive && indexDb
+        ? {
+            keywordIndexingActive: true,
+            totalIndexed: getIndexedDocumentCount(indexDb),
+            totalChunks: getChunkCount(indexDb),
+          }
+        : {}),
     };
   }
   if (!indexDb) {
@@ -239,7 +253,8 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   return {
     enabled: true,
     state: "running",
-    model: indexerModel ?? null,
+    ...(keywordIndexingActive ? { keywordIndexingActive: true } : {}),
+    model,
     totalIndexed,
     totalIndexErrors,
     percentIndexed: overall.percent,

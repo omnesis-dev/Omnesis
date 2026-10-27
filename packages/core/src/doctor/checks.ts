@@ -1230,8 +1230,10 @@ function checkIndex(d: DoctorData, ck: Checks): void {
       ck.fail(
         "Index",
         "index.model",
-        "Index disabled — embedding model file is missing",
-        "Install the embedding model with `omnesis models install <id>` so indexing and search can run.",
+        idx.keywordIndexingActive
+          ? "Semantic search unavailable — embedding model file is missing; keyword indexing is active"
+          : "Index disabled — embedding model file is missing",
+        "Install the embedding model with `omnesis models install <id>` to enable semantic search.",
       );
     } else {
       ck.warn(
