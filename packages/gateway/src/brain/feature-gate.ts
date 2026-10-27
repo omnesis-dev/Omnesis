@@ -418,6 +418,9 @@ export async function bootBriefs(deps: {
         getSettings: rq.getSettings,
         ...(rq.contentPending ? { contentPending: rq.contentPending } : {}),
         activeDerivationStages: rq.activeDerivationStages ?? (() => DERIVATION_STAGES),
+        ...(rq.activity
+          ? { isRunActive: (runId: string) => rq.activity!.startedAtMs(runId) !== null }
+          : {}),
         clock: rq.clock ?? Date.now,
         log: log.child("knowledge"),
         ...(rq.interest ? { interest: rq.interest } : {}),

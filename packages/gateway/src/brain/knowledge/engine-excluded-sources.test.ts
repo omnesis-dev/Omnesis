@@ -3,7 +3,7 @@
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createLogger, type DecisionCapability } from "@omnesis/core";
+import { createLogger, type DecisionCapability, type EntailCapability } from "@omnesis/core";
 import {
   createSourceInventoryTables,
   recordSourceInventoryDocument,
@@ -11,6 +11,12 @@ import {
 } from "../../data/repositories/SourceInventoryRepository.js";
 import { createTemporalAnnotationTables } from "../../enrichment/temporal-annotations/storage.js";
 import { resolveBrainSettings } from "../config.js";
+import { createBrainSourceFence } from "../source-exclusion.js";
+import {
+  EXCLUDED_SOURCE_ERROR_CODE,
+  existingPageCitations,
+  fenceExcludedDocumentArguments,
+} from "../steward/source-fence.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
@@ -21,10 +27,21 @@ import { advanceKnowledgeCascade, recordKnowledgeSourceChange } from "./storage.
 import { hasKnowledgeWorkFromExcludedSources } from "./work.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import { listOrganizationAdmissions } from "./organization.js";
+import { getKnowledgeClaims } from "./storage-read.js";
+import { buildKnowledgeTools } from "./tools.js";
 
 const log = createLogger("test:knowledge-excluded-sources");
 const DAY = 86_400_000;
-let db: Database.Database, engine: KnowledgeEngine;
+let db: Database.Database, engine: KnowledgeEngine, service: KnowledgeService;
+/** Everything the fake entailment verifier was asked to read. */
+const verified: string[] = [];
+const verifier: EntailCapability = {
+  async verify(request) {
+    verified.push(JSON.stringify(request));
+    return { label: "entailment", probability: 1 };
+  },
+  dispose() {},
+};
 let writeGate: ReturnType<typeof directKnowledgeGate>;
 let now: number, serial: number;
 let settings: ReturnType<typeof resolveBrainSettings>;
@@ -58,10 +75,12 @@ beforeEach(() => {
   serial = 0;
   configure([], false);
   writeGate = directKnowledgeGate(db);
-  const service = new KnowledgeService({
+  verified.length = 0;
+  service = new KnowledgeService({
     db,
     writeGate,
     getSettings: () => settings,
+    getEntailmentVerifier: async () => verifier,
     clock: () => now,
     log,
   });
@@ -268,5 +287,116 @@ describe("brain.excludedSources organization revisits", () => {
         .sort();
     expect(due([])).toEqual(["gated-mail", "gated-session"]);
     expect(due(["codex"])).toEqual(["gated-mail"]);
+  });
+});
+
+describe("brain.excludedSources page citations", () => {
+  const SESSION_TEXT = "The planning session moved the workshop to the north hall.";
+  const PAGE = [
+    '<claim id="hall" refs="source:session">',
+    "## Venue",
+    "",
+    "The workshop is in the north hall.",
+    "</claim>",
+    "",
+    '<claim id="day" refs="source:mail">',
+    "## Day",
+    "",
+    "The workshop begins Friday.",
+    "</claim>",
+    "",
+  ].join("\n");
+  const invocation = { sessionId: "synthetic-session", messageId: "synthetic-message" };
+
+  beforeEach(async () => {
+    const insert = db.prepare(`INSERT INTO documents VALUES(?,?,?,?,?,NULL,NULL)`);
+    insert.run("session", "codex:local", "v1", SESSION_TEXT, "Planning session");
+    insert.run("mail", "gmail:maya@example.com", "v1", "The workshop begins Friday.", "Workshop");
+    insert.run(
+      "mail-update",
+      "gmail:maya@example.com",
+      "v1",
+      "The workshop begins Saturday.",
+      "Update",
+    );
+    // Written and verified while nothing was excluded.
+    await service.save({
+      id: "workshop",
+      kind: "wiki",
+      title: "Workshop",
+      expectedRevision: 0,
+      markdown: PAGE,
+      inputVersions: { "source:session": "v1", "source:mail": "v1" },
+    });
+    expect(getKnowledgeClaims(db, "workshop").map((claim) => claim.verification)).toEqual([
+      "verified",
+      "verified",
+    ]);
+    configure(["codex"], false);
+    verified.length = 0;
+  });
+
+  /** The background run's knowledge tools, fenced as the steward fences them. */
+  async function fencedTools() {
+    const tools = fenceExcludedDocumentArguments(
+      buildKnowledgeTools(service, { runId: "run" }),
+      createBrainSourceFence(db, () => settings.excludedSources),
+      existingPageCitations(db),
+    );
+    const call = (name: string, args: unknown) =>
+      tools.find((tool) => tool.name === name)!.invoke(args, invocation);
+    expect(await call("knowledge_fetch", { id: "workshop", editing: true })).toMatchObject({
+      kind: "structured",
+    });
+    return call;
+  }
+
+  it("refuses a new claim citing an excluded document the page cites, and never verifies it", async () => {
+    const call = await fencedTools();
+    const result = await call("knowledge_edit", {
+      node: {
+        id: "workshop",
+        expectedRevision: 1,
+        // An exact version stands in for a read the fence would refuse.
+        inputVersions: { "source:session": "v1" },
+        edits: [
+          {
+            op: "insert_section",
+            at: "end",
+            markdown:
+              '<claim id="room" refs="source:session">\n## Room\n\nThe north hall seats forty.\n</claim>\n',
+          },
+        ],
+      },
+    });
+    expect(result).toMatchObject({ kind: "error", code: EXCLUDED_SOURCE_ERROR_CODE });
+    expect(db.prepare("SELECT revision FROM knowledge_nodes WHERE id='workshop'").get()).toEqual({
+      revision: 1,
+    });
+    expect(verified).toEqual([]);
+  });
+
+  it("keeps an unchanged claim on an excluded document without reading it again", async () => {
+    const call = await fencedTools();
+    expect(await call("knowledge_reference", { ref: "source:mail-update" })).toMatchObject({
+      kind: "structured",
+    });
+    const result = await call("knowledge_edit", {
+      node: {
+        id: "workshop",
+        expectedRevision: 1,
+        edits: [
+          {
+            op: "replace_text",
+            old: '<claim id="day" refs="source:mail">',
+            new: '<claim id="day" refs="source:mail-update">',
+          },
+          { op: "replace_text", old: "begins Friday", new: "begins Saturday" },
+        ],
+      },
+    });
+    expect(result).toMatchObject({ kind: "structured" });
+    expect(verified.join("\n")).toContain("Saturday");
+    expect(verified.join("\n")).not.toContain("north hall");
   });
 });

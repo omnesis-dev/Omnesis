@@ -93,6 +93,13 @@ export function hasCognitionRunWithDedupeKey(db: Db, dedupeKey: string): boolean
 /** Default retry cap before a run is marked terminally `failed`. */
 export const DEFAULT_COGNITION_RUN_MAX_ATTEMPTS = 5;
 
+/**
+ * A run claimed this long ago, and not executing in this process, is presumed
+ * lost — the cognition queue's counterpart of the note agent's
+ * `NOTE_RUN_STALE_MS`, longer because a maintenance run has no turn timeout.
+ */
+export const COGNITION_RUN_STALE_MS = 60 * 60_000;
+
 /** Default per-tick claim size. */
 const DEFAULT_COGNITION_RUN_CLAIM_LIMIT = 1;
 
@@ -974,6 +981,29 @@ export function failCognitionRun(
        WHERE id = ?`,
     ).run(truncated, opts.failureCode ?? null, opts.nextAttemptAt, id);
   }
+}
+
+/**
+ * Settle as failed a run that died on its last attempt: still `pending` at
+ * the attempts cap, so the drainer can never claim it again, and last claimed
+ * at or before `claimedBefore`. Returns whether the row matched; a run that
+ * settled or was claimed since is left alone.
+ */
+export function failExhaustedCognitionRun(
+  db: Db,
+  id: string,
+  opts: { maxAttempts: number; claimedBefore: number; now: number },
+): boolean {
+  return (
+    db
+      .prepare<[number, string, number, number]>(
+        `UPDATE cognition_runs
+           SET status = 'failed', last_error = 'The run did not settle on any of its attempts',
+               completed_at = ?, payload_json = ${SETTLED_PAYLOAD_SQL}
+         WHERE id = ? AND status = 'pending' AND attempts >= ? AND last_attempt_at <= ?`,
+      )
+      .run(opts.now, id, opts.maxAttempts, opts.claimedBefore).changes > 0
+  );
 }
 
 /**

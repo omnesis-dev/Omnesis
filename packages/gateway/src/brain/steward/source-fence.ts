@@ -23,9 +23,17 @@
  * of a run already in flight.
  */
 
+import { parseClaimMarkup, type ParsedClaim } from "../knowledge/claims.js";
+import {
+  getKnowledgeClaims,
+  getKnowledgeDependencies,
+  getKnowledgeNode,
+} from "../knowledge/storage-read.js";
+import { applyWikiEdits, type WikiEditOp } from "../knowledge/wiki-edit.js";
 import type { DocRef, EventTrail, TemporalQueryResult, TrailEvent } from "@omnesis/core";
 import type { EntityContextResult, SqlPort, ToolHandle, ToolPorts } from "@omnesis/agent";
 import type { BrainSourceFence } from "../source-exclusion.js";
+import type { KnowledgeClaim, KnowledgeClaimState } from "../knowledge/types.js";
 import type Database from "better-sqlite3";
 
 /** The error code a fenced tool call answers with. */
@@ -325,19 +333,30 @@ function candidateDocumentIds(args: unknown): { ids: Set<string>; complete: bool
   return { ids, complete };
 }
 
+/** What one call does with the documents its target already cites. */
+export interface CallCitations {
+  /** Documents the target cites only through claims the call carries through unchanged. */
+  kept: ReadonlySet<string>;
+  /** Documents cited by claims the call adds or changes, whether or not its arguments name them. */
+  added: ReadonlySet<string>;
+}
+
+const NO_CITATIONS: CallCitations = { kept: new Set(), added: new Set() };
+
 /**
  * Refuse any call whose arguments name a document of an excluded source,
  * before the tool runs. The refusal names the documents so the run can drop
  * them and carry on with the rest of its work.
  *
- * `alreadyCited` names, per call, the excluded documents the call's target
- * already rests on — a page's existing claims, say — which may be carried
- * through unchanged; a new citation of one is still refused.
+ * `citations` says, per call, which excluded documents the call's target
+ * already rests on through claims the call leaves unchanged — those may be
+ * named — and which ones a new or changed claim would cite, which are refused
+ * even when the arguments never name them.
  */
 export function fenceExcludedDocumentArguments(
   tools: readonly ToolHandle[],
   live: BrainSourceFence,
-  alreadyCited: (toolName: string, args: unknown) => ReadonlySet<string> = () => new Set(),
+  citations: (toolName: string, args: unknown) => CallCitations = () => NO_CITATIONS,
 ): ToolHandle[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -356,16 +375,19 @@ export function fenceExcludedDocumentArguments(
             message:
               "These arguments are too large or too deeply nested to check against the sources excluded from the Brain; split the call.",
           };
-        const kept = alreadyCited(tool.name, args);
-        const named = [...fence.excludedDocuments(candidates.ids)].filter((id) => !kept.has(id));
+        const { kept, added } = citations(tool.name, args);
+        const named = [...fence.excludedDocuments([...candidates.ids, ...added])].filter(
+          (id) => !kept.has(id),
+        );
         if (named.length > 0)
           return {
             kind: "error",
             code: EXCLUDED_SOURCE_ERROR_CODE,
             message:
               `${named.sort().join(", ")} ${named.length === 1 ? "belongs" : "belong"} to a source the operator ` +
-              "excluded from the Brain. Background runs may not read or newly cite its documents: " +
-              "remove them from this call and continue with the rest.",
+              "excluded from the Brain. Background runs may not read or newly cite its documents, and keep " +
+              "a claim that already cites one exactly as it is: remove them from this call, leave such " +
+              "claims unchanged, and continue with the rest.",
           };
       }
       return tool.invoke(args, context);
@@ -373,25 +395,99 @@ export function fenceExcludedDocumentArguments(
   }));
 }
 
+/** The claim-state fields a save may set; each changes what the claim asserts. */
+const CLAIM_STATE_FIELDS = [
+  "supportLogic",
+  "attribution",
+  "modality",
+  "epistemicStatus",
+  "validFrom",
+  "validUntil",
+] as const;
+
 /**
- * The source documents a knowledge page already cites, for
- * {@link fenceExcludedDocumentArguments}: saving or editing a page may keep its existing
- * claims on an excluded source, though it cannot add one.
+ * Whether a proposed claim is the stored one carried through unchanged: the
+ * same text, place and references, and no supplied state that differs, as
+ * the save applies it (relations given replace the stored ones whole).
+ */
+function carriedUnchanged(
+  claim: ParsedClaim,
+  stored: KnowledgeClaim | undefined,
+  state: Partial<KnowledgeClaimState> | undefined,
+  relations: ReadonlyMap<string, string>,
+): boolean {
+  if (!stored || stored.text !== claim.text || stored.parentId !== claim.parentId) return false;
+  const refs = claim.refs.map((ref) => ref.raw).sort();
+  const storedRefs = [...stored.refs].sort();
+  if (refs.length !== storedRefs.length || refs.some((ref, i) => ref !== storedRefs[i]))
+    return false;
+  if (!state) return true;
+  return (
+    CLAIM_STATE_FIELDS.every(
+      (field) => state[field] === undefined || state[field] === stored[field],
+    ) &&
+    (state.relations === undefined ||
+      refs.every(
+        (ref) => (state.relations?.[ref] ?? "supports") === relations.get(`${claim.id}\n${ref}`),
+      ))
+  );
+}
+
+/**
+ * The page citations of a `knowledge_save` or `knowledge_edit`, for
+ * {@link fenceExcludedDocumentArguments}: the call's resulting page is
+ * compared, claim by claim, with the stored revision it names. A claim carried
+ * through unchanged may keep citing an excluded document, which the verifier
+ * then has no reason to read again; a new or changed claim may not cite one.
  */
 export function existingPageCitations(
   db: Database.Database,
-): (toolName: string, args: unknown) => ReadonlySet<string> {
+): (toolName: string, args: unknown) => CallCitations {
   return (toolName, args) => {
-    if (toolName !== "knowledge_save" && toolName !== "knowledge_edit") return new Set();
-    const nodeId = (args as { node?: { id?: unknown } } | null)?.node?.id;
-    if (typeof nodeId !== "string") return new Set();
-    return new Set(
-      db
-        .prepare<[string], { id: string }>(
-          "SELECT DISTINCT target_id AS id FROM knowledge_dependencies WHERE node_id=? AND target_kind='source'",
-        )
-        .all(nodeId)
-        .map((row) => row.id),
+    if (toolName !== "knowledge_save" && toolName !== "knowledge_edit") return NO_CITATIONS;
+    const node = (args as { node?: Record<string, unknown> } | null)?.node;
+    if (typeof node?.id !== "string") return NO_CITATIONS;
+    const stored = getKnowledgeNode(db, node.id);
+    // A new page, or a call against another revision, carries nothing through.
+    if (!stored || stored.revision !== node.expectedRevision) return NO_CITATIONS;
+    let claims: ParsedClaim[];
+    try {
+      const markdown =
+        toolName === "knowledge_save"
+          ? node.markdown
+          : applyWikiEdits(stored.markdown, node.edits as WikiEditOp[]).markdown;
+      // The tool refuses what cannot be parsed or applied; nothing is carried through it.
+      if (typeof markdown !== "string") return NO_CITATIONS;
+      claims = parseClaimMarkup(markdown).claims;
+    } catch {
+      return NO_CITATIONS;
+    }
+    const storedClaims = new Map(
+      getKnowledgeClaims(db, stored.id).map((claim) => [claim.id, claim]),
     );
+    const dependencies = getKnowledgeDependencies(db, stored.id);
+    const relations = new Map(
+      dependencies.map((dependency) => [
+        `${dependency.claimId}\n${dependency.ref}`,
+        dependency.relation,
+      ]),
+    );
+    const states = new Map(
+      (Array.isArray(node.claims) ? (node.claims as Partial<KnowledgeClaimState>[]) : []).flatMap(
+        (state) => (typeof state?.id === "string" ? [[state.id, state] as const] : []),
+      ),
+    );
+    const added = new Set<string>();
+    for (const claim of claims)
+      if (!carriedUnchanged(claim, storedClaims.get(claim.id), states.get(claim.id), relations))
+        for (const ref of claim.refs) if (ref.kind === "source") added.add(ref.id);
+    const kept = new Set(
+      dependencies
+        .filter(
+          (dependency) => dependency.targetKind === "source" && !added.has(dependency.targetId),
+        )
+        .map((dependency) => dependency.targetId),
+    );
+    return { kept, added };
   };
 }

@@ -4,6 +4,7 @@
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createKnowledgeTables, saveKnowledgeNode } from "../knowledge/storage.js";
 import { createBrainSourceFence, type BrainSourceFence } from "../source-exclusion.js";
 import {
   EXCLUDED_SOURCE_ERROR_CODE,
@@ -321,13 +322,24 @@ describe("fenceExcludedDocumentArguments", () => {
   });
 
   it("lets a call carry citations its target already rests on, but no new one", async () => {
-    const [fenced] = fenceExcludedDocumentArguments([tool], fence, () => new Set(["doc-session"]));
+    let added = new Set<string>();
+    const [fenced] = fenceExcludedDocumentArguments([tool], fence, () => ({
+      kept: new Set(["doc-session"]),
+      added,
+    }));
     await fenced!.invoke({ markdown: 'refs="source:doc-session"' }, {} as never);
     expect(calls).toHaveLength(1);
     insertNote();
     expect(
       await fenced!.invoke({ markdown: 'refs="source:doc-session source:doc-other"' }, {} as never),
     ).toMatchObject({ code: EXCLUDED_SOURCE_ERROR_CODE });
+    // A citation the call adds is refused even when its arguments never name it.
+    added = new Set(["doc-other"]);
+    expect(await fenced!.invoke({ markdown: "unrelated" }, {} as never)).toMatchObject({
+      code: EXCLUDED_SOURCE_ERROR_CODE,
+      message: expect.stringContaining("doc-other"),
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it("runs a call that names only other documents, and any call once the exclusion is lifted", async () => {
@@ -340,59 +352,139 @@ describe("fenceExcludedDocumentArguments", () => {
 });
 
 describe("existingPageCitations", () => {
-  it("names a page's cited sources for a full save and a targeted edit alike", () => {
-    db.exec(
-      "CREATE TABLE knowledge_dependencies(node_id TEXT, target_id TEXT, target_kind TEXT); INSERT INTO knowledge_dependencies VALUES('page','doc-session','source'),('page','other-page','node')",
+  const PAGE = [
+    '<claim id="a" refs="source:doc-session">',
+    "## Sessions",
+    "",
+    "Planning sessions run on Tuesdays.",
+    "</claim>",
+    "",
+    '<claim id="m" refs="source:doc-mail">',
+    "## Mail",
+    "",
+    "The newsletter goes out monthly.",
+    "</claim>",
+    "",
+  ].join("\n");
+  const invoked: unknown[] = [];
+  const handle = (name: string): ToolHandle => ({
+    name,
+    description: "test",
+    schema: z.unknown(),
+    mutates: true,
+    async invoke(args) {
+      invoked.push(args);
+      return { kind: "structured", resultType: "ok", data: {} } as never;
+    },
+  });
+  const fenced = (name: "knowledge_save" | "knowledge_edit") =>
+    fenceExcludedDocumentArguments([handle(name)], fence, existingPageCitations(db))[0]!;
+  const edit = (edits: unknown[], extra: Record<string, unknown> = {}) =>
+    fenced("knowledge_edit").invoke(
+      { node: { id: "page", expectedRevision: 1, edits, ...extra } },
+      {} as never,
     );
-    const cited = existingPageCitations(db);
-    for (const tool of ["knowledge_save", "knowledge_edit"])
-      expect([...cited(tool, { node: { id: "page" } })], tool).toEqual(["doc-session"]);
-    expect(cited("annotate_durable", { node: { id: "page" } }).size).toBe(0);
-    expect(cited("knowledge_edit", { node: {} }).size).toBe(0);
+  const save = (markdown: string, extra: Record<string, unknown> = {}) =>
+    fenced("knowledge_save").invoke(
+      {
+        node: { id: "page", kind: "wiki", title: "Page", expectedRevision: 1, markdown, ...extra },
+      },
+      {} as never,
+    );
+  const refused = { kind: "error", code: EXCLUDED_SOURCE_ERROR_CODE };
+
+  beforeEach(() => {
+    invoked.length = 0;
+    db.exec("ALTER TABLE documents ADD COLUMN content_hash TEXT NOT NULL DEFAULT 'v1'");
+    createKnowledgeTables(db);
+    // The page was written while nothing was excluded.
+    saveKnowledgeNode(
+      db,
+      {
+        id: "page",
+        kind: "wiki",
+        title: "Page",
+        expectedRevision: 0,
+        markdown: PAGE,
+        inputVersions: { "source:doc-session": "v1", "source:doc-mail": "v1" },
+      },
+      1,
+    );
   });
 
-  it("lets an edit replace text holding an existing citation but refuses a new one", async () => {
-    db.exec(
-      "CREATE TABLE knowledge_dependencies(node_id TEXT, target_id TEXT, target_kind TEXT); INSERT INTO knowledge_dependencies VALUES('page','doc-session','source')",
-    );
-    insertNote();
-    const edits: unknown[] = [];
-    const edit: ToolHandle = {
-      name: "knowledge_edit",
-      description: "test",
-      schema: z.unknown(),
-      mutates: true,
-      async invoke(args) {
-        edits.push(args);
-        return { kind: "structured", resultType: "ok", data: {} } as never;
-      },
-    };
-    const [fenced] = fenceExcludedDocumentArguments([edit], fence, existingPageCitations(db));
-    const args = (refs: string) => ({
-      node: {
-        id: "page",
-        expectedRevision: 1,
-        edits: [
-          {
-            op: "replace_text",
-            old: '<claim id="a" refs="source:doc-session">',
-            new: `<claim id="a" refs="${refs}">`,
-          },
-        ],
-      },
-    });
-    expect(
-      await fenced!.invoke(args("source:doc-session source:doc-mail"), {} as never),
-    ).toMatchObject({
+  it("lets a call carry a claim on an excluded document through unchanged", async () => {
+    const changedMail = PAGE.replace("monthly", "weekly");
+    expect(await save(changedMail)).toMatchObject({ kind: "structured" });
+    expect(await edit([{ op: "replace_text", old: "monthly", new: "weekly" }])).toMatchObject({
       kind: "structured",
     });
+    // Naming the document in an edit that leaves its claim as it is is no new citation.
     expect(
-      await fenced!.invoke(args("source:doc-session source:doc-other"), {} as never),
-    ).toMatchObject({
-      kind: "error",
-      code: EXCLUDED_SOURCE_ERROR_CODE,
-      message: expect.stringContaining("doc-other"),
+      await edit([
+        {
+          op: "replace_text",
+          old: '<claim id="m" refs="source:doc-mail">',
+          new: '<claim id="m" refs="source:doc-mail source:doc-note">',
+        },
+      ]),
+    ).toMatchObject({ kind: "structured" });
+    expect(invoked).toHaveLength(3);
+  });
+
+  it("refuses a new claim citing an excluded document the page already cites", async () => {
+    const result = await edit([
+      {
+        op: "insert_section",
+        at: "end",
+        markdown:
+          '<claim id="b" refs="source:doc-session">\n## Agenda\n\nAgendas go out a day ahead.\n</claim>\n',
+      },
+    ]);
+    expect(result).toMatchObject({ ...refused, message: expect.stringContaining("doc-session") });
+    expect(
+      await save(
+        `${PAGE}\n<claim id="b" refs="source:doc-session">\n## Agenda\n\nAgendas go out a day ahead.\n</claim>\n`,
+      ),
+    ).toMatchObject(refused);
+    expect(invoked).toEqual([]);
+  });
+
+  it("refuses a change to a claim that cites an excluded document, named in the call or not", async () => {
+    expect(
+      await edit([{ op: "replace_text", old: "on Tuesdays", new: "on Wednesdays" }]),
+    ).toMatchObject({ ...refused, message: expect.stringContaining("doc-session") });
+    expect(
+      await save(
+        PAGE.replace('refs="source:doc-session"', 'refs="source:doc-session source:doc-mail"'),
+      ),
+    ).toMatchObject(refused);
+    expect(
+      await save(PAGE, { claims: [{ id: "a", relations: { "source:doc-session": "context" } }] }),
+    ).toMatchObject(refused);
+    expect(await save(PAGE, { claims: [{ id: "a", modality: "observation" }] })).toMatchObject({
+      kind: "structured",
     });
-    expect(edits).toHaveLength(1);
+    expect(invoked).toHaveLength(1);
+  });
+
+  it("carries nothing through for a stale revision, a new page or another tool", async () => {
+    expect(await save(PAGE, { expectedRevision: 0 })).toMatchObject(refused);
+    expect(
+      await fenced("knowledge_save").invoke(
+        {
+          node: { id: "other", kind: "wiki", title: "Other", expectedRevision: 0, markdown: PAGE },
+        },
+        {} as never,
+      ),
+    ).toMatchObject(refused);
+    const [annotate] = fenceExcludedDocumentArguments(
+      [handle("annotate_durable")],
+      fence,
+      existingPageCitations(db),
+    );
+    expect(
+      await annotate!.invoke({ node: { id: "page" }, docId: "doc-session" }, {} as never),
+    ).toMatchObject(refused);
+    expect(invoked).toEqual([]);
   });
 });

@@ -78,6 +78,8 @@ export interface KnowledgeEngineDeps {
   contentPending?: (ids: readonly string[]) => Set<string>;
   activeDerivationStages?: () => readonly DerivationStage[];
   publishedRetrievalBoundary?: () => string | null;
+  /** Whether a run is executing in this process now; omitted, only claim age tells. */
+  isRunActive?: (runId: string) => boolean;
 }
 interface SourceInput {
   id: string;

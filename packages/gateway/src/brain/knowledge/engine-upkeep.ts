@@ -5,6 +5,10 @@ import { ANNOTATION_CONTEXT_VERIFIER } from "../annotation-verification.js";
 import { outcomeRecordPolicyKey } from "../record-check/rubric.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import {
+  COGNITION_RUN_STALE_MS,
+  DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+} from "../storage/run-queue.js";
+import {
   captureDecisionPayloadSubjects,
   decisionPayloadErasureGeneration,
 } from "../decision-payload.js";
@@ -46,22 +50,45 @@ export class KnowledgeUpkeep {
     }
   }
 
+  /**
+   * Release the batches whose run is over: settled, missing, or dead — still
+   * pending at its attempts cap, which the drainer never claims again, last
+   * claimed long ago and not executing now (a process that died on every
+   * attempt leaves exactly that row, holding its region forever).
+   */
   async recover(): Promise<void> {
     const cfg = this.deps.getSettings().knowledge;
+    const claimedBefore = this.deps.clock() - COGNITION_RUN_STALE_MS;
     const rows = this.deps.db
-      .prepare<[number], { id: string; failed: number }>(
-        `SELECT b.id,COALESCE(r.status='failed',0) AS failed FROM knowledge_batches b
+      .prepare<
+        [number, number, number],
+        { id: string; runId: string; failed: number; dead: number }
+      >(
+        `SELECT b.id,b.run_id AS runId,COALESCE(r.status='failed',0) AS failed,COALESCE(r.status='pending',0) AS dead
+      FROM knowledge_batches b
       LEFT JOIN cognition_runs r ON r.id=b.run_id WHERE b.status IN ('pending','running','deferred')
-      AND (r.id IS NULL OR r.status IN ('completed','failed')) ORDER BY b.created_at LIMIT ?`,
+      AND (r.id IS NULL OR r.status IN ('completed','failed')
+        OR (r.status='pending' AND r.attempts>=? AND r.last_attempt_at<=?))
+      ORDER BY b.created_at LIMIT ?`,
       )
-      .all(cfg.maxSeeds);
-    for (const row of rows)
+      .all(DEFAULT_COGNITION_RUN_MAX_ATTEMPTS, claimedBefore, cfg.maxSeeds);
+    for (const row of rows) {
+      if (row.dead && this.deps.isRunActive?.(row.runId)) continue;
       await this.deps.writeGate["knowledge.abandonBatch"](
         {
           batchId: row.id,
           notBefore: this.deps.clock() + cfg.soonDelayMs,
+          ...(row.dead
+            ? {
+                deadRun: {
+                  runId: row.runId,
+                  maxAttempts: DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+                  claimedBefore,
+                },
+              }
+            : {}),
           // A run that exhausted its attempts adjudicated the work it was offered.
-          ...(row.failed
+          ...(row.failed || row.dead
             ? {
                 failure: {
                   backoffMs: cfg.retryBackoffMs,
@@ -73,6 +100,7 @@ export class KnowledgeUpkeep {
         },
         this.deps.clock(),
       );
+    }
   }
 
   /**

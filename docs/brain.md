@@ -186,6 +186,12 @@ discovery targets, become ordinary `change` work of their own. A selected page
 keeps its exemption from the impact gate until it next changes. (Past 64 such dependents, every seed is retried
 whole instead.) Everything else is queued again at its current input revision.
 
+A run that dies on every attempt — the process ends mid-run each time, so no
+attempt settles it — stays `pending` at the drainer's attempts cap, where it can
+never be claimed again. Once its last claim is an hour old and it is not
+executing in this process, the maintenance tick settles it as failed and
+abandons its batch as for any failed run, so its region is free again.
+
 Only a failed run charges a failure, and only to work it was offered or settled
 without finishing; work the batch never reached is requeued as it was. Charged
 work waits `retryBackoff`, doubling per further failure up to `retryBackoffCap`,
@@ -324,8 +330,12 @@ any source of it is installed. Every consumer reads the list live
   `excluded_source` when its arguments name an excluded document, as an id, a
   list entry, an object key or a `source:<id>` reference in text; arguments too
   large or deep to check are refused too. No new loop, annotation, temporal
-  annotation or page claim can rest on one. A `knowledge_save` may carry the
-  page's existing citations of an excluded document through unchanged.
+  annotation or page claim can rest on one. A `knowledge_save` or
+  `knowledge_edit` may carry a claim that already cites an excluded document
+  through unchanged — the same text, references and claim state as the
+  revision it names; the resulting page is compared claim by claim, so a new or
+  changed claim citing one is refused even when the call never names the
+  document, before the verifier could read it.
 - **Maintenance.** A run cannot re-check a claim that cites an excluded
   document, and that is not evidence against the claim. While none of the
   claim's own references changed, maintenance does not offer it for review: the

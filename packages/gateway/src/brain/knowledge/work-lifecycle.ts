@@ -25,6 +25,12 @@ export interface AbandonKnowledgeBatchInput {
    * batch never reached is not.
    */
   failure?: KnowledgeRetryPolicy;
+  /**
+   * Present when the batch's run died on its last attempt: the run is settled
+   * failed in the same transaction, and nothing is abandoned unless it still
+   * is that dead row (see `failExhaustedCognitionRun`).
+   */
+  deadRun?: { runId: string; maxAttempts: number; claimedBefore: number };
 }
 
 /** Above this many unfinished dependents, abandonment retries every seed whole. */

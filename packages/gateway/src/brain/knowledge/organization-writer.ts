@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { enqueueCognitionRun } from "../storage/run-queue.js";
+import { enqueueCognitionRun, failExhaustedCognitionRun } from "../storage/run-queue.js";
 import { createKnowledgeBatch, enqueueKnowledgeWork, type KnowledgeFrontierInput } from "./work.js";
 import { abandonKnowledgeBatch, type AbandonKnowledgeBatchInput } from "./work-lifecycle.js";
 import {
@@ -145,6 +145,17 @@ export function abandonOrganizationBatch(
   now: number,
 ): boolean {
   return db.transaction(() => {
+    const { deadRun } = input;
+    if (
+      deadRun &&
+      (!db
+        .prepare(
+          "SELECT 1 FROM knowledge_batches WHERE id=? AND run_id=? AND status IN ('pending','running','deferred')",
+        )
+        .get(input.batchId, deadRun.runId) ||
+        !failExhaustedCognitionRun(db, deadRun.runId, { ...deadRun, now }))
+    )
+      return false;
     abandonOrganizationCohort(db, input.batchId, now);
     return abandonKnowledgeBatch(db, input, now);
   })();

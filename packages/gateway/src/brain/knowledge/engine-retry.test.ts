@@ -7,6 +7,11 @@ import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { createTemporalAnnotationTables } from "../../enrichment/temporal-annotations/storage.js";
 import { resolveBrainSettings } from "../config.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
+import {
+  claimDueCognitionRuns,
+  COGNITION_RUN_STALE_MS,
+  DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+} from "../storage/run-queue.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { createKnowledgeDecisionTable } from "./decision-storage.js";
@@ -15,11 +20,13 @@ import { KnowledgeService } from "./service.js";
 import { KnowledgeQueryService } from "./query-service.js";
 import { KnowledgeEngine, type KnowledgeEngineDeps } from "./engine.js";
 import { listKnowledgeDiscoveryBacklog } from "./discovery.js";
-import { enqueueKnowledgeWork } from "./work.js";
+import { enqueueKnowledgeWork, reserveKnowledgeRegion } from "./work.js";
 import { advanceKnowledgeCascade, recordKnowledgeSourceChange } from "./storage.js";
 
 let db: Database.Database, engine: KnowledgeEngine, service: KnowledgeService;
 let now: number, serial: number;
+/** Runs the drainer is executing right now, as its activity registry reports them. */
+const inFlight = new Set<string>();
 const settings = resolveBrainSettings({
   bootstrap: { enabled: false },
   knowledge: {
@@ -45,6 +52,7 @@ beforeEach(() => {
   createKnowledgeDecisionTable(db);
   now = Date.parse("2027-01-11T08:00:00Z");
   serial = 0;
+  inFlight.clear();
   const writeGate = directKnowledgeGate(db);
   service = new KnowledgeService({
     db,
@@ -73,6 +81,7 @@ beforeEach(() => {
     clock: () => now,
     log,
     idGen: () => String(++serial),
+    isRunActive: (runId) => inFlight.has(runId),
     decisions: { getDecision: () => decision, log, recordSpend: async () => {} },
   } satisfies KnowledgeEngineDeps);
 });
@@ -389,4 +398,84 @@ it("offers a retry inputs not yet offered before ones an earlier attempt left", 
   const second = (await engine.next(batch.id, batch.runId)).items.map((item) => item.id);
   const missed = ids.map((id) => `source:${id}`).find((id) => !first.includes(id))!;
   expect(second[0]).toBe(missed);
+});
+
+/** Claim the batch's run for every attempt it has, each one dying before it settles. */
+async function crashEveryAttempt(subjectId: string) {
+  await engine.tick();
+  const batch = activeBatch(subjectId)!;
+  await engine.next(batch.id, batch.runId);
+  for (let attempt = 0; attempt < DEFAULT_COGNITION_RUN_MAX_ATTEMPTS; attempt++)
+    expect(claimDueCognitionRuns(db, { now }).map((run) => run.id)).toEqual([batch.runId]);
+  expect(claimDueCognitionRuns(db, { now })).toEqual([]);
+  const region = db
+    .prepare<[string], { nodeId: string }>(
+      "SELECT node_id AS nodeId FROM knowledge_batch_regions WHERE batch_id=?",
+    )
+    .all(batch.id)
+    .map((row) => row.nodeId);
+  expect(region.length).toBeGreaterThan(0);
+  return { ...batch, region, lastAttemptAt: now };
+}
+/** Whether another batch could reserve these nodes now. */
+function regionFree(nodeIds: string[]): boolean {
+  db.prepare(
+    `INSERT OR IGNORE INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+    VALUES('probe','probe-run','probe','routine','pending',?,?)`,
+  ).run(now, now);
+  try {
+    reserveKnowledgeRegion(db, "probe", nodeIds);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    db.prepare("DELETE FROM knowledge_batch_regions WHERE batch_id='probe'").run();
+  }
+}
+function runStatus(runId: string) {
+  return db
+    .prepare<[string], { status: string }>("SELECT status FROM cognition_runs WHERE id=?")
+    .get(runId)?.status;
+}
+
+it("frees the region of a maintenance run that died on every attempt, charging its work once", async () => {
+  source("lost");
+  const dead = await crashEveryAttempt("lost");
+  expect(regionFree(dead.region)).toBe(false);
+
+  now = dead.lastAttemptAt + COGNITION_RUN_STALE_MS;
+  await engine.tick();
+  expect(db.prepare("SELECT status FROM knowledge_batches WHERE id=?").get(dead.id)).toEqual({
+    status: "abandoned",
+  });
+  expect(runStatus(dead.runId)).toBe("failed");
+  expect(claimDueCognitionRuns(db, { now })).toEqual([]);
+  expect(work("lost")).toMatchObject({ status: "pending", failures: 1, dueAt: now + 2 * HOUR });
+  expect(regionFree(dead.region)).toBe(true);
+  // A later pass finds nothing more to settle.
+  await engine.tick();
+  expect(work("lost")).toMatchObject({ status: "pending", failures: 1 });
+});
+
+it("never abandons a last attempt that may still be running", async () => {
+  source("slow");
+  const last = await crashEveryAttempt("slow");
+  // Claimed recently: the attempt may still be in flight.
+  now = last.lastAttemptAt + COGNITION_RUN_STALE_MS - 1;
+  await engine.tick();
+  expect(activeBatch("slow")?.id).toBe(last.id);
+  expect(runStatus(last.runId)).toBe("pending");
+  // Claimed long ago but still executing: it is not dead either.
+  inFlight.add(last.runId);
+  now += HOUR;
+  await engine.tick();
+  expect(activeBatch("slow")?.id).toBe(last.id);
+  expect(runStatus(last.runId)).toBe("pending");
+  expect(regionFree(last.region)).toBe(false);
+  // Once it stops without settling, it is.
+  inFlight.delete(last.runId);
+  await engine.tick();
+  expect(activeBatch("slow")).toBeUndefined();
+  expect(runStatus(last.runId)).toBe("failed");
+  expect(regionFree(last.region)).toBe(true);
 });

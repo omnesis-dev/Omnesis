@@ -8,9 +8,11 @@
  * maintenance run is not offered the excluded-source claims (it may not read
  * that source, and being unable to re-check a claim is not evidence against
  * it); its attempt to gut the page, removing four claims with one boilerplate
- * reason under a new title, is refused and saves nothing; its targeted edit of
- * the changed claim leaves the page current rather than stale; and it settles
- * the remaining readable claim by review. Every claim survives.
+ * reason under a new title, is refused and saves nothing; its attempt to add a
+ * new claim citing the excluded log, which the page already cites, is refused
+ * as `excluded_source` before the verifier ever reads the log; its targeted
+ * edit of the changed claim leaves the page current rather than stale; and it
+ * settles the remaining readable claim by review. Every claim survives.
  *
  * Fixture data is invented — no corpus content.
  */
@@ -89,6 +91,7 @@ let bench: BrainBench;
 let mainId = "";
 let supportId = "";
 let logId = "";
+let logRevision = "";
 let excluded = false;
 let repairRun: string | undefined;
 
@@ -138,6 +141,7 @@ const maintain = knowledgePuppet({
       mainId = item.source.id;
       supportId = support.evidence.id;
       logId = log.evidence.id;
+      logRevision = log.evidence.revision;
       return {
         calls: [
           ...support.calls,
@@ -264,6 +268,34 @@ function guttingArm(item: PuppetKnowledgeItem, steps: readonly ToolStep[]) {
   };
 }
 
+/**
+ * After the gutting save, the repair run tries once to add a new claim citing
+ * the excluded session log, at an exact version so no read is needed.
+ */
+function newClaimArm(item: PuppetKnowledgeItem, steps: readonly ToolStep[]) {
+  if (steps.some((step) => step.name === "knowledge_edit" && isError(step))) return null;
+  return {
+    kind: "tool" as const,
+    name: "knowledge_edit",
+    args: {
+      inputFingerprint: item.inputFingerprint,
+      placementAssessment,
+      node: {
+        id: pageId,
+        expectedRevision: item.node!.revision,
+        inputVersions: { [`source:${logId}`]: logRevision },
+        edits: [
+          {
+            op: "insert_section",
+            at: "end",
+            markdown: section("shed", `source:${logId}`, "Shed", "The shed key hangs by the gate."),
+          },
+        ],
+      },
+    },
+  };
+}
+
 beforeAll(async () => {
   bench = await BrainBench.start({
     experimental: true,
@@ -300,12 +332,18 @@ beforeAll(async () => {
           (repairRun ?? ctx.runId) === ctx.runId
         ) {
           repairRun = ctx.runId;
-          const arm = guttingArm(item, steps);
+          const arm = guttingArm(item, steps) ?? newClaimArm(item, steps);
           if (arm) return arm;
         }
         return maintain(
           ctx,
-          steps.filter((step) => !(step.name === "knowledge_save" && isError(step))),
+          steps.filter(
+            (step) =>
+              !(
+                (step.name === "knowledge_save" || step.name === "knowledge_edit") &&
+                isError(step)
+              ),
+          ),
         );
       },
     },
@@ -349,6 +387,7 @@ it("keeps excluded-source claims through a repair and refuses gutting the page",
   });
 
   // The operator excludes the session log's source; then the plan changes.
+  const verdictsBeforeExclusion = bench.entailmentCalls.length;
   excluded = true;
   await bench.patchConfig({ brain: { excludedSources: [EXCLUDED_TYPE] } });
   await bench.update(
@@ -402,9 +441,22 @@ it("keeps excluded-source claims through a repair and refuses gutting the page",
     }),
   ]);
 
+  // The new claim citing the excluded log was refused before the tool ran, and
+  // no verdict after the exclusion read the log.
+  const [newClaim, ...edits] = steps.filter((step) => step.tool === "knowledge_edit");
+  expect(newClaim!.result).toMatchObject({
+    kind: "error",
+    code: "excluded_source",
+    message: expect.stringContaining(logId),
+  });
+  expect(
+    bench.entailmentCalls
+      .slice(verdictsBeforeExclusion)
+      .filter((verdict) => verdict.prompt.includes("Session notes")),
+  ).toEqual([]);
+
   // The targeted edit left the page current, and its successor offered only
   // the readable claim the edit did not review; review settled it.
-  const edits = steps.filter((step) => step.tool === "knowledge_edit");
   expect(edits.map((step) => step.result?.kind)).toEqual(["structured", "structured"]);
   expect(edits[0]!.result).toMatchObject({
     data: { node: { id: pageId, validity: "current" } },
