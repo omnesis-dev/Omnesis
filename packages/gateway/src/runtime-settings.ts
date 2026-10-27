@@ -109,7 +109,9 @@ export interface ResolvedRuntimeSettings {
   ingestYieldBatch: number;
   /** Largest DuckDB table admitted to the atomic online stream-key rebuild. */
   analyticsStreamRekeyMaxRows: number;
-  /** Absent means the analytics pool picks its machine-dependent default. */
+  /** Absent means the memory budget is the cgroup limit, else the host's memory. */
+  memoryLimitMb: number | undefined;
+  /** Absent means the analytics pool derives its default from the memory budget. */
   analyticsMemoryLimitMb: number | undefined;
   analyticsThreads: number | undefined;
   /**
@@ -506,6 +508,7 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
     ingestYieldBatch: config?.gateway?.ingestYieldBatch ?? DEFAULT_INGEST_YIELD_BATCH,
     analyticsStreamRekeyMaxRows:
       config?.gateway?.analyticsStreamRekeyMaxRows ?? DEFAULTS.analyticsStreamRekeyMaxRows,
+    memoryLimitMb: envIntPositive("OMNESIS_MEMORY_LIMIT_MB") ?? config?.gateway?.memoryLimitMb,
     analyticsMemoryLimitMb:
       envIntPositive("OMNESIS_ANALYTICS_MEMORY_LIMIT_MB") ??
       config?.gateway?.analyticsMemoryLimitMb,

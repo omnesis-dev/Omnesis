@@ -19,7 +19,9 @@ import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-pr
 import { PendingRequest } from "./pending-request.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { Embedder } from "../indexer/types.js";
+import type { MemoryBudget } from "../memory-budget.js";
 import type {
   IndexerCutoffMap,
   IndexerInit,
@@ -107,6 +109,10 @@ export interface IndexerWorkerOptions {
   usearchIndexPath: string;
   /** Optional cold-backfill page size; primarily for scheduling tests. */
   usearchBackfillPageSize?: number;
+  /** Optional cold-rebuild checkpoint interval, ms; primarily for crash-resume tests. */
+  usearchCheckpointIntervalMs?: number;
+  /** The gateway's memory budget; the worker keeps the HNSW graph within it. */
+  memoryBudget?: MemoryBudget;
   heartbeatIntervalMs?: number;
   heartbeatWarnGapMs?: number;
 }
@@ -214,6 +220,7 @@ export class IndexerWorkerProxy implements Embedder {
    * to serve a server-side ETA on first page load — no client warm-up.
    */
   private _indexRatePerSec: number | null = null;
+  private _vectorIndex: SemanticSearchStatus | null = null;
   private _bootProgress: {
     stage: "hnsw-backfill" | "loading-model" | "warmup" | "initial-cycle";
     progress: number;
@@ -283,6 +290,8 @@ export class IndexerWorkerProxy implements Embedder {
       httpEmbedderAllowRemoteInference: opts.httpEmbedderAllowRemoteInference,
       usearchIndexPath: opts.usearchIndexPath,
       usearchBackfillPageSize: opts.usearchBackfillPageSize,
+      usearchCheckpointIntervalMs: opts.usearchCheckpointIntervalMs,
+      ...(opts.memoryBudget ? { memoryBudget: opts.memoryBudget } : {}),
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
       ...(opts.gatewayDbKeyHex ? { gatewayDbKeyHex: opts.gatewayDbKeyHex } : {}),
       ...(opts.indexDbKeyHex ? { indexDbKeyHex: opts.indexDbKeyHex } : {}),
@@ -322,6 +331,14 @@ export class IndexerWorkerProxy implements Embedder {
   get indexRatePerSec(): number | null {
     return this._indexRatePerSec;
   }
+
+  /** The HNSW graph's state from the worker; null before its first report. */
+  get vectorIndex(): SemanticSearchStatus | null {
+    return this._vectorIndex;
+  }
+
+  /** Called on every graph state the worker reports. */
+  onVectorIndexChange?: (graph: SemanticSearchStatus) => void;
 
   /** Boot-phase progress from the worker. null before first report. */
   get bootProgress(): {
@@ -708,6 +725,12 @@ export class IndexerWorkerProxy implements Embedder {
       case "bootProgress":
         this._bootProgress = { stage: msg.stage, progress: msg.progress };
         break;
+      case "vectorIndex": {
+        const { type: _type, ...graph } = msg;
+        this._vectorIndex = graph;
+        this.onVectorIndexChange?.(graph);
+        break;
+      }
       case "jobUpdate":
         this.handleJobUpdate(msg);
         break;

@@ -843,6 +843,17 @@ export interface GatewayClient {
 /**
  * Indexing stats returned by the gateway.
  */
+/**
+ * Whether vector (semantic) search is being served. `degraded` means the
+ * gateway does not have the memory to hold the HNSW index: search answers from
+ * the keyword lane alone until a restart finds the memory, and `reason` says
+ * why, naming the gateway's memory budget.
+ */
+export interface SemanticSearchStatus {
+  state: "ready" | "degraded";
+  reason?: string;
+}
+
 export interface IndexStats {
   enabled: boolean;
   totalIndexed: number;
@@ -878,6 +889,8 @@ export interface IndexStats {
       percent: number;
     } | null;
   };
+  /** Absent on older gateways and before the indexer reports its graph. */
+  semanticSearch?: SemanticSearchStatus;
   bySource: Record<
     string,
     {

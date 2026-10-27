@@ -19,6 +19,8 @@
 
 import { sourceSettingKeys } from "@omnesis/config";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
+import type { MemoryBudget } from "../memory-budget.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -132,6 +134,13 @@ export type IndexerInit = {
   usearchIndexPath: string;
   /** Optional cold-backfill page size; production uses the write handle default. */
   usearchBackfillPageSize?: number;
+  /** Optional cold-rebuild checkpoint interval, ms; production uses the write handle default. */
+  usearchCheckpointIntervalMs?: number;
+  /**
+   * The gateway's memory budget (see `memory-budget.ts`). The worker holds the
+   * HNSW graph in memory only while it fits; absent, nothing is checked.
+   */
+  memoryBudget?: MemoryBudget;
   /** When set, use HttpEmbedder instead of LlamaCppEmbedder. */
   httpEmbedderUrl?: string;
   /** Model name for the HTTP embedder (auto-discovered if omitted). */
@@ -268,6 +277,9 @@ export type IndexerToMain =
   // then proceeds; the next boot rebuilds, fail-safe).
   | { type: "flushSaveComplete"; id: number; ok: boolean }
   | IndexerJobUpdate
+  // Whether the HNSW graph is being built, serving, or released for lack of
+  // memory (semantic search degraded, keyword search only).
+  | ({ type: "vectorIndex" } & SemanticSearchStatus)
   | { type: "shutdownComplete" }
   | {
       /**

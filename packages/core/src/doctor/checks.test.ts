@@ -1351,6 +1351,21 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     expect(report.ok).toBe(true);
   });
 
+  test("semantic search degraded for lack of memory warns with the fix", () => {
+    const data = healthyData();
+    data.indexStats!.semanticSearch = {
+      state: "degraded",
+      reason:
+        "memory ran short while serving: 120 MiB left of the 8.0 GiB (gateway.memoryLimitMb) budget; the HNSW graph was released from memory",
+    };
+    const report = evaluateDoctor(data);
+    const check = findCheck(report.checks, "index.semantic");
+    expect(check?.status).toBe("warn");
+    expect(check?.message).toContain("keyword search only: memory ran short while serving");
+    expect(check?.hint).toContain("gateway.memoryLimitMb");
+    expect(report.ok).toBe(true);
+  });
+
   test("missing index model file is a FAIL", () => {
     const data = healthyData();
     data.indexStats = { enabled: false, state: "model-missing", model: { present: false } };

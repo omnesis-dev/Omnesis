@@ -516,6 +516,20 @@ export function renderStatus(data: StatusData, fx: CliFx): void {
     }
   }
 
+  // Semantic search off for lack of memory: the gateway could not hold its
+  // HNSW index, so search is answering from the keyword lane alone.
+  const semantic = data.indexStats?.semanticSearch;
+  if (semantic?.state === "degraded") {
+    writeLine();
+    writeLine(`${c.bold}${c.yellow}Semantic Search Degraded${c.reset}`);
+    writeLine(
+      `  ${c.yellow}↳${c.reset} keyword search only: ${semantic.reason ?? "not enough memory"}`,
+    );
+    writeLine(
+      `  ${c.dim}  give the gateway more memory (gateway.memoryLimitMb or the container's limit), then restart it${c.reset}`,
+    );
+  }
+
   // Config health — degraded (typo'd / dangling) inference role assignments.
   // Fail-loud: a capability silently disabled by a bad assignment surfaces
   // here as a named red line saying which role and why, instead of hiding in

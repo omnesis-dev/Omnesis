@@ -1767,16 +1767,34 @@ const gateway = z
       )
       .optional(),
     /**
+     * The gateway's memory budget (MiB): how much resident memory the process
+     * may use. Unset, it is the container's cgroup limit when there is one,
+     * otherwise the host's physical memory. The indexer keeps the HNSW vector
+     * graph in memory only while it fits in what is left of the budget, and
+     * serves keyword-only search (semantic search degraded) when it does not;
+     * defaults that would otherwise read the host's memory, such as the
+     * analytics ceiling, derive from it. Set it on a host whose memory is
+     * shared with other services.
+     */
+    memoryLimitMb: z
+      .number()
+      .int()
+      .min(256)
+      .describe(
+        "Memory budget in MiB for the gateway process. The HNSW vector graph is kept in memory only while it fits; otherwise search is keyword-only and semantic search reports degraded. Applied at gateway start. Default: the container's memory limit, else the host's physical memory.",
+      )
+      .optional(),
+    /**
      * Memory ceiling (MiB) for the analytics DuckDB instance, which user SQL
      * shares with ingest; DuckDB spills to the store's temp directory beyond
-     * it. Default a quarter of physical memory, clamped to 512–4096.
+     * it. Default a quarter of the gateway's memory budget, clamped to 512–4096.
      */
     analyticsMemoryLimitMb: z
       .number()
       .int()
       .min(256)
       .describe(
-        "Memory ceiling in MiB for the analytics DuckDB instance (shared by ingest and user SQL). Applied at gateway start. Default: a quarter of physical memory, 512–4096.",
+        "Memory ceiling in MiB for the analytics DuckDB instance (shared by ingest and user SQL). Applied at gateway start. Default: a quarter of the gateway's memory budget, 512–4096.",
       )
       .optional(),
     /**

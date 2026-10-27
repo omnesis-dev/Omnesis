@@ -13,6 +13,7 @@ type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
+import { withScanPageCache } from "./scan-page-cache.js";
 
 const log = createLogger("indexer:db");
 
@@ -249,6 +250,41 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_prune AFTER INSERT ON chunks_fts_changes
       WHEN new.seq % 10000 = 0 BEGIN
       DELETE FROM chunks_fts_changes WHERE seq <= new.seq - 500000;
+    END;
+  `);
+
+  // Change log of chunk vectors for the HNSW graph (see `catchUpFromChangeLog`
+  // in usearch-index.ts): every insert, delete and embedding update appends the
+  // chunk's rowid, so a graph persisted at log position N is brought up to date
+  // by re-reading exactly the rowids logged after N — instead of rebuilding the
+  // whole graph after a crash or an unsaved write. Checkpoints prune what every
+  // persisted graph already covers (`pruneVectorChanges`); the self-prune bounds
+  // a log no checkpoint drains (semantic search degraded for a long time) and
+  // records how far it pruned, so a graph older than the log rebuilds.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vector_changes (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      chunk_rowid INTEGER NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS vector_changes_ai AFTER INSERT ON chunks
+      WHEN new.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (new.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_au AFTER UPDATE OF embedding ON chunks
+      WHEN old.embedding IS NOT NULL OR new.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (new.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_ad AFTER DELETE ON chunks
+      WHEN old.embedding IS NOT NULL BEGIN
+      INSERT INTO vector_changes(chunk_rowid) VALUES (old.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS vector_changes_prune AFTER INSERT ON vector_changes
+      WHEN new.seq % 10000 = 0 BEGIN
+      DELETE FROM vector_changes WHERE seq <= new.seq - ${VECTOR_CHANGES_RETAINED};
+      INSERT INTO index_meta (key, value, updated_at)
+        VALUES ('${VECTOR_CHANGES_PRUNED_THROUGH_KEY}', CAST(new.seq - ${VECTOR_CHANGES_RETAINED} AS TEXT), datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        WHERE CAST(index_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER);
     END;
   `);
 
@@ -653,6 +689,89 @@ export function setUsearchSavedSeq(db: Db, seq: number): void {
     `INSERT INTO index_meta (key, value, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(USEARCH_SAVED_SEQ_KEY, String(seq), new Date().toISOString());
+}
+
+/** Newest entries the vector change log keeps when no checkpoint prunes it. */
+const VECTOR_CHANGES_RETAINED = 2_000_000;
+/** `index_meta` key: the highest `vector_changes.seq` already pruned from the log. */
+const VECTOR_CHANGES_PRUNED_THROUGH_KEY = "vector_changes_pruned_through";
+/**
+ * `index_meta` key: the change-log position the on-disk plaintext graph was
+ * last saved at — every change logged at or below it is in the file, or still
+ * queued in `pending_vector_deletes`. Absent on a graph saved before the log
+ * existed; such a graph can only be trusted by the exact `usearch_saved_seq`.
+ */
+const USEARCH_SAVED_CHANGE_SEQ_KEY = "usearch_saved_change_seq";
+/**
+ * `index_meta` key: the last chunk rowid a cold rebuild had added when the
+ * on-disk graph was saved. Absent once the build completed; present, the graph
+ * holds rowids up to it and the build resumes after it.
+ */
+const USEARCH_BACKFILL_CURSOR_KEY = "usearch_backfill_cursor";
+
+function getMetaInt(db: Db, key: string): number | null {
+  const row = db
+    .prepare<[string], { value: string }>("SELECT value FROM index_meta WHERE key = ?")
+    .get(key);
+  if (!row) return null;
+  const n = Number(row.value);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function setMetaInt(db: Db, key: string, value: number | null): void {
+  if (value === null) {
+    db.prepare("DELETE FROM index_meta WHERE key = ?").run(key);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO index_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, String(value), new Date().toISOString());
+}
+
+/** The newest position in the vector change log (0 before the first change). */
+export function getVectorChangeHead(db: Db): number {
+  const row = db
+    .prepare<[], { seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'vector_changes'")
+    .get();
+  return row?.seq ?? 0;
+}
+
+export function getVectorChangesPrunedThrough(db: Db): number {
+  return getMetaInt(db, VECTOR_CHANGES_PRUNED_THROUGH_KEY) ?? 0;
+}
+
+/**
+ * Drop log entries every persisted graph already reflects. Callers pass the
+ * change position of the oldest graph a restart could load; never past it.
+ */
+export function pruneVectorChanges(db: Db, throughSeq: number): void {
+  if (throughSeq <= getVectorChangesPrunedThrough(db)) return;
+  db.transaction(() => {
+    db.prepare("DELETE FROM vector_changes WHERE seq <= ?").run(throughSeq);
+    setMetaInt(db, VECTOR_CHANGES_PRUNED_THROUGH_KEY, throughSeq);
+  })();
+}
+
+export function getUsearchSavedChangeSeq(db: Db): number | null {
+  return getMetaInt(db, USEARCH_SAVED_CHANGE_SEQ_KEY);
+}
+
+export function setUsearchSavedChangeSeq(db: Db, seq: number | null): void {
+  setMetaInt(db, USEARCH_SAVED_CHANGE_SEQ_KEY, seq);
+}
+
+export function getUsearchBackfillCursor(db: Db): number | null {
+  return getMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY);
+}
+
+export function setUsearchBackfillCursor(db: Db, rowid: number | null): void {
+  setMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY, rowid);
+}
+
+/** Whether a main-thread vector removal still waits for the worker to apply and save it. */
+export function hasPendingVectorDeletes(db: Db): boolean {
+  return db.prepare("SELECT 1 FROM pending_vector_deletes LIMIT 1").get() !== undefined;
 }
 
 /** Read one index generation's row, or null if absent. */
@@ -2499,25 +2618,27 @@ export function getIndexStatsBySource(
 export function refreshIndexStats(db: Db): void {
   const now = new Date().toISOString();
 
-  const perSource = db
-    .prepare<
-      [],
-      {
-        source_id: string;
-        docs: number;
-        chunks: number;
-        earliest: string | null;
-        latest: string | null;
-      }
-    >(
-      `SELECT source_id,
+  const perSource = withScanPageCache(db, () =>
+    db
+      .prepare<
+        [],
+        {
+          source_id: string;
+          docs: number;
+          chunks: number;
+          earliest: string | null;
+          latest: string | null;
+        }
+      >(
+        `SELECT source_id,
               COUNT(DISTINCT document_id) AS docs,
               COUNT(*) AS chunks,
               MIN(source_created_at) AS earliest,
               MAX(source_created_at) AS latest
        FROM chunks GROUP BY source_id`,
-    )
-    .all();
+      )
+      .all(),
+  );
 
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM source_index_stats").run();

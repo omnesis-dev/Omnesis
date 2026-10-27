@@ -495,7 +495,8 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
   "/activityRetention/maxAge", // globally optional; absent keeps activity forever
   "/brain/transcriptRetention", // legacy per-cognition override; absent inherits activity retention
   "/gateway/cpuConcurrency", // machine-dependent: max(2, floor(availableParallelism / 2) - 2)
-  "/gateway/analyticsMemoryLimitMb", // machine-dependent: clamp(totalmem / 4, 512 MiB, 4 GiB)
+  "/gateway/memoryLimitMb", // machine-dependent: the cgroup memory limit, else totalmem
+  "/gateway/analyticsMemoryLimitMb", // machine-dependent: clamp(memory budget / 4, 512 MiB, 4 GiB)
   "/gateway/analyticsThreads", // machine-dependent: clamp(cores / 2, 2, 8)
   "/gateway/mdns/serviceName", // defaults to the OS hostname in gateway boot code
   "/agent/subagentTreeTokenBudget", // unset = unbounded tree budget (a warning is logged)
@@ -529,7 +530,9 @@ const CONFIG_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "/search/diversity/topK": "Uses search.params.candidateLimit.",
   "/search/diversity/maxPerSourceInTopK": "No per-source cap; MMR diversity still applies.",
   "/gateway/cpuConcurrency": "Chosen automatically from the machine's available CPU cores.",
-  "/gateway/analyticsMemoryLimitMb": "Chosen automatically from the machine's physical memory.",
+  "/gateway/memoryLimitMb":
+    "The container's memory limit when there is one, otherwise the machine's physical memory.",
+  "/gateway/analyticsMemoryLimitMb": "Chosen automatically from the gateway's memory budget.",
   "/gateway/analyticsThreads": "Chosen automatically from the machine's available CPU cores.",
   "/gateway/backfill/mergePass/interval": "Uses gateway.backfill.peopleCounts.interval.",
   "/gateway/watch/compileReasoningTokens": "The assigned backend chooses its reasoning budget.",

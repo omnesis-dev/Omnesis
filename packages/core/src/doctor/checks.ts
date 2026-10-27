@@ -1246,6 +1246,16 @@ function checkIndex(d: DoctorData, ck: Checks): void {
 
   ck.pass("Index", "index.enabled", "Indexing is enabled");
 
+  const semantic = idx.semanticSearch;
+  if (semantic?.state === "degraded") {
+    ck.warn(
+      "Index",
+      "index.semantic",
+      `Semantic search degraded — keyword search only: ${semantic.reason ?? "not enough memory for the HNSW index"}`,
+      "Give the gateway more memory — raise gateway.memoryLimitMb (or OMNESIS_MEMORY_LIMIT_MB), the container's memory limit, or free memory on the host — then restart the gateway.",
+    );
+  }
+
   const total = idx.totalGatewayDocs ?? 0;
   const indexed = idx.totalIndexed ?? 0;
   if (total > 0) {

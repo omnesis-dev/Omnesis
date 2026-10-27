@@ -202,3 +202,41 @@ describe("computeIndexStats — data cutoffs", () => {
     expect(stats.totalGatewayDocs).toBe(1);
   });
 });
+
+describe("semantic search state", () => {
+  const degraded = {
+    state: "degraded" as const,
+    reason: "memory ran short while serving: 90 MiB left of the 2.0 GiB (host memory) budget",
+  };
+
+  test("is reported while running and while the worker starts", () => {
+    const running = computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: MODEL,
+      getSemanticSearch: () => degraded,
+    });
+    expect(running.state).toBe("running");
+    expect(running.semanticSearch).toEqual(degraded);
+
+    const spawning = computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: MODEL,
+      indexerReadiness: () => ({ status: "loading-model" }),
+      getSemanticSearch: () => degraded,
+    });
+    expect(spawning.state).toBe("spawning");
+    expect(spawning.semanticSearch).toEqual(degraded);
+  });
+
+  test("is absent before the worker reports its graph", () => {
+    const stats = computeIndexStats({
+      db,
+      indexDb,
+      indexerModel: MODEL,
+      getSemanticSearch: () => null,
+    });
+    expect(stats).not.toHaveProperty("semanticSearch");
+  });
+});

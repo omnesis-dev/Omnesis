@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
@@ -26,7 +27,9 @@ import {
   upsertChunks,
 } from "../indexer/db.js";
 import { UsearchReadHandle } from "../indexer/usearch-index.js";
+import { prepareEncryptedGraphForBoot } from "../indexer/usearch-sidecar-boot.js";
 import { IndexerWorkerProxy, type IndexerWorkerOptions } from "./indexer-worker-proxy.js";
+import type { MemoryBudget } from "../memory-budget.js";
 import type { DocumentInput } from "@omnesis/types";
 import type { IndexerInit, IndexerToMain } from "./protocol.js";
 
@@ -145,10 +148,18 @@ function deleteDocumentsBySource(gatewayDbPath: string, sourceId: string): void 
   }
 }
 
+type WorkerTestOptions = {
+  reindexMissingAtBoot?: boolean;
+  usearchBackfillPageSize?: number;
+  usearchCheckpointIntervalMs?: number;
+  indexDbKeyHex?: string;
+  memoryBudget?: MemoryBudget;
+};
+
 function makeWorkerOptions(
   paths: { gatewayDbPath: string; indexDbPath: string; usearchIndexPath: string },
   httpEmbedderUrl: string,
-  options: { reindexMissingAtBoot?: boolean; usearchBackfillPageSize?: number } = {},
+  options: WorkerTestOptions = {},
 ): IndexerWorkerOptions {
   return {
     modelPath: "(http)",
@@ -178,13 +189,16 @@ function makeWorkerOptions(
     httpEmbedderAllowRemoteInference: false,
     usearchIndexPath: paths.usearchIndexPath,
     usearchBackfillPageSize: options.usearchBackfillPageSize,
+    usearchCheckpointIntervalMs: options.usearchCheckpointIntervalMs,
+    ...(options.indexDbKeyHex ? { indexDbKeyHex: options.indexDbKeyHex } : {}),
+    ...(options.memoryBudget ? { memoryBudget: options.memoryBudget } : {}),
   };
 }
 
 function createProxy(
   paths: { gatewayDbPath: string; indexDbPath: string; usearchIndexPath: string },
   httpEmbedderUrl: string,
-  options: { reindexMissingAtBoot?: boolean; usearchBackfillPageSize?: number } = {},
+  options: WorkerTestOptions = {},
 ): IndexerWorkerProxy {
   return new IndexerWorkerProxy(makeWorkerOptions(paths, httpEmbedderUrl, options));
 }
@@ -257,7 +271,90 @@ function startWorkerWithDeferredDelete(
   };
 }
 
-function createFixture(initialDocuments: DocumentInput[]): {
+type RecordingWorker = {
+  ready: Promise<void>;
+  /** Every `hnsw-backfill` progress fraction the worker reported, in order. */
+  backfillProgress: number[];
+  vectorIndex: Array<{ state: string; reason?: string }>;
+  cycleCompletions(): number;
+  /** Stop the thread the way an OOM kill stops the process: no shutdown, no final save. */
+  kill(): Promise<void>;
+  dispose(): Promise<void>;
+};
+
+/** A bare worker that records what it reports, so a test can kill it mid-boot. */
+function startRecordingWorker(
+  paths: { gatewayDbPath: string; indexDbPath: string; usearchIndexPath: string },
+  httpEmbedderUrl: string,
+  options: WorkerTestOptions = {},
+): RecordingWorker {
+  const entry = resolveWorkerEntry("./indexer-worker.ts", import.meta.url, "./register-tsx.mjs");
+  const worker = new Worker(entry.url, { execArgv: entry.execArgv });
+  const backfillProgress: number[] = [];
+  const vectorIndex: Array<{ state: string; reason?: string }> = [];
+  let cycles = 0;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const exit = new Promise<void>((resolve) => {
+    worker.once("exit", () => resolve());
+  });
+  worker.on("message", (message: IndexerToMain) => {
+    if (message.type === "bootProgress" && message.stage === "hnsw-backfill") {
+      backfillProgress.push(message.progress);
+    }
+    if (message.type === "vectorIndex") {
+      vectorIndex.push({ state: message.state, reason: message.reason });
+    }
+    if (
+      message.type === "jobUpdate" &&
+      message.jobId === "indexer.cycle" &&
+      message.phase === "completed"
+    ) {
+      cycles++;
+    }
+    if (message.type === "ready") resolveReady();
+    if (message.type === "initError") rejectReady(new Error(message.error));
+    if (message.type === "shutdownComplete") void worker.terminate().catch(() => {});
+  });
+  worker.once("error", (error) => rejectReady(error));
+  const options_ = makeWorkerOptions(paths, httpEmbedderUrl, options);
+  worker.postMessage({
+    type: "init",
+    ...options_,
+    heartbeatIntervalMs: 30_000,
+  } satisfies IndexerInit);
+  return {
+    ready,
+    backfillProgress,
+    vectorIndex,
+    cycleCompletions: () => cycles,
+    async kill() {
+      await worker.terminate();
+    },
+    async dispose() {
+      worker.postMessage({ type: "shutdown" });
+      await exit;
+    },
+  };
+}
+
+async function waitUntil(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+function createFixture(
+  initialDocuments: DocumentInput[],
+  options: { indexDbKey?: Buffer } = {},
+): {
   gatewayDbPath: string;
   indexDbPath: string;
   usearchIndexPath: string;
@@ -272,12 +369,15 @@ function createFixture(initialDocuments: DocumentInput[]): {
     usearchIndexPath: join(graphDir, "index.usearch"),
   };
   insertDocuments(paths.gatewayDbPath, initialDocuments);
-  createIndexDatabase(paths.indexDbPath).close();
+  createIndexDatabase(paths.indexDbPath, { encryptionKey: options.indexDbKey ?? null }).close();
   return paths;
 }
 
-function countVectors(indexDbPath: string): number {
-  const indexDb = openIndexDb(indexDbPath, { readonly: true });
+function countVectors(indexDbPath: string, encryptionKey?: Buffer): number {
+  const indexDb = openIndexDb(indexDbPath, {
+    readonly: true,
+    encryptionKey: encryptionKey ?? null,
+  });
   try {
     return (
       indexDb
@@ -1104,6 +1204,164 @@ describe("indexer worker boot persistence", () => {
       await proxy?.dispose();
       if (blockingEmbedder) await closeServer(blockingEmbedder.server);
       if (seedEmbedder.server.listening) await closeServer(seedEmbedder.server);
+    }
+  }, 60_000);
+
+  test("a cold rebuild killed part way resumes after its last checkpoint", async () => {
+    const documents = Array.from({ length: 300 }, (_, index) =>
+      makeDocument(
+        `rebuild-resume-${index}`,
+        `David Lin drafted fictional rebuild checklist item ${index}.`,
+      ),
+    );
+    const paths = createFixture(documents);
+    const embedder = await startFakeEmbedder();
+    let worker: RecordingWorker | undefined;
+    try {
+      const seed = createProxy(paths, embedder.url);
+      await seed.whenReady();
+      await waitForCycleRuns(seed, 1);
+      await seed.dispose();
+      // Rebuild the graph cold from the stored vectors, one vector per page
+      // and a checkpoint after each, then kill the worker half way through.
+      rmSync(paths.usearchIndexPath, { force: true });
+      worker = startRecordingWorker(paths, embedder.url, {
+        usearchBackfillPageSize: 1,
+        usearchCheckpointIntervalMs: 0,
+      });
+      const killed = worker;
+      await waitUntil(() => (killed.backfillProgress.at(-1) ?? 0) >= 0.5, "half the rebuild");
+      await killed.kill();
+
+      worker = startRecordingWorker(paths, embedder.url, { usearchBackfillPageSize: 1 });
+      await worker.ready;
+      // The restarted build continues after the checkpoint rather than from the
+      // first chunk, so it never reports the first half of the build again.
+      expect(worker.backfillProgress.filter((p) => p > 0 && p < 0.45)).toEqual([]);
+      expect(worker.backfillProgress.at(-1)).toBe(1);
+      expect(worker.vectorIndex.at(-1)?.state).toBe("ready");
+      const reader = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+      try {
+        expect(reader.size()).toBe(documents.length);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      await worker?.dispose();
+      await closeServer(embedder.server);
+    }
+  }, 60_000);
+
+  test("an encrypted graph killed after its rebuild is restored and caught up, not rebuilt", async () => {
+    const indexDbKey = randomBytes(32);
+    const indexDbKeyHex = indexDbKey.toString("hex");
+    const documents = Array.from({ length: 200 }, (_, index) =>
+      makeDocument(
+        `encrypted-rebuild-${index}`,
+        `Sarah Mendez drafted fictional archive checklist item ${index}.`,
+      ),
+    );
+    const paths = createFixture(documents, { indexDbKey });
+    const configDir = dirname(paths.usearchIndexPath);
+    const embedder = await startFakeEmbedder();
+    // The gateway's own boot step: purge the plaintext graph and decrypt the
+    // sidecar when the worker can bring it level.
+    const bootRestore = () => {
+      const indexDb = openIndexDb(paths.indexDbPath, { encryptionKey: indexDbKey });
+      try {
+        return prepareEncryptedGraphForBoot(indexDb, configDir, indexDbKey);
+      } finally {
+        indexDb.close();
+      }
+    };
+    let worker: RecordingWorker | undefined;
+    try {
+      const seed = createProxy(paths, embedder.url, { indexDbKeyHex });
+      await seed.whenReady();
+      await waitForCycleRuns(seed, 1);
+      await seed.dispose();
+      // Lose the graph, so the next start rebuilds it from the stored vectors,
+      // and give that start more documents to embed once the rebuild is done.
+      rmSync(paths.usearchIndexPath, { force: true });
+      rmSync(`${paths.usearchIndexPath}.enc`, { force: true });
+      insertDocuments(
+        paths.gatewayDbPath,
+        Array.from({ length: 50 }, (_, index) =>
+          makeDocument(
+            `encrypted-after-rebuild-${index}`,
+            `Sarah Mendez added fictional archive note ${index} after the rebuild.`,
+          ),
+        ),
+      );
+      expect(bootRestore().restored).toBe(false);
+      worker = startRecordingWorker(paths, embedder.url, {
+        indexDbKeyHex,
+        usearchBackfillPageSize: 10,
+      });
+      const killed = worker;
+      await killed.ready;
+      expect(killed.backfillProgress.filter((p) => p > 0 && p < 1).length).toBeGreaterThan(0);
+      await waitUntil(() => killed.cycleCompletions() >= 1, "the post-rebuild indexing cycle");
+      expect(countVectors(paths.indexDbPath, indexDbKey)).toBe(250);
+      // Killed with the rebuild done and new vectors saved only in plaintext,
+      // which an encrypted install never keeps across a start.
+      await killed.kill();
+
+      const restore = bootRestore();
+      expect(restore.restored).toBe(true);
+      worker = startRecordingWorker(paths, embedder.url, {
+        indexDbKeyHex,
+        usearchBackfillPageSize: 10,
+      });
+      await worker.ready;
+      expect(worker.backfillProgress.filter((p) => p > 0 && p < 1)).toEqual([]);
+      const reader = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+      try {
+        expect(reader.size()).toBe(250);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      await worker?.dispose();
+      await closeServer(embedder.server);
+    }
+  }, 60_000);
+
+  test("a graph that does not fit the memory budget leaves search keyword-only and reports it", async () => {
+    const paths = createFixture([
+      makeDocument("budget-plan", "David Lin drafted a fictional packing list."),
+    ]);
+    const embedder = await startFakeEmbedder();
+    let proxy: IndexerWorkerProxy | undefined;
+    try {
+      proxy = createProxy(paths, embedder.url);
+      await proxy.whenReady();
+      await waitForCycleRuns(proxy, 1);
+      await proxy.dispose();
+      proxy = undefined;
+      const graphBefore = statSync(paths.usearchIndexPath);
+
+      insertDocuments(paths.gatewayDbPath, [
+        makeDocument("budget-later", "David Lin added a fictional second list."),
+      ]);
+      proxy = createProxy(paths, embedder.url, {
+        memoryBudget: { bytes: 64 * 1024 * 1024, source: "config" },
+      });
+      await proxy.whenReady();
+      await waitForCycleRuns(proxy, 1);
+
+      expect(proxy.vectorIndex?.state).toBe("degraded");
+      expect(proxy.vectorIndex?.reason).toContain("64 MiB (gateway.memoryLimitMb)");
+      // Indexing goes on — vectors land in index.db for a later start — and
+      // query embedding still answers; only the in-memory graph is skipped.
+      expect(countVectors(paths.indexDbPath)).toBe(2);
+      await expect(proxy.embedQuery("packing list")).resolves.toHaveLength(EMBED_DIM);
+      const graphAfter = statSync(paths.usearchIndexPath);
+      expect(graphAfter.mtimeMs).toBe(graphBefore.mtimeMs);
+      expect(graphAfter.size).toBe(graphBefore.size);
+    } finally {
+      await proxy?.dispose();
+      await closeServer(embedder.server);
     }
   }, 60_000);
 
