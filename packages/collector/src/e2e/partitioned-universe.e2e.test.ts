@@ -210,10 +210,9 @@ describe("partitioned universe — one stream per phone", () => {
     try {
       expect(
         absenceDb
-          .prepare<
-            [string],
-            { stream_id: string; external_id: string }
-          >("SELECT stream_id, external_id FROM document_absences WHERE source_id = ? ORDER BY stream_id, external_id")
+          .prepare<[string], { stream_id: string; external_id: string }>(
+            "SELECT stream_id, external_id FROM document_absences WHERE source_id = ? ORDER BY stream_id, external_id",
+          )
           .all(CALL_LOG),
       ).toEqual(
         distinct
@@ -331,10 +330,9 @@ describe("partitioned universe — one stream per phone", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     const countWhere = (table: string, streamId: string): number =>
       db
-        .prepare<
-          [string, string],
-          { n: number }
-        >(`SELECT COUNT(*) AS n FROM ${table} WHERE source_id = ? AND stream_id = ?`)
+        .prepare<[string, string], { n: number }>(
+          `SELECT COUNT(*) AS n FROM ${table} WHERE source_id = ? AND stream_id = ?`,
+        )
         .get(CALL_LOG, streamId)!.n;
     const sql = async (query: string) =>
       (
@@ -349,10 +347,9 @@ describe("partitioned universe — one stream per phone", () => {
       );
     try {
       const victim = db
-        .prepare<
-          [string, string],
-          { id: string }
-        >("SELECT id FROM documents WHERE source_id = ? AND stream_id = ? ORDER BY id LIMIT 1")
+        .prepare<[string, string], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = ? AND stream_id = ? ORDER BY id LIMIT 1",
+        )
         .get(CALL_LOG, second.deviceId)!;
       const secondTombstonesBefore = countWhere("removed_documents", second.deviceId);
       expect(

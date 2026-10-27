@@ -380,10 +380,9 @@ describe("DeviceWsServer", () => {
       expect(
         JSON.parse(
           localDb
-            .prepare<
-              [string],
-              { capabilities: string }
-            >("SELECT capabilities FROM devices WHERE id = ?")
+            .prepare<[string], { capabilities: string }>(
+              "SELECT capabilities FROM devices WHERE id = ?",
+            )
             .get(agent.id)!.capabilities,
         ),
       ).toMatchObject({

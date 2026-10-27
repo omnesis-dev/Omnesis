@@ -4,10 +4,7 @@
 import type { Db } from "./types.js";
 
 export type MutableListRevisionScope =
-  | "product-loops"
-  | "cognition-coverage"
-  | "cognition-runs"
-  | "link-declarations";
+  "product-loops" | "cognition-coverage" | "cognition-runs" | "link-declarations";
 
 const SCOPES: readonly MutableListRevisionScope[] = [
   "product-loops",
@@ -188,9 +185,8 @@ export function readListPage<T>(db: Db, read: () => T): T {
 
 export function mutableListRevision(db: Db, scope: MutableListRevisionScope): number {
   return db
-    .prepare<
-      [MutableListRevisionScope],
-      { revision: number }
-    >("SELECT revision FROM mutable_list_revisions WHERE scope = ?")
+    .prepare<[MutableListRevisionScope], { revision: number }>(
+      "SELECT revision FROM mutable_list_revisions WHERE scope = ?",
+    )
     .get(scope)!.revision;
 }

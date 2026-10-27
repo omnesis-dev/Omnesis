@@ -183,10 +183,9 @@ it("accepts complete paginated reads and requires both phases before durably com
     .toBeDefined();
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
   const runIds = bench.sql
-    .prepare<
-      [string],
-      { run_id: string }
-    >("SELECT DISTINCT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.subject_id=?")
+    .prepare<[string], { run_id: string }>(
+      "SELECT DISTINCT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.subject_id=?",
+    )
     .all(sourceId);
   const executed = (
     await Promise.all(runIds.map((run) => bench!.obs.executedTools(run.run_id)))
@@ -276,10 +275,9 @@ it("accepts complete paginated reads and requires both phases before durably com
     .toEqual({ status: "completed" });
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 90_000 });
   const review = bench.sql
-    .prepare<
-      [],
-      { run_id: string }
-    >("SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.id='covered-source-review'")
+    .prepare<[], { run_id: string }>(
+      "SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.id='covered-source-review'",
+    )
     .get()!;
   const reviewTools = await bench.obs.executedTools(review.run_id);
   expect(reviewTools).toContainEqual(

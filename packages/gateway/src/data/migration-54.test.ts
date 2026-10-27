@@ -45,10 +45,9 @@ interface CognitionSpendRow {
 
 function cognitionRows(d: Db): CognitionSpendRow[] {
   return d
-    .prepare<
-      [],
-      CognitionSpendRow
-    >("SELECT * FROM cognition_spend ORDER BY day, mechanism, model_id")
+    .prepare<[], CognitionSpendRow>(
+      "SELECT * FROM cognition_spend ORDER BY day, mechanism, model_id",
+    )
     .all();
 }
 
@@ -103,10 +102,9 @@ describe("migration 54 — cognition_spend + cognition_spend_daily history copy"
 
     // Downgrade safety: the legacy table survives, rows untouched.
     const legacy = db
-      .prepare<
-        [],
-        { day: string; runs: number }
-      >("SELECT day, runs FROM cognition_spend_daily ORDER BY day")
+      .prepare<[], { day: string; runs: number }>(
+        "SELECT day, runs FROM cognition_spend_daily ORDER BY day",
+      )
       .all();
     expect(legacy).toEqual([
       { day: "2026-07-01", runs: 4 },

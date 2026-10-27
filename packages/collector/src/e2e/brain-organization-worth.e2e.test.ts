@@ -212,8 +212,7 @@ afterAll(async () => {
 const pageRevision = () =>
   (
     bench.sql.prepare("SELECT revision FROM knowledge_nodes WHERE id=?").get(pageId) as
-      | { revision: number }
-      | undefined
+      { revision: number } | undefined
   )?.revision;
 const organizationCoverage = (id: string) =>
   (

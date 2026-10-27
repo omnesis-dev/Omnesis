@@ -133,7 +133,9 @@ describe("Things replicas across real collectors", () => {
         .prepare<
           [string],
           { external_id: string; stream_id: string; title: string; source_updated_at: string }
-        >("SELECT external_id, stream_id, title, source_updated_at FROM documents WHERE source_id = ? ORDER BY external_id")
+        >(
+          "SELECT external_id, stream_id, title, source_updated_at FROM documents WHERE source_id = ? ORDER BY external_id",
+        )
         .all(SOURCE_ID);
     } finally {
       db.close();
@@ -144,10 +146,9 @@ describe("Things replicas across real collectors", () => {
     try {
       return (
         db
-          .prepare<
-            [string, string],
-            { last_synced_at: string | null }
-          >("SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?")
+          .prepare<[string, string], { last_synced_at: string | null }>(
+            "SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?",
+          )
           .get(SOURCE_ID, deviceId)?.last_synced_at ?? null
       );
     } finally {

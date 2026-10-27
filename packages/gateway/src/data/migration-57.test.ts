@@ -90,10 +90,9 @@ describe("migration 57 — annotation superseded_by", () => {
     for (const table of TABLES) {
       expect(columns(db, table)).toContain("superseded_by");
       const row = db
-        .prepare<
-          [],
-          { superseded_by: string | null; claim_text: string }
-        >(`SELECT superseded_by, claim_text FROM ${table}`)
+        .prepare<[], { superseded_by: string | null; claim_text: string }>(
+          `SELECT superseded_by, claim_text FROM ${table}`,
+        )
         .get();
       expect(row).toEqual({
         superseded_by: null,

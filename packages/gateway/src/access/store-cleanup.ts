@@ -76,10 +76,9 @@ export function cleanupExpiredAccessStateBatch(
       .run(now, limit).changes;
     const hasMore =
       db
-        .prepare<
-          [number],
-          { present: number }
-        >(`SELECT 1 AS present FROM ${table} WHERE expires_at <= ? LIMIT 1`)
+        .prepare<[number], { present: number }>(
+          `SELECT 1 AS present FROM ${table} WHERE expires_at <= ? LIMIT 1`,
+        )
         .get(now) !== undefined;
     return { phase, deleted, hasMore };
   })();
@@ -348,10 +347,9 @@ function cleanupAccessAuditEvents(
       .run(cutoff, limit).changes;
     const hasMore =
       db
-        .prepare<
-          [number],
-          { present: number }
-        >("SELECT 1 AS present FROM access_audit_events WHERE occurred_at < ? LIMIT 1")
+        .prepare<[number], { present: number }>(
+          "SELECT 1 AS present FROM access_audit_events WHERE occurred_at < ? LIMIT 1",
+        )
         .get(cutoff) !== undefined;
     return { phase: "auditEvents" as const, deleted, hasMore };
   })();

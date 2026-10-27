@@ -41,7 +41,7 @@ function readTlv(der: Uint8Array, offset: number, limit: number): Tlv {
 
 function children(der: Uint8Array, parent: Tlv): Tlv[] {
   const items: Tlv[] = [];
-  for (let offset = parent.contentStart; offset < parent.end; ) {
+  for (let offset = parent.contentStart; offset < parent.end;) {
     const item = readTlv(der, offset, parent.end);
     items.push(item);
     offset = item.end;

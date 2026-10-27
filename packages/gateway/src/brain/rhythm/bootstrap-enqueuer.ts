@@ -92,9 +92,7 @@ const BOOTSTRAP_STATE_DRAINED = "drained";
 const BOOTSTRAP_STATE_PARKED = "parked";
 
 type BootstrapLaneState =
-  | typeof BOOTSTRAP_STATE_RUNNING
-  | typeof BOOTSTRAP_STATE_DRAINED
-  | typeof BOOTSTRAP_STATE_PARKED;
+  typeof BOOTSTRAP_STATE_RUNNING | typeof BOOTSTRAP_STATE_DRAINED | typeof BOOTSTRAP_STATE_PARKED;
 
 /**
  * How long after process start the lane holds off a pass, and equally the
@@ -165,10 +163,9 @@ export interface BootstrapEnqueuePassResult {
 function countPendingBootstrapRuns(db: Db): number {
   return (
     db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM cognition_runs WHERE kind = 'bootstrap' AND status = 'pending'")
+      .prepare<[], { c: number }>(
+        "SELECT COUNT(*) AS c FROM cognition_runs WHERE kind = 'bootstrap' AND status = 'pending'",
+      )
       .get()?.c ?? 0
   );
 }

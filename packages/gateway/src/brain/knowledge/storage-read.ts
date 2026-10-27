@@ -63,10 +63,9 @@ export function listKnowledgeNodes(
   let after = options.afterId ?? "";
   while (result.length < limit) {
     const rows = db
-      .prepare<
-        [string | null, string | null, string, number],
-        KnowledgeNodeRow
-      >("SELECT * FROM knowledge_nodes WHERE (? IS NULL OR kind=?) AND id>? ORDER BY id LIMIT ?")
+      .prepare<[string | null, string | null, string, number], KnowledgeNodeRow>(
+        "SELECT * FROM knowledge_nodes WHERE (? IS NULL OR kind=?) AND id>? ORDER BY id LIMIT ?",
+      )
       .all(options.kind ?? null, options.kind ?? null, after, limit - result.length);
     if (!rows.length) break;
     for (const row of rows) {

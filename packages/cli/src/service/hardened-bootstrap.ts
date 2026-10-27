@@ -30,9 +30,7 @@ export type BootstrapTarget = { kind: "version"; version: string } | { kind: "re
 
 /** How the dedicated gateway's keys are sealed. */
 export type BootstrapKeyring =
-  | { kind: "passphrase" }
-  | { kind: "none" }
-  | { kind: "file"; path: string };
+  { kind: "passphrase" } | { kind: "none" } | { kind: "file"; path: string };
 
 export interface BootstrapCommandInput {
   target: BootstrapTarget;

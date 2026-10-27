@@ -59,11 +59,7 @@ export type WebSocketFactory = (
 ) => SocketLike;
 
 export type IntegrationConnectionState =
-  | "stopped"
-  | "connecting"
-  | "authenticating"
-  | "ready"
-  | "disconnected";
+  "stopped" | "connecting" | "authenticating" | "ready" | "disconnected";
 
 export interface AgentIntegrationClientOptions {
   gatewayUrl: string;

@@ -321,17 +321,15 @@ export function findDeviceByInstallId(
   installId: string,
 ): DeviceRecord | null {
   const row = db
-    .prepare<
-      [string, string],
-      DeviceRow
-    >(`SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ?`)
+    .prepare<[string, string], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ?`,
+    )
     .get(kind, installId);
   return row ? rowToDevice(row) : null;
 }
 
 export type RenameDeviceResult =
-  | { ok: true; device: DeviceRecord }
-  | { ok: false; reason: "not-found" | "name-taken" };
+  { ok: true; device: DeviceRecord } | { ok: false; reason: "not-found" | "name-taken" };
 
 /**
  * Display rename. Names stay unique per gateway (the by-name adoption path
@@ -341,10 +339,9 @@ export type RenameDeviceResult =
 export function renameDevice(db: Db, id: DeviceId, name: string): RenameDeviceResult {
   return db.transaction((): RenameDeviceResult => {
     const taken = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM devices WHERE name = ? AND id != ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM devices WHERE name = ? AND id != ?",
+      )
       .get(name, id);
     if (taken) return { ok: false, reason: "name-taken" };
     const changed = db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(name, id).changes;
@@ -388,10 +385,9 @@ export function replaceDeviceForRepair(
   const version = versionFrom(caps);
   const tx = db.transaction((): { installId: string | null; accessLevelId: string | null } => {
     const exists = db
-      .prepare<
-        [string],
-        { install_id: string | null; access_level_id: string | null }
-      >("SELECT install_id, access_level_id FROM devices WHERE id = ?")
+      .prepare<[string], { install_id: string | null; access_level_id: string | null }>(
+        "SELECT install_id, access_level_id FROM devices WHERE id = ?",
+      )
       .get(oldId);
     if (!exists) throw new Error(`Device not found: ${oldId}`);
     // Existing live sockets authenticated with these credentials may finish
@@ -948,8 +944,7 @@ export function setRelayPushConsent(
 ): RelayPushConsentOutcome {
   return db.transaction((): RelayPushConsentOutcome => {
     const row = db.prepare(`SELECT capabilities FROM devices WHERE id = ?`).get(id) as
-      | { capabilities: string | null }
-      | undefined;
+      { capabilities: string | null } | undefined;
     if (!row) return "device-not-found";
     const caps = parseCapabilities(row.capabilities, id);
     if (caps.pushAppId !== undefined && caps.pushAppId !== consent.appId) {
@@ -1916,10 +1911,9 @@ function canonicalJson(value: unknown): string {
  */
 export function bootstrapSelfFromDevices(db: Db): string | null {
   const existing = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   if (existing) return null;
 

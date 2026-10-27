@@ -77,10 +77,9 @@ describe("foldWebPagesIntoWebSource", () => {
       deduped: 1,
     });
     const rows = db
-      .prepare<
-        [],
-        { id: string; content: string }
-      >("SELECT id, content FROM documents WHERE source_id = 'web'")
+      .prepare<[], { id: string; content: string }>(
+        "SELECT id, content FROM documents WHERE source_id = 'web'",
+      )
       .all();
     expect(rows).toEqual([{ id: "new", content: "Body new" }]);
   });

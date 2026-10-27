@@ -322,10 +322,9 @@ describe("knowledge_edit", () => {
       "seeds",
     ]);
     const diff = db
-      .prepare<
-        [],
-        { diff_json: string }
-      >("SELECT diff_json FROM knowledge_revisions WHERE node_id='garden' AND revision=2")
+      .prepare<[], { diff_json: string }>(
+        "SELECT diff_json FROM knowledge_revisions WHERE node_id='garden' AND revision=2",
+      )
       .get()!;
     expect(JSON.parse(diff.diff_json).claimRemovals).toEqual([
       { id: "costs", reason: "The plot fee moved to the membership page." },

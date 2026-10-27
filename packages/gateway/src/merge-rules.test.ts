@@ -314,10 +314,9 @@ describe("upsertMergeEquivalences stale-snapshot guard", () => {
     upsertMergeEquivalences(db, computeMergeEquivalences(db));
     const mergedInto = (): string | null =>
       db
-        .prepare<
-          [string],
-          { merged_into: string | null }
-        >("SELECT merged_into FROM people WHERE id = ?")
+        .prepare<[string], { merged_into: string | null }>(
+          "SELECT merged_into FROM people WHERE id = ?",
+        )
         .get(b)?.merged_into ?? null;
     expect(mergedInto()).toBe(a);
 
@@ -345,10 +344,9 @@ describe("upsertMergeEquivalences orphan sweep", () => {
     upsertMergeEquivalences(db, computeMergeEquivalences(db));
 
     const after = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(b);
     expect(after?.merged_into).toBeNull();
   });
@@ -364,10 +362,9 @@ describe("upsertMergeEquivalences orphan sweep", () => {
     upsertMergeEquivalences(db, computeMergeEquivalences(db));
 
     const after = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(a);
     expect(after?.merged_into).toBeNull();
   });
@@ -449,10 +446,9 @@ describe("listMergeRules", () => {
       winnerSide: "a",
     });
     const aliceId = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias='alice@x.com'")
+      .prepare<[], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias='alice@x.com'",
+      )
       .get()!.person_id;
     const matched = listMergeRules(db, { touchesPersonId: aliceId });
     expect(matched.length).toBe(1);
@@ -979,10 +975,9 @@ describe("computeMergeEquivalences — chains", () => {
     applyAllRules();
     // Direct merged_into pointers, no intermediate hops needed.
     const cMerged = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(c)!.merged_into;
     expect(cMerged).toBe(a);
   });
@@ -1378,10 +1373,9 @@ describe("interaction scores follow merges", () => {
 
     refreshInteractionScores(db);
     const aliceId = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias='alice@x.com'")
+      .prepare<[], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias='alice@x.com'",
+      )
       .get()!.person_id;
     const phoneId = db
       .prepare<[], { person_id: string }>("SELECT person_id FROM person_aliases WHERE alias='+1'")
@@ -1431,10 +1425,9 @@ describe("interaction scores follow merges", () => {
     refreshInteractionScores(db);
 
     const aliceId = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias='alice@x.com'")
+      .prepare<[], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias='alice@x.com'",
+      )
       .get()!.person_id;
     const phoneId = db
       .prepare<[], { person_id: string }>("SELECT person_id FROM person_aliases WHERE alias='+1'")
@@ -1560,10 +1553,9 @@ describe("auto-detect physical-merges shared identifiers", () => {
     // identity. The shared-email duplication is benign — read paths
     // union aliases across the equivalence class.
     const ownersAfter = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT DISTINCT person_id FROM person_aliases WHERE alias = 'shared@x.com'")
+      .prepare<[], { person_id: string }>(
+        "SELECT DISTINCT person_id FROM person_aliases WHERE alias = 'shared@x.com'",
+      )
       .all();
     expect(ownersAfter.length).toBe(2);
     expect(db.prepare("SELECT id FROM people WHERE id = ?").get(loser1)).toBeTruthy();
@@ -1694,18 +1686,16 @@ describe("auto-detect physical-merges shared identifiers", () => {
     expect(alive(bystander)).toBe(true);
     expect(
       db
-        .prepare<
-          [string],
-          { person_id: string }
-        >("SELECT person_id FROM person_aliases WHERE alias = 'm.reeves@example.org' AND alias_type = ?")
+        .prepare<[string], { person_id: string }>(
+          "SELECT person_id FROM person_aliases WHERE alias = 'm.reeves@example.org' AND alias_type = ?",
+        )
         .get("email")?.person_id,
     ).toBe(stranger);
     expect(
       db
-        .prepare<
-          [string],
-          { person_id: string }
-        >("SELECT person_id FROM document_people WHERE document_id = ?")
+        .prepare<[string], { person_id: string }>(
+          "SELECT person_id FROM document_people WHERE document_id = ?",
+        )
         .get(docId)?.person_id,
     ).toBe(stranger);
   });
@@ -1762,10 +1752,9 @@ describe("dirty bump on new alias creation (regression)", () => {
 
     const aliceId = personIdByEmail("alice@x.com");
     const phoneId = db
-      .prepare<
-        [],
-        { person_id: string }
-      >("SELECT person_id FROM person_aliases WHERE alias='+1' AND alias_type='phone'")
+      .prepare<[], { person_id: string }>(
+        "SELECT person_id FROM person_aliases WHERE alias='+1' AND alias_type='phone'",
+      )
       .get()!.person_id;
     // One of them is canonical, the other merged_into it.
     const aliceCanonical = resolvePersonId(db, aliceId!);
@@ -1775,10 +1764,9 @@ describe("dirty bump on new alias creation (regression)", () => {
 
 function personIdByEmail(email: string): string | null {
   const row = db
-    .prepare<
-      [string],
-      { person_id: string }
-    >("SELECT person_id FROM person_aliases WHERE alias_type='email' AND alias=? LIMIT 1")
+    .prepare<[string], { person_id: string }>(
+      "SELECT person_id FROM person_aliases WHERE alias_type='email' AND alias=? LIMIT 1",
+    )
     .get(email);
   return row?.person_id ?? null;
 }

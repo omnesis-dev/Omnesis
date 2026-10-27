@@ -118,10 +118,9 @@ describe("migration 156", () => {
       ]);
       expect(
         db
-          .prepare<
-            [],
-            { name: string; pk: number }
-          >("SELECT name, pk FROM pragma_table_info('mobile_permission_health') WHERE pk > 0 ORDER BY pk")
+          .prepare<[], { name: string; pk: number }>(
+            "SELECT name, pk FROM pragma_table_info('mobile_permission_health') WHERE pk > 0 ORDER BY pk",
+          )
           .all(),
       ).toEqual([
         { name: "source_id", pk: 1 },

@@ -953,8 +953,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
           const gatewayCount =
             (
               gatewayDb.prepare<[], { c: number }>("SELECT COUNT(*) as c FROM documents").get() as
-                | { c: number }
-                | undefined
+                { c: number } | undefined
             )?.c ?? 0;
           if (gatewayCount > 0 && indexedCount / gatewayCount < 0.99 && diskOkForCycle()) {
             log(

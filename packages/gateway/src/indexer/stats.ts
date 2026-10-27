@@ -177,10 +177,9 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     }
   } else {
     const rows = db
-      .prepare<
-        [],
-        { source_id: string; count: number }
-      >("SELECT source_id, doc_count AS count FROM source_stats")
+      .prepare<[], { source_id: string; count: number }>(
+        "SELECT source_id, doc_count AS count FROM source_stats",
+      )
       .all();
     for (const row of rows) gatewaySourceCounts[row.source_id] = row.count;
   }

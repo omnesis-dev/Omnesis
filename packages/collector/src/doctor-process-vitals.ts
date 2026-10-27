@@ -13,8 +13,7 @@ export class CollectorDoctorVitals {
   private readonly eventLoop = monitorEventLoopDelay({ resolution: 20 });
   private interval: ReturnType<typeof setInterval> | null = null;
   private currentEventLoop: ProcessVitalsResult["eventLoop"] extends
-    | { current: infer T }
-    | undefined
+    { current: infer T } | undefined
     ? T
     : never = null;
 

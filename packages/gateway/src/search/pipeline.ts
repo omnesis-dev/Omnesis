@@ -1058,10 +1058,9 @@ export class SearchPipeline {
     const ids = results.map((r) => r.documentId);
     const placeholders = ids.map(() => "?").join(",");
     const extRows = this.gatewayDb
-      .prepare<
-        string[],
-        { id: string; external_id: string | null; stream_id: string }
-      >(`SELECT id, external_id, stream_id FROM documents WHERE id IN (${placeholders})`)
+      .prepare<string[], { id: string; external_id: string | null; stream_id: string }>(
+        `SELECT id, external_id, stream_id FROM documents WHERE id IN (${placeholders})`,
+      )
       .all(...ids);
     const externalById = new Map(
       extRows.map((r) => [r.id, { externalId: r.external_id, streamId: r.stream_id }]),

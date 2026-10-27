@@ -449,10 +449,9 @@ export class UsearchWriteHandle {
     const threads = resolveBackfillThreads(opts?.threads);
 
     const totalRow = db
-      .prepare<
-        [],
-        { cnt: number }
-      >(`SELECT count(*) as cnt FROM chunks WHERE embedding IS NOT NULL`)
+      .prepare<[], { cnt: number }>(
+        `SELECT count(*) as cnt FROM chunks WHERE embedding IS NOT NULL`,
+      )
       .get();
     const totalInDb = totalRow?.cnt ?? 0;
     const currentSize = this.index.size();

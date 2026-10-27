@@ -311,10 +311,9 @@ export function requeueStaleMentionJudgements(
 export function countPendingMentionJudgements(db: Db): number {
   return (
     db
-      .prepare<
-        [],
-        { n: number }
-      >(`SELECT COUNT(*) AS n FROM date_mention_judgements WHERE verdict = 'pending'`)
+      .prepare<[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM date_mention_judgements WHERE verdict = 'pending'`,
+      )
       .get()?.n ?? 0
   );
 }

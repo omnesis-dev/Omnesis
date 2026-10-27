@@ -61,10 +61,9 @@ describe("migration 75 — the annotation interval precision is named `precision
     expect(columns()).not.toContain("granularity");
     expect(
       db
-        .prepare<
-          [],
-          { id: string; precision: string; sentence: string }
-        >("SELECT id, precision, sentence FROM temporal_annotations")
+        .prepare<[], { id: string; precision: string; sentence: string }>(
+          "SELECT id, precision, sentence FROM temporal_annotations",
+        )
         .all(),
     ).toEqual([
       {

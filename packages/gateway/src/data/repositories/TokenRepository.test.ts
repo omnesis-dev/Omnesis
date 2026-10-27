@@ -132,10 +132,9 @@ describe("validateToken", () => {
     const { token } = createToken(db, deviceId, [SCOPE_READ]);
     validateToken(db, token);
     const row = db
-      .prepare<
-        [string],
-        { last_seen_at: number | null }
-      >("SELECT last_seen_at FROM devices WHERE id = ?")
+      .prepare<[string], { last_seen_at: number | null }>(
+        "SELECT last_seen_at FROM devices WHERE id = ?",
+      )
       .get(deviceId);
     expect(row?.last_seen_at).not.toBeNull();
   });
@@ -180,10 +179,9 @@ describe("touchTokenUsageBatch", () => {
 
     for (const d of [deviceA, deviceB]) {
       const row = db
-        .prepare<
-          [string],
-          { last_seen_at: number | null }
-        >("SELECT last_seen_at FROM devices WHERE id = ?")
+        .prepare<[string], { last_seen_at: number | null }>(
+          "SELECT last_seen_at FROM devices WHERE id = ?",
+        )
         .get(d);
       expect(row?.last_seen_at).not.toBeNull();
     }
@@ -379,10 +377,9 @@ describe("session management", () => {
     const rowId = storedSessionRowId(sessionId);
 
     const row = db
-      .prepare<
-        [string],
-        { created_at: number; last_active_at: number; expires_at: number }
-      >("SELECT created_at, last_active_at, expires_at FROM sessions WHERE id = ?")
+      .prepare<[string], { created_at: number; last_active_at: number; expires_at: number }>(
+        "SELECT created_at, last_active_at, expires_at FROM sessions WHERE id = ?",
+      )
       .get(rowId)!;
     expect(row.last_active_at).toBe(row.created_at);
     expect(row.expires_at).toBe(row.created_at + 30 * 24 * 60 * 60 * 1000);
@@ -397,10 +394,9 @@ describe("session management", () => {
     const rowId = storedSessionRowId(sessionId);
 
     const row = db
-      .prepare<
-        [string],
-        { created_at: number; expires_at: number }
-      >("SELECT created_at, expires_at FROM sessions WHERE id = ?")
+      .prepare<[string], { created_at: number; expires_at: number }>(
+        "SELECT created_at, expires_at FROM sessions WHERE id = ?",
+      )
       .get(rowId)!;
     expect(row.expires_at).toBe(row.created_at + 60_000);
   });
@@ -424,10 +420,9 @@ describe("session management", () => {
     expect(refreshSessionActivity(db, sessionId, 60_000, 60 * 60 * 1000)).toBe(true);
 
     const row = db
-      .prepare<
-        [string],
-        { last_active_at: number; expires_at: number }
-      >("SELECT last_active_at, expires_at FROM sessions WHERE id = ?")
+      .prepare<[string], { last_active_at: number; expires_at: number }>(
+        "SELECT last_active_at, expires_at FROM sessions WHERE id = ?",
+      )
       .get(rowId)!;
     expect(row.last_active_at).toBe(createdAt + 1_000);
     expect(row.expires_at).toBe(createdAt + 61_000);
@@ -441,20 +436,18 @@ describe("session management", () => {
     const sessionId = createSession(db, tokenId, [SCOPE_READ]);
     const rowId = storedSessionRowId(sessionId);
     const before = db
-      .prepare<
-        [string],
-        { last_active_at: number; expires_at: number }
-      >("SELECT last_active_at, expires_at FROM sessions WHERE id = ?")
+      .prepare<[string], { last_active_at: number; expires_at: number }>(
+        "SELECT last_active_at, expires_at FROM sessions WHERE id = ?",
+      )
       .get(rowId)!;
 
     vi.setSystemTime(new Date(Date.now() + 30_000));
     expect(refreshSessionActivity(db, sessionId, 60_000, 60 * 60 * 1000)).toBe(false);
 
     const after = db
-      .prepare<
-        [string],
-        { last_active_at: number; expires_at: number }
-      >("SELECT last_active_at, expires_at FROM sessions WHERE id = ?")
+      .prepare<[string], { last_active_at: number; expires_at: number }>(
+        "SELECT last_active_at, expires_at FROM sessions WHERE id = ?",
+      )
       .get(rowId)!;
     expect(after).toEqual(before);
   });

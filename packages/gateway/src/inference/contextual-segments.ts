@@ -54,7 +54,7 @@ export function prepareContextualWitnessRequest(input: {
   };
   const partition = (text: string) => {
     const result: Array<{ id?: string; text: string }> = [];
-    for (let start = 0; start < text.length; ) {
+    for (let start = 0; start < text.length;) {
       let end = Math.min(start + 2048, text.length);
       if (end < text.length) {
         const boundary = text.lastIndexOf("\n", end - 1);

@@ -70,10 +70,9 @@ describe("migration 77", () => {
     migration77.up(db);
 
     const rows = db
-      .prepare<
-        [],
-        { id: string; document_id: string; slot: string; label: string }
-      >("SELECT id, document_id, slot, label FROM document_temporal_projections ORDER BY label")
+      .prepare<[], { id: string; document_id: string; slot: string; label: string }>(
+        "SELECT id, document_id, slot, label FROM document_temporal_projections ORDER BY label",
+      )
       .all();
 
     expect(rows.map((r) => r.id)).toEqual(rows.map((r) => expectedId(r.document_id, r.slot)));
@@ -129,10 +128,9 @@ describe("migration 77", () => {
     migration77.up(db);
 
     const links = db
-      .prepare<
-        [],
-        { annotation_id: string; projection_id: string }
-      >("SELECT annotation_id, projection_id FROM temporal_annotation_projections ORDER BY annotation_id")
+      .prepare<[], { annotation_id: string; projection_id: string }>(
+        "SELECT annotation_id, projection_id FROM temporal_annotation_projections ORDER BY annotation_id",
+      )
       .all();
     expect(links).toEqual([
       { annotation_id: "ta_one", projection_id: expectedId("doc-one", "scheduled") },
@@ -141,10 +139,9 @@ describe("migration 77", () => {
 
     // The citation still resolves to a row that exists.
     const target = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM document_temporal_projections WHERE id = ?")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM document_temporal_projections WHERE id = ?",
+      )
       .get(links[0]!.projection_id);
     expect(target).toBeDefined();
   });

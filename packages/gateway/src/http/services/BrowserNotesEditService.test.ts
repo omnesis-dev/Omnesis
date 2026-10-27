@@ -35,13 +35,11 @@ function fixture() {
     placeName: null,
   };
   const listBrowser = vi.fn(() => [{ documentId: "notes-day", entry }]);
-  const editBrowser = vi.fn(
-    async (): Promise<BrowserNoteEditResult> => ({
-      outcome: "updated" as const,
-      entry,
-      documentId: "notes-day",
-    }),
-  );
+  const editBrowser = vi.fn(async (): Promise<BrowserNoteEditResult> => ({
+    outcome: "updated" as const,
+    entry,
+    documentId: "notes-day",
+  }));
   const tokenIsActive = vi.fn(() => true);
   const service = new BrowserNotesEditService({
     devices: {

@@ -32,14 +32,7 @@ const SAMPLES_PER_BUCKET = 500;
 
 /** A category of HTTP caller, derived from the auth context's device.kind. */
 export type CallerKind =
-  | "cli"
-  | "portal"
-  | "ios"
-  | "android"
-  | "collector"
-  | "agent"
-  | "browser"
-  | "unknown";
+  "cli" | "portal" | "ios" | "android" | "collector" | "agent" | "browser" | "unknown";
 
 export interface RequestSample {
   ts: number; // Date.now() at sample time

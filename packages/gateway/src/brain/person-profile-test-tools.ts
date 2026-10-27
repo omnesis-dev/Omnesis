@@ -21,10 +21,9 @@ export function withPersonProfileRead(
           ? input.personId
           : typeof input.id === "string"
             ? db
-                .prepare<
-                  [string],
-                  { person_id: string }
-                >("SELECT person_id FROM person_annotations WHERE id=?")
+                .prepare<[string], { person_id: string }>(
+                  "SELECT person_id FROM person_annotations WHERE id=?",
+                )
                 .get(input.id)?.person_id
             : undefined;
       if (personId) {

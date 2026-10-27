@@ -197,9 +197,7 @@ export type MainToIndexer =
 
 /** Stable IDs for the worker-hosted background jobs surfaced to /admin/background-jobs. */
 export type IndexerWorkerJobId =
-  | "indexer.cycle"
-  | "indexer.reconcile-deleted"
-  | "indexer.reindex-missing";
+  "indexer.cycle" | "indexer.reconcile-deleted" | "indexer.reindex-missing";
 
 /**
  * Worker → main update on a worker-hosted background job. Sent at each

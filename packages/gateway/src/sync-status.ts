@@ -35,12 +35,7 @@ import type { StoredSyncState } from "./db.js";
  * retry note rather than a red error pill.
  */
 export type SourceSyncState =
-  | "idle"
-  | "syncing"
-  | "completed"
-  | "error"
-  | "needs-auth"
-  | "rate-limited";
+  "idle" | "syncing" | "completed" | "error" | "needs-auth" | "rate-limited";
 
 /**
  * Canonical *display* state served by `/admin/sync/status` to portal + CLI.

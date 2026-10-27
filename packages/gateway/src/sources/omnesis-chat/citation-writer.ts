@@ -114,8 +114,7 @@ export interface ConversationRecordCitationInput {
 }
 
 export type ConversationCitationInput =
-  | ConversationDocumentCitationInput
-  | ConversationRecordCitationInput;
+  ConversationDocumentCitationInput | ConversationRecordCitationInput;
 
 export interface UpsertConversationCitationsResult {
   /** Number of rows wiped from the previous edge set. */
@@ -244,10 +243,9 @@ export function findConversationDocId(
   externalId: string,
 ): string | null {
   const row = db
-    .prepare<
-      [string, string, string],
-      { id: string }
-    >("SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
+    .prepare<[string, string, string], { id: string }>(
+      "SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+    )
     .get(providerId, sourceId, externalId);
   return row?.id ?? null;
 }

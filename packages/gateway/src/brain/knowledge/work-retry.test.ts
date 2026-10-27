@@ -107,10 +107,9 @@ function outcome(batchId: string, nodeId: string, status: "offered" | "changed")
 }
 const latest = (subjectId: string) =>
   db
-    .prepare<
-      [string],
-      { status: string; failures: number; due: number; error: string | null }
-    >("SELECT status,failures,due_at AS due,last_error AS error FROM knowledge_work WHERE subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
+    .prepare<[string], { status: string; failures: number; due: number; error: string | null }>(
+      "SELECT status,failures,due_at AS due,last_error AS error FROM knowledge_work WHERE subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+    )
     .get(subjectId)!;
 
 it("doubles the retry delay per failure up to its cap", () => {

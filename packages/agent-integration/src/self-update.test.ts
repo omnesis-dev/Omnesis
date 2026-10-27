@@ -121,12 +121,10 @@ describe("the harness plugin's device.update handler", () => {
   test("passes an exact commit to the updater and reports the same target", async () => {
     const commit = "a".repeat(40);
     const updater: HarnessSelfUpdater = {
-      run: vi.fn(
-        async (): Promise<HarnessUpdateAttempt> => ({
-          state: "failed",
-          detail: "invented failure",
-        }),
-      ),
+      run: vi.fn(async (): Promise<HarnessUpdateAttempt> => ({
+        state: "failed",
+        detail: "invented failure",
+      })),
     };
     const { socket } = setup(updater);
 

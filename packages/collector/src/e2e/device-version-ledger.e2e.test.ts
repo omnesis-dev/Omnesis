@@ -116,10 +116,9 @@ describe("device version ledger (gateway)", () => {
     try {
       return (
         db
-          .prepare<
-            [string],
-            { version: string | null }
-          >("SELECT version FROM devices WHERE name = ?")
+          .prepare<[string], { version: string | null }>(
+            "SELECT version FROM devices WHERE name = ?",
+          )
           .get(name)?.version ?? null
       );
     } finally {

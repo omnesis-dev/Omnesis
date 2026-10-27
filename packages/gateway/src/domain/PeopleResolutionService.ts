@@ -182,10 +182,9 @@ export function resolvePersonId(db: Db, personId: string): string {
   let current = personId;
   for (let i = 0; i < 10; i++) {
     const row = db
-      .prepare<
-        [string],
-        { merged_into: string | null }
-      >("SELECT merged_into FROM people WHERE id = ?")
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
       .get(current);
     if (!row?.merged_into) return current;
     current = row.merged_into;
@@ -354,10 +353,9 @@ export function findOrCreatePerson(
   // create a placeholder, which would pollute the people graph.
   if (mention.isSelf === true) {
     const selfRow = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM people WHERE is_self = 1 AND merged_into IS NULL LIMIT 1")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM people WHERE is_self = 1 AND merged_into IS NULL LIMIT 1",
+      )
       .get();
     if (!selfRow) return null;
     const now = new Date().toISOString();
@@ -602,10 +600,9 @@ function aliasStillVouchedForOnSource(
 ): boolean {
   const target = aliasSkipKey(aliasType, value);
   const rows = db
-    .prepare<
-      [string, string],
-      { metadata: string }
-    >("SELECT metadata FROM documents WHERE source_id = ? AND id != ?")
+    .prepare<[string, string], { metadata: string }>(
+      "SELECT metadata FROM documents WHERE source_id = ? AND id != ?",
+    )
     .all(sourceId, excludeDocId);
   for (const row of rows) {
     const meta = documentsMetadataCodec.parseWithFallback(row.metadata) as {

@@ -546,10 +546,9 @@ export function applyNearDupDfFromStaging(
   try {
     if (resume.afterShingle === null && resume.applied === 0) {
       const any = staging
-        .prepare<
-          [number],
-          { present: number }
-        >("SELECT EXISTS (SELECT 1 FROM df WHERE df >= ?) AS present")
+        .prepare<[number], { present: number }>(
+          "SELECT EXISTS (SELECT 1 FROM df WHERE df >= ?) AS present",
+        )
         .get(input.minDf);
       if ((any?.present ?? 0) === 0) {
         throw new Error(
@@ -711,16 +710,14 @@ export function algoSweepStep(
   // active one, and the least above it. If neither exists, there is nothing
   // to retire and the read is skipped entirely.
   const otherAlgoBelow = db
-    .prepare<
-      [string],
-      { algo_version: string }
-    >("SELECT algo_version FROM near_dup_df WHERE algo_version < ? ORDER BY algo_version DESC LIMIT 1")
+    .prepare<[string], { algo_version: string }>(
+      "SELECT algo_version FROM near_dup_df WHERE algo_version < ? ORDER BY algo_version DESC LIMIT 1",
+    )
     .get(active);
   const otherAlgoAbove = db
-    .prepare<
-      [string],
-      { algo_version: string }
-    >("SELECT algo_version FROM near_dup_df WHERE algo_version > ? ORDER BY algo_version LIMIT 1")
+    .prepare<[string], { algo_version: string }>(
+      "SELECT algo_version FROM near_dup_df WHERE algo_version > ? ORDER BY algo_version LIMIT 1",
+    )
     .get(active);
   const staleAlgoRowsExist = otherAlgoBelow !== undefined || otherAlgoAbove !== undefined;
 

@@ -146,10 +146,7 @@ export function knowledgeNodeFence(
 }
 
 export type KnowledgeStaleAncestorCause =
-  | "source_changed"
-  | "source_deleted"
-  | "node_changed"
-  | "owner_changed";
+  "source_changed" | "source_deleted" | "node_changed" | "owner_changed";
 
 /**
  * The current ancestors that make a node stale, by the same rule as

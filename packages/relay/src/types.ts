@@ -4,9 +4,7 @@
 export type RelayPlatform = "ios" | "android";
 
 export type CarrierCredentialPruneReason =
-  | "unregistered"
-  | "bad_device_token"
-  | "device_token_not_for_topic";
+  "unregistered" | "bad_device_token" | "device_token_not_for_topic";
 
 export type CarrierDispatchErrorKind = "credential_mint_failed" | "stale_credential" | "other";
 

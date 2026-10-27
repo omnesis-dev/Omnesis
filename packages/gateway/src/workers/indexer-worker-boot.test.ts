@@ -1009,18 +1009,16 @@ describe("indexer worker boot persistence", () => {
         expect(readySettled).toBe(false);
         expect(
           scrubbedDb
-            .prepare<
-              [string],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?")
+            .prepare<[string], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?",
+            )
             .get(sourceId)?.c,
         ).toBe(0);
         expect(
           scrubbedDb
-            .prepare<
-              [],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'inventory'")
+            .prepare<[], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'inventory'",
+            )
             .get()?.c,
         ).toBe(0);
         expect(listPendingSourceIndexPurges(scrubbedDb)).toEqual([]);
@@ -1080,10 +1078,9 @@ describe("indexer worker boot persistence", () => {
       try {
         expect(
           duringWarmupDb
-            .prepare<
-              [string],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?")
+            .prepare<[string], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?",
+            )
             .get(sourceId)?.c,
         ).toBe(0);
         expect(listPendingSourceIndexPurges(duringWarmupDb)).toEqual([]);
@@ -1107,10 +1104,9 @@ describe("indexer worker boot persistence", () => {
       try {
         expect(
           afterBootDb
-            .prepare<
-              [string],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?")
+            .prepare<[string], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?",
+            )
             .get(sourceId)?.c,
         ).toBe(0);
         expect(afterBootReader.size()).toBe(0);
@@ -1171,18 +1167,16 @@ describe("indexer worker boot persistence", () => {
       try {
         expect(
           duringBackfillDb
-            .prepare<
-              [string],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?")
+            .prepare<[string], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks WHERE source_id = ?",
+            )
             .get(removedSourceId)?.c,
         ).toBe(0);
         expect(
           duringBackfillDb
-            .prepare<
-              [],
-              { c: number }
-            >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'moonstone'")
+            .prepare<[], { c: number }>(
+              "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'moonstone'",
+            )
             .get()?.c,
         ).toBe(0);
       } finally {
@@ -1401,10 +1395,9 @@ describe("indexer worker boot persistence", () => {
       let staleRowid = 0;
       try {
         const stale = indexDb
-          .prepare<
-            [string],
-            { document_id: string; rowid: number }
-          >("SELECT document_id, rowid FROM chunks WHERE source_id = ?")
+          .prepare<[string], { document_id: string; rowid: number }>(
+            "SELECT document_id, rowid FROM chunks WHERE source_id = ?",
+          )
           .get(staleSourceId)!;
         staleRowid = stale.rowid;
         // Insert the replacement before deleting the stale row so SQLite

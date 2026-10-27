@@ -25,10 +25,9 @@ const GCM_TAG_BYTES = 16;
 export function getRefreshTokenAudience(db: Db, refreshToken: string): string | null {
   return (
     db
-      .prepare<
-        [string],
-        { audience: string }
-      >("SELECT audience FROM oauth_refresh_tokens WHERE token_hash = ?")
+      .prepare<[string], { audience: string }>(
+        "SELECT audience FROM oauth_refresh_tokens WHERE token_hash = ?",
+      )
       .get(hashSecret(refreshToken))?.audience ?? null
   );
 }
@@ -81,10 +80,9 @@ export function refreshPrincipalAccessToken(
         );
         if (!retried) return { ok: false, error: "invalid-grant" };
         const replacement = db
-          .prepare<
-            [string],
-            { expires_at: number }
-          >("SELECT expires_at FROM oauth_access_tokens WHERE token_hash = ?")
+          .prepare<[string], { expires_at: number }>(
+            "SELECT expires_at FROM oauth_access_tokens WHERE token_hash = ?",
+          )
           .get(hashSecret(retried.accessToken));
         if (!replacement) return { ok: false, error: "invalid-grant" };
         return {
@@ -376,10 +374,9 @@ export function reissueExecutionDeviceTokens(
     // Access Grant behind them, so a device revoked between the lookup above
     // and this transaction would otherwise still be handed a fresh pair.
     const device = db
-      .prepare<
-        [string],
-        { present: number }
-      >("SELECT 1 AS present FROM devices WHERE id = ? AND kind = 'agent' AND revoked_at IS NULL")
+      .prepare<[string], { present: number }>(
+        "SELECT 1 AS present FROM devices WHERE id = ? AND kind = 'agent' AND revoked_at IS NULL",
+      )
       .get(input.deviceId);
     if (!device) return { ok: false, error: "not-found" };
     const client = getOAuthClient(db, active.oauth_client_id);

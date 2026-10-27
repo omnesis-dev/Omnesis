@@ -53,10 +53,9 @@ function chunk(
 
 function rowidOf(documentId: string): bigint {
   const row = db
-    .prepare<
-      [string],
-      { rowid: number }
-    >("SELECT rowid FROM chunks WHERE document_id = ? AND chunk_index = 0")
+    .prepare<[string], { rowid: number }>(
+      "SELECT rowid FROM chunks WHERE document_id = ? AND chunk_index = 0",
+    )
     .get(documentId);
   if (!row) throw new Error(`no chunk for ${documentId}`);
   return BigInt(row.rowid);

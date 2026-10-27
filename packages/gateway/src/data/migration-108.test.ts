@@ -70,10 +70,9 @@ describe("migration 108", () => {
       // rather than rechecked; the morning brief never ships it.
       expect(
         db
-          .prepare<
-            [],
-            { state: string; close_reason: string | null }
-          >("SELECT state, close_reason FROM observations WHERE id = 'obs_1'")
+          .prepare<[], { state: string; close_reason: string | null }>(
+            "SELECT state, close_reason FROM observations WHERE id = 'obs_1'",
+          )
           .get(),
       ).toEqual({ state: "dropped", close_reason: "stale" });
       for (const run of firstRuns) {
@@ -83,10 +82,9 @@ describe("migration 108", () => {
       migration.up(db);
 
       const runs = db
-        .prepare<
-          [],
-          { dedupe_key: string; payload_json: string }
-        >("SELECT dedupe_key, payload_json FROM cognition_runs ORDER BY dedupe_key")
+        .prepare<[], { dedupe_key: string; payload_json: string }>(
+          "SELECT dedupe_key, payload_json FROM cognition_runs ORDER BY dedupe_key",
+        )
         .all();
       expect(
         runs.map((run) => ({
@@ -105,10 +103,9 @@ describe("migration 108", () => {
       ]);
       expect(
         db
-          .prepare<
-            [],
-            { value: string }
-          >("SELECT value FROM cognition_engine_state WHERE key = 'migration:108:missing-prior-rechecks'")
+          .prepare<[], { value: string }>(
+            "SELECT value FROM cognition_engine_state WHERE key = 'migration:108:missing-prior-rechecks'",
+          )
           .get(),
       ).toEqual({ value: "complete" });
     } finally {

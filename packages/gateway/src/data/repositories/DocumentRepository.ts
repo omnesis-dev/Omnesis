@@ -247,10 +247,9 @@ function filterTombstonedDocuments<T extends DocumentInput>(
       const chunk = group.ids.slice(i, i + CHUNK);
       const placeholders = chunk.map(() => "?").join(", ");
       const rows = db
-        .prepare<
-          unknown[],
-          { external_id: string }
-        >(`SELECT external_id FROM removed_documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`)
+        .prepare<unknown[], { external_id: string }>(
+          `SELECT external_id FROM removed_documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`,
+        )
         .all(group.providerId, group.sourceId, group.streamId, ...chunk);
       for (const r of rows) removed.add(key(group.providerId, group.sourceId, r.external_id));
     }
@@ -777,10 +776,9 @@ export function deleteDocuments(
     // means no row can vanish between the SELECT and the DELETE.
     const rows = db.transaction(() => {
       const matches = db
-        .prepare<
-          unknown[],
-          { id: string }
-        >(`SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`)
+        .prepare<unknown[], { id: string }>(
+          `SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`,
+        )
         .all(providerId, sourceId, streamId, ...chunk);
       reviewBrainArtifactsForDeletedDocs(
         db,
@@ -842,10 +840,9 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
     // and this function knows which sources' derived stores went stale.
     const rows = db.transaction(() => {
       const matches = db
-        .prepare<
-          unknown[],
-          { id: string; source_id: string }
-        >(`SELECT id, source_id FROM documents WHERE id IN (${placeholders})`)
+        .prepare<unknown[], { id: string; source_id: string }>(
+          `SELECT id, source_id FROM documents WHERE id IN (${placeholders})`,
+        )
         .all(...chunk);
       reviewBrainArtifactsForDeletedDocs(
         db,
@@ -997,10 +994,9 @@ export function deleteDocumentForRetention(
 ): string | null {
   return db.transaction(() => {
     const existing = db
-      .prepare<
-        [string, string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
+      .prepare<[string, string, string], { id: string }>(
+        "SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+      )
       .get(providerId, sourceId, externalId);
     if (!existing) {
       return (
@@ -1046,10 +1042,9 @@ export function completeDocumentRetention(
 export function deleteAllBySource(db: Db, sourceId: string): number {
   // Count first — db.run().changes includes cascaded FK deletions
   const countRow = db
-    .prepare<
-      [string],
-      { count: number }
-    >("SELECT COUNT(*) as count FROM documents WHERE source_id = ?")
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM documents WHERE source_id = ?",
+    )
     .get(sourceId);
   const count = countRow?.count ?? 0;
   db.prepare("DELETE FROM documents WHERE source_id = ?").run(sourceId);
@@ -1181,18 +1176,16 @@ export function deleteAllByStream(
 export function deleteAllByProvider(db: Db, providerId: string): number {
   // Find affected source IDs for sync state cleanup
   const affectedSources = db
-    .prepare<
-      [string],
-      { source_id: string }
-    >("SELECT DISTINCT source_id FROM documents WHERE provider_id = ?")
+    .prepare<[string], { source_id: string }>(
+      "SELECT DISTINCT source_id FROM documents WHERE provider_id = ?",
+    )
     .all(providerId);
 
   // Count first — db.run().changes includes cascaded FK deletions (provider delete)
   const countRow = db
-    .prepare<
-      [string],
-      { count: number }
-    >("SELECT COUNT(*) as count FROM documents WHERE provider_id = ?")
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM documents WHERE provider_id = ?",
+    )
     .get(providerId);
   const count = countRow?.count ?? 0;
 
@@ -1261,10 +1254,9 @@ export function deleteAllByProvider(db: Db, providerId: string): number {
 
 export function getDocumentCount(db: Db, sourceId: string): number {
   const row = db
-    .prepare<
-      [string],
-      { count: number }
-    >("SELECT COUNT(*) as count FROM documents WHERE source_id = ?")
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM documents WHERE source_id = ?",
+    )
     .get(sourceId);
   return row?.count ?? 0;
 }
@@ -1509,10 +1501,9 @@ export function listDocumentsLightweight(
 export function getDocumentUpdatedAtBoundary(db: Db): string | null {
   return (
     db
-      .prepare<
-        [],
-        { updated_at: string | null }
-      >("SELECT MAX(updated_at) AS updated_at FROM documents INDEXED BY idx_documents_updated_at")
+      .prepare<[], { updated_at: string | null }>(
+        "SELECT MAX(updated_at) AS updated_at FROM documents INDEXED BY idx_documents_updated_at",
+      )
       .get()?.updated_at ?? null
   );
 }
@@ -1583,10 +1574,9 @@ export function listDocumentsByIds(db: Db, ids: string[]): ListedDocumentRow[] {
 export function documentExistsForSource(db: Db, sourceId: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { one: number }
-      >("SELECT 1 AS one FROM documents WHERE source_id = ? LIMIT 1")
+      .prepare<[string], { one: number }>(
+        "SELECT 1 AS one FROM documents WHERE source_id = ? LIMIT 1",
+      )
       .get(sourceId) !== undefined
   );
 }
@@ -1606,10 +1596,9 @@ export function getDocumentSourceIds(db: Db, ids: string[]): Map<string, string>
     const chunk = ids.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        string[],
-        { id: string; source_id: string }
-      >(`SELECT id, source_id FROM documents WHERE id IN (${placeholders})`)
+      .prepare<string[], { id: string; source_id: string }>(
+        `SELECT id, source_id FROM documents WHERE id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const row of rows) out.set(row.id, row.source_id);
   }
@@ -1646,7 +1635,9 @@ export function getDocumentTitlesAndSources(
       .prepare<
         string[],
         { id: string; title: string; source_id: string; source_created_at: string }
-      >(`SELECT id, title, source_id, source_created_at FROM documents WHERE id IN (${placeholders})`)
+      >(
+        `SELECT id, title, source_id, source_created_at FROM documents WHERE id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const row of rows) {
       if (isKnowledgeDocumentReadable(db, row.id, row.source_id))
@@ -1706,10 +1697,9 @@ export function lookupDocumentIdsBySourceUrl(
     const chunk = uniqueNorm.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        unknown[],
-        { id: string; source_url: string }
-      >(`SELECT id, source_url FROM documents WHERE source_url IN (${placeholders})`)
+      .prepare<unknown[], { id: string; source_url: string }>(
+        `SELECT id, source_url FROM documents WHERE source_url IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const r of rows) {
       const list = idsByNorm.get(r.source_url);
@@ -1875,10 +1865,9 @@ export function checkExistingExternalIds(
     const chunk = externalIds.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        string[],
-        { external_id: string }
-      >(`SELECT external_id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`)
+      .prepare<string[], { external_id: string }>(
+        `SELECT external_id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`,
+      )
       .all(providerId, sourceId, streamId, ...chunk);
     for (const r of rows) found.push(r.external_id);
   }

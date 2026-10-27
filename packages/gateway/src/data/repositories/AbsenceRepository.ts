@@ -194,10 +194,9 @@ function absenceScope(
   streamId: string,
 ): { generation: number; revision: number } {
   const row = db
-    .prepare<
-      [string, string, string],
-      { generation: number; revision: number }
-    >("SELECT generation, revision FROM document_absence_scopes WHERE provider_id = ? AND source_id = ? AND stream_id = ?")
+    .prepare<[string, string, string], { generation: number; revision: number }>(
+      "SELECT generation, revision FROM document_absence_scopes WHERE provider_id = ? AND source_id = ? AND stream_id = ?",
+    )
     .get(providerId, sourceId, streamId);
   return row === undefined
     ? { generation: 0, revision: 0 }
@@ -236,10 +235,9 @@ export function computeSnapshotAbsencePlan(
   const rows =
     claimed === undefined
       ? db
-          .prepare<
-            [string, string, string],
-            { id: string; external_id: string }
-          >("SELECT id, external_id FROM documents INDEXED BY idx_documents_provider_source_stream WHERE provider_id = ? AND source_id = ? AND stream_id = ? ORDER BY id")
+          .prepare<[string, string, string], { id: string; external_id: string }>(
+            "SELECT id, external_id FROM documents INDEXED BY idx_documents_provider_source_stream WHERE provider_id = ? AND source_id = ? AND stream_id = ? ORDER BY id",
+          )
           .all(providerId, sourceId, streamId)
       : claimed.length === 0
         ? []
@@ -254,10 +252,9 @@ export function computeSnapshotAbsencePlan(
 
   const pending = new Map<string, number>();
   for (const row of db
-    .prepare<
-      [string, string, string, number],
-      AbsenceRow
-    >("SELECT document_id, last_absent_at FROM document_absences INDEXED BY idx_document_absences_scope WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND generation = ?")
+    .prepare<[string, string, string, number], AbsenceRow>(
+      "SELECT document_id, last_absent_at FROM document_absences INDEXED BY idx_document_absences_scope WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND generation = ?",
+    )
     .all(providerId, sourceId, streamId, generation)) {
     pending.set(row.document_id, row.last_absent_at);
   }
@@ -486,10 +483,9 @@ export function applySnapshotAbsencePlan(
   const currentScope = absenceScope(db, plan.providerId, plan.sourceId, plan.streamId);
   if (plan.observationId !== undefined) {
     const received = db
-      .prepare<
-        [string, string, string, string],
-        { found: number }
-      >("SELECT 1 AS found FROM document_absence_observations WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND observation_id = ?")
+      .prepare<[string, string, string, string], { found: number }>(
+        "SELECT 1 AS found FROM document_absence_observations WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND observation_id = ?",
+      )
       .get(plan.providerId, plan.sourceId, plan.streamId, plan.observationId);
     if (received !== undefined) return { marked: 0, cleared: 0 };
   }
@@ -946,10 +942,9 @@ export function sweepDueAbsences(
     // `id` is AUTOINCREMENT and therefore monotone, so the trail is trimmed by
     // an indexed range on the primary key rather than by re-ranking the table.
     const highest = db
-      .prepare<
-        [],
-        { max_id: number | null }
-      >("SELECT MAX(id) AS max_id FROM snapshot_absence_deletions")
+      .prepare<[], { max_id: number | null }>(
+        "SELECT MAX(id) AS max_id FROM snapshot_absence_deletions",
+      )
       .get()?.max_id;
     if (highest !== null && highest !== undefined) {
       db.prepare("DELETE FROM snapshot_absence_deletions WHERE id <= ?").run(

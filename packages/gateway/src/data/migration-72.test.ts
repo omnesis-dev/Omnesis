@@ -102,10 +102,9 @@ describe("migration 72", () => {
     // The target had a column the source lacked; the copy uses shared columns
     // and the extra one keeps its default.
     const spend = db
-      .prepare<
-        [],
-        { runs: number; cache_read_tokens: number }
-      >("SELECT runs, cache_read_tokens FROM cognition_spend_daily WHERE day = '2026-01-01'")
+      .prepare<[], { runs: number; cache_read_tokens: number }>(
+        "SELECT runs, cache_read_tokens FROM cognition_spend_daily WHERE day = '2026-01-01'",
+      )
       .get();
     expect(spend?.runs).toBe(7);
     expect(spend?.cache_read_tokens).toBe(0);

@@ -222,18 +222,16 @@ it("carries a correction recorded on another document into the page that cites t
   });
   const steps = async (): Promise<ExecutedTool[]> => {
     const runs = bench!.sql
-      .prepare<
-        [],
-        { run_id: string }
-      >("SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL")
+      .prepare<[], { run_id: string }>(
+        "SELECT DISTINCT run_id FROM knowledge_batches WHERE run_id IS NOT NULL",
+      )
       .all();
     return (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
   };
   const pageText = () =>
     (
       bench!.sql.prepare("SELECT plain_text FROM knowledge_nodes WHERE id=?").get(pageId) as
-        | { plain_text: string }
-        | undefined
+        { plain_text: string } | undefined
     )?.plain_text;
   const searchable = async (text: string, title: string) => {
     let last: unknown = null;
@@ -353,10 +351,9 @@ it("carries a correction recorded on another document into the page that cites t
     // The annotation also queued the page for an ordinary review.
     const reviews = () =>
       bench!.sql
-        .prepare<
-          [string],
-          { status: string }
-        >("SELECT status FROM knowledge_work WHERE subject_kind='node' AND subject_id=? AND reason='review'")
+        .prepare<[string], { status: string }>(
+          "SELECT status FROM knowledge_work WHERE subject_kind='node' AND subject_id=? AND reason='review'",
+        )
         .all(pageId);
     await expect
       .poll(() => reviews().some((work) => work.status === "completed"), { timeout: 120_000 })

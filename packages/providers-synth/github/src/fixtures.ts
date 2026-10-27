@@ -155,22 +155,18 @@ export function loadThreadEntries(): ThreadEntry[] {
   const kindIndex = buildKindIndex(fixture);
   const repo = fixture.repo;
   threadCache = [
-    ...fixture.threads.map(
-      (node): ThreadEntry => ({
-        kind: "thread",
-        repo,
-        node,
-        refKinds: refKindsFor(threadRefTexts(node), node.number, kindIndex),
-      }),
-    ),
-    ...fixture.discussions.map(
-      (node): ThreadEntry => ({
-        kind: "discussion",
-        repo,
-        node,
-        refKinds: refKindsFor(discussionRefTexts(node), node.number, kindIndex),
-      }),
-    ),
+    ...fixture.threads.map((node): ThreadEntry => ({
+      kind: "thread",
+      repo,
+      node,
+      refKinds: refKindsFor(threadRefTexts(node), node.number, kindIndex),
+    })),
+    ...fixture.discussions.map((node): ThreadEntry => ({
+      kind: "discussion",
+      repo,
+      node,
+      refKinds: refKindsFor(discussionRefTexts(node), node.number, kindIndex),
+    })),
   ];
   return threadCache;
 }

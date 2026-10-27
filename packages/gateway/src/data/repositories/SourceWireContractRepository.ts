@@ -7,10 +7,9 @@ import type Database from "better-sqlite3";
 export function sourceWireFloor(db: Database.Database, sourceId: string): number {
   return (
     db
-      .prepare<
-        [string],
-        { minimum_version: number }
-      >("SELECT minimum_version FROM source_wire_contracts WHERE source_id = ?")
+      .prepare<[string], { minimum_version: number }>(
+        "SELECT minimum_version FROM source_wire_contracts WHERE source_id = ?",
+      )
       .get(sourceId)?.minimum_version ?? 0
   );
 }

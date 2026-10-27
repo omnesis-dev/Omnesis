@@ -167,8 +167,7 @@ describe("MdnsAdvertiser with its own multicast responder", () => {
 
     // The responder reports a refused bind asynchronously, as an `error` event.
     const onError = onMock.mock.calls.find(([event]) => event === "error")?.[1] as
-      | ((err: Error) => void)
-      | undefined;
+      ((err: Error) => void) | undefined;
     expect(onError).toBeTypeOf("function");
     expect(() => onError?.(new Error("bind EADDRINUSE 192.168.1.50:5353"))).not.toThrow();
     expect(destroyMock).toHaveBeenCalledTimes(1);

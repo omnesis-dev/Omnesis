@@ -176,10 +176,9 @@ export function watchDisclosureSummaries(db: Db): Map<string, WatchDisclosureSum
  */
 export function watchDisclosure(db: Db, watchId: string): WatchDisclosure | null {
   const rows = db
-    .prepare<
-      [string],
-      DisclosureRow
-    >(`${DISCLOSURE_SELECT} AND json_extract(r.compiled_plan_json, '$.predicate.watchId') = ?${DISCLOSURE_ORDER}`)
+    .prepare<[string], DisclosureRow>(
+      `${DISCLOSURE_SELECT} AND json_extract(r.compiled_plan_json, '$.predicate.watchId') = ?${DISCLOSURE_ORDER}`,
+    )
     .all(watchId);
   for (const row of rows) {
     const summary = summaryOf(row);

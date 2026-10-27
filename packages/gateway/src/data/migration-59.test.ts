@@ -44,10 +44,9 @@ function columns(d: Db, table: string): string[] {
 function tableExists(d: Db, table: string): boolean {
   return (
     d
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      )
       .get(table) !== undefined
   );
 }
@@ -96,10 +95,9 @@ describe("migration 59 — evidence child tables + consumption edges", () => {
     for (const t of NEW_TABLES) expect(tableExists(db, t)).toBe(true);
     expect(
       db
-        .prepare<
-          [],
-          Record<string, unknown>
-        >("SELECT * FROM doc_annotation_evidence WHERE annotation_id = 'anno_pre'")
+        .prepare<[], Record<string, unknown>>(
+          "SELECT * FROM doc_annotation_evidence WHERE annotation_id = 'anno_pre'",
+        )
         .all(),
     ).toEqual([
       {
@@ -112,10 +110,9 @@ describe("migration 59 — evidence child tables + consumption edges", () => {
     ]);
     expect(
       db
-        .prepare<
-          [],
-          Record<string, unknown>
-        >("SELECT * FROM person_annotation_evidence WHERE annotation_id = 'panno_pre'")
+        .prepare<[], Record<string, unknown>>(
+          "SELECT * FROM person_annotation_evidence WHERE annotation_id = 'panno_pre'",
+        )
         .all(),
     ).toEqual([
       {
@@ -187,10 +184,9 @@ describe("migration 59 — evidence child tables + consumption edges", () => {
     expect(() => v57!.up(db)).not.toThrow();
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE annotation_id = 'anno_pre'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE annotation_id = 'anno_pre'",
+        )
         .get()!.n,
     ).toBe(2);
     expect(

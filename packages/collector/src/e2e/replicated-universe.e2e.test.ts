@@ -213,10 +213,9 @@ describe("replicated universe — two hosts per source", () => {
     const db = new SqliteDatabase(harness.getDbPath(), { readonly: true });
     const documentsIn = (streamId: string) =>
       db
-        .prepare<
-          [string, string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM documents WHERE source_id = ? AND stream_id = ?")
+        .prepare<[string, string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM documents WHERE source_id = ? AND stream_id = ?",
+        )
         .get(SCREEN_TIME, streamId)!.n;
     const analyticsIn = async (table: string, streamId: string) => {
       const { rows } = await harness.gatewayJson<{ rows: unknown[][] }>("/analytics/sql", {

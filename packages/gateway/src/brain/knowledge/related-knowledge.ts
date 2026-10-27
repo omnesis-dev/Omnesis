@@ -162,10 +162,9 @@ function recordSources(db: Database.Database, node: KnowledgeNode): Set<string> 
     const subject = node.kind === "doc_annotation" ? "doc_id" : "NULL";
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
       const owner = db
-        .prepare<
-          [string],
-          { subject: string | null; evidence: string | null }
-        >(`SELECT ${subject} AS subject,evidence_doc_id AS evidence FROM ${table} WHERE id=?`)
+        .prepare<[string], { subject: string | null; evidence: string | null }>(
+          `SELECT ${subject} AS subject,evidence_doc_id AS evidence FROM ${table} WHERE id=?`,
+        )
         .get(node.ownerId ?? node.id);
       if (owner?.subject) ids.add(owner.subject);
       if (owner?.evidence) ids.add(owner.evidence);

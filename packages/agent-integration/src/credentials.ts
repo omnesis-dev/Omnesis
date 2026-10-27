@@ -85,8 +85,7 @@ export const legacyIntegrationCredentialsSchema = z
 
 export type LegacyIntegrationCredentials = z.infer<typeof legacyIntegrationCredentialsSchema>;
 export type OperationalIntegrationCredentials =
-  | IntegrationCredentials
-  | LegacyIntegrationCredentials;
+  IntegrationCredentials | LegacyIntegrationCredentials;
 
 function readJson(path: string): unknown {
   let value: unknown;

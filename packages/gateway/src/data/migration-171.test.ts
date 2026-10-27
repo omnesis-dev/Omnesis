@@ -301,10 +301,9 @@ describe("migration 171", () => {
     );
     if (!decided.ok) throw new Error("request not approved");
     pendingCredentialId = db
-      .prepare<
-        [string],
-        { credential_id: string }
-      >("SELECT credential_id FROM oauth_authorization_requests WHERE id = ?")
+      .prepare<[string], { credential_id: string }>(
+        "SELECT credential_id FROM oauth_authorization_requests WHERE id = ?",
+      )
       .get(pending.value.id)!.credential_id;
 
     // (e) a principal whose second grant holds only an approved sign-in still
@@ -354,10 +353,9 @@ describe("migration 171", () => {
     waitingOnly = {
       principalId: notebook.principalId,
       grantId: db
-        .prepare<
-          [string],
-          { created_grant_id: string }
-        >("SELECT created_grant_id FROM oauth_authorization_requests WHERE id = ?")
+        .prepare<[string], { created_grant_id: string }>(
+          "SELECT created_grant_id FROM oauth_authorization_requests WHERE id = ?",
+        )
         .get(waiting.value.id)!.created_grant_id,
     };
     // (f) a grant that has expired, and (g) a revoked connection.
@@ -622,10 +620,9 @@ describe("migration 171", () => {
     );
 
     const sessions = db
-      .prepare<
-        [],
-        { id: string; owner_id: string; principal_id: string; grant_id: string }
-      >("SELECT id, owner_id, principal_id, grant_id FROM direct_audit_sessions ORDER BY id")
+      .prepare<[], { id: string; owner_id: string; principal_id: string; grant_id: string }>(
+        "SELECT id, owner_id, principal_id, grant_id FROM direct_audit_sessions ORDER BY id",
+      )
       .all();
     expect(sessions).toEqual([
       {
@@ -659,10 +656,9 @@ describe("migration 171", () => {
   test("an approval still waiting on a moved grant reaps the connection it moved to", () => {
     migrateV171AccessLevels(db, NOW + 1_000);
     const movedTo = db
-      .prepare<
-        [string],
-        { principal_id: string }
-      >("SELECT principal_id FROM access_grants WHERE id = ?")
+      .prepare<[string], { principal_id: string }>(
+        "SELECT principal_id FROM access_grants WHERE id = ?",
+      )
       .get(waitingOnly.grantId)!.principal_id;
     expect(movedTo).not.toBe(waitingOnly.principalId);
 

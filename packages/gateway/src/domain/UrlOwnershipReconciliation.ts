@@ -88,10 +88,12 @@ export function resolveUrlLink(
   const patternReference = sourcePrefixPredicate("source_id", referenceOnlySourcePrefixes);
   const patternSource = sourcePrefixPredicate("source_id", [extracted.sourceTypePrefix]);
   const patternRow = db
-    .prepare<
-      unknown[],
-      { id: string }
-    >(PATTERN_OWNER_LOOKUP_SQL.replace("/*SOURCE_PREDICATE*/", patternSource.sql).replace("/*REFERENCE_PREDICATE*/", patternReference.sql))
+    .prepare<unknown[], { id: string }>(
+      PATTERN_OWNER_LOOKUP_SQL.replace("/*SOURCE_PREDICATE*/", patternSource.sql).replace(
+        "/*REFERENCE_PREDICATE*/",
+        patternReference.sql,
+      ),
+    )
     .get(extracted.id, ...patternSource.params, ...patternReference.params);
   return patternRow ? { docId: patternRow.id } : null;
 }
@@ -213,20 +215,18 @@ export function computeUrlOwnershipRepairs(
     : cursors.linkMax > 0
       ? cursors.linkMax
       : (db
-          .prepare<
-            [],
-            { max_id: number }
-          >("SELECT COALESCE(MAX(id), 0) AS max_id FROM document_links")
+          .prepare<[], { max_id: number }>(
+            "SELECT COALESCE(MAX(id), 0) AS max_id FROM document_links",
+          )
           .get()?.max_id ?? 0);
   const documentCycleMaxRowid = !documentEnabled
     ? undefined
     : cursors.documentMax > 0
       ? cursors.documentMax
       : (db
-          .prepare<
-            [],
-            { max_rowid: number }
-          >("SELECT COALESCE(MAX(rowid), 0) AS max_rowid FROM documents")
+          .prepare<[], { max_rowid: number }>(
+            "SELECT COALESCE(MAX(rowid), 0) AS max_rowid FROM documents",
+          )
           .get()?.max_rowid ?? 0);
 
   const linkRows = !linkEnabled

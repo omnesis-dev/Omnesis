@@ -166,10 +166,9 @@ function storedIds(sourceId: string): string[] {
 function documentIdFor(sourceId: string, externalId: string): string {
   const row = readDb((db) =>
     db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+      )
       .get(sourceId, externalId),
   );
   if (!row) throw new Error(`no document ${externalId} stored for ${sourceId}`);
@@ -451,10 +450,9 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
     for (const sourceId of [NOTES, CALENDAR]) {
       const scopes = readDb((db) =>
         db
-          .prepare<
-            [string],
-            { provider_id: string; stream_id: string }
-          >("SELECT DISTINCT provider_id, stream_id FROM documents WHERE source_id = ?")
+          .prepare<[string], { provider_id: string; stream_id: string }>(
+            "SELECT DISTINCT provider_id, stream_id FROM documents WHERE source_id = ?",
+          )
           .all(sourceId),
       );
       // A snapshot is scoped to one (provider, source, stream). If a future
@@ -826,10 +824,9 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
       readDb(
         (db) =>
           db
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE evidence_doc_id = ? AND broken_at IS NULL")
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE evidence_doc_id = ? AND broken_at IS NULL",
+            )
             .get(event3DocId)!.n,
       ),
     ).toBe(0);

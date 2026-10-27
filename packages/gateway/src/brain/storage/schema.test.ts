@@ -73,10 +73,9 @@ describe("cognition storage schema", () => {
 
   test("the retired_loops consolidation store + its title-norm index exist", () => {
     const index = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_retired_loops_title_norm'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_retired_loops_title_norm'",
+      )
       .get();
     expect(index?.name).toBe("idx_retired_loops_title_norm");
     // The table accepts a trace row (smoke over the declared columns).

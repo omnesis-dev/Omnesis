@@ -63,10 +63,9 @@ describe("sync tombstone cascade outbox", () => {
   function exists(externalId: string): boolean {
     return (
       db
-        .prepare<
-          [string, string],
-          { id: string }
-        >("SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+        .prepare<[string, string], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+        )
         .get(SOURCE, externalId) !== undefined
     );
   }

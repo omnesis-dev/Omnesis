@@ -19,11 +19,7 @@ export const DEFAULT_WAKE_LEASE_MS = 60_000;
 const MAX_WAKE_ERROR_LENGTH = 256;
 
 export type NotificationDeliveryState =
-  | "pending"
-  | "leased"
-  | "delivered"
-  | "superseded"
-  | "expired";
+  "pending" | "leased" | "delivered" | "superseded" | "expired";
 
 export interface EnqueueNotificationInput {
   message: NotificationMessage;
@@ -179,20 +175,18 @@ function notificationIsActionable(db: Db, kind: string, targetId: string, now: n
   if (kind === "access-authorization") {
     return (
       db
-        .prepare<
-          [number],
-          { present: number }
-        >("SELECT 1 AS present FROM oauth_authorization_requests WHERE status = 'pending' AND expires_at > ? LIMIT 1")
+        .prepare<[number], { present: number }>(
+          "SELECT 1 AS present FROM oauth_authorization_requests WHERE status = 'pending' AND expires_at > ? LIMIT 1",
+        )
         .get(now) !== undefined
     );
   }
   if (kind !== "privacy-approval") return true;
   return (
     db
-      .prepare<
-        [string, number],
-        { present: number }
-      >("SELECT 1 AS present FROM answer_approvals WHERE id = ? AND status = 'pending' AND expires_at > ?")
+      .prepare<[string, number], { present: number }>(
+        "SELECT 1 AS present FROM answer_approvals WHERE id = ? AND status = 'pending' AND expires_at > ?",
+      )
       .get(targetId, now) !== undefined
   );
 }
@@ -460,10 +454,9 @@ export function leaseNotificationWakes(
         );
         if (result.changes !== 1) continue;
         const attempt = db
-          .prepare<
-            [string],
-            { wake_attempt_count: number }
-          >("SELECT wake_attempt_count FROM notification_deliveries WHERE id = ?")
+          .prepare<[string], { wake_attempt_count: number }>(
+            "SELECT wake_attempt_count FROM notification_deliveries WHERE id = ?",
+          )
           .get(candidate.delivery_id)!.wake_attempt_count;
         leased.push({
           deliveryId: candidate.delivery_id,
@@ -681,10 +674,9 @@ export function claimNotification(
   const transaction = db.transaction((): ClaimedNotificationDelivery | null => {
     expireNotificationsInTransaction(db, input.now, input.deviceId);
     const candidate = db
-      .prepare<
-        [string, number, number, number, number],
-        { delivery_id: string }
-      >(CLAIM_CANDIDATE_SQL)
+      .prepare<[string, number, number, number, number], { delivery_id: string }>(
+        CLAIM_CANDIDATE_SQL,
+      )
       .get(input.deviceId, input.now, input.now, input.now, input.now);
     if (!candidate) return null;
 

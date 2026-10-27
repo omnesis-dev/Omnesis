@@ -1318,19 +1318,17 @@ describe("bootstrapSelfFromDevices", () => {
     expect(personId).not.toBeNull();
 
     const person = db
-      .prepare<
-        [string],
-        { id: string; is_self: number; source: string; canonical_name: string }
-      >("SELECT id, is_self, source, canonical_name FROM people WHERE id = ?")
+      .prepare<[string], { id: string; is_self: number; source: string; canonical_name: string }>(
+        "SELECT id, is_self, source, canonical_name FROM people WHERE id = ?",
+      )
       .get(personId!);
     expect(person?.is_self).toBe(1);
     expect(person?.source).toBe("device");
 
     const aliases = db
-      .prepare<
-        [string],
-        { alias: string; alias_type: string; source_id: string | null }
-      >("SELECT alias, alias_type, source_id FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias")
+      .prepare<[string], { alias: string; alias_type: string; source_id: string | null }>(
+        "SELECT alias, alias_type, source_id FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias",
+      )
       .all(personId!);
     expect(aliases).toHaveLength(2);
     expect(aliases.find((a) => a.alias_type === "email")?.alias).toBe("me@example.com");
@@ -1377,10 +1375,9 @@ describe("bootstrapSelfFromDevices", () => {
 
     // Aliases come from the earlier-paired device only.
     const aliases = db
-      .prepare<
-        [string],
-        { alias: string; source_id: string | null }
-      >("SELECT alias, source_id FROM person_aliases WHERE person_id = ?")
+      .prepare<[string], { alias: string; source_id: string | null }>(
+        "SELECT alias, source_id FROM person_aliases WHERE person_id = ?",
+      )
       .all(personId!);
     expect(aliases).toHaveLength(1);
     expect(aliases[0].alias).toBe("a@x.com");

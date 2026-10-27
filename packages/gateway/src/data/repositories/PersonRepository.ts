@@ -601,10 +601,9 @@ export function getPersonById(db: Db, id: string): PersonDetail | null {
   // a second fetch.
   const mergedIntoCanonicalName = row.merged_into
     ? (db
-        .prepare<
-          [string],
-          { canonical_name: string }
-        >("SELECT canonical_name FROM people WHERE id = ?")
+        .prepare<[string], { canonical_name: string }>(
+          "SELECT canonical_name FROM people WHERE id = ?",
+        )
         .get(row.merged_into)?.canonical_name ?? null)
     : null;
 
@@ -1338,10 +1337,9 @@ export function upsertPeopleCounts(db: Db, rows: PeopleCountRow[]): { updated: n
   // Read current values for diffing. One statement, one round-trip.
   const current = new Map<string, { doc_count: number; alias_count: number }>();
   for (const r of db
-    .prepare<
-      [],
-      { id: string; doc_count: number; alias_count: number }
-    >("SELECT id, doc_count, alias_count FROM people")
+    .prepare<[], { id: string; doc_count: number; alias_count: number }>(
+      "SELECT id, doc_count, alias_count FROM people",
+    )
     .iterate()) {
     current.set(r.id, { doc_count: r.doc_count, alias_count: r.alias_count });
   }

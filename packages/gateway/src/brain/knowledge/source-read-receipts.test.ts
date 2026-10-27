@@ -30,9 +30,11 @@ function fixture(
     referenceResult?: ToolResult;
   } = {},
 ) {
-  const settled = vi.fn(
-    async (): Promise<ToolResult> => ({ kind: "structured", resultType: "done", data: true }),
-  );
+  const settled = vi.fn(async (): Promise<ToolResult> => ({
+    kind: "structured",
+    resultType: "done",
+    data: true,
+  }));
   const definitions: Array<[string, ToolHandle["invoke"]]> = [
     [
       "knowledge_next_frontier",

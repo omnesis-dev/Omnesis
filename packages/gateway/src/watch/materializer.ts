@@ -325,10 +325,9 @@ export class Materializer {
     // not recovery, it is a synthetic storm on first boot.
     if (checkpoint === null) {
       const newest = this.deps.db
-        .prepare<
-          [],
-          { updated_at: string; id: string }
-        >("SELECT updated_at, id FROM documents ORDER BY updated_at DESC, id DESC LIMIT 1")
+        .prepare<[], { updated_at: string; id: string }>(
+          "SELECT updated_at, id FROM documents ORDER BY updated_at DESC, id DESC LIMIT 1",
+        )
         .get();
       state[DOCUMENT_CHECKPOINT] = encodeCheckpoint({
         at: newest?.updated_at ?? "",
@@ -408,10 +407,9 @@ export class Materializer {
 
       const projection = entry.document;
       const row = this.deps.db
-        .prepare<
-          [string],
-          Pick<DocumentRow, "people_resolved_at" | "updated_at">
-        >("SELECT people_resolved_at, updated_at FROM documents WHERE id = ?")
+        .prepare<[string], Pick<DocumentRow, "people_resolved_at" | "updated_at">>(
+          "SELECT people_resolved_at, updated_at FROM documents WHERE id = ?",
+        )
         .get(projection.id);
       // Gone between the commit and the drain: deleted, or a source removed.
       // Nothing to say about a document that no longer exists.

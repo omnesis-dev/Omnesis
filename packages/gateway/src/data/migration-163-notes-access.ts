@@ -6,10 +6,9 @@ import type { Db } from "./types.js";
 /** Permit independently consented note capture without granting corpus access. */
 export function addNotesAccessCapability(db: Db): void {
   const table = db
-    .prepare<
-      [],
-      { sql: string }
-    >("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'access_grant_capabilities'")
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'access_grant_capabilities'",
+    )
     .get();
   if (!table || table.sql.includes("'notes'")) return;
   db.exec(`

@@ -1014,10 +1014,9 @@ describe("person annotation invalidator subscription", () => {
     });
     expect(hasLivePersonAnnotationsForEvidenceDoc(db, evidence)).toBe(true);
     const row = db
-      .prepare<
-        [],
-        { verification_state: string | null; last_verified_at: number | null }
-      >("SELECT verification_state, last_verified_at FROM person_annotations WHERE id = 'panno_1'")
+      .prepare<[], { verification_state: string | null; last_verified_at: number | null }>(
+        "SELECT verification_state, last_verified_at FROM person_annotations WHERE id = 'panno_1'",
+      )
       .get();
     expect(row?.verification_state).toBe("unverified");
     expect(row?.last_verified_at).toBeNull();
@@ -2958,10 +2957,9 @@ describe("multi-evidence grounding", () => {
 
   function childRows(id: string): Array<Record<string, unknown>> {
     return db
-      .prepare<
-        [string],
-        Record<string, unknown>
-      >("SELECT position, evidence_doc_id, evidence_quote, broken_at FROM doc_annotation_evidence WHERE annotation_id = ? ORDER BY position")
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT position, evidence_doc_id, evidence_quote, broken_at FROM doc_annotation_evidence WHERE annotation_id = ? ORDER BY position",
+      )
       .all(id);
   }
 
@@ -3259,10 +3257,9 @@ describe("multi-evidence grounding", () => {
     const r = invalidatePersonAnnotationsForDoc(db, evA, NOW + 1000);
     expect(r).toEqual({ invalidated: 0, flaggedUnverified: 1, promoted: 1 });
     const row = db
-      .prepare<
-        [],
-        Record<string, unknown>
-      >("SELECT * FROM person_annotations WHERE id = 'panno_m2'")
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM person_annotations WHERE id = 'panno_m2'",
+      )
       .get()!;
     expect(row.invalidated_at).toBeNull();
     expect(row.evidence_doc_id).toBe(evC);
@@ -3294,10 +3291,9 @@ describe("multi-evidence grounding", () => {
     expect(r).toEqual({ invalidated: 1, flaggedUnverified: 0, promoted: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { t: number | null }
-        >("SELECT invalidated_at AS t FROM person_annotations WHERE id = 'panno_m3'")
+        .prepare<[], { t: number | null }>(
+          "SELECT invalidated_at AS t FROM person_annotations WHERE id = 'panno_m3'",
+        )
         .get()!.t,
     ).toBe(NOW + 1000);
   });

@@ -98,10 +98,9 @@ describe("a collector that predates this branch, against the new gateway", () =>
     expect(
       readDb((db) =>
         db
-          .prepare<
-            [string],
-            { external_id: string; partition_key: string }
-          >("SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id")
+          .prepare<[string], { external_id: string; partition_key: string }>(
+            "SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id",
+          )
           .all(SOURCE),
       ),
     ).toEqual([
@@ -130,10 +129,9 @@ describe("a collector that predates this branch, against the new gateway", () =>
       readDb(
         (db) =>
           db
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM documents WHERE source_id = ?")
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM documents WHERE source_id = ?",
+            )
             .get(SOURCE)!.n,
       ),
     ).toBe(2);

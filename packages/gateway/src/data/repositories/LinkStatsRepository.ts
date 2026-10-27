@@ -31,10 +31,9 @@ export function computeLinkStats(db: Db): LinkStatsAggregation {
     // can short-circuit and return a skipped aggregation rather than
     // pay the COUNT(*) over `document_links`.
     const stateRow = db
-      .prepare<
-        [],
-        { dirty_version: number; needs_refresh: number }
-      >("SELECT dirty_version, needs_refresh FROM refresh_meta WHERE job = 'link_graph'")
+      .prepare<[], { dirty_version: number; needs_refresh: number }>(
+        "SELECT dirty_version, needs_refresh FROM refresh_meta WHERE job = 'link_graph'",
+      )
       .get();
     const capturedVersion = stateRow?.dirty_version ?? 0;
     if (stateRow && stateRow.needs_refresh === 0) {
@@ -52,10 +51,9 @@ export function computeLinkStats(db: Db): LinkStatsAggregation {
       .prepare<[], { count: number }>("SELECT COUNT(*) as count FROM document_links")
       .get();
     const resolvedRow = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) as count FROM document_links WHERE target_doc_id IS NOT NULL")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) as count FROM document_links WHERE target_doc_id IS NOT NULL",
+      )
       .get();
     const byTypeRows = db
       .prepare<[], { link_type: string; total: number; resolved: number }>(
@@ -132,10 +130,9 @@ export function upsertLinkStats(db: Db, agg: LinkStatsAggregation): { updated: n
  */
 export function readLinkStatsFromCounters(db: Db): LinkStats {
   const rows = db
-    .prepare<
-      [],
-      { link_type: string; total: number; resolved: number }
-    >("SELECT link_type, total, resolved FROM link_stats_counters")
+    .prepare<[], { link_type: string; total: number; resolved: number }>(
+      "SELECT link_type, total, resolved FROM link_stats_counters",
+    )
     .all();
   if (rows.length === 0) {
     return readMaterializedLinkStatsLegacy(db);

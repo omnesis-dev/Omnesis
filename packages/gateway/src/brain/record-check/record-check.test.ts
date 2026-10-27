@@ -1234,10 +1234,9 @@ describe("record check", () => {
       await c.forRun(run("bootstrap", { docId: doc, datumAt: NOW }))!(record(doc));
       await c.idle();
       const row = db
-        .prepare<
-          [string],
-          { prompt_tokens: number; runs: number }
-        >(`SELECT prompt_tokens, runs FROM cognition_spend WHERE mechanism = ?`)
+        .prepare<[string], { prompt_tokens: number; runs: number }>(
+          `SELECT prompt_tokens, runs FROM cognition_spend WHERE mechanism = ?`,
+        )
         .get(RECORD_CHECK_SPEND_MECHANISM);
       expect(row).toEqual({ prompt_tokens: 120, runs: 0 });
       expect(getCognitionSpendDayTotal(db, cognitionSpendDay(NOW))?.runs ?? 0).toBe(0);

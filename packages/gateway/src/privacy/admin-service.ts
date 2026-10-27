@@ -237,10 +237,9 @@ export class PrivacyAdminService {
 
   private versionByRevision(revision: string): PrivacyPolicyVersion | null {
     const row = this.deps.db
-      .prepare<
-        [string],
-        { generation: number }
-      >("SELECT generation FROM privacy_policy_versions WHERE revision = ?")
+      .prepare<[string], { generation: number }>(
+        "SELECT generation FROM privacy_policy_versions WHERE revision = ?",
+      )
       .get(revision);
     return row ? privacyPolicyVersion(this.deps.db, row.generation) : null;
   }

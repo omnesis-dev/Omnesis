@@ -101,10 +101,9 @@ export function readKnowledgeCollectionRevision(
   collection: KnowledgeCollection,
 ): number {
   const row = db
-    .prepare<
-      [string],
-      { revision: number }
-    >("SELECT revision FROM knowledge_reconciliation_revisions WHERE collection=?")
+    .prepare<[string], { revision: number }>(
+      "SELECT revision FROM knowledge_reconciliation_revisions WHERE collection=?",
+    )
     .get(collection);
   if (!row)
     throw new KnowledgeStorageError("revision_conflict", "Reconciliation revision is unavailable");

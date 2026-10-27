@@ -79,10 +79,9 @@ describe("migration 118", () => {
 
     // The document-side FK is gone; the annotation-side FK stays.
     const fks = db
-      .prepare<
-        [],
-        { table: string; from: string }
-      >('SELECT "table", "from" FROM pragma_foreign_key_list(\'temporal_annotation_documents\')')
+      .prepare<[], { table: string; from: string }>(
+        'SELECT "table", "from" FROM pragma_foreign_key_list(\'temporal_annotation_documents\')',
+      )
       .all();
     expect(fks).toEqual([{ table: "temporal_annotations", from: "annotation_id" }]);
 

@@ -114,20 +114,18 @@ export function sinceNoted(db: Db, observation: ObservationRow): string[] {
   const lines: string[] = [];
   for (const loopId of observation.relatedLoopIds) {
     const loop = db
-      .prepare<
-        [string],
-        { title: string; state: string; last_update: number }
-      >("SELECT title, state, last_update FROM open_loops WHERE id = ?")
+      .prepare<[string], { title: string; state: string; last_update: number }>(
+        "SELECT title, state, last_update FROM open_loops WHERE id = ?",
+      )
       .get(loopId);
     if (!loop) {
       lines.push(`Related loop ${loopId} no longer exists.`);
       continue;
     }
     for (const entry of db
-      .prepare<
-        [string, number],
-        { at: number; note: string }
-      >("SELECT at, note FROM open_loop_ledger WHERE loop_id = ? AND at > ? ORDER BY seq DESC LIMIT 5")
+      .prepare<[string, number], { at: number; note: string }>(
+        "SELECT at, note FROM open_loop_ledger WHERE loop_id = ? AND at > ? ORDER BY seq DESC LIMIT 5",
+      )
       .all(loopId, observation.createdAt))
       lines.push(
         `${new Date(entry.at).toISOString()} loop "${loop.title}": ${entry.note.slice(0, 300)}`,
@@ -163,10 +161,9 @@ function claimQuoteGone(db: Db, observation: ObservationRow): boolean {
 
 function nodeStale(db: Db, observationId: string): boolean {
   const row = db
-    .prepare<
-      [string],
-      { validity: string }
-    >("SELECT validity FROM knowledge_nodes WHERE kind='observation' AND owner_id = ?")
+    .prepare<[string], { validity: string }>(
+      "SELECT validity FROM knowledge_nodes WHERE kind='observation' AND owner_id = ?",
+    )
     .get(observationId);
   return row?.validity === "stale";
 }

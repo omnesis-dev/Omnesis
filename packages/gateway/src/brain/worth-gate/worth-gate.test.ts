@@ -301,10 +301,9 @@ describe("worth gate", () => {
   test("reuses the answer the mention worth gate recorded for the same email", async () => {
     const docId = seed({ externalId: "promo-4", title: "Weekly deals inside" });
     const doc = db
-      .prepare<
-        [string],
-        { content_hash: string }
-      >("SELECT content_hash FROM documents WHERE id = ?")
+      .prepare<[string], { content_hash: string }>(
+        "SELECT content_hash FROM documents WHERE id = ?",
+      )
       .get(docId)!;
     const decision = scripted();
     recordWorthAnswers(db, [

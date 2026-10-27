@@ -64,10 +64,9 @@ export function excludedDocumentIds(
   for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
     const chunk = ids.slice(i, i + LOOKUP_CHUNK);
     const rows = db
-      .prepare<
-        unknown[],
-        { id: string }
-      >(`SELECT id FROM documents WHERE id IN (${chunk.map(() => "?").join(",")}) AND NOT (${inclusion.sql})`)
+      .prepare<unknown[], { id: string }>(
+        `SELECT id FROM documents WHERE id IN (${chunk.map(() => "?").join(",")}) AND NOT (${inclusion.sql})`,
+      )
       .all(...chunk, ...inclusion.params);
     for (const row of rows) out.add(row.id);
   }

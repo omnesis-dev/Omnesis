@@ -198,10 +198,9 @@ describe("replicated snapshot dispute across collectors", () => {
     readDb(
       (db) =>
         db
-          .prepare<
-            [string, string],
-            { observations: number }
-          >("SELECT observations FROM document_absences WHERE source_id = ? AND external_id = ?")
+          .prepare<[string, string], { observations: number }>(
+            "SELECT observations FROM document_absences WHERE source_id = ? AND external_id = ?",
+          )
           .get(SOURCE, externalId)?.observations,
     );
   const nameOf = (deviceId: string): string =>

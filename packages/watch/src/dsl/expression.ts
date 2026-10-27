@@ -88,8 +88,7 @@ interface ParseFailure {
 }
 
 export type ParseResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: ParseFailure };
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ParseFailure };
 
 /** What the DSL knows about one extractor function, beyond its name. */
 export interface ExtractorSignature {

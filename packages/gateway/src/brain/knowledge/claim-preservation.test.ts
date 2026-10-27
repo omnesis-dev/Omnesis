@@ -66,10 +66,9 @@ it("allows a narrow deliberate removal and records its reason in the revision au
   );
   expect(saved.node.markdown).toBe(first);
   const row = db
-    .prepare<
-      [],
-      { diff_json: string }
-    >("SELECT diff_json FROM knowledge_revisions WHERE node_id='reference' AND revision=2")
+    .prepare<[], { diff_json: string }>(
+      "SELECT diff_json FROM knowledge_revisions WHERE node_id='reference' AND revision=2",
+    )
     .get()!;
   expect(JSON.parse(row.diff_json).claimRemovals).toEqual([
     { id: "tools", reason: "Retired section now maintained in the equipment reference." },

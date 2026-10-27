@@ -588,8 +588,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       .poll(
         async () => {
           const state = (await extensionStorage())["omnesis.notes.state.v1"] as
-            | { draft?: { selection: string } }
-            | undefined;
+            { draft?: { selection: string } } | undefined;
           return state?.draft?.selection;
         },
         { timeout: 20_000 },

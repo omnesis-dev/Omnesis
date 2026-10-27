@@ -34,10 +34,9 @@ export function loadGrantSummary(db: Db, grantId: string): AccessGrantSummary | 
     ...grant,
     rules: grant.capabilities.map(capabilityToRule),
     credentials: db
-      .prepare<
-        [string],
-        CredentialRow
-      >(`${CREDENTIAL_SELECT} WHERE c.grant_id = ? AND c.kind = 'interactive' ORDER BY c.created_at, c.id`)
+      .prepare<[string], CredentialRow>(
+        `${CREDENTIAL_SELECT} WHERE c.grant_id = ? AND c.kind = 'interactive' ORDER BY c.created_at, c.id`,
+      )
       .all(grantId)
       .map(credentialFromRow),
   };
@@ -79,10 +78,9 @@ export function revokeAccessGrant(
 ): boolean {
   return db.transaction(() => {
     const grant = db
-      .prepare<
-        [string],
-        { principal_id: string; revision: number }
-      >("SELECT principal_id, revision FROM access_grants WHERE id = ? AND revoked_at IS NULL")
+      .prepare<[string], { principal_id: string; revision: number }>(
+        "SELECT principal_id, revision FROM access_grants WHERE id = ? AND revoked_at IS NULL",
+      )
       .get(grantId);
     if (!grant) return false;
     db.prepare("UPDATE access_grants SET revoked_at = ?, updated_at = ? WHERE id = ?").run(
@@ -148,10 +146,9 @@ export function renameAccessPrincipal(
   const name = input.name.trim();
   return db.transaction((): AccessMutationResult<AccessPrincipal> => {
     const current = db
-      .prepare<
-        [string],
-        PrincipalRow
-      >("SELECT * FROM access_principals WHERE id = ? AND revoked_at IS NULL")
+      .prepare<[string], PrincipalRow>(
+        "SELECT * FROM access_principals WHERE id = ? AND revoked_at IS NULL",
+      )
       .get(input.principalId);
     if (!current) return { ok: false, error: "not-found" };
     if (current.name === name) return { ok: true, value: principalFromRow(current) };
@@ -260,10 +257,9 @@ export function removeProfile(
 ): boolean {
   return db.transaction(() => {
     const owner = db
-      .prepare<
-        [string],
-        { principal_id: string }
-      >("SELECT principal_id FROM access_grants WHERE id = ?")
+      .prepare<[string], { principal_id: string }>(
+        "SELECT principal_id FROM access_grants WHERE id = ?",
+      )
       .get(grantId);
     if (!owner) return false;
     if (!revokeAccessGrant(db, grantId, actorTokenId, now)) return false;
@@ -333,10 +329,9 @@ export function listAccessOverview(
   now = Date.now(),
 ): Omit<AccessOverview, "pendingRequests"> {
   const principals = db
-    .prepare<
-      [],
-      PrincipalRow
-    >("SELECT * FROM access_principals WHERE kind = 'interactive' ORDER BY created_at, id")
+    .prepare<[], PrincipalRow>(
+      "SELECT * FROM access_principals WHERE kind = 'interactive' ORDER BY created_at, id",
+    )
     .all()
     .map(principalFromRow);
   const grants = db
@@ -349,10 +344,9 @@ export function listAccessOverview(
     .all()
     .map((row) => grantFromRow(db, row));
   const credentials = db
-    .prepare<
-      [],
-      CredentialRow
-    >(`${CREDENTIAL_SELECT} WHERE c.kind = 'interactive' ORDER BY c.created_at, c.id`)
+    .prepare<[], CredentialRow>(
+      `${CREDENTIAL_SELECT} WHERE c.kind = 'interactive' ORDER BY c.created_at, c.id`,
+    )
     .all()
     .map(credentialFromRow);
   const availableSources = db

@@ -178,10 +178,9 @@ describe("source URL recanonicalization", () => {
 
     const storedTargets = (): Array<{ normalized_target: string; target_doc_id: string | null }> =>
       db
-        .prepare<
-          [],
-          { normalized_target: string; target_doc_id: string | null }
-        >("SELECT normalized_target, target_doc_id FROM document_links ORDER BY id")
+        .prepare<[], { normalized_target: string; target_doc_id: string | null }>(
+          "SELECT normalized_target, target_doc_id FROM document_links ORDER BY id",
+        )
         .all();
 
     test("moves the edge's canonical form with the document's, so ownership repair can still reach it", async () => {

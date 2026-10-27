@@ -102,10 +102,9 @@ interface SessionRow {
 function ownerDirectAuditBytesUsed(db: PrivacyDb, ownerId: string): number {
   return (
     db
-      .prepare<
-        [string],
-        { bytes: number }
-      >(`SELECT COALESCE(SUM(payload_bytes), 0) AS bytes FROM direct_audit_events WHERE owner_id = ?`)
+      .prepare<[string], { bytes: number }>(
+        `SELECT COALESCE(SUM(payload_bytes), 0) AS bytes FROM direct_audit_events WHERE owner_id = ?`,
+      )
       .get(ownerId)?.bytes ?? 0
   );
 }
@@ -270,10 +269,9 @@ function attachPrincipalNames(db: PrivacyDb, sessions: DirectAuditSession[]): vo
   if (hasColumn(db, "access_principals", "name")) {
     const ids = [...new Set(sessions.map((session) => session.principalId))];
     const rows = db
-      .prepare<
-        string[],
-        { id: string; name: string | null }
-      >(`SELECT id, name FROM access_principals WHERE id IN (${ids.map(() => "?").join(", ")})`)
+      .prepare<string[], { id: string; name: string | null }>(
+        `SELECT id, name FROM access_principals WHERE id IN (${ids.map(() => "?").join(", ")})`,
+      )
       .all(...ids);
     const names = new Map(rows.map((row) => [row.id, row.name?.trim() || null]));
     for (const session of sessions) {
@@ -483,10 +481,9 @@ export function getDirectAuditEvent(
     .get(...params);
   if (!row) return null;
   const payload = db
-    .prepare<
-      [string],
-      { payload_json: string }
-    >(`SELECT payload_json FROM direct_audit_payloads WHERE event_id = ?`)
+    .prepare<[string], { payload_json: string }>(
+      `SELECT payload_json FROM direct_audit_payloads WHERE event_id = ?`,
+    )
     .get(eventId);
   let parsed: unknown = null;
   if (payload) {

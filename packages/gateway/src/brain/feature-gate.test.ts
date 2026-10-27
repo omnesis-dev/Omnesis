@@ -594,10 +594,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: true } });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM cognition_runs WHERE id = 'run_hot_assignment'")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM cognition_runs WHERE id = 'run_hot_assignment'",
+        )
         .get(),
     ).toEqual({ status: "pending", attempts: 0 });
 
@@ -607,10 +606,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       .poll(
         () =>
           db
-            .prepare<
-              [],
-              { status: string }
-            >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
+            .prepare<[], { status: string }>(
+              "SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'",
+            )
             .get()?.status,
       )
       .toBe("completed");
@@ -624,10 +622,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: true } });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM cognition_runs WHERE id = 'run_after_removal'")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM cognition_runs WHERE id = 'run_after_removal'",
+        )
         .get(),
     ).toEqual({ status: "pending", attempts: 0 });
     expect(scheduled.filter((task) => task.name === "cognition.drain")).toHaveLength(1);
@@ -675,10 +672,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     const ctx = { signal: new AbortController().signal } as TaskContext;
     const verificationRunCount = () =>
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'",
+        )
         .get()!.n;
 
     // reverification.enabled=true but annotations.enabled=false: the sweep's

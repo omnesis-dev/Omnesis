@@ -241,10 +241,9 @@ describe("SubscriptionService watch privacy policy", () => {
     expect(review).toHaveBeenCalledOnce();
     expect(
       db
-        .prepare<
-          [string],
-          { privacy_review_json: string | null }
-        >("SELECT privacy_review_json FROM subscription_approvals WHERE id = ?")
+        .prepare<[string], { privacy_review_json: string | null }>(
+          "SELECT privacy_review_json FROM subscription_approvals WHERE id = ?",
+        )
         .get(created.approval!.id)?.privacy_review_json,
     ).toContain("Synthetic policy decision");
   });
@@ -266,7 +265,9 @@ describe("SubscriptionService watch privacy policy", () => {
         .prepare<
           [string],
           { resolved_by_device_id: string | null; resolved_by_token_id: string | null }
-        >("SELECT resolved_by_device_id, resolved_by_token_id FROM subscription_approvals WHERE id = ?")
+        >(
+          "SELECT resolved_by_device_id, resolved_by_token_id FROM subscription_approvals WHERE id = ?",
+        )
         .get(created.approval!.id),
     ).toEqual({ resolved_by_device_id: null, resolved_by_token_id: null });
     expect(resolutionAudit(created.id)).toEqual([
@@ -302,10 +303,9 @@ describe("SubscriptionService watch privacy policy", () => {
     ]);
     expect(
       db
-        .prepare<
-          [string],
-          { resolved_by_device_id: string | null }
-        >("SELECT resolved_by_device_id FROM subscription_approvals WHERE id = ?")
+        .prepare<[string], { resolved_by_device_id: string | null }>(
+          "SELECT resolved_by_device_id FROM subscription_approvals WHERE id = ?",
+        )
         .get(created.approval!.id),
     ).toEqual({ resolved_by_device_id: deviceId });
   });
@@ -607,10 +607,9 @@ describe("SubscriptionService watch privacy policy", () => {
     expect(created.status).toBe("pending_approval");
     expect(
       db
-        .prepare<
-          [string],
-          { privacy_review_json: string | null }
-        >("SELECT privacy_review_json FROM subscription_approvals WHERE id = ?")
+        .prepare<[string], { privacy_review_json: string | null }>(
+          "SELECT privacy_review_json FROM subscription_approvals WHERE id = ?",
+        )
         .get(created.approval!.id)?.privacy_review_json,
     ).toBeNull();
 

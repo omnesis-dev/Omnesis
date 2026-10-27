@@ -117,10 +117,9 @@ describe("applyDeclaredEdges", () => {
     );
     expect(res.written).toBe(1);
     const link = db
-      .prepare<
-        [],
-        { source_doc_id: string; target_doc_id: string }
-      >("SELECT source_doc_id, target_doc_id FROM document_links")
+      .prepare<[], { source_doc_id: string; target_doc_id: string }>(
+        "SELECT source_doc_id, target_doc_id FROM document_links",
+      )
       .get();
     expect(link).toEqual({ source_doc_id: "from-b", target_doc_id: "day-1-b" });
   });

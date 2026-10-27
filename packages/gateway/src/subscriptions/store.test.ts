@@ -141,10 +141,9 @@ describe("subscription store", () => {
     ).toBe("fired");
     expect(
       db
-        .prepare<
-          [],
-          { categories_json: string }
-        >("SELECT categories_json FROM subscription_workflow_disclosure")
+        .prepare<[], { categories_json: string }>(
+          "SELECT categories_json FROM subscription_workflow_disclosure",
+        )
         .get()?.categories_json,
     ).toBe(
       JSON.stringify([{ category: "health", detailLevel: "existence", subject: "user", count: 1 }]),
@@ -421,10 +420,9 @@ describe("subscription store", () => {
   function releaseFiringTask(taskId: string, firingId: string): void {
     const disclosureRevision =
       db
-        .prepare<
-          [string],
-          { revision: number }
-        >("SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?")
+        .prepare<[string], { revision: number }>(
+          "SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?",
+        )
         .get("wf_northstar")?.revision ?? 0;
     const task = beginAnswerTask(db, {
       ownerId: `device:${deviceId}`,
@@ -703,10 +701,9 @@ describe("subscription store", () => {
       }),
     ).toMatchObject({ outcome: "fired" });
     const stored = db
-      .prepare<
-        [string],
-        { observation_json: string | null }
-      >("SELECT observation_json FROM subscription_firings WHERE id = ?")
+      .prepare<[string], { observation_json: string | null }>(
+        "SELECT observation_json FROM subscription_firings WHERE id = ?",
+      )
       .get("sfiring_documented");
     expect(stored?.observation_json).toBeNull();
   });
@@ -723,10 +720,9 @@ describe("subscription store", () => {
     // the writer that materializes expiry under the one-shot approval lock.
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_approvals WHERE id = 'sapp_northstar'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_approvals WHERE id = 'sapp_northstar'",
+        )
         .get()?.status,
     ).toBe("pending");
   });
@@ -787,10 +783,9 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM subscription_grants WHERE id = 'sgrant_must_not_exist'")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM subscription_grants WHERE id = 'sgrant_must_not_exist'",
+        )
         .get()!.count,
     ).toBe(0);
   });
@@ -1011,10 +1006,9 @@ describe("subscription store", () => {
     ).toMatchObject({ outcome: "settled", status: "delivered" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_operator_settle'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_operator_settle'",
+        )
         .get(),
     ).toEqual({ status: "delivered" });
   });
@@ -1053,18 +1047,16 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { revoked_at: number | null }
-        >("SELECT revoked_at FROM subscription_grants WHERE id = 'sgrant_northstar'")
+        .prepare<[], { revoked_at: number | null }>(
+          "SELECT revoked_at FROM subscription_grants WHERE id = 'sgrant_northstar'",
+        )
         .get()?.revoked_at,
     ).toBe(400);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_policy'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_policy'",
+        )
         .get(),
     ).toEqual({ status: "cancel_pending", last_error: "privacy policy changed" });
     expect(
@@ -1109,10 +1101,9 @@ describe("subscription store", () => {
       approval: { status: "pending" },
     });
     const approvalId = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM subscription_approvals WHERE subscription_id = 'sub_northstar' AND revision = 2")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM subscription_approvals WHERE subscription_id = 'sub_northstar' AND revision = 2",
+      )
       .get()!.id;
     expect(
       resolveSubscriptionApproval(db, {
@@ -1147,18 +1138,16 @@ describe("subscription store", () => {
 
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_deleted_evidence'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_deleted_evidence'",
+        )
         .get(),
     ).toEqual({ status: "blocked" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_deleted_evidence'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_deleted_evidence'",
+        )
         .get(),
     ).toEqual({
       status: "cancel_pending",
@@ -1166,10 +1155,9 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { revoked_at: number | null }
-        >("SELECT revoked_at FROM subscription_firing_answer_authorities WHERE firing_id = 'sfiring_deleted_evidence'")
+        .prepare<[], { revoked_at: number | null }>(
+          "SELECT revoked_at FROM subscription_firing_answer_authorities WHERE firing_id = 'sfiring_deleted_evidence'",
+        )
         .get()?.revoked_at,
     ).not.toBeNull();
     expect(
@@ -1329,10 +1317,9 @@ describe("subscription store", () => {
     ).toEqual([]);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE id = 'sdel_sfiring_retry'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE id = 'sdel_sfiring_retry'",
+        )
         .get(),
     ).toEqual({
       status: "cancel_pending",
@@ -1359,10 +1346,9 @@ describe("subscription store", () => {
     ).toEqual({ outcome: "settled", status: "failed" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_retry'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_retry'",
+        )
         .get()?.status,
     ).toBe("blocked");
   });
@@ -1409,10 +1395,9 @@ describe("subscription store", () => {
       expect(first.outcome).toBe("fired");
       expect(second.outcome).toBe("fired");
       const firings = db
-        .prepare<
-          [],
-          { id: string; index_event_key: string; evidence_count: number }
-        >("SELECT id, index_event_key, evidence_count FROM subscription_firings ORDER BY id")
+        .prepare<[], { id: string; index_event_key: string; evidence_count: number }>(
+          "SELECT id, index_event_key, evidence_count FROM subscription_firings ORDER BY id",
+        )
         .all();
       expect(firings.map((f) => f.id)).toEqual(["sfiring_cell_a", "sfiring_cell_b"]);
       // Each carries its own cell's evidence. Collapsing the two would hand

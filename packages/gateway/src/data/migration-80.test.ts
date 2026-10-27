@@ -57,10 +57,9 @@ afterEach(() => db.close());
 function tableExists(d: Db, table: string): boolean {
   return (
     d
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      )
       .get(table) !== undefined
   );
 }

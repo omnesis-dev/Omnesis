@@ -74,12 +74,10 @@ export function mapEmail(
 ): DocumentInput | DocumentInput[] {
   const people: PersonMention[] = [
     { ...personMention(e.from, "sender"), emails: [e.fromEmail] },
-    ...e.to.map(
-      (ref, i): PersonMention => ({
-        ...personMention(ref, "recipient"),
-        emails: [e.toEmails[i]],
-      }),
-    ),
+    ...e.to.map((ref, i): PersonMention => ({
+      ...personMention(ref, "recipient"),
+      emails: [e.toEmails[i]],
+    })),
   ];
 
   const attachments = e.attachments ?? [];

@@ -1012,10 +1012,9 @@ const getSourceDocCounts = (): readonly SourceDocCount[] => {
   let counts: SourceDocCount[];
   try {
     counts = db
-      .prepare<
-        [],
-        { sourceId: string; docCount: number }
-      >("SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0")
+      .prepare<[], { sourceId: string; docCount: number }>(
+        "SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0",
+      )
       .all();
   } catch {
     counts = [];
@@ -1867,8 +1866,7 @@ const sweepService = new SweepService({
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let agentConversationsRuntime:
-  | import("./sources/agent-conversations/index.js").AgentConversationsRuntime
-  | undefined;
+  import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
 // Held for the delivery loop below (policy review and operator-watch
 // re-approval passes) and for the agent's watch port, which authors operator
 // watches through it.

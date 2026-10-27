@@ -280,10 +280,9 @@ export function getAuthorizationRequestByUserCode(
   const normalized = normalizeUserCode(userCode);
   if (!normalized) return null;
   const row = db
-    .prepare<
-      [string],
-      AuthorizationRequestRow
-    >("SELECT * FROM oauth_authorization_requests WHERE user_code = ?")
+    .prepare<[string], AuthorizationRequestRow>(
+      "SELECT * FROM oauth_authorization_requests WHERE user_code = ?",
+    )
     .get(normalized);
   if (!row) return null;
   return portalAuthorization(row, now);
@@ -477,10 +476,9 @@ export function exchangeAuthorizationCode(
   const client = getOAuthClient(db, input.clientId);
   if (!client) return { ok: false, error: "invalid-client" };
   const row = db
-    .prepare<
-      [string],
-      AuthorizationRequestRow
-    >("SELECT * FROM oauth_authorization_requests WHERE authorization_code_hash = ?")
+    .prepare<[string], AuthorizationRequestRow>(
+      "SELECT * FROM oauth_authorization_requests WHERE authorization_code_hash = ?",
+    )
     .get(hashSecret(input.code));
   if (!row || row.status !== "code-issued" || row.authorization_code_consumed_at !== null) {
     return { ok: false, error: "invalid-code" };

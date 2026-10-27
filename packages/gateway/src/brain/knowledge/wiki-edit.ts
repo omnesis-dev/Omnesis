@@ -28,10 +28,7 @@ export type WikiEditOp =
   | { op: "replace_text"; old: string; new: string };
 
 export type WikiEditErrorCode =
-  | "edit_target_not_found"
-  | "edit_target_ambiguous"
-  | "edit_section_boundary"
-  | "edit_invalid";
+  "edit_target_not_found" | "edit_target_ambiguous" | "edit_section_boundary" | "edit_invalid";
 
 export class WikiEditError extends Error {
   constructor(
@@ -297,7 +294,7 @@ function sectionSpan(
   const next = headings.slice(index + 1).find((other) => other.level <= heading.level);
   const edge = (offset: number) => {
     let start = offset;
-    for (let moved = true; moved; ) {
+    for (let moved = true; moved;) {
       moved = false;
       for (const claim of claims)
         if (

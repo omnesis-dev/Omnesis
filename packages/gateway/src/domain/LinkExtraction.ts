@@ -147,10 +147,9 @@ function registryFromSpecs(
  */
 function isBestEffortRetention(db: Db, sourceId: string): boolean {
   const row = db
-    .prepare<
-      [string],
-      { content_retention: string | null }
-    >("SELECT content_retention FROM sync_state WHERE source_id = ?")
+    .prepare<[string], { content_retention: string | null }>(
+      "SELECT content_retention FROM sync_state WHERE source_id = ?",
+    )
     .get(sourceId);
   return row?.content_retention === "best-effort";
 }

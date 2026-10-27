@@ -130,10 +130,9 @@ export function captureKnowledgeCanonicalFence(
 ): KnowledgeCanonicalFence {
   assertKnowledgeRunFence(db, run);
   const rows = db
-    .prepare<
-      [string],
-      { node_id: string; input_fingerprint: string; input_versions_json: string }
-    >("SELECT node_id,input_fingerprint,input_versions_json FROM knowledge_frontier WHERE batch_id=? AND status='offered' ORDER BY node_id LIMIT 257")
+    .prepare<[string], { node_id: string; input_fingerprint: string; input_versions_json: string }>(
+      "SELECT node_id,input_fingerprint,input_versions_json FROM knowledge_frontier WHERE batch_id=? AND status='offered' ORDER BY node_id LIMIT 257",
+    )
     .all(run.batchId);
   if (!rows.length || rows.length > 256)
     throw new KnowledgeStorageError(

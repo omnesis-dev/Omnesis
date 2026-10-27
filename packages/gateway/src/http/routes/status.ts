@@ -370,10 +370,9 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
 
     let sourceRows = seg("sourceStats", () =>
       db
-        .prepare<
-          [],
-          { source_id: string; count: number; totalUnits: number | null }
-        >("SELECT source_id, doc_count AS count, total_units AS totalUnits FROM source_stats")
+        .prepare<[], { source_id: string; count: number; totalUnits: number | null }>(
+          "SELECT source_id, doc_count AS count, total_units AS totalUnits FROM source_stats",
+        )
         .all(),
     );
     if (sourceRows.length === 0) {

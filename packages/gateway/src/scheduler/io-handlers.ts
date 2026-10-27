@@ -129,8 +129,7 @@ export const ioHandlers = {
   // Smallest non-trivial read op — proves the handle is usable.
   "io.countDocuments": (db: Db) => {
     const row = db.prepare("SELECT COUNT(*) AS n FROM documents").get() as
-      | { n: number }
-      | undefined;
+      { n: number } | undefined;
     return row?.n ?? 0;
   },
   // The lane's backlog. `corpusTotal` rather than a count of already-scanned

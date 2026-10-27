@@ -46,10 +46,9 @@ describe("conversation read state", () => {
     // An episode is "there is something new here", not a message count — the
     // second arrival must not restart it.
     const row = db
-      .prepare<
-        [string],
-        { unread_since: number }
-      >("SELECT unread_since FROM conversation_read_state WHERE conversation_id = ?")
+      .prepare<[string], { unread_since: number }>(
+        "SELECT unread_since FROM conversation_read_state WHERE conversation_id = ?",
+      )
       .get("conv-a");
     expect(row?.unread_since).toBe(1_000);
   });
@@ -66,10 +65,9 @@ describe("conversation read state", () => {
     markConversationOpened(db, "conv-a");
     recordAgentMessage(db, "conv-a", 3_000);
     const row = db
-      .prepare<
-        [string],
-        { unread_since: number }
-      >("SELECT unread_since FROM conversation_read_state WHERE conversation_id = ?")
+      .prepare<[string], { unread_since: number }>(
+        "SELECT unread_since FROM conversation_read_state WHERE conversation_id = ?",
+      )
       .get("conv-a");
     expect(row?.unread_since).toBe(3_000);
   });

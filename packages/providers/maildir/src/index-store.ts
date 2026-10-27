@@ -122,8 +122,7 @@ export class MaildirIndex {
 
   private meta(key: string): string | undefined {
     const row = this.db.prepare("SELECT v FROM meta WHERE k = ?").get(key) as
-      | { v: string }
-      | undefined;
+      { v: string } | undefined;
     return row?.v;
   }
 

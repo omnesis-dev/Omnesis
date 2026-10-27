@@ -280,8 +280,7 @@ export async function bootBriefs(deps: {
    */
   morningBrief?: {
     getConversationPort():
-      | import("./observations/morning-brief.js").MorningBriefConversationPort
-      | null;
+      import("./observations/morning-brief.js").MorningBriefConversationPort | null;
   };
   /**
    * Top-level interactive-session write access (experimental). When present and
@@ -573,10 +572,9 @@ export async function bootBriefs(deps: {
           if (payload.focus !== "knowledge-maintenance" || typeof payload.batchId !== "string")
             return runtimeSeams.validateRun?.(run) ?? null;
           const batch = rq.db
-            .prepare<
-              [string, string],
-              { status: string }
-            >("SELECT status FROM knowledge_batches WHERE id=? AND run_id=?")
+            .prepare<[string, string], { status: string }>(
+              "SELECT status FROM knowledge_batches WHERE id=? AND run_id=?",
+            )
             .get(payload.batchId, run.id);
           return batch?.status === "completed" || batch?.status === "abandoned"
             ? null
@@ -902,8 +900,7 @@ async function observationRuntimeDeps(
     writeGate: WriteGate;
     morningBrief?: {
       getConversationPort():
-        | import("./observations/morning-brief.js").MorningBriefConversationPort
-        | null;
+        import("./observations/morning-brief.js").MorningBriefConversationPort | null;
     };
   },
   log: Logger,

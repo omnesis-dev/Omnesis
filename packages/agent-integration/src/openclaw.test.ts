@@ -2161,8 +2161,8 @@ async function startedService(fake: ReturnType<typeof api>) {
     })}\n`,
   );
   let starter:
-    | ((context: { delivery: SubscriptionDelivery; binding: null }) => Promise<unknown>)
-    | null = null;
+    ((context: { delivery: SubscriptionDelivery; binding: null }) => Promise<unknown>) | null =
+    null;
   vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(function (this: unknown) {
     // The starter is the delivery client's only way into the plugin, so a
     // test that drives a wake has to take the same entry point.

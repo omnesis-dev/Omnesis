@@ -49,11 +49,7 @@ export const SECRET_STORE_BACKENDS = [
 
 export type SecretStoreBackend = (typeof SECRET_STORE_BACKENDS)[number];
 export type ResolvedSecretStoreBackend =
-  | "macos-keychain"
-  | "secret-service"
-  | "passphrase"
-  | "file"
-  | "unavailable";
+  "macos-keychain" | "secret-service" | "passphrase" | "file" | "unavailable";
 
 /** Environment/credential sources for the `passphrase` backend, in priority order. */
 export const PASSPHRASE_ENV = "OMNESIS_KEYRING_PASSPHRASE";

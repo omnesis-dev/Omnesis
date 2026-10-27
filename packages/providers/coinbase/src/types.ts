@@ -78,12 +78,7 @@ export interface CoinbaseAccountsResponse {
  * upstream id and only fetch rows newer than a persisted watermark.
  */
 export type CoinbasePhase =
-  | "snapshot-balances"
-  | "snapshot-holdings"
-  | "orders"
-  | "fills"
-  | "transactions"
-  | "incremental";
+  "snapshot-balances" | "snapshot-holdings" | "orders" | "fills" | "transactions" | "incremental";
 
 export interface CoinbaseCursor extends SyncCursor {
   phase: CoinbasePhase;

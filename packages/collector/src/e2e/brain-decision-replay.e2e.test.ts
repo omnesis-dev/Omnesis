@@ -96,10 +96,9 @@ describe("persisted legacy worth decisions: cassette recovery", () => {
     for (const id of ids.values())
       expect((await bench.obs.interpretationForSource(id)).kind).toBe("synthesis");
     const decisions = bench.sql
-      .prepare<
-        [],
-        { purpose: string; score: number | null }
-      >("SELECT purpose,score FROM knowledge_decisions")
+      .prepare<[], { purpose: string; score: number | null }>(
+        "SELECT purpose,score FROM knowledge_decisions",
+      )
       .all();
     expect(decisions.some((entry) => entry.purpose === "discovery")).toBe(true);
     expect(decisions.every((entry) => entry.score === null)).toBe(true);

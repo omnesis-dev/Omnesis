@@ -933,8 +933,7 @@ export const writerHandlers = {
   "people.bootstrapSelfFromConfig": (
     db: Db,
     configSelf:
-      | { name?: string; emails?: readonly string[]; phones?: readonly string[] }
-      | undefined,
+      { name?: string; emails?: readonly string[]; phones?: readonly string[] } | undefined,
   ): string | null => reconcileSelfFromConfig(db, configSelf),
   "people.mergePeople": (db: Db, winnerId: string, loserId: string): void => {
     mergePeople(db, winnerId, loserId);

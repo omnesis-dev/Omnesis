@@ -52,8 +52,7 @@ const integrationMocks = vi.hoisted(() => ({
 /** The `client_name` the last OAuth authorization would have registered. */
 function registeredClientName(): string | undefined {
   const provider = integrationMocks.authorizeOAuth.mock.lastCall?.[0] as
-    | IntegrationOAuthProvider
-    | undefined;
+    IntegrationOAuthProvider | undefined;
   return provider?.clientMetadata.client_name;
 }
 

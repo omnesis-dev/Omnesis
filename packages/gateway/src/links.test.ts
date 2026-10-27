@@ -102,10 +102,9 @@ function getDocId(db: Db, externalId: string): string {
 
 function getSourceUrl(db: Db, externalId: string): string | null {
   const row = db
-    .prepare<
-      [string],
-      { source_url: string | null }
-    >("SELECT source_url FROM documents WHERE external_id = ?")
+    .prepare<[string], { source_url: string | null }>(
+      "SELECT source_url FROM documents WHERE external_id = ?",
+    )
     .get(externalId);
   return row?.source_url ?? null;
 }
@@ -197,10 +196,9 @@ describe("processDocumentLinks — preserved link types", () => {
     );
 
     const row = db
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM document_links WHERE source_doc_id = ? AND link_type = 'cited'")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM document_links WHERE source_doc_id = ? AND link_type = 'cited'",
+      )
       .get(ownerId);
     expect(row?.c).toBe(1);
   });
@@ -239,10 +237,9 @@ describe("processDocumentLinks — preserved link types", () => {
     );
 
     const byType = db
-      .prepare<
-        [string],
-        { link_type: string; n: number }
-      >("SELECT link_type, COUNT(*) AS n FROM document_links WHERE source_doc_id = ? GROUP BY link_type")
+      .prepare<[string], { link_type: string; n: number }>(
+        "SELECT link_type, COUNT(*) AS n FROM document_links WHERE source_doc_id = ? GROUP BY link_type",
+      )
       .all(ownerId);
     const m = new Map(byType.map((r) => [r.link_type, r.n]));
     expect(m.get("cited")).toBe(1);
@@ -708,10 +705,9 @@ describe("processDocumentLinks", () => {
     reconcileUnresolvedLinks(db, 1000);
 
     const row = db
-      .prepare<
-        [string],
-        { links_extracted_at: string | null }
-      >("SELECT links_extracted_at FROM documents WHERE id = ?")
+      .prepare<[string], { links_extracted_at: string | null }>(
+        "SELECT links_extracted_at FROM documents WHERE id = ?",
+      )
       .get(docId);
     expect(row!.links_extracted_at).not.toBeNull();
   });
@@ -733,10 +729,9 @@ describe("processDocumentLinks", () => {
     reconcileUnresolvedLinks(db, 1000);
 
     const row = db
-      .prepare<
-        [string],
-        { links_extracted_at: string | null }
-      >("SELECT links_extracted_at FROM documents WHERE id = ?")
+      .prepare<[string], { links_extracted_at: string | null }>(
+        "SELECT links_extracted_at FROM documents WHERE id = ?",
+      )
       .get(docId);
     expect(row!.links_extracted_at).not.toBeNull();
   });
@@ -1074,10 +1069,9 @@ describe("reconcileUnresolvedLinks", () => {
     expect(() => computeLinkResolutions(db, 50, [])).not.toThrow();
     expect(computeLinkResolutions(db, 50, []).resolutions).toContainEqual({
       linkId: db
-        .prepare<
-          [],
-          { id: number }
-        >("SELECT id FROM document_links WHERE link_type = 'future-edge-kind'")
+        .prepare<[], { id: number }>(
+          "SELECT id FROM document_links WHERE link_type = 'future-edge-kind'",
+        )
         .get()!.id,
       targetDocId: null,
     });
@@ -1298,10 +1292,9 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
     upsertLinkResolutions(db, wrap);
     expect(
       db
-        .prepare<
-          [],
-          { cursor: number; max: number; cycles: number }
-        >("SELECT cursor, url_cycle_max_id AS max, cycle_count AS cycles FROM link_reconcile_state WHERE id = 1")
+        .prepare<[], { cursor: number; max: number; cycles: number }>(
+          "SELECT cursor, url_cycle_max_id AS max, cycle_count AS cycles FROM link_reconcile_state WHERE id = 1",
+        )
         .get(),
     ).toEqual({ cursor: 0, max: 0, cycles: 1 });
 
@@ -1378,10 +1371,9 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
 
     expect(upsertLinkResolutions(db, batch)).toEqual({ updated: 0, deleted: 0, retargeted: 0 });
     const stored = db
-      .prepare<
-        [string],
-        { target_doc_id: string | null }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { target_doc_id: string | null }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .get(sourceId);
     expect(stored?.target_doc_id).toBeNull();
   });
@@ -1455,17 +1447,15 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
     let calls = 0;
     for (;;) {
       const before = db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL",
+        )
         .get()!.n;
       const result = upsertLinkResolutionsYieldable(db, input, { token });
       const after = db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL",
+        )
         .get()!.n;
       expect(after - before).toBeLessThanOrEqual(LINK_RECONCILE_APPLY_CHUNK_SIZE);
       calls += 1;
@@ -1481,10 +1471,9 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
     expect(calls).toBeGreaterThan(2);
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL",
+        )
         .get()!.n,
     ).toBe(resolutions.length);
     expect(
@@ -1533,10 +1522,9 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
     expect(stopped.updated).toBe(LINK_RECONCILE_APPLY_CHUNK_SIZE);
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL",
+        )
         .get()!.n,
     ).toBe(LINK_RECONCILE_APPLY_CHUNK_SIZE);
     expect(
@@ -1819,10 +1807,9 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
     ).run();
 
     const linkId = db
-      .prepare<
-        [string],
-        { id: number }
-      >("SELECT id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { id: number }>(
+        "SELECT id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .get(sourceId)!.id;
     // Advance the cursor well past the link so the cursor scan (1) returns
     // nothing for it this tick.
@@ -1983,10 +1970,9 @@ describe("retroactive URL ownership", () => {
     );
 
     const link = db
-      .prepare<
-        [string],
-        { id: number; target_doc_id: string | null }
-      >("SELECT id, target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { id: number; target_doc_id: string | null }>(
+        "SELECT id, target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .get(referrerId)!;
     const resolved = resolveExtractedLinks(
       db,
@@ -2203,10 +2189,9 @@ describe("retroactive URL ownership", () => {
     expect(getDocumentRefs(db, referrerId).outbound[0].targetDocId).toBeNull();
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+        )
         .get(referenceId)?.n,
     ).toBe(0);
   });
@@ -2230,10 +2215,9 @@ describe("retroactive URL ownership", () => {
     expect(getDocumentRefs(db, referrerId).outbound[0].targetDocId).toBe(ownerId);
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+        )
         .get(referenceId)?.n,
     ).toBe(0);
   });
@@ -2279,10 +2263,9 @@ describe("retroactive URL ownership", () => {
 
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+        )
         .get(captureId)?.n,
     ).toBe(0);
   });
@@ -2310,10 +2293,9 @@ describe("retroactive URL ownership", () => {
     upsertLinkResolutions(db, computeLinkResolutions(db, 50, fallbackPrefixes));
     expect(
       db
-        .prepare<
-          [string],
-          { target_doc_id: string | null }
-        >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+        .prepare<[string], { target_doc_id: string | null }>(
+          "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+        )
         .get(captureId),
     ).toBeUndefined();
 
@@ -2514,10 +2496,9 @@ describe("retroactive URL ownership", () => {
     const secondOwnerId = insertOwningDocument("race-owner-b");
     upsertLinkResolutions(db, computeLinkResolutions(db, 50, fallbackPrefixes));
     const current = db
-      .prepare<
-        [string],
-        { target_doc_id: string }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+      .prepare<[string], { target_doc_id: string }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+      )
       .get(captureId)!.target_doc_id;
     const alternate = current === firstOwnerId ? secondOwnerId : firstOwnerId;
 
@@ -2535,10 +2516,9 @@ describe("retroactive URL ownership", () => {
     upsertLinkResolutions(db, stale);
     expect(
       db
-        .prepare<
-          [string],
-          { target_doc_id: string }
-        >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'")
+        .prepare<[string], { target_doc_id: string }>(
+          "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'same-resource'",
+        )
         .get(captureId)?.target_doc_id,
     ).toBe(current);
   });
@@ -3070,10 +3050,9 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
 
       upsertExtractedLinksBatch(otherDb, batch);
       const refs = otherDb
-        .prepare<
-          [string],
-          { target_doc_id: string | null; link_type: string }
-        >("SELECT target_doc_id, link_type FROM document_links WHERE source_doc_id = ?")
+        .prepare<[string], { target_doc_id: string | null; link_type: string }>(
+          "SELECT target_doc_id, link_type FROM document_links WHERE source_doc_id = ?",
+        )
         .all(sourceDocId);
       expect(refs.some((r) => r.link_type === "references" && r.target_doc_id === targetId)).toBe(
         true,
@@ -3103,10 +3082,9 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
       upsertExtractedLinksBatch(otherDb, stripped);
 
       const refs = otherDb
-        .prepare<
-          [string],
-          { target_doc_id: string | null }
-        >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'")
+        .prepare<[string], { target_doc_id: string | null }>(
+          "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'",
+        )
         .all(sourceDocId);
       expect(refs).toHaveLength(1);
       expect(refs[0].target_doc_id).toBeNull();
@@ -3139,10 +3117,9 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
       upsertExtractedLinksBatch(otherDb, batch);
 
       const refs = otherDb
-        .prepare<
-          [string],
-          { target_doc_id: string | null }
-        >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'")
+        .prepare<[string], { target_doc_id: string | null }>(
+          "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'",
+        )
         .all(sourceDocId);
       expect(refs).toHaveLength(1);
       // Unresolved, never dangling.
@@ -3216,10 +3193,9 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
       expect(first.applied).toBe(0);
       expect(first.remaining.map((r) => r.docId)).toContain(docId);
       const markedEarly = yieldDb
-        .prepare<
-          [string],
-          { links_extracted_at: string | null }
-        >("SELECT links_extracted_at FROM documents WHERE id = ?")
+        .prepare<[string], { links_extracted_at: string | null }>(
+          "SELECT links_extracted_at FROM documents WHERE id = ?",
+        )
         .get(docId);
       expect(markedEarly?.links_extracted_at).toBeNull();
 
@@ -3286,18 +3262,16 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
 
     // Doc must remain unprocessed so the next periodic re-extracts.
     const row = db
-      .prepare<
-        [string],
-        { links_extracted_at: string | null }
-      >("SELECT links_extracted_at FROM documents WHERE id = ?")
+      .prepare<[string], { links_extracted_at: string | null }>(
+        "SELECT links_extracted_at FROM documents WHERE id = ?",
+      )
       .get(docId);
     expect(row!.links_extracted_at).toBeNull();
     // No links should have been inserted.
     const linkCount = db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?",
+      )
       .get(docId)!.n;
     expect(linkCount).toBe(0);
   });
@@ -3323,10 +3297,9 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
 
     // The pre-existing mark stays — we didn't overwrite it.
     const row = db
-      .prepare<
-        [string],
-        { links_extracted_at: string | null }
-      >("SELECT links_extracted_at FROM documents WHERE id = ?")
+      .prepare<[string], { links_extracted_at: string | null }>(
+        "SELECT links_extracted_at FROM documents WHERE id = ?",
+      )
       .get(docId);
     expect(row!.links_extracted_at).toBe("2026-01-01T00:00:00Z");
   });
@@ -3441,10 +3414,9 @@ describe("link_stats materialization", () => {
       )
       .get()!;
     const meta = d
-      .prepare<
-        [],
-        { needs_refresh: number; dirty_version: number }
-      >("SELECT needs_refresh, dirty_version FROM refresh_meta WHERE job = 'link_graph'")
+      .prepare<[], { needs_refresh: number; dirty_version: number }>(
+        "SELECT needs_refresh, dirty_version FROM refresh_meta WHERE job = 'link_graph'",
+      )
       .get()!;
     return { ...data, needs_refresh: meta.needs_refresh, dirty_version: meta.dirty_version };
   }
@@ -3551,10 +3523,9 @@ describe("link_stats materialization", () => {
       .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM document_links")
       .get()!.n;
     const directResolved = db
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL")
+      .prepare<[], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_links WHERE target_doc_id IS NOT NULL",
+      )
       .get()!.n;
 
     // Refresh the materialized path.
@@ -3573,10 +3544,9 @@ describe("link_stats mark-dirty audit (every mutation site bumps dirty_version)"
   // The dirty version now lives on refresh_meta.
   function ver(d: Db): number {
     return d
-      .prepare<
-        [],
-        { dirty_version: number }
-      >("SELECT dirty_version FROM refresh_meta WHERE job = 'link_graph'")
+      .prepare<[], { dirty_version: number }>(
+        "SELECT dirty_version FROM refresh_meta WHERE job = 'link_graph'",
+      )
       .get()!.dirty_version;
   }
 
@@ -4381,10 +4351,9 @@ describe("processDocumentLinks with URL canonicalizer (Fix 1)", () => {
     // The link normalized_target should be the canonical Drive URL —
     // `/edit` is stripped at extraction time via the canonicalizer.
     const linkRow = db
-      .prepare<
-        [string],
-        { normalized_target: string }
-      >("SELECT normalized_target FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string }>(
+        "SELECT normalized_target FROM document_links WHERE source_doc_id = ?",
+      )
       .get(messageId);
     expect(linkRow?.normalized_target).toBe("https://drive.google.com/file/d/116UrX");
   });
@@ -4469,10 +4438,9 @@ describe("processDocumentLinks with URL canonicalizer (Fix 1)", () => {
     );
 
     const links = db
-      .prepare<
-        [string],
-        { normalized_target: string }
-      >("SELECT normalized_target FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string }>(
+        "SELECT normalized_target FROM document_links WHERE source_doc_id = ?",
+      )
       .all(msgId);
     expect(links).toHaveLength(1);
     expect(links[0].normalized_target).toBe("https://drive.google.com/file/d/ABC");
@@ -4540,10 +4508,9 @@ describe("processDocumentLinks with URL canonicalizer (Fix 1)", () => {
 
     // Verify the extracted link is canonical.
     const linkRow = db
-      .prepare<
-        [string],
-        { normalized_target: string }
-      >("SELECT normalized_target FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string }>(
+        "SELECT normalized_target FROM document_links WHERE source_doc_id = ?",
+      )
       .get(messageId);
     expect(linkRow?.normalized_target).toBe("https://drive.google.com/file/d/DRIVE-RAW-1");
 
@@ -4602,10 +4569,9 @@ describe("processDocumentLinks with URL canonicalizer (Fix 1)", () => {
     processDocumentLinks(db, msgId, msg.content, msg.metadata, msg.sourceId, msg.externalId, null);
 
     const linkRow = db
-      .prepare<
-        [string],
-        { normalized_target: string; target_doc_id: string | null }
-      >("SELECT normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { normalized_target: string; target_doc_id: string | null }>(
+        "SELECT normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ?",
+      )
       .get(msgId);
     // The `/edit` survives normalization without a canonicalizer.
     expect(linkRow?.normalized_target).toBe("https://drive.google.com/file/d/ABC/edit");
@@ -4632,10 +4598,9 @@ describe("cursor-paginated URL reconciler (Fix 2)", () => {
     last_wrapped_at: string | null;
   } {
     return db
-      .prepare<
-        [],
-        { cursor: number; cycle_count: number; last_wrapped_at: string | null }
-      >("SELECT cursor, cycle_count, last_wrapped_at FROM link_reconcile_state WHERE id = 1")
+      .prepare<[], { cursor: number; cycle_count: number; last_wrapped_at: string | null }>(
+        "SELECT cursor, cycle_count, last_wrapped_at FROM link_reconcile_state WHERE id = 1",
+      )
       .get()!;
   }
 
@@ -4985,7 +4950,9 @@ describe("additive-only link extraction (best-effort content retention)", () => 
       .prepare<
         [string],
         { link_type: string; normalized_target: string; target_doc_id: string | null }
-      >("SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target")
+      >(
+        "SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target",
+      )
       .all(docId);
   }
 
@@ -5564,7 +5531,9 @@ describe("url-link storage gate", () => {
       .prepare<
         [string],
         { link_type: string; normalized_target: string; target_doc_id: string | null }
-      >("SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target")
+      >(
+        "SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target",
+      )
       .all(docId);
   }
 
@@ -5602,10 +5571,9 @@ describe("url-link storage gate", () => {
       expect(links.filter((l) => l.link_type === "url")).toHaveLength(0);
       expect(
         db
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM pending_edges WHERE source_doc_id = ?")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(*) AS count FROM pending_edges WHERE source_doc_id = ?",
+          )
           .get(docId)?.count ?? 0,
       ).toBe(0);
       const intra = links.filter((l) => l.link_type === "references");
@@ -5709,10 +5677,9 @@ describe("url-link storage gate", () => {
       expect(allLinks(docId).filter((l) => l.link_type === "url")).toHaveLength(0);
       expect(
         db
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM pending_edges WHERE source_doc_id = ?")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(*) AS count FROM pending_edges WHERE source_doc_id = ?",
+          )
           .get(docId)?.count ?? 0,
       ).toBe(0);
     });
@@ -5852,7 +5819,9 @@ describe("known-but-not-added source link survives the url-link storage gate", (
       .prepare<
         [string],
         { link_type: string; normalized_target: string; target_doc_id: string | null }
-      >("SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target")
+      >(
+        "SELECT link_type, normalized_target, target_doc_id FROM document_links WHERE source_doc_id = ? ORDER BY normalized_target",
+      )
       .all(docId);
   }
 
@@ -5908,10 +5877,9 @@ describe("known-but-not-added source link survives the url-link storage gate", (
     // 3. The periodic prune must NOT delete it — it could still resolve.
     const pruneBatch = computeLinkResolutions(db, 50);
     const linkId = db
-      .prepare<
-        [string],
-        { id: number }
-      >("SELECT id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { id: number }>(
+        "SELECT id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .get(emailId)!.id;
     expect(pruneBatch.deletableLinkIds).not.toContain(linkId);
     const { deleted } = upsertLinkResolutions(db, pruneBatch);
@@ -5980,10 +5948,9 @@ describe("references resolved through declared link keys", () => {
   function targetOf(sourceDocId: string): string | null {
     return (
       db
-        .prepare<
-          [string],
-          { target_doc_id: string | null }
-        >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'")
+        .prepare<[string], { target_doc_id: string | null }>(
+          "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'",
+        )
         .get(sourceDocId)?.target_doc_id ?? null
     );
   }
@@ -6045,10 +6012,9 @@ describe("duplicate-content edges whose other copy is deleted", () => {
 
   function edgesFrom(docId: string, type: string): Array<{ target: string | null }> {
     return db
-      .prepare<
-        [string, string],
-        { target: string | null }
-      >("SELECT target_doc_id AS target FROM document_links WHERE source_doc_id = ? AND link_type = ?")
+      .prepare<[string, string], { target: string | null }>(
+        "SELECT target_doc_id AS target FROM document_links WHERE source_doc_id = ? AND link_type = ?",
+      )
       .all(docId, type);
   }
 

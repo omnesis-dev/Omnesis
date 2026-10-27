@@ -190,10 +190,9 @@ export function searchRetiredLoopsLexical(
   }
   params.push(options.limit ?? 8);
   const rows = db
-    .prepare<
-      (string | number)[],
-      RetiredLoopDbRow
-    >(`SELECT * FROM retired_loops WHERE (${clause}) AND ${knowledgeOwnerReadPredicate(db, "retired_loops.id")} ORDER BY retired_at DESC LIMIT ?`)
+    .prepare<(string | number)[], RetiredLoopDbRow>(
+      `SELECT * FROM retired_loops WHERE (${clause}) AND ${knowledgeOwnerReadPredicate(db, "retired_loops.id")} ORDER BY retired_at DESC LIMIT ?`,
+    )
     .all(...params);
   return rows.map(rowToRetiredLoop);
 }

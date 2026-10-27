@@ -221,10 +221,9 @@ export function migrateV152AccessGrants(db: Db): void {
   // left behind; integrations retrieve the task through their principal.
   db.exec("DROP TABLE IF EXISTS answer_completion_authorities");
   const completionTokens = db
-    .prepare<
-      [],
-      { id: string; scopes: string }
-    >("SELECT id, scopes FROM tokens WHERE scopes LIKE '%answer:completion%'")
+    .prepare<[], { id: string; scopes: string }>(
+      "SELECT id, scopes FROM tokens WHERE scopes LIKE '%answer:completion%'",
+    )
     .all();
   const deleteToken = db.prepare("DELETE FROM tokens WHERE id = ?");
   for (const token of completionTokens) {

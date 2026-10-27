@@ -350,9 +350,9 @@ export function transitionObservation(
   args.push(id);
   return (
     db
-      .prepare<
-        Array<string | number | null>
-      >(`UPDATE observations SET ${sets.join(", ")} WHERE id = ? AND state IN ('live','held')`)
+      .prepare<Array<string | number | null>>(
+        `UPDATE observations SET ${sets.join(", ")} WHERE id = ? AND state IN ('live','held')`,
+      )
       .run(...args).changes > 0
   );
 }
@@ -366,9 +366,9 @@ export function setObservationUserAction(
 ): boolean {
   return (
     db
-      .prepare<
-        [string | null, number, string]
-      >("UPDATE observations SET user_action = ?, updated_at = ? WHERE id = ?")
+      .prepare<[string | null, number, string]>(
+        "UPDATE observations SET user_action = ?, updated_at = ? WHERE id = ?",
+      )
       .run(userAction, now, id).changes > 0
   );
 }

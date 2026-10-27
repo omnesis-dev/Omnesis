@@ -285,10 +285,9 @@ export function isAgentPairingCredentialActive(
  */
 export function isTokenActive(db: Db, tokenId: TokenId, deviceId: DeviceId): boolean {
   const row = db
-    .prepare<
-      [string, string],
-      { expires_at: number | null }
-    >("SELECT expires_at FROM tokens WHERE id = ? AND device_id = ?")
+    .prepare<[string, string], { expires_at: number | null }>(
+      "SELECT expires_at FROM tokens WHERE id = ? AND device_id = ?",
+    )
     .get(tokenId, deviceId);
   return !!row && (row.expires_at === null || row.expires_at >= now());
 }
@@ -673,9 +672,8 @@ export function cleanupExpiredSessions(db: Db): number {
 /** Read-side authority check for deferred device approvals. */
 export function isDeviceTokenActive(db: Db, id: TokenId, deviceId: DeviceId): boolean {
   return !!db
-    .prepare<
-      [string, string, number],
-      { active: number }
-    >("SELECT 1 AS active FROM tokens WHERE id = ? AND device_id = ? AND (expires_at IS NULL OR expires_at > ?)")
+    .prepare<[string, string, number], { active: number }>(
+      "SELECT 1 AS active FROM tokens WHERE id = ? AND device_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+    )
     .get(id, deviceId, Date.now());
 }

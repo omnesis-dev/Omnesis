@@ -89,8 +89,7 @@ interface DeviceListItem extends DeviceRecord {
    * this row would say so.
    */
   agentAuthorization?:
-    | { status: "authorized" }
-    | { status: "needs-reauthorization"; remedy: string };
+    { status: "authorized" } | { status: "needs-reauthorization"; remedy: string };
   /** Set when the device pins a certificate the gateway replaces or has replaced. */
   tlsTrust?:
     | { status: "pinned-renews"; renewsAt: string; remedy: string; updateFollows?: true }

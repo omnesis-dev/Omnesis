@@ -200,18 +200,16 @@ describe("gateway schema reconciliation", () => {
       expect(getErroredDocumentIds(db)).not.toContain("error-only-retired-page");
       expect(
         db
-          .prepare<
-            [],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM chunks WHERE document_id = 'retired-page'")
+          .prepare<[], { count: number }>(
+            "SELECT COUNT(*) AS count FROM chunks WHERE document_id = 'retired-page'",
+          )
           .get()?.count,
       ).toBe(0);
       expect(
         db
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM chunks_fts WHERE chunks_fts MATCH ?")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(*) AS count FROM chunks_fts WHERE chunks_fts MATCH ?",
+          )
           .get("retired")?.count,
       ).toBe(0);
       expect(
@@ -221,10 +219,9 @@ describe("gateway schema reconciliation", () => {
       ).toBe(1);
       expect(
         db
-          .prepare<
-            [],
-            { value: string }
-          >("SELECT value FROM index_meta WHERE key = 'gateway_schema_version_reconciled'")
+          .prepare<[], { value: string }>(
+            "SELECT value FROM index_meta WHERE key = 'gateway_schema_version_reconciled'",
+          )
           .get()?.value,
       ).toBe("70");
 
@@ -290,10 +287,9 @@ describe("indexed documents", () => {
     expect(markIndexedDocumentEvent(db, "doc-1", "source-event-b")).toBe(true);
     expect(
       db
-        .prepare<
-          [string],
-          { source_event_at: string; event_indexed_at: string }
-        >("SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?")
+        .prepare<[string], { source_event_at: string; event_indexed_at: string }>(
+          "SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?",
+        )
         .get("doc-1"),
     ).toEqual({
       source_event_at: "source-event-b",
@@ -351,10 +347,9 @@ describe("chunks", () => {
       },
     ]);
     const row = db
-      .prepare<
-        [string],
-        { embedding: Buffer | null }
-      >("SELECT embedding FROM chunks WHERE document_id = ?")
+      .prepare<[string], { embedding: Buffer | null }>(
+        "SELECT embedding FROM chunks WHERE document_id = ?",
+      )
       .get("doc-emb");
     expect(row).not.toBeNull();
     expect(row!.embedding).not.toBeNull();
@@ -702,35 +697,31 @@ describe("chunks", () => {
 
     // The deleted source's rows are gone
     const statsRow = db
-      .prepare<
-        [string],
-        { source_id: string }
-      >("SELECT source_id FROM source_index_stats WHERE source_id = ?")
+      .prepare<[string], { source_id: string }>(
+        "SELECT source_id FROM source_index_stats WHERE source_id = ?",
+      )
       .get("whatsapp:+1");
     expect(statsRow).toBeUndefined();
 
     const errorRow = db
-      .prepare<
-        [string],
-        { document_id: string }
-      >("SELECT document_id FROM indexing_errors WHERE source_id = ?")
+      .prepare<[string], { document_id: string }>(
+        "SELECT document_id FROM indexing_errors WHERE source_id = ?",
+      )
       .get("whatsapp:+1");
     expect(errorRow).toBeUndefined();
 
     // The other source is untouched
     const otherStats = db
-      .prepare<
-        [string],
-        { source_id: string }
-      >("SELECT source_id FROM source_index_stats WHERE source_id = ?")
+      .prepare<[string], { source_id: string }>(
+        "SELECT source_id FROM source_index_stats WHERE source_id = ?",
+      )
       .get("apple-notes");
     expect(otherStats?.source_id).toBe("apple-notes");
 
     const otherError = db
-      .prepare<
-        [string],
-        { document_id: string }
-      >("SELECT document_id FROM indexing_errors WHERE source_id = ?")
+      .prepare<[string], { document_id: string }>(
+        "SELECT document_id FROM indexing_errors WHERE source_id = ?",
+      )
       .get("apple-notes");
     expect(otherError?.document_id).toBe("doc-b");
   });
@@ -764,10 +755,9 @@ describe("chunks", () => {
     const gmailRowid = (): number =>
       (
         db
-          .prepare<
-            [],
-            { rowid: number }
-          >("SELECT rowid FROM chunks WHERE source_id = 'gmail:u@example.com'")
+          .prepare<[], { rowid: number }>(
+            "SELECT rowid FROM chunks WHERE source_id = 'gmail:u@example.com'",
+          )
           .get() as { rowid: number }
       ).rowid;
     const pendingRowids = (): number[] =>
@@ -794,10 +784,9 @@ describe("chunks", () => {
       });
       expect(
         db
-          .prepare<
-            [],
-            { c: number }
-          >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'x'")
+          .prepare<[], { c: number }>(
+            "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH 'x'",
+          )
           .get()?.c,
       ).toBe(0);
       expect(pendingRowids()).toEqual([rowid]);
@@ -932,18 +921,16 @@ describe("chunks", () => {
     expect(deleted).toBe(0);
 
     const statsRow = db
-      .prepare<
-        [string],
-        { source_id: string }
-      >("SELECT source_id FROM source_index_stats WHERE source_id = ?")
+      .prepare<[string], { source_id: string }>(
+        "SELECT source_id FROM source_index_stats WHERE source_id = ?",
+      )
       .get("whatsapp:+1");
     expect(statsRow).toBeUndefined();
 
     const errorRow = db
-      .prepare<
-        [string],
-        { document_id: string }
-      >("SELECT document_id FROM indexing_errors WHERE source_id = ?")
+      .prepare<[string], { document_id: string }>(
+        "SELECT document_id FROM indexing_errors WHERE source_id = ?",
+      )
       .get("whatsapp:+1");
     expect(errorRow).toBeUndefined();
   });
@@ -1036,10 +1023,9 @@ describe("indexing_errors", () => {
     recordIndexError(db, "doc-a", "gmail:a@b.com", "first");
     recordIndexError(db, "doc-a", "gmail:a@b.com", "second");
     const row = db
-      .prepare<
-        [string],
-        { attempts: number; error: string }
-      >("SELECT attempts, error FROM indexing_errors WHERE document_id = ?")
+      .prepare<[string], { attempts: number; error: string }>(
+        "SELECT attempts, error FROM indexing_errors WHERE document_id = ?",
+      )
       .get("doc-a");
     expect(row?.attempts).toBe(2);
     expect(row?.error).toBe("second");
@@ -1300,10 +1286,9 @@ describe("chunks_fts tokenizer migration", () => {
     ]);
     // Legacy tokenizer doesn't stem or fold — confirm baseline misses.
     const legacyStemHit = legacy
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
+      )
       .get("recipe");
     expect(legacyStemHit?.c ?? 0).toBe(0);
     legacy.close();
@@ -1320,18 +1305,16 @@ describe("chunks_fts tokenizer migration", () => {
 
     // Same query that missed under the legacy tokenizer now matches.
     const stemHit = migrated
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
+      )
       .get("recipe");
     expect(stemHit?.c ?? 0).toBeGreaterThanOrEqual(1);
 
     const accentHit = migrated
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
+      )
       .get("ceremonie");
     expect(accentHit?.c ?? 0).toBeGreaterThanOrEqual(1);
 
@@ -1367,10 +1350,9 @@ describe("chunks_fts tokenizer migration", () => {
 
     const reopened = createIndexDatabase(path);
     const hit = reopened
-      .prepare<
-        [string],
-        { c: number }
-      >("SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?")
+      .prepare<[string], { c: number }>(
+        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
+      )
       .get("recipe");
     expect(hit?.c).toBe(1);
     reopened.close();
@@ -1430,10 +1412,9 @@ describe("dual-index write — usearch stays in sync with chunks", () => {
     // The vector for chunk 0 is keyed by the chunk's SQLite rowid and is
     // findable by nearest-neighbour search on its own embedding.
     const rowid0 = db
-      .prepare<
-        [string, number],
-        { rowid: number }
-      >("SELECT rowid FROM chunks WHERE document_id = ? AND chunk_index = ?")
+      .prepare<[string, number], { rowid: number }>(
+        "SELECT rowid FROM chunks WHERE document_id = ? AND chunk_index = ?",
+      )
       .get("doc-1", 0)!.rowid;
     usearch.save();
     {
@@ -1503,10 +1484,9 @@ describe("index_totals integrity — floor and delta", () => {
 
     // Read the raw row to prove it clamped at zero rather than going negative.
     const row = db
-      .prepare<
-        [],
-        { total_indexed: number; total_chunks: number }
-      >("SELECT total_indexed, total_chunks FROM index_totals WHERE id = 1")
+      .prepare<[], { total_indexed: number; total_chunks: number }>(
+        "SELECT total_indexed, total_chunks FROM index_totals WHERE id = 1",
+      )
       .get();
     expect(row).toEqual({ total_indexed: 0, total_chunks: 0 });
   });

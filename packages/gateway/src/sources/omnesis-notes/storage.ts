@@ -215,10 +215,9 @@ export function insertNoteEntry(
         throw error;
       }
       const authorized = db
-        .prepare<
-          [string, string, number],
-          { scopes: string }
-        >(`SELECT tokens.scopes FROM tokens JOIN devices ON devices.id = tokens.device_id WHERE tokens.id = ? AND tokens.device_id = ? AND devices.kind = 'browser' AND devices.revoked_at IS NULL AND (tokens.expires_at IS NULL OR tokens.expires_at > ?)`)
+        .prepare<[string, string, number], { scopes: string }>(
+          `SELECT tokens.scopes FROM tokens JOIN devices ON devices.id = tokens.device_id WHERE tokens.id = ? AND tokens.device_id = ? AND devices.kind = 'browser' AND devices.revoked_at IS NULL AND (tokens.expires_at IS NULL OR tokens.expires_at > ?)`,
+        )
         .get(browserAuthority.tokenId, browserAuthority.deviceId, Date.now());
       if (
         !authorized ||
@@ -353,10 +352,9 @@ export function updateBrowserNoteEntry(db: Db, input: BrowserNoteEditInput): Bro
 export function notesDayDocumentId(db: Db, day: string): string | null {
   return (
     db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?",
+      )
       .get(day)?.id ?? null
   );
 }
@@ -404,10 +402,9 @@ export function applyNoteEntryTranscript(
   nowIso: string,
 ): { outcome: "replaced"; day: string } | { outcome: "changed" | "missing" } {
   const row = db
-    .prepare<
-      [string],
-      { day: string; text: string }
-    >(`SELECT day, text FROM note_entries WHERE id = ?`)
+    .prepare<[string], { day: string; text: string }>(
+      `SELECT day, text FROM note_entries WHERE id = ?`,
+    )
     .get(id);
   if (!row) return { outcome: "missing" };
   if (row.text !== expected) return { outcome: "changed" };
@@ -500,10 +497,9 @@ export function listNoteEntriesHistory(
  */
 export function listNoteEntriesForDay(db: Db, day: string): NoteEntry[] {
   const rows = db
-    .prepare<
-      [string],
-      NoteEntryRow
-    >(`SELECT * FROM note_entries WHERE day = ? ORDER BY captured_at, rowid`)
+    .prepare<[string], NoteEntryRow>(
+      `SELECT * FROM note_entries WHERE day = ? ORDER BY captured_at, rowid`,
+    )
     .all(day);
   return rows.map(rowToEntry);
 }

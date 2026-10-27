@@ -81,10 +81,9 @@ export function setSweepWatermark(db: Db, algoVersion: string, watermark: string
  */
 export function readLiveDfGeneration(db: Db, algoVersion: string): number {
   const row = db
-    .prepare<
-      [string],
-      { live_generation: number }
-    >("SELECT live_generation FROM near_dup_df_meta WHERE algo_version = ?")
+    .prepare<[string], { live_generation: number }>(
+      "SELECT live_generation FROM near_dup_df_meta WHERE algo_version = ?",
+    )
     .get(algoVersion);
   return row?.live_generation ?? 0;
 }
@@ -101,10 +100,9 @@ export function readLiveDfGeneration(db: Db, algoVersion: string): number {
  */
 export function nextDfGeneration(db: Db, algoVersion: string): number {
   const row = db
-    .prepare<
-      [string],
-      { highest: number | null }
-    >("SELECT MAX(generation) AS highest FROM near_dup_df WHERE algo_version = ?")
+    .prepare<[string], { highest: number | null }>(
+      "SELECT MAX(generation) AS highest FROM near_dup_df WHERE algo_version = ?",
+    )
     .get(algoVersion);
   return Math.max(row?.highest ?? 0, readLiveDfGeneration(db, algoVersion)) + 1;
 }
@@ -183,10 +181,9 @@ export function readNearDupDfMeta(db: Db): {
  */
 export function readNearDupDfBuiltAt(db: Db, algoVersion: string): number | null {
   const row = db
-    .prepare<
-      [string],
-      { built_at: number | null }
-    >(`SELECT built_at FROM near_dup_df_meta WHERE algo_version = ?`)
+    .prepare<[string], { built_at: number | null }>(
+      `SELECT built_at FROM near_dup_df_meta WHERE algo_version = ?`,
+    )
     .get(algoVersion);
   return row?.built_at ?? null;
 }

@@ -545,10 +545,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     await sleep(1500);
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
+        )
         .get(`data:doc:${docId}`)!.n,
     ).toBe(0);
 
@@ -625,10 +624,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     // One row for the document — the newer datum did NOT mint a second run,
     // and did not vanish either: the same row ran twice.
     const rowsForDoc = bench.sql
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
+      )
       .get(`data:doc:${foldDocId}`)!.n;
     expect(rowsForDoc).toBe(1);
 

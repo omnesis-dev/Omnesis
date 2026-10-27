@@ -159,10 +159,9 @@ describe("briefs waker drain", () => {
 
   function pendingRows(): Array<{ id: string; kind: string; status: string }> {
     return db
-      .prepare<
-        [],
-        { id: string; kind: string; status: string }
-      >("SELECT id, kind, status FROM cognition_runs")
+      .prepare<[], { id: string; kind: string; status: string }>(
+        "SELECT id, kind, status FROM cognition_runs",
+      )
       .all();
   }
 
@@ -464,10 +463,9 @@ describe("briefs waker drain", () => {
       outcome: { kind: "completed" },
     });
     const raw = db
-      .prepare<
-        [string],
-        { payload_json: string; status: string }
-      >("SELECT payload_json, status FROM cognition_runs WHERE id = ?")
+      .prepare<[string], { payload_json: string; status: string }>(
+        "SELECT payload_json, status FROM cognition_runs WHERE id = ?",
+      )
       .get(claimed.id)!;
     expect(raw.status).toBe("completed");
     // The criterion is no PRIOR-VERSION content: the pre-update snapshot
@@ -495,10 +493,9 @@ describe("briefs waker drain", () => {
       outcome: { kind: "failed", errorMessage: "backend down", terminal: true, nextAttemptAt: now },
     });
     const raw = db
-      .prepare<
-        [string],
-        { payload_json: string; status: string }
-      >("SELECT payload_json, status FROM cognition_runs WHERE id = ?")
+      .prepare<[string], { payload_json: string; status: string }>(
+        "SELECT payload_json, status FROM cognition_runs WHERE id = ?",
+      )
       .get(claimed.id)!;
     expect(raw.status).toBe("failed");
     // Same criterion as the completed case: prior-version content
@@ -648,10 +645,9 @@ describe("briefs waker drain", () => {
 
     function dueAt(): number {
       return db
-        .prepare<
-          [],
-          { next_attempt_at: number }
-        >("SELECT next_attempt_at FROM cognition_runs WHERE kind = 'data'")
+        .prepare<[], { next_attempt_at: number }>(
+          "SELECT next_attempt_at FROM cognition_runs WHERE kind = 'data'",
+        )
         .get()!.next_attempt_at;
     }
 

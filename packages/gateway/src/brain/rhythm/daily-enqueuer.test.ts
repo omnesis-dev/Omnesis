@@ -130,10 +130,9 @@ describe("daily enqueuer", () => {
 
   function pendingRuns(): { kind: string; dedupe_key: string | null; payload_json: string }[] {
     return db
-      .prepare<
-        [],
-        { kind: string; dedupe_key: string | null; payload_json: string }
-      >("SELECT kind, dedupe_key, payload_json FROM cognition_runs WHERE status = 'pending' ORDER BY dedupe_key")
+      .prepare<[], { kind: string; dedupe_key: string | null; payload_json: string }>(
+        "SELECT kind, dedupe_key, payload_json FROM cognition_runs WHERE status = 'pending' ORDER BY dedupe_key",
+      )
       .all();
   }
 

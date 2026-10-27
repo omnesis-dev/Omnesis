@@ -56,10 +56,9 @@ export function decisionPayloadErasureGeneration(db: Database.Database): number 
   if (!table(db, "knowledge_decision_privacy")) return -1;
   return (
     db
-      .prepare<
-        [],
-        { generation: number }
-      >("SELECT generation FROM knowledge_decision_privacy WHERE id=1")
+      .prepare<[], { generation: number }>(
+        "SELECT generation FROM knowledge_decision_privacy WHERE id=1",
+      )
       .get()?.generation ?? -1
   );
 }
@@ -166,10 +165,9 @@ export function createDecisionPayloadTables(db: Database.Database): void {
     );
     const old = table(db, "knowledge_decision_inputs")
       ? db
-          .prepare<
-            [],
-            { name: string; notnull: number }
-          >("PRAGMA table_info(knowledge_decision_inputs)")
+          .prepare<[], { name: string; notnull: number }>(
+            "PRAGMA table_info(knowledge_decision_inputs)",
+          )
           .all()
       : [];
     if (old.some((c) => c.name === "source_id" && c.notnull === 1)) {
@@ -308,10 +306,9 @@ export function readDecisionPayload(db: Database.Database, id: string) {
       )
       .get(id);
     const subjects = db
-      .prepare<
-        [string],
-        { kind: "source" | "node"; id: string }
-      >("SELECT kind,id FROM knowledge_decision_input_subjects WHERE decision_id=? LIMIT 257")
+      .prepare<[string], { kind: "source" | "node"; id: string }>(
+        "SELECT kind,id FROM knowledge_decision_input_subjects WHERE decision_id=? LIMIT 257",
+      )
       .all(id);
     if (
       !row ||

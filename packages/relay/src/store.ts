@@ -133,8 +133,7 @@ export class RelayStore {
 
   challengePlatform(id: string): RelayPlatform | null {
     const row = this.db.prepare("SELECT platform FROM relay_challenges WHERE id = ?").get(id) as
-      | { platform: RelayPlatform }
-      | undefined;
+      { platform: RelayPlatform } | undefined;
     return row?.platform ?? null;
   }
 

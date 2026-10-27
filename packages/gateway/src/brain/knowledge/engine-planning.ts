@@ -99,7 +99,9 @@ export class KnowledgeBatchPlanner {
         .prepare<
           unknown[],
           { title: string; content: string; contentHash: string; sourceRevision: string }
-        >(`SELECT title,content,content_hash AS contentHash,${knowledgeSourceRevisionSql()} AS sourceRevision FROM documents d WHERE id=? AND ${included.sql}`)
+        >(
+          `SELECT title,content,content_hash AS contentHash,${knowledgeSourceRevisionSql()} AS sourceRevision FROM documents d WHERE id=? AND ${included.sql}`,
+        )
         .get(item.subjectId, ...included.params);
       if (!source || source.sourceRevision !== item.inputRevision) continue;
       const decisionId = this.context.deps.decisions.record ? this.context.id("kd") : undefined;
@@ -295,10 +297,9 @@ export class KnowledgeBatchPlanner {
   async adoptOverlappingWork(batchId: string): Promise<void> {
     const cfg = this.context.deps.getSettings().knowledge;
     const existing = this.context.deps.db
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM knowledge_work WHERE batch_id=?")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM knowledge_work WHERE batch_id=?",
+      )
       .get(batchId)!.count;
     if (existing >= cfg.maxSeeds) return;
     // A retry of work a failed batch left unfinished stays alone.

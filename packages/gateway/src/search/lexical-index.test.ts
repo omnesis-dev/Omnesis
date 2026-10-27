@@ -248,10 +248,9 @@ describe("LexicalIndex", () => {
       chunk({ id: "c3", documentId: "d3", content: "marathon training" }),
     ]);
     const first = db
-      .prepare<
-        [],
-        { seq: number }
-      >("SELECT min(seq) AS seq FROM chunks_fts_changes WHERE chunk_rowid = 2")
+      .prepare<[], { seq: number }>(
+        "SELECT min(seq) AS seq FROM chunks_fts_changes WHERE chunk_rowid = 2",
+      )
       .get()!;
     db.prepare("DELETE FROM chunks_fts_changes WHERE seq <= ?").run(first.seq);
     expect(index.rank(db, "zephyr", 10)).toBeNull();

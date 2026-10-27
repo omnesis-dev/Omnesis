@@ -41,10 +41,9 @@ const MIGRATION_OBJECTS = new Set([
 
 function definitionsOf(db: Db): Record<string, string> {
   const rows = db
-    .prepare<
-      [],
-      { name: string; type: string; sql: string }
-    >("SELECT name, type, sql FROM sqlite_master WHERE tbl_name IN ('document_absences', 'document_absence_observations', 'document_absence_scopes', 'snapshot_absence_cascade_outbox', 'snapshot_absence_deletions') AND sql IS NOT NULL ORDER BY name")
+    .prepare<[], { name: string; type: string; sql: string }>(
+      "SELECT name, type, sql FROM sqlite_master WHERE tbl_name IN ('document_absences', 'document_absence_observations', 'document_absence_scopes', 'snapshot_absence_cascade_outbox', 'snapshot_absence_deletions') AND sql IS NOT NULL ORDER BY name",
+    )
     .all();
   // A column added by `ALTER TABLE` is spelled differently in `sqlite_master`
   // from the same column in a fresh CREATE, so tables compare by their column
@@ -91,10 +90,9 @@ describe("migration 138", () => {
     for (const table of TABLES) {
       expect(
         db
-          .prepare<
-            [string],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
           .get(table)?.name,
       ).toBe(table);
     }

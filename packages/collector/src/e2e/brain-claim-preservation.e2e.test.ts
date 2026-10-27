@@ -267,10 +267,9 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     .toBeDefined();
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
   const runs = bench.sql
-    .prepare<
-      [string],
-      { run_id: string }
-    >("SELECT DISTINCT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?")
+    .prepare<[string], { run_id: string }>(
+      "SELECT DISTINCT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?",
+    )
     .all(id);
   const tools = (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
   expect(
@@ -298,18 +297,16 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
   // Independent proof reviews may add revisions after the deliberate edit.
   // Every later revision must preserve the surviving claim and the removal.
   const revisions = bench.sql
-    .prepare<
-      [string],
-      { revision: number; markdown: string }
-    >("SELECT revision,markdown FROM knowledge_revisions WHERE node_id=? AND revision>=2 ORDER BY revision")
+    .prepare<[string], { revision: number; markdown: string }>(
+      "SELECT revision,markdown FROM knowledge_revisions WHERE node_id=? AND revision>=2 ORDER BY revision",
+    )
     .all(pageId);
   expect(revisions[0]?.revision).toBe(2);
   for (const revision of revisions) expect(revision.markdown).toBe(markup(id, false));
   const audit = bench.sql
-    .prepare<
-      [string],
-      { diff_json: string }
-    >("SELECT diff_json FROM knowledge_revisions WHERE node_id=? AND revision=2")
+    .prepare<[string], { diff_json: string }>(
+      "SELECT diff_json FROM knowledge_revisions WHERE node_id=? AND revision=2",
+    )
     .get(pageId)!;
   expect(JSON.parse(audit.diff_json).claimRemovals).toEqual([
     { id: "tools", reason: "Retired material-location section after review." },
@@ -533,10 +530,9 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
   });
   const reviews = (id: string) =>
     bench!.sql
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT count(*) AS count FROM knowledge_work WHERE subject_id=? AND reason='review' AND tier='soon' AND status='completed'")
+      .prepare<[string], { count: number }>(
+        "SELECT count(*) AS count FROM knowledge_work WHERE subject_id=? AND reason='review' AND tier='soon' AND status='completed'",
+      )
       .get(id)!.count;
   await bench.push(
     email({
@@ -591,10 +587,9 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
       .get(childId, parentId),
   ).toEqual({ kind: "part_of" });
   const runs = bench.sql
-    .prepare<
-      [],
-      { run_id: string }
-    >("SELECT run_id FROM knowledge_batches WHERE status='completed'")
+    .prepare<[], { run_id: string }>(
+      "SELECT run_id FROM knowledge_batches WHERE status='completed'",
+    )
     .all();
   const tools = (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
   const errors = tools.filter((step) => step.result?.kind === "error");
@@ -612,10 +607,9 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
   expect(tools.filter((step) => step.tool === "knowledge_link")).toHaveLength(1);
   for (const id of [parentId, childId]) {
     const latest = bench.sql
-      .prepare<
-        [string],
-        { diff_json: string }
-      >("SELECT diff_json FROM knowledge_revisions WHERE node_id=? ORDER BY revision DESC LIMIT 1")
+      .prepare<[string], { diff_json: string }>(
+        "SELECT diff_json FROM knowledge_revisions WHERE node_id=? ORDER BY revision DESC LIMIT 1",
+      )
       .get(id)!;
     expect(JSON.parse(latest.diff_json).placementAssessment.status).toBe("integrated");
   }

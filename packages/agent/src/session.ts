@@ -208,11 +208,10 @@ export class AgentSession {
     if (opts.initialHistory && opts.initialHistory.length > 0) {
       // Defensive copy: the caller may keep mutating its own copy
       // (we never do, but the API contract says we own the seed).
-      this.history = opts.initialHistory.map(
-        (m): ChatMessage =>
-          m.role === "user"
-            ? { role: "user", parts: [...m.parts] }
-            : { role: "assistant", parts: [...m.parts] },
+      this.history = opts.initialHistory.map((m): ChatMessage =>
+        m.role === "user"
+          ? { role: "user", parts: [...m.parts] }
+          : { role: "assistant", parts: [...m.parts] },
       );
       this.seedCitationsFromHistory();
     }

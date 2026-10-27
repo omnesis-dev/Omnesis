@@ -45,8 +45,7 @@ const SOURCES_DIR_KEY = "Sources";
  * single-DB layout.
  */
 export type ContactsStore =
-  | { kind: "open"; key: string; db: Db }
-  | { kind: "unavailable"; key: string; reason: string };
+  { kind: "open"; key: string; db: Db } | { kind: "unavailable"; key: string; reason: string };
 
 export class ContactsDbHelper implements AppleDbLifecycle {
   private readonly opened = new Map<string, Db>();

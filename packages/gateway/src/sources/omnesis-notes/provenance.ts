@@ -35,10 +35,9 @@ export class NotesProvenanceService {
       loops: [],
     };
     const document = this.db
-      .prepare<
-        [string, string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
+      .prepare<[string, string, string], { id: string }>(
+        "SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+      )
       .get(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID, day);
     if (!document) return result;
     result.documentId = document.id;

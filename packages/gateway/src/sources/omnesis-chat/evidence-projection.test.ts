@@ -41,10 +41,9 @@ async function setup() {
   stores.push(db);
   await directWriteGate(db).upsertDocuments([buildDocumentInput(record)]);
   const id = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM documents WHERE external_id='fictional-observatory'")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM documents WHERE external_id='fictional-observatory'",
+    )
     .get()!.id;
   return { db, id, rendered: renderConversation(record) };
 }

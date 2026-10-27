@@ -98,10 +98,9 @@ export function resolveKnowledgeReference(
 } {
   if (ref.kind === "source") {
     const deleted = db
-      .prepare<
-        [string],
-        { deleted: number }
-      >("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
+      .prepare<[string], { deleted: number }>(
+        "SELECT deleted FROM knowledge_source_revisions WHERE document_id=?",
+      )
       .get(ref.id);
     if (deleted?.deleted || !isKnowledgeEvidenceReadable(db, ref.id))
       throw unavailableKnowledgeReference(ref);
@@ -146,10 +145,9 @@ export function resolveKnowledgeReference(
     revision:
       ref.selector?.kind === "claim"
         ? db
-            .prepare<
-              [string, string],
-              { meaning_revision: number }
-            >("SELECT meaning_revision FROM knowledge_claims WHERE node_id=? AND id=?")
+            .prepare<[string, string], { meaning_revision: number }>(
+              "SELECT meaning_revision FROM knowledge_claims WHERE node_id=? AND id=?",
+            )
             .get(node.id, ref.selector.id)!.meaning_revision
         : node.meaning_revision,
     stale:
@@ -210,10 +208,9 @@ function referenceHasCurrentSupport(
   )
     return false;
   const supports = db
-    .prepare<
-      [string, string],
-      { ref: string; input_version_json: string }
-    >("SELECT ref,input_version_json FROM knowledge_dependencies WHERE node_id=? AND claim_id=? AND relation='supports'")
+    .prepare<[string, string], { ref: string; input_version_json: string }>(
+      "SELECT ref,input_version_json FROM knowledge_dependencies WHERE node_id=? AND claim_id=? AND relation='supports'",
+    )
     .all(target.targetId, ref.selector.id);
   const next = new Set(path);
   next.add(ref.raw);

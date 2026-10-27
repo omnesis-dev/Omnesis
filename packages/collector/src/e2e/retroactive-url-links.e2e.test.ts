@@ -333,10 +333,9 @@ describe("retroactive URL links across synthetic source arrival orders", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const row = db
-        .prepare<
-          [string],
-          { source_url: string }
-        >("SELECT source_url FROM documents WHERE external_id = ?")
+        .prepare<[string], { source_url: string }>(
+          "SELECT source_url FROM documents WHERE external_id = ?",
+        )
         .get("canonicalizer-worker-transport");
       expect(row?.source_url).toBe(canonicalUrl);
     } finally {

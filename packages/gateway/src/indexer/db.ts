@@ -106,10 +106,9 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
 
   const hadChunksFts =
     db
-      .prepare<
-        [],
-        { present: number }
-      >("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'")
+      .prepare<[], { present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'",
+      )
       .get()?.present === 1;
   db.exec(`
     CREATE TABLE IF NOT EXISTS chunks (
@@ -799,10 +798,9 @@ export function listIndexVersions(db: Db): IndexVersionRow[] {
 export function getBuildingIndexVersion(db: Db): IndexVersionRow | null {
   return (
     db
-      .prepare<
-        [],
-        IndexVersionRow
-      >("SELECT * FROM index_versions WHERE state = 'building' ORDER BY version ASC LIMIT 1")
+      .prepare<[], IndexVersionRow>(
+        "SELECT * FROM index_versions WHERE state = 'building' ORDER BY version ASC LIMIT 1",
+      )
       .get() ?? null
   );
 }
@@ -895,10 +893,9 @@ export function getBuildingEmbeddingsPage(
   limit: number,
 ): Array<{ chunk_rowid: number; embedding: Buffer }> {
   return db
-    .prepare<
-      [number, number],
-      { chunk_rowid: number; embedding: Buffer }
-    >("SELECT chunk_rowid, embedding FROM chunk_embeddings_building WHERE chunk_rowid > ? ORDER BY chunk_rowid LIMIT ?")
+    .prepare<[number, number], { chunk_rowid: number; embedding: Buffer }>(
+      "SELECT chunk_rowid, embedding FROM chunk_embeddings_building WHERE chunk_rowid > ? ORDER BY chunk_rowid LIMIT ?",
+    )
     .all(afterRowid, limit);
 }
 
@@ -1381,10 +1378,9 @@ export function setWatermark(db: Db, key: string, value: string): void {
 export function getIndexedDocument(db: Db, documentId: string): IndexedDocumentRow | null {
   return (
     db
-      .prepare<
-        [string],
-        IndexedDocumentRow
-      >("SELECT * FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], IndexedDocumentRow>(
+        "SELECT * FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId) ?? null
   );
 }
@@ -1408,10 +1404,9 @@ export function getIndexedContentHashes(db: Db, documentIds: string[]): Map<stri
     const chunk = documentIds.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        string[],
-        { document_id: string; content_hash: string }
-      >(`SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`)
+      .prepare<string[], { document_id: string; content_hash: string }>(
+        `SELECT document_id, content_hash FROM indexed_documents WHERE document_id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const r of rows) out.set(r.document_id, r.content_hash);
   }
@@ -1534,10 +1529,9 @@ export function adoptIndexedDocumentSourceEvent(
  */
 function nextIndexedEventAt(db: Db, proposed: string): string {
   const current = db
-    .prepare<
-      [],
-      { max_event_at: string | null }
-    >("SELECT MAX(event_indexed_at) AS max_event_at FROM indexed_documents")
+    .prepare<[], { max_event_at: string | null }>(
+      "SELECT MAX(event_indexed_at) AS max_event_at FROM indexed_documents",
+    )
     .get()?.max_event_at;
   if (!current || proposed > current) return proposed;
   const currentMs = Date.parse(current);
@@ -1839,10 +1833,9 @@ export function upsertChunksAndMarkIndexed(
   const txn = db.transaction(() => {
     // Check whether this is a new document or an update (re-index).
     const existing = db
-      .prepare<
-        [string],
-        { chunk_count: number }
-      >("SELECT chunk_count FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], { chunk_count: number }>(
+        "SELECT chunk_count FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId);
 
     upsertChunks(db, chunks, options);
@@ -1900,10 +1893,9 @@ export function upsertChunksAndMarkIndexedBatch(
     ) => {
       for (const { documentId, contentHash, chunks, isUpdate, sourceEventAt } of items) {
         const existing = db
-          .prepare<
-            [string],
-            { chunk_count: number }
-          >("SELECT chunk_count FROM indexed_documents WHERE document_id = ?")
+          .prepare<[string], { chunk_count: number }>(
+            "SELECT chunk_count FROM indexed_documents WHERE document_id = ?",
+          )
           .get(documentId);
 
         if (isUpdate) {
@@ -1962,16 +1954,14 @@ export function deleteChunksByDocument(
     // Capture the source_id before deleting chunks so we can adjust
     // per-source stats. All chunks for a document share the same source.
     const sourceRow = db
-      .prepare<
-        [string],
-        { source_id: string }
-      >("SELECT source_id FROM chunks WHERE document_id = ? LIMIT 1")
+      .prepare<[string], { source_id: string }>(
+        "SELECT source_id FROM chunks WHERE document_id = ? LIMIT 1",
+      )
       .get(documentId);
     const hadIndexedRow = db
-      .prepare<
-        [string],
-        { document_id: string }
-      >("SELECT document_id FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], { document_id: string }>(
+        "SELECT document_id FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId);
 
     const rowids = db
@@ -2040,10 +2030,9 @@ export function deleteChunksByDocumentBatch(
   let usearchRowids: bigint[] | undefined;
   const txn = db.transaction(() => {
     const chunkRows = db
-      .prepare<
-        [string, number],
-        { rowid: number; source_id: string }
-      >("SELECT rowid, source_id FROM chunks WHERE document_id = ? ORDER BY rowid LIMIT ?")
+      .prepare<[string, number], { rowid: number; source_id: string }>(
+        "SELECT rowid, source_id FROM chunks WHERE document_id = ? ORDER BY rowid LIMIT ?",
+      )
       .all(documentId, safeLimit + 1);
     if (!sourceDeleted && chunkRows.length <= safeLimit) {
       // Keep the final searchable rows and indexed_documents summary as a
@@ -2073,10 +2062,9 @@ export function deleteChunksByDocumentBatch(
 
     const remaining =
       db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM chunks WHERE document_id = ? LIMIT 1")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM chunks WHERE document_id = ? LIMIT 1",
+        )
         .get(documentId) !== undefined;
     complete = sourceDeleted && !remaining;
     if (complete) {
@@ -2201,9 +2189,9 @@ export function repointChunkSource(db: Db, documentIds: string[], newSourceId: s
       const slice = ids.slice(i, i + CHUNK);
       const placeholders = slice.map(() => "?").join(", ");
       changed += db
-        .prepare<
-          string[]
-        >(`UPDATE chunks SET source_id = ? WHERE source_id <> ? AND document_id IN (${placeholders})`)
+        .prepare<string[]>(
+          `UPDATE chunks SET source_id = ? WHERE source_id <> ? AND document_id IN (${placeholders})`,
+        )
         .run(newSourceId, newSourceId, ...slice).changes;
     }
   });
@@ -2445,10 +2433,9 @@ export function getIndexDateRangeBySource(
   db: Db,
 ): Record<string, { earliest: string; latest: string }> {
   const rows = db
-    .prepare<
-      [],
-      { source_id: string; earliest: string | null; latest: string | null }
-    >("SELECT source_id, earliest_source_date AS earliest, latest_source_date AS latest FROM source_index_stats")
+    .prepare<[], { source_id: string; earliest: string | null; latest: string | null }>(
+      "SELECT source_id, earliest_source_date AS earliest, latest_source_date AS latest FROM source_index_stats",
+    )
     .all();
   const result: Record<string, { earliest: string; latest: string }> = {};
   for (const row of rows) {
@@ -2536,10 +2523,9 @@ export function clearIndexError(db: Db, documentId: string): void {
 /** Per-source count of hard-failing (un-indexed) documents. */
 export function getIndexErrorCountsBySource(db: Db): Record<string, number> {
   const rows = db
-    .prepare<
-      [],
-      { source_id: string; count: number }
-    >("SELECT source_id, COUNT(*) AS count FROM indexing_errors WHERE severity = 'error' GROUP BY source_id")
+    .prepare<[], { source_id: string; count: number }>(
+      "SELECT source_id, COUNT(*) AS count FROM indexing_errors WHERE severity = 'error' GROUP BY source_id",
+    )
     .all();
   const result: Record<string, number> = {};
   for (const row of rows) result[row.source_id] = row.count;
@@ -2585,10 +2571,9 @@ export function getIndexStatsBySource(
   db: Db,
 ): Record<string, { indexedDocs: number; chunks: number }> {
   const cached = db
-    .prepare<
-      [],
-      { source_id: string; docs: number; chunks: number }
-    >("SELECT source_id, indexed_docs AS docs, chunks FROM source_index_stats")
+    .prepare<[], { source_id: string; docs: number; chunks: number }>(
+      "SELECT source_id, indexed_docs AS docs, chunks FROM source_index_stats",
+    )
     .all();
   if (cached.length > 0) {
     const result: Record<string, { indexedDocs: number; chunks: number }> = {};
@@ -2651,10 +2636,9 @@ export function refreshIndexStats(db: Db): void {
     }
 
     const totalsRow = db
-      .prepare<
-        [],
-        { docs: number; chunks: number }
-      >("SELECT COUNT(*) AS docs FROM indexed_documents")
+      .prepare<[], { docs: number; chunks: number }>(
+        "SELECT COUNT(*) AS docs FROM indexed_documents",
+      )
       .get();
     const totalIndexed = totalsRow?.docs ?? 0;
     const totalChunks = perSource.reduce((s, r) => s + Number(r.chunks), 0);

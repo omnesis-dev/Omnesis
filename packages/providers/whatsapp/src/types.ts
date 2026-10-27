@@ -248,11 +248,7 @@ export interface SocketFactoryResult {
      */
     resyncAppState?: (
       collections: readonly (
-        | "critical_block"
-        | "critical_unblock_low"
-        | "regular_high"
-        | "regular_low"
-        | "regular"
+        "critical_block" | "critical_unblock_low" | "regular_high" | "regular_low" | "regular"
       )[],
       isInitialSync: boolean,
     ) => Promise<void>;

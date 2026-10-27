@@ -67,10 +67,9 @@ describe("replicated Apple source across real collector lifecycles", () => {
     const db = new SqliteDatabase(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM documents WHERE source_id = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
+        )
         .get(SOURCE_ID)!.count;
     } finally {
       db.close();
@@ -81,10 +80,9 @@ describe("replicated Apple source across real collector lifecycles", () => {
     try {
       return (
         db
-          .prepare<
-            [string, string],
-            { last_synced_at: string | null }
-          >("SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?")
+          .prepare<[string, string], { last_synced_at: string | null }>(
+            "SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?",
+          )
           .get(SOURCE_ID, deviceId)?.last_synced_at != null
       );
     } finally {

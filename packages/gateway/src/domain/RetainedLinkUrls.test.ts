@@ -69,10 +69,9 @@ describe("attached page links before capture", () => {
   }
   function edges() {
     return db
-      .prepare<
-        [],
-        { normalized_target: string; target_doc_id: string | null }
-      >("SELECT normalized_target, target_doc_id FROM document_links WHERE link_type = 'url'")
+      .prepare<[], { normalized_target: string; target_doc_id: string | null }>(
+        "SELECT normalized_target, target_doc_id FROM document_links WHERE link_type = 'url'",
+      )
       .all();
   }
   function extract() {

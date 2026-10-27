@@ -58,10 +58,9 @@ describe("Apple hybrid source mode transition", () => {
     try {
       return {
         sharedDocuments: db
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM documents WHERE source_id = ? AND stream_id = ''")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(*) AS count FROM documents WHERE source_id = ? AND stream_id = ''",
+          )
           .get(SOURCE_ID)!.count,
         cursors: db
           .prepare<[string], CursorRow>(

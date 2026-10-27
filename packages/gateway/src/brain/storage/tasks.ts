@@ -112,12 +112,7 @@ export type TaskCommandResult =
        * caller asked for already holds, so a client may treat it as applied.
        */
       reason:
-        | "not_found"
-        | "not_owned"
-        | "invalid"
-        | "already_done"
-        | "nothing_to_undo"
-        | "not_latest";
+        "not_found" | "not_owned" | "invalid" | "already_done" | "nothing_to_undo" | "not_latest";
       message: string;
     };
 
@@ -431,19 +426,17 @@ function undo(
   ) => number,
 ): TaskCommandResult {
   const entry = db
-    .prepare<
-      [number],
-      { loop_id: string; event_json: string | null }
-    >("SELECT loop_id, event_json FROM open_loop_ledger WHERE seq = ?")
+    .prepare<[number], { loop_id: string; event_json: string | null }>(
+      "SELECT loop_id, event_json FROM open_loop_ledger WHERE seq = ?",
+    )
     .get(command.seq);
   if (!entry?.event_json) return fail("nothing_to_undo", "that change cannot be undone");
   const event = JSON.parse(entry.event_json) as TaskEvent;
   if (event.kind === "undone") return fail("nothing_to_undo", "an undo cannot be undone");
   const later = db
-    .prepare<
-      [string, number],
-      { one: number }
-    >("SELECT 1 AS one FROM open_loop_ledger WHERE loop_id = ? AND seq > ? AND event_json IS NOT NULL LIMIT 1")
+    .prepare<[string, number], { one: number }>(
+      "SELECT 1 AS one FROM open_loop_ledger WHERE loop_id = ? AND seq > ? AND event_json IS NOT NULL LIMIT 1",
+    )
     .get(entry.loop_id, command.seq);
   if (later) return fail("not_latest", "a later change to this task has to be undone first");
   const loop = getOpenLoop(db, entry.loop_id);

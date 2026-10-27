@@ -62,8 +62,7 @@ describe("a source row gains a place for a declared account", () => {
 
     expect(columns()).toContain("account");
     const row = db.prepare("SELECT * FROM sources WHERE id = ?").get("gmail:maya@example.com") as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(row?.account_id).toBe("maya@example.com");
     expect(row?.enabled).toBe(1);
   });
@@ -84,8 +83,7 @@ describe("a source row gains a place for a declared account", () => {
     addSourceAccountDescriptor(db);
 
     const row = db.prepare("SELECT account FROM sources WHERE id = ?").get("things:local") as
-      | { account: unknown }
-      | undefined;
+      { account: unknown } | undefined;
     expect(row?.account).toBeNull();
   });
 

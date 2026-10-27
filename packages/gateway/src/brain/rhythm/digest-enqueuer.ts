@@ -72,8 +72,7 @@ export interface DigestEnqueuerDeps {
 }
 
 export type DigestEnqueuePassResult =
-  | { fired: true }
-  | { fired: false; reason: "disabled-window" | "already-ran" | "waiting" };
+  { fired: true } | { fired: false; reason: "disabled-window" | "already-ran" | "waiting" };
 
 /**
  * Whether every sweep that declares itself a digest prerequisite has fired for

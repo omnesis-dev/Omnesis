@@ -45,17 +45,15 @@ function workflowDisclosureMatches(
 ): boolean {
   const answerRevision =
     db
-      .prepare<
-        [string],
-        { revision: number }
-      >("SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?")
+      .prepare<[string], { revision: number }>(
+        "SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?",
+      )
       .get(workflowId)?.revision ?? 0;
   const existenceRevision =
     db
-      .prepare<
-        [string],
-        { revision: number }
-      >("SELECT revision FROM subscription_workflow_disclosure WHERE workflow_id = ?")
+      .prepare<[string], { revision: number }>(
+        "SELECT revision FROM subscription_workflow_disclosure WHERE workflow_id = ?",
+      )
       .get(workflowId)?.revision ?? 0;
   return (
     (expectedAnswerRevision === undefined || answerRevision === expectedAnswerRevision) &&

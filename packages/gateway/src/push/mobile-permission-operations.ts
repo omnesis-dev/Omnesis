@@ -53,11 +53,7 @@ import type { Db } from "../data/types.js";
 export type OwnedPermissionHealthResult =
   | {
       rejection:
-        | "source-not-found"
-        | "source-paused"
-        | "wrong-device"
-        | "not-phone"
-        | "report-expired";
+        "source-not-found" | "source-paused" | "wrong-device" | "not-phone" | "report-expired";
     }
   | {
       accepted: boolean;

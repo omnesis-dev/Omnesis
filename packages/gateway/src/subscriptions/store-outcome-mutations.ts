@@ -58,10 +58,9 @@ export function issueSubscriptionFiringOutcomeAuthority(
     if (!delivery) return { outcome: "not_found" } as const;
 
     const token = db
-      .prepare<
-        [string],
-        { scopes: string; expires_at: number | null }
-      >("SELECT scopes, expires_at FROM tokens WHERE id = ?")
+      .prepare<[string], { scopes: string; expires_at: number | null }>(
+        "SELECT scopes, expires_at FROM tokens WHERE id = ?",
+      )
       .get(input.tokenId);
     if (!token) return { outcome: "token_unavailable" } as const;
     let scopes: unknown;
@@ -140,10 +139,9 @@ export function recordSubscriptionFiringOutcome(
     if (authority.expires_at <= input.reportedAt) return { outcome: "expired" } as const;
 
     const existing = db
-      .prepare<
-        [string],
-        { runs: number; first_reported_at: number }
-      >("SELECT runs, first_reported_at FROM subscription_firing_outcomes WHERE firing_id = ?")
+      .prepare<[string], { runs: number; first_reported_at: number }>(
+        "SELECT runs, first_reported_at FROM subscription_firing_outcomes WHERE firing_id = ?",
+      )
       .get(input.firingId);
     // A firing is reported on once, or a handful of times when a deferred run
     // resumes. Past that the caller is looping, and each report is a write at

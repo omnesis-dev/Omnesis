@@ -81,10 +81,9 @@ export async function ensureConversationMemoryEvidence(
   const record = await deps.loadConversation(sessionId);
   if (!record) return null;
   const row = deps.readDb
-    .prepare<
-      [string, string, string],
-      { id: string; content: string | null }
-    >("SELECT id, content FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
+    .prepare<[string, string, string], { id: string; content: string | null }>(
+      "SELECT id, content FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+    )
     .get(OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID, sessionId);
   // The debouncer logs failures; never mistake an old document for a successful
   // synchronous flush. Quote checks still run again when an annotation writes.
@@ -102,10 +101,9 @@ export async function validateConversationAnnotationEvidence(
   quote: string,
 ): Promise<{ code: string; message: string } | null> {
   const row = deps.readDb
-    .prepare<
-      [string],
-      { provider_id: string; source_id: string; external_id: string }
-    >("SELECT provider_id, source_id, external_id FROM documents WHERE id = ?")
+    .prepare<[string], { provider_id: string; source_id: string; external_id: string }>(
+      "SELECT provider_id, source_id, external_id FROM documents WHERE id = ?",
+    )
     .get(documentId);
   if (!row || row.source_id !== OMNESIS_CHAT_SOURCE_ID) return null;
   const record =

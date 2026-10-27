@@ -1207,10 +1207,9 @@ describe("subscription routes", () => {
     const { app: answerApp } = await committedFiringAnswerApp("outcome_route");
     const firingId = "sfiring_outcome_route";
     const delivery = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM subscription_deliveries WHERE firing_id = ?")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM subscription_deliveries WHERE firing_id = ?",
+      )
       .get(firingId);
     const outcomeToken = createToken(
       db,

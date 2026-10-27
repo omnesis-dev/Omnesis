@@ -123,10 +123,9 @@ export function captureTemporalDocumentReceipt(
   const ids = [...new Set(documentIds as string[])].sort();
   return db.transaction(() => {
     const reset = db
-      .prepare<
-        [],
-        { generation: number }
-      >("SELECT generation FROM knowledge_temporal_epoch_reset WHERE id=1")
+      .prepare<[], { generation: number }>(
+        "SELECT generation FROM knowledge_temporal_epoch_reset WHERE id=1",
+      )
       .get();
     if (!reset) return null;
     const lookup = db.prepare<[string], { source_id: string; epoch: number }>(

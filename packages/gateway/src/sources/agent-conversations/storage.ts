@@ -144,10 +144,9 @@ export function listBucketMessages(db: Db, b: Bucket): AgentMessageRow[] {
 /** Distinct buckets present in the ledger — used for boot reconciliation. */
 export function listAllBuckets(db: Db): Bucket[] {
   const rows = db
-    .prepare<
-      [],
-      { harness: string; channel: string; chat_id: string; day: string }
-    >(`SELECT DISTINCT harness, channel, chat_id, day FROM agent_messages`)
+    .prepare<[], { harness: string; channel: string; chat_id: string; day: string }>(
+      `SELECT DISTINCT harness, channel, chat_id, day FROM agent_messages`,
+    )
     .all();
   return rows.map((r) => ({
     harness: r.harness,

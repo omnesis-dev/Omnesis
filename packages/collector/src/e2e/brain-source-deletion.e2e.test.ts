@@ -220,10 +220,9 @@ it("invalidates a page whose cited source is deleted, and a maintenance run reti
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
   expect(sourceId).toBe(await bench.docId("shed-labels"));
   const beforeDeletion = bench.sql
-    .prepare<
-      [string],
-      { revision: number; markdown: string }
-    >("SELECT revision,markdown FROM knowledge_nodes WHERE id=?")
+    .prepare<[string], { revision: number; markdown: string }>(
+      "SELECT revision,markdown FROM knowledge_nodes WHERE id=?",
+    )
     .get(pageId)!;
   expect(beforeDeletion.markdown).toBe(created(sourceId, supportId));
 
@@ -248,19 +247,17 @@ it("invalidates a page whose cited source is deleted, and a maintenance run reti
     .poll(
       () =>
         bench.sql
-          .prepare<
-            [string, number],
-            { revision: number; markdown: string; diff_json: string }
-          >("SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? AND revision>? AND validity='stale' ORDER BY revision LIMIT 1")
+          .prepare<[string, number], { revision: number; markdown: string; diff_json: string }>(
+            "SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? AND revision>? AND validity='stale' ORDER BY revision LIMIT 1",
+          )
           .get(pageId, beforeDeletion.revision),
       { timeout: 60_000 },
     )
     .toBeDefined();
   const invalidated = bench.sql
-    .prepare<
-      [string, number],
-      { revision: number; markdown: string; diff_json: string }
-    >("SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? AND revision>? AND validity='stale' ORDER BY revision LIMIT 1")
+    .prepare<[string, number], { revision: number; markdown: string; diff_json: string }>(
+      "SELECT revision,markdown,diff_json FROM knowledge_revisions WHERE node_id=? AND revision>? AND validity='stale' ORDER BY revision LIMIT 1",
+    )
     .get(pageId, beforeDeletion.revision)!;
   expect(invalidated.revision).toBe(beforeDeletion.revision + 1);
   expect(invalidated.markdown).toBe(beforeDeletion.markdown);
@@ -276,20 +273,18 @@ it("invalidates a page whose cited source is deleted, and a maintenance run reti
     .poll(
       () =>
         bench.sql
-          .prepare<
-            [string],
-            { withdrawn: number | null }
-          >("SELECT json_extract(fields_json,'$.withdrawn') AS withdrawn FROM knowledge_nodes WHERE id=?")
+          .prepare<[string], { withdrawn: number | null }>(
+            "SELECT json_extract(fields_json,'$.withdrawn') AS withdrawn FROM knowledge_nodes WHERE id=?",
+          )
           .get(pageId)?.withdrawn,
       { timeout: 120_000 },
     )
     .toBe(1);
   await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
   const retired = bench.sql
-    .prepare<
-      [string],
-      { revision: number; fields_json: string; markdown: string }
-    >("SELECT revision,fields_json,markdown FROM knowledge_nodes WHERE id=?")
+    .prepare<[string], { revision: number; fields_json: string; markdown: string }>(
+      "SELECT revision,fields_json,markdown FROM knowledge_nodes WHERE id=?",
+    )
     .get(pageId)!;
   expect(retired.revision).toBe(invalidated.revision + 1);
   expect(JSON.parse(retired.fields_json)).toMatchObject({
@@ -312,10 +307,9 @@ it("invalidates a page whose cited source is deleted, and a maintenance run reti
 
   // The retirement was the run's reviewed act, and it settled the page's work.
   const runId = bench.sql
-    .prepare<
-      [string],
-      { run_id: string }
-    >("SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON w.batch_id=b.id WHERE w.subject_id=? ORDER BY b.created_at DESC LIMIT 1")
+    .prepare<[string], { run_id: string }>(
+      "SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON w.batch_id=b.id WHERE w.subject_id=? ORDER BY b.created_at DESC LIMIT 1",
+    )
     .get(pageId)!.run_id;
   const steps = await bench.obs.executedTools(runId);
   expect(steps.filter((step) => step.tool === "knowledge_retire")).toEqual([

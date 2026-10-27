@@ -312,10 +312,9 @@ describe("open-loop repository", () => {
     function peopleRowCount(loopId: string): number {
       return (
         db
-          .prepare<
-            [string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM open_loop_people WHERE loop_id = ?")
+          .prepare<[string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM open_loop_people WHERE loop_id = ?",
+          )
           .get(loopId)?.n ?? 0
       );
     }

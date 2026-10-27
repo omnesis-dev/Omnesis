@@ -25,16 +25,14 @@ export function registerKnowledgeEvidence(
   return db.transaction(() => {
     assertKnowledgeRunFence(db, runFence);
     const doc = db
-      .prepare<
-        [string],
-        { content_hash: string; content: string }
-      >("SELECT content_hash,content FROM documents WHERE id=?")
+      .prepare<[string], { content_hash: string; content: string }>(
+        "SELECT content_hash,content FROM documents WHERE id=?",
+      )
       .get(input.documentId);
     const tombstone = db
-      .prepare<
-        [string],
-        { deleted: number }
-      >("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
+      .prepare<[string], { deleted: number }>(
+        "SELECT deleted FROM knowledge_source_revisions WHERE document_id=?",
+      )
       .get(input.documentId);
     if (!doc || tombstone?.deleted || !isKnowledgeEvidenceReadable(db, input.documentId))
       throw new KnowledgeStorageError("reference_invalid", "Evidence document does not exist");

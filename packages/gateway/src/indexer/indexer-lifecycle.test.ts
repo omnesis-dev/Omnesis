@@ -990,10 +990,9 @@ describe("IndexerLifecycle", () => {
       // The mid-crash document landed in the resumed generation: its
       // chunks.embedding was promoted to the new dimension at the flip.
       const promoted = idxDb
-        .prepare<
-          [],
-          { embedding: Buffer }
-        >("SELECT embedding FROM chunks WHERE document_id = 'd-5'")
+        .prepare<[], { embedding: Buffer }>(
+          "SELECT embedding FROM chunks WHERE document_id = 'd-5'",
+        )
         .get();
       expect(promoted?.embedding.byteLength).toBe(64 * 4);
 

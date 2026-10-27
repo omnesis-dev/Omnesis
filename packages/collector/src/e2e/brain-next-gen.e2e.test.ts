@@ -164,10 +164,9 @@ describe("next generation brain progressive maintenance", () => {
           .poll(
             () =>
               bench.sql
-                .prepare<
-                  [],
-                  { count: number }
-                >("SELECT COUNT(*) AS count FROM knowledge_organization_cohorts WHERE status='completed'")
+                .prepare<[], { count: number }>(
+                  "SELECT COUNT(*) AS count FROM knowledge_organization_cohorts WHERE status='completed'",
+                )
                 .get()!.count,
             { timeout: 120_000 },
           )
@@ -180,10 +179,9 @@ describe("next generation brain progressive maintenance", () => {
         arrivalRevision = await claimRevision("demo-gathering", "guest-arrival");
         expect(arrivalRevision).toBeDefined();
         originalSupplyHash = bench.sql
-          .prepare<
-            [string],
-            { content_hash: string }
-          >("SELECT content_hash FROM documents WHERE id=?")
+          .prepare<[string], { content_hash: string }>(
+            "SELECT content_hash FROM documents WHERE id=?",
+          )
           .get(documentIds.get("party-supplies")!)!.content_hash;
         expect(
           (await batches()).filter((entry) => entry.status === "completed").length,
@@ -207,10 +205,9 @@ describe("next generation brain progressive maintenance", () => {
       } else if (step.id === "same-document-edit") {
         expect(
           bench.sql
-            .prepare<
-              [string],
-              { content_hash: string }
-            >("SELECT content_hash FROM documents WHERE id=?")
+            .prepare<[string], { content_hash: string }>(
+              "SELECT content_hash FROM documents WHERE id=?",
+            )
             .get(documentIds.get("party-supplies")!)!.content_hash,
         ).not.toBe(originalSupplyHash);
         await expect

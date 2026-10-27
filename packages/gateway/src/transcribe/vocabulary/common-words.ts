@@ -13,8 +13,7 @@ export function normalizeVocabularyTerm(text: string): string {
 }
 
 let cachedLists:
-  | { languages: Map<string, ReadonlySet<string>>; allLanguages: ReadonlySet<string>[] }
-  | undefined;
+  { languages: Map<string, ReadonlySet<string>>; allLanguages: ReadonlySet<string>[] } | undefined;
 
 /** Standard calendar words come from locale data, never a private corpus. */
 function calendarVocabularyForms(language: string): Set<string> {

@@ -165,10 +165,9 @@ describe("AnswerCompletionDeliveryService", () => {
     for (let attempt = 0; attempt < 9; attempt += 1) {
       await delivery.drainOnce();
       now = db
-        .prepare<
-          { next_attempt_at: number },
-          []
-        >("SELECT next_attempt_at FROM answer_completion_deliveries WHERE id = 'delivery_completion'")
+        .prepare<{ next_attempt_at: number }, []>(
+          "SELECT next_attempt_at FROM answer_completion_deliveries WHERE id = 'delivery_completion'",
+        )
         .get()!.next_attempt_at;
     }
     expect(

@@ -1799,8 +1799,7 @@ function configWithAssignments(
     inference: {
       allowRemoteInference: opts?.allowRemoteInference,
       assignments: assignments as OmnesisConfig["inference"] extends
-        | { assignments?: infer A }
-        | undefined
+        { assignments?: infer A } | undefined
         ? A
         : never,
     },

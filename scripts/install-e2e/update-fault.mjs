@@ -309,7 +309,7 @@ function hardRetireUpdater(child, gate) {
         .map((s) => processIdentity(Number(s)))
         .filter(Boolean)
     : [];
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     for (const item of processes)
       if (descendants.has(item.parent) && !descendants.has(item.pid)) {

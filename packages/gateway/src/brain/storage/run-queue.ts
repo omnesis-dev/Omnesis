@@ -82,10 +82,9 @@ export function countDuePendingCognitionRuns(
 export function hasCognitionRunWithDedupeKey(db: Db, dedupeKey: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
+      )
       .get(dedupeKey)!.n > 0
   );
 }
@@ -374,10 +373,9 @@ export function enqueueCognitionRun(
 /** The pending row for a fold key, or null. */
 export function getPendingRunByDedupeKey(db: Db, dedupeKey: string): CognitionRunRow | null {
   const row = db
-    .prepare<
-      [string],
-      CognitionRunDbRow
-    >("SELECT * FROM cognition_runs WHERE dedupe_key = ? AND status = 'pending'")
+    .prepare<[string], CognitionRunDbRow>(
+      "SELECT * FROM cognition_runs WHERE dedupe_key = ? AND status = 'pending'",
+    )
     .get(dedupeKey);
   return row ? rowToRun(row) : null;
 }
@@ -776,10 +774,9 @@ function claimOneCognitionRun(db: Db, opts: ClaimCognitionRunsOpts): ClaimedCogn
     for (const row of history) insert.run(row.joint);
   }
   const history = db
-    .prepare<
-      [],
-      { joint: number; repair: number }
-    >("SELECT COALESCE(MAX(joint_work),0) AS joint,COALESCE(MAX(policy_repair),0) AS repair FROM cognition_synthesis_admissions")
+    .prepare<[], { joint: number; repair: number }>(
+      "SELECT COALESCE(MAX(joint_work),0) AS joint,COALESCE(MAX(policy_repair),0) AS repair FROM cognition_synthesis_admissions",
+    )
     .get()!;
   const preferJointWork = history.joint === 0;
   const preferPolicyRepair = history.repair === 0;
@@ -1087,10 +1084,9 @@ export function finalizeCognitionRun(db: Db, input: FinalizeCognitionRunInput): 
     const foldedInFlight =
       input.claimedPayloadJson !== undefined &&
       db
-        .prepare<
-          [string],
-          { payload_json: string }
-        >("SELECT payload_json FROM cognition_runs WHERE id = ?")
+        .prepare<[string], { payload_json: string }>(
+          "SELECT payload_json FROM cognition_runs WHERE id = ?",
+        )
         .get(input.runId)?.payload_json !== input.claimedPayloadJson;
     if (input.outcome.kind === "completed") {
       if (foldedInFlight) resurrectFoldedRun(db, input.runId, { now: input.now, debounceMs });
@@ -1389,10 +1385,9 @@ export function listCognitionRunsByDedupePrefix(db: Db, prefix: string): Cogniti
 /** Pending rows still under the attempts cap — the drainer's backlog gauge. */
 export function countPendingCognitionRuns(db: Db, maxAttempts: number): number {
   const row = db
-    .prepare<
-      [number],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND attempts < ?")
+    .prepare<[number], { n: number }>(
+      "SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND attempts < ?",
+    )
     .get(maxAttempts);
   return row?.n ?? 0;
 }

@@ -25,10 +25,9 @@ export function commitReauthReminderNotification(
   return db
     .transaction(() => {
       const authority = db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM reauth_reminders WHERE reservation_token = ?")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM reauth_reminders WHERE reservation_token = ?",
+        )
         .get(reservationToken);
       if (!authority) return null;
       validateEnqueueNotificationInput(notification);
@@ -53,10 +52,9 @@ export function commitMobilePermissionReminderNotification(
   return db
     .transaction(() => {
       const authority = db
-        .prepare<
-          [string, string],
-          { present: number }
-        >("SELECT 1 AS present FROM mobile_permission_health WHERE reservation_token = ? AND episode_id = ?")
+        .prepare<[string, string], { present: number }>(
+          "SELECT 1 AS present FROM mobile_permission_health WHERE reservation_token = ? AND episode_id = ?",
+        )
         .get(reservationToken, episodeId);
       if (!authority) return null;
       validateEnqueueNotificationInput(notification);

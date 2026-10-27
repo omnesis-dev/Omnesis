@@ -445,18 +445,16 @@ describe("MV3 background handoff", () => {
       jsonResponse(200, { ingested: 0, deleted: 0 }),
     ) as unknown as typeof fetch;
     const { listener, storage, createAlarm } = await startBackground(fetchImpl);
-    const emissions = ["one", "two", "three"].map(
-      (suffix): CaptureEmission => ({
-        kind: "re-extract",
-        normalizedUrl: `https://example.com/${suffix}`,
-        title: `Example ${suffix}`,
-        text: `Fictional ${suffix} body`,
-        contentHash: TEST_CONTENT_HASH,
-        visitedAt: "2026-01-01T00:00:00.000Z",
-        dwellMs: 5_000,
-        contentChanged: true,
-      }),
-    );
+    const emissions = ["one", "two", "three"].map((suffix): CaptureEmission => ({
+      kind: "re-extract",
+      normalizedUrl: `https://example.com/${suffix}`,
+      title: `Example ${suffix}`,
+      text: `Fictional ${suffix} body`,
+      contentHash: TEST_CONTENT_HASH,
+      visitedAt: "2026-01-01T00:00:00.000Z",
+      dwellMs: 5_000,
+      contentChanged: true,
+    }));
     await Promise.all(
       emissions.map(async (emission) =>
         sendMessage(listener, await boundCapture(emission), {

@@ -67,10 +67,9 @@ export function planSourceUrlRecanonicalization(
   const cycleMaxRowid =
     prior?.cycleMaxRowid ??
     db
-      .prepare<
-        [],
-        { maxRowid: number }
-      >("SELECT COALESCE(MAX(rowid), 0) AS maxRowid FROM documents")
+      .prepare<[], { maxRowid: number }>(
+        "SELECT COALESCE(MAX(rowid), 0) AS maxRowid FROM documents",
+      )
       .get()!.maxRowid;
   const cursor: SourceUrlRecanonicalizationCursor = {
     fingerprint,

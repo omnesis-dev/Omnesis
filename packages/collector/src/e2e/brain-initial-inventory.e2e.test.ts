@@ -46,7 +46,9 @@ it("keeps pre-existing inventory searchable while admitting new arrivals and edi
     .prepare<
       [],
       { externalId: string; sourceId: string; providerId: string; title: string; content: string }
-    >("SELECT external_id AS externalId,source_id AS sourceId,provider_id AS providerId,title,content FROM documents WHERE content IS NOT NULL LIMIT 1")
+    >(
+      "SELECT external_id AS externalId,source_id AS sourceId,provider_id AS providerId,title,content FROM documents WHERE content IS NOT NULL LIMIT 1",
+    )
     .get()!;
   const search = await bench.harness.gatewayJson<{ results: unknown[] }>(
     `/documents/search?q=${encodeURIComponent(existing.title)}&limit=1`,
@@ -123,17 +125,15 @@ it.each([
     expect(imported).toBeGreaterThan(0);
     expect(
       bench.sql
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM source_inventories WHERE completed_at IS NOT NULL")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM source_inventories WHERE completed_at IS NOT NULL",
+        )
         .get()!.count,
     ).toBeGreaterThan(0);
     const coverage = bench.sql
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM knowledge_discovery_coverage WHERE phase='organization' AND status='gated'")
+      .prepare<[], { count: number }>(
+        "SELECT COUNT(*) AS count FROM knowledge_discovery_coverage WHERE phase='organization' AND status='gated'",
+      )
       .get()!.count;
     if (discovers) {
       expect(coverage).toBeGreaterThan(0);

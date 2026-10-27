@@ -243,10 +243,9 @@ export function validateGrantRuleReferences(
   for (const rule of rules) {
     if (rule.policyFamilyId) {
       const family = db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+        )
         .get(rule.policyFamilyId);
       if (!family) throw new Error("Invalid privacy policy family.");
     }

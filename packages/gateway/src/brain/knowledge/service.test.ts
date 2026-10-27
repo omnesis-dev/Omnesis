@@ -1095,9 +1095,8 @@ it("correlates unavailable alternatives and proposal changes without exposing ta
   await brain.save({ ...input, expectedRevision: 1 });
   await brain.save({ ...input, expectedRevision: 2, title: "Proposed workshop" });
   const messages = warn.mock.calls.map(([message]) => message);
-  const fields = messages.map(
-    (message) =>
-      /target=([a-f0-9]{64}), fingerprint=([a-f0-9]{64}), evidence=(\d+\/\d+)/.exec(message)!,
+  const fields = messages.map((message) =>
+    /target=([a-f0-9]{64}), fingerprint=([a-f0-9]{64}), evidence=(\d+\/\d+)/.exec(message)!,
   );
   expect(fields).toHaveLength(6);
   expect(fields.map((field) => field[1])).toEqual(Array(6).fill(knowledgeHash([input.id, "date"])));

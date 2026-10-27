@@ -47,10 +47,9 @@ test("revokes service principals, grants and credentials once and leaves interac
 
   const revokedAt = (table: string) =>
     db
-      .prepare<
-        [],
-        { id: string; revoked_at: number | null }
-      >(`SELECT id, revoked_at FROM ${table} ORDER BY id`)
+      .prepare<[], { id: string; revoked_at: number | null }>(
+        `SELECT id, revoked_at FROM ${table} ORDER BY id`,
+      )
       .all();
   expect(revokedAt("access_principals")).toEqual([
     { id: "interactive-principal", revoked_at: null },
@@ -69,10 +68,9 @@ test("revokes service principals, grants and credentials once and leaves interac
   ]);
   const updatedAt = (table: string) =>
     db
-      .prepare<
-        [],
-        { id: string; updated_at: number }
-      >(`SELECT id, updated_at FROM ${table} ORDER BY id`)
+      .prepare<[], { id: string; updated_at: number }>(
+        `SELECT id, updated_at FROM ${table} ORDER BY id`,
+      )
       .all();
   expect(updatedAt("access_principals")).toEqual([
     { id: "interactive-principal", updated_at: 1 },

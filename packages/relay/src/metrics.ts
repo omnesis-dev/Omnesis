@@ -14,10 +14,7 @@ export type WakeResult = "sent" | "failed";
 export type CarrierOutcome = "success" | "failure";
 export type CarrierReason = "none" | CarrierDispatchErrorKind;
 export type WakeRejectionReason =
-  | "rate_limited"
-  | "unknown_credential"
-  | "bad_signature"
-  | "unknown_identity";
+  "rate_limited" | "unknown_credential" | "bad_signature" | "unknown_identity";
 export type AbuseEndpoint = "enrol" | "verify" | "wake";
 export type AbuseRejectionReason =
   | "source_rate"

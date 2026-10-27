@@ -196,10 +196,9 @@ export function documentsAwaitingTranscription(
 /** A pending note's audio; null when not queued. */
 export function readPendingVoiceNoteAudio(db: Db, noteId: string): Uint8Array | null {
   const row = db
-    .prepare<
-      [string],
-      { audio: Buffer }
-    >(`SELECT audio FROM voice_note_transcriptions WHERE note_id = ?`)
+    .prepare<[string], { audio: Buffer }>(
+      `SELECT audio FROM voice_note_transcriptions WHERE note_id = ?`,
+    )
     .get(noteId);
   return row ? new Uint8Array(row.audio) : null;
 }

@@ -93,10 +93,9 @@ describe("migration 64 — covering (person_id, source_id) index on document_peo
     runMigrations(db, { log: createLogger("test") });
 
     const rows = db
-      .prepare<
-        [],
-        { document_id: string; source_id: string | null }
-      >("SELECT document_id, source_id FROM document_people ORDER BY document_id")
+      .prepare<[], { document_id: string; source_id: string | null }>(
+        "SELECT document_id, source_id FROM document_people ORDER BY document_id",
+      )
       .all();
     expect(rows).toEqual([
       { document_id: "d1", source_id: "gmail:x@example.com" }, // backfilled

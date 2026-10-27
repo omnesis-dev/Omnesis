@@ -62,16 +62,14 @@ export function getKnowledgeWork(db: Database.Database, id: string): KnowledgeWo
 function assertCurrentWorkRevision(db: Database.Database, input: EnqueueKnowledgeWork): void {
   if (input.subjectKind === "source") {
     const live = db
-      .prepare<
-        [string],
-        { content_hash: string }
-      >(`SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d WHERE id=?`)
+      .prepare<[string], { content_hash: string }>(
+        `SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d WHERE id=?`,
+      )
       .get(input.subjectId);
     const tombstone = db
-      .prepare<
-        [string],
-        { deleted: number }
-      >("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
+      .prepare<[string], { deleted: number }>(
+        "SELECT deleted FROM knowledge_source_revisions WHERE document_id=?",
+      )
       .get(input.subjectId);
     if (!live && !tombstone?.deleted)
       throw new KnowledgeStorageError("reference_invalid", "Work source does not exist");
@@ -141,10 +139,9 @@ export function enqueueKnowledgeWork(
       if (parked) return parked;
     }
     const pending = db
-      .prepare<
-        [string, string, string],
-        KnowledgeWork
-      >(`SELECT ${projection} FROM knowledge_work WHERE subject_kind=? AND subject_id=? AND reason=? AND status='pending'`)
+      .prepare<[string, string, string], KnowledgeWork>(
+        `SELECT ${projection} FROM knowledge_work WHERE subject_kind=? AND subject_id=? AND reason=? AND status='pending'`,
+      )
       .get(input.subjectKind, input.subjectId, input.reason);
     if (pending) {
       const tier = ranks[input.tier] < ranks[pending.tier] ? input.tier : pending.tier;
@@ -319,10 +316,9 @@ export function historicalKnowledgeAdmissions(
   now: number,
 ): { total: number; today: number } {
   return db
-    .prepare<
-      [string],
-      { total: number; today: number }
-    >("SELECT COALESCE(SUM(count),0) AS total,COALESCE(SUM(CASE WHEN day=? THEN count ELSE 0 END),0) AS today FROM knowledge_historical_admissions")
+    .prepare<[string], { total: number; today: number }>(
+      "SELECT COALESCE(SUM(count),0) AS total,COALESCE(SUM(CASE WHEN day=? THEN count ELSE 0 END),0) AS today FROM knowledge_historical_admissions",
+    )
     .get(cognitionSpendDay(now))!;
 }
 
@@ -334,10 +330,9 @@ export function listPendingKnowledgeWorkWindow(
   if (!Number.isSafeInteger(limit) || limit < 1)
     throw new Error("Pending work limit must be positive");
   const rows = db
-    .prepare<
-      [number],
-      KnowledgeWork
-    >(`SELECT ${projection} FROM knowledge_work WHERE status='pending' ORDER BY due_at,created_at,id LIMIT ?`)
+    .prepare<[number], KnowledgeWork>(
+      `SELECT ${projection} FROM knowledge_work WHERE status='pending' ORDER BY due_at,created_at,id LIMIT ?`,
+    )
     .all(limit + 1);
   return { items: rows.slice(0, limit), hasMore: rows.length > limit };
 }
@@ -445,10 +440,9 @@ export function createKnowledgeBatch(
   db.transaction(() => {
     const fingerprint = batchFingerprint(input);
     const existing = db
-      .prepare<
-        [string],
-        { creation_fingerprint: string }
-      >("SELECT creation_fingerprint FROM knowledge_batches WHERE id=?")
+      .prepare<[string], { creation_fingerprint: string }>(
+        "SELECT creation_fingerprint FROM knowledge_batches WHERE id=?",
+      )
       .get(input.id);
     if (existing) {
       if (existing.creation_fingerprint !== fingerprint)
@@ -566,10 +560,9 @@ export function appendKnowledgeFrontier(
         ),
       );
       const existing = db
-        .prepare<
-          [string, string, string],
-          { input_versions_json: string }
-        >("SELECT input_versions_json FROM knowledge_frontier WHERE batch_id=? AND node_id=? AND input_fingerprint=?")
+        .prepare<[string, string, string], { input_versions_json: string }>(
+          "SELECT input_versions_json FROM knowledge_frontier WHERE batch_id=? AND node_id=? AND input_fingerprint=?",
+        )
         .get(batchId, item.nodeId, item.inputFingerprint);
       if (existing && existing.input_versions_json !== serialized)
         throw new KnowledgeStorageError(
