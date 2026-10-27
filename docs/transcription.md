@@ -63,7 +63,11 @@ records a `CapabilityVerdict`:
   since that is a server without the route (Ollama before 0.40, LM Studio);
 - `inconclusive` when there was no answer at all (a timeout, a refused
   connection, a URL the inference policy blocks). The probe waits up to a
-  minute because speaches loads the model on the first request.
+  minute because speaches loads the model on the first request. An
+  inconclusive verdict is reported but not cached: the assignment stays
+  usable (the backend answered its model list, and a failed transcription is
+  retried), and the backend re-probe task asks again on its active cadence
+  until the backend answers (`transcriberAwaitsVerification`).
 
 The verdict is cached per `(backend, model, role)` and dropped when the
 backend's address or key changes. It is used in three places:
@@ -72,7 +76,8 @@ backend's address or key changes. It is used in three places:
    for every assignment the body sets. A transcriber on a backend that
    answered it cannot transcribe is refused with HTTP 400 and the reason as
    `error`; the portal and `omnesis model assign` show that sentence. A
-   backend that gave no answer is let through. The portal checks before it
+   backend that gave no answer is let through and verified again later. The
+   portal checks before it
    writes, so the user sees "Checking that … can transcribe" and the refusal
    without a config write.
 2. **Resolution.** `resolveHttpAssignment` reads the cached verdict for the

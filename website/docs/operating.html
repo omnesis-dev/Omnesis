@@ -768,9 +768,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           the role is assigned to an HTTP backend, the gateway first asks it to transcribe one
           second of audio. A backend that answers it cannot, because the endpoint is missing or the
           model is unknown to it, is refused with its answer, in the portal and from
-          <code>omnesis model assign</code>; a backend that gives no answer is assigned and shows as
-          <em>configured, but unavailable</em> with the reason until it does. The Models page marks
-          a model the backend has refused, and <code>omnesis model status</code> prints the reason.
+          <code>omnesis model assign</code>; a backend that gives no answer, because it is still
+          loading its model, is assigned and asked again until it does. The Models page marks a
+          model the backend has refused, and <code>omnesis model status</code> prints the reason.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

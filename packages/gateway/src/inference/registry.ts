@@ -796,10 +796,9 @@ export class InferenceRegistry {
    * model, a rejected key) is refused with that answer, so the operator learns
    * it at assignment time rather than from a log line after voice notes have
    * gone untranscribed. A backend that gives no answer (down, still loading)
-   * is let through: the role then reads "configured, but unavailable" with
-   * the reason until a later verification succeeds. A backend the registry
-   * has not loaded yet (declared in the same config write) is let through
-   * too; the reload verifies it.
+   * is let through and stays usable; the re-probe task verifies it again
+   * until it answers. A backend the registry has not loaded yet (declared in
+   * the same config write) is let through too; the reload verifies it.
    */
   async vetAssignment(
     role: CapabilityRole,

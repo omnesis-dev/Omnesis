@@ -1011,7 +1011,7 @@ export function ModelsView({ section }) {
     // cannot (a chat-only server such as Ollama) is never written to the
     // config, so the role cannot show a green check for a model that will not
     // transcribe anything. A backend that gives no answer is assigned anyway
-    // and reads "configured, but unavailable" with the reason.
+    // and verified again by the gateway until it answers.
     if (role === "transcriber") {
       flashOk(`Checking that "${backendKey}" can transcribe with ${model}…`);
       let verdict;
