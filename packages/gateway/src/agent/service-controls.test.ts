@@ -302,6 +302,28 @@ it("interrupts once to send accumulated followups together and keeps receipts ac
   expect(record?.messages.filter((m) => m.role === "user")).toHaveLength(2);
 });
 
+it("keeps a queued turn interrupted by send now in the transcript without a retry", async () => {
+  const h = await setup();
+  const { sessionId } = await h.service.createSession("device:A");
+  await h.service.submitMessage("device:A", sessionId, request("a", "Summarize the report."));
+  await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["Summarize the report."]));
+  await h.service.submitMessage("device:A", sessionId, request("b", "Only the totals."));
+  await h.service.sendQueuedNow("device:A", sessionId, ["b"]);
+  await vi.waitFor(() =>
+    expect(h.turns.map((t) => t.text)).toEqual(["Summarize the report.", "Only the totals."]),
+  );
+  expect(h.service.conversationControls(sessionId).queuedMessages).toEqual([]);
+  h.turns[1]!.finish();
+  await vi.waitFor(async () =>
+    expect((await h.store.load(sessionId))?.controls?.submissions.map((s) => s.status)).toEqual([
+      "completed",
+      "completed",
+    ]),
+  );
+  const record = await h.store.load(sessionId);
+  expect(record?.messages.filter((m) => m.role === "user")).toHaveLength(2);
+});
+
 it("counts a session accepting durable work against the caller cap", async () => {
   const h = await setup(1);
   const { sessionId } = await h.service.createSession("device:A");

@@ -9,25 +9,31 @@ import {
   submissionInputSchema,
   type ConversationControlState,
 } from "./conversation-controls.js";
+import type { ConversationTurnReceipt } from "./voice-session.js";
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
     resolve = r;
   });
   return { promise, resolve };
 }
+const receipt = (
+  stopReason: ConversationTurnReceipt["stopReason"],
+  historyEnd = 2,
+): ConversationTurnReceipt => ({ messageId: "m", historyStart: 0, historyEnd, stopReason });
 function harness() {
   let busy = true;
   let available = true;
   let state: ConversationControlState = { submissions: [] };
   let durable: ConversationControlState = { submissions: [] };
-  const turns: ReturnType<typeof deferred>[] = [];
+  const turns: ReturnType<typeof deferred<ConversationTurnReceipt | void>>[] = [];
   const starts: string[] = [];
   const persist = vi.fn(async () => {
     durable = structuredClone(state);
   });
-  const cancel = vi.fn();
+  // Like the agent session, a cancel ends the running turn with a canceled receipt.
+  const cancel = vi.fn(() => turns.at(-1)?.resolve(receipt("canceled")));
   const controls = new ConversationControls({
     state: () => state,
     persist,
@@ -35,9 +41,9 @@ function harness() {
     available: () => available,
     start: async (_, s) => {
       starts.push(s.text);
-      const turn = deferred();
+      const turn = deferred<ConversationTurnReceipt | void>();
       turns.push(turn);
-      await turn.promise;
+      return turn.promise;
     },
     cancel,
   });
@@ -263,6 +269,40 @@ it("send now cancels after persistence and never cancels again once the batch st
   await vi.waitFor(() => expect(h.starts).toHaveLength(2));
   h.turns[1]!.resolve();
   await h.controls.settle();
+});
+
+it("send now on a later message retires the interrupted batch as delivered, not failed", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("a", "A"));
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["A"]));
+  await h.controls.submit("s", input("b", "B"));
+  await h.controls.sendNow("s", ["b"]);
+  await vi.waitFor(() => expect(h.starts).toEqual(["A", "B"]));
+  expect(h.durable().submissions.find((s) => s.id === "a")).toMatchObject({
+    status: "completed",
+    result: { stopReason: "canceled" },
+  });
+  expect(h.controls.snapshot("s").queuedMessages).toEqual([]);
+  h.turns[1]!.resolve(receipt("end_turn"));
+  await h.controls.settle();
+});
+
+it("offers a retry when the turn fails or stops before its message reaches the transcript", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("errored"));
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toHaveLength(1));
+  h.turns[0]!.resolve(receipt("error"));
+  await h.controls.settle();
+  await h.controls.submit("s", input("undelivered"));
+  await vi.waitFor(() => expect(h.starts).toHaveLength(2));
+  h.turns[1]!.resolve(receipt("canceled", 0));
+  await h.controls.settle();
+  expect(h.controls.snapshot("s").queuedMessages.map((s) => [s.id, s.status, s.error])).toEqual([
+    ["errored", "failed", expect.stringContaining("could not finish")],
+    ["undelivered", "failed", expect.stringContaining("could not finish")],
+  ]);
 });
 
 it("send now preserves the queue and question on failed persistence", async () => {

@@ -425,7 +425,10 @@ export class ConversationControls {
           },
           batch.map((item) => item.id),
         )) ?? undefined;
-      if (result && result.stopReason !== "end_turn") failed = true;
+      // A stopped turn whose message reached the transcript is delivered; retrying would duplicate it.
+      const delivered =
+        result?.stopReason === "canceled" && result.historyEnd > result.historyStart;
+      if (result && result.stopReason !== "end_turn" && !delivered) failed = true;
     } catch {
       failed = true;
     }
