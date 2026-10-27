@@ -10,7 +10,12 @@
  * the declared behavioral bundles), and the native, install, Docker, harness and
  * security lanes follow path rules for what each one covers. Anything the plan
  * cannot decide narrowly — a global toolchain input, an unsupported path, a
- * change to `packages/core`, or a planner failure — runs everything.
+ * change to `packages/core`, or a planner failure — runs every Linux lane. The
+ * macOS lanes (`MACOS_LANES`) run on a pull request only for the paths they
+ * cover: GitHub lends the repository a few macOS runners at a time, and `main`
+ * runs them on every push, so a platform-only regression a pull request could
+ * not see reddens `main` within the hour instead of queueing every pull
+ * request behind a Mac.
  *
  * `node scripts/nx/ci-scope.mjs` writes the decision to `$GITHUB_OUTPUT`;
  * `node scripts/nx/ci-scope.mjs static` runs the pull-request floor of format
@@ -20,6 +25,12 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync } from "node:fs";
 
 export const E2E_SHARDS = 8;
+/**
+ * The lanes that each take one of GitHub's few macOS runners: the macOS Node
+ * lane, the Swift linters and the iOS app, the Android screenshot goldens and
+ * the Mac installer scenarios. A pull request runs them by path rule only.
+ */
+export const MACOS_LANES = ["node_macos", "apple", "android_render", "installer_coverage"];
 /** Keep a scoped shard no longer than a full-suite shard (~160 files / 8). */
 const FILES_PER_SHARD = 20;
 export const EMBEDDER_E2E = [
@@ -64,6 +75,19 @@ export function fullScope(reason) {
   };
 }
 
+/**
+ * Every Linux lane of a pull request the plan cannot narrow, with the macOS
+ * lanes by the path rules of `files`. Without a file list (the planner and
+ * `git diff` both failed) the macOS lanes run: nothing says they are unneeded.
+ */
+export function pullRequestFullScope(reason, files) {
+  const scope = fullScope(reason);
+  if (files === null) return scope;
+  const paths = pathLanes(files);
+  for (const lane of MACOS_LANES) scope[lane] = String(paths[lane]);
+  return scope;
+}
+
 // Inputs every lane depends on, or that decide the selection itself: the
 // dependency manifests and lockfile, the root toolchain configs, the workflows,
 // the core package everything imports, and the check runners and planner.
@@ -87,6 +111,32 @@ const harnessPaths =
   /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/cli\/src\/uninstall\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
 const sourceCode = /\.(?:[cm]?[jt]sx?)$/;
 
+/** The lanes that follow path rules alone, from a pull request's changed files. */
+export function pathLanes(files) {
+  const deploys = any(files, deployment);
+  return {
+    node_macos: any(files, nodeMacOS),
+    apple: any(files, appleOnly),
+    android_render: any(files, /^android\//),
+    docker_image: deploys || any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/),
+    docker_smoke:
+      deploys ||
+      any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/) ||
+      any(
+        files,
+        /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
+      ),
+    install_smoke: deploys,
+    installer_coverage:
+      deploys ||
+      any(files, /^scripts\/install-e2e\//) ||
+      any(files, /^packages\/cli\/src\/commands\/(?:update|service)\./),
+    topology: deploys || any(files, /^scripts\/docker-topology\//),
+    docker_security:
+      deploys || any(files, /^scripts\/docker-e2e\//) || any(files, securitySensitive),
+  };
+}
+
 /** Split the selected E2E files round-robin across as few shards as keep each short. */
 export function e2eMatrix(files) {
   if (files.length === 0) return [];
@@ -105,9 +155,13 @@ export function e2eMatrix(files) {
  */
 export function pullRequestScope(files, plan, bundleFiles, projectCount) {
   if (plan.fallback)
-    return fullScope(`${plan.fallback.reason}: ${plan.fallback.paths.slice(0, 5).join(", ")}`);
+    return pullRequestFullScope(
+      `${plan.fallback.reason}: ${plan.fallback.paths.slice(0, 5).join(", ")}`,
+      files,
+    );
   const shared = files.filter((file) => sharedInputs.test(file));
-  if (shared.length) return fullScope(`shared input changed: ${shared.slice(0, 5).join(", ")}`);
+  if (shared.length)
+    return pullRequestFullScope(`shared input changed: ${shared.slice(0, 5).join(", ")}`, files);
 
   const projects = plan.affectedProjects;
   const e2eFiles = [
@@ -116,34 +170,15 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
     ),
   ];
   const sharded = e2eFiles.filter((file) => !EMBEDDER_E2E.includes(file));
-  const deploys = any(files, deployment);
   const lanes = {
+    ...pathLanes(files),
     unit: projects.length > 0,
     portal:
       projects.includes("@omnesis/gateway") ||
       any(files, /^(?:packages\/gateway\/|e2e\/|playwright\.config\.ts$)/),
     embedder: e2eFiles.some((file) => EMBEDDER_E2E.includes(file)),
-    node_macos: any(files, nodeMacOS),
     knip: any(files, sourceCode) || files.includes("knip.json"),
-    apple: any(files, appleOnly),
     android: any(files, /^android\//) || plan.bundles.some((name) => name.startsWith("android-")),
-    android_render: any(files, /^android\//),
-    docker_image: deploys || any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/),
-    docker_smoke:
-      deploys ||
-      any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/) ||
-      any(
-        files,
-        /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
-      ),
-    install_smoke: deploys,
-    installer_coverage:
-      deploys ||
-      any(files, /^scripts\/install-e2e\//) ||
-      any(files, /^packages\/cli\/src\/commands\/(?:update|service)\./),
-    topology: deploys || any(files, /^scripts\/docker-topology\//),
-    docker_security:
-      deploys || any(files, /^scripts\/docker-e2e\//) || any(files, securitySensitive),
     harness: projects.includes("@omnesis/agent-integration") || any(files, harnessPaths),
     security_static: any(files, sourceCode) || any(files, /^scripts\/security\//),
   };
@@ -176,8 +211,18 @@ export async function planScope(event = process.env.EVENT) {
       workspaceProjects().length,
     );
   } catch (error) {
-    return fullScope(`the affected plan could not be computed: ${error.message.split("\n")[0]}`);
+    return pullRequestFullScope(
+      `the affected plan could not be computed: ${error.message.split("\n")[0]}`,
+      changedFiles(),
+    );
   }
+}
+
+/** The merge commit's changed files against its first parent, or null when git cannot say. */
+function changedFiles() {
+  const diff = spawnSync("git", ["diff", "--name-only", "HEAD^1", "HEAD"], { encoding: "utf8" });
+  if (diff.status !== 0) return null;
+  return diff.stdout.split("\n").filter(Boolean);
 }
 
 /** Files the pull-request floor formats and lints: changed and still present. */

@@ -2157,6 +2157,8 @@ describe("full-validation workflow topology", () => {
     );
     expect(workflow.concurrency.group).toContain("github.event.pull_request.number");
     expect(workflow.concurrency.group).toContain("github.ref");
+    // Every push to main keeps its own run: a burst of merges leaves no commit untested.
+    expect(workflow.concurrency.group).toContain("github.sha");
     expect(workflow.concurrency.group).not.toContain("run_id");
     expect(workflow.permissions).toEqual({ contents: "read" });
     const called = Object.values(workflow.jobs)
