@@ -62,7 +62,11 @@ type BackfillOptions = {
   resumeAfterRowid?: number;
   /** Fired when a cold rebuild discards the graph and starts from the first chunk. */
   onRebuildStart?: () => void;
-  /** Save the partial graph at least this often while building. Default 60 s. */
+  /**
+   * Save the partial graph at least this often while building. Default 60 s;
+   * a timed interval stretches to ten times the cost of a save, and 0 saves
+   * after every page.
+   */
   checkpointIntervalMs?: number;
   /** Fired after each checkpoint save, including the final one. */
   onCheckpoint?: () => void;
@@ -558,7 +562,11 @@ export class UsearchWriteHandle {
         const savingSince = Date.now();
         this.checkpoint(opts);
         lastCheckpointAt = Date.now();
-        checkpointEvery = Math.max(checkpointEvery, (lastCheckpointAt - savingSince) * 10);
+        // An explicit interval of 0 asks for a checkpoint after every page
+        // (tests rely on it to kill a build at a known position); only a
+        // timed interval stretches with the cost of the save.
+        if (checkpointEvery > 0)
+          checkpointEvery = Math.max(checkpointEvery, (lastCheckpointAt - savingSince) * 10);
       }
       // Cooperative callers yield here. Deletions that land after this page
       // remove its vectors synchronously; keyset pagination means deleting
