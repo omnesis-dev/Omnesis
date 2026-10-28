@@ -54,9 +54,9 @@ enum RealtimeProtocol {
 
 /// Capability reads are read-only and use the same pinned gateway transport as chat.
 enum RealtimeCapability {
-    /// Realtime voice builds only into the demo app, which sets `OMNESIS_REALTIME_VOICE`.
-    /// Its live transport links WebRTC, whose BoringSSL is not Apple's encryption, so the
-    /// production app leaves the whole feature out rather than ship that library.
+    // Realtime voice builds only into the demo app, which sets `OMNESIS_REALTIME_VOICE`.
+    // Its live transport links WebRTC, whose BoringSSL is not Apple's encryption, so the
+    // production app leaves the whole feature out rather than ship that library.
     #if OMNESIS_REALTIME_VOICE
     static let includedInBuild = true
     #else

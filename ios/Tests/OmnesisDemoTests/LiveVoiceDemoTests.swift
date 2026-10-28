@@ -22,9 +22,9 @@ final class LiveVoiceDemoTests: XCTestCase {
         }
     }
 
-    func testDemoBuildOffersVoiceToAnExperimentalGatewayThatAdvertisesIt() async {
-        let pairing = Pairing(
-            url: URL(string: "https://gateway.example.com")!,
+    func testDemoBuildOffersVoiceToAnExperimentalGatewayThatAdvertisesIt() async throws {
+        let pairing = try Pairing(
+            url: XCTUnwrap(URL(string: "https://gateway.example.com")),
             token: "test-token",
             accountId: "test-account",
             deviceId: "test-device",
