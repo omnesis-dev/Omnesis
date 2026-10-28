@@ -17,6 +17,7 @@ import {
   type DurableStore,
 } from "@omnesis/extension";
 import { judgeCaptureUrl } from "@omnesis/provider-web/capture-policy";
+import { gatewayLogTail } from "./gateway-request.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /**
@@ -56,13 +57,25 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
  * real corpus.
  */
 
-/** Adapt Node's global fetch to the push module's minimal `FetchLike`. */
+/** The spawned gateway's log, set once it boots. */
+let gatewayLogPath: string | undefined;
+
+/**
+ * Adapt Node's global fetch to the push module's minimal `FetchLike`. A 5xx
+ * body is sanitized to a request id, so the gateway's own account of it is
+ * printed beside the failing test before teardown deletes the log.
+ */
 const nodeFetch: FetchLike = async (url, init) => {
   const res = await fetch(url, {
     method: init.method,
     headers: init.headers,
     body: init.method === "GET" ? undefined : init.body,
   });
+  if (res.status >= 500) {
+    process.stderr.write(
+      `${init.method} ${url} → ${res.status}${gatewayLogTail(gatewayLogPath)}\n`,
+    );
+  }
   return {
     status: res.status,
     headers: { get: (name: string) => res.headers.get(name) },
@@ -104,6 +117,7 @@ describe("Browser-capture push path (spawned gateway)", () => {
     harness = new SyntheticE2EHarness({ gatewayMode: "stable" });
     await harness.start();
     gatewayUrl = harness.gatewayUrl;
+    gatewayLogPath = harness.getGatewayLogPath();
 
     // 1. Mint a `browser` pairing code via the real admin endpoint WITHOUT
     //    naming scopes, so the gateway's own default grant for a browser device

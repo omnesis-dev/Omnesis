@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
 type Db = Database.Database;
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
+import { useImmediateTransactions } from "../sqlite-transactions.js";
 
 export function openWriteConn(
   path: string,
@@ -52,28 +53,4 @@ export function openWriteConn(
   db.exec("PRAGMA synchronous = FULL");
   useImmediateTransactions(db);
   return db;
-}
-
-/**
- * Make every `db.transaction(fn)` on this handle begin with `BEGIN IMMEDIATE`.
- *
- * A deferred transaction takes the write lock only at its first write. Under
- * WAL, when another connection commits after the transaction's first read and
- * before that write, SQLite fails it at once with SQLITE_BUSY_SNAPSHOT
- * ("database is locked"): `busy_timeout` cannot help, because waiting never
- * makes the stale snapshot current. An immediate transaction takes the write
- * lock at BEGIN, where `busy_timeout` applies, so another writer is waited out
- * instead of failing a read-then-write operation.
- *
- * The writer is the gateway's only writer, so the lock is free in normal
- * operation and this costs nothing; it makes the writer robust to a writer
- * outside the gateway, such as an operator's sqlite3 shell or a test seeding
- * rows. A transaction opened inside another still uses a savepoint, and the
- * `.deferred` / `.exclusive` variants stay available on the returned function.
- */
-function useImmediateTransactions(db: Db): void {
-  const transaction = db.transaction.bind(db);
-  // Each variant better-sqlite3 returns carries all the others as properties,
-  // so the immediate one is a complete transaction function.
-  db.transaction = ((fn) => transaction(fn).immediate) as Db["transaction"];
 }

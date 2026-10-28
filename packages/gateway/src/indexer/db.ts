@@ -12,6 +12,7 @@ import Database from "better-sqlite3";
 type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
+import { useImmediateTransactions } from "../sqlite-transactions.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
 import { withScanPageCache } from "./scan-page-cache.js";
 
@@ -84,6 +85,9 @@ export function openIndexDb(path: string, opts: OpenIndexDbOptions = {}): Db {
     db.exec(`PRAGMA mmap_size = ${mmapBytes ?? 0}`);
   } else {
     db.exec("PRAGMA mmap_size = 0");
+    // Two connections write index.db — the indexer worker and the HTTP
+    // thread's delete cascades — and every transaction here writes.
+    useImmediateTransactions(db);
   }
   const cacheBytes = opts.cacheSizeBytes ?? 1024 * 1024 * 1024;
   const cacheKib = Math.max(2, Math.floor(cacheBytes / 1024));

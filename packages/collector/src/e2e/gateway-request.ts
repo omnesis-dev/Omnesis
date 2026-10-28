@@ -89,7 +89,7 @@ export async function gatewayJson<T = unknown>(
  * The end of the spawned gateway's log, read at throw time — the harness
  * deletes its temp directory during teardown, before a reporter would print.
  */
-function gatewayLogTail(logPath: string | undefined): string {
+export function gatewayLogTail(logPath: string | undefined): string {
   if (!logPath) return "";
   try {
     const lines = readFileSync(logPath, "utf8").trimEnd().split("\n").slice(-LOG_TAIL_LINES);

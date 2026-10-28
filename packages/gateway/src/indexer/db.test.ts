@@ -50,6 +50,8 @@ import {
   migrateAdoptInPlaceVersion,
   getIndexVersion,
   reconcileIndexForGatewaySchema,
+  openIndexDb,
+  deleteChunksByDocuments,
 } from "./db.js";
 import { UsearchWriteHandle, UsearchReadHandle } from "./usearch-index.js";
 import type { ChunkUpsertInput } from "./db.js";
@@ -978,6 +980,58 @@ describe("chunks", () => {
       )
       .get("whatsapp:+1");
     expect(errorRow).toBeUndefined();
+  });
+});
+
+describe("two writers on one index", () => {
+  // The indexer worker writes index.db on its own connection while the HTTP
+  // thread deletes a page's chunks on another (a privacy delete, a domain purge).
+  const chunk = (documentId: string): ChunkUpsertInput => ({
+    id: `${documentId}-c0`,
+    documentId,
+    chunkIndex: 0,
+    content: `invented text of ${documentId}`,
+    embedding: null,
+    sourceId: "web",
+    title: documentId,
+    sourceCreatedAt: "2026-03-10T00:00:00Z",
+  });
+
+  test("an indexer commit cannot fail a chunk delete between its read and its write", () => {
+    upsertChunksAndMarkIndexed(db, "doc-deleted", "hash-a", [chunk("doc-deleted")]);
+    const worker = openIndexDb(db.name);
+    // Fail at once instead of waiting: both connections run on this thread.
+    worker.exec("PRAGMA busy_timeout = 0");
+    const workerWrite = () =>
+      upsertChunksAndMarkIndexed(worker, "doc-indexed", "hash-b", [chunk("doc-indexed")]);
+
+    // Land the worker's commit after the delete has read the chunks it removes
+    // and before it writes, the instant a deferred transaction is exposed.
+    let workerOutcome: unknown = "not attempted";
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (sql.startsWith("DELETE FROM chunks") && workerOutcome === "not attempted") {
+        try {
+          workerWrite();
+          workerOutcome = "committed";
+        } catch (error) {
+          workerOutcome = error;
+        }
+      }
+      return prepare(sql);
+    }) as Db["prepare"];
+
+    try {
+      expect(deleteChunksByDocuments(db, ["doc-deleted"])).toBe(1);
+      // The delete held the write lock from BEGIN, so the worker waits its turn
+      // (here: is refused at once) and then writes normally.
+      expect(workerOutcome).toEqual(expect.objectContaining({ code: "SQLITE_BUSY" }));
+      workerWrite();
+      expect(getAllIndexedDocumentIds(db)).toEqual(new Set(["doc-indexed"]));
+      expect(getChunkCount(db)).toBe(1);
+    } finally {
+      worker.close();
+    }
   });
 });
 
