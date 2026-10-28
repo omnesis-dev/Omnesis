@@ -23,7 +23,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const REF = { providerConfigKey: "notion", connectionId: "conn-notion" };
 
 async function brokeredConfigDir(): Promise<string> {
@@ -39,7 +39,7 @@ async function brokeredConfigDir(): Promise<string> {
   return dir;
 }
 
-function stubNetwork(token: string) {
+function stubNetwork(token: string, workspaceId = "workspace-9") {
   const calls: Array<{ url: string; authorization: string | null }> = [];
   vi.stubGlobal(
     "fetch",
@@ -52,7 +52,7 @@ function stubNetwork(token: string) {
             credentials: {
               type: "OAUTH2",
               access_token: token,
-              raw: { workspace_id: "workspace-9", workspace_name: "Studio Northstar" },
+              raw: { workspace_id: workspaceId, workspace_name: "Studio Northstar" },
             },
           }),
         );
@@ -85,6 +85,21 @@ describe("Notion with a brokered grant", () => {
     expect(broker[0]!.authorization).toBe("Bearer broker-key");
     expect(notion.length).toBeGreaterThan(0);
     for (const call of notion) expect(call.authorization).toBe("Bearer brokered-notion-token");
+  });
+
+  test("stops when the broker's connection now belongs to another workspace", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork("other-workspace-token", "workspace-other");
+    const context = await definition.createContext!({
+      accountId: "workspace-9",
+      providerId: ProviderId("notion:workspace-9"),
+      host: fakeProviderHost({ configDir }),
+    });
+    await expect(context.client.listUsers()).rejects.toMatchObject({
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect(calls.filter((c) => c.url.startsWith("https://api.notion.com"))).toHaveLength(0);
   });
 
   test("is connected while the binding reads, and never-connected once it is removed", async () => {

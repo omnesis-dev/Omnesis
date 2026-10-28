@@ -915,7 +915,14 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // the shared file would report success while every source kept syncing —
     // a revocation that does not revoke.
     if (entry.spec.perAccount) {
-      const accounts = listProviderAccountIds(body.fileKey, configDir);
+      // Brokered accounts too: their binding is this provider's credential
+      // here, and leaving it would keep them syncing past the clear.
+      const accounts = [
+        ...new Set([
+          ...listProviderAccountIds(body.fileKey, configDir),
+          ...listBrokeredAccountIds(body.fileKey, configDir),
+        ]),
+      ];
       for (const accountId of accounts) {
         await clearProviderAccountCredentials(body.fileKey, accountId, configDir);
       }

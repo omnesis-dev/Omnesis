@@ -24,7 +24,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const REF = { providerConfigKey: "strava-web", connectionId: "conn-strava" };
 const ATHLETE_ID = "9876543";
 
@@ -56,6 +56,7 @@ function stubNetwork(
     renewed?: string;
     raw?: Record<string, unknown>;
     brokerStatus?: number;
+    brokerErrorCode?: string;
     strava?: (call: Call) => Response;
   } = {},
 ): Call[] {
@@ -70,7 +71,12 @@ function stubNetwork(
       calls.push(call);
       if (call.url.origin === BROKER.url) {
         if (opts.brokerStatus) {
-          return Promise.resolve(new Response(null, { status: opts.brokerStatus }));
+          return Promise.resolve(
+            Response.json(
+              { error: { code: opts.brokerErrorCode ?? "connection_refresh_exhausted" } },
+              { status: opts.brokerStatus },
+            ),
+          );
         }
         const forced = call.url.searchParams.get("force_refresh") === "true";
         return Promise.resolve(

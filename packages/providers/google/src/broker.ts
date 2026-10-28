@@ -181,9 +181,9 @@ async function probeAccount(
  * name the same one: connections of two different people bound under one
  * account would interleave two mailboxes, calendars or drives in one place.
  * The id is the address as the first of them reports it, Gmail first, which
- * is what the sign-in stores an account under. Only when no linked purpose
- * can say (Contacts alone, usually) is the operator's `account` taken on
- * trust; when one can, a different `account` is refused.
+ * is what the sign-in stores an account under. A purpose that cannot say
+ * (Contacts, usually) is accepted only with the operator's `account`: alone,
+ * it is taken on trust; beside purposes that can, it must match them.
  */
 export async function resolveGoogleBrokerAccount(
   credentials: BrokeredCredentials,
@@ -215,6 +215,16 @@ export async function resolveGoogleBrokerAccount(
   }
 
   const [first, ...rest] = named as [{ label: string; email: string }, ...typeof named];
+  // A connection that cannot name its account is not vouched for by the ones
+  // that can: it may be another person's grant. It joins them only when the
+  // operator states the account, which is then checked against the rest.
+  const unverified = answers.filter((a) => a.email === undefined).map((a) => a.label);
+  if (unverified.length > 0 && !supplied) {
+    throw new Error(
+      `The linked ${unverified.join(", ")} connection cannot say which Google account it belongs to; ` +
+        `give \`account=${first.email}\` to confirm it is that account's, or leave it out`,
+    );
+  }
   const others = supplied ? [...rest, { label: "the account given", email: supplied }] : rest;
   for (const other of others) {
     if (other.email.toLowerCase() !== first.email.toLowerCase()) {

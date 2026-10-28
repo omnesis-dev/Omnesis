@@ -1725,7 +1725,10 @@
           catalogue, link to a generic <code>private-api-bearer</code> or
           <code>private-api-basic</code> integration that holds them. A Google account links one
           connection per API (Gmail, Calendar, Drive, Contacts), because Nango keeps a separate
-          grant for each; every connection must belong to the same Google account.
+          grant for each; every connection must belong to the same Google account. Gmail, Calendar
+          and Drive each report which account they belong to and are checked against each other.
+          Contacts usually cannot, so linking it needs <code>--param account=&lt;address&gt;</code>,
+          which is checked against the others.
         </p>
         <p>
           Run these on the machine whose collector syncs the account, as the collector's user: the

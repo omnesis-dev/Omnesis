@@ -24,7 +24,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const PAT_REF = { providerConfigKey: "github-pat", connectionId: "conn-github" };
 const OAUTH_REF = { providerConfigKey: "github", connectionId: "conn-github-oauth" };
 const ACCOUNT = "maya-reeves@acme-org";

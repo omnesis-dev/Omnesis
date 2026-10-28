@@ -27,7 +27,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const REF = { providerConfigKey: "private-api-generic", connectionId: "conn-lunchflow" };
 const ACCOUNT = String(deriveAccountId("lf_key_linked"));
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -97,7 +97,7 @@ describe("keyFromFile", () => {
 });
 
 describe("linkBrokeredAccount", () => {
-  const config = { kind: "nango" as const, url: "http://broker.test", secretKey: "k" };
+  const config = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "k" };
   const brokerFetch = (async () =>
     Response.json({ credentials: { type: "API_KEY", apiKey: "probe" } })) as typeof fetch;
 
@@ -119,6 +119,27 @@ describe("linkBrokeredAccount", () => {
       connections: { mail: { providerConfigKey: "m", connectionId: "1" } },
       params: { host: "imap.example.com", resolved: "imap.example.com" },
     });
+  });
+
+  test("refuses to take over an account signed in here unless told to", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-broker-link-"));
+    created.push(dir);
+    mkdirSync(join(dir, "multi", "maya.reeves@example.com"), { recursive: true });
+    writeFileSync(join(dir, "multi", "maya.reeves@example.com", "tokens.json"), "{}");
+    const link = (replace?: boolean) =>
+      linkBrokeredAccount({
+        spec: MULTI,
+        config,
+        connections: { mail: { providerConfigKey: "m", connectionId: "1" } },
+        params: { host: "imap.example.com" },
+        configDir: dir,
+        replace,
+        fetch: brokerFetch,
+      });
+    await expect(link()).rejects.toThrow(/already signed in here/);
+    expect(listBrokeredAccountIds("multi", dir)).toEqual([]);
+    await expect(link(true)).resolves.toMatchObject({ replaced: true });
+    expect(listBrokeredAccountIds("multi", dir)).toEqual(["maya.reeves@example.com"]);
   });
 
   test("writes nothing when the provider cannot resolve the account", async () => {

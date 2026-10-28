@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const REF = { providerConfigKey: "coinbase-cdp", connectionId: "maya-reeves-portfolio" };
 const PORTFOLIO_ID = "11111111-2222-3333-4444-555555555555";
 

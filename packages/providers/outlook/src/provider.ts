@@ -508,7 +508,7 @@ export async function resolveBrokeredAccount(
  * the token came from the broker with the access token itself, and the claim
  * only names the directory the account is stored under.
  */
-function idTokenUsername(idToken: unknown): string | undefined {
+export function idTokenUsername(idToken: unknown): string | undefined {
   if (typeof idToken !== "string") return undefined;
   const payload = idToken.split(".")[1];
   if (!payload) return undefined;

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  BrokerCredentialError,
   BrokeredCredentials,
   hasBrokerBinding,
   listBrokeredAccountIds,
@@ -106,7 +107,22 @@ export default defineProvider<StravaContext>({
       if (!Number.isSafeInteger(athleteId) || athleteId <= 0) {
         throw new Error(`Strava account ${accountId} is not an athlete id`);
       }
-      const credentials = await BrokeredCredentials.load("strava", accountId, configDir);
+      const credentials = await BrokeredCredentials.load("strava", accountId, configDir, {
+        // A token response that names its athlete must name this one: a
+        // connection re-authorised at the broker as someone else would
+        // otherwise sync their activities under this athlete's id.
+        verify: (_purpose, { credential }) => {
+          const named = athleteIdentity(
+            credential.type === "oauth2" ? credential.raw.athlete : undefined,
+          );
+          if (named && named.id !== athleteId) {
+            throw new BrokerCredentialError(
+              "identity-changed",
+              `The broker's Strava connection now belongs to another athlete, not ${accountId}; link it again with \`omnesis broker link\``,
+            );
+          }
+        },
+      });
       return {
         client: buildBrokeredStravaClient(credentials),
         accountId,

@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import {
+  BrokerCredentialError,
   BrokeredCredentials,
   DEFAULT_CONFIG_DIR,
   createLogger,
@@ -88,7 +89,19 @@ export default defineProvider<NotionContext>({
   async createContext({ accountId, dataCutoff, host }) {
     let client: NotionClient;
     if (hasBrokerBinding("notion", accountId, host?.configDir)) {
-      const credentials = await BrokeredCredentials.load("notion", accountId, host?.configDir);
+      const credentials = await BrokeredCredentials.load("notion", accountId, host?.configDir, {
+        // The token response names the workspace; one re-authorised at the
+        // broker for another workspace must not sync under this one's id.
+        verify: (_purpose, { credential }) => {
+          const raw = credential.type === "oauth2" ? credential.raw : {};
+          if (typeof raw.workspace_id === "string" && raw.workspace_id !== accountId) {
+            throw new BrokerCredentialError(
+              "identity-changed",
+              `The broker's Notion connection now belongs to another workspace, not ${accountId}; link it again with \`omnesis broker link\``,
+            );
+          }
+        },
+      });
       client = new NotionClient(() => credentials.token());
     } else {
       client = new NotionClient(loadTokens(accountId, host?.configDir).access_token);

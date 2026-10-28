@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import {
+  BrokerCredentialError,
   BrokeredCredentials,
   DEFAULT_CONFIG_DIR,
   hasBrokerBinding,
@@ -13,6 +14,7 @@ import { defineProvider } from "@omnesis/source-sdk";
 import {
   MicrosoftProvider,
   discoverAccounts,
+  idTokenUsername,
   resolveBrokeredAccount,
   authenticate as microsoftAuthenticate,
   authFlow as microsoftAuthFlow,
@@ -135,7 +137,21 @@ export default defineProvider<MicrosoftContext>({
     // does not exist while discovery kept finding the account under the old
     // one — presenting as a failed sign-in rather than a missing directory.
     const broker = hasBrokerBinding("outlook", accountId, host?.configDir)
-      ? await BrokeredCredentials.load("outlook", accountId, host?.configDir)
+      ? await BrokeredCredentials.load("outlook", accountId, host?.configDir, {
+          // An ID token the broker kept names the mailbox; one re-authorised
+          // at the broker as another account must not sync under this id.
+          verify: (_purpose, { credential }) => {
+            const named = idTokenUsername(
+              credential.type === "oauth2" ? credential.raw.id_token : undefined,
+            );
+            if (named && named.toLowerCase() !== accountId.toLowerCase()) {
+              throw new BrokerCredentialError(
+                "identity-changed",
+                `The broker's Microsoft connection now belongs to ${named}, not ${accountId}; link it again with \`omnesis broker link\``,
+              );
+            }
+          },
+        })
       : undefined;
     const provider = new MicrosoftProvider(accountId, host?.configDir, { broker });
     await provider.initialize();

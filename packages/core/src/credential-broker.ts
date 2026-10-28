@@ -48,6 +48,15 @@ const EXPIRY_MARGIN_MS = 5 * 60 * 1000;
  */
 const UNDATED_TTL_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
+/**
+ * The shortest interval between two forced refreshes of one connection. A
+ * forced refresh that fails is recorded against the connection at the broker
+ * and holds every other program using it back for a while, so a source that
+ * meets a run of refusals must not turn each into another refresh.
+ */
+const FORCED_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+/** How long Nango holds a connection back after a failed refresh. */
+const BROKER_REFRESH_BACKOFF_MS = 30_000;
 
 /** Where the broker is and the key Omnesis presents to it. */
 export interface CredentialBrokerConfig {
@@ -115,9 +124,10 @@ export class BrokerCredentialError extends SyncError {
       | "not-found"
       | "refresh-exhausted"
       | "unsupported"
+      | "identity-changed"
       | "unavailable",
     message: string,
-    opts: { cause?: unknown } = {},
+    opts: { cause?: unknown; retryAfterMs?: number } = {},
   ) {
     super(reason === "unavailable" ? "network" : "auth", message, opts);
     this.name = "BrokerCredentialError";
@@ -148,6 +158,11 @@ export async function writeCredentialBrokerConfig(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`The broker URL must be http(s), not ${url.protocol}`);
   }
+  // The key reaches every connection at the broker; it never crosses a
+  // network in the clear.
+  if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(url.hostname)) {
+    throw new Error(`Use https for a broker that is not on this machine (${url.hostname})`);
+  }
   if (!config.secretKey.trim()) throw new Error("The broker key is empty");
   await writeSecretJsonFile(
     credentialBrokerConfigPath(configDir),
@@ -158,6 +173,33 @@ export async function writeCredentialBrokerConfig(
     },
     { configDir },
   );
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+/**
+ * Whether a value can be an integration or connection id. Both are spliced
+ * into the broker's URL, so a value that would change the path it names (`.`,
+ * `..`, a separator) or that no broker issues (control characters) is refused
+ * wherever one is read or written.
+ */
+export function isBrokerRefPart(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value !== "" &&
+    value !== "." &&
+    value !== ".." &&
+    !/[/\\?#%\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+function assertRef(
+  ref: BrokerConnectionRef | undefined,
+  where: string,
+): asserts ref is BrokerConnectionRef {
+  if (!isBrokerRefPart(ref?.providerConfigKey) || !isBrokerRefPart(ref?.connectionId)) {
+    throw new BrokerCredentialError("unbound", `${where} names no usable connection`);
+  }
 }
 
 export function brokerBindingPath(fileKey: string, accountId: string, configDir?: string): string {
@@ -207,9 +249,7 @@ export async function readBrokerBinding(
     throw new BrokerCredentialError("unbound", `${path} is not a usable broker binding`);
   }
   for (const [purpose, ref] of Object.entries(connections)) {
-    if (!ref?.providerConfigKey || !ref?.connectionId) {
-      throw new BrokerCredentialError("unbound", `${path} names no connection for ${purpose}`);
-    }
+    assertRef(ref, `${path} (${purpose})`);
   }
   return { broker: "nango", connections, ...(value.params ? { params: value.params } : {}) };
 }
@@ -223,6 +263,7 @@ export async function writeBrokerBinding(
   if (Object.keys(binding.connections).length === 0) {
     throw new Error("A broker binding needs at least one connection");
   }
+  for (const [purpose, ref] of Object.entries(binding.connections)) assertRef(ref, purpose);
   const path = brokerBindingPath(fileKey, accountId, configDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   await writeSecretJsonFile(path, binding, { configDir });
@@ -253,6 +294,7 @@ export async function fetchBrokerCredential(
   ref: BrokerConnectionRef,
   opts: FetchBrokerCredentialOptions = {},
 ): Promise<BrokerCredentialResult> {
+  assertRef(ref, "The binding");
   const url = new URL(`${config.url}/connections/${encodeURIComponent(ref.connectionId)}`);
   url.searchParams.set("provider_config_key", ref.providerConfigKey);
   if (opts.forceRefresh) url.searchParams.set("force_refresh", "true");
@@ -273,38 +315,82 @@ export async function fetchBrokerCredential(
     );
   }
 
-  if (res.status === 401 || res.status === 403) {
-    throw new BrokerCredentialError(
-      "rejected",
-      `The credential broker refused Omnesis's key (HTTP ${res.status}) for ${label}`,
-    );
-  }
-  if (res.status === 404) {
-    throw new BrokerCredentialError("not-found", `The credential broker no longer holds ${label}`);
-  }
-  if (res.status === 424) {
-    throw new BrokerCredentialError(
-      "refresh-exhausted",
-      `The credential broker can no longer refresh ${label}; sign it in again at the broker`,
-    );
-  }
-  if (!res.ok) {
-    throw new BrokerCredentialError(
-      "unavailable",
-      `The credential broker answered HTTP ${res.status} for ${label}`,
-    );
-  }
+  if (!res.ok) throw await brokerFailure(res, label);
 
-  const body = (await res.json()) as {
+  let body: {
     credentials?: Record<string, unknown>;
     connection_config?: Record<string, unknown>;
     metadata?: Record<string, unknown> | null;
   };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    // Whatever answered is not the broker's API (a proxy page, a captive
+    // portal); its body is not repeated, since it is not ours to log.
+    throw new BrokerCredentialError(
+      "unavailable",
+      `The credential broker's answer for ${label} was not JSON`,
+    );
+  }
   return {
     credential: normaliseCredential(body.credentials, label),
     connectionConfig: body.connection_config ?? {},
     metadata: body.metadata ?? {},
   };
+}
+
+/**
+ * Classify a refusal from Nango. The status alone is not enough: Nango answers
+ * 424 both for a grant it has given up refreshing and for its short back-off
+ * after any failed refresh, and 400 for a grant the provider rejected outright
+ * as well as for request mistakes. Only a grant that is gone asks the operator
+ * to act; a back-off or a blip is retried.
+ */
+async function brokerFailure(res: Response, label: string): Promise<BrokerCredentialError> {
+  const text = await res.text().catch(() => "");
+  let code = "";
+  try {
+    const body = JSON.parse(text) as { error?: { code?: unknown } | string };
+    const error = body?.error;
+    code = typeof error === "string" ? error : typeof error?.code === "string" ? error.code : "";
+  } catch {
+    code = "";
+  }
+  if (res.status === 401 || res.status === 403) {
+    return new BrokerCredentialError(
+      "rejected",
+      `The credential broker refused Omnesis's key (HTTP ${res.status}) for ${label}`,
+    );
+  }
+  if (code === "unknown_provider_config") {
+    return new BrokerCredentialError(
+      "unbound",
+      `The credential broker has no integration for ${label}`,
+    );
+  }
+  if (res.status === 404 || code === "unknown_connection") {
+    return new BrokerCredentialError("not-found", `The credential broker no longer holds ${label}`);
+  }
+  if (code === "connection_refresh_backoff") {
+    return new BrokerCredentialError(
+      "unavailable",
+      `The credential broker is holding ${label} back after a failed refresh; retrying shortly`,
+      { retryAfterMs: BROKER_REFRESH_BACKOFF_MS },
+    );
+  }
+  if (
+    code === "connection_refresh_exhausted" ||
+    (code === "refresh_token_external_error" && /invalid_grant|revoked|expired/i.test(text))
+  ) {
+    return new BrokerCredentialError(
+      "refresh-exhausted",
+      `The credential broker can no longer refresh ${label}; sign it in again at the broker`,
+    );
+  }
+  return new BrokerCredentialError(
+    "unavailable",
+    `The credential broker answered HTTP ${res.status}${code ? ` (${code})` : ""} for ${label}`,
+  );
 }
 
 function normaliseCredential(
@@ -371,17 +457,42 @@ export function brokerBearerToken(credential: BrokerCredential): string {
  * One account's brokered credentials, fetched on demand and reused until they
  * are due. Built once per source context; every API call asks it for a value.
  */
+export interface BrokeredCredentialsOptions {
+  now?: () => number;
+  fetch?: typeof fetch;
+  /**
+   * Check each credential the broker hands out still belongs to the account it
+   * was linked as, and throw (a {@link BrokerCredentialError} with reason
+   * `identity-changed`) when it does not. A connection re-authorised at the
+   * broker as someone else would otherwise sync that person's data under this
+   * account's id. Runs on every fresh fetch, before the value is used.
+   */
+  verify?: (purpose: string, result: BrokerCredentialResult) => void | Promise<void>;
+}
+
+interface CacheEntry {
+  result: BrokerCredentialResult;
+  validUntil: number;
+  seq: number;
+}
+
+/**
+ * One account's brokered credentials, fetched on demand and reused until they
+ * are due. Built once per source context; every API call asks it for a value.
+ */
 export class BrokeredCredentials {
-  private readonly cache = new Map<
+  private readonly cache = new Map<string, CacheEntry>();
+  private readonly inflight = new Map<
     string,
-    { result: BrokerCredentialResult; validUntil: number }
+    { promise: Promise<BrokerCredentialResult>; forced: boolean }
   >();
-  private readonly inflight = new Map<string, Promise<BrokerCredentialResult>>();
+  private readonly lastForced = new Map<string, number>();
+  private seq = 0;
 
   constructor(
     readonly binding: BrokerBinding,
     private readonly config: CredentialBrokerConfig,
-    private readonly opts: { now?: () => number; fetch?: typeof fetch } = {},
+    private readonly opts: BrokeredCredentialsOptions = {},
   ) {}
 
   /** Load the binding and broker configuration for one account. */
@@ -389,7 +500,7 @@ export class BrokeredCredentials {
     fileKey: string,
     accountId: string,
     configDir?: string,
-    opts: { now?: () => number; fetch?: typeof fetch } = {},
+    opts: BrokeredCredentialsOptions = {},
   ): Promise<BrokeredCredentials> {
     const binding = await readBrokerBinding(fileKey, accountId, configDir);
     if (!binding) {
@@ -417,7 +528,14 @@ export class BrokeredCredentials {
     return purpose in this.binding.connections;
   }
 
-  /** The current credential for `purpose`, with the broker's connection details. */
+  /**
+   * The current credential for `purpose`, with the broker's connection details.
+   *
+   * `forceRefresh` asks the broker to renew an OAuth grant now, for a caller
+   * whose token was just refused. It is honoured at most once per connection
+   * every few minutes; within that window the caller gets the newest value
+   * the broker has handed out, which is already the refreshed one.
+   */
   async get(
     purpose: string = DEFAULT_BROKER_PURPOSE,
     opts: { forceRefresh?: boolean } = {},
@@ -426,41 +544,61 @@ export class BrokeredCredentials {
     const key = `${ref.providerConfigKey}\u0000${ref.connectionId}`;
     const now = (this.opts.now ?? Date.now)();
     const cached = this.cache.get(key);
-    if (!opts.forceRefresh && cached && cached.validUntil > now) return cached.result;
-    if (!opts.forceRefresh) {
-      const pending = this.inflight.get(key);
-      if (pending) return pending;
+    const pending = this.inflight.get(key);
+
+    let forced = Boolean(opts.forceRefresh);
+    if (forced) {
+      const last = this.lastForced.get(key);
+      if (last !== undefined && now - last < FORCED_REFRESH_INTERVAL_MS) forced = false;
     }
+    if (!forced) {
+      // A throttled forced refresh refetches as the broker holds it, which
+      // picks up a rotation another caller's refresh already made.
+      if (cached && cached.validUntil > now && !opts.forceRefresh) return cached.result;
+      if (pending) return pending.promise;
+    } else if (pending?.forced) {
+      return pending.promise;
+    }
+
     // Only an OAuth grant has anything to refresh. A key or a login held at the
     // broker is fetched again as it stands, so a caller that suspects a rotated
     // one never depends on how the broker treats a refresh it cannot perform.
-    const forceRefresh =
-      opts.forceRefresh &&
+    const sendForce =
+      forced &&
       cached?.result.credential.type !== "api-key" &&
       cached?.result.credential.type !== "basic";
-    const request = fetchBrokerCredential(this.config, ref, {
-      forceRefresh,
+    if (forced) this.lastForced.set(key, now);
+    const seq = ++this.seq;
+    const promise = fetchBrokerCredential(this.config, ref, {
+      forceRefresh: sendForce,
       fetch: this.opts.fetch,
-    }).then(
-      (result) => {
-        const fetchedAt = (this.opts.now ?? Date.now)();
-        const expiresAt =
-          result.credential.type === "oauth2" ? result.credential.expiresAt : undefined;
-        const validUntil =
-          expiresAt !== undefined
-            ? Math.min(expiresAt - EXPIRY_MARGIN_MS, fetchedAt + UNDATED_TTL_MS * 6)
-            : fetchedAt + UNDATED_TTL_MS;
-        this.cache.set(key, { result, validUntil });
-        this.inflight.delete(key);
+    })
+      .then(async (result) => {
+        await this.opts.verify?.(purpose, result);
         return result;
-      },
-      (err: unknown) => {
-        this.inflight.delete(key);
-        throw err;
-      },
-    );
-    this.inflight.set(key, request);
-    return request;
+      })
+      .then(
+        (result) => {
+          const fetchedAt = (this.opts.now ?? Date.now)();
+          const expiresAt =
+            result.credential.type === "oauth2" ? result.credential.expiresAt : undefined;
+          const validUntil =
+            expiresAt !== undefined
+              ? Math.min(expiresAt - EXPIRY_MARGIN_MS, fetchedAt + UNDATED_TTL_MS * 6)
+              : fetchedAt + UNDATED_TTL_MS;
+          // A slower fetch that started earlier never replaces a newer value.
+          const current = this.cache.get(key);
+          if (!current || current.seq < seq) this.cache.set(key, { result, validUntil, seq });
+          if (this.inflight.get(key)?.promise === promise) this.inflight.delete(key);
+          return this.cache.get(key)!.seq > seq ? this.cache.get(key)!.result : result;
+        },
+        (err: unknown) => {
+          if (this.inflight.get(key)?.promise === promise) this.inflight.delete(key);
+          throw err;
+        },
+      );
+    this.inflight.set(key, { promise, forced });
+    return promise;
   }
 
   /** The bearer token for `purpose`: an OAuth access token or an API key. */

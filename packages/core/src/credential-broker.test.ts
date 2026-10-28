@@ -85,6 +85,29 @@ describe("broker configuration and bindings", () => {
     expect(listBrokeredAccountIds("notion", cfg)).toEqual([]);
   });
 
+  test("plain http is allowed only to this machine", async () => {
+    const cfg = tempConfigDir();
+    await expect(
+      writeCredentialBrokerConfig({ ...CONFIG, url: "http://nango.example.com:3003" }, cfg),
+    ).rejects.toThrow(/https/);
+    await writeCredentialBrokerConfig({ ...CONFIG, url: "https://nango.example.com" }, cfg);
+    await writeCredentialBrokerConfig({ ...CONFIG, url: "http://localhost:3003" }, cfg);
+  });
+
+  test("a binding naming an unusable connection is refused on write", async () => {
+    await expect(
+      writeBrokerBinding(
+        "notion",
+        "ws-1",
+        {
+          broker: "nango",
+          connections: { default: { providerConfigKey: "notion", connectionId: ".." } },
+        },
+        tempConfigDir(),
+      ),
+    ).rejects.toThrow(/no usable connection/);
+  });
+
   test("a non-http broker URL is refused", async () => {
     await expect(
       writeCredentialBrokerConfig({ ...CONFIG, url: "file:///etc/passwd" }, tempConfigDir()),
@@ -181,12 +204,32 @@ describe("fetchBrokerCredential", () => {
   });
 
   test.each([
-    [401, "rejected", "auth"],
-    [404, "not-found", "auth"],
-    [424, "refresh-exhausted", "auth"],
-    [502, "unavailable", "network"],
-  ] as const)("HTTP %i is %s and classified %s", async (status, reason, kind) => {
-    const { fn } = recordingFetch(() => jsonResponse(status, { error: "x" }));
+    [401, {}, "rejected", "auth"],
+    [404, { error: { code: "unknown_connection" } }, "not-found", "auth"],
+    [400, { error: { code: "unknown_provider_config" } }, "unbound", "auth"],
+    [424, { error: { code: "connection_refresh_exhausted" } }, "refresh-exhausted", "auth"],
+    [424, { error: { code: "connection_refresh_backoff" } }, "unavailable", "network"],
+    [424, { error: { code: "script_http_error" } }, "unavailable", "network"],
+    [
+      400,
+      { error: { code: "refresh_token_external_error", payload: { error: "invalid_grant" } } },
+      "refresh-exhausted",
+      "auth",
+    ],
+    [
+      400,
+      {
+        error: {
+          code: "refresh_token_external_error",
+          payload: { error: "temporarily_unavailable" },
+        },
+      },
+      "unavailable",
+      "network",
+    ],
+    [502, { error: "bad gateway" }, "unavailable", "network"],
+  ] as const)("HTTP %i %j is %s and classified %s", async (status, body, reason, kind) => {
+    const { fn } = recordingFetch(() => jsonResponse(status, body));
     const err = await fetchBrokerCredential(CONFIG, BINDING.connections.gmail!, {
       fetch: fn,
     }).catch((e) => e);
@@ -196,6 +239,41 @@ describe("fetchBrokerCredential", () => {
     expect(err.kind).toBe(kind);
     expect(String(err.message)).not.toContain("test-broker-key");
   });
+
+  test("Nango's refresh back-off is retried after its cooldown, not parked", async () => {
+    const { fn } = recordingFetch(() =>
+      jsonResponse(424, { error: { code: "connection_refresh_backoff" } }),
+    );
+    const err = await fetchBrokerCredential(CONFIG, BINDING.connections.gmail!, {
+      fetch: fn,
+    }).catch((e) => e);
+    expect(err.retryAfterMs).toBe(30_000);
+  });
+
+  test("an answer that is not JSON is a network failure that does not repeat the body", async () => {
+    const fn = (async () =>
+      new Response("<html>proxy login for maya</html>", { status: 200 })) as typeof fetch;
+    const err = await fetchBrokerCredential(CONFIG, BINDING.connections.gmail!, {
+      fetch: fn,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(BrokerCredentialError);
+    expect(err.kind).toBe("network");
+    expect(String(err.message)).not.toContain("maya");
+  });
+
+  test.each([".", "..", "a/b", "a?b", "a#b", "a%2Fb", "a\u0000b", ""])(
+    "refuses connection id %j before any request",
+    async (connectionId) => {
+      const { fn, calls } = recordingFetch(() => jsonResponse(200, {}));
+      const err = await fetchBrokerCredential(
+        CONFIG,
+        { providerConfigKey: "gmail-example", connectionId },
+        { fetch: fn },
+      ).catch((e) => e);
+      expect(err.reason).toBe("unbound");
+      expect(calls).toHaveLength(0);
+    },
+  );
 
   test("an unreachable broker is a network failure", async () => {
     const fn = (async () => {
@@ -295,6 +373,64 @@ describe("BrokeredCredentials", () => {
     await creds.get("gmail", { forceRefresh: true });
     expect(calls).toHaveLength(2);
     expect(calls[1]!.url.searchParams.has("force_refresh")).toBe(false);
+  });
+
+  test("a slower fetch that started first never replaces a newer forced refresh", async () => {
+    const releases: Array<(r: Response) => void> = [];
+    const fn = (() =>
+      new Promise<Response>((resolve) => releases.push(resolve))) as unknown as typeof fetch;
+    const creds = new BrokeredCredentials(BINDING, CONFIG, { fetch: fn });
+    const older = creds.token("gmail");
+    const newer = creds.token("gmail", { forceRefresh: true });
+    releases[1]!(jsonResponse(200, { credentials: { type: "OAUTH2", access_token: "NEW" } }));
+    expect(await newer).toBe("NEW");
+    releases[0]!(jsonResponse(200, { credentials: { type: "OAUTH2", access_token: "OLD" } }));
+    expect(await older).toBe("NEW");
+    expect(await creds.token("gmail")).toBe("NEW");
+  });
+
+  test("forced refreshes of one connection are throttled", async () => {
+    let now = 0;
+    const { fn, calls } = recordingFetch(() =>
+      jsonResponse(200, { credentials: { type: "OAUTH2", access_token: "t" } }),
+    );
+    const creds = new BrokeredCredentials(BINDING, CONFIG, { now: () => now, fetch: fn });
+    await creds.token("gmail", { forceRefresh: true });
+    now += 60_000;
+    await creds.token("gmail", { forceRefresh: true });
+    now += 5 * 60_000;
+    await creds.token("gmail", { forceRefresh: true });
+    expect(calls.map((c) => c.url.searchParams.get("force_refresh"))).toEqual([
+      "true",
+      null,
+      "true",
+    ]);
+  });
+
+  test("verify sees every fresh credential and a refusal is never cached", async () => {
+    let owner = "workspace-1";
+    const { fn } = recordingFetch(() =>
+      jsonResponse(200, {
+        credentials: { type: "OAUTH2", access_token: "t", raw: { workspace_id: owner } },
+      }),
+    );
+    const creds = new BrokeredCredentials(BINDING, CONFIG, {
+      fetch: fn,
+      verify: (_purpose, result) => {
+        const raw = result.credential.type === "oauth2" ? result.credential.raw : {};
+        if (raw.workspace_id !== "workspace-1") {
+          throw new BrokerCredentialError("identity-changed", "another workspace");
+        }
+      },
+    });
+    expect(await creds.token("gmail")).toBe("t");
+    owner = "workspace-2";
+    creds.invalidate("gmail");
+    await expect(creds.token("gmail")).rejects.toMatchObject({
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    await expect(creds.token("gmail")).rejects.toMatchObject({ reason: "identity-changed" });
   });
 
   test("load names what is missing", async () => {

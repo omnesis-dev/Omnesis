@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const BROKER = { kind: "nango" as const, url: "http://broker.test", secretKey: "broker-key" };
+const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "broker-key" };
 const ACCOUNT = "maya.reeves@example.com";
 const REFS = {
   gmail: { providerConfigKey: "google-mail", connectionId: "conn-mail" },
@@ -324,7 +324,9 @@ describe("Google broker account resolution", () => {
 
   test("names the account by the address Gmail reports, asking each purpose with its own token", async () => {
     const net = stubNetwork();
-    await expect(resolve(["gmail", "calendar", "drive", "contacts"])).resolves.toEqual({
+    await expect(
+      resolve(["gmail", "calendar", "drive", "contacts"], { account: ACCOUNT }),
+    ).resolves.toEqual({
       accountId: ACCOUNT,
     });
     expect(net.google("gmail.googleapis.com")[0]!.authorization).toBe("Bearer conn-mail-token-1");
@@ -380,6 +382,19 @@ describe("Google broker account resolution", () => {
     await expect(resolve(["contacts"], { account: "maya@studio.example.com" })).rejects.toThrow(
       /link connections of one Google account/,
     );
+  });
+
+  test("a Contacts connection that cannot name its account joins Gmail only when the operator states it", async () => {
+    // Contacts answers with no address Google attributes to the account, so it
+    // could be anyone's grant: Gmail naming Maya does not vouch for it.
+    stubNetwork();
+    await expect(resolve(["gmail", "contacts"])).rejects.toThrow(/cannot say which Google account/);
+    await expect(resolve(["gmail", "contacts"], { account: ACCOUNT })).resolves.toEqual({
+      accountId: ACCOUNT,
+    });
+    await expect(
+      resolve(["gmail", "contacts"], { account: "jamie.lopez@example.org" }),
+    ).rejects.toThrow(/link connections of one Google account/);
   });
 
   test("refuses an operator address that contradicts what Google reports", async () => {

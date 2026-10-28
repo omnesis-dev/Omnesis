@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { rm, rmdir } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { defineCommand } from "citty";
 import {
   BrokeredCredentials,
@@ -157,6 +158,8 @@ export async function linkBrokeredAccount(opts: {
   connections: Record<string, BrokerConnectionRef>;
   params: Record<string, string>;
   configDir: string;
+  /** Take over an account signed in here, replacing its local credential's role. */
+  replace?: boolean;
   fetch?: typeof fetch;
 }): Promise<{ accountId: string; binding: BrokerBinding; replaced: boolean }> {
   const probe: BrokerBinding = {
@@ -175,7 +178,19 @@ export async function linkBrokeredAccount(opts: {
     connections: opts.connections,
     ...(Object.keys(params).length ? { params } : {}),
   };
-  const replaced = hasBrokerBinding(opts.spec.fileKey, resolved.accountId, opts.configDir);
+  const path = brokerBindingPath(opts.spec.fileKey, resolved.accountId, opts.configDir);
+  const local = existsSync(dirname(path))
+    ? readdirSync(dirname(path)).filter((name) => name !== basename(path))
+    : [];
+  // An account signed in here would flip to the broker, and every source of
+  // it the link does not cover would stop: that is the operator's call.
+  if (local.length > 0 && !opts.replace) {
+    throw new Error(
+      `${resolved.accountId} is already signed in here; pass --replace to take its credential from the broker instead`,
+    );
+  }
+  const replaced =
+    local.length > 0 || hasBrokerBinding(opts.spec.fileKey, resolved.accountId, opts.configDir);
   await writeBrokerBinding(opts.spec.fileKey, resolved.accountId, binding, opts.configDir);
   return { accountId: resolved.accountId, binding, replaced };
 }
@@ -371,6 +386,10 @@ const linkCommand = defineCommand({
       required: true,
     },
     param: { type: "string", description: "A provider setting, name=value (repeatable)" },
+    replace: {
+      type: "boolean",
+      description: "Take over an account already signed in here",
+    },
     json: { type: "boolean", description: "Machine-readable JSON output" },
   },
   async run({ args }) {
@@ -408,6 +427,7 @@ const linkCommand = defineCommand({
       connections,
       params,
       configDir: dir,
+      replace: Boolean(args.replace),
     }).catch((err: unknown) => fail(err));
     if (isJSON) {
       console.log(
@@ -450,8 +470,11 @@ const unlinkCommand = defineCommand({
       );
     }
     // Only the binding goes: the grant is the broker's, and other software
-    // signed in through it keeps using it.
-    await rm(brokerBindingPath(provider.spec.fileKey, args.account, dir), { force: true });
+    // signed in through it keeps using it. An account directory left empty
+    // goes too, so nothing later adopts a shared legacy key into it.
+    const path = brokerBindingPath(provider.spec.fileKey, args.account, dir);
+    await rm(path, { force: true });
+    if (readdirSync(dirname(path)).length === 0) await rmdir(dirname(path));
     if (isJSON) {
       console.log(JSON.stringify({ ok: true }));
       return;
