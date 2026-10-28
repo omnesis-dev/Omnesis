@@ -29,7 +29,7 @@ const SCANNED_ROOTS = [join("packages", "providers"), join("packages", "source-s
 function repoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+    if (existsSync(join(dir, "package-lock.json"))) return dir;
     dir = dirname(dir);
   }
   throw new Error("Could not locate the repository root from the source-sdk package");

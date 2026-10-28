@@ -1,5 +1,14 @@
 # @omnesis/provider-apple
 
+## 0.7.0
+
+### Patch Changes
+
+- @omnesis/config@0.7.0
+  - @omnesis/core@0.7.0
+  - @omnesis/source-sdk@0.7.0
+  - @omnesis/types@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
