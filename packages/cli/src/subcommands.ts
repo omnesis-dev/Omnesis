@@ -59,6 +59,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   // ── Grouped admin commands ──────────────────────────────────────────
   sources: () => import("./commands/sources-group.js").then((m) => m.sourcesCommand),
   creds: () => import("./commands/creds.js").then((m) => m.credsCommand),
+  broker: () => import("./commands/broker.js").then((m) => m.brokerCommand),
   devices: () => import("./commands/devices.js").then((m) => m.devicesCommand),
   // Friendlier top-level alias for `devices redeem` — pair a new device with
   // `omnesis pair <code>` instead of curling the raw /devices/pair endpoint.

@@ -4,8 +4,10 @@
 import { createHash } from "node:crypto";
 import {
   clearProviderAccountAndLegacyCredentials,
+  clearProviderAccountCredentials,
   createLogger,
   CredentialPersistError,
+  hasBrokerBinding,
   hasProviderAccountCredentials,
   hasProviderCredentials,
   listProviderAccountDirs,
@@ -264,7 +266,18 @@ export function discoverAccounts(configDir?: string): AccountId[] {
   });
 }
 
+/**
+ * Remove an account's local credential. A brokered account loses only its own
+ * directory, binding included: the grant is the broker's and other software
+ * shares it, and the provider-wide legacy file belongs to whichever account
+ * predates per-account storage, never to one linked through the broker.
+ */
 export async function cleanupCredentials(accountId: string, configDir?: string): Promise<void> {
+  if (hasBrokerBinding(GITHUB_FILE_KEY, accountId, configDir)) {
+    await clearProviderAccountCredentials(GITHUB_FILE_KEY, accountId, configDir);
+    log.info(`Unlinked brokered GitHub account ${accountId}`);
+    return;
+  }
   await clearProviderAccountAndLegacyCredentials(GITHUB_FILE_KEY, accountId, configDir);
   log.info(`Cleaned up GitHub credentials for account ${accountId}`);
 }

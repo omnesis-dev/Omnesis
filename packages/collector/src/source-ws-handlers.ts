@@ -24,6 +24,8 @@ import {
   writeProviderCredentials,
   clearProviderAccountCredentials,
   clearProviderCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
   listProviderAccountIds,
   serializeCredentialsSpec,
   redactSecrets,
@@ -297,6 +299,20 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     if (!descriptor) throw new Error(`Unknown source: ${body.sourceType}`);
     if (!descriptor.authFlow && !descriptor.authenticate) {
       throw new Error(`Source ${body.sourceType} does not support auth flow`);
+    }
+    // Renewing a brokered account here would store a credential its binding
+    // then overrides, so the operator's sign-in would be silently ignored. The
+    // grant is the broker's to renew.
+    const fileKey = descriptor.credentials?.fileKey;
+    if (
+      body.accountId &&
+      fileKey &&
+      hasBrokerBinding(fileKey, body.accountId, sourceManager.getConfigDir())
+    ) {
+      throw new Error(
+        `${descriptor.provider.name} account ${body.accountId} takes its credential from the credential broker. ` +
+          `Sign it in again at the broker, or run \`omnesis broker unlink ${descriptor.provider.id} ${body.accountId}\` to sign it in here instead.`,
+      );
     }
 
     const flowId = body.flowId;
@@ -825,6 +841,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     providerName: string;
     spec: ReturnType<typeof serializeCredentialsSpec>;
     configured: boolean;
+    brokeredAccounts: string[];
   }> {
     const seen = new Map<
       string,
@@ -854,6 +871,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         ? listProviderAccountIds(fileKey, configDir).length > 0 ||
           hasProviderCredentials(fileKey, configDir)
         : hasProviderCredentials(fileKey, configDir),
+      brokeredAccounts: listBrokeredAccountIds(fileKey, configDir),
     }));
   }
 

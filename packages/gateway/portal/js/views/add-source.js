@@ -81,6 +81,8 @@ export function shouldOpenCredentialsWizard(spec, entry, alreadyCollected) {
   // belongs to the account being added, so an existing one says nothing.
   if (!spec.required && !spec.perAccount) return false;
   if (!entry) return false;
+  // An account the credential broker holds needs nothing pasted here.
+  if (entry.brokeredAccounts?.length) return false;
   if (!spec.perAccount && entry.configured) return false;
   return true;
 }

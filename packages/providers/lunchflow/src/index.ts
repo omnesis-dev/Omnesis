@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
-import { readProviderAccountOrLegacyCredentials } from "@omnesis/core";
+import {
+  BrokeredCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readProviderAccountOrLegacyCredentials,
+} from "@omnesis/core";
 import { LunchflowClient } from "./client.js";
 import {
   authenticate as lunchflowAuthenticate,
@@ -11,6 +17,7 @@ import {
   discoverAccounts,
   hasCredentials,
   loadApiKey,
+  resolveBrokeredAccount,
 } from "./provider.js";
 import { lunchflowCredentialsSpec } from "./credentials-spec.js";
 import { lunchflowIcon } from "./icons.js";
@@ -68,10 +75,38 @@ export default defineProvider<LunchflowContext>({
   authType: "api-key",
   credentials: lunchflowCredentialsSpec,
 
+  /**
+   * Lunch Flow through the credential broker. Nango does not catalog Lunch
+   * Flow, so the key is held by a generic API-key integration: a
+   * `private-api-generic` (API_KEY; key name `x-api-key`, value template
+   * `${apiKey}`, base URL `https://www.lunchflow.app/api/v1`, to match what
+   * Lunch Flow expects should anything use the broker's proxy) or a
+   * `private-api-bearer` (API_KEY). Either way the connection's `apiKey` is
+   * the key of a Lunch Flow API destination; Omnesis reads it and sends it as
+   * `x-api-key` itself, so only that field matters here.
+   *
+   * The account id is a hash of the key at link time — see
+   * `resolveBrokeredAccount` for why a key rotated at the broker keeps it.
+   */
+  broker: {
+    fileKey: "lunchflow",
+    purposes: [
+      {
+        id: "default",
+        label: "Lunch Flow",
+        brokerProviders: ["private-api-generic", "private-api-bearer"],
+      },
+    ],
+    resolveAccount: (credentials, _params, ctx?: { configDir?: string }) =>
+      resolveBrokeredAccount(credentials, ctx),
+  },
+
   // Resolve connected accounts offline; the collector derives accounts solely
   // from discover().
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map(String);
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("lunchflow", ctx?.configDir)) ids.add(id);
+    return [...ids];
   },
 
   authenticate(session) {
@@ -90,10 +125,20 @@ export default defineProvider<LunchflowContext>({
   },
 
   async createContext({ accountId, dataCutoff, host }) {
-    // Keyed by account: a shared load would hand every instance the same key,
-    // so a second connection would sync the first one's banks.
-    const apiKey = await loadApiKey(accountId, host?.configDir);
-    const client = new LunchflowClient({ apiKey });
+    let client: LunchflowClient;
+    if (hasBrokerBinding("lunchflow", accountId, host?.configDir)) {
+      // Asked of the broker per request and never written down: the binding
+      // is all this account keeps on disk.
+      const credentials = await BrokeredCredentials.load("lunchflow", accountId, host?.configDir);
+      client = new LunchflowClient({
+        apiKey: () => credentials.token(),
+        invalidateApiKey: () => credentials.invalidate(),
+      });
+    } else {
+      // Keyed by account: a shared load would hand every instance the same key,
+      // so a second connection would sync the first one's banks.
+      client = new LunchflowClient({ apiKey: await loadApiKey(accountId, host?.configDir) });
+    }
     return { client, accountId, dataCutoff, configDir: host?.configDir, now: () => new Date() };
   },
 
@@ -106,6 +151,13 @@ export default defineProvider<LunchflowContext>({
     // the remedy differs: one asks the operator to connect, the other to
     // authenticate again.
     return readConnectionState(async () => {
+      if (hasBrokerBinding("lunchflow", String(ctx.accountId), ctx.configDir)) {
+        // The broker holds the key; a binding that reads is the stored answer.
+        // A connection the broker has lost surfaces on the next sync as an
+        // `auth` failure.
+        await readBrokerBinding("lunchflow", String(ctx.accountId), ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasCredentials(String(ctx.accountId), ctx.configDir))
         return { status: "never-connected" };
       const fields = await readProviderAccountOrLegacyCredentials(

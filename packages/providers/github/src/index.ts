@@ -3,10 +3,17 @@
 
 import { defineProvider, readConnectionState } from "@omnesis/source-sdk";
 import { SourceId } from "@omnesis/types";
-import { readProviderAccountOrLegacyCredentials } from "@omnesis/core";
+import {
+  BrokeredCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readProviderAccountOrLegacyCredentials,
+} from "@omnesis/core";
 import { GithubClient } from "./client.js";
 import {
   ACCOUNT_LABEL_REGEX,
+  accountIdFor,
   accountLogin,
   authFlow as githubAuthFlow,
   authenticate as githubAuthenticate,
@@ -150,17 +157,46 @@ export default defineProvider<GithubContext>({
   authType: "api-key",
   credentials: githubCredentialsSpec,
 
+  /**
+   * GitHub through the credential broker: either a user OAuth grant (Nango
+   * `github`, OAUTH2) or a personal access token held as an API key (Nango
+   * `github-pat`, API_KEY, the token in `apiKey`). Both are sent the same way,
+   * as a bearer token, so either fits the one purpose.
+   */
+  broker: {
+    fileKey: "github",
+    purposes: [{ id: "default", label: "GitHub", brokerProviders: ["github", "github-pat"] }],
+    params: [
+      {
+        name: "accountLabel",
+        label:
+          "Connection name — only for a second token for the same GitHub user, such as one " +
+          "scoped to an organization. Name it after that scope.",
+        required: false,
+      },
+    ],
+    // The same derivation as a sign-in here: the login `GET /user` reports,
+    // plus the label only the operator can supply, since no API the token can
+    // call names the scope it was issued for (see `accountIdFor`).
+    async resolveAccount(credentials, params) {
+      const { login } = await new GithubClient(() => credentials.token()).getUser();
+      return { accountId: accountIdFor(login, params.accountLabel) };
+    },
+  },
+
   // An account id here is a login, optionally followed by the name of the
   // organization a second token is scoped to. Both halves are declared rather
   // than left to be parsed back out: the login is who this is, and the label
   // is which world the token can see — a distinction no API the token can call
   // will report, which is why the operator supplies it at connect time.
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map((id) => {
-      const login = accountLogin(String(id));
-      const label = String(id).slice(login.length + 1);
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("github", ctx?.configDir)) ids.add(id);
+    return [...ids].map((id) => {
+      const login = accountLogin(id);
+      const label = id.slice(login.length + 1);
       return {
-        id: String(id),
+        id,
         subject: { kind: "handle" as const, value: login },
         ...(label ? { tenant: { id: label } } : {}),
       };
@@ -179,8 +215,17 @@ export default defineProvider<GithubContext>({
   },
 
   async createContext({ accountId, dataCutoff, host }) {
-    const token = await loadToken(accountId, host?.configDir);
-    const client = new GithubClient(token);
+    let client: GithubClient;
+    if (hasBrokerBinding("github", accountId, host?.configDir)) {
+      // Asked of the broker per request and never written down: the binding
+      // is all this account keeps on disk.
+      const credentials = await BrokeredCredentials.load("github", accountId, host?.configDir);
+      client = new GithubClient(() => credentials.token(), {
+        invalidateToken: () => credentials.invalidate(),
+      });
+    } else {
+      client = new GithubClient(await loadToken(accountId, host?.configDir));
+    }
     return { client, accountId, dataCutoff, configDir: host?.configDir };
   },
 
@@ -194,6 +239,13 @@ export default defineProvider<GithubContext>({
     // the remedy differs: one asks the operator to connect, the other to
     // authenticate again.
     return readConnectionState(async () => {
+      if (hasBrokerBinding("github", String(ctx.accountId), ctx.configDir)) {
+        // The broker holds the credential; a binding that reads is the stored
+        // answer. A connection the broker has lost surfaces on the next sync
+        // as an `auth` failure.
+        await readBrokerBinding("github", String(ctx.accountId), ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasCredentials(String(ctx.accountId), ctx.configDir))
         return { status: "never-connected" };
       const fields = await readProviderAccountOrLegacyCredentials(

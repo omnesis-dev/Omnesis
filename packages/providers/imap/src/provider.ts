@@ -2,10 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  BrokerCredentialError,
+  BrokeredCredentials,
   clearProviderAccountCredentials,
   createLogger,
   CredentialPersistError,
+  DEFAULT_BROKER_PURPOSE,
   hasProviderAccountCredentials,
+  listBrokeredAccountIds,
   listProviderAccountIds,
   readProviderAccountCredentials,
   MissingCredentialsError,
@@ -21,10 +25,10 @@ import type {
   AuthSession,
   SourceLifecycleContext,
 } from "@omnesis/source-sdk";
-import type { ImapConnectionCredentials } from "./client.js";
+import type { ImapConnectionCredentials, ImapDeferredCredentials } from "./client.js";
 
 const log = createLogger("provider:imap");
-const FILE_KEY = "imap";
+export const FILE_KEY = "imap";
 const HOST_PATTERN =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -273,8 +277,13 @@ function connectFailure(error: unknown, host: string): AuthFailure {
   return new AuthFailure("unknown", error instanceof Error ? error.message : String(error));
 }
 
+/** Accounts with a stored login, and those whose login the broker holds. */
 export function discoverAccounts(configDir?: string): AccountId[] {
-  return listProviderAccountIds(FILE_KEY, configDir).flatMap((value) => {
+  const ids = new Set([
+    ...listProviderAccountIds(FILE_KEY, configDir),
+    ...listBrokeredAccountIds(FILE_KEY, configDir),
+  ]);
+  return [...ids].flatMap((value) => {
     try {
       return [AccountId(value)];
     } catch {
@@ -302,6 +311,113 @@ export async function loadCredentials(
     throw new Error(`Stored IMAP username does not match account ${accountId}`);
   }
   return toConnectionCredentials(stored);
+}
+
+/**
+ * The login for a mailbox whose password the credential broker holds.
+ *
+ * Nango has no IMAP integration, so the operator stores the login in a
+ * generic **`private-api-basic`** integration (Nango auth mode `BASIC`):
+ * `username` is the mailbox's address and `password` its IMAP password (an
+ * app-specific one when the provider issues them). The server is not a secret
+ * and is recorded in the binding when the account is linked
+ * (`--param host=imap.example.com`); the port and TLS are not settings here,
+ * since Omnesis only connects with TLS on port 993.
+ *
+ * The login is asked of the broker each time a connection opens. It is held
+ * to the account it was linked as: a broker connection edited to name another
+ * mailbox would otherwise repoint this account at someone else's mail.
+ */
+export async function loadBrokeredCredentials(
+  accountId: string,
+  configDir?: string,
+): Promise<ImapDeferredCredentials> {
+  const credentials = await BrokeredCredentials.load(FILE_KEY, accountId, configDir);
+  const host = credentials.binding.params?.host?.trim().toLowerCase() ?? "";
+  if (!HOST_PATTERN.test(host)) {
+    throw new BrokerCredentialError(
+      "unbound",
+      `The broker link for IMAP account ${accountId} names no valid hostname; link it again with --param host=<imap hostname>`,
+    );
+  }
+  return {
+    host,
+    async login(opts = {}) {
+      let stored: StoredImapCredentials;
+      try {
+        stored = await brokeredLogin(credentials, host, opts);
+      } catch (error) {
+        if (error instanceof SyncError) throw error;
+        throw new SyncError("auth", `The broker's IMAP login is unusable: ${describe(error)}`, {
+          scope: "connection",
+        });
+      }
+      if (stored.username !== accountId) {
+        throw new SyncError(
+          "auth",
+          `The broker's IMAP login no longer matches account ${accountId}; link the connection again`,
+          { scope: "connection" },
+        );
+      }
+      return { username: stored.username, password: stored.app_password };
+    },
+  };
+}
+
+/**
+ * Which mailbox a brokered login is for, checked against the server first.
+ *
+ * The account is the login, normalised as a paste is, so the binding lands
+ * where a paste of the same login would have stored it. The connection is
+ * tried before anything is written, for the reason the paste flow tries it:
+ * a hostname or password the server will not accept should leave no account.
+ */
+export async function resolveBrokeredAccount(
+  credentials: BrokeredCredentials,
+  params: Record<string, string>,
+): Promise<{ accountId: string; params: Record<string, string> }> {
+  const stored = await brokeredLogin(credentials, params.host);
+  const client = createImapClient(toConnectionCredentials(stored));
+  try {
+    await client.connect();
+  } catch (error) {
+    throw connectFailure(error, stored.host);
+  } finally {
+    try {
+      await client.close();
+    } catch {
+      log.warn("Failed to close IMAP authentication connection");
+    }
+  }
+  return { accountId: stored.username, params: { host: stored.host } };
+}
+
+/** The broker's Basic login for this account, validated as a pasted one is. */
+async function brokeredLogin(
+  credentials: BrokeredCredentials,
+  host: string | undefined,
+  opts: { fresh?: boolean } = {},
+): Promise<StoredImapCredentials> {
+  const { credential } = await credentials.get(
+    DEFAULT_BROKER_PURPOSE,
+    opts.fresh ? { forceRefresh: true } : {},
+  );
+  if (credential.type !== "basic") {
+    throw new BrokerCredentialError(
+      "unsupported",
+      "The broker's IMAP connection holds a token, not a login; store the mailbox in a " +
+        "private-api-basic integration with the address as username and the IMAP password as password",
+    );
+  }
+  return validateCredentials({
+    host,
+    username: credential.username,
+    app_password: credential.password,
+  });
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function cleanupCredentials(accountId: string, configDir?: string): Promise<void> {

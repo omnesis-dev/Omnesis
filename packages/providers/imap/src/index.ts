@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { resolveAttachmentConfig } from "@omnesis/core";
+import {
+  DEFAULT_BROKER_PURPOSE,
+  hasBrokerBinding,
+  readBrokerBinding,
+  resolveAttachmentConfig,
+} from "@omnesis/core";
 import { defineProvider, readConnectionState } from "@omnesis/source-sdk";
 import { createImapClient } from "./client.js";
 import { imapCredentialsSpec } from "./credentials-spec.js";
@@ -12,16 +17,20 @@ import {
   authFlow,
   cleanupCredentials,
   discoverAccounts,
+  FILE_KEY,
   hasCredentials,
+  loadBrokeredCredentials,
   loadCredentials,
+  resolveBrokeredAccount,
 } from "./provider.js";
 import { ImapEmailSource, validateImapEmailCursor } from "./source.js";
 import { imapStateSpec } from "./state.js";
-import type { ImapConnectionCredentials } from "./client.js";
+import type { ImapConnectionCredentials, ImapDeferredCredentials } from "./client.js";
 
 interface ImapContext {
   accountId: string;
-  credentials: ImapConnectionCredentials;
+  /** The stored login, or the server plus a login the broker is asked for per connection. */
+  credentials: ImapConnectionCredentials | ImapDeferredCredentials;
   configDir?: string;
 }
 
@@ -35,10 +44,12 @@ export {
   cleanupCredentials,
   discoverAccounts,
   hasCredentials,
+  loadBrokeredCredentials,
   loadCredentials,
+  resolveBrokeredAccount,
 } from "./provider.js";
 export { ImapEmailSource, validateImapEmailCursor } from "./source.js";
-export type { ImapConnectionCredentials } from "./client.js";
+export type { ImapConnectionCredentials, ImapDeferredCredentials } from "./client.js";
 export type {
   ImapAddress,
   ImapAttachmentPart,
@@ -60,6 +71,21 @@ export default defineProvider<ImapContext>({
   provider: { id: "imap", name: "IMAP" },
   authType: "api-key",
   credentials: imapCredentialsSpec,
+
+  // See `loadBrokeredCredentials` for what the broker connection holds and why
+  // the server is a link parameter rather than part of the secret.
+  broker: {
+    fileKey: FILE_KEY,
+    purposes: [
+      {
+        id: DEFAULT_BROKER_PURPOSE,
+        label: "IMAP login (Basic: username = email address, password = IMAP/app password)",
+        brokerProviders: ["private-api-basic"],
+      },
+    ],
+    params: [{ name: "host", label: "IMAP hostname (TLS on port 993)", required: true }],
+    resolveAccount: resolveBrokeredAccount,
+  },
 
   // An account is the login the mailbox was connected with. That is almost
   // always the mailbox's address, but a server may accept a bare user name
@@ -92,7 +118,9 @@ export default defineProvider<ImapContext>({
   async createContext({ accountId, host }) {
     return {
       accountId,
-      credentials: await loadCredentials(accountId, host?.configDir),
+      credentials: hasBrokerBinding(FILE_KEY, accountId, host?.configDir)
+        ? await loadBrokeredCredentials(accountId, host?.configDir)
+        : await loadCredentials(accountId, host?.configDir),
       configDir: host?.configDir,
     };
   },
@@ -103,6 +131,13 @@ export default defineProvider<ImapContext>({
   // other to authenticate again.
   credentialState(ctx) {
     return readConnectionState(async () => {
+      if (hasBrokerBinding(FILE_KEY, ctx.accountId, ctx.configDir)) {
+        // The broker holds the password; a binding that reads is the stored
+        // answer. A login the broker has lost, or the server now refuses,
+        // surfaces on the next sync as an `auth` failure.
+        await readBrokerBinding(FILE_KEY, ctx.accountId, ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasCredentials(ctx.accountId, ctx.configDir)) return { status: "never-connected" };
       await loadCredentials(ctx.accountId, ctx.configDir);
       return { status: "connected" };

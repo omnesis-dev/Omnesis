@@ -32,7 +32,17 @@ export interface GithubClientOptions {
   /** Injectable sleep for tests. Defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /**
+   * Called when GitHub rejects the token, before the request is retried once
+   * with whatever the token function then returns. Only for a token function:
+   * a brokered key rotated at the broker is otherwise served from its cache,
+   * stale, until the cache lapses, and the 401 would park the source first.
+   */
+  invalidateToken?: () => void;
 }
+
+/** A fixed token, or a function asked for the current one before every request. */
+export type GithubToken = string | (() => Promise<string>);
 
 interface EtagEntry {
   etag: string;
@@ -55,19 +65,26 @@ export interface RestPage<T> {
  * classification in the collector would file both as `permission`.
  */
 export class GithubClient {
-  private readonly token: string;
+  private readonly token: GithubToken;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
+  private readonly invalidateToken?: () => void;
   private readonly etags = new Map<string, EtagEntry>();
 
-  constructor(token: string, opts: GithubClientOptions = {}) {
+  /**
+   * `token` is the account's token, or — for an account whose credential the
+   * broker holds — a function asked for the current one before every request,
+   * so a token the broker refreshes or rotates is picked up mid-run.
+   */
+  constructor(token: GithubToken, opts: GithubClientOptions = {}) {
     this.token = token;
     this.baseUrl = opts.baseUrl ?? GITHUB_API_BASE;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = opts.now ?? Date.now;
+    this.invalidateToken = typeof token === "function" ? opts.invalidateToken : undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -272,16 +289,22 @@ export class GithubClient {
       headers?: Record<string, string>;
       /** Statuses handed back to the caller instead of raising a SyncError. */
       allowStatuses?: number[];
+      /** Set on the one retry after a rejected token was invalidated. */
+      reauthorized?: boolean;
     } = {},
     attempt = 0,
   ): Promise<Response> {
+    // Outside the try below: a broker that cannot supply the token raises its
+    // own `SyncError` (`auth` or `network`), which must not be retried and
+    // relabelled as GitHub being unreachable.
+    const token = typeof this.token === "string" ? this.token : await this.token();
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method: init.method ?? "GET",
         body: init.body,
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
           "User-Agent": "omnesis",
@@ -304,6 +327,12 @@ export class GithubClient {
     if (res.status >= 500 && attempt < TRANSIENT_RETRIES) {
       await this.sleep(TRANSIENT_BACKOFF_MS[Math.min(attempt, TRANSIENT_BACKOFF_MS.length - 1)]);
       return this.rawRequest(path, init, attempt + 1);
+    }
+
+    if (res.status === 401 && this.invalidateToken && !init.reauthorized) {
+      await res.body?.cancel().catch(() => undefined);
+      this.invalidateToken();
+      return this.rawRequest(path, { ...init, reauthorized: true }, attempt);
     }
 
     if (res.status === 401) {

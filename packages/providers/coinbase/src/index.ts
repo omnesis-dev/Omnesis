@@ -2,7 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
-import { readProviderAccountOrLegacyCredentials } from "@omnesis/core";
+import {
+  BrokeredCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readProviderAccountOrLegacyCredentials,
+} from "@omnesis/core";
+import { brokeredCoinbaseClient, coinbaseBrokerSpec } from "./broker.js";
 import { CoinbaseClient } from "./client.js";
 import { coinbaseCredentialsSpec } from "./credentials-spec.js";
 import { coinbaseIcon } from "./icons.js";
@@ -10,6 +17,7 @@ import {
   authenticate as coinbaseAuthenticate,
   authFlow as coinbaseAuthFlow,
   cleanupCredentials as coinbaseCleanupCredentials,
+  COINBASE_FILE_KEY,
   discoverAccounts,
   hasCredentials,
   loadCredentials,
@@ -32,7 +40,14 @@ export {
   COINBASE_V2_BASE,
   ACTIVITY_PAGE_LIMIT,
 } from "./client.js";
-export type { FetchFn } from "./client.js";
+export type {
+  CoinbaseClientOptions,
+  CoinbaseSigningKey,
+  CoinbaseSigningKeySource,
+  CoinbaseTransportOptions,
+  FetchFn,
+} from "./client.js";
+export { brokeredCoinbaseClient, brokeredSigningKey, coinbaseBrokerSpec } from "./broker.js";
 export { signCoinbaseJwt, coinbaseJwtUri, COINBASE_JWT_TTL_SECONDS } from "./jwt.js";
 export { coinbaseCredentialsSpec } from "./credentials-spec.js";
 export { decimalFromString, decimalFromStringOrNull, DECIMAL_STRING_RE } from "./decimal.js";
@@ -83,6 +98,7 @@ export {
   discoverAccounts,
   hasCredentials,
   loadCredentials,
+  resolveKeyAccount,
 } from "./provider.js";
 export { validateCoinbaseCursor } from "./types.js";
 export type {
@@ -99,11 +115,15 @@ export default defineProvider<CoinbaseContext>({
   provider: { id: "coinbase", name: "Coinbase" },
   authType: "api-key",
   credentials: coinbaseCredentialsSpec,
+  broker: coinbaseBrokerSpec,
 
   // Offline account resolution from the per-account marker dirs authFlow
-  // writes — the collector derives instances solely from discover().
+  // writes, and the bindings of portfolios whose key the broker holds — the
+  // collector derives instances solely from discover().
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map(String);
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds(COINBASE_FILE_KEY, ctx?.configDir)) ids.add(id);
+    return [...ids];
   },
 
   async authFlow(params, callbacks, ctx) {
@@ -122,6 +142,18 @@ export default defineProvider<CoinbaseContext>({
   },
 
   async createContext({ accountId, dataCutoff, host }) {
+    // A brokered portfolio is checked first and needs nothing else on disk;
+    // reading the stored key for it would adopt the pre-per-account shared
+    // file into its directory.
+    if (hasBrokerBinding(COINBASE_FILE_KEY, accountId, host?.configDir)) {
+      const brokered = await BrokeredCredentials.load(
+        COINBASE_FILE_KEY,
+        accountId,
+        host?.configDir,
+      );
+      const client = brokeredCoinbaseClient(brokered);
+      return { client, accountId, dataCutoff, configDir: host?.configDir };
+    }
     // Keyed by account: a shared load would give every instance whichever key
     // happened to be stored, so a second portfolio would sync the first's data.
     const credentials = await loadCredentials(accountId, host?.configDir);
@@ -144,6 +176,13 @@ export default defineProvider<CoinbaseContext>({
   // other to authenticate again.
   credentialState(ctx) {
     return readConnectionState(async () => {
+      if (hasBrokerBinding(COINBASE_FILE_KEY, ctx.accountId, ctx.configDir)) {
+        // The broker holds the key; a binding that reads is the stored
+        // answer. A key the broker has lost, or Coinbase has revoked,
+        // surfaces on the next sync as an `auth` failure.
+        await readBrokerBinding(COINBASE_FILE_KEY, ctx.accountId, ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasCredentials(ctx.accountId, ctx.configDir)) return { status: "never-connected" };
       const fields = await readProviderAccountOrLegacyCredentials(
         "coinbase",

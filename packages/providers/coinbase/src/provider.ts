@@ -16,8 +16,10 @@
 import { createHash } from "node:crypto";
 import {
   clearProviderAccountAndLegacyCredentials,
+  clearProviderAccountCredentials,
   createLogger,
   CredentialPersistError,
+  hasBrokerBinding,
   hasProviderAccountCredentials,
   hasProviderCredentials,
   listProviderAccountDirs,
@@ -37,12 +39,12 @@ import type {
   AuthSession,
   SourceLifecycleContext,
 } from "@omnesis/source-sdk";
-import type { CoinbaseClientOptions } from "./client.js";
+import type { CoinbaseTransportOptions } from "./client.js";
 import type { CoinbaseCredentials, CoinbaseKeyPermissions } from "./types.js";
 
 const log = createLogger("provider:coinbase");
 
-const COINBASE_FILE_KEY = "coinbase";
+export const COINBASE_FILE_KEY = "coinbase";
 
 /**
  * Load one account's stored CDP credentials, adopting a pre-per-account shared
@@ -92,7 +94,7 @@ export async function authFlow(
   _params?: Record<string, string>,
   callbacks?: AuthFlowCallbacks,
   ctx?: SourceLifecycleContext,
-  overrides?: Partial<CoinbaseClientOptions>,
+  overrides?: CoinbaseTransportOptions,
 ): Promise<AccountId> {
   const configDir = ctx?.configDir;
   const reauthAccountId = callbacks?.accountId;
@@ -186,7 +188,7 @@ export function authenticate(session: AuthSession): Promise<AuthResult> {
  */
 export async function authenticateWith(
   session: AuthSession,
-  deps: Partial<CoinbaseClientOptions>,
+  deps: CoinbaseTransportOptions,
 ): Promise<AuthResult> {
   // A client of the older shape collected the key pair on its wizard before
   // the flow started. Reading that first is what keeps both clients on one
@@ -254,7 +256,7 @@ async function askForKey(
 async function connectWithKey(
   session: AuthSession,
   credentials: CoinbaseCredentials,
-  deps: Partial<CoinbaseClientOptions>,
+  deps: CoinbaseTransportOptions,
 ): Promise<AuthResult> {
   const configDir = session.host.configDir;
   const reauthAccountId = session.reason === "reauthenticate" ? session.accountId : undefined;
@@ -290,21 +292,14 @@ async function connectWithKey(
 
   session.show({ kind: "wait", title: "Checking the Coinbase key" });
 
-  const permissions = await probe(() => client.getKeyPermissions());
-  assertReadOnly(permissions);
-
-  // Confirm the key actually reads, and prefer the accounts-derived portfolio
-  // id (key_permissions may omit it).
-  const accounts = await probe(() => client.getAccounts(1));
-  const portfolioId = permissions.retail_portfolio_id ?? accounts.accounts[0]?.retail_portfolio_id;
-  const derived = deriveAccountId(portfolioId, credentials.key_id);
+  const { accountId: derived, fromIdentity } = await resolveKeyAccount(client, credentials.key_id);
 
   // A renewal refreshes the account it was invoked for; a key for a different
   // portfolio would silently repoint an existing source at other holdings.
   // Only checkable when the id came from the portfolio identity: a key-derived
   // id is a function of the key, so a rotated key never matches, and enforcing
   // it there would make rotation impossible rather than catch a wrong account.
-  if (derivedFromIdentity(portfolioId) && reauthAccountId && String(derived) !== reauthAccountId) {
+  if (fromIdentity && reauthAccountId && String(derived) !== reauthAccountId) {
     throw new AuthFailure(
       "identity-mismatch",
       `This API key belongs to Coinbase portfolio ${derived}, not ${reauthAccountId}.`,
@@ -325,6 +320,31 @@ async function connectWithKey(
   }
   log.info(`Authenticated with Coinbase (read-only) — account ${accountId}`);
   return { accounts: [{ accountId: String(accountId), state: { status: "connected" } }] };
+}
+
+/**
+ * Which account a key reads, refusing one wider than View-only.
+ *
+ * Shared by a pasted key and one the credential broker holds, so a portfolio
+ * linked through the broker lands under the same account id a paste of the
+ * same key would have stored it under, and the broker cannot hand Omnesis a
+ * key it would refuse to keep itself.
+ */
+export async function resolveKeyAccount(
+  client: CoinbaseClient,
+  keyId: string,
+): Promise<{ accountId: AccountId; fromIdentity: boolean }> {
+  const permissions = await probe(() => client.getKeyPermissions());
+  assertReadOnly(permissions);
+
+  // Confirm the key actually reads, and prefer the accounts-derived portfolio
+  // id (key_permissions may omit it).
+  const accounts = await probe(() => client.getAccounts(1));
+  const portfolioId = permissions.retail_portfolio_id ?? accounts.accounts[0]?.retail_portfolio_id;
+  return {
+    accountId: deriveAccountId(portfolioId, keyId),
+    fromIdentity: derivedFromIdentity(portfolioId),
+  };
 }
 
 /**
@@ -417,7 +437,18 @@ export function hasCredentials(accountId: string, configDir?: string): boolean {
   return hasProviderCredentials(COINBASE_FILE_KEY, configDir);
 }
 
+/**
+ * Remove one account's local state.
+ *
+ * A brokered account owns nothing but its directory: the key stays at the
+ * broker for whoever else uses it, and the pre-per-account shared file is
+ * some other account's key, which removing this one must not decide about.
+ */
 export async function cleanupCredentials(accountId: string, configDir?: string): Promise<void> {
-  await clearProviderAccountAndLegacyCredentials(COINBASE_FILE_KEY, accountId, configDir);
+  if (hasBrokerBinding(COINBASE_FILE_KEY, accountId, configDir)) {
+    await clearProviderAccountCredentials(COINBASE_FILE_KEY, accountId, configDir);
+  } else {
+    await clearProviderAccountAndLegacyCredentials(COINBASE_FILE_KEY, accountId, configDir);
+  }
   log.info(`Cleaned up Coinbase credentials for account ${accountId}`);
 }

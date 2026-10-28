@@ -3,9 +3,12 @@
 
 import { createHash } from "node:crypto";
 import {
+  BrokeredCredentials,
   clearProviderAccountAndLegacyCredentials,
+  clearProviderAccountCredentials,
   createLogger,
   CredentialPersistError,
+  hasBrokerBinding,
   hasProviderAccountCredentials,
   hasProviderCredentials,
   listProviderAccountDirs,
@@ -173,6 +176,49 @@ export async function authenticateWith(
 }
 
 /**
+ * Which account a key held by the credential broker belongs to.
+ *
+ * The same derivation as a paste: a hash of the key, taken from the key as it
+ * is at link time, after the same probe proves Lunch Flow accepts it. A
+ * binding is read by its directory and never re-derived, so the account keeps
+ * this id if the key is later rotated at the broker — it then no longer
+ * matches what pasting the new key would produce, and adding the new key
+ * here directly would make a second connection (refused by the overlap check
+ * below whenever the two reach a bank in common).
+ *
+ * The overlap check needs to know which config directory the binding will
+ * join, so it runs only when the caller says (`ctx`). It skips the account
+ * being linked: re-linking a connection, or moving a pasted key's account
+ * onto the broker, covers the same banks under the same id by design.
+ */
+export async function resolveBrokeredAccount(
+  credentials: BrokeredCredentials,
+  ctx?: { configDir?: string },
+  deps: AuthFlowDeps = {},
+): Promise<{ accountId: string }> {
+  // Trimmed as a pasted key is, so the hash comes out the same.
+  const apiKey = (await credentials.token()).trim();
+  const client = new LunchflowClient({ apiKey, fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
+  const accounts = await client.listAccounts();
+  const accountId = String(deriveAccountId(apiKey));
+  if (ctx) {
+    const clash = await findOverlappingAccount(
+      new Set(accounts.map((a) => String(a.id))),
+      ctx.configDir,
+      deps,
+      accountId,
+    );
+    if (clash) {
+      throw new Error(
+        `This API key covers bank accounts already connected under ${clash}. ` +
+          `Connecting them twice would make the two sources overwrite each other's data.`,
+      );
+    }
+  }
+  return { accountId };
+}
+
+/**
  * What a failed probe means for the operator.
  *
  * Lunch Flow answers both a missing key and a revoked one with 401 or 403 and
@@ -268,13 +314,20 @@ async function findOverlappingAccount(
   bankAccountIds: Set<string>,
   configDir?: string,
   deps: AuthFlowDeps = {},
+  skip?: string,
 ): Promise<string | null> {
   // By DIRECTORY, not by stored credential: on an install that has not adopted
   // yet the existing connection holds no per-account file, and skipping it
   // would wave through exactly the overlap this guard exists to catch.
   for (const existing of listProviderAccountDirs(LUNCHFLOW_FILE_KEY, configDir)) {
+    if (existing === skip) continue;
     try {
-      const key = await loadApiKey(existing, configDir);
+      // A brokered sibling's key is asked of the broker. Reading it from disk
+      // would find none, or adopt an older install's shared key into the
+      // brokered account's directory.
+      const key = hasBrokerBinding(LUNCHFLOW_FILE_KEY, existing, configDir)
+        ? await (await BrokeredCredentials.load(LUNCHFLOW_FILE_KEY, existing, configDir)).token()
+        : await loadApiKey(existing, configDir);
       const client = new LunchflowClient({
         apiKey: key,
         fetchImpl: deps.fetchImpl,
@@ -305,7 +358,10 @@ export function discoverAccounts(configDir?: string): AccountId[] {
   const stored = listProviderAccountIds(LUNCHFLOW_FILE_KEY, configDir);
   if (stored.length > 0) return stored.map((id) => AccountId(id));
   if (!hasProviderCredentials(LUNCHFLOW_FILE_KEY, configDir)) return [];
+  // A brokered account's directory is no legacy marker: counting it would
+  // hide the `default` account of an install that never recorded one.
   const dirs = listProviderAccountDirs(LUNCHFLOW_FILE_KEY, configDir).flatMap((name) => {
+    if (hasBrokerBinding(LUNCHFLOW_FILE_KEY, name, configDir)) return [];
     try {
       return [AccountId(name)];
     } catch {
@@ -317,7 +373,19 @@ export function discoverAccounts(configDir?: string): AccountId[] {
   return dirs.length > 0 ? dirs : [AccountId(LUNCHFLOW_ACCOUNT_ID)];
 }
 
+/**
+ * Remove an account's local credential. A brokered account loses only its own
+ * directory, binding included: the key is the broker's and other software
+ * shares it, and the provider-wide legacy file belongs to whichever account
+ * predates per-account storage (`default`, often), never to one linked
+ * through the broker.
+ */
 export async function cleanupCredentials(accountId: string, configDir?: string): Promise<void> {
+  if (hasBrokerBinding(LUNCHFLOW_FILE_KEY, accountId, configDir)) {
+    await clearProviderAccountCredentials(LUNCHFLOW_FILE_KEY, accountId, configDir);
+    log.info(`Unlinked brokered Lunch Flow account ${accountId}`);
+    return;
+  }
   await clearProviderAccountAndLegacyCredentials(LUNCHFLOW_FILE_KEY, accountId, configDir);
   log.info(`Cleaned up Lunch Flow credentials for account ${accountId}`);
 }

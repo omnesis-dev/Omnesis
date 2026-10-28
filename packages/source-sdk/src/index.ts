@@ -36,6 +36,7 @@ export * from "./connection-state.js";
 export * from "./account-descriptor.js";
 export * from "./execution-mode.js";
 export * from "./auth-session.js";
+export * from "./broker-spec.js";
 export * from "./state-runtime.js";
 export type * from "./source-host.js";
 export * as config from "./config-schema.js";

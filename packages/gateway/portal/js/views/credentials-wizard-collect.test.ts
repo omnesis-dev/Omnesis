@@ -129,6 +129,12 @@ describe("the gate that decides whether the wizard opens", () => {
     expect(shouldOpenCredentialsWizard(undefined, undefined, false)).toBe(false);
   });
 
+  test("an account the credential broker holds never opens it", () => {
+    const brokered = { configured: false, brokeredAccounts: ["workspace-1"] };
+    expect(shouldOpenCredentialsWizard({ required: true }, brokered, false)).toBe(false);
+    expect(shouldOpenCredentialsWizard({ perAccount: true }, brokered, false)).toBe(false);
+  });
+
   test("an unknown fileKey never opens it", () => {
     expect(shouldOpenCredentialsWizard({ perAccount: true }, undefined, false)).toBe(false);
   });

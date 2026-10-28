@@ -1709,6 +1709,74 @@
           Don't submit the app for verification.
         </p>
 
+        <h3 id="credential-broker">Credentials from a broker</h3>
+        <p>
+          When the accounts you want to index are already signed in to a self-hosted
+          <a href="https://nango.dev">Nango</a> that other software on your machines uses, Omnesis
+          can take their credentials from it instead of signing them in again. A linked account
+          stores only which Nango connection holds its credential; the collector asks Nango for a
+          current token whenever it needs one, and Nango refreshes the grant. Revoking the
+          connection in Nango cuts Omnesis off with everything else that uses it, and removing the
+          source in Omnesis removes only the link, never the grant.
+        </p>
+        <p>
+          Google, Notion, Outlook, GitHub, Strava and Granola link to the matching Nango
+          integrations. Lunch Flow and Coinbase keys and IMAP logins, which Nango does not
+          catalogue, link to a generic <code>private-api-bearer</code> or
+          <code>private-api-basic</code> integration that holds them. A Google account links one
+          connection per API (Gmail, Calendar, Drive, Contacts), because Nango keeps a separate
+          grant for each; every connection must belong to the same Google account.
+        </p>
+        <p>
+          Run these on the machine whose collector syncs the account, as the collector's user: the
+          broker settings and each link are files in that collector's configuration directory,
+          encrypted at rest like its other credentials. Give Omnesis a Nango API key that can read
+          connection credentials; Nango cannot limit a key to particular connections, so the key
+          reaches every connection in its environment.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># once: where Nango is, and a file holding its API key</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker set --url http://127.0.0.1:3003 --key-file ~/nango-key</span
+              >
+            </p>
+            <p class="t-dim">
+              # link an account: &lt;integration&gt;/&lt;connection id&gt; from Nango
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker link notion notion/3f2a9c1e-0000-4000-8000-000000000001</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker link google gmail=gmail/3f2a9c1e-0000-4000-8000-000000000002
+                calendar=calendar/3f2a9c1e-0000-4000-8000-000000000003</span
+              >
+            </p>
+            <p class="t-dim"># then add its sources as usual; the add offers the linked account</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources add notion-pages</span>
+            </p>
+            <p class="t-dim"># linked accounts, each credential checked against Nango</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis broker status</span></p>
+          </div>
+        </div>
+        <p>
+          <code>omnesis broker link</code> asks the service which account the credential belongs to
+          and stores the link under that account, so a link always names the account its sources
+          sync. <code>omnesis broker unlink &lt;provider&gt; &lt;account&gt;</code> forgets a link
+          and leaves the Nango connection in place. A link to a connection Nango no longer holds, or
+          can no longer refresh, shows as needing sign-in; sign it in again in Nango.
+        </p>
+
         <h3 id="day-to-day">Day-to-day tasks</h3>
         <p>
           Each task names the portal action on the <strong>Sources</strong> page first, then the CLI
