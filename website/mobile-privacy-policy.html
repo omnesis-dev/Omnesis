@@ -116,7 +116,7 @@
       <main id="main" class="docs-content">
         <p class="docs-kicker">Legal</p>
         <h1>Omnesis Mobile App Privacy Policy</h1>
-        <p class="docs-lead"><strong>Last updated:</strong> 2026-10-18</p>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-10-28</p>
 
         <h2 id="summary">Summary</h2>
         <p>
@@ -207,13 +207,13 @@
             server on another machine, including a cloud service, receives it only if remote
             inference is allowed on your gateway. The app deletes its copy once the gateway has it;
             the gateway keeps it in its database, alongside the rest of your data, only until it has
-            transcribed it, for at most a week, and deleting the note deletes it. If you enable
-            personal transcription vocabulary on your gateway, the paired app can fetch a small list
-            of names and terms from your indexed data. It keeps this list in memory, for at most 24
-            hours without a refresh, and supplies it only to on-device speech recognition. It does
-            not supply personal vocabulary to cloud recognizers, Siri, or other voice assistants.
-            Unpairing clears the list; disabling vocabulary clears it when the app next observes the
-            gateway setting.
+            transcribed it, for at most a week, and deleting the note deletes it. When personal
+            transcription vocabulary is enabled on your gateway (the default), the paired app can
+            fetch a small list of names and terms from your indexed data. It keeps this list in
+            memory, for at most 24 hours without a refresh, and supplies it only to on-device speech
+            recognition. It does not supply personal vocabulary to cloud recognizers, Siri, or other
+            voice assistants. Unpairing clears the list; disabling vocabulary clears it when the app
+            next observes the gateway setting.
           </li>
           <li>
             <strong>Location</strong> — on iOS, a location can be attached to a note captured in the
@@ -323,17 +323,17 @@
           policy.
         </p>
         <p>
-          With <code>OMNESIS_EXPERIMENTAL=1</code>, a configured OpenAI backend, and remote
-          inference allowed, iOS offers an unstable realtime voice conversation mode. During a call,
-          the app sends microphone audio directly to OpenAI over an encrypted WebRTC connection for
-          speech recognition and spoken replies. Your gateway coordinates the call and sends recent
-          conversation text and verified agent results to OpenAI's speech service. Your configured
-          Omnesis agent handles reasoning and tools using its selected model provider; the inputs
-          needed for that work are sent to that provider when remote inference is enabled. Omnesis
-          does not save call audio. Transcripts, tool activity, and citations remain in the ordinary
-          conversation history on your gateway. Each provider's API privacy and retention terms
-          apply to the data it receives. Ending the call stops microphone capture and audio
-          streaming.
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, an OpenAI backend explicitly assigned to the
+          speech-to-speech role, and remote inference allowed, iOS offers an unstable realtime voice
+          conversation mode. During a call, the app sends microphone audio directly to OpenAI over
+          an encrypted WebRTC connection for speech recognition and spoken replies. Your gateway
+          coordinates the call and sends recent conversation text and verified agent results to
+          OpenAI's speech service. Your configured Omnesis agent handles reasoning and tools using
+          its selected model provider; the inputs needed for that work are sent to that provider
+          when remote inference is enabled. Omnesis does not save call audio. Transcripts, tool
+          activity, and citations remain in the ordinary conversation history on your gateway. Each
+          provider's API privacy and retention terms apply to the data it receives. Ending the call
+          stops microphone capture and audio streaming.
         </p>
 
         <h2 id="what-omnesis-does-not-do">What Omnesis does NOT do</h2>

@@ -17,7 +17,7 @@ under [`website/docs/`](website/docs/)).
 
 | Tool                        | Why                                 | Notes                                           |
 | --------------------------- | ----------------------------------- | ----------------------------------------------- |
-| **Node ≥ 24**               | runtime for gateway, collector, CLI | macOS users on Homebrew: `brew install node@24` |
+| **Node 24.16+ or 26.1+**    | runtime for gateway, collector, CLI | macOS users on Homebrew: `brew install node@24` |
 | **Xcode 16+**               | iOS app and SwiftLint/SwiftFormat   | macOS only; required only if you touch `ios/`   |
 | **XcodeGen**                | regenerates `ios/Omnesis.xcodeproj` | `brew install xcodegen`                         |
 | **SwiftFormat + SwiftLint** | iOS code style / lint               | `brew install swiftformat swiftlint`            |

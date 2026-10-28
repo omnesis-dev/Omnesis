@@ -27,7 +27,7 @@ packages/cli/          unified `omnesis` CLI — read commands hit /search, /doc
 packages/providers/*   one package per provider (google, apple, notion, whatsapp, …)
 packages/watch/     the Watch V2 DSL, validator, runtime and compiler — standalone by contract, imports nothing from the gateway; the gateway hosts it through `packages/gateway/src/watch/`
 packages/agent-integration/ shared off-host integration runtime for OpenClaw and Hermes — transcript ingestion, subscription delivery, and scoped management tools
-extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; experimental Tell Omnesis notes and Find search require gateway `OMNESIS_EXPERIMENTAL=1` and use separately approved create-only and read credentials with independent capability discovery; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
+extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; experimental Tell Omnesis notes and Find search require gateway `OMNESIS_EXPERIMENTAL=1` and use separately issued create-only and read credentials with independent capability discovery; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
 scripts/release/       publish pipeline — stage packages, transform src-pointing manifests to dist at publish time (see docs/releasing.md)
 ios/                   native iPhone app — pairs with the gateway, hosts Apple Health
 website/               static site Cloudflare publishes to omnesis.dev — landing page, public docs (website/docs/), privacy policy, installer mirror
@@ -252,7 +252,7 @@ How versioning, migrations, and cross-version compatibility are encoded — the 
 
 Read `docs/releasing.md` before touching anything publish-related. The essentials:
 
-- `npm run release -- <plan|version|pr|tag|status>` is the single entry point; it owns everything from the changeset to the annotated tag (including the iOS and Android version fields) and never pushes. Pushing the tag triggers `.github/workflows/release.yml`, which always creates the GitHub Release with the changelog section; its npm and image publishing steps stay dry-run until the repository variable `OMNESIS_RELEASE_PUBLISH` is `1`.
+- `npm run release -- <plan|version|pr|tag|status>` is the single entry point; it owns everything from the changeset to the annotated tag (including the iOS and Android version fields) and never pushes. Pushing the tag triggers `.github/workflows/release.yml`, which always creates the GitHub Release with the changelog section and publishes the release images unless the repository variable `OMNESIS_IMAGE_PUBLISH` is `0`; its npm publishing step stays a dry run until `OMNESIS_RELEASE_PUBLISH` is `1`.
 - All `@omnesis/*` packages version in **lockstep** (one product version, served on `GET /health`, printed by `omnesis --version`, tagged `vX.Y.Z`).
 - Repo manifests stay **src-pointing** (`main`/`exports`/`bin` → `src/*.ts`); `scripts/release/` transforms them to `dist/*.js` at publish-stage time, never in the repo.
 - Code that spawns a sibling worker thread or subprocess must use `resolveWorkerEntry` / `resolveSubprocessEntry` from `@omnesis/core` so it works both under tsx (dev) and compiled (published).

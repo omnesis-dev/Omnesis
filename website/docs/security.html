@@ -473,11 +473,13 @@ installing it takes one command as root:
           </li>
         </ol>
         <p>
-          It needs git and a Node 24 that only root can change, such as your distribution's under
+          It needs git and a Node that only root can change, such as your distribution's under
           <code>/usr</code>; a Node installed in a home directory (through nvm, for example) is
-          refused. <code>--no-keyring</code> installs without encryption at rest, and
-          <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies into
-          <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
+          refused. The release is built from source, so use a Node the
+          <a href="/docs/install#requirements">source install</a> supports: 24.16 or newer within
+          Node 24, or 26.1 or newer. <code>--no-keyring</code> installs without encryption at rest,
+          and <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies
+          into <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
         </p>
         <p>
           It is a new gateway, never your existing one moved: devices pair with it again and sources

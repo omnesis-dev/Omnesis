@@ -454,7 +454,7 @@
           metadata (type, timestamps, source URL, the people involved), stored in SQLite. Ingest
           never waits for indexing. Each new document wakes the indexer, a background worker in the
           gateway. It splits the document into chunks suited to its type, adds them to a keyword
-          index (SQLite FTS5), and embeds them with the configured embedding model into a vector
+          index (SQLite FTS5) and, when an embedding model is assigned, embeds them into a vector
           index (HNSW).
         </p>
         <p>
@@ -474,7 +474,7 @@
           there, and “tomorrow” counts from the day you wrote the note in your own time zone. A
           document's page in the portal lists all of its dates under
           <strong>Enriched by Omnesis</strong>, and
-          <strong>Debug → Knowledge → Timeline</strong> shows the time index itself: the dates
+          <strong>Debug → Cognition → Timeline</strong> shows the time index itself: the dates
           sources record and the mentions above, by day, week or month, and the deadlines coming up.
         </p>
         <p>
@@ -499,8 +499,9 @@
         </p>
         <p>
           A search queries both indexes and merges the results, so exact terms and paraphrases both
-          match. Without an embedding model, search falls back to keywords alone. How ranking works,
-          and the query syntax, are on <a href="/docs/search">Search</a>.
+          match. Without an embedding model, or while the vector index does not fit in the gateway's
+          memory budget, search falls back to keywords alone. How ranking works, and the query
+          syntax, are on <a href="/docs/search">Search</a>.
         </p>
 
         <h2 id="people-and-reference-graphs">People and reference graphs</h2>
@@ -552,9 +553,9 @@
           someone else. A task has a planned time (a day, a month or someday) separate from any real
           deadline, and every change to it is recorded with a receipt you can undo. You change tasks
           directly, by asking the agent in a conversation, or by telling Omnesis in a note from the
-          portal, the apps or the CLI once a <code>background-agent</code> model is assigned to read
-          notes; notes that external agents add are saved but never acted on. Tasks need no model.
-          See <a href="/docs/apps#tasks">Tasks</a>.
+          portal, the apps or the CLI while a <code>background-agent</code> model is assigned and
+          the <a href="/docs/agent#tasks">note agent</a> is on; notes that external agents add are
+          saved but never acted on. Tasks need no model. See <a href="/docs/apps#tasks">Tasks</a>.
         </p>
 
         <h2 id="where-your-data-lives">Where your data lives</h2>

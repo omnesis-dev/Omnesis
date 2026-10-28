@@ -273,8 +273,7 @@
           Source updates check the target checkout's Node requirement before changing the checkout
           or stopping services. If the installed Node version is unsupported, upgrade Node, ensure
           <code>node</code> and <code>npm</code> select it on <code>PATH</code>, then rerun
-          <code>omnesis update</code>. Package installations retain their Node 24 runtime
-          requirement.
+          <code>omnesis update</code>. Package installations need only Node 24 or newer.
         </p>
         <p>
           <code>omnesis update</code> moves a machine to the newest stable release and restarts what
@@ -730,7 +729,8 @@
           pull, while the gateway still serves the previous image. Rolling back is quick: the
           previous tag is written back, and its image is still on the machine.
           <code>--target-version</code> pins a release tag, and <code>--edge</code> follows the
-          images built from the main branch.
+          <code>main</code> image tag, which moves only when images are published by hand from the
+          main branch and is not published for the combined image.
         </p>
         <p>
           The update runs in a short-lived updater container that holds the Docker socket for that

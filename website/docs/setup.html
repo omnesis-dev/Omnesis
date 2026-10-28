@@ -818,6 +818,12 @@ omnesis.example.com {
           <code>write:web</code> only.
         </p>
         <p>
+          The extension also registers the <code>om</code> keyword in Chrome's address bar. On a
+          gateway that offers no search to the browser, text entered after <code>om</code> goes to
+          Chrome's default search engine, as the address bar says before you press Enter; that is
+          what the extension's <code>search</code> permission is for.
+        </p>
+        <p>
           Page capture and optional capabilities have separate compatibility checks. Unsupported
           capabilities remain hidden while page capture continues. If pairing times out, submit the
           same code again: the gateway recognises the repeated request and returns the token it
@@ -928,11 +934,11 @@ omnesis.example.com {
         </div>
         <p>
           <strong>Versions and access.</strong> The popup shows the gateway's version beside its
-          address. Page capture uses its established compatibility floor; optional notes require the
-          gateway's advertised notes capability. A different major release produces a warning to
-          update the older component. If Chrome's page access is later revoked, the popup says so:
-          open <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload open
-          pages. Unpairing removes both the extension's token and its page access.
+          address. Page capture uses its established compatibility floor; an optional capability
+          appears only when the gateway advertises it. A different major release produces a warning
+          to update the older component. If Chrome's page access is later revoked, the popup says
+          so: open <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload
+          open pages. Unpairing removes both the extension's token and its page access.
         </p>
         <p>
           <strong>When the gateway is unreachable.</strong> Pages waiting to upload survive browser

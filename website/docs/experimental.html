@@ -341,9 +341,11 @@
           Submitted notes wait locally while the gateway is unavailable; reopening Tell Omnesis
           shows whether they are waiting to sync or saved. They appear alongside other notes in the
           portal's <strong>Tell Omnesis</strong> page and in the day's searchable Notes document,
-          with the page URL and optional quotation. Its page reference can resolve when the page is
-          indexed later; taking a note does not automatically capture an excluded page. Automatic
-          capture pauses and exclusions do not prevent you from explicitly submitting a note.
+          with the page URL and optional quotation. The note agent never acts on a note taken in the
+          browser: it is saved and searchable, and changes no task or memory. Its page reference can
+          resolve when the page is indexed later; taking a note does not automatically capture an
+          excluded page. Automatic capture pauses and exclusions do not prevent you from explicitly
+          submitting a note.
         </p>
 
         <p>
@@ -436,7 +438,7 @@
                   documents it came from. The agent's time query returns them beside source dates
                   and date mentions.
                 </td>
-                <td>Debug → Knowledge → Timeline</td>
+                <td>Debug → Cognition → Timeline</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -727,14 +729,14 @@
           </table>
         </div>
         <p>
-          Codex can serve the first three through the same ChatGPT login, and Claude Code through
-          the same Claude Code sign-in. The two reviewers each run as their own model turn even when
-          they use the same model as the agent waiting on their verdict, and every role shares the
-          account's usage allowance.
+          Codex can serve the first two through the same ChatGPT login, and Claude Code through the
+          same Claude Code sign-in. The verifier runs as its own model turn even when it uses the
+          same model as the agent waiting on its verdict, and every role shares the account's usage
+          allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
-          <code>active</code>; the portal's Brain activity page says which of the two conditions is
-          missing.
+          <code>active</code>; the portal's <strong>Debug → Cognition</strong> pages say which of
+          the two conditions is missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
@@ -794,7 +796,7 @@
         </p>
         <p>
           Historical organization is opt-in. Open
-          <strong>Debug → Brain activity → Discovery</strong> and press
+          <strong>Debug → Cognition → Discovery</strong> and press
           <strong>Start reading history</strong>. The pass honors historical enablement, active
           hours and admission caps, and reports separate interpretation, organization and conversion
           coverage. Recent-first is the default; historical evidence need not contain a future date
@@ -1005,7 +1007,7 @@
           does not offer, or a server whose context length cut the prompt short. Then the run keeps
           its place and its attempt is refunded until you fix the cause. After three consecutive
           backend failures the drainer stops claiming work and backs off from one minute to fifteen,
-          and the Bootstrap tab shows a
+          and the Discovery tab shows a
           <strong>Model backend — Failing</strong> banner with the provider's own error. Nothing is
           lost while it lasts.
         </p>
@@ -1049,6 +1051,50 @@
             against their evidence and re-affirmed, weakened, superseded or retracted.
           </li>
         </ul>
+
+        <p>
+          Searchable assistant conversations remain historical context, not independent evidence for
+          their claims. Brain verification uses authenticated, complete attributed utterances;
+          current original sources must be read separately. Long or partially read utterances may
+          remain readable without providing factual support.
+        </p>
+        <p>
+          A stale maintained page may still expose individually current, qualified claims. Direct
+          reads can handle a freshness-only mirror delay at the same revision. Other prose remains
+          orientation only; privacy restrictions and changed read snapshots still prevent use.
+        </p>
+        <p>
+          Maintenance can reuse the exact frontier receipt observed by a complete editing read
+          instead of transcribing its fingerprint. Explicit mismatches and stale source, owner or
+          privacy state remain refused.
+        </p>
+        <p>
+          Synthesis saves report bounded stored claim verification states. A successful save or
+          completed review can still leave claims unverified. Whole synthesis references provide
+          orientation; factual support requires qualified claims or original evidence.
+        </p>
+        <p>
+          Loop claim verification checks each assertion in its bounded final outcome context.
+          Surrounding prose is interpretation, not additional evidence. Older literal-only proofs
+          are rechecked gradually, including retained completed outcomes without reopening them.
+          Operational loop updates remain separate from claim verification; a stored description is
+          not a guarantee of factual accuracy.
+        </p>
+        <p>
+          Exact loop reads can reuse current context-verified assertions with their conditions,
+          attribution and time bounds. Surrounding prose and tracked open state do not prove
+          additional facts, present-world obligations or completion.
+        </p>
+        <p>
+          Evidence-backed timeline entries pass their configured record-value check before paid
+          evidence verification. An enforced value refusal avoids that verification call;
+          cancellation stops the write, and source freshness and privacy checks still apply.
+        </p>
+        <p>
+          The experimental Brain admits at most two independent remote verification checks at a
+          time; native verification remains serial. Backend pool limits and existing verification
+          deadlines still apply.
+        </p>
 
         <h3 id="brain-worth-gate">Routing maintenance with the decision model</h3>
         <p>
@@ -1203,14 +1249,14 @@
         </p>
         <p>
           A catch-up run is a full agent session, several model round-trips rather than one
-          completion, so the catch-up lane is where large bills come from. The Overview tab splits
-          each day's tokens into fresh input, input re-read from the provider's cache (billed at a
-          fraction, and a subset of input, not an addition) and output. On the catch-up lane the
-          observed cache share depends on the backend, model and prompt prefix. Compare measured
-          fresh and cached input with your provider's pricing; no fixed output ratio is assumed.
-          Cache totals include only usage reported by the provider. A zero aggregate does not
-          establish that every input token was fresh; missing historical cache details cannot be
-          reconstructed.
+          completion, so the catch-up lane is where large bills come from. The Discovery tab's
+          Budget section splits the day's tokens into fresh input, input re-read from the provider's
+          cache (billed at a fraction, and a subset of input, not an addition) and output. On the
+          catch-up lane the observed cache share depends on the backend, model and prompt prefix.
+          Compare measured fresh and cached input with your provider's pricing; no fixed output
+          ratio is assumed. Cache totals include only usage reported by the provider. A zero
+          aggregate does not establish that every input token was fresh; missing historical cache
+          details cannot be reconstructed.
         </p>
         <p>
           All limits are set with <code>omnesis config set &lt;path&gt; &lt;value&gt;</code> (or the
@@ -1315,7 +1361,7 @@
             </p>
           </div>
         </div>
-        <p>The Bootstrap tab reports the catch-up lane as one of seven states:</p>
+        <p>The Discovery tab reports the catch-up lane as one of five states:</p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1408,13 +1454,14 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          The portal separates <strong>Knowledge</strong> (the library, loops, observations, and
-          timeline) from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent
-          runs shows the queue, transcripts, and decisions; Maintenance follows repair batches;
-          Discovery shows coverage and historical admission controls; Calibration compares
-          confidence with observed outcomes. Legacy memory retains agent notes and retired-loop
-          history. <strong>System → Gateway jobs</strong> shows when each scheduled task last ran.
-          The same data is available from the CLI:
+          In the portal, <strong>Debug → Cognition</strong> holds the Library (pages, loops,
+          annotations and observations) and the Timeline; Agent runs shows the queue, transcripts,
+          decisions and spend; Observations and Interest follow the morning brief and what Brain
+          learns from your reactions; Maintenance follows repair batches; Discovery shows coverage,
+          the budget and historical admission controls; Confidence &amp; feedback compares stated
+          confidence with observed outcomes; Behavioral notes shows the agent-notes file.
+          <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
+          data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>
@@ -1472,7 +1519,7 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         <p>There are four levels, from narrowest to widest:</p>
         <ul>
           <li>
-            <strong>Pause the catch-up.</strong> The Bootstrap tab's pause control sets
+            <strong>Pause the catch-up.</strong> The Discovery tab's pause control sets
             <code>brain.bootstrap.enabled</code> to <code>false</code>. Nothing already done is
             repeated when you resume: each document is marked once as reviewed.
           </li>
@@ -1483,7 +1530,7 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
           <li>
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
-            once. While experimental mode is on, the portal's Brain activity page still shows what
+            once. While experimental mode is on, <strong>Debug → Cognition</strong> still shows what
             was written, the Morning brief conversation keeps its past messages, and Tasks keeps
             every task, including suggestions not yet accepted. Notes stop being read.
           </li>
@@ -1959,7 +2006,7 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         </p>
         <p>
           Every compile is recorded as a run of kind <code>subscription_compile</code> on
-          <strong>Debug → Brain activity → Agent runs</strong>, with the full transcript: what the
+          <strong>Debug → Cognition → Agent runs</strong>, with the full transcript: what the
           compiler looked up, what it wrote and each repair turn. An installed watch links to it
           from its detail page. The transcript contains corpus text the compiler read.
         </p>
@@ -2546,10 +2593,10 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         <p>
           In the portal, <strong>Watches</strong> lists every watch with pending agent requests at
           the top; a watch's page shows its definition, its firings and the compile that produced
-          it. <strong>Debug → Watch</strong> draws one watch as a graph, shows what each stateful
-          node is holding per key and every armed timer, and lights up the path an event took,
-          including the times the watch looked and did not fire. It is read-only; actions stay in
-          the CLI. The iOS and Android apps show watches read-only when experimental mode is on.
+          it. <strong>Debug → Watch runtime</strong> draws one watch as a graph, shows what each
+          stateful node is holding per key and every armed timer, and lights up the path an event
+          took, including the times the watch looked and did not fire. It is read-only; actions stay
+          in the CLI. The iOS and Android apps show watches read-only when experimental mode is on.
         </p>
         <p>
           <code>omnesis watch report</code> puts every stopped watch in one bucket:
@@ -2681,49 +2728,6 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             ><span class="pager-title">Building sources</span></a
           >
         </nav>
-        <p>
-          Searchable assistant conversations remain historical context, not independent evidence for
-          their claims. Brain verification uses authenticated, complete attributed utterances;
-          current original sources must be read separately. Long or partially read utterances may
-          remain readable without providing factual support.
-        </p>
-        <p>
-          A stale maintained page may still expose individually current, qualified claims. Direct
-          reads can handle a freshness-only mirror delay at the same revision. Other prose remains
-          orientation only; privacy restrictions and changed read snapshots still prevent use.
-        </p>
-        <p>
-          Maintenance can reuse the exact frontier receipt observed by a complete editing read
-          instead of transcribing its fingerprint. Explicit mismatches and stale source, owner or
-          privacy state remain refused.
-        </p>
-        <p>
-          Synthesis saves report bounded stored claim verification states. A successful save or
-          completed review can still leave claims unverified. Whole synthesis references provide
-          orientation; factual support requires qualified claims or original evidence.
-        </p>
-        <p>
-          Loop claim verification checks each assertion in its bounded final outcome context.
-          Surrounding prose is interpretation, not additional evidence. Older literal-only proofs
-          are rechecked gradually, including retained completed outcomes without reopening them.
-          Operational loop updates remain separate from claim verification; a stored description is
-          not a guarantee of factual accuracy.
-        </p>
-        <p>
-          Exact loop reads can reuse current context-verified assertions with their conditions,
-          attribution and time bounds. Surrounding prose and tracked open state do not prove
-          additional facts, present-world obligations or completion.
-        </p>
-        <p>
-          Evidence-backed timeline entries pass their configured record-value check before paid
-          evidence verification. An enforced value refusal avoids that verification call;
-          cancellation stops the write, and source freshness and privacy checks still apply.
-        </p>
-        <p>
-          The experimental Brain admits at most two independent remote verification checks at a
-          time; native verification remains serial. Backend pool limits and existing verification
-          deadlines still apply.
-        </p>
       </main>
     </div>
 

@@ -10,8 +10,8 @@ One command drives a release: `npm run release -- <subcommand>` (§ [The
 release conductor](#the-release-conductor)). It owns everything from the
 changeset to the annotated tag and reads nothing outside the repository.
 Pushing that tag triggers `.github/workflows/release.yml`, which creates the
-GitHub Release and, once publication is armed, publishes the packages and the
-container images (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
+GitHub Release, publishes the container images and, once npm publication is
+armed, the packages (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
 
 A release is an annotated `vX.Y.Z` tag on `main`. Both distribution channels
 resolve from it: a source install checks out the tag and builds it, and a

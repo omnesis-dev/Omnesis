@@ -331,10 +331,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           skips them).
         </p>
         <p>
-          With no embedding model assigned, keyword-only indexing is healthy. If a local embedding
-          model is assigned but its file is missing, doctor reports the missing model even while
-          keyword search continues to work. Install the assigned model to restore semantic search,
-          or disable the embedder assignment to keep keyword-only operation intentionally.
+          Keyword search works without an embedding model, but doctor still treats the embedder as
+          required. After <code>omnesis model assign embedder disabled</code>, documents are indexed
+          for keyword search and <code>models.embedder</code> fails as not configured. If a local
+          embedding model is assigned but its file is missing, doctor reports the missing model even
+          while keyword search continues to work. Install the model to restore semantic search.
         </p>
         <p>
           The same report is in the portal under <strong>Debug → System → Health</strong>. A
@@ -365,7 +366,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <h3 id="calendar">Reading the calendar</h3>
         <p>
-          <strong>Debug → Knowledge → Timeline</strong> combines structured dates supplied by
+          <strong>Debug → Cognition → Timeline</strong> combines structured dates supplied by
           sources (<strong>Source record</strong>), interpretations recorded by the agent (<strong
             >Agent interpretation</strong
           >), and date expressions found in document text (<strong>Date mention</strong>). Source
@@ -556,7 +557,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   (see
                   <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
                   takes the same chat models as <code>agent</code> and is never assigned
-                  automatically. Without it, notes are saved and indexed but not acted on.
+                  automatically. Without it, or with <code>agent.noteAgent</code> set to
+                  <code>false</code>, notes are saved and indexed but not acted on.
                 </td>
               </tr>
               <tr>
@@ -601,7 +603,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             </tbody>
           </table>
         </div>
-        <p>Each role can run its model in one of four places:</p>
+        <p>Each role can run its model in one of five places:</p>
         <ul>
           <li>
             <strong>Local GGUF models</strong>, downloaded with
@@ -626,8 +628,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <code>omnesis codex login</code> or the portal's Codex backend settings, where you can
             copy the one-time login code with the copy button beside it.
             <code>omnesis codex status</code> shows the runtime and sign-in state. Codex serves the
-            <code>agent</code>, <code>privacy-reviewer</code> and image-capable
-            <code>ocr</code> roles from one login; it has no embedding or transcription models.
+            <code>agent</code>, <code>background-agent</code>, <code>privacy-reviewer</code> and
+            image-capable <code>ocr</code> roles from one login; it has no embedding or
+            transcription models.
           </li>
           <li>
             <strong>Claude Code</strong>, assigned as <code>claude-code/&lt;model&gt;</code>, which
@@ -640,8 +643,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             before it is listed), or with <code>omnesis claude-code refresh</code>.
             <code>omnesis claude-code status</code> shows the installation, sign-in state and the
             models the CLI offers. Claude Code serves the <code>agent</code>,
-            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
-            it has no embedding or transcription models. Sign-in and isolation are covered in
+            <code>background-agent</code>, <code>privacy-reviewer</code> and image-capable
+            <code>ocr</code> roles from one login; it has no embedding or transcription models.
+            Sign-in and isolation are covered in
             <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
           </li>
         </ul>
@@ -1294,7 +1298,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <a href="#configuration">Configuration</a>). Give the gateway more memory: raise that
           setting or the container's limit, or free memory on the host. Then restart the gateway. On
           a host whose memory other services share, set <code>gateway.memoryLimitMb</code> to what
-          the gateway may really use, so it backs off before the system runs out.
+          the gateway may really use, so it backs off before the system runs out. The in-memory copy
+          of the keyword index is not released when memory runs short; on a small host, set
+          <code>search.bm25.memoryIndex</code> to <code>false</code> to rank keywords from disk (see
+          <a href="/docs/search#searching">Search</a>).
         </p>
         <p>
           The index is saved as it is built and as it changes, so a gateway that stops or is killed

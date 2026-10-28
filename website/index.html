@@ -4549,7 +4549,9 @@
                 </svg>
                 <div>
                   <div class="tool-name" style="color: var(--color-device)">Watch</div>
-                  <div class="tool-desc">Wake external agents with data predicates</div>
+                  <div class="tool-desc">
+                    Experimental: wake external agents with data predicates
+                  </div>
                 </div>
               </div>
               <div class="tool">
@@ -4649,10 +4651,10 @@
                 <div class="arch-card arch-built-in-agent">
                   <div class="built-in-name">Omnesis Agent</div>
                   <div class="built-in-desc">
-                    Private corpus recall/reasonning via companion app, with no internet/write
-                    access.
+                    Private corpus recall and reasoning, with no internet access. It writes only its
+                    own memory and your tasks.
                   </div>
-                  <div class="sandbox-badge">Read-only sandbox</div>
+                  <div class="sandbox-badge">Sandboxed</div>
                 </div>
               </div>
             </div>
@@ -4674,8 +4676,8 @@
                   <div class="agent-name">ChatGPT</div>
                 </div>
                 <div class="agent agent--openclaw">
-                  <img width="120" height="120" src="media/openclaw.svg" alt="Openclaw" />
-                  <div class="agent-name">Openclaw</div>
+                  <img width="120" height="120" src="media/openclaw.svg" alt="OpenClaw" />
+                  <div class="agent-name">OpenClaw</div>
                 </div>
                 <div class="agent agent--hermes">
                   <img width="24" height="24" src="media/hermes.svg" alt="Hermes" />
@@ -4871,7 +4873,7 @@
               <p>Pages you visited, saved, and kept coming back to.</p>
               <div class="data-tags">
                 <span class="data-tag">Browsing history</span>
-                <span class="data-tag">Browser Bookmarks</span>
+                <span class="data-tag">Chrome Bookmarks</span>
                 <span class="data-tag">Web page capture via Browser extension</span>
               </div>
             </div>
@@ -5331,7 +5333,7 @@
                   <!-- Date header: Wed Mar 3 -->
                   <li class="gd-date" style="--event-accent: #ea4335; --next-accent: #ea4335">
                     <div class="gd-date-marker"></div>
-                    <div class="gd-date-label tl-slide">Wed &middot; Mar 3, 2026</div>
+                    <div class="gd-date-label tl-slide">Tue &middot; Mar 3, 2026</div>
                   </li>
 
                   <!-- Event 1: Email from John Smith -->
@@ -5501,7 +5503,7 @@
                   <!-- Date header: Thu Mar 4 -->
                   <li class="gd-date" style="--event-accent: #25d366; --next-accent: #25d366">
                     <div class="gd-date-marker"></div>
-                    <div class="gd-date-label tl-slide">Thu &middot; Mar 4, 2026</div>
+                    <div class="gd-date-label tl-slide">Wed &middot; Mar 4, 2026</div>
                   </li>
 
                   <!-- Event 4: WhatsApp signed copy -->
@@ -5748,10 +5750,11 @@
               </ul>
               <p class="priv-panel-foot">
                 <strong>Local</strong> runs in-process &mdash; node-llama-cpp, whisper.cpp, Apple
-                Vision &mdash; or your own vLLM server. <strong>Cloud</strong> connects to any
-                OpenAI-compatible endpoint, with first-class Anthropic API support and a Codex
-                integration that runs the agent on your ChatGPT subscription. We recommend using
-                zero data retention inference providers.
+                Vision &mdash; or your own OpenAI-compatible server, such as vLLM or Ollama.
+                <strong>Cloud</strong> connects to any OpenAI-compatible endpoint, with first-class
+                Anthropic API support and Codex and Claude Code integrations that run the agent on
+                your ChatGPT or Claude subscription. We recommend using zero data retention
+                inference providers.
               </p>
             </div>
 
@@ -5773,9 +5776,9 @@
                 </span>
                 <h3 class="priv-card-title">A safe-by-default agent</h3>
                 <p>
-                  The built-in Omnesis agent can do exactly one thing: recall and make sense of your
-                  data, via the companion app. It has no other tools and no access to the internet,
-                  so there is nothing for it to leak.
+                  The built-in Omnesis agent recalls and makes sense of your data. Its tools read
+                  your index and write only its own memory and your tasks. It has no shell, no file
+                  access and no access to the internet, so there is nothing for it to leak.
                 </p>
               </div>
 
@@ -5796,16 +5799,18 @@
                 </span>
                 <h3 class="priv-card-title">Omnesis Privacy Gate</h3>
                 <p>
-                  You can also point your own agent (openclaw, hermes, claude, etc) to Omnesis via
-                  an agent to agent protocol. This allows pairing the powerful recall and reasoning
-                  over your digital life that Omnesis offers with the ability to act in the digital
-                  world.
+                  You can also point your own agent (OpenClaw, Hermes, Claude, etc.) to Omnesis over
+                  MCP, where it asks the Omnesis agent and receives its answer. This allows pairing
+                  the powerful recall and reasoning over your digital life that Omnesis offers with
+                  the ability to act in the digital world.
                 </p>
                 <p>
                   To do this safely, Omnesis offers the ability to author a policy that describes
                   what information can be shared with external agents or when approval should be
-                  required via a notification on the companion app. The Omnesis Privacy gate can
-                  also release information with reductions (i.e redacting sensitive information).
+                  required via a notification on the companion app. The Omnesis Privacy Gate can
+                  also release information with reductions (redacting sensitive details). Direct
+                  access, which returns raw records, is a separate permission this review does not
+                  cover.
                 </p>
               </div>
             </div>

@@ -19,9 +19,8 @@ Flow for a release:
    `git tag -a v<version> -m "Omnesis <version>" <main-sha>`.
 8. Push only that tag: `git push origin v<version>`.
 
-The active release is source-only. Tagging does not publish npm packages or
-container images; those pipelines are retained for future distribution and
-local validation.
+Tagging publishes the release container images; npm packages publish only
+once `OMNESIS_RELEASE_PUBLISH=1` is set.
 
 Workspace dependencies stay `"*"` in the repo (so dev tooling resolves
 TypeScript source directly); `@omnesis/*` dependencies are pinned to the

@@ -195,8 +195,8 @@
               <td><strong>Direct</strong></td>
               <td>
                 Read-only retrieval tools that return raw records: search, document fetch and URL
-                lookup, people lookup, connection trails, and bounded SQL over the analytics
-                database.
+                lookup, people lookup, connection trails, a time query over dated records, and
+                bounded SQL over the analytics database.
               </td>
               <td>No</td>
             </tr>
@@ -1046,7 +1046,8 @@
           <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
           <code>omnesis uninstall codex</code>
-          signs Codex out and removes the MCP entry, the plugin and its marketplace.
+          signs Codex out of the Omnesis server and removes the MCP entry, the plugin and its
+          marketplace.
         </p>
         <div class="callout">
           <strong>For Codex, the plugin is guidance, not a connection.</strong> It teaches Codex how
@@ -1126,7 +1127,7 @@
           <code>omnesis_add_note</code> and the rest. It offers exactly the tools the gateway lists
           for the connection, with the gateway's descriptions, and forwards each call to the same
           tool on <code>/mcp</code>, so a source-restricted Direct permission gets its restricted
-          set. They are available in conversations, scheduled runs and watch runs alike.
+          set. They are available in conversations and scheduled runs alike.
           <code>omnesis_add_note</code> takes the same UUID <code>id</code> as any other client, and
           a retry reuses it.
         </p>
@@ -1287,7 +1288,7 @@
           for example after reinstalling the harness over its existing Omnesis files, run the
           command from the Connect an agent card with a new pairing code. The machine proves it is
           the same installation with the credentials it already holds, so the gateway keeps the same
-          agent device: its watches, conversations, and access stay bound to it. The device gets new
+          agent device: its conversations and access stay bound to it. The device gets new
           credentials and its old ones stop working. The command offers those credentials only to
           the gateway that issued them, recognized by the certificate the machine pinned, or by its
           address when this run verified the certificate against <code>--trust-fingerprint</code>,
