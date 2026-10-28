@@ -95,7 +95,10 @@ const log = createLogger("gateway:agent").child("controls");
 export class ConversationControls {
   private readonly revisions = new WeakMap<ConversationControlState, number>();
   private readonly tails = new Map<string, Promise<unknown>>();
-  private readonly running = new Map<string, Promise<ConversationTurnReceipt | undefined>>();
+  private readonly running = new Map<
+    string,
+    { batch: ReadonlySet<string>; operation: Promise<ConversationTurnReceipt | undefined> }
+  >();
   private readonly resultWaiters = new Map<
     string,
     Map<
@@ -116,8 +119,12 @@ export class ConversationControls {
         .state(id)
         .submissions.find((candidate) => candidate.id === submissionId);
       if (!item) throw new ConversationControlError("The submitted message is unavailable.");
-      if (item.result && !this.running.has(id)) return { value: structuredClone(item.result) };
-      if (!this.running.has(id) && (item.status === "failed" || item.status === "completed"))
+      // Only unstarted work and the running batch publish later; anything else is settled now.
+      const settled =
+        (item.status === "failed" || item.status === "completed") &&
+        !this.running.get(id)?.batch.has(item.id);
+      if (settled && item.result) return { value: structuredClone(item.result) };
+      if (settled)
         throw new ConversationControlError(
           "The submitted message has no recoverable result. Review the conversation before trying again.",
         );
@@ -390,7 +397,7 @@ export class ConversationControls {
       // Persist running before model work: a crash may leave an uncertain turn,
       // which is surfaced as failed on resume and never automatically replayed.
       const operation = this.execute(id, batch);
-      this.running.set(id, operation);
+      this.running.set(id, { batch: new Set(batch.map((item) => item.id)), operation });
       void operation.then(
         (result) => {
           this.running.delete(id);
@@ -543,7 +550,10 @@ export class ConversationControls {
   }
 
   async settle(): Promise<void> {
-    await Promise.allSettled([...this.tails.values(), ...this.running.values()]);
+    await Promise.allSettled([
+      ...this.tails.values(),
+      ...[...this.running.values()].map((run) => run.operation),
+    ]);
   }
 
   private async lock<T>(id: string, work: () => Promise<T>): Promise<T> {

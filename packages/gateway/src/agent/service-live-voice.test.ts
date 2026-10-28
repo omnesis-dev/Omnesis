@@ -446,11 +446,12 @@ describe("configured agent voice lease", () => {
       mode: "queue",
     });
     release.resolve();
-    await vi.waitFor(() =>
-      expect(f.service.conversationControls(created.sessionId).busy).toBe(false),
-    );
+    // The queue reads idle while it saves the next batch as running; wait for that turn too.
+    await vi.waitFor(() => {
+      expect(f.inputs).toHaveLength(2);
+      expect(f.service.conversationControls(created.sessionId).busy).toBe(false);
+    });
     expect(write).toHaveBeenCalledOnce();
-    expect(f.inputs).toHaveLength(2);
   });
   it("admits an unchanged voice write once and releases the controls lock before it completes", async () => {
     const writing = deferred();
@@ -984,12 +985,24 @@ describe("configured agent voice lease", () => {
     const voice = await f.service.openVoiceSession("token:fixture", {
       conversationId: created.sessionId,
     });
+    // Stop the correction while its acceptance is still being saved, so the
+    // stop settles it before its result is awaited.
+    const accepting = deferred();
+    const accepted = deferred();
+    const save = f.store.save.bind(f.store);
+    vi.spyOn(f.store, "save").mockImplementation(async (record) => {
+      if (record.controls?.submissions.some((item) => item.id === "voice-correction")) {
+        accepting.resolve();
+        await accepted.promise;
+      }
+      await save(record);
+    });
     const pending = voice.submit(submit("voice-correction"));
-    const stopped = expect(pending).rejects.toThrow("durably");
-    await vi.waitFor(() =>
-      expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1),
-    );
-    await voice.cancel();
+    const stopped = expect(pending).rejects.toThrow("no recoverable result");
+    await accepting.promise;
+    const cancel = voice.cancel();
+    accepted.resolve();
+    await cancel;
     await stopped;
     await voice.close();
     expect(signal?.aborted).toBe(false);
@@ -1039,12 +1052,22 @@ describe("configured agent voice lease", () => {
     const voice = await f.service.openVoiceSession("token:fixture");
     const first = voice.submit(submit("held", "Held fictional request"));
     await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    const accepting = deferred();
+    const accepted = deferred();
+    const save = f.store.save.bind(f.store);
+    vi.spyOn(f.store, "save").mockImplementation(async (record) => {
+      if (record.controls?.submissions.some((item) => item.id === "next")) {
+        accepting.resolve();
+        await accepted.promise;
+      }
+      await save(record);
+    });
     const second = voice.submit(submit("next"));
-    await vi.waitFor(() =>
-      expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1),
-    );
-    const queuedCanceled = expect(second).rejects.toThrow("durably");
-    await voice.cancel();
+    const queuedCanceled = expect(second).rejects.toThrow("no recoverable result");
+    await accepting.promise;
+    const cancel = voice.cancel();
+    accepted.resolve();
+    await cancel;
     expect(await first).toMatchObject({ stopReason: "canceled" });
     await queuedCanceled;
     expect(f.inputs).toHaveLength(1);

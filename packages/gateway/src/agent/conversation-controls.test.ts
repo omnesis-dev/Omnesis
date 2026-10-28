@@ -305,6 +305,29 @@ it("offers a retry when the turn fails or stops before its message reaches the t
   ]);
 });
 
+it("answers a settled submission's result at once while an unrelated batch runs", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("done"));
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["done"]));
+  h.turns[0]!.resolve(receipt("end_turn"));
+  await h.controls.settle();
+  await h.controls.submit("s", input("active"));
+  await vi.waitFor(() => expect(h.starts).toEqual(["done", "active"]));
+  await h.controls.submit("s", input("awaited"));
+  await h.controls.submit("s", input("stopped"));
+  const awaited = h.controls.waitForResult("s", "awaited");
+  await h.controls.cancelSubmitted("s", new Set(["awaited", "stopped"]));
+  expect(h.cancel).not.toHaveBeenCalled();
+  await expect(awaited).rejects.toThrow("could not finish durably");
+  await expect(h.controls.waitForResult("s", "stopped")).rejects.toThrow("no recoverable result");
+  await expect(h.controls.waitForResult("s", "done")).resolves.toMatchObject({
+    stopReason: "end_turn",
+  });
+  h.turns[1]!.resolve(receipt("end_turn"));
+  await h.controls.settle();
+});
+
 it("send now preserves the queue and question on failed persistence", async () => {
   const h = harness();
   await h.controls.submit("s", input("one"));
