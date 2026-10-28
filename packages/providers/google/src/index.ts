@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { DEFAULT_CONFIG_DIR, resolveAttachmentConfig } from "@omnesis/core";
+import { DEFAULT_CONFIG_DIR, listBrokeredAccountIds, resolveAttachmentConfig } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
 import {
   GoogleProvider,
@@ -21,6 +21,7 @@ import {
   googleContactsIconUrl,
 } from "./icons.js";
 import { googleCredentialsSpec } from "./credentials-spec.js";
+import { googleBrokerSpec, type GoogleBrokerPurpose } from "./broker.js";
 import {
   gmailDocumentEventProfile,
   googleCalendarDocumentEventProfile,
@@ -33,6 +34,7 @@ import {
 } from "./state.js";
 
 export { googleCredentialsSpec } from "./credentials-spec.js";
+export { googleBrokerSpec } from "./broker.js";
 
 export {
   GoogleProvider,
@@ -48,9 +50,24 @@ export { GoogleContactsSource } from "./contacts.js";
 
 interface GoogleContext {
   provider: GoogleProvider;
-  auth: ReturnType<GoogleProvider["getAuth"]>;
+  /**
+   * The signed-in account's one client, shared by every source. Absent for a
+   * brokered account, whose sources each take the client of their own
+   * purpose's connection; see {@link authFor}.
+   */
+  auth?: ReturnType<GoogleProvider["getAuth"]>;
   accountId: string;
   dataCutoff?: string;
+}
+
+/**
+ * The client a source of `purpose` calls Google with: the account's one
+ * client when it signed in here, or the client of that purpose's broker
+ * connection, which throws an `auth` failure when the account did not link
+ * one.
+ */
+function authFor(ctx: GoogleContext, purpose: GoogleBrokerPurpose) {
+  return ctx.auth ?? ctx.provider.getAuth(purpose);
 }
 
 // ── Provider Definition ──────────────────────────────────────────────
@@ -59,15 +76,19 @@ export default defineProvider<GoogleContext>({
   provider: { id: "google", name: "Google" },
   authType: "oauth",
   credentials: googleCredentialsSpec,
+  broker: googleBrokerSpec,
 
   // Every account here is an address, because that is what the sign-in
   // resolves and what the credential is stored under. Declaring it means the
   // self-identity resolver reads a stated email instead of deciding an account
-  // is one because the id contains an `@`.
+  // is one because the id contains an `@`. A brokered account is stored under
+  // the same address, which `resolveAccount` reads from Google.
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map((id) => ({
-      id: String(id),
-      subject: { kind: "email" as const, value: String(id) },
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("google", ctx?.configDir)) ids.add(id);
+    return [...ids].map((id) => ({
+      id,
+      subject: { kind: "email" as const, value: id },
     }));
   },
 
@@ -91,7 +112,7 @@ export default defineProvider<GoogleContext>({
     await provider.initialize();
     return {
       provider,
-      auth: provider.getAuth(),
+      ...(provider.brokered ? {} : { auth: provider.getAuth() }),
       accountId,
       dataCutoff,
     };
@@ -188,7 +209,7 @@ export default defineProvider<GoogleContext>({
           defaultEnabled: true,
           includeAudioTypes: host?.includeAudioTypes,
         });
-        const source = new GmailSource(ctx.auth, accountId, dataCutoff, {
+        const source = new GmailSource(authFor(ctx, "gmail"), accountId, dataCutoff, {
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
           isTranscriptionVocabularyEnabled: host?.isTranscriptionVocabularyEnabled,
@@ -224,7 +245,11 @@ export default defineProvider<GoogleContext>({
       },
       documentEventProfile: googleCalendarDocumentEventProfile,
       async create(_options, ctx) {
-        const source = new GoogleCalendarSource(ctx.auth, ctx.accountId, ctx.dataCutoff);
+        const source = new GoogleCalendarSource(
+          authFor(ctx, "calendar"),
+          ctx.accountId,
+          ctx.dataCutoff,
+        );
         // Event documents sync alongside the analytics dual-push: a
         // `google_calendar_events` table and the synthesized doc↔row edge.
         return {
@@ -288,7 +313,7 @@ export default defineProvider<GoogleContext>({
           defaultEnabled: true,
           includeAudioTypes: host?.includeAudioTypes,
         });
-        const source = new GoogleDriveSource(ctx.auth, accountId, dataCutoff, {
+        const source = new GoogleDriveSource(authFor(ctx, "drive"), accountId, dataCutoff, {
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
         });
@@ -313,7 +338,7 @@ export default defineProvider<GoogleContext>({
         state: googleContactsStateSpec,
       },
       async create(_options, ctx) {
-        const source = new GoogleContactsSource(ctx.auth, ctx.accountId);
+        const source = new GoogleContactsSource(authFor(ctx, "contacts"), ctx.accountId);
         return { sync: (cursor) => source.sync(cursor) };
       },
     },

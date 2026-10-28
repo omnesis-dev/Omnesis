@@ -166,4 +166,28 @@ describe("GraphClient.get", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(getToken).not.toHaveBeenCalled();
   });
+
+  it("does not send a refused token again when nothing renewed it", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, text: async () => "" });
+    const client = new GraphClient(getToken);
+    await expect(client.get("/me/mailFolders")).rejects.toBeInstanceOf(AuthError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getToken).toHaveBeenLastCalledWith({ forceRefresh: true });
+  });
+
+  it("resends a refused request once with a renewed token", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401, text: async () => "" })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: [] }) });
+    const renewing = vi.fn(async (opts?: { forceRefresh?: boolean }) =>
+      opts?.forceRefresh ? "renewed-token" : "stale-token",
+    );
+    const client = new GraphClient(renewing);
+    await expect(client.get("/me/mailFolders")).resolves.toEqual({ value: [] });
+    expect(
+      fetchMock.mock.calls.map(
+        ([, init]) => (init.headers as Record<string, string>).Authorization,
+      ),
+    ).toEqual(["Bearer stale-token", "Bearer renewed-token"]);
+  });
 });

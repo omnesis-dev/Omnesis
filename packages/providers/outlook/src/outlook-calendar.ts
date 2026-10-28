@@ -25,6 +25,7 @@ import {
   DeltaExpiredError,
   AuthError,
   toConnectionAuthError,
+  type GraphAccessToken,
 } from "./graph-client.js";
 import {
   OUTLOOK_CALENDAR_EVENTS_TABLE,
@@ -261,7 +262,7 @@ export class OutlookCalendarSource {
   private readonly accountId: string;
 
   constructor(
-    getAccessToken: () => Promise<string>,
+    getAccessToken: GraphAccessToken,
     sourceId: string,
     providerId: string,
     dataCutoff?: string,

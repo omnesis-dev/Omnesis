@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  BrokeredCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+} from "@omnesis/core";
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
 import {
   authenticate as stravaAuthenticate,
@@ -10,7 +16,7 @@ import {
   loadTokens,
   cleanupCredentials as stravaCleanupCredentials,
 } from "./provider.js";
-import { buildStravaClient } from "./client.js";
+import { buildBrokeredStravaClient, buildStravaClient } from "./client.js";
 import { StravaActivitiesSource } from "./activities.js";
 import { stravaIcon, stravaAttribution } from "./icons.js";
 import { allSchemas } from "./schemas.js";
@@ -23,13 +29,53 @@ export { StravaClient } from "./client.js";
 export { StravaActivitiesSource } from "./activities.js";
 export { stravaCredentialsSpec } from "./credentials-spec.js";
 
+/**
+ * The athlete a Strava payload names — the `athlete` of a token response, or
+ * `GET /athlete` — as the sign-in here records one: its numeric id, and the
+ * first and last name joined for display.
+ */
+function athleteIdentity(value: unknown): { id: number; name?: string } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { id, firstname, lastname } = value as Record<string, unknown>;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) return undefined;
+  const name = [firstname, lastname]
+    .filter((s): s is string => typeof s === "string" && s !== "")
+    .join(" ")
+    .trim();
+  return name ? { id, name } : { id };
+}
+
 export default defineProvider<StravaContext>({
   provider: { id: "strava", name: "Strava" },
   authType: "oauth",
   credentials: stravaCredentialsSpec,
 
+  broker: {
+    fileKey: "strava",
+    purposes: [{ id: "default", label: "Strava", brokerProviders: ["strava", "strava-web"] }],
+    // The sign-in here stores an athlete under the id Strava's token response
+    // names. The broker keeps that response, but a refresh answers without
+    // the `athlete`, and the broker keeps the latest one — so once the grant
+    // has been refreshed the athlete is asked of `/athlete` instead. The name
+    // is recorded beside the binding, as the sign-in records it beside the
+    // tokens, for the documents that show whose activities they are.
+    async resolveAccount(credentials) {
+      const { credential } = await credentials.get();
+      const raw = credential.type === "oauth2" ? credential.raw : {};
+      const athlete =
+        athleteIdentity(raw.athlete) ??
+        athleteIdentity(await buildBrokeredStravaClient(credentials).getAthleteDetail());
+      if (!athlete)
+        throw new Error("Strava did not say which athlete the broker's connection holds");
+      const params: Record<string, string> = athlete.name ? { athleteName: athlete.name } : {};
+      return { accountId: String(athlete.id), params };
+    },
+  },
+
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map(String);
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("strava", ctx?.configDir)) ids.add(id);
+    return [...ids];
   },
 
   async authFlow(_params, callbacks, ctx) {
@@ -45,12 +91,31 @@ export default defineProvider<StravaContext>({
     return stravaAuthenticate(session);
   },
 
+  // Local state only — the athlete's directory, which holds the tokens or,
+  // for a brokered athlete, the binding. Strava is never asked to deauthorize:
+  // a brokered grant is shared with other software.
   async cleanupCredentials(accountId: string, ctx) {
     await stravaCleanupCredentials(accountId, ctx?.configDir);
   },
 
   async createContext({ accountId, dataCutoff, host }) {
     const configDir = host?.configDir;
+    if (hasBrokerBinding("strava", accountId, configDir)) {
+      // The account id is the athlete id, as the sign-in here stores it.
+      const athleteId = Number(accountId);
+      if (!Number.isSafeInteger(athleteId) || athleteId <= 0) {
+        throw new Error(`Strava account ${accountId} is not an athlete id`);
+      }
+      const credentials = await BrokeredCredentials.load("strava", accountId, configDir);
+      return {
+        client: buildBrokeredStravaClient(credentials),
+        accountId,
+        dataCutoff,
+        athleteId,
+        athleteName: credentials.binding.params?.athleteName || undefined,
+        configDir,
+      };
+    }
     const tokens = await loadTokens(accountId, configDir);
     const client = await buildStravaClient({ tokens, configDir });
     const athleteName =
@@ -80,6 +145,13 @@ export default defineProvider<StravaContext>({
     // the remedy differs: one asks the operator to connect, the other to
     // authenticate again.
     return readConnectionState(async () => {
+      if (hasBrokerBinding("strava", ctx.accountId, ctx.configDir)) {
+        // The broker holds the grant and refreshes it; a binding that reads
+        // is the stored answer. A connection the broker has lost surfaces on
+        // the next sync as an `auth` failure.
+        await readBrokerBinding("strava", ctx.accountId, ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasTokens(ctx.accountId, ctx.configDir)) return { status: "never-connected" };
       const tokens = await loadTokens(ctx.accountId, ctx.configDir);
       if (!tokens.access_token || !tokens.refresh_token) throw new Error("Unreadable Strava token");

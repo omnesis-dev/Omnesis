@@ -6,13 +6,18 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import {
+  BrokerCredentialError,
   createLogger,
   oauthCallbackHost,
   CredentialPersistError,
+  DEFAULT_BROKER_PURPOSE,
   DEFAULT_CONFIG_DIR,
+  hasBrokerBinding,
+  readBrokerBinding,
   readProviderCredentials,
   readSecretTextFile,
   writeSecretTextFile,
+  type BrokeredCredentials,
 } from "@omnesis/core";
 import { ProviderId, AccountId } from "@omnesis/types";
 import {
@@ -32,7 +37,7 @@ import {
   type AuthSession,
   type Provider,
 } from "@omnesis/source-sdk";
-import { AuthError } from "./graph-client.js";
+import { AuthError, GraphClient } from "./graph-client.js";
 
 const log = createLogger("provider:microsoft");
 
@@ -455,6 +460,78 @@ export async function authenticateWith(
 }
 
 /**
+ * Which mailbox a brokered Microsoft grant belongs to: the id the sign-in here
+ * would have stored the same account under.
+ *
+ * The sign-in names an account by MSAL's `account.username`, which MSAL reads
+ * off the ID token — `preferred_username`, else `upn`, else the first of
+ * `emails` — and keeps exactly as Microsoft wrote it, never lowercased. When
+ * the broker kept an ID token in the token response (its integration asks for
+ * `openid profile`), the same claims are read off it in the same order. Nango's
+ * Microsoft integrations ask only for `offline_access .default` unless told
+ * otherwise, which brings no ID token, so Graph is asked instead: `/me`'s
+ * `userPrincipalName` is the address a personal account signs in with, which
+ * is what `preferred_username` carries for one. `mail` is null for many
+ * personal accounts, so it is read only when there is no UPN. `/me` is asked
+ * without `$select`, which Graph has been reported to refuse on personal
+ * accounts.
+ */
+export async function resolveBrokeredAccount(
+  credentials: BrokeredCredentials,
+): Promise<{ accountId: string }> {
+  const { credential } = await credentials.get(DEFAULT_BROKER_PURPOSE);
+  const fromIdToken =
+    credential.type === "oauth2" ? idTokenUsername(credential.raw.id_token) : undefined;
+  if (fromIdToken) return { accountId: fromIdToken };
+
+  const graph = new GraphClient((opts) => credentials.token(DEFAULT_BROKER_PURPOSE, opts));
+  let me: { userPrincipalName?: unknown; mail?: unknown };
+  try {
+    me = await graph.get<{ userPrincipalName?: unknown; mail?: unknown }>("/me");
+  } catch (err) {
+    throw new Error(
+      `Microsoft Graph would not say whose mailbox the broker's connection holds: ${err instanceof Error ? err.message : String(err)}. ` +
+        "Give the broker's integration the User.Read scope, or openid and profile so its token response carries an ID token.",
+      { cause: err },
+    );
+  }
+  const accountId = nonEmptyString(me.userPrincipalName) ?? nonEmptyString(me.mail);
+  if (!accountId) {
+    throw new Error("Microsoft Graph did not name the mailbox the broker's connection holds");
+  }
+  return { accountId };
+}
+
+/**
+ * The username MSAL would give the account an ID token describes, or
+ * `undefined` when there is no readable token. The signature is not checked:
+ * the token came from the broker with the access token itself, and the claim
+ * only names the directory the account is stored under.
+ */
+function idTokenUsername(idToken: unknown): string | undefined {
+  if (typeof idToken !== "string") return undefined;
+  const payload = idToken.split(".")[1];
+  if (!payload) return undefined;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  if (!claims || typeof claims !== "object") return undefined;
+  const { preferred_username, upn, emails } = claims as Record<string, unknown>;
+  return (
+    nonEmptyString(preferred_username) ??
+    nonEmptyString(upn) ??
+    (Array.isArray(emails) ? nonEmptyString(emails[0]) : undefined)
+  );
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
  * The authorize URL for one attempt.
  *
  * Without an explicit prompt, Microsoft reuses whichever account the browser
@@ -746,6 +823,15 @@ function waitForAuthCode(expectedState: string): Promise<string> {
   });
 }
 
+export interface MicrosoftProviderOptions {
+  /**
+   * The account's credentials, for an account whose grant the credential
+   * broker holds. Its tokens then come from the broker alone: MSAL is never
+   * set up, no client id is read, and nothing is written to `tokens.json`.
+   */
+  broker?: BrokeredCredentials;
+}
+
 /**
  * Microsoft OAuth 2.0 provider (personal accounts, PKCE).
  * Each instance represents one Microsoft account.
@@ -775,6 +861,15 @@ export class MicrosoftProvider implements Provider {
    */
   private persistQueue: Promise<void> = Promise.resolve();
 
+  private readonly broker?: BrokeredCredentials;
+
+  /**
+   * The broker refresh one Graph 401 started, shared by every request that
+   * meets the same refused token — mail, calendar and files fan out at once,
+   * and each refresh at the broker is a round trip to Microsoft.
+   */
+  private brokerRefresh: Promise<string> | null = null;
+
   get id(): ProviderId {
     return ProviderId(`microsoft:${this._accountId}`);
   }
@@ -783,9 +878,10 @@ export class MicrosoftProvider implements Provider {
     return AccountId(this._accountId);
   }
 
-  constructor(accountId: string, configDir?: string) {
+  constructor(accountId: string, configDir?: string, opts: MicrosoftProviderOptions = {}) {
     this._accountId = accountId;
     this.configDir = configDir ?? DEFAULT_CONFIG_DIR;
+    this.broker = opts.broker;
   }
 
   private get tokensPath() {
@@ -793,6 +889,10 @@ export class MicrosoftProvider implements Provider {
   }
 
   async initialize(): Promise<void> {
+    // The broker holds and refreshes a brokered grant. An MSAL cache here
+    // would be a second copy of it, and an empty one would only ever answer
+    // that the account needs signing in.
+    if (this.broker) return;
     const clientId = await loadOutlookClientId(this.configDir);
     this.pca = new PublicClientApplication(getMsalConfig(clientId));
 
@@ -813,12 +913,22 @@ export class MicrosoftProvider implements Provider {
 
   async authenticate(): Promise<void> {
     // Auth is done via CLI's authFlow(). This is a no-op.
-    if (!this.pca) {
+    if (!this.pca && !this.broker) {
       throw new Error("Provider not initialized");
     }
   }
 
   async isAuthenticated(): Promise<boolean> {
+    if (this.broker) {
+      // Same split as below: the broker answering that it holds no usable
+      // grant is the only `false`; a broker that cannot be reached is not.
+      try {
+        await this.getAccessToken();
+        return true;
+      } catch (err) {
+        return !(err instanceof AuthError);
+      }
+    }
     if (!this.pca || !this.account) return false;
     try {
       await this.pca.acquireTokenSilent({
@@ -860,6 +970,13 @@ export class MicrosoftProvider implements Provider {
   /** Inspect stored state only; token refresh belongs to requests, not status. */
   credentialState(): Promise<ConnectionState> {
     return readConnectionState(async () => {
+      if (hasBrokerBinding("outlook", this._accountId, this.configDir)) {
+        // The broker holds the grant and refreshes it; a binding that reads
+        // is the stored answer. A connection the broker has lost surfaces on
+        // the next sync as an `auth` failure.
+        await readBrokerBinding("outlook", this._accountId, this.configDir);
+        return { status: "connected" };
+      }
       const cache = await readSecretTextFile(this.tokensPath, { configDir: this.configDir });
       if (cache === null) return { status: "never-connected" };
       if (!cache || !this.account) throw new Error("Unreadable Microsoft account cache");
@@ -868,6 +985,12 @@ export class MicrosoftProvider implements Provider {
     });
   }
 
+  /**
+   * Local only, in both modes: MSAL's `removeAccount` drops the account from
+   * this process's cache, and a brokered account has no cache at all. The
+   * grant at Microsoft — or at the broker, shared with other software — is
+   * never revoked from here.
+   */
   async disconnect(): Promise<void> {
     const pca = this.pca;
     const account = this.account;
@@ -891,7 +1014,18 @@ export class MicrosoftProvider implements Provider {
     }
   }
 
-  async getAccessToken(): Promise<string> {
+  /**
+   * A Graph access token for the account.
+   *
+   * `forceRefresh` is what `GraphClient` asks after Graph refused a token. A
+   * brokered account then asks the broker to refresh the grant, which picks up
+   * a token the broker rotated since this one was handed out. A stored grant
+   * ignores it: MSAL renews its token when due, so Graph refusing one MSAL
+   * still holds means the grant itself is gone, which the `AuthError` that
+   * follows reports.
+   */
+  async getAccessToken(opts: { forceRefresh?: boolean } = {}): Promise<string> {
+    if (this.broker) return this.brokeredAccessToken(this.broker, opts.forceRefresh === true);
     if (!this.pca || !this.account) {
       throw new Error("Microsoft provider not initialized or not authenticated");
     }
@@ -920,6 +1054,34 @@ export class MicrosoftProvider implements Provider {
     this.grantRevoked = false;
 
     return result.accessToken;
+  }
+
+  /**
+   * The broker's token for this account. A refusal at the broker — no such
+   * connection, a grant it can no longer refresh, Omnesis's key refused — is
+   * raised as `AuthError`, the same account-wide failure a dead MSAL grant is,
+   * so every source parks on it rather than reading it as one calendar's or
+   * one folder's problem. A broker that cannot be reached stays a `network`
+   * error and is retried.
+   */
+  private async brokeredAccessToken(
+    broker: BrokeredCredentials,
+    forceRefresh: boolean,
+  ): Promise<string> {
+    try {
+      if (!forceRefresh) return await broker.token(DEFAULT_BROKER_PURPOSE);
+      this.brokerRefresh ??= broker
+        .token(DEFAULT_BROKER_PURPOSE, { forceRefresh: true })
+        .finally(() => {
+          this.brokerRefresh = null;
+        });
+      return await this.brokerRefresh;
+    } catch (err) {
+      if (err instanceof BrokerCredentialError && err.kind === "auth") {
+        throw new AuthError(err.message, { cause: err });
+      }
+      throw err;
+    }
   }
 
   /**

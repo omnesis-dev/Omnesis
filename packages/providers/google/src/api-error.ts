@@ -141,7 +141,8 @@ function getOAuthErrorBody(e: GaxiosLikeError): string {
  * Calendar, Drive, Contacts) is built from the one `OAuth2Client` the
  * provider's `createContext` mints for the account, so a rejected token
  * fails all of them identically, not just the source that happened to make
- * the next request.
+ * the next request. A brokered account's sources each hold their own
+ * connection's client instead, and there the scope is that one connection.
  *
  * `rate-limit` carries `quota: { kind: "account" }` only for the
  * `userRateLimitExceeded` reason — Google's API error reference documents

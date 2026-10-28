@@ -2,11 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { DEFAULT_CONFIG_DIR, resolveAttachmentConfig } from "@omnesis/core";
+import {
+  BrokeredCredentials,
+  DEFAULT_CONFIG_DIR,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  resolveAttachmentConfig,
+} from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
 import {
   MicrosoftProvider,
   discoverAccounts,
+  resolveBrokeredAccount,
   authenticate as microsoftAuthenticate,
   authFlow as microsoftAuthFlow,
 } from "./provider.js";
@@ -30,7 +37,12 @@ export { OneDriveSource } from "./onedrive.js";
 export { OutlookCalendarSource } from "./outlook-calendar.js";
 export { OUTLOOK_CALENDAR_EVENTS_TABLE } from "./outlook-calendar-schema.js";
 export { outlookCredentialsSpec } from "./credentials-spec.js";
-export { GraphClient, DeltaExpiredError, AuthError } from "./graph-client.js";
+export {
+  GraphClient,
+  DeltaExpiredError,
+  AuthError,
+  type GraphAccessToken,
+} from "./graph-client.js";
 export {
   validateOneDriveCursor,
   type OneDriveCursor,
@@ -61,14 +73,40 @@ export default defineProvider<MicrosoftContext>({
   authType: "oauth",
   credentials: outlookCredentialsSpec,
 
+  /**
+   * One Microsoft grant serves mail, calendar and OneDrive alike, so an
+   * account links a single connection. Any of Nango's Microsoft integrations
+   * fits it, provided the grant covers `Mail.Read`, `Files.Read` and
+   * `Calendars.Read` (`.default` does when the app registration holds them):
+   * `one-drive-personal` signs in against the same `/consumers` authority as
+   * the sign-in here; `microsoft`, and `outlook` and `one-drive` that alias it,
+   * go to `/common`, which also admits the work and school accounts these
+   * sources were never built against.
+   */
+  broker: {
+    fileKey: "outlook",
+    purposes: [
+      {
+        id: "default",
+        label: "Microsoft account (Outlook mail, calendar and OneDrive)",
+        brokerProviders: ["outlook", "microsoft", "one-drive-personal", "one-drive"],
+      },
+    ],
+    resolveAccount: (credentials) => resolveBrokeredAccount(credentials),
+  },
+
   // Every account here is the address the sign-in resolved (`account.username`
   // under an authority that accepts personal accounts only), and it is what the
   // credential is stored under. Declaring it means the self-identity resolver
   // reads a stated email rather than inferring one because the id has an `@`.
+  // A brokered account is named by the same address (see
+  // `resolveBrokeredAccount`), so it declares the same subject.
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map((id) => ({
-      id: String(id),
-      subject: { kind: "email" as const, value: String(id) },
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("outlook", ctx?.configDir)) ids.add(id);
+    return [...ids].map((id) => ({
+      id,
+      subject: { kind: "email" as const, value: id },
     }));
   },
 
@@ -81,6 +119,9 @@ export default defineProvider<MicrosoftContext>({
     return String(accountId);
   },
 
+  // Local state only: the account directory, which holds the MSAL cache or,
+  // for a brokered account, the binding. Nothing is revoked at Microsoft or at
+  // the broker, whose grant other software shares.
   async cleanupCredentials(accountId: string, ctx) {
     const { rm } = await import("node:fs/promises");
     const accountDir = join(ctx?.configDir ?? DEFAULT_CONFIG_DIR, "outlook", accountId);
@@ -93,7 +134,10 @@ export default defineProvider<MicrosoftContext>({
     // state-dir substitution would point the token store at a directory that
     // does not exist while discovery kept finding the account under the old
     // one — presenting as a failed sign-in rather than a missing directory.
-    const provider = new MicrosoftProvider(accountId, host?.configDir);
+    const broker = hasBrokerBinding("outlook", accountId, host?.configDir)
+      ? await BrokeredCredentials.load("outlook", accountId, host?.configDir)
+      : undefined;
+    const provider = new MicrosoftProvider(accountId, host?.configDir, { broker });
     await provider.initialize();
     return {
       provider,
@@ -148,7 +192,7 @@ export default defineProvider<MicrosoftContext>({
           includeAudioTypes: host?.includeAudioTypes,
         });
         const source = new OutlookEmailSource(
-          () => ctx.provider.getAccessToken(),
+          (opts) => ctx.provider.getAccessToken(opts),
           sourceId,
           providerId,
           dataCutoff,
@@ -211,7 +255,7 @@ export default defineProvider<MicrosoftContext>({
           includeAudioTypes: host?.includeAudioTypes,
         });
         const source = new OneDriveSource(
-          () => ctx.provider.getAccessToken(),
+          (opts) => ctx.provider.getAccessToken(opts),
           sourceId,
           providerId,
           dataCutoff,
@@ -261,7 +305,7 @@ export default defineProvider<MicrosoftContext>({
       },
       async create({ sourceId, providerId, dataCutoff }, ctx) {
         const source = new OutlookCalendarSource(
-          () => ctx.provider.getAccessToken(),
+          (opts) => ctx.provider.getAccessToken(opts),
           sourceId,
           providerId,
           dataCutoff,

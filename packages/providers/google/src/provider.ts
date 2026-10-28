@@ -21,14 +21,23 @@ import { randomUUID } from "node:crypto";
 import {
   createLogger,
   oauthCallbackHost,
+  BrokerCredentialError,
+  BrokeredCredentials,
   CredentialPersistError,
   DEFAULT_CONFIG_DIR,
+  hasBrokerBinding,
   MissingCredentialsError,
+  readBrokerBinding,
   readProviderCredentials,
   readSecretJsonFile,
   writeSecretJsonFile,
   providerCredentialsPath,
 } from "@omnesis/core";
+import {
+  brokeredGoogleClients,
+  googleBrokerPurposeLabel,
+  type GoogleBrokerPurpose,
+} from "./broker.js";
 import type {
   AuthFlowCallbacks,
   AuthResult,
@@ -165,6 +174,27 @@ export function discoverAccounts(configDir?: string): AccountId[] {
     .map((d) => AccountId(d.name));
 }
 
+/**
+ * Refuse to sign in an account whose grants the credential broker holds.
+ *
+ * The binding decides how such an account calls Google, so a token stored
+ * beside it would never be read: the sign-in would look like it worked and
+ * change nothing, and would leave a second grant to the same account for
+ * nobody to refresh or revoke.
+ */
+function refuseBrokeredAccount(accountId: string, configDir: string): void {
+  if (!hasBrokerBinding("google", accountId, configDir)) return;
+  throw new AuthFailure(
+    "unsupported",
+    `${accountId} takes its Google access from the credential broker, so it is not signed in here.`,
+    {
+      remedy:
+        "Sign the account in again at the broker. To sign it in here instead, remove it from " +
+        "Omnesis first and then add it.",
+    },
+  );
+}
+
 export interface AuthFlowOptions {
   configDir?: string;
   /** Stream auth events (URL/QR/device-code) to a remote CLI/admin client. */
@@ -211,6 +241,7 @@ export async function authFlow(configDirOrOpts?: string | AuthFlowOptions): Prom
     typeof configDirOrOpts === "string" ? { configDir: configDirOrOpts } : (configDirOrOpts ?? {});
   const dir = opts.configDir ?? DEFAULT_CONFIG_DIR;
   const callbacks = opts.callbacks ?? {};
+  if (callbacks.accountId) refuseBrokeredAccount(callbacks.accountId, dir);
   const creds = await loadClientCredentials(dir);
 
   const oauth2Client = new google.auth.OAuth2(
@@ -249,6 +280,7 @@ export async function authFlow(configDirOrOpts?: string | AuthFlowOptions): Prom
   const profile = await gmail.users.getProfile({ userId: "me" });
   const email = profile.data.emailAddress;
   if (!email) throw new Error("Could not resolve Google account email");
+  refuseBrokeredAccount(email, dir);
 
   // Save tokens to account-specific directory.
   await persistTokens(join(dir, "google", email, "tokens.json"), tokens, dir);
@@ -302,6 +334,9 @@ export async function authenticateWith(
   deps: AuthenticateDeps = {},
 ): Promise<AuthResult> {
   const configDir = session.host.configDir;
+  // Before the client credentials: a brokered account needs none, and their
+  // absence would send the operator to a wizard that cannot help.
+  if (session.accountId) refuseBrokeredAccount(session.accountId, configDir);
   // Every install registers its own OAuth client, so an install that has not
   // done that yet is the ordinary first-run state rather than a failure of
   // this flow. Thrown as the real class: the host routes it to the wizard
@@ -358,6 +393,7 @@ export async function authenticateWith(
   oauth2Client.setCredentials(tokens);
 
   const email = await resolveAccountEmail(oauth2Client);
+  refuseBrokeredAccount(email, configDir);
 
   // Checked before anything is written. `login_hint` asks Google to preselect
   // the account being renewed, but the operator can still pick another one at
@@ -845,6 +881,12 @@ export class GoogleProvider implements Provider {
   readonly name = "Google";
 
   private oauth2Client: OAuth2Client | null = null;
+  /**
+   * For an account whose grants the credential broker holds: one client per
+   * linked purpose, since each Google API is its own connection there. `null`
+   * for a signed-in account, whose one client serves every source.
+   */
+  private brokeredClients: Map<GoogleBrokerPurpose, OAuth2Client> | null = null;
   private configDir: string;
   private _accountId: string;
 
@@ -865,7 +907,21 @@ export class GoogleProvider implements Provider {
     return join(this.configDir, "google", this._accountId, "tokens.json");
   }
 
+  /** Whether this account's grants are held by the credential broker. */
+  get brokered(): boolean {
+    return this.brokeredClients !== null;
+  }
+
   async initialize(): Promise<void> {
+    // Neither the OAuth client file nor a token file exists for a brokered
+    // account, and neither is needed: the broker holds each grant and
+    // refreshes it, and every client asks the broker for its token.
+    if (hasBrokerBinding("google", this._accountId, this.configDir)) {
+      const credentials = await BrokeredCredentials.load("google", this._accountId, this.configDir);
+      this.brokeredClients = brokeredGoogleClients(credentials);
+      return;
+    }
+
     const creds = await loadClientCredentials(this.configDir);
 
     this.oauth2Client = new google.auth.OAuth2(
@@ -919,6 +975,13 @@ export class GoogleProvider implements Provider {
    */
   async credentialState(): Promise<ConnectionState> {
     return readConnectionState(async () => {
+      if (hasBrokerBinding("google", this._accountId, this.configDir)) {
+        // The broker holds each grant and refreshes it; a binding that reads
+        // is the stored answer. A connection the broker has lost surfaces on
+        // its source's next sync as an `auth` failure.
+        await readBrokerBinding("google", this._accountId, this.configDir);
+        return { status: "connected" };
+      }
       if (existsSync(this.tokensPath)) {
         // Check readability even when a usable token remains cached in memory.
         const stored = await readSecretJsonFile<StoredTokens>(this.tokensPath, {
@@ -943,11 +1006,22 @@ export class GoogleProvider implements Provider {
   dispose(): void {
     this.oauth2Client?.removeAllListeners("tokens");
     this.oauth2Client = null;
+    this.brokeredClients = null;
   }
 
-  /** Explicit account disconnection revokes the Google authorization. */
+  /**
+   * Explicit account disconnection revokes the Google authorization — unless
+   * the broker holds it. That grant is shared with the other software using
+   * the broker, so only the broker may withdraw it; checked on disk as well
+   * as in memory, so an account linked after this client was built is spared
+   * too.
+   */
   async disconnect(): Promise<void> {
-    if (this.oauth2Client) {
+    if (
+      this.oauth2Client &&
+      !this.brokeredClients &&
+      !hasBrokerBinding("google", this._accountId, this.configDir)
+    ) {
       try {
         await this.oauth2Client.revokeCredentials();
       } catch {
@@ -957,7 +1031,24 @@ export class GoogleProvider implements Provider {
     this.dispose();
   }
 
-  getAuth(): OAuth2Client {
+  /**
+   * The client a source calls Google with. A signed-in account has one client
+   * for every purpose, and `purpose` is ignored. A brokered account has one
+   * per linked purpose; asking for one it did not link is an `auth` failure
+   * that names it, so that source fails to start while the linked ones run.
+   */
+  getAuth(purpose?: GoogleBrokerPurpose): OAuth2Client {
+    if (this.brokeredClients) {
+      if (!purpose) throw new Error("A brokered Google account has one client per purpose");
+      const client = this.brokeredClients.get(purpose);
+      if (!client) {
+        throw new BrokerCredentialError(
+          "unbound",
+          `Google account ${this._accountId} has no ${googleBrokerPurposeLabel(purpose)} connection linked at the credential broker`,
+        );
+      }
+      return client;
+    }
     if (!this.oauth2Client) {
       throw new Error("Google provider not initialized");
     }
