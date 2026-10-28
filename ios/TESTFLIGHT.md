@@ -30,6 +30,7 @@ details.
 6. Confirm the archive contains:
    - `PrivacyInfo.xcprivacy` in the app and every embedded executable bundle;
    - no `NSAllowsArbitraryLoads` key;
+   - no `WebRTC.framework` in the production app or any bundle it embeds;
    - HealthKit, notification, widget, and Watch entitlements expected for their
      respective targets;
    - the intended product version and build number.
@@ -79,27 +80,37 @@ and Apple account; they are never committed.
 
 ## Export compliance
 
-The app uses Apple's HTTPS, Keychain, and CryptoKit APIs, and its bundled
-WebRTC framework implements standard DTLS/SRTP transport encryption through
-BoringSSL. Encryption is therefore not limited to Apple's operating system.
-The app does not use an ATS arbitrary-load exemption.
+The production app (`Omnesis`, `dev.omnesis.ios`) and every bundle it embeds use
+only encryption provided by Apple's operating system: HTTPS through
+`URLSession`, Keychain, and CryptoKit. It links no third-party cryptography —
+its only package, SwiftDraw, renders SVG — and has no ATS arbitrary-load
+exemption. Realtime voice, whose WebRTC framework implements DTLS/SRTP through
+BoringSSL, builds only into the demo app, so the production target neither links
+nor embeds WebRTC. Its `Info.plist` therefore sets
+`ITSAppUsesNonExemptEncryption` to `false`: the build is exempt and App Store
+Connect asks no export-compliance questions for it. Before an upload, confirm
+the archive still has no `WebRTC.framework` in any bundle and that the target's
+dependencies are unchanged.
 
-Review the generated archive, including linked third-party libraries, against
+The demo app (`OmnesisDemo`) still bundles WebRTC and BoringSSL, so its
+encryption is not limited to Apple's operating system. `Info-Demo.plist` omits
+`ITSAppUsesNonExemptEncryption` so App Store Connect asks its current
+export-compliance questions for each demo build. Review that archive, including
+linked third-party libraries, against
 [Apple's export compliance requirements](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/).
 Apple distinguishes standard algorithms implemented outside its operating system
 and requires a French encryption declaration when distributing such an app on the
-App Store in France. Do not assume standard encryption is automatically exempt.
-The main app targets omit `ITSAppUsesNonExemptEncryption` so App Store Connect
-asks its current export-compliance questions for each uploaded build. Complete
-that determination for the intended distribution and obtain any requested
-documentation before making the build available to testers.
+App Store in France; do not assume standard encryption is automatically exempt.
+Complete that determination for the intended distribution and obtain any
+requested documentation before making a demo build available to testers.
 
 ## TestFlight
 
 After processing:
 
 1. Confirm the build reports the intended product version and build number.
-2. Complete any current export-compliance prompt.
+2. Confirm the production build reports its exempt encryption answer; complete
+   any export-compliance prompt for a demo build.
 3. Add the exact build to the internal group.
 4. Install it through TestFlight and run the physical-device smoke test above.
 5. Do not promote a different build to App Review after testing; the reviewed

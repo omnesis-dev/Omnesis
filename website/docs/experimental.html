@@ -135,7 +135,7 @@
             <li>
               <a href="/docs/experimental" aria-current="page">Experimental</a>
               <ul class="side-sub">
-                <li><a href="#realtime-voice">Realtime voice on iOS</a></li>
+                <li><a href="#realtime-voice">Realtime voice in Omnesis Demo</a></li>
                 <li><a href="#browser-extension">Browser extension</a></li>
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
@@ -150,10 +150,11 @@
         <h1>Experimental</h1>
         <p class="docs-lead">
           <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
-          notes and Find, realtime voice conversations on iOS, <strong>Omnesis Brain</strong>, which
-          reads your data in the background and keeps cited notes and loops and writes a morning
-          brief, and <strong>Omnesis Watch</strong>, which tells you or an agent when a condition
-          becomes true. This page explains how to run, observe and stop them.
+          notes and Find, realtime voice conversations in the Omnesis Demo iOS app,
+          <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
+          notes and loops and writes a morning brief, and <strong>Omnesis Watch</strong>, which
+          tells you or an agent when a condition becomes true. This page explains how to run,
+          observe and stop them.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -208,22 +209,23 @@
           picker only by a collector that runs with the flag itself.
         </p>
 
-        <h2 id="realtime-voice">Realtime voice on iOS</h2>
+        <h2 id="realtime-voice">Realtime voice in Omnesis Demo</h2>
         <p>
-          With <code>OMNESIS_EXPERIMENTAL=1</code>, assign the
+          This iOS prototype is built only into the Omnesis Demo app; the Omnesis app does not
+          include it. With <code>OMNESIS_EXPERIMENTAL=1</code>, assign the
           <strong>Speech-to-speech</strong> capability in Models to an OpenAI backend and
-          <code>gpt-live-1</code> to enable this unstable iOS prototype. The backend needs an API
-          key and <code>inference.allowRemoteInference=true</code>. The capability is off when
-          unassigned; adding an OpenAI backend alone does not enable it. Open an agent conversation
-          and tap the voice-call button to the right of the microphone. Allow microphone access,
-          then speak naturally and hear the reply. The call screen shows the agent's tool activity
-          while it works. The activity disk stays fixed above the scrolling transcript, with
-          different halos for your speech and the agent's playback. Scrolling back pauses automatic
-          following; use Latest speech to resume it. Reduce Motion keeps the halos static. Use mute
-          to pause your microphone and hang up to end the call.
+          <code>gpt-live-1</code> to enable it. The backend needs an API key and
+          <code>inference.allowRemoteInference=true</code>. The capability is off when unassigned;
+          adding an OpenAI backend alone does not enable it. Open an agent conversation and tap the
+          voice-call button to the right of the microphone. Allow microphone access, then speak
+          naturally and hear the reply. The call screen shows the agent's tool activity while it
+          works. The activity disk stays fixed above the scrolling transcript, with different halos
+          for your speech and the agent's playback. Scrolling back pauses automatic following; use
+          Latest speech to resume it. Reduce Motion keeps the halos static. Use mute to pause your
+          microphone and hang up to end the call.
         </p>
         <p>
-          The iOS app sends call audio directly to OpenAI's GPT-Live over WebRTC. The gateway
+          Omnesis Demo sends call audio directly to OpenAI's GPT-Live over WebRTC. The gateway
           creates and controls the call; the OpenAI API key stays on the gateway. GPT-Live handles
           listening and speaking. The configured Omnesis agent handles reasoning and tools, with the
           same instructions, model, permissions and conversation history as typed messages. Tool
@@ -231,8 +233,7 @@
           speaking without starting another thread. Text queued during a call waits until the call
           ends. Audio and relevant conversation context are sent to OpenAI during the call.
           Voice-session duration is billed separately from the configured agent's model usage;
-          muting the microphone does not end the voice session. This control is available only on
-          iOS.
+          muting the microphone does not end the voice session.
         </p>
         <p>
           The configured agent keeps its ordinary backend retry behavior. Provider credit or quota

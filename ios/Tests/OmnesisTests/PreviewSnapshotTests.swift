@@ -7,9 +7,6 @@ import Observation
 import SwiftUI
 import UIKit
 import XCTest
-#if canImport(WebRTC)
-import WebRTC
-#endif
 
 // This catalogue holds one test per screen state, and the app has hundreds of
 // them: its length is the point, and every view added to the app lengthens it.
@@ -638,48 +635,6 @@ final class PreviewSnapshotTests: XCTestCase {
             ignoresSafeArea: true
         )
     }
-
-    #if canImport(WebRTC)
-    func testLiveVoiceActualPeerSignalingAndDataChannel() async throws {
-        for name in ["WebRTC-LICENSE.md", "WebRTC-Build-LICENSE.txt", "WebRTC-Build-NOTICE.md"] {
-            XCTAssertNotNil(Bundle.main.url(forResource: name, withExtension: nil), "Missing bundled dependency notice: \(name)")
-        }
-        let media = LiveWebRTCMedia()
-        let remote = LiveWebRTCLoopback()
-        defer { media.close()
-            remote.close()
-        }
-        let receivedCaption = expectation(description: "actual RTC data-channel caption")
-        var captions = LiveVoiceCaptions()
-        var receivedStarted = false
-        var failure: Error?
-        media.onFailure = { failure = $0 }
-        media.onEvent = { data in
-            guard let event = RealtimeProtocol.event(data) else { return }
-            if event["type"] as? String == "session.started" { receivedStarted = true }
-            captions.receive(event)
-            if !captions.fragments.isEmpty { receivedCaption.fulfill() }
-        }
-        let offer = try await media.offer()
-        XCTAssertTrue(offer.contains("m=audio"))
-        XCTAssertTrue(offer.contains("m=application"))
-        let answer = try await remote.answer(offer: offer)
-        try await media.connect(answer: answer)
-        await fulfillment(of: [receivedCaption], timeout: 10)
-        XCTAssertTrue(receivedStarted)
-        XCTAssertNil(failure)
-        XCTAssertFalse(RTCAudioSession.sharedInstance().isAudioEnabled)
-        XCTAssertEqual(captions.fragments.map(\.text), ["The workshop notes are ready."])
-        let session = PreviewMocks.realtimeListening
-        session.isLive = true
-        session.liveCaptions = captions.displayRuns
-        snapshot(
-            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
-            name: "live-voice-actual-data-channel",
-            ignoresSafeArea: true
-        )
-    }
-    #endif
 
     func testCitationSpineContinuesThroughEventGap() throws {
         let store = PreviewMocks.realtimeCitationsStore

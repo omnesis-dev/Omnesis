@@ -228,8 +228,8 @@ public struct AgentView: View {
         .background(sizeProbe)
         .task(id: "\(store.pairing?.url.absoluteString ?? "")-\(store.pairing?.pairingGeneration ?? "")-\(store.experimentalEnabled)") {
             realtimeAvailable = false
-            guard store.experimentalEnabled, let pairing = store.pairing else { return }
-            let available = await (try? RealtimeCapability.available(pairing: pairing)) ?? false
+            guard let pairing = store.pairing else { return }
+            let available = await RealtimeCapability.offered(pairing: pairing, experimental: store.experimentalEnabled)
             guard !Task.isCancelled else { return }
             realtimeAvailable = available
         }

@@ -163,8 +163,6 @@ targets:
       - path: Resources/Assets.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Resources/Fonts
-      - path: Resources/ThirdParty
-        buildPhase: resources
       - path: Resources/AppPrivacy/PrivacyInfo.xcprivacy
     dependencies:
       # Widget extension (iOS 18 Control Center / Lock Screen control) —
@@ -184,8 +182,9 @@ targets:
       # over the gateway's pinned connection.
       - target: OmnesisNotificationService
         embed: true
+      # No WebRTC: realtime voice ships in OmnesisDemo only, so this app
+      # carries no non-Apple encryption (see TESTFLIGHT.md § Export compliance).
       - package: SwiftDraw
-      - package: WebRTC
     settings:
       configs:
         Release:
@@ -242,6 +241,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).demo
         PRODUCT_NAME: OmnesisDemo
+        # Realtime voice and its WebRTC transport build into this app only.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) OMNESIS_REALTIME_VOICE
         INFOPLIST_FILE: Info-Demo.plist
         CODE_SIGN_ENTITLEMENTS: Omnesis-Demo.entitlements
         # Picks the hue-shifted (orange) icon from the shared asset catalog
@@ -379,7 +380,6 @@ targets:
       - path: Tests/OmnesisTests
     dependencies:
       - target: Omnesis
-      - package: WebRTC
     settings:
       base:
         # Unit tests don't need an Info.plist — XcodeGen's default
@@ -389,6 +389,24 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ""
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Omnesis.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Omnesis"
+
+  # Hosted in OmnesisDemo, the only app that builds realtime voice: the tests
+  # that drive its WebRTC transport.
+  OmnesisDemoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/OmnesisDemoTests
+    dependencies:
+      - target: OmnesisDemo
+      - package: WebRTC
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_ENTITLEMENTS: ""
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OmnesisDemo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OmnesisDemo"
 
   # UI test target for OmnesisDemo — used by scripts/record-demos.sh
   # to drive automated demo screen recordings on the simulator. Each
@@ -450,6 +468,9 @@ schemes:
         OmnesisDemo: all
     run:
       config: Debug
+    test:
+      targets:
+        - OmnesisDemoTests
     archive:
       config: Release
     profile:

@@ -62,7 +62,10 @@ mutations. Citation tools decorate the canonical answer, so speech preserves ans
 text around citations while discarding preambles before further research.
 
 Live media uses WebRTC to the provider, with gateway-owned authenticated signaling
-and sideband control. A separate versioned optional capability preserves the legacy
+and sideband control. On iOS the WebRTC transport and every realtime voice entry point build only
+into the `OmnesisDemo` app (the `OMNESIS_REALTIME_VOICE` compilation condition, read
+through `RealtimeCapability.includedInBuild`), so the production app links no
+non-Apple encryption. A separate versioned optional capability preserves the legacy
 Realtime transport. The lifecycle stream carries safe call status and errors, not
 a second conversation protocol. Provider duration accounting stays separate from
 the configured agent's token accounting.

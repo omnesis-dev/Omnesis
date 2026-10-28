@@ -324,16 +324,17 @@
         </p>
         <p>
           With <code>OMNESIS_EXPERIMENTAL=1</code>, an OpenAI backend explicitly assigned to the
-          speech-to-speech role, and remote inference allowed, iOS offers an unstable realtime voice
-          conversation mode. During a call, the app sends microphone audio directly to OpenAI over
-          an encrypted WebRTC connection for speech recognition and spoken replies. Your gateway
-          coordinates the call and sends recent conversation text and verified agent results to
-          OpenAI's speech service. Your configured Omnesis agent handles reasoning and tools using
-          its selected model provider; the inputs needed for that work are sent to that provider
-          when remote inference is enabled. Omnesis does not save call audio. Transcripts, tool
-          activity, and citations remain in the ordinary conversation history on your gateway. Each
-          provider's API privacy and retention terms apply to the data it receives. Ending the call
-          stops microphone capture and audio streaming.
+          speech-to-speech role, and remote inference allowed, the Omnesis Demo iOS app offers an
+          unstable realtime voice conversation mode. The Omnesis app does not include this mode.
+          During a call, Omnesis Demo sends microphone audio directly to OpenAI over an encrypted
+          WebRTC connection for speech recognition and spoken replies. Your gateway coordinates the
+          call and sends recent conversation text and verified agent results to OpenAI's speech
+          service. Your configured Omnesis agent handles reasoning and tools using its selected
+          model provider; the inputs needed for that work are sent to that provider when remote
+          inference is enabled. Omnesis does not save call audio. Transcripts, tool activity, and
+          citations remain in the ordinary conversation history on your gateway. Each provider's
+          API privacy and retention terms apply to the data it receives. Ending the call stops
+          microphone capture and audio streaming.
         </p>
 
         <h2 id="what-omnesis-does-not-do">What Omnesis does NOT do</h2>

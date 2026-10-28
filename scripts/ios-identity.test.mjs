@@ -154,6 +154,33 @@ describe("iOS build identities", () => {
     );
   });
 
+  // WebRTC bundles BoringSSL, which is not Apple's encryption: shipping it
+  // would take the production app out of the export-compliance exemption.
+  it("builds realtime voice and WebRTC into the demo app only", () => {
+    const packages = (target) =>
+      spec.targets[target].dependencies.flatMap((dependency) => dependency.package ?? []);
+    const sources = (target) => spec.targets[target].sources.map((source) => source.path);
+    const conditions = (target) =>
+      targetSetting(target, "SWIFT_ACTIVE_COMPILATION_CONDITIONS")?.split(/\s+/) ?? [];
+    const exempt = (path) =>
+      read(path).match(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<(true|false)\/>/)?.[1];
+
+    for (const target of ["Omnesis", "OmnesisTests"]) {
+      expect(packages(target)).not.toContain("WebRTC");
+      expect(conditions(target)).not.toContain("OMNESIS_REALTIME_VOICE");
+    }
+    expect(sources("Omnesis")).not.toContain("Resources/ThirdParty");
+    expect(exempt("ios/Info.plist")).toBe("false");
+
+    for (const target of ["OmnesisDemo", "OmnesisDemoTests"]) {
+      expect(packages(target)).toContain("WebRTC");
+    }
+    expect(conditions("OmnesisDemo")).toContain("OMNESIS_REALTIME_VOICE");
+    expect(sources("OmnesisDemo")).toContain("Resources/ThirdParty");
+    expect(exempt("ios/Info-Demo.plist")).toBeUndefined();
+    expect(targetSetting("OmnesisDemoTests", "TEST_HOST")).toContain("/OmnesisDemo.app/");
+  });
+
   it("registers the watch complication link scheme the watch app parses", () => {
     const swift = read("ios/Sources/Omnesis/Intents/WatchComplication.swift");
     const scheme = swift.match(/static let scheme = "([^"]+)"/)?.[1];

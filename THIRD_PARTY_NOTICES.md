@@ -335,12 +335,13 @@ fetched through the gateway. SwiftDraw is licensed under **zlib**; Copyright
 license and source are at
 [SwiftDraw 0.29.0](https://github.com/swhitty/SwiftDraw/blob/0.29.0/LICENSE.txt).
 
-The iPhone app also uses **WebRTC M155**, distributed as the standalone
+The Omnesis Demo iPhone app also uses **WebRTC M155**, distributed as the standalone
 **shiguredo-webrtc-build m155.8059.4.1** XCFramework. It contains WebRTC and
 its linked third-party libraries, whose respective licenses and copyright
 notices are reproduced verbatim in
 [`ios/Resources/ThirdParty/WebRTC-LICENSE.md`](ios/Resources/ThirdParty/WebRTC-LICENSE.md)
-and bundled with the iPhone app. The pinned build distribution's
+and bundled with the Omnesis Demo app. The production Omnesis app does not include
+WebRTC. The pinned build distribution's
 [license](ios/Resources/ThirdParty/WebRTC-Build-LICENSE.txt) and
 [notices](ios/Resources/ThirdParty/WebRTC-Build-NOTICE.md) are retained alongside it.
 This is the aggregate generated for the upstream binary, not a replacement license

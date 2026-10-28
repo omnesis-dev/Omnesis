@@ -39,12 +39,26 @@ Instead, this package declares a plain **library** target that compiles on macOS
 
 Use the generated `Omnesis.xcodeproj` to build the iOS app. Opening the Swift package alone builds the library and tests, not the signed app and its embedded targets.
 
-Running the app in the iOS Simulator requires an Apple Silicon Mac. The pinned WebRTC framework
-contains arm64 slices for iOS devices and the iOS Simulator, so the XcodeGen spec
+Running the app in the iOS Simulator requires an Apple Silicon Mac. The pinned WebRTC framework,
+which the Omnesis Demo app links for realtime voice, contains arm64 slices for iOS devices and the iOS Simulator, so the XcodeGen spec
 selects arm64 consistently for iOS simulator apps, hosted tests and embedded iOS
 targets. Intel simulator builds are unsupported. Physical-device architectures
 retain Xcode's defaults; the platform-independent SwiftPM logic tests do not
 link WebRTC and remain separate from this simulator requirement.
+
+## Realtime voice in the demo app
+
+Realtime voice is available only in the Omnesis Demo app for now. Its WebRTC
+transport bundles BoringSSL, which is not Apple's encryption, so the production
+Omnesis app leaves the feature out and keeps an exempt export-compliance answer
+(see [TESTFLIGHT.md](TESTFLIGHT.md) § "Export compliance"). The `OmnesisDemo`
+target sets the `OMNESIS_REALTIME_VOICE` compilation condition and links WebRTC;
+`Omnesis` does neither. Code that offers a voice call asks
+`RealtimeCapability.offered`, which is always false without that condition, and
+WebRTC-backed code is compiled under `#if OMNESIS_REALTIME_VOICE` rather than
+`canImport(WebRTC)`, which a shared DerivedData can satisfy for the production
+target too. The tests that drive WebRTC live in the demo-hosted
+`OmnesisDemoTests` target (`-scheme OmnesisDemo test`).
 
 ## WebRTC microphone initialization
 

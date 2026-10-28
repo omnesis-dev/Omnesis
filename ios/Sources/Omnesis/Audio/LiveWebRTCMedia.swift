@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-#if os(iOS) && canImport(WebRTC)
+#if os(iOS) && OMNESIS_REALTIME_VOICE
 import AVFAudio
 import Foundation
 @preconcurrency import WebRTC

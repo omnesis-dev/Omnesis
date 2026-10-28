@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-#if os(iOS) && canImport(WebRTC)
 import Foundation
 @preconcurrency import WebRTC
 
@@ -169,4 +168,3 @@ private final class LiveWebRTCSilentAudioDevice: NSObject, RTCAudioDevice {
         return true
     }
 }
-#endif
