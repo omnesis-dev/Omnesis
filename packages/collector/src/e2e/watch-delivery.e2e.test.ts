@@ -22,6 +22,7 @@
 
 import "./synth-env.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { localDayKey } from "@omnesis/core";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 interface WatchSummary {
@@ -196,7 +197,7 @@ describe("Watch V2 delivery (e2e-minimal universe)", () => {
     expect(after?.firings, "switching delivery cost the watch its history").toBe(1);
   }, 300_000);
 
-  test("a spent daily cap withholds the notification and keeps the firing", async () => {
+  test("a spent daily cap withholds the notification and keeps the firing", async ({ skip }) => {
     // The cap is on notifications, not on watching. A firing over it is still a
     // row and still a trace record — and the trace says why nothing was sent,
     // because a person who stops hearing from a watch has to be able to tell a
@@ -204,6 +205,7 @@ describe("Watch V2 delivery (e2e-minimal universe)", () => {
     const watch = await addWatch("chatty-watch", true);
     const cap = (await report()).delivery?.perWatchDailyCap ?? 5;
 
+    const day = localDayKey(Date.now());
     for (let index = 0; index <= cap; index += 1) {
       await pushMail(`dl-cap-${index}`, `Spring works — item ${index}`);
     }
@@ -211,6 +213,9 @@ describe("Watch V2 delivery (e2e-minimal universe)", () => {
     expect(fired, "a cap swallowed a firing rather than a notification").toBe(cap + 1);
 
     const now = await report();
+    // The cap is per host-local day: a run that crossed midnight got a fresh
+    // allowance partway through and cannot show the cap binding.
+    skip(localDayKey(Date.now()) !== day, "crossed local midnight, so the cap reset mid-test");
     const row = now.watches.find((w) => w.id === watch.id);
     expect(row?.attemptedToday, "the cap did not bind").toBe(cap);
     expect(now.delivery?.attempted).toBeGreaterThanOrEqual(cap);
