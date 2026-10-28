@@ -228,6 +228,7 @@ describe("SearchPipeline temporal lane", () => {
           asked.push(text);
           return new Float32Array(EMBEDDING_DIM).fill(0.01);
         }),
+        "scripted-embedding",
       );
       const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
       expect(asked.sort()).toEqual(["invoice", "invoice last week"]);
@@ -245,6 +246,7 @@ describe("SearchPipeline temporal lane", () => {
           if (text === "invoice") throw new Error("embedder overloaded");
           return new Float32Array(EMBEDDING_DIM).fill(0.01);
         }),
+        "scripted-embedding",
       );
       const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
       expect(r.stages?.temporal?.status).toBe("ran");
@@ -254,7 +256,10 @@ describe("SearchPipeline temporal lane", () => {
     it("gives the lane no vector when the vector lane could not run", async () => {
       // No HNSW index: the vector lane is skipped, so the lane ranks by words.
       const p = new SearchPipeline({ indexDb: db, searchConfig: { temporal: { enabled: true } } });
-      p.setEmbedder(embedder(async () => new Float32Array(EMBEDDING_DIM).fill(0.01)));
+      p.setEmbedder(
+        embedder(async () => new Float32Array(EMBEDDING_DIM).fill(0.01)),
+        "scripted-embedding",
+      );
       const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
       expect(r.stages?.vector?.status).toBe("skipped");
       expect(r.stages?.temporal?.status).toBe("ran");

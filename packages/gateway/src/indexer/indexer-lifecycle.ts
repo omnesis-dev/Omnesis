@@ -796,11 +796,11 @@ export class IndexerLifecycle {
         // is the one that's bounded so it can't starve these at the server.
         maxConcurrentRequests: Infinity,
       });
-      this.deps.searchPipeline.setEmbedder(searchEmbedder);
+      this.deps.searchPipeline.setEmbedder(searchEmbedder, embedId);
       this._queryEmbedderIsWorker = false;
       this.log.info(`search embedder: direct HTTP client (bypasses indexer worker)`);
     } else {
-      this.deps.searchPipeline.setEmbedder(proxy);
+      this.deps.searchPipeline.setEmbedder(proxy, embedId);
       this._queryEmbedderIsWorker = true;
     }
     // Publish to the live ref so POST /admin/index/reindex-missing
@@ -1380,7 +1380,7 @@ export class IndexerLifecycle {
       embedModel: modelLabel,
       embedDim: newDim,
     });
-    this.deps.searchPipeline.setEmbedder(searchEmbedder);
+    this.deps.searchPipeline.setEmbedder(searchEmbedder, embedId);
     this.log.info(
       `Atomic flip complete: generation ${newVersion} now serving vector search; generation ${activeVersion} retired.`,
     );

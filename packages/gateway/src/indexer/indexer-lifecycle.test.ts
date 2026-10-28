@@ -236,7 +236,7 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   } as unknown as IndexerLifecycleDeps["configStore"];
 
   let queryEmbedder: Embedder | undefined;
-  const setEmbedder = vi.fn((value: Embedder | undefined) => {
+  const setEmbedder = vi.fn((value: Embedder | undefined, _modelId?: string) => {
     queryEmbedder = value;
   });
   const setVectorSearchUnavailable = vi.fn();
@@ -334,6 +334,7 @@ describe("IndexerLifecycle", () => {
     expect(proxyInstances[0].whenReady).toHaveBeenCalledOnce();
     expect(setEmbedder).toHaveBeenCalledOnce();
     expect(setEmbedder.mock.calls[0][0]).toBeInstanceOf(FakeHttpEmbedder);
+    expect(setEmbedder.mock.calls[0][1]).toBe("mock-embed");
     expect(registerAll).toHaveBeenCalledOnce();
     expect(proxyInstances[0].wake).toHaveBeenCalledOnce();
     expect(statusReporter.getReadiness().status).toBe("ready");
@@ -1432,6 +1433,14 @@ describe("embedder swap — four-transition graceful matrix (option A)", () => {
         expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
         // The query embedder was NEVER cleared → no BM25-only downtime window.
         expect(setEmbedder.mock.calls.every((c) => c[0] !== undefined)).toBe(true);
+        expect(setEmbedder.mock.calls[0][1]).toBe(
+          oldKind === "local" ? "local-embed" : "mock-embed",
+        );
+        expect(
+          setEmbedder.mock.calls
+            .slice(1)
+            .every((c) => c[1] === (newKind === "local" ? "local-embed" : "mock-embed-new")),
+        ).toBe(true);
 
         // Atomic flip to a fresh generation at the new dimension; old retired.
         expect(getActiveIndexVersion(idxDb)).toBe(2);
@@ -1670,7 +1679,7 @@ describe("lexical worker promotion on model installation", () => {
   test.each([false, true])(
     "download completion promotes one lexical owner (boot in flight: %s)",
     async (duringBoot) => {
-      const { deps, resolve } = makeDeps();
+      const { deps, resolve, setEmbedder } = makeDeps();
       resolve.mockReturnValue({
         kind: "local",
         catalogId: "fictional-embedder",
@@ -1710,6 +1719,7 @@ describe("lexical worker promotion on model installation", () => {
         );
         expect(lifecycle.indexerProxy).toBe(semantic);
         expect(deps.searchPipeline.queryEmbedder()).toBe(semantic);
+        expect(setEmbedder).toHaveBeenLastCalledWith(semantic, "fictional-embedder");
         await lifecycle.startIndexer();
         expect(proxyInstances).toHaveLength(2);
       } finally {

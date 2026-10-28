@@ -266,8 +266,11 @@ export class SearchPipeline {
    * documented downtime window instead of embedding queries with a now-invalid
    * old-dimension model against a wiped/new index.
    */
-  setEmbedder(embedder: Embedder | undefined): void {
+  setEmbedder(embedder: undefined): void;
+  setEmbedder(embedder: Embedder, embeddingModelId: string): void;
+  setEmbedder(embedder: Embedder | undefined, embeddingModelId?: string): void {
     this.embedder = embedder;
+    this.embeddingModelId = embedder ? embeddingModelId : undefined;
     log.info(
       !embedder
         ? "Search pipeline: embedder cleared, vector search degraded to BM25-only"

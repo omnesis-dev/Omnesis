@@ -268,7 +268,8 @@
           each document as its vectors land. There is nothing to switch on; the pipeline uses
           whatever signals exist at query time. When embeddings become available after keyword-only
           indexing, vectors are rebuilt for the retained corpus while keyword results remain
-          available.
+          available. Search responses report the active embedding model as assignments change,
+          without requiring a gateway restart.
         </p>
         <p>
           A query made only of filters, with no free text (<code>from:maya type:email</code>), skips
