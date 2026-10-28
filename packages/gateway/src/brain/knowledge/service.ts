@@ -144,7 +144,7 @@ export class KnowledgeService {
 
   /** Internal grounded seeding/repair seam; model-created wikis must use candidate publication. */
   async save(
-    { sourceFence, ...input }: KnowledgeProposal,
+    input: KnowledgeProposal,
     publication?: {
       candidateId: string;
       expectedCandidateRevision: number;
@@ -248,7 +248,7 @@ export class KnowledgeService {
     }
     const allRefs = () => parsed.claims.flatMap((claim) => claim.refs.map((ref) => ref.raw));
     const excludedDocuments =
-      sourceFence?.excludedDocuments(
+      input.sourceFence?.excludedDocuments(
         parsed.claims.flatMap((claim) =>
           claim.refs.flatMap((ref) => (ref.kind === "source" ? [ref.id] : [])),
         ),
@@ -462,8 +462,11 @@ export class KnowledgeService {
       states.every((state) => state.verification?.status === "verified")
     )
       metadata.lastVerifiedAt = this.deps.clock();
+    // The proposal as it stands now, not a copy from before verification; the
+    // fence is host-only and never crosses to the writer.
+    const { sourceFence: _fence, ...proposal } = input;
     const node = {
-      ...input,
+      ...proposal,
       enforceClaimPreservation: true,
       runFence,
       outcomeFence,
