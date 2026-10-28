@@ -451,7 +451,34 @@ describe("Brain Bench — the operator surface", () => {
         expect(action.ok).toBe(true);
       }
       expect(revisit.docIds).toContain(invoiceDocId);
-      expect(revisit.researchToolCalls).toBeGreaterThanOrEqual(2);
+      expect(revisit.outcome).toBe("completed");
+      const steps = await bench.obs.executedTools(revisit.runId, revisit.attempt);
+      // Reconcile the audit with actual reads. Frontier/evidence plumbing and
+      // successful owner saves are not research; a settled source review may
+      // need neither a new owner nor another research call.
+      const nonResearchTools = new Set([
+        "knowledge_next_frontier",
+        "knowledge_discovery_complete",
+        "knowledge_temporal_context",
+        "knowledge_evidence",
+        "knowledge_save",
+      ]);
+      expect(revisit.researchToolCalls).toBe(
+        steps.filter((step) => step.tool && !nonResearchTools.has(step.tool)).length,
+      );
+      if (revisit.actions.length === 0 && revisit.researchToolCalls === 0) {
+        expect(steps).toContainEqual(
+          expect.objectContaining({
+            tool: "knowledge_discovery_complete",
+            args: expect.objectContaining({
+              id: `source:${invoiceDocId}`,
+              phases: [],
+              targets: [],
+            }),
+            result: expect.objectContaining({ kind: "structured" }),
+          }),
+        );
+      }
     }
 
     const invoiceRun = await invoiceCreationRun();

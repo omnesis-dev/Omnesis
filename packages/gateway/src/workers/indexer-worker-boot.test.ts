@@ -1611,6 +1611,19 @@ test("lexical boot bypasses graph admission and promotion discards obsolete file
     insertDocuments(paths.gatewayDbPath, [
       makeDocument("budget-new", "fictional starpetal instrument"),
     ]);
+    const gateway = createDatabase(paths.gatewayDbPath);
+    let newDocumentId: string;
+    try {
+      const inserted = gateway
+        .prepare<[string], { id: string }>(
+          "SELECT id FROM documents WHERE provider_id = 'synthetic' AND source_id = 'synthetic:maya@example.com' AND external_id = ?",
+        )
+        .get("budget-new");
+      if (!inserted) throw new Error("Missing newly inserted lexical document");
+      newDocumentId = inserted.id;
+    } finally {
+      gateway.close();
+    }
     proxy = new IndexerWorkerProxy({
       ...makeWorkerOptions(paths, "http://127.0.0.1:9", {
         memoryBudget: { bytes: 64 * 1024 * 1024, source: "config" },
@@ -1626,7 +1639,11 @@ test("lexical boot bypasses graph admission and promotion discards obsolete file
     const lexicalDb = openIndexDb(paths.indexDbPath, { readonly: true });
     try {
       expect(
-        lexicalDb.prepare("SELECT embedding FROM chunks WHERE document_id = 'budget-new'").get(),
+        lexicalDb
+          .prepare<[string], { embedding: Buffer | null }>(
+            "SELECT embedding FROM chunks WHERE document_id = ?",
+          )
+          .get(newDocumentId),
       ).toEqual({ embedding: null });
       expect(
         lexicalDb
