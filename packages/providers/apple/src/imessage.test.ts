@@ -100,6 +100,7 @@ function createTestDb(dbPath: string): Db {
       guid TEXT,
       filename TEXT,
       mime_type TEXT,
+      uti TEXT,
       transfer_name TEXT,
       total_bytes INTEGER DEFAULT 0
     );
@@ -198,18 +199,20 @@ function insertAttachment(
   opts: {
     filename?: string;
     mimeType?: string;
+    uti?: string;
     transferName?: string;
     totalBytes?: number;
     guid?: string;
   } = {},
 ) {
   db.prepare(
-    "INSERT INTO attachment (ROWID, guid, filename, mime_type, transfer_name, total_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO attachment (ROWID, guid, filename, mime_type, uti, transfer_name, total_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     attId,
     opts.guid ?? `att-${attId}`,
     opts.filename ?? null,
     opts.mimeType ?? null,
+    opts.uti ?? null,
     opts.transferName ?? null,
     opts.totalBytes ?? 0,
   );
@@ -594,7 +597,10 @@ describe("AppleIMessageSource", () => {
 
   describe("inline audio transcription", () => {
     /** Write a fake audio clip on disk and insert a chat.db audio attachment pointing at it. */
-    function insertAudioMessage(audioPath: string): void {
+    function insertAudioMessage(
+      audioPath: string,
+      type: { mimeType?: string; uti?: string } = { mimeType: "audio/x-caf" },
+    ): void {
       writeFileSync(audioPath, Buffer.from("fake-audio-bytes"));
       insertMessage(testDb, 1, 1, {
         text: null,
@@ -604,11 +610,32 @@ describe("AppleIMessageSource", () => {
       });
       insertAttachment(testDb, 1, 1, {
         filename: audioPath,
-        mimeType: "audio/x-caf",
+        ...type,
         transferName: "Audio Message.caf",
         totalBytes: 16,
       });
     }
+
+    test("transcribes an audio message Messages stored with a UTI and no MIME type", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath, { uti: "com.apple.coreaudio-format" });
+
+      const transcribeAudio = vi.fn(async () => ({ text: "Back by six", durationSec: 7 }));
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+
+      const result = await src.sync(null);
+      expect(transcribeAudio).toHaveBeenCalledWith(
+        expect.any(Uint8Array),
+        "audio/x-caf",
+        expect.anything(),
+      );
+      expect(result.documents[0].content).toContain("[Audio, 0:07]: Back by six");
+    });
 
     test("transcribes a voice clip and renders it inline in the conversation", async () => {
       const audioPath = join(tmpDir, "clip.caf");

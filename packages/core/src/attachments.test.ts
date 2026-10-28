@@ -32,6 +32,11 @@ describe("resolveEffectiveMimeType", () => {
     );
   });
 
+  test("recovers audio delivered without a type", () => {
+    expect(resolveEffectiveMimeType("voice-note.caf", "")).toBe("audio/x-caf");
+    expect(resolveEffectiveMimeType("memo.m4a", "application/octet-stream")).toBe("audio/x-m4a");
+  });
+
   test("recovers PDF / Office delivered as octet-stream", () => {
     expect(resolveEffectiveMimeType("report.pdf", "application/octet-stream")).toBe(
       "application/pdf",

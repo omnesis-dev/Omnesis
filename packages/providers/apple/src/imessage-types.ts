@@ -86,14 +86,16 @@ export interface RawIMessage {
 }
 
 /**
- * Raw attachment row from chat.db.
+ * Attachment row from chat.db with its type resolved (see
+ * `imessage-attachment-type.ts`).
  */
 export interface RawIMessageAttachment {
   attachmentRowId: number;
   guid: string | null;
   messageRowId: number;
   filename: string | null;
-  mimeType: string | null;
+  /** Effective MIME type from `mime_type`, the UTI or the extension; `""` when unknown. */
+  mimeType: string;
   transferName: string | null;
   totalBytes: number;
 }

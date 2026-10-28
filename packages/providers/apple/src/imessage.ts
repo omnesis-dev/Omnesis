@@ -10,7 +10,6 @@ import {
   createLogger,
   resolveAttachmentConfig,
   shouldExtractAttachment,
-  resolveEffectiveMimeType,
   buildAttachmentDocument,
   formatAttachmentMarkers,
   deriveAttachmentStableId,
@@ -34,6 +33,11 @@ import {
   imessagePersonIdentifiers,
 } from "./imessage-normalizer.js";
 import { validateAppleIMessageSyncCursor } from "./imessage-types.js";
+import {
+  imessageAttachmentFilename,
+  resolveIMessageAttachment,
+  type IMessageAttachmentRow,
+} from "./imessage-attachment-type.js";
 import { throwOnOpenFailure } from "./db-helpers/internal.js";
 import type {
   AttachmentInfo,
@@ -335,7 +339,7 @@ export class AppleIMessageSource {
       // Build attachment info
       const attachments = (attachmentMap.get(row.rowId) ?? []).map((a) => ({
         guid: a.guid ?? undefined,
-        filename: a.transferName ?? a.filename?.split("/").pop() ?? "attachment",
+        filename: imessageAttachmentFilename(a),
         mimeType: a.mimeType,
         filePath: a.filename,
         totalBytes: a.totalBytes,
@@ -608,6 +612,7 @@ export class AppleIMessageSource {
              maj.message_id as messageRowId,
              a.filename,
              a.mime_type as mimeType,
+             a.uti as uti,
              a.transfer_name as transferName,
              a.total_bytes as totalBytes
            FROM message_attachment_join maj
@@ -615,8 +620,9 @@ export class AppleIMessageSource {
            WHERE maj.message_id IN (${placeholders})
            ORDER BY maj.message_id ASC, a.ROWID ASC`,
         )
-        .all(...batch) as RawIMessageAttachment[];
-      for (const att of attRows) {
+        .all(...batch) as IMessageAttachmentRow[];
+      for (const row of attRows) {
+        const att = resolveIMessageAttachment(row);
         if (!result.has(att.messageRowId)) result.set(att.messageRowId, []);
         result.get(att.messageRowId)!.push(att);
       }
@@ -775,7 +781,7 @@ export class AppleIMessageSource {
 
     const attachments = (attMap.get(row.rowId) ?? []).map((a) => ({
       guid: a.guid ?? undefined,
-      filename: a.transferName ?? a.filename?.split("/").pop() ?? "attachment",
+      filename: imessageAttachmentFilename(a),
       mimeType: a.mimeType,
       filePath: a.filename,
       totalBytes: a.totalBytes,
@@ -1002,8 +1008,8 @@ export class AppleIMessageSource {
       const parsed = this.parseMessageRow(row, attMap);
       if (!parsed || parsed.tapback) continue;
       for (const raw of attMap.get(row.rowId) ?? []) {
-        const filename = raw.transferName ?? raw.filename?.split("/").pop() ?? "attachment";
-        const mimeType = resolveEffectiveMimeType(filename, raw.mimeType);
+        const filename = imessageAttachmentFilename(raw);
+        const mimeType = raw.mimeType;
         if (!mimeType) continue;
         const check = shouldExtractAttachment(mimeType, raw.totalBytes, this.attachmentConfig);
         if (!check.extract) continue;
@@ -1185,8 +1191,8 @@ export class AppleIMessageSource {
     for (const msg of dayParsed) {
       if (msg.tapback) continue;
       for (const raw of dayAttMap.get(msg.rowId) ?? []) {
-        const filename = raw.transferName ?? raw.filename?.split("/").pop() ?? "attachment";
-        const mimeType = resolveEffectiveMimeType(filename, raw.mimeType);
+        const filename = imessageAttachmentFilename(raw);
+        const mimeType = raw.mimeType;
         if (!mimeType) continue;
         const check = shouldExtractAttachment(mimeType, raw.totalBytes, this.attachmentConfig);
         if (!check.extract) continue;
@@ -1211,15 +1217,13 @@ export class AppleIMessageSource {
       const rawAtts = dayAttMap.get(msg.rowId) ?? [];
 
       for (const att of rawAtts) {
-        const filename = att.transferName ?? att.filename?.split("/").pop() ?? "attachment";
-        // Recover the real type when the DB has a generic/empty MIME for a
-        // recognizable extension (e.g. a .pkpass stored as octet-stream).
-        const mimeType = resolveEffectiveMimeType(filename, att.mimeType);
+        const filename = imessageAttachmentFilename(att);
+        const mimeType = att.mimeType;
 
         if (!mimeType) {
           attachmentInfos.push({
             filename,
-            mimeType: mimeType ?? "unknown",
+            mimeType: "unknown",
             size: att.totalBytes,
             extracted: false,
             reason: "type-excluded",

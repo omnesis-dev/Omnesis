@@ -176,6 +176,15 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   // Gmail and Outlook, so extension recovery is what makes them extractable.
   pkpass: "application/vnd.apple.pkpass",
   pkpasses: "application/vnd.apple.pkpasses",
+  // Audio (transcribed when a transcriber is assigned and the source opts in).
+  caf: "audio/x-caf",
+  m4a: "audio/x-m4a",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
+  opus: "audio/opus",
+  amr: "audio/amr",
   // Images (OCR'd when a backend is assigned).
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
