@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { listBrokeredAccountIds, readBrokerBinding } from "@omnesis/core";
-import type { ProviderBrokerSpec } from "@omnesis/source-sdk";
 import { keyFromFile, linkBrokeredAccount, parseConnectionArgs, parseParamArgs } from "./broker.js";
+import type { ProviderBrokerSpec } from "@omnesis/source-sdk";
 
 const created: string[] = [];
 afterEach(() => {

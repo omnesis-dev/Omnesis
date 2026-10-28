@@ -19,8 +19,8 @@ import {
   type BrokerConnectionRef,
   type CredentialBrokerConfig,
 } from "@omnesis/core";
-import type { ProviderBrokerSpec, SourceOrProviderDefinition } from "@omnesis/source-sdk";
 import { c, CliError, EXIT_FAILURE, EXIT_USER_ERROR, isJSON } from "../utils.js";
+import type { ProviderBrokerSpec, SourceOrProviderDefinition } from "@omnesis/source-sdk";
 
 /**
  * `omnesis broker` — take account credentials from a credential broker.
