@@ -2446,13 +2446,7 @@ const app = createServer(db, DB_PATH, {
   indexerReadiness: () => indexerStatus.getReadiness(),
   getSemanticSearch: () => indexerLifecycle.vectorIndex,
   indexerControl: {
-    reindexMissing: async () => {
-      const proxy = indexerLifecycle.indexerProxy;
-      if (!proxy) {
-        throw new Error("indexer worker not ready — check /index/stats for state");
-      }
-      return proxy.reindexMissing();
-    },
+    reindexMissing: async () => indexerLifecycle.indexerProxy?.reindexMissing() ?? null,
     rebuild: (mode) => indexerLifecycle.applyEmbedSwap(mode),
     // Route through the worker that owns index.db, including during startup
     // before it is ready for search/admin calls. Returns undefined only when no

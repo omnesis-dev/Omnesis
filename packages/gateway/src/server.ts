@@ -353,7 +353,8 @@ export function createServer(
      * Operator-facing trigger for the indexer's on-demand passes.
      */
     indexerControl?: {
-      reindexMissing: () => Promise<{ indexed: number; errors: number }>;
+      /** Resolves null when no indexer worker is ready to run the pass. */
+      reindexMissing: () => Promise<{ indexed: number; errors: number } | null>;
       rebuild?: (mode?: import("./indexer/indexer-lifecycle.js").EmbedSwapMode) => Promise<void>;
       wake?: () => void;
       /**

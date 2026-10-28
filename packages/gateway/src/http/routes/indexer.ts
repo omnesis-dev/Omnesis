@@ -4,7 +4,7 @@
 import { createLogger } from "@omnesis/core";
 import { computeIndexStats } from "../../indexer/stats.js";
 import { scope } from "../scope.js";
-import { ServiceUnavailableError, BadRequestError } from "../errors.js";
+import { HttpError, ServiceUnavailableError, BadRequestError } from "../errors.js";
 import type { EmbedSwapMode, IndexerModelInfo } from "../../indexer/indexer-lifecycle.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -23,7 +23,8 @@ export interface IndexerRoutesDeps {
   config?: OmnesisConfig;
   indexerModel?: IndexerModelInfo;
   indexerControl?: {
-    reindexMissing: () => Promise<{ indexed: number; errors: number }>;
+    /** Resolves null when no indexer worker is ready to run the pass. */
+    reindexMissing: () => Promise<{ indexed: number; errors: number } | null>;
     rebuild?: (mode?: EmbedSwapMode) => Promise<void>;
     wake?: () => void;
     /** Latest docs/sec indexing throughput, or null when unknown. */
@@ -64,14 +65,28 @@ export function mountIndexerRoutes(app: RouteApp, deps: IndexerRoutesDeps): void
     if (!indexerControl) {
       throw new ServiceUnavailableError("indexer control not available");
     }
+    let r: { indexed: number; errors: number } | null;
     try {
-      const r = await indexerControl.reindexMissing();
-      return c.json({ ok: true, indexed: r.indexed, errors: r.errors });
+      r = await indexerControl.reindexMissing();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`Manual reindex-missing failed: ${message}`);
       throw err;
     }
+    if (r) return c.json({ ok: true, indexed: r.indexed, errors: r.errors });
+    // No worker: it is starting, or restarting after an embedder swap, and
+    // the pass can run in a moment. A worker that failed to start or is
+    // switched off will not come back by itself, so that is not retryable.
+    const readiness = indexerReadiness?.();
+    if (readiness?.status === "failed" || readiness?.status === "disabled") {
+      throw new ServiceUnavailableError(`indexer is not running: ${readiness.reason}`);
+    }
+    c.header("Retry-After", "5");
+    throw new HttpError(
+      503,
+      "INDEXER_NOT_READY",
+      "The indexer is starting — try again in a moment.",
+    );
   });
 
   app.post("/admin/index/rebuild", scope.admin(), async (c) => {

@@ -70,19 +70,52 @@ export async function gatewayJson<T = unknown>(
   }
 
   const body = await res.text();
-  if (!res.ok) {
-    const shown =
-      body.length > MAX_BODY_CHARS ? `${body.slice(0, MAX_BODY_CHARS)}…` : body || "(empty body)";
-    // A 5xx body is sanitized down to a request id, so the message that
-    // explains it lives only in the gateway's log.
-    const detail = res.status >= 500 ? gatewayLogTail(endpoint.gatewayLogPath) : "";
-    throw Object.assign(
-      new Error(`gateway ${init?.method ?? "GET"} ${path} → ${res.status}: ${shown}${detail}`),
-      { status: res.status, body },
-    ) as GatewayRequestError;
-  }
+  if (!res.ok) throw requestError(endpoint, path, init, res.status, body);
   // A 2xx may legitimately carry no body (204 No Content).
   return (body ? JSON.parse(body) : null) as T;
+}
+
+/**
+ * Run the indexer's sweep of unindexed documents now. Resolves null while the
+ * indexer worker is not ready — it is starting, or restarting after an
+ * embedder swap — so a polling probe asks again instead of failing.
+ */
+export async function reindexMissing(
+  endpoint: GatewayEndpoint,
+): Promise<{ ok: true; indexed: number; errors: number } | null> {
+  const path = "/admin/index/reindex-missing";
+  const init = { method: "POST" };
+  const res = await gatewayFetch(endpoint, path, init);
+  const body = await res.text();
+  if (res.ok) return JSON.parse(body) as { ok: true; indexed: number; errors: number };
+  if (res.status === 503 && errorCode(body) === "INDEXER_NOT_READY") return null;
+  throw requestError(endpoint, path, init, res.status, body);
+}
+
+function errorCode(body: string): unknown {
+  try {
+    return (JSON.parse(body) as { code?: unknown }).code;
+  } catch {
+    return undefined;
+  }
+}
+
+function requestError(
+  endpoint: GatewayEndpoint,
+  path: string,
+  init: RequestInit | undefined,
+  status: number,
+  body: string,
+): GatewayRequestError {
+  const shown =
+    body.length > MAX_BODY_CHARS ? `${body.slice(0, MAX_BODY_CHARS)}…` : body || "(empty body)";
+  // A 5xx body is sanitized down to a request id, so the message that
+  // explains it lives only in the gateway's log.
+  const detail = status >= 500 ? gatewayLogTail(endpoint.gatewayLogPath) : "";
+  return Object.assign(
+    new Error(`gateway ${init?.method ?? "GET"} ${path} → ${status}: ${shown}${detail}`),
+    { status, body },
+  ) as GatewayRequestError;
 }
 
 /**

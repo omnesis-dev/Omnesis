@@ -10349,7 +10349,7 @@ describe("POST /admin/index/reindex-missing", () => {
     const customApp = createServer(db, undefined, {
       indexerControl: {
         reindexMissing: async () => {
-          throw new Error("indexer worker not ready — check /index/stats for state");
+          throw new Error("disk full");
         },
       },
     });
@@ -10365,6 +10365,42 @@ describe("POST /admin/index/reindex-missing", () => {
     // leak to the client.
     expect(body.error).toBe("Internal server error");
     expect(body.code).toBe("INTERNAL_ERROR");
+  });
+
+  // The worker is down while it starts, and again while an embedder swap
+  // restarts it. A caller that asked too early should be told to come back,
+  // not handed an internal error.
+  test("answers a retryable 503 while the indexer worker is starting", async () => {
+    const customApp = createServer(db, undefined, {
+      indexerControl: { reindexMissing: async () => null },
+      indexerReadiness: () => ({ status: "loading-model" }),
+    });
+
+    const res = await customApp.request("/admin/index/reindex-missing", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    expect(((await res.json()) as { code: string }).code).toBe("INDEXER_NOT_READY");
+  });
+
+  test("answers a non-retryable 503 naming why the indexer is not running", async () => {
+    const customApp = createServer(db, undefined, {
+      indexerControl: { reindexMissing: async () => null },
+      indexerReadiness: () => ({ status: "failed", reason: "HTTP embedder probe failed: 401" }),
+    });
+
+    const res = await customApp.request("/admin/index/reindex-missing", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBeNull();
+    expect(await res.json()).toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+      error: expect.stringContaining("HTTP embedder probe failed: 401"),
+    });
   });
 });
 

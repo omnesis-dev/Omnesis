@@ -273,7 +273,7 @@ it("refuses a near-duplicate new page beyond the first library page and merges i
     await waitFor(
       "indexed knowledge mirror: Riverside studio rehearsals",
       async () => {
-        await bench!.harness.gatewayJson("/admin/index/reindex-missing", { method: "POST" });
+        if (!(await bench!.harness.reindexMissing())) return null;
         await bench!.harness.refreshSearchSnapshot();
         const response = await bench!.harness.gatewayJson<{ results: Array<{ title: string }> }>(
           "/search",

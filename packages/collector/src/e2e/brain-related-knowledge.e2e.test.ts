@@ -242,7 +242,7 @@ it("carries a correction recorded on another document into the page that cites t
           // Mirrors reach the index through the indexer's periodic sweep of
           // unindexed documents, and search reads a published snapshot; run
           // both now instead of waiting for their schedules.
-          await bench!.harness.gatewayJson("/admin/index/reindex-missing", { method: "POST" });
+          if (!(await bench!.harness.reindexMissing())) return null;
           await bench!.harness.refreshSearchSnapshot();
           const response = await bench!.harness.gatewayJson<{
             results: Array<{ title: string; sourceId?: string }>;

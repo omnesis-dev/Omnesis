@@ -68,7 +68,12 @@ import {
   type StartFakeApnsServerOptions,
 } from "./fake-apns.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
-import { gatewayFetch, gatewayJson, type GatewayEndpoint } from "./gateway-request.js";
+import {
+  gatewayFetch,
+  gatewayJson,
+  reindexMissing,
+  type GatewayEndpoint,
+} from "./gateway-request.js";
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -1201,6 +1206,11 @@ export class SyntheticE2EHarness {
   /** The raw response, for callers asserting on a non-2xx status or body. */
   async gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
     return gatewayFetch(this.endpoint(), path, init);
+  }
+
+  /** Run the indexer's missing-docs pass now; null while its worker is not ready. */
+  async reindexMissing(): Promise<{ indexed: number; errors: number } | null> {
+    return reindexMissing(this.endpoint());
   }
 
   private endpoint(): GatewayEndpoint {
