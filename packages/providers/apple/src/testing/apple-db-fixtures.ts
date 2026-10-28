@@ -118,6 +118,7 @@ export function seedIMessageDb(path: string): void {
       guid TEXT,
       filename TEXT,
       mime_type TEXT,
+      uti TEXT,
       transfer_name TEXT,
       total_bytes INTEGER DEFAULT 0
     );
