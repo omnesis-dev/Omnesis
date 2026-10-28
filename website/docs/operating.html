@@ -163,11 +163,19 @@
 
         <h2 id="services">Services</h2>
         <p>
-          The <a href="/docs/install">installer</a> registers the gateway and collector as user
-          services: launchd LaunchAgents on macOS, systemd user units on Linux. Both start at login
-          and restart on failure. <code>omnesis service install</code> sets them up on a machine
-          where the installer did not. Name a component to install just one, for example
-          <code>omnesis service install collector</code> on a machine that only syncs.
+          For a Docker install, manage the containers with
+          <code>docker compose -f ~/.config/omnesis/docker-compose.yml</code> followed by
+          <code>ps</code>, <code>logs -f</code>, <code>stop</code>, <code>start</code> or
+          <code>restart</code>. Substitute your config directory if you chose another path.
+          <code>omnesis service</code> manages native OS services, not containers; see
+          <a href="/docs/install#docker">Docker installation</a> for its host CLI wrapper.
+        </p>
+        <p>
+          For a native install, the <a href="/docs/install">installer</a> registers the gateway and
+          collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
+          Both start at login and restart on failure. <code>omnesis service install</code> sets them
+          up on a machine where the installer did not. Name a component to install just one, for
+          example <code>omnesis service install collector</code> on a machine that only syncs.
         </p>
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
@@ -321,6 +329,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             >--no-security</code
           >
           skips them).
+        </p>
+        <p>
+          With no embedding model assigned, keyword-only indexing is healthy. If a local embedding
+          model is assigned but its file is missing, doctor reports the missing model even while
+          keyword search continues to work. Install the assigned model to restore semantic search,
+          or disable the embedder assignment to keep keyword-only operation intentionally.
         </p>
         <p>
           The same report is in the portal under <strong>Debug → System → Health</strong>. A

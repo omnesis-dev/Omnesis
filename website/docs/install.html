@@ -187,8 +187,8 @@
                 <td><code>--docker</code></td>
                 <td>Docker with the Compose plugin</td>
                 <td>
-                  You want containers and no Node on the host. Release images are not published yet;
-                  see <a href="#docker">Docker</a>.
+                  You want containers and no Node on the host. See <a href="#docker">Docker</a>
+                  for image selection, storage and networking.
                 </td>
               </tr>
             </tbody>
@@ -954,6 +954,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>docker compose down</code>; adding <code>--volumes</code> destroys it. This
           standalone example is managed through Compose; use the installer for its host CLI wrapper
           and transactional <code>omnesis update</code> integration.
+        </p>
+        <p>
+          On Linux Docker Engine, add the included <code>compose.host.yaml</code> override for host
+          networking: <code>docker compose -f compose.yaml -f compose.host.yaml up -d</code>. Use
+          both <code>-f</code> flags on subsequent Compose commands, including <code>run</code> and
+          <code>down</code>. The override removes bridge port mappings, honors
+          <code>OMNESIS_PORT</code> for the gateway, and keeps OAuth callback listeners on host
+          loopback. It is not a Docker Desktop networking configuration.
         </p>
         <h3 id="docker-unraid">Unraid</h3>
         <p>
