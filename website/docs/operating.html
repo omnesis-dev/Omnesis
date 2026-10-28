@@ -331,11 +331,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           skips them).
         </p>
         <p>
-          Keyword search works without an embedding model, but doctor still treats the embedder as
-          required. After <code>omnesis model assign embedder disabled</code>, documents are indexed
-          for keyword search and <code>models.embedder</code> fails as not configured. If a local
-          embedding model is assigned but its file is missing, doctor reports the missing model even
-          while keyword search continues to work. Install the model to restore semantic search.
+          Keyword search and indexing work without an embedding model; semantic search needs one.
+          Doctor therefore fails <code>models.embedder</code> when the embedder is disabled, as
+          after <code>omnesis model assign embedder disabled</code>, or when its local model file is
+          missing, while documents are still indexed for keyword search. Its hint says how to
+          install or assign the model that restores semantic search.
         </p>
         <p>
           The same report is in the portal under <strong>Debug → System → Health</strong>. A

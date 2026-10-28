@@ -494,8 +494,9 @@ function checkModels(d: DoctorData, ck: Checks): void {
   for (const role of CHECKED_ROLES) {
     const a = assignments[role];
     const id = `models.${role}`;
-    // Embedder is load-bearing for indexing + search; its absence is a
-    // hard failure. Each other checked role only gates an optional feature.
+    // Embedder is load-bearing for semantic search; its absence is a hard
+    // failure even though keyword indexing and search keep working without it.
+    // Each other checked role only gates an optional feature.
     const severity: "fail" | "warn" = role === "embedder" ? "fail" : "warn";
     const emit = (message: string, hint: string) =>
       severity === "fail"
@@ -506,7 +507,7 @@ function checkModels(d: DoctorData, ck: Checks): void {
       emit(
         `${role} is not configured`,
         role === "embedder"
-          ? "Search and indexing cannot run without an embedder. Install one with `omnesis model install <id>` and assign it with `omnesis model assign embedder local/<id>`."
+          ? "Keyword search and indexing work without an embedder, but semantic search needs one. Install one with `omnesis model install <id>` and assign it with `omnesis model assign embedder local/<id>`."
           : role === "transcriber"
             ? "Voice notes and audio clips stay as placeholders until a transcriber is assigned. Install one with `omnesis model install <id>` and assign it with `omnesis model assign transcriber local/<id>`."
             : `Assign ${article(role)} ${role} model with \`omnesis model assign ${role} <backend>/<model>\` to enable it.`,

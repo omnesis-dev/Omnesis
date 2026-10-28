@@ -2,56 +2,7 @@
 
 ## Unreleased
 
-### Source contract and upgrade safety
-
-Sources can declare versioned cursor migrations, required host capabilities,
-typed configuration and authentication sessions. Unsupported requirements refuse
-the affected source before creation rather than silently omitting its behavior;
-supported siblings remain eligible to sync. Existing unversioned declarations
-remain supported. Changing an output revision alone does not run a backfill.
-
-Upgrade the gateway before collectors. Collectors refuse a gateway that does
-not advertise the required source-wire contract. Once a source adopts that
-contract, older collectors cannot read its cursor or write to it: upgrade every
-collector sharing that source, including replicated members. Other sources and
-phone-only streams remain eligible to sync. Gateway binary downgrade is not a
-rollback strategy: restore a coherent pre-upgrade backup instead. An older
-gateway may reset newer cursors and cannot enforce the adopted wire floor.
-
-Adding member-local configuration fields does not interrupt an existing member
-that still understands every pinned field, even while a sibling is offline.
-The gateway keeps the existing configuration scope until all members advertise
-the expanded set; member-local configuration and membership edits remain strictly checked.
-Missing fields or incompatible storage modes still refuse the affected member.
-
-Incomplete source scans now expose persistent, member-scoped warnings in the
-portal, CLI and doctor. A successful assessment clears its corresponding warning;
-unassessed or legacy status events do not silently clear it. Interrupted mixed
-document-and-analytics pages replay from a durable journal, with analytics write
-receipts preventing repeated deletion of rows restored by another collector.
-
-Local-file scope removal resumes reconciliation after a complete configured-root
-scan, while unavailable mounts retain their previous state. Deep root paths use
-bounded partition keys and unchanged legacy entries are re-emitted to acquire
-their partition. Unreadable notes and transcripts retain known IDs while readable
-siblings continue reconciling; an unavailable transcript archive cannot turn a
-move into deletion evidence. Apple sources without a local store save valid
-empty-state seeds instead of repeatedly classifying their cursor as unreadable.
-
-Chrome bookmarks publish complete presence even on unchanged-file cycles, so
-lost cursors no longer strand deleted bookmarks. Granola performs daily complete
-rewalks that reconcile documents and meeting rows together, retaining listed
-notes whose detail reads fail. Notion database rewalks restamp legacy summaries
-and reconcile removed databases and their rows while unreadable siblings remain
-protected. Incomplete enumeration is reported without authorizing deletion.
-
-Configuration validates path-list elements and rejects whitespace-only required
-values. Newline-only list parsing preserves comma-containing exclusion globs.
-Existing advanced member settings remain member-scoped, including browser
-profile paths and Screen Time database paths; invalid local overrides report
-validation failures instead of silently selecting another store.
-Authentication rejects unsupported questions and answers to nonpending or shown
-challenges, and preserves typed redirect variants across the subprocess boundary.
+## 0.7.0
 
 ### Mixed-version compatibility with 0.6.0
 
@@ -108,6 +59,59 @@ floor no tokenizer goes under for the request's text, and ends the turn with
 `prompt_truncated` naming both counts and the remedy: raise the server's context
 length, for Ollama with `OLLAMA_CONTEXT_LENGTH` or a Modelfile `num_ctx`. The
 `/docs/agent` page says so beside the Ollama example.
+
+## 0.6.0
+
+### Source contract and upgrade safety
+
+Sources can declare versioned cursor migrations, required host capabilities,
+typed configuration and authentication sessions. Unsupported requirements refuse
+the affected source before creation rather than silently omitting its behavior;
+supported siblings remain eligible to sync. Existing unversioned declarations
+remain supported. Changing an output revision alone does not run a backfill.
+
+Upgrade the gateway before collectors. Collectors refuse a gateway that does
+not advertise the required source-wire contract. Once a source adopts that
+contract, older collectors cannot read its cursor or write to it: upgrade every
+collector sharing that source, including replicated members. Other sources and
+phone-only streams remain eligible to sync. Gateway binary downgrade is not a
+rollback strategy: restore a coherent pre-upgrade backup instead. An older
+gateway may reset newer cursors and cannot enforce the adopted wire floor.
+
+Adding member-local configuration fields does not interrupt an existing member
+that still understands every pinned field, even while a sibling is offline.
+The gateway keeps the existing configuration scope until all members advertise
+the expanded set; member-local configuration and membership edits remain strictly checked.
+Missing fields or incompatible storage modes still refuse the affected member.
+
+Incomplete source scans now expose persistent, member-scoped warnings in the
+portal, CLI and doctor. A successful assessment clears its corresponding warning;
+unassessed or legacy status events do not silently clear it. Interrupted mixed
+document-and-analytics pages replay from a durable journal, with analytics write
+receipts preventing repeated deletion of rows restored by another collector.
+
+Local-file scope removal resumes reconciliation after a complete configured-root
+scan, while unavailable mounts retain their previous state. Deep root paths use
+bounded partition keys and unchanged legacy entries are re-emitted to acquire
+their partition. Unreadable notes and transcripts retain known IDs while readable
+siblings continue reconciling; an unavailable transcript archive cannot turn a
+move into deletion evidence. Apple sources without a local store save valid
+empty-state seeds instead of repeatedly classifying their cursor as unreadable.
+
+Chrome bookmarks publish complete presence even on unchanged-file cycles, so
+lost cursors no longer strand deleted bookmarks. Granola performs daily complete
+rewalks that reconcile documents and meeting rows together, retaining listed
+notes whose detail reads fail. Notion database rewalks restamp legacy summaries
+and reconcile removed databases and their rows while unreadable siblings remain
+protected. Incomplete enumeration is reported without authorizing deletion.
+
+Configuration validates path-list elements and rejects whitespace-only required
+values. Newline-only list parsing preserves comma-containing exclusion globs.
+Existing advanced member settings remain member-scoped, including browser
+profile paths and Screen Time database paths; invalid local overrides report
+validation failures instead of silently selecting another store.
+Authentication rejects unsupported questions and answers to nonpending or shown
+challenges, and preserves typed redirect variants across the subprocess boundary.
 
 ## 2026-08-20
 

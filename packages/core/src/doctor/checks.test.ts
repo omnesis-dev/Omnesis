@@ -958,6 +958,18 @@ describe("evaluateDoctor — missing embedder", () => {
     expect(report.summary.errors).toBe(1);
     expect(report.summary.warnings).toBeGreaterThanOrEqual(1);
   });
+
+  test("a disabled embedder fails with a hint that keyword search still works", () => {
+    const data = healthyData();
+    data.models!.inference.assignments.embedder = { role: "embedder", kind: "disabled" };
+
+    const emb = findCheck(evaluateDoctor(data).checks, "models.embedder");
+    expect(emb?.status).toBe("fail");
+    expect(emb?.message).toBe("embedder is not configured");
+    expect(emb?.hint).toContain("Keyword search and indexing work without an embedder");
+    expect(emb?.hint).toContain("semantic search needs one");
+    expect(emb?.hint).toContain("omnesis model assign embedder local/<id>");
+  });
 });
 
 describe("evaluateDoctor — Codex runtime maintenance", () => {
