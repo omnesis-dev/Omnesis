@@ -157,6 +157,7 @@ interface OpenClawIntegrationApi {
     options: { name: string; optional?: boolean } | { names: string[]; optional?: boolean },
   ): void;
   runtime: {
+    version?: string;
     agent: {
       session: {
         listSessionEntries(input: { agentId: string; readOnly?: boolean }): Iterable<{
