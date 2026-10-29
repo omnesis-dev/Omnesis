@@ -1887,8 +1887,8 @@ describe("release.yml verification permissions", () => {
     expect(create.if).toBeUndefined();
     const notes = steps.find((step) => step.name === "Compose the release notes");
     expect(notes.env.PACKAGES_PUBLISHED).toBe("${{ needs.verify.outputs.armed }}");
-    expect(notes.run).toContain('if [ "$PACKAGES_PUBLISHED" != "true" ]; then');
-    expect(notes.run).toContain("grep ' artifacts/install.sh$' release/SHA256SUMS.txt");
+    // github-release.test.mjs covers what the shared module attaches.
+    expect(notes.run).toBe("node scripts/release/github-release.mjs release");
   });
 });
 

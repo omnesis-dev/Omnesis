@@ -570,24 +570,9 @@ jobs:
       - name: Compose the release notes
         env:
           PACKAGES_PUBLISHED: ${{ needs.verify.outputs.armed }}
-        run: |
-          if [ "$PACKAGES_PUBLISHED" != "true" ]; then
-            grep ' artifacts/install.sh$' release/SHA256SUMS.txt > release/SHA256SUMS.attached.txt
-            mv release/SHA256SUMS.attached.txt release/SHA256SUMS.txt
-          fi
-          node --input-type=module -e '
-            import { readChangelogSection } from "./scripts/release/changelog.mjs";
-            import { readFileSync, writeFileSync } from "node:fs";
-            const version = process.env.RELEASE_TAG.replace(/^v/, "");
-            const section = readChangelogSection(process.cwd(), version)
-              ?? "_No changelog section for this version._";
-            const sums = readFileSync("release/SHA256SUMS.txt", "utf8").trim();
-            writeFileSync(
-              "release/NOTES.md",
-              `${section}\n\n## Checksums (SHA-256)\n\n\`\`\`\n${sums}\n\`\`\`\n`,
-            );
-          '
-          cat release/NOTES.md
+        # Shared with `npm run release -- github-release`, which finishes a run
+        # whose own release step could not create the page.
+        run: node scripts/release/github-release.mjs release
 
       - name: Create the GitHub Release
         env:

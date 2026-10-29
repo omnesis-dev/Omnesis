@@ -256,6 +256,8 @@ npm run release -- version <x.y.z>  apply pending changesets and write x.y.z eve
 npm run release -- pr               open or refresh the release pull request
 npm run release -- tag [x.y.z]      preflight, then create the annotated tag
 npm run release -- status           current tag, npm dist-tags, image tags, store versions
+npm run release -- github-release [x.y.z] --run <id>
+                                    create the release page a release run could not
 ```
 
 Every subcommand takes `--dry-run` and every subcommand is re-runnable: each
@@ -316,6 +318,17 @@ from HEAD, the npm dist-tags for `omnesis`, the published image tags, and a
 slot for the mobile store versions. Each remote
 probe fails soft and says "unavailable" rather than erroring: an unpublished
 package and an unreachable registry are both answers.
+
+**`github-release --run <id>`** creates the GitHub Release page for a
+release workflow run whose `verify`, `packages`, `images` and
+`images-manifest` jobs succeeded but whose `github-release` job did not create
+the page. It refuses a run that is not a release run, a push run for another
+tag, artifacts built for another version, and an installer that does not match
+its checksum. It downloads that run's `release-artifacts` and composes the
+notes and checksum list with `scripts/release/github-release.mjs`, the code the
+workflow runs, from the changelog at the tagged commit. Then it creates the
+page with your own `gh` login on the remote tag's commit. A page that already
+exists is left alone.
 
 ### The boundary
 
@@ -401,20 +414,32 @@ the packages that landed and nothing else advertises the version. Because the
 publisher orders the graph leaves-first, the `omnesis` entry package lands
 only after everything it depends on, and an install of that version fails to
 resolve until it does.
-To finish an interrupted publication, dispatch the release workflow again
-against the same tag (`gh workflow run release.yml -f tag=v<version>`): the
-publisher skips every package the registry already holds byte for byte,
-publishes the rest, and refuses to continue past a version whose registry
-artifact differs from the one this tree stages.
+To finish an interrupted publication, first rerun the failed jobs of the
+tag's own run (`gh run rerun <run-id> --failed`), which keeps the tag's
+workflow file. When the fix is in the workflow itself, dispatch it from `main`
+against the same tag (`gh workflow run release.yml --ref main -f tag=v<version>`):
+the run uses `main`'s workflow file and still builds the tagged commit. Either
+way the publisher skips every package the registry already holds byte for
+byte, publishes the rest, and refuses to continue past a version whose
+registry artifact differs from the one this tree stages. A dispatched run's
+`github-release` job has been refused by GitHub with HTTP 403 (`Resource not
+accessible by integration`) although its token held `contents: write`, while
+tag-push runs created the page. In that case, create the page from the run's
+own artifacts with `npm run release -- github-release <version> --run <run-id>`.
 
 **Images publish on a release by default.** The repository variable
 `OMNESIS_IMAGE_PUBLISH=0` disables image pushes for a rehearsal; both architectures
 are still built and tested, each on its own native runner. Each runner pushes
 the digest it booted, and `images-manifest` tags the pair. npm packages remain opt-in through
 `OMNESIS_RELEASE_PUBLISH=1`. The GitHub Release page is created after the image
-jobs succeed. Make each GHCR package public in its package settings before
-advertising anonymous Docker installation; repository visibility alone does not
-prove an image can be pulled anonymously.
+jobs succeed. Each `images-manifest` job ends by pulling its image without
+credentials, so the page waits until every image is public. GHCR creates a
+package as private the first time it is pushed, and repository visibility does
+not change that. Before the first image release, or after adding an image, an
+organization owner must allow public packages (organization Settings →
+Packages → Package creation → Public). Without that, the package's visibility
+setting is disabled. Then make each new `omnesis-*` package public under
+Package settings → Change visibility, and rerun the run's failed jobs.
 The package destination is a separate choice, not another arming switch. With
 `OMNESIS_RELEASE_REGISTRY` unset, the packages step uses npmjs,
 `secrets.NPM_TOKEN`, provenance, and the explicit public-publish override. Set

@@ -11,6 +11,7 @@
  *   pr                   open (or refresh) the release pull request
  *   tag                  preflight, then create the annotated tag — never pushed
  *   status               where the released artifacts currently stand
+ *   github-release       create the release page a workflow run could not
  *
  * Every subcommand takes `--dry-run` and every subcommand is re-runnable: each
  * one inspects the tree, does only what is still missing, and says so when
@@ -29,7 +30,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readChangelogSection } from "./changelog.mjs";
+import { extractChangelogSection, readChangelogSection } from "./changelog.mjs";
 import { checkProductVersion } from "./check-product-version.mjs";
 import {
   NATIVE_VERSION_FILES,
@@ -48,6 +49,7 @@ import {
   releasePrRefusal,
   resolveTargetVersion,
 } from "./plan.mjs";
+import { releaseRunEvidence, writeReleaseFiles } from "./github-release.mjs";
 import { OVERRIDE_FLAG as ALLOW_FAILED_INSTALL_E2E } from "./install-e2e-gate.mjs";
 import { preflightTag } from "./preflight-tag.mjs";
 import { syncPluginVersions } from "./sync-plugin-versions.mjs";
@@ -375,6 +377,90 @@ function commandStatus({ registry, storeVersions }) {
   return 0;
 }
 
+// ── github-release ──────────────────────────────────────────────────────
+
+/**
+ * Create the GitHub Release page from a release workflow run whose images and
+ * packages finished but whose `github-release` job did not create the page.
+ * It uses that run's own artifacts and the same notes code as the workflow,
+ * and the operator's `gh` login instead of the run's token.
+ */
+function commandGithubRelease({ requestedVersion, runId, dryRun }) {
+  const version = requestedVersion ?? readProductVersion(repoRoot);
+  assertStrictSemver(version);
+  const tag = `v${version}`;
+  if (!runId || !/^\d+$/u.test(runId)) {
+    throw new Error("Usage: release github-release [x.y.z] --run <release workflow run id>");
+  }
+  const existing = tryCapture("gh", ["release", "view", tag, "--json", "url", "--jq", ".url"]);
+  if (existing) {
+    console.log(`${tag} already has its release page: ${existing}`);
+    return 0;
+  }
+
+  const remote = (ref) =>
+    tryCapture("git", ["ls-remote", "--tags", "origin", ref])?.split(/\s+/u)[0] || null;
+  const sha = remote(`refs/tags/${tag}^{}`) ?? remote(`refs/tags/${tag}`);
+  if (!sha) throw new Error(`${tag} does not exist on origin.`);
+
+  const workflowRun = JSON.parse(
+    capture("gh", ["run", "view", runId, "--json", "workflowName,headBranch,event,jobs"]),
+  );
+  if (workflowRun.workflowName !== "release") {
+    throw new Error(`Run ${runId} is a ${workflowRun.workflowName} run, not a release run.`);
+  }
+  // A dispatch runs on a branch and names its tag only as an input, so the
+  // artifact's tarball names are what bind it to this version.
+  if (workflowRun.event === "push" && workflowRun.headBranch !== tag) {
+    throw new Error(`Run ${runId} was started by ${workflowRun.headBranch}, not ${tag}.`);
+  }
+  const evidence = releaseRunEvidence(workflowRun.jobs);
+  if (evidence.refusal) throw new Error(`Run ${runId} cannot be finished: ${evidence.refusal}.`);
+
+  const dir = mkdtempSync(join(tmpdir(), "omnesis-github-release-"));
+  try {
+    capture("gh", ["run", "download", runId, "--name", "release-artifacts", "--dir", dir], {
+      quiet: true,
+    });
+    const tarballs = existsSync(join(dir, "tarballs")) ? readdirSync(join(dir, "tarballs")) : [];
+    if (tarballs.length === 0 || tarballs.some((name) => !name.endsWith(`-${version}.tgz`))) {
+      throw new Error(`Run ${runId}'s release artifacts were not built for ${version}.`);
+    }
+    // The changelog as the tagged commit carries it, whatever is checked out.
+    const changelog = capture("git", ["show", `${sha}:packages/cli/CHANGELOG.md`], { quiet: true });
+    const notes = writeReleaseFiles(
+      dir,
+      extractChangelogSection(changelog, version),
+      evidence.packagesPublished,
+    );
+    const args = [
+      "release",
+      "create",
+      tag,
+      "--verify-tag",
+      "--target",
+      sha,
+      "--title",
+      `Omnesis ${version}`,
+      "--notes-file",
+      join(dir, "NOTES.md"),
+      join(dir, "artifacts/install.sh"),
+      join(dir, "SHA256SUMS.txt"),
+    ];
+    if (dryRun) {
+      console.log(notes);
+      console.log(`Would create the ${tag} release at ${sha} from run ${runId}.`);
+      console.log("Dry run — nothing created.");
+      return 0;
+    }
+    run("gh", args);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  console.log(`Created the ${tag} release page.`);
+  return 0;
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────
 
 const SUBCOMMANDS = {
@@ -383,6 +469,7 @@ const SUBCOMMANDS = {
   pr: commandPr,
   tag: commandTag,
   status: commandStatus,
+  "github-release": commandGithubRelease,
 };
 
 export function parseArgs(argv) {
@@ -394,12 +481,14 @@ export function parseArgs(argv) {
     if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--sign") options.sign = true;
     else if (arg === ALLOW_FAILED_INSTALL_E2E) options.allowFailedInstallE2e = true;
-    else if (arg === "--registry" || arg === "--store-versions") {
+    else if (arg === "--registry" || arg === "--store-versions" || arg === "--run") {
       const value = rest[++index];
       if (value === undefined || value.startsWith("--")) {
         throw new Error(`${arg} needs a value`);
       }
-      options[arg === "--registry" ? "registry" : "storeVersions"] = value;
+      options[
+        { "--registry": "registry", "--store-versions": "storeVersions", "--run": "runId" }[arg]
+      ] = value;
     } else if (arg.startsWith("-")) throw new Error(`Unknown flag: ${arg}`);
     else positional.push(arg);
   }
@@ -417,12 +506,15 @@ function usage() {
     "  pr                  open or refresh the release pull request",
     "  tag [x.y.z]         preflight, then create the annotated tag (never pushed)",
     "  status              current tag, npm dist-tags, image tags, store versions",
+    "  github-release [x.y.z] --run <id>",
+    "                      create the release page a release run could not",
     "",
     "  --dry-run           print what would happen; change nothing",
     "  --sign              (tag) sign the tag with your configured release key",
     `  ${ALLOW_FAILED_INSTALL_E2E}  (tag) release although the install/update lanes are red`,
     "  --registry <url>    (status) query this registry instead of the default",
     "  --store-versions    (status) JSON object of store versions from a wrapper",
+    "  --run <id>          (github-release) the release workflow run to finish",
     "",
     `Native project files written by \`version\`: ${NATIVE_VERSION_FILES.join(", ")}`,
   ].join("\n");

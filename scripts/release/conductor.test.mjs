@@ -35,6 +35,10 @@ test("parses the subcommand, its version argument and every flag", () => {
   expect(parseArgs(["status", "--store-versions", '{"ios":"1.2.3"}']).options.storeVersions).toBe(
     '{"ios":"1.2.3"}',
   );
+  expect(parseArgs(["github-release", "1.2.3", "--run", "42"]).options).toMatchObject({
+    requestedVersion: "1.2.3",
+    runId: "42",
+  });
 });
 
 test("rejects an unknown flag and a second positional argument", () => {
