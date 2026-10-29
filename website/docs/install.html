@@ -186,7 +186,7 @@
               <tr>
                 <td>Docker</td>
                 <td><code>--docker</code></td>
-                <td>Docker with the Compose plugin</td>
+                <td>Docker with the Compose plugin, v2.24.0 or later</td>
                 <td>
                   You want containers and no Node on the host. See <a href="#docker">Docker</a>
                   for image selection, storage and networking.
@@ -816,9 +816,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           containers from published images tagged by release:
           <code>ghcr.io/omnesis-dev/omnesis-gateway</code> and <code>omnesis-collector</code>, or
           <code>omnesis-combined</code> for both in one container, with
-          <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin,
-          <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The installer uses
-          release images only, so it refuses <code>--edge</code>;
+          <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin at
+          v2.24.0 or later (<code>docker compose version</code> prints it; the installer refuses an
+          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The
+          installer uses release images only, so it refuses <code>--edge</code>;
           <code>--version X.Y.Z</code> selects an exact release. From a checkout,
           <code>sh scripts/install.sh --docker --build</code> builds the images locally.
         </p>
@@ -843,10 +844,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
         <p>
           <code>omnesis</code> on this host is a wrapper that runs the CLI inside the container: the
-          gateway's, or the collector's on a machine that only collects. The source, device, model,
-          TLS, query and update commands on this site work unchanged. The daemons are containers
-          rather than services, so manage them with <code>docker compose</code> instead of
-          <code>omnesis service</code>:
+          gateway's, or the collector's on a machine that only collects. On a gateway host, the
+          source, device, model, TLS, query and update commands on this site work unchanged. A
+          machine that only collects holds its collector's token, not the gateway's admin token, so
+          there its <code>omnesis</code> runs <code>update</code> and <code>uninstall</code>;
+          source, device and status commands run on the gateway host or in the portal. The daemons
+          are containers rather than services, so manage them with
+          <code>docker compose</code> instead of <code>omnesis service</code>:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -904,6 +908,43 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           The account you log in with must itself have access to the image. If access is denied, the
           installer prints the <code>docker login &lt;registry&gt;</code> command to run; it never
           runs that command or reads the token itself.
+        </p>
+        <p>
+          Without a terminal, as in a provisioning script, the installer asks nothing, so every
+          answer goes on the command line: the embedding model and the keyring passphrase file (or
+          <code>--no-model</code> and <code>--no-keyring</code>). A container has no OS keyring, so
+          the passphrase file is the only way to encrypt at rest; it must sit in the config
+          directory, readable only by you. The installer checks for these flags before it pulls
+          anything, and names every missing one:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">mkdir -m 700 -p ~/.config/omnesis</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >(umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' &gt;
+                ~/.config/omnesis/keyring.pass)</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --embedder
+                nomic-embed-text-v1.5.Q8_0 --keyring-passphrase-file
+                ~/.config/omnesis/keyring.pass</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The installer prints no recovery code for a passphrase file you supply; create one once
+          the gateway runs, with <code>omnesis keyring export-recovery --backend passphrase</code>,
+          and store it away from the server.
         </p>
         <p>A second machine that only collects can run its collector in a container too:</p>
         <div class="term">
@@ -1409,7 +1450,8 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           launcher on the host, not in a container: it takes the containers and images down (<code
             >docker compose … down --rmi all</code
           >), removes the compose file and the launcher, and with <code>--purge</code> the config
-          directory. An install is removed as a whole.
+          directory. An install is removed as a whole. On a machine that only collects, it ends by
+          reminding you to remove its device on the gateway host, as a native collector's does.
         </p>
         <p>
           <strong>What only you can do.</strong> The command says which of these apply when it

@@ -936,6 +936,21 @@
         color: var(--text-secondary);
         margin-bottom: 12px;
       }
+      .install-alt {
+        margin-top: 10px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+      }
+      .install-alt a {
+        color: var(--text-primary);
+        text-decoration: underline;
+        text-decoration-color: var(--border);
+        text-underline-offset: 3px;
+      }
+      .install-alt a:hover {
+        text-decoration-color: var(--accent);
+      }
       .install-code {
         display: flex;
         align-items: flex-start;
@@ -3515,6 +3530,10 @@
                       </svg>
                     </button>
                   </div>
+                  <p class="install-alt">
+                    Or run it in containers:
+                    <a href="/docs/install#docker">install with Docker</a>.
+                  </p>
                 </div>
               </div>
             </div>

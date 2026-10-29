@@ -32,6 +32,9 @@ import {
   planHostUpdate,
   runsInstalledBuild,
   planUpdate,
+  DOCKER_EDGE_REFUSAL,
+  dockerPsSpec,
+  runningImageTag,
   newestStableTag,
   stableTagForVersion,
   normalizeVersion,
@@ -436,6 +439,56 @@ describe("the recorded image tag", () => {
   });
 });
 
+describe("the tag a collector container runs", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    Service: "collector",
+    State: "running",
+    Image: "ghcr.io/omnesis-dev/omnesis-collector:0.7.0",
+    ...over,
+  });
+
+  test("is listed by every container of the project", () => {
+    expect(dockerPsSpec("/srv/omnesis/docker-compose.yml")).toEqual({
+      command: "docker",
+      args: ["compose", "-f", "/srv/omnesis/docker-compose.yml", "ps", "--all", "--format", "json"],
+    });
+  });
+
+  test("reads the one object per line newer Compose prints, and the array of older ones", () => {
+    const lines = [row(), row({ Service: "updater", State: "exited", Image: "x:9" })]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    expect(runningImageTag(lines, ["collector"])).toBe("0.7.0");
+    expect(runningImageTag(JSON.stringify([row()]), ["collector"])).toBe("0.7.0");
+    expect(
+      runningImageTag(JSON.stringify(row({ Image: "localhost:5000/omnesis-collector:0.7.0" })), [
+        "collector",
+      ]),
+    ).toBe("0.7.0");
+  });
+
+  test("shows nothing a container does not prove", () => {
+    // Stopped, missing, by image id after the tag moved, by digest, or garbage.
+    expect(runningImageTag(JSON.stringify(row({ State: "exited" })), ["collector"])).toBeNull();
+    expect(runningImageTag(JSON.stringify(row({ Service: "gateway" })), ["collector"])).toBeNull();
+    for (const id of ["sha256:" + "0123abcd".repeat(8), "0123abcd4567"]) {
+      expect(runningImageTag(JSON.stringify(row({ Image: id })), ["collector"])).toBeNull();
+    }
+    expect(
+      runningImageTag(JSON.stringify(row({ Image: "ghcr.io/o/c@sha256:0123" })), ["collector"]),
+    ).toBeNull();
+    expect(runningImageTag("not json", ["collector"])).toBeNull();
+    expect(runningImageTag("", ["collector"])).toBeNull();
+  });
+
+  test("names a tag only when every service named agrees on it", () => {
+    const lines = [row(), row({ Service: "gateway", Image: "ghcr.io/o/omnesis-gateway:0.6.0" })]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    expect(runningImageTag(lines, ["collector", "gateway"])).toBeNull();
+  });
+});
+
 describe("packageIndexUrl", () => {
   test("uses the product package", () => {
     expect(CLI_PACKAGE).toBe("omnesis");
@@ -725,16 +778,19 @@ describe("planUpdate", () => {
     });
   });
 
-  test("a container install follows released image tags, and --edge follows main", () => {
+  test("a container install follows released image tags and refuses --edge up front", () => {
     expect(planUpdate(docker, flags())).toEqual({
       kind: "docker",
       composeFile: docker.composeFile,
       projectDir: docker.projectDir,
-      edge: false,
     });
-    // Unlike a package install, --edge means something here: the release
-    // pipeline moves the `main` image tag with the branch.
-    expect(planUpdate(docker, flags({ edge: true }))).toMatchObject({ kind: "docker", edge: true });
+    // No image follows the main branch, so a branch tag would fail only once
+    // the pull reached the registry. The refusal comes before any of that and
+    // names the two ways that do work.
+    const refused = planUpdate(docker, flags({ edge: true }));
+    expect(refused).toEqual({ kind: "refuse", message: DOCKER_EDGE_REFUSAL });
+    expect(DOCKER_EDGE_REFUSAL).toContain("--target-version X.Y.Z");
+    expect(DOCKER_EDGE_REFUSAL).toContain("sha-<commit>");
   });
 
   test("--registry and a non-default --channel are refused on a container install", () => {

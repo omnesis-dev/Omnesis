@@ -126,7 +126,9 @@ import {
   detectInstallMethod,
   DOCKER_ENV_FILE,
   dockerApplyPlan,
+  dockerPsSpec,
   dockerRestartSpec,
+  runningImageTag,
   formatCommandSpec,
   harnessRefreshSpec,
   harnessRestartSpec,
@@ -514,6 +516,13 @@ export interface UpdateFlowDeps {
    * asks this before trusting the tag on file.
    */
   servedVersion?(): Promise<string | null>;
+  /**
+   * The image tag a container install's collector is running, or null when
+   * that cannot be shown. A host with no gateway of its own answers with this
+   * instead of `servedVersion`: the gateway its collector dials is another
+   * machine's, on that machine's release.
+   */
+  runningImageTag?(): Promise<string | null>;
   /**
    * Point the installation at the version an apply plan names, before that
    * plan's commands run. A docker install resolves its images from a tag
@@ -2382,9 +2391,6 @@ export async function updateSourceCheckout(
 
 // ── Docker flow ─────────────────────────────────────────────────────────
 
-/** The image tag the release pipeline moves with the main branch. */
-const DOCKER_EDGE_TAG = "main";
-
 /**
  * Update a container install: record the image tag its compose project
  * resolves every service at, pull that tag, and recreate the containers in
@@ -2407,7 +2413,6 @@ export async function updateDocker(
   opts: {
     composeFile: string;
     projectDir: string;
-    edge: boolean;
     dryRun: boolean;
     force?: boolean;
     backup?: boolean;
@@ -2488,9 +2493,7 @@ export async function updateDocker(
   }
 
   let target: string;
-  if (opts.edge) {
-    target = DOCKER_EDGE_TAG;
-  } else if (opts.targetVersion) {
+  if (opts.targetVersion) {
     target = normalizeVersion(opts.targetVersion);
   } else {
     // Docker releases may be published without npm packages. Resolve the
@@ -2529,8 +2532,7 @@ export async function updateDocker(
   // version being moved from — not the CLI version of the updater image this
   // command happens to run as. Carried on the deps every step below reads, so
   // that the rollback's health wait demands the version it is restoring rather
-  // than the updater's own. An edge install's tag is a branch and not a
-  // version, so there is nothing to assess and the edge note stands instead.
+  // than the updater's own.
   // The tag on file is what the last apply meant to run; whether it finished
   // is the record's to say, or failing a record, the gateway's. The rollback
   // baseline is the tag known to have been served, which after an
@@ -2545,43 +2547,52 @@ export async function updateDocker(
       EXIT_FAILURE,
     );
   }
-  const servedVersion = opts.edge ? null : ((await deps.servedVersion?.()) ?? null);
-  const evidence = opts.edge
-    ? null
-    : assessDockerApplyEvidence(opts.projectDir, previous, target, rawState, servedVersion);
-  const baseline = evidence?.previousTag ?? previous;
+  // A host that only collects has no gateway to ask, so Docker's account of
+  // the tag its collector was created at stands in for it.
+  const collectorOnly = !roles.gateway.present;
+  const servedVersion = collectorOnly
+    ? ((await deps.runningImageTag?.()) ?? null)
+    : ((await deps.servedVersion?.()) ?? null);
+  const evidence = assessDockerApplyEvidence(
+    opts.projectDir,
+    previous,
+    target,
+    rawState,
+    servedVersion,
+  );
+  const baseline = evidence.previousTag;
   const flowDeps: UpdateFlowDeps = {
     ...deps,
     currentVersion: isResolvedVersion(baseline) ? normalizeVersion(baseline) : deps.currentVersion,
     roles,
     select,
   };
-  const assessment = opts.edge ? undefined : assessUpdate(flowDeps.currentVersion, target);
+  const assessment = assessUpdate(flowDeps.currentVersion, target);
 
-  if (evidence?.recovery === "unfinished") {
+  if (evidence.recovery === "unfinished") {
     console.log(
       `${c.yellow}! The previous container update did not finish: ${previous} is recorded but ` +
         `${baseline} is what these containers last served. Reapplying ${target}.${c.reset}`,
     );
-  } else if (evidence?.recovery === "unrecorded") {
+  } else if (evidence.recovery === "unrecorded") {
     console.log(
       `${c.yellow}! ${previous} is the recorded tag, but nothing proves the containers were ` +
         `recreated on it${
           servedVersion
-            ? ` — the gateway serves ${servedVersion}`
-            : " and the gateway is not answering"
+            ? ` — the ${collectorOnly ? "collector runs" : "gateway serves"} ${servedVersion}`
+            : collectorOnly
+              ? " and the collector container is not running it"
+              : " and the gateway is not answering"
         }. Reapplying ${target} instead of assuming it finished.${c.reset}`,
     );
-  } else if (evidence?.recovery === "mismatch") {
+  } else if (evidence.recovery === "mismatch") {
     console.log(
       `${c.yellow}! The update record does not match what these containers serve. Reapplying ` +
         `${target} instead of assuming it finished.${c.reset}`,
     );
   }
 
-  // The main tag moves with the branch, so an edge install is never "already
-  // there" — the same tag names a different image on the next pull.
-  if (evidence?.complete && !opts.force) {
+  if (evidence.complete && !opts.force) {
     if (evidence.attested) {
       // The gateway's own answer stood in for a record written before
       // completion tracking; leave the record so the next run need not ask.
@@ -2592,16 +2603,17 @@ export async function updateDocker(
       }
     }
     console.log(
-      `Already up to date (${normalizeVersion(previous)}): the gateway serves it. Pass --force ` +
-        `to pull and recreate the containers at that tag anyway.`,
+      `Already up to date (${normalizeVersion(previous)}): the ${
+        collectorOnly ? "collector runs" : "gateway serves"
+      } it. Pass --force to pull and recreate the containers at that tag anyway.`,
     );
     return target;
   }
 
   const applyPlan = dockerApplyPlan(opts.composeFile, opts.projectDir, target, baseline);
-  const arrow = assessment?.direction === "downgrade" ? "↓" : "→";
+  const arrow = assessment.direction === "downgrade" ? "↓" : "→";
   console.log(
-    `${assessment?.direction === "downgrade" ? "Downgrade" : "Update"} of the container images: ` +
+    `${assessment.direction === "downgrade" ? "Downgrade" : "Update"} of the container images: ` +
       `${c.bold}${baseline}${c.reset} ${arrow} ${c.bold}${target}${c.reset}`,
   );
   console.log(`Will run: ${c.cyan}${formatCommandSpec(applyPlan.apply[0]!)}${c.reset}`);
@@ -2609,35 +2621,23 @@ export async function updateDocker(
     backup: opts.backup !== false,
     restart: flowDeps.restart,
   });
-  // The main tag has no release number to tell whether its updater takes an
-  // offer, so an edge update finishes in this process.
-  const offer = opts.edge
-    ? undefined
-    : continuationOffer(
-        flowDeps,
-        {
-          method: "docker",
-          composeFile: opts.composeFile,
-          projectDir: opts.projectDir,
-          target,
-          previous: baseline,
-        },
-        target,
-        planned,
-      );
+  const offer = continuationOffer(
+    flowDeps,
+    {
+      method: "docker",
+      composeFile: opts.composeFile,
+      projectDir: opts.projectDir,
+      target,
+      previous: baseline,
+    },
+    target,
+    planned,
+  );
   const steps = orderForHandoff(planned, offer?.deferredBackup ?? null);
   printPlan(steps, target);
-  const notes = assessment?.notes ?? [
-    `The ${DOCKER_EDGE_TAG} tag moves with the branch and can contain unreleased changes. ` +
-      "Back up before running it: omnesis backup --note pre-upgrade",
-    // Both directions of the plan pull the same moving tag, so the rollback is
-    // not the way back an edge failure needs.
-    `Rolling this back re-pulls ${DOCKER_EDGE_TAG}, which by then is the build that just ` +
-      "failed — the backup taken before the update is the way back from it.",
-  ];
-  for (const note of notes) console.log(`${c.yellow}! ${note}${c.reset}`);
+  for (const note of assessment.notes) console.log(`${c.yellow}! ${note}${c.reset}`);
   if (opts.dryRun) {
-    if (assessment?.requiresForce && !opts.force) {
+    if (assessment.requiresForce && !opts.force) {
       console.log(
         `${c.dim}Downgrade — re-run without --dry-run and pass --force to proceed.${c.reset}`,
       );
@@ -2645,7 +2645,7 @@ export async function updateDocker(
     console.log(`${c.dim}Dry run — nothing executed.${c.reset}`);
     return null;
   }
-  if (assessment?.requiresForce && !opts.force) {
+  if (assessment.requiresForce && !opts.force) {
     throw new CliError(
       `${c.red}Refusing to downgrade ${assessment.current} → ${target} without --force. ` +
         `Re-run with --force if this is intentional.${c.reset}`,
@@ -2654,11 +2654,11 @@ export async function updateDocker(
   }
 
   await flowDeps.confirm(`Update the containers in ${opts.composeFile} to ${target}?`);
-  await executeHostPlan(steps, applyPlan, target, opts.edge ? null : target, flowDeps, {
+  await executeHostPlan(steps, applyPlan, target, target, flowDeps, {
     ...(offer ? { offer } : {}),
-    downgrade: assessment?.direction === "downgrade",
+    downgrade: assessment.direction === "downgrade",
   });
-  return opts.edge ? null : target;
+  return target;
 }
 
 // ── Effects ─────────────────────────────────────────────────────────────
@@ -3220,6 +3220,17 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
         signal,
       );
     },
+    runningImageTag:
+      plan.kind === "docker"
+        ? async () => {
+            try {
+              const listed = await spawnRunner(dockerPsSpec(plan.composeFile), "capture");
+              return listed.code === 0 ? runningImageTag(listed.stdout, ["collector"]) : null;
+            } catch {
+              return null;
+            }
+          }
+        : undefined,
     servedVersion: async () => {
       try {
         await ensureTrust();
@@ -3408,8 +3419,7 @@ export const updateCommand = defineCommand({
     edge: {
       type: "boolean",
       default: false,
-      description:
-        "Update to the current main build instead of a stable release (source and docker installs)",
+      description: "Update a source checkout to the current main build instead of a stable release",
     },
     channel: {
       type: "string",
@@ -3666,7 +3676,6 @@ export const updateCommand = defineCommand({
               {
                 composeFile: plan.composeFile,
                 projectDir: plan.projectDir,
-                edge: plan.edge,
                 dryRun,
                 force,
                 backup,
@@ -3702,13 +3711,11 @@ export const updateCommand = defineCommand({
       await updateHost();
       return;
     }
-    if (plan.kind !== "npm-global" && plan.edge) {
+    if (plan.kind === "source" && plan.edge) {
       // The fan-out is only safe because the host's landed release can be
-      // compared against the version the gateway is serving. A branch build —
-      // a source checkout on origin/main, or a container install on the main
-      // image tag — has no release number, so there is nothing to compare and
-      // the ordering guarantee would be a formality. A container install on a
-      // release tag does have one, and fans out like any other host.
+      // compared against the version the gateway is serving. A source checkout
+      // on origin/main has no release number, so there is nothing to compare
+      // and the ordering guarantee would be a formality.
       throw new CliError(
         `${c.red}--fleet needs a release to compare against, which --edge does not have. ` +
           `Update this host with --edge, restart its gateway, then run --fleet.${c.reset}`,

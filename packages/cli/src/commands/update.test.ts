@@ -1780,7 +1780,6 @@ describe("updateDocker", () => {
   const opts = (over: Partial<Parameters<typeof updateDocker>[0]> = {}) => ({
     composeFile,
     projectDir,
-    edge: false,
     dryRun: false,
     ...over,
   });
@@ -1878,16 +1877,6 @@ describe("updateDocker", () => {
       message: expect.stringMatching(/OMNESIS_IMAGE_TAG/u),
     });
     expect(events).toEqual([]);
-  });
-
-  test("--edge moves to the main tag and demands no version of the gateway", async () => {
-    const events: string[] = [];
-    const runner = dockerRunner(events);
-    const landed = await updateDocker(opts({ edge: true }), dockerDeps(events, runner));
-    expect(events).toContain("select main");
-    expect(events).toContain("awaitHealth null");
-    // A branch build has no release number for the fleet fan-out to compare.
-    expect(landed).toBeNull();
   });
 
   test("a dry run prints the plan and touches nothing", async () => {
@@ -2331,14 +2320,59 @@ describe("updateDocker", () => {
     expect(events).toContain("awaitHealth 0.4.1");
   });
 
-  // Both directions of an edge plan pull the same moving tag, so the rollback
-  // re-fetches the build that just failed.
-  test("--edge says the rollback is not the way back", async () => {
-    const events: string[] = [];
-    const runner = dockerRunner(events);
-    await updateDocker(opts({ edge: true }), dockerDeps(events, runner));
-    expect(output()).toContain("the build that just failed");
-    expect(output()).toContain("backup");
+  // A host that only collects runs no gateway: the one its collector dials is
+  // another machine's, on that machine's release, so it says nothing about
+  // the images here. Docker's account of the collector's container does.
+  describe("a host that only collects", () => {
+    beforeEach(() => {
+      writeFileSync(
+        composeFile,
+        [
+          "services:",
+          "  collector:",
+          "    image: ghcr.io/omnesis-dev/omnesis-collector:${OMNESIS_IMAGE_TAG}",
+          "  updater:",
+          "    profiles: [update]",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    });
+
+    test("is up to date when its collector runs the recorded tag", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const servedVersion = vi.fn(() => Promise.resolve("0.3.9"));
+      const runningImageTag = vi.fn(() => Promise.resolve("0.4.1"));
+      const landed = await updateDocker(
+        opts({ dryRun: true }),
+        dockerDeps(events, runner, {
+          latestDockerVersion: () => Promise.resolve("0.4.1"),
+          servedVersion,
+          runningImageTag,
+        }),
+      );
+      expect(landed).toBe("0.4.1");
+      expect(output()).toContain("Already up to date (0.4.1): the collector runs it.");
+      expect(output()).not.toContain("move this installation");
+      expect(servedVersion).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+    });
+
+    test("reapplies the tag when the collector is not shown to run it", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ dryRun: true }),
+        dockerDeps(events, runner, {
+          latestDockerVersion: () => Promise.resolve("0.4.1"),
+          servedVersion: () => Promise.resolve("0.4.1"),
+          runningImageTag: () => Promise.resolve(null),
+        }),
+      );
+      expect(output()).toContain("the collector container is not running it");
+      expect(output()).toContain("Dry run");
+    });
   });
 
   describe("handing the rest to the updater the pull brought", () => {
@@ -2409,15 +2443,6 @@ describe("updateDocker", () => {
         `docker compose -f ${composeFile} up -d --no-deps collector`,
       ]);
       expect(output()).toContain("did not take over the rest of this update (it exited 1)");
-    });
-
-    test("the main tag has no release to hand over to, so everything runs here", async () => {
-      const events: string[] = [];
-      const runner = dockerRunner(events);
-      const continueAfterApply = vi.fn(taken);
-      await updateDocker(opts({ edge: true }), dockerDeps(events, runner, { continueAfterApply }));
-      expect(continueAfterApply).not.toHaveBeenCalled();
-      expect(events[0]).toBe("backup");
     });
 
     test("a release older than the hand-over runs everything here, in the old order", async () => {

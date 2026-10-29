@@ -266,6 +266,62 @@ export function dockerComposeSpec(composeFile: string, args: readonly string[]):
   return { command: "docker", args: ["compose", "-f", composeFile, ...args] };
 }
 
+/** The listing `runningImageTag` reads: every container of the project, as JSON. */
+export function dockerPsSpec(composeFile: string): CommandSpec {
+  return dockerComposeSpec(composeFile, ["ps", "--all", "--format", "json"]);
+}
+
+/**
+ * The image tag every named service's container is running, read from
+ * `docker compose ps --all --format json` — or null when any of them is not
+ * running, runs something other than a tagged image, or disagrees with the
+ * others. Compose prints one JSON array in older releases and one object per
+ * line in newer ones; both are read.
+ *
+ * This is what a host with no gateway of its own has to show for the tag it
+ * runs. A container's image is named as it was created, so a container
+ * created at the recorded tag is the proof a gateway's `/health` would give;
+ * one whose tag was since moved to another image is listed by image id, which
+ * names no tag and proves nothing.
+ */
+export function runningImageTag(psOutput: string, services: readonly string[]): string | null {
+  const rows: unknown[] = [];
+  const text = psOutput.trim();
+  if (!text || services.length === 0) return null;
+  try {
+    if (text.startsWith("[")) {
+      const parsed: unknown = JSON.parse(text);
+      if (!Array.isArray(parsed)) return null;
+      rows.push(...(parsed as unknown[]));
+    } else {
+      for (const line of text.split("\n")) {
+        if (line.trim()) rows.push(JSON.parse(line));
+      }
+    }
+  } catch {
+    return null;
+  }
+  let tag: string | null = null;
+  for (const service of services) {
+    const row = rows.find(
+      (candidate): candidate is { Service: string; State?: unknown; Image?: unknown } =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { Service?: unknown }).Service === service,
+    );
+    if (!row || row.State !== "running" || typeof row.Image !== "string") return null;
+    // An image listed by id (`sha256:…`, or its bare hex) names no tag.
+    if (/^(?:sha256:)?[0-9a-f]{12,64}$/u.test(row.Image)) return null;
+    const name = row.Image.slice(row.Image.lastIndexOf("/") + 1);
+    const colon = name.lastIndexOf(":");
+    if (colon < 0 || name.includes("@")) return null;
+    const found = name.slice(colon + 1);
+    if (!IMAGE_TAG_PATTERN.test(found) || (tag !== null && tag !== found)) return null;
+    tag = found;
+  }
+  return tag;
+}
+
 /**
  * Recreate one service's container so it runs the image the compose project
  * currently resolves. `up -d --no-deps` rather than `restart`: restarting a
@@ -797,13 +853,24 @@ export type UpdatePlan =
   | { kind: "npm-global"; channel: UpdateChannel; registry?: string }
   | { kind: "source"; rootDir: string; edge: boolean }
   /**
-   * A container install. `edge` is allowed here and selects the `main` image
-   * tag, which the release pipeline moves with the branch — the container
-   * equivalent of a source checkout following `origin/main`.
+   * A container install. It follows released images only: there is no branch
+   * image to follow, so `--edge` is refused before anything is resolved.
    */
-  | { kind: "docker"; composeFile: string; projectDir: string; edge: boolean }
+  | { kind: "docker"; composeFile: string; projectDir: string }
   | { kind: "refuse"; message: string }
   | { kind: "manual" };
+
+/**
+ * Why a container install refuses `--edge`. No image follows the main branch
+ * as a published release does, so a branch tag would fail only once the pull
+ * reached the registry, mid-update. An image of an exact commit is published by
+ * hand and pinned by its immutable `sha-*` tag instead.
+ */
+export const DOCKER_EDGE_REFUSAL =
+  "--edge applies to a source checkout. This installation runs released container images, " +
+  "and no image follows the main branch. Use --target-version X.Y.Z to pin a release. To run " +
+  "an exact commit, publish its images with the docker-publish workflow and pin their " +
+  "sha-<commit> tag: https://omnesis.dev/docs/updating#docker-update";
 
 export function planUpdate(detection: InstallMethod, flags: UpdateFlags): UpdatePlan {
   const channel = parseChannel(flags.channel);
@@ -841,14 +908,16 @@ export function planUpdate(detection: InstallMethod, flags: UpdateFlags): Update
         kind: "refuse",
         message:
           `--channel ${channel} selects an npm dist-tag and applies to a package install. ` +
-          "This installation runs from container images — use --edge to follow the main tag.",
+          "This installation runs from container images — use --target-version X.Y.Z to pin a release.",
       };
+    }
+    if (flags.edge) {
+      return { kind: "refuse", message: DOCKER_EDGE_REFUSAL };
     }
     return {
       kind: "docker",
       composeFile: detection.composeFile,
       projectDir: detection.projectDir,
-      edge: flags.edge,
     };
   }
   if (flags.registry !== undefined) {

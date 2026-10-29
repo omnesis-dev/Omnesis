@@ -155,8 +155,10 @@ FROM gateway-runtime AS combined-runtime
 COPY --chmod=0555 scripts/docker/supervisor.mjs /app/scripts/docker/supervisor.mjs
 EXPOSE 3000 3001 3002 3003
 # tini reaps orphaned provider subprocesses; the supervisor forwards signals
-# to both daemon groups and lets the collector drain before the gateway.
-ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/seeded-state/entrypoint.sh"]
+# to both daemon groups and lets the collector drain before the gateway. `-s`
+# keeps that working, without a "not running as PID 1" warning, when another
+# init runs in front of it (Compose's `init: true`, `docker run --init`).
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/app/scripts/seeded-state/entrypoint.sh"]
 CMD ["node", "/app/scripts/docker/supervisor.mjs"]
 
 # ── Updater ───────────────────────────────────────────────────────────────────

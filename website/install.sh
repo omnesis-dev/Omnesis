@@ -322,6 +322,7 @@ TLS_FINGERPRINT=""
 # the one the banner's join line prints.
 DOCKER_EXTRA_NAMES=""
 DOCKER_JOIN_HOST=""
+DOCKER_DEVICE_NAME=""
 # A checkout to build the images from, when this script came from one. Only a
 # fallback: the images are published per release and are normally pulled.
 DOCKER_BUILD_CONTEXT="${OMNESIS_DOCKER_BUILD_CONTEXT:-}"
@@ -2495,7 +2496,7 @@ read_embedder_catalog() {
   # a prompt this pipeline has already discarded.
   CATALOG_JSON="$("$EXISTING_CLI" model catalog --role embed --json 2>/dev/null </dev/null || true)"
   [ -n "$CATALOG_JSON" ] || return 1
-  EMBEDDER_MENU="$(printf '%s' "$CATALOG_JSON" | node -e '
+  EMBEDDER_MENU="$(printf '%s' "$CATALOG_JSON" | json_node -e '
     let s = "";
     process.stdin.on("data", (d) => (s += d));
     process.stdin.on("end", () => {
@@ -2516,6 +2517,26 @@ read_embedder_catalog() {
     });' 2>/dev/null || true)"
   [ -n "$EMBEDDER_MENU" ] || return 1
   return 0
+}
+
+# Node for a JSON read. This host's own when it has one; a Docker host
+# deliberately has none, so there it is the Node in this install's CLI image at
+# DOCKER_NODE_TAG — the images this run pulled, or before the pull, the ones an
+# earlier run recorded. Never pulled here: a check made before the pull answers
+# "cannot read" rather than downloading an image to find out.
+DOCKER_NODE_TAG=""
+host_node_works() {
+  command -v node >/dev/null 2>&1 && node -e 'process.exit(0)' </dev/null >/dev/null 2>&1
+}
+
+json_node() {
+  if host_node_works; then
+    node "$@"
+    return
+  fi
+  [ "$DOCKER" = 1 ] && [ -n "$DOCKER_NODE_TAG" ] || return 1
+  docker run --rm -i --pull never --network none --entrypoint node \
+    "$IMAGE_REPO/$(docker_cli_image):$DOCKER_NODE_TAG" "$@"
 }
 
 # Refuse a run that has a model to choose and no way to ask. Named flags only:
@@ -3355,11 +3376,14 @@ write_passphrase_file() {
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
   # Node is the first choice and `/dev/urandom` the fallback, because the
   # Docker role deliberately leaves this host without a Node of its own.
-  if command -v node >/dev/null 2>&1; then
+  if host_node_works; then
     ( umask 077; node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' \
         > "$1" ) || fail "Could not generate a keyring passphrase file."
   else
-    ( umask 077; LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 \
+    # 32 bytes read once, then hex: nothing in the pipeline outlives its
+    # reader. `tr < /dev/urandom | head` left tr writing into a closed pipe,
+    # which printed "tr: write error: Broken pipe" on every run.
+    ( umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' \
         > "$1" ) || fail "Could not generate a keyring passphrase file."
   fi
   [ -s "$1" ] || fail "Generated an empty keyring passphrase file."
@@ -4713,13 +4737,37 @@ print_harness_banner() {
 #   - The OAuth callback ports stay published, or no provider can redirect a
 #     browser back to the collector that started the flow.
 
+# The oldest Compose the generated project and the repository's Compose files
+# work with: the standalone host-networking override resets the published
+# ports with `!reset`, which Compose reads from v2.24.0.
+DOCKER_COMPOSE_MIN="2.24.0"
+
 ensure_docker() {
   command -v docker >/dev/null 2>&1 || \
     fail "--docker needs Docker, which is not installed. Install it from https://docs.docker.com/get-docker/ and re-run."
   docker compose version >/dev/null 2>&1 || \
-    fail "--docker needs Docker Compose v2 (the 'docker compose' subcommand). Update Docker or install the compose plugin."
+    fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
+  docker_require_compose_version
   docker info >/dev/null 2>&1 || \
     fail "The Docker daemon is not reachable. Start Docker and re-run."
+}
+
+# Refuse a Compose older than DOCKER_COMPOSE_MIN before anything is written.
+# An older one fails later, and less clearly: on the project name, the update
+# profile or the health condition the collector waits on. A version string
+# this cannot read (a vendor build) is let through rather than refused.
+docker_require_compose_version() {
+  COMPOSE_VERSION="$(docker compose version --short 2>/dev/null | sed -n '1s/^[vV]//p')"
+  COMPOSE_CORE="$(printf '%s' "$COMPOSE_VERSION" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*$/\1 \2 \3/p')"
+  [ -n "$COMPOSE_CORE" ] || return 0
+  # shellcheck disable=SC2086
+  set -- $COMPOSE_CORE
+  COMPOSE_OLDER=0
+  if [ "$1" -lt 2 ]; then COMPOSE_OLDER=1
+  elif [ "$1" -eq 2 ] && [ "$2" -lt 24 ]; then COMPOSE_OLDER=1
+  fi
+  [ "$COMPOSE_OLDER" = 0 ] || \
+    fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later, and this host has v$COMPOSE_VERSION. Update Docker, or the compose plugin, and re-run; nothing was changed."
 }
 
 # The Unix socket this host's Docker client talks to, and the group that owns
@@ -5245,6 +5293,15 @@ docker_compose_ca_env() {
 # those per account, and two accounts running gateways on one host would
 # already be fighting over the same ports. Anywhere else — a second instance, a
 # test rig — derives a name from the path, so the two never meet.
+# The image the host's `omnesis` runs in: the gateway's, the combined one, or
+# the collector's on a host that only collects.
+docker_cli_image() {
+  if [ "$COLLECTOR" = 1 ]; then printf 'omnesis-collector'
+  elif [ "$DOCKER_COMBINED" = 1 ]; then printf 'omnesis-combined'
+  else printf 'omnesis-gateway'
+  fi
+}
+
 docker_project_name() {
   if [ "$CONFIG_DIR" = "$HOME/.config/omnesis" ]; then
     printf 'omnesis'
@@ -5274,7 +5331,11 @@ docker_compose_gateway_service() {
       printf '          - %s\n' "$TLS_ALIAS"
     done
   fi
-  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  # The combined image starts under its own tini, which reaps the daemons'
+  # orphaned children; Docker's init in front of it would leave tini as a child
+  # that warns, on every start and every one-shot command, that it is not PID 1.
+  [ "$DOCKER_COMBINED" = 1 ] || printf '    init: true\n'
+  printf '    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
   printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
   if [ "$DOCKER_NETWORK" = host ]; then
     printf '    network_mode: host\n'
@@ -5330,11 +5391,28 @@ docker_compose_oauth_ports() {
   done
 }
 
+# The name the collector container answers to: this host's short name, cut to
+# a DNS label. It names the collector's device on the gateway — the name a
+# redeemed code falls back to, or `<name>-collector` when the collector pairs
+# itself. Without one, Docker names each container after its random id, so the
+# device got a meaningless name and a re-pair from a new container a new one.
+docker_collector_hostname() {
+  COLLECTOR_HOST="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  printf '%s' "$COLLECTOR_HOST" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' \
+    | sed 's/^-*//; s/-*$//' | cut -c1-63 | sed 's/-*$//'
+}
+
 docker_compose_collector_service() {
   printf '  collector:\n'
   printf '    image: "%s/omnesis-collector:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO"
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: collector-runtime\n' "$DOCKER_BUILD_CONTEXT"
+  fi
+  # Under host networking the container already answers to this host's own
+  # name, so there is nothing to set.
+  if [ "$DOCKER_NETWORK" != host ]; then
+    DOCKER_COLLECTOR_HOSTNAME="$(docker_collector_hostname)"
+    [ -z "$DOCKER_COLLECTOR_HOSTNAME" ] || printf '    hostname: %s\n' "$DOCKER_COLLECTOR_HOSTNAME"
   fi
   printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
   printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
@@ -5766,8 +5844,17 @@ if [ "${1:-}" = uninstall ]; then
     printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
   fi
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
+  # A collector is a device of a gateway elsewhere, which keeps it, and the
+  # sources it hosts, until it is removed there; the same note a native
+  # collector's uninstall leaves.
+  uninstall_follow_ups() {
+    [ "$SERVICE" = collector ] || return 0
+    printf '\n%s\n' "Afterwards"
+    printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke <device> --forget"
+  }
   if [ "$UNINSTALL_DRY_RUN" = 1 ]; then
-    printf '%s\n' "Dry run: nothing was changed."
+    uninstall_follow_ups
+    printf '\n%s\n' "Dry run: nothing was changed."
     exit 0
   fi
   if [ "$UNINSTALL_YES" != 1 ]; then
@@ -5825,6 +5912,7 @@ if [ "${1:-}" = uninstall ]; then
       rm -f "$UNINSTALL_PROFILE.omnesis-uninstall"
     done
   fi
+  uninstall_follow_ups
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     printf '%s\n' "Removed the Docker install and its data."
   else
@@ -5988,12 +6076,21 @@ docker_collector_pair() {
   fi
   set -- "$@" --save "$CONFIG_DIR/collector/collector-token"
   info "Pairing with $PAIR_GATEWAY_URL..."
-  PAIR_STATUS=0
+  # The output is shown as it comes and kept, for the name the gateway gave
+  # this device: the code may have named it, and otherwise it is the hostname.
+  # A pipe has no portable exit status of its own, so the CLI's goes in a file.
+  PAIR_OUTPUT="$REGISTRY_TMP_DIR/pair.out"
+  PAIR_STATUS_FILE="$REGISTRY_TMP_DIR/pair.status"
+  printf '1\n' > "$PAIR_STATUS_FILE"
   if is_promptable; then
-    "$OMNESIS_BIN" "$@" </dev/tty || PAIR_STATUS=$?
+    { PAIR_RC=0; "$OMNESIS_BIN" "$@" </dev/tty || PAIR_RC=$?; printf '%s\n' "$PAIR_RC" > "$PAIR_STATUS_FILE"; } | tee "$PAIR_OUTPUT"
   else
-    "$OMNESIS_BIN" "$@" </dev/null || PAIR_STATUS=$?
+    { PAIR_RC=0; "$OMNESIS_BIN" "$@" </dev/null || PAIR_RC=$?; printf '%s\n' "$PAIR_RC" > "$PAIR_STATUS_FILE"; } | tee "$PAIR_OUTPUT"
   fi
+  PAIR_STATUS="$(cat "$PAIR_STATUS_FILE")"
+  PAIR_ESC="$(printf '\033')"
+  DOCKER_DEVICE_NAME="$(tr -d '\r' < "$PAIR_OUTPUT" 2>/dev/null | sed "s/$PAIR_ESC\[[0-9;]*m//g" \
+    | sed -n 's/^Paired as \(.*\) (collector) id=.*$/\1/p' | head -n 1)"
   PAIR_OK=0; [ "$PAIR_STATUS" = 0 ] && PAIR_OK=1
   if [ "$PAIR_OK" = 0 ]; then
     RETRY_FLAGS="--docker --collector --gateway-url $PAIR_GATEWAY_URL"
@@ -6028,24 +6125,70 @@ docker_propagate_keyring() {
   docker_own_path "$COLLECTOR_ENV"
 }
 
-print_docker_banner() {
+# A host that only collects has no gateway and no admin token: its CLI holds a
+# collector token alone, so sources and status are run where the gateway is.
+print_docker_collector_banner() {
   echo ""
-  if [ "$COLLECTOR" = 1 ]; then
-    printf '\033[1m\033[0;32mCollector container is running.\033[0m\n'
-    echo ""
-    echo "  Gateway:  $PAIR_GATEWAY_URL"
-    echo "  Token:    $CONFIG_DIR/collector/collector-token"
-    print_collector_encryption_line
+  printf '\033[1m\033[0;32mCollector container is running.\033[0m\n'
+  echo ""
+  echo "  Gateway:  $PAIR_GATEWAY_URL"
+  [ -z "$DOCKER_DEVICE_NAME" ] || echo "  Device:   $DOCKER_DEVICE_NAME"
+  echo "  Token:    $CONFIG_DIR/collector/collector-token"
+  print_collector_encryption_line
+  echo ""
+  printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal at %s/portal/:\n' "$PAIR_GATEWAY_URL"
+  echo ""
+  if [ -n "$DOCKER_DEVICE_NAME" ]; then
+    echo "    omnesis sources add --device '$DOCKER_DEVICE_NAME'"
   else
-    printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
+    echo "    omnesis sources add --device <this collector>    # omnesis devices list names it"
+  fi
+  echo ""
+  echo "  This host holds a collector token, not the gateway's admin token, so source,"
+  echo "  device and status commands run on the gateway host."
+  echo ""
+  echo "  Compose file:  $COMPOSE_FILE  (image tag: $IMAGE_TAG)"
+  echo "  Stop:          docker compose -f $COMPOSE_FILE down"
+  echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
+  echo "  Update later:  omnesis update"
+  echo ""
+  printf '\033[1mWhat a container cannot do:\033[0m\n'
+  echo ""
+  echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
+  echo "    that do not exist in a Linux container. Run a native collector on the Mac"
+  echo "    and pair it with the same gateway:"
+  echo ""
+  if [ -n "$PAIR_FINGERPRINT" ]; then
+    echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+    echo "        --gateway-url $PAIR_GATEWAY_URL \\"
+    echo "        --trust-fingerprint $PAIR_FINGERPRINT"
+  else
+    echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+    echo "        --gateway-url $PAIR_GATEWAY_URL"
+  fi
+  if [ "$KEYRING_READY" = 1 ]; then
     echo ""
-    echo "  Portal:  https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
-    echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
-    if [ -n "$TLS_CERT_PATH" ]; then
-      echo "  Certificate: $TLS_CERT_PATH (sha256:$TLS_FINGERPRINT)"
-      echo "           Renew it in place with the tool that issued it; the gateway picks the"
-      echo "           renewal up within the hour, or at once with: omnesis tls reload"
-    fi
+    echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
+    echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
+  fi
+  print_path_hints
+  echo ""
+}
+
+print_docker_banner() {
+  if [ "$COLLECTOR" = 1 ]; then
+    print_docker_collector_banner
+    return 0
+  fi
+  echo ""
+  printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
+  echo ""
+  echo "  Portal:  https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
+  echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
+  if [ -n "$TLS_CERT_PATH" ]; then
+    echo "  Certificate: $TLS_CERT_PATH (sha256:$TLS_FINGERPRINT)"
+    echo "           Renew it in place with the tool that issued it; the gateway picks the"
+    echo "           renewal up within the hour, or at once with: omnesis tls reload"
   fi
   echo ""
   printf '\033[1mThe CLI runs in the containers:\033[0m\n'
@@ -6057,11 +6200,9 @@ print_docker_banner() {
   fi
   echo "    omnesis status"
   echo ""
-  if [ "$COLLECTOR" != 1 ]; then
-    print_phone_lines
-    print_browser_lines
-    print_agent_certificate_lines
-  fi
+  print_phone_lines
+  print_browser_lines
+  print_agent_certificate_lines
   echo "  Compose file:  $COMPOSE_FILE  (image tag: $IMAGE_TAG)"
   echo "  Stop:          docker compose -f $COMPOSE_FILE down"
   echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
@@ -6132,11 +6273,50 @@ docker_prepare_topology_transition() {
   fi
 }
 
+# Whether choose_embedder will have a question to ask: a model is wanted, none
+# is named, and no assignment from elsewhere already answers it.
+embedder_question_pending() {
+  [ "$WANT_MODEL" = 1 ] && [ "$EMBEDDER_EXPLICIT" = 0 ] || return 1
+  resolve_existing_cli
+  read_embedder_catalog || return 0
+  PENDING_ASSIGNED="$(printf '%s\n' "$EMBEDDER_MENU" | sed -n '2p')"
+  [ -n "$PENDING_ASSIGNED" ] || return 0
+  printf '%s\n' "$EMBEDDER_MENU" | sed -n '3,$p' | cut -d'|' -f1 | grep -qxF -- "$PENDING_ASSIGNED"
+}
+
+# Without a terminal, a Docker run reaches its first question only once every
+# image is pulled. Each question has a flag, so all of them are checked here,
+# before anything is pulled or written, and every missing one is named in a
+# single refusal: one re-run then gets through.
+docker_require_unattended_answers() {
+  is_promptable && return 0
+  # A re-run can read the catalog from the images an earlier run pulled.
+  DOCKER_NODE_TAG="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
+  DOCKER_UNANSWERED=""
+  if embedder_question_pending; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --embedder <id>   the embedding model to install ($EMBEDDER_ID is the default), or --no-model for none"
+  fi
+  # A container has no OS keyring, so this question is always asked.
+  if [ "$WANT_KEYRING" = 1 ] && [ -z "$KEYRING_PASSPHRASE_FILE" ]; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --keyring-passphrase-file $CONFIG_DIR/keyring.pass   an owner-only passphrase file you created there, to encrypt at rest; or --no-keyring"
+  fi
+  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --code <code>   a pairing code minted on the gateway host with: omnesis devices pair --kind collector"
+  fi
+  DOCKER_NODE_TAG=""
+  [ -n "$DOCKER_UNANSWERED" ] || return 0
+  fail "No terminal to ask what this install needs to know, so nothing was pulled or changed. Re-run with:$DOCKER_UNANSWERED"
+}
+
 docker_install() {
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_require_unattended_answers
   docker_runtime_identity
   docker_registry_prepare
   docker_warn_native_install
@@ -6160,7 +6340,9 @@ docker_install() {
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
   # The catalog answers from the image, so the question can be asked — and
-  # answered — before anything is started.
+  # answered — before anything is started. Its JSON is read with the Node in
+  # the image just pulled, since this host needs none of its own.
+  DOCKER_NODE_TAG="$IMAGE_TAG"
   choose_embedder final
   # Before the first boot, so a corpus that is going to be encrypted is born
   # that way rather than migrated into it.

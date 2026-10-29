@@ -464,8 +464,8 @@
               <tr>
                 <td><code>--edge</code></td>
                 <td>
-                  Follows the <code>main</code> branch instead of stable releases (source and Docker
-                  installs).
+                  Follows the <code>main</code> branch instead of stable releases (source installs).
+                  A Docker install refuses it.
                 </td>
               </tr>
               <tr>
@@ -730,16 +730,51 @@
           recorded beside the Compose file and pulling the new images; the backup runs after the
           pull, while the gateway still serves the previous image. Rolling back is quick: the
           previous tag is written back, and its image is still on the machine.
-          <code>--target-version</code> pins a release tag, and <code>--edge</code> follows the
-          <code>main</code> image tag, which moves only when images are published by hand from the
-          main branch and is not published for the combined image.
+          <code>--target-version</code> pins a release tag. A Docker install follows releases only,
+          so it refuses <code>--edge</code> before anything changes.
+        </p>
+        <p>
+          To run an exact commit in Docker, a maintainer publishes its gateway, collector and
+          updater images with the repository's <code>docker-publish</code> workflow, which tags them
+          <code>sha-&lt;short-commit&gt;</code>; there is no combined image for a commit. Pin that
+          tag on a host that runs the gateway and collector as separate containers, then pull and
+          recreate them:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >sed -i.bak 's/^OMNESIS_IMAGE_TAG=.*/OMNESIS_IMAGE_TAG=sha-0123abc/'
+                ~/.config/omnesis/.env</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >docker compose -f ~/.config/omnesis/docker-compose.yml --profile update pull</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >docker compose -f ~/.config/omnesis/docker-compose.yml up -d --force-recreate</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Back up first, with <code>omnesis backup --note pre-upgrade</code>: a commit image can
+          carry migrations no release has.
         </p>
         <p>
           The update runs in a short-lived updater container that holds the Docker socket for that
           one run. The socket gives root-equivalent control of the host, which is why the
           long-running gateway and collector containers never hold it. If a run is interrupted, run
           <code>omnesis update</code> again; it checks what the gateway actually serves before
-          trusting the recorded tag.
+          trusting the recorded tag. A host that only collects has no gateway to ask, so there it
+          checks the tag Docker started the collector container from.
         </p>
 
         <p>
