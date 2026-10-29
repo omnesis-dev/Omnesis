@@ -1150,6 +1150,14 @@
           gateway either way. Each plugin keeps the last list it read, so a restart while the
           gateway is unreachable keeps the tools it had.
         </p>
+        <p>
+          Hermes can interpret file paths in replies as attachments and context references as
+          instructions to read files. The Omnesis integration removes these references from released
+          answers and their citations before returning them to Hermes, including answers delivered
+          after approval. Approval releases answer text, not local files. This protects literal
+          relays of the answer; it does not restrict the agent's own tools or paths reconstructed
+          from other conversation context.
+        </p>
         <h3 id="harness-install">Install</h3>
         <p>
           Make the gateway reachable from the machine that runs the agent at an address it accepts
