@@ -409,7 +409,8 @@ artifact differs from the one this tree stages.
 
 **Images publish on a release by default.** The repository variable
 `OMNESIS_IMAGE_PUBLISH=0` disables image pushes for a rehearsal; both architectures
-are still built and tested. npm packages remain opt-in through
+are still built and tested, each on its own native runner. Each runner pushes
+the digest it booted, and `images-manifest` tags the pair. npm packages remain opt-in through
 `OMNESIS_RELEASE_PUBLISH=1`. The GitHub Release page is created after the image
 jobs succeed. Make each GHCR package public in its package settings before
 advertising anonymous Docker installation; repository visibility alone does not

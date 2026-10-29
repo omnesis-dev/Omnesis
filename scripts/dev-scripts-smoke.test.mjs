@@ -1802,6 +1802,30 @@ describe("release.yml verification permissions", () => {
     expect(githubRelease.run).toContain('[ "$remote_sha" = "${{ needs.verify.outputs.sha }}" ]');
   });
 
+  it("publishes images unless OMNESIS_IMAGE_PUBLISH is 0, testing each architecture natively", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
+    // An unset variable is null in an expression, and null != '0' is false.
+    expect(workflow.jobs.verify.outputs.images_armed).toBe("${{ steps.arming.outputs.images }}");
+    const arming = workflow.jobs.verify.steps.find((step) => step.id === "arming");
+    expect(arming.env.IMAGE_PUBLISH).toBe("${{ vars.OMNESIS_IMAGE_PUBLISH }}");
+    expect(arming.run).toContain('if [ "$IMAGE_PUBLISH" = "0" ]; then');
+
+    const { matrix } = workflow.jobs.images.strategy;
+    expect(matrix.arch).toEqual(["amd64", "arm64"]);
+    expect(matrix.include).toEqual(
+      expect.arrayContaining([
+        { arch: "amd64", runner: "ubuntu-latest" },
+        { arch: "arm64", runner: "ubuntu-24.04-arm" },
+      ]),
+    );
+    expect(
+      workflow.jobs.images.steps.some((step) => step.uses?.startsWith("docker/setup-qemu")),
+    ).toBe(false);
+    expect(workflow.jobs["images-manifest"].needs).toEqual(["verify", "images"]);
+    expect(workflow.jobs["github-release"].needs).toContain("images-manifest");
+  });
+
   it("keeps publication arming independent from the package destination", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
