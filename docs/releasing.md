@@ -357,7 +357,8 @@ Cutting the tag stays a human decision.
    plugin and extension manifests, the native project files, and the lockstep
    guard.
 5. `npm run build && npm run typecheck && npm test` — full validation.
-6. Commit, then `npm run release -- pr`.
+6. Commit, then `npm run release -- pr`. It pushes the branch, then opens the
+   pull request or, when one is open, refreshes its title and body.
 7. Merge the release commit to `main` and wait for its main-branch CI verdict.
 8. On that exact checkout, `npm run release -- tag` — preflight, then the
    annotated tag on the verified commit.

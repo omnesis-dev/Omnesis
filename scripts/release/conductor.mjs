@@ -227,11 +227,21 @@ function commandPr({ dryRun }) {
   if (refusal) throw new Error(refusal);
   const body = formatReleasePrBody(version, readChangelogSection(repoRoot, version));
   const title = `Release v${version}`;
-  const existing = tryCapture("gh", ["pr", "view", "--json", "url", "--jq", ".url"]);
+  const existing = tryCapture("gh", [
+    "pr",
+    "view",
+    "--json",
+    "number,url",
+    "--jq",
+    '"\\(.number) \\(.url)"',
+  ]);
+  const [existingNumber, existingUrl] = existing ? existing.split(" ") : [];
 
   if (dryRun) {
     console.log(
-      existing ? `Would refresh ${existing}` : `Would open "${title}" (${branch} → main)`,
+      existing
+        ? `Would push ${branch} and refresh ${existingUrl}`
+        : `Would push ${branch} and open "${title}" (${branch} → main)`,
     );
     console.log("");
     console.log(body);
@@ -244,9 +254,24 @@ function commandPr({ dryRun }) {
   try {
     const bodyFile = join(dir, "pr-body.md");
     writeFileSync(bodyFile, `${body}\n`);
+    // `gh pr create` refuses a branch the remote does not have, and a refresh
+    // describes the commit the remote branch carries.
+    run("git", ["push", "--set-upstream", "origin", branch]);
     if (existing) {
-      run("gh", ["pr", "edit", "--title", title, "--body-file", bodyFile]);
-      console.log(`Refreshed ${existing}`);
+      // The REST endpoint, because `gh pr edit` fails on GitHub's retired
+      // Projects (classic) GraphQL field.
+      run("gh", [
+        "api",
+        "--silent",
+        "-X",
+        "PATCH",
+        `repos/{owner}/{repo}/pulls/${existingNumber}`,
+        "-f",
+        `title=${title}`,
+        "-F",
+        `body=@${bodyFile}`,
+      ]);
+      console.log(`Refreshed ${existingUrl}`);
     } else {
       run("gh", ["pr", "create", "--base", "main", "--title", title, "--body-file", bodyFile]);
     }
