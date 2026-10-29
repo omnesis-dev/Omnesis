@@ -463,6 +463,7 @@ import {
   setRelayPushRegistration,
   withdrawRelayPushConsent,
   updateDeviceCapabilities,
+  recordReportedDeviceVersion,
   updateDeviceSelfInfo,
   touchDevice,
   createPairing,
@@ -1349,6 +1350,11 @@ export interface WriteGate extends KnowledgeWriteGate {
     capabilities: DeviceCapability,
     protocolVersion?: number,
   ): Promise<SourceId[]>;
+  /**
+   * Record the product version a browser reported over HTTP, when it differs
+   * from the row's. See recordReportedDeviceVersion.
+   */
+  recordReportedDeviceVersion(id: DeviceId, version: string): Promise<boolean>;
   /**
    * Record (or close out) the version an operator asked this device to
    * update itself to. See setDeviceUpdateRequest.
@@ -2528,6 +2534,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     replaceDeviceForRepair: (oldId, opts) => call("devices.replaceDeviceForRepair", [oldId, opts]),
     updateDeviceCapabilities: (id, caps, protocolVersion) =>
       call("devices.updateDeviceCapabilities", [id, caps, protocolVersion]),
+    recordReportedDeviceVersion: (id, version) =>
+      call("devices.recordReportedVersion", [id, version]),
     setDeviceUpdateRequest: (id, request) => call("devices.setUpdateRequest", [id, request]),
     beginDeviceDoctorRun: (input) => call("devices.doctorRunBegin", [input]),
     startDeviceDoctorRun: (input) => call("devices.doctorRunStart", [input]),
@@ -3127,6 +3135,8 @@ export function directWriteGate(db: Db): WriteGate {
     updateDeviceCapabilities: async (id, caps, protocolVersion) => {
       return updateDeviceCapabilities(db, id, caps, protocolVersion);
     },
+    recordReportedDeviceVersion: async (id, version) =>
+      recordReportedDeviceVersion(db, id, version),
     setDeviceUpdateRequest: async (id, request) => setDeviceUpdateRequest(db, id, request),
     beginDeviceDoctorRun: async (input) => beginDeviceDoctorRun(db, input),
     startDeviceDoctorRun: async (input) => startDeviceDoctorRun(db, input),

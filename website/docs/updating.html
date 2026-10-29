@@ -846,9 +846,11 @@
         <h2 id="compatibility">Version compatibility</h2>
         <p>
           Every Omnesis release and app build shares one product version, and each device reports
-          its own when it connects. The gateway compares it with its own version and with the oldest
-          build it still supports for that kind of device. <code>omnesis devices list</code>, the
-          portal's Devices page and <code>omnesis doctor</code> all show the same verdict:
+          its own when it connects; the browser extension, which holds no connection open, reports
+          it with its uploads and periodic checks. The gateway compares it with its own version and
+          with the oldest build it still supports for that kind of device.
+          <code>omnesis devices list</code>, the portal's Devices page and
+          <code>omnesis doctor</code> all show the same verdict:
         </p>
         <div class="table-wrap">
           <table>

@@ -30,7 +30,7 @@ import {
   Scope,
 } from "@omnesis/types";
 import { AnalyticsDb } from "../../analytics-db.js";
-import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { createDevice, getDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDatabase } from "../../db.js";
 import { resetOwnedWebDomains } from "../../owned-web-domains.js";
@@ -446,6 +446,65 @@ describe("a field from a newer extension does not change the answer", () => {
       findToken,
     );
     expect(res.status, await res.text()).toBe(200);
+  });
+});
+
+describe("a browser's reported version", () => {
+  // The extension appends its manifest version to the requests it already
+  // makes. Every authenticated route must answer exactly as it does without it,
+  // so a gateway that predates the parameter and one that reads it agree.
+  const authenticated = contract.gatewayRoutes.filter((r) => r.authenticated);
+
+  test.each(authenticated)("$method $path answers the same with ?clientVersion", async (route) => {
+    const recipe = recipeFor(route);
+    const { path, init } = await recipe.build();
+    const separator = path.includes("?") ? "&" : "?";
+    const res = await call(`${path}${separator}clientVersion=0.7.0`, credentialFor(route), init);
+    expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
+      recipe.expected,
+    );
+  });
+
+  test("a push carrying a new version moves only the pushing browser's row", async () => {
+    const pushing = createDevice(db, {
+      name: "invented pushing browser",
+      kind: "browser",
+      capabilities: { version: "0.6.0" },
+    });
+    const sibling = createDevice(db, {
+      name: "invented sibling browser",
+      kind: "browser",
+      capabilities: { version: "0.6.0" },
+    });
+    const token = createToken(db, pushing.id, [writeScope(SourceType("web"))]).token;
+    const probe = json("POST", { documents: [] });
+
+    const malformed = await call("/documents?clientVersion=seven", token, probe);
+    expect(malformed.status).toBe(200);
+    await vi.waitFor(() => expect(getDevice(db, pushing.id)!.version).toBe("0.6.0"));
+
+    const res = await call("/documents?clientVersion=0.7.0", token, probe);
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(getDevice(db, pushing.id)!.version).toBe("0.7.0"));
+    expect(getDevice(db, pushing.id)!.versionSeenAt).toBeGreaterThanOrEqual(pushing.pairedAt);
+    expect(getDevice(db, sibling.id)!.version).toBe("0.6.0");
+  });
+
+  test("a collector's token cannot move its version over HTTP", async () => {
+    const collector = createDevice(db, {
+      name: "invented collector",
+      kind: "collector",
+      capabilities: { version: "0.6.0" },
+    });
+    const token = createToken(db, collector.id, [SCOPE_WRITE_ALL]).token;
+    const res = await call(
+      "/documents?clientVersion=0.7.0",
+      token,
+      json("POST", { documents: [] }),
+    );
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getDevice(db, collector.id)!.version).toBe("0.6.0");
   });
 });
 

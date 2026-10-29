@@ -37,6 +37,7 @@ import {
   setRelayPushRegistration,
   withdrawRelayPushConsent,
   updateDeviceCapabilities,
+  recordReportedDeviceVersion,
   updateDeviceSelfInfo,
   touchDevice,
   createPairing,
@@ -1597,6 +1598,83 @@ describe("an unsupported update result", () => {
       updateDetail: null,
       updateStateAt: null,
     });
+  });
+});
+
+describe("recordReportedDeviceVersion", () => {
+  function pairedBrowser(version = "0.6.0") {
+    return createDevice(db, {
+      name: "Example browser",
+      kind: "browser",
+      capabilities: { version, installId: "example-install" },
+    });
+  }
+
+  test("moves a browser row's version and stamps when it was recorded", async () => {
+    const d = pairedBrowser();
+    const pairedSeenAt = getDevice(db, d.id)!.versionSeenAt!;
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(recordReportedDeviceVersion(db, d.id, "0.7.0")).toBe(true);
+    const row = getDevice(db, d.id)!;
+    expect(row.version).toBe("0.7.0");
+    expect(row.versionSeenAt).toBeGreaterThan(pairedSeenAt);
+    // Only the version reading moves: the pairing's capabilities and the
+    // token beacon's activity stamp are someone else's.
+    expect(row.capabilities).toEqual(d.capabilities);
+    expect(row.installId).toBe("example-install");
+    expect(row.lastSeenAt).toBeNull();
+  });
+
+  test("writes nothing when the row already reads that version", () => {
+    const d = pairedBrowser("0.7.0");
+    const before = getDevice(db, d.id)!;
+    expect(recordReportedDeviceVersion(db, d.id, "0.7.0")).toBe(false);
+    expect(getDevice(db, d.id)!.versionSeenAt).toBe(before.versionSeenAt);
+  });
+
+  test("never writes a row that is not a live browser", () => {
+    const collector = createDevice(db, {
+      name: "Example collector",
+      kind: "collector",
+      capabilities: { version: "0.6.0" },
+    });
+    expect(recordReportedDeviceVersion(db, collector.id, "0.7.0")).toBe(false);
+    expect(getDevice(db, collector.id)!.version).toBe("0.6.0");
+
+    const revoked = pairedBrowser();
+    revokeDevice(db, revoked.id);
+    expect(recordReportedDeviceVersion(db, revoked.id, "0.7.0")).toBe(false);
+    expect(getDevice(db, revoked.id)!.version).toBe("0.6.0");
+
+    expect(recordReportedDeviceVersion(db, DeviceId(randomUUID()), "0.7.0")).toBe(false);
+  });
+
+  test("clears an unsupported update result only when the build changes", () => {
+    const d = pairedBrowser();
+    setDeviceUpdateRequest(db, d.id, {
+      desiredVersion: "0.7.0",
+      state: "unsupported",
+      detail: "This build does not accept update commands.",
+    });
+    recordReportedDeviceVersion(db, d.id, "0.6.0");
+    expect(getDevice(db, d.id)).toMatchObject({ updateState: "unsupported" });
+
+    recordReportedDeviceVersion(db, d.id, "0.7.0");
+    expect(getDevice(db, d.id)).toMatchObject({
+      version: "0.7.0",
+      desiredVersion: null,
+      updateState: null,
+      updateDetail: null,
+      updateStateAt: null,
+    });
+  });
+
+  test("leaves any other update state alone", () => {
+    const d = pairedBrowser();
+    setDeviceUpdateRequest(db, d.id, { desiredVersion: "0.7.0", state: "failed", detail: "x" });
+    recordReportedDeviceVersion(db, d.id, "0.7.0");
+    expect(getDevice(db, d.id)).toMatchObject({ desiredVersion: "0.7.0", updateState: "failed" });
   });
 });
 

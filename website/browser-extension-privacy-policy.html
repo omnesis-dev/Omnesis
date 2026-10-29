@@ -96,7 +96,9 @@
             selected gateway for redemption. If that request times out, the same code is sent again
             with the same request identifier so the gateway can return the credential it already
             issued; the extension keeps only a hash of the code and that identifier, for at most
-            fifteen minutes, and never the code itself.
+            fifteen minutes, and never the code itself. The extension's own version number is sent
+            when pairing and with each upload and periodic check, so the gateway can show which
+            build each paired browser runs; it identifies the extension build, not you.
           </li>
           <li>
             <strong>Experimental features</strong> — page notes and Find are hidden unless the

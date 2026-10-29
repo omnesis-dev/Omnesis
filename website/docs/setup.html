@@ -936,9 +936,13 @@ omnesis.example.com {
           <strong>Versions and access.</strong> The popup shows the gateway's version beside its
           address. Page capture uses its established compatibility floor; an optional capability
           appears only when the gateway advertises it. A different major release produces a warning
-          to update the older component. If Chrome's page access is later revoked, the popup says
-          so: open <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload
-          open pages. Unpairing removes both the extension's token and its page access.
+          to update the older component. The extension reports its own version with its uploads and
+          its periodic check, so after Chrome updates it, or you reload an unpacked build,
+          <code>omnesis devices list</code> and the portal's Devices page show the new version
+          within about fifteen minutes, without pairing again. If Chrome's page access is later
+          revoked, the popup says so: open <em>Pairing settings</em>, choose
+          <em>Grant HTTPS page access</em>, then reload open pages. Unpairing removes both the
+          extension's token and its page access.
         </p>
         <p>
           <strong>When the gateway is unreachable.</strong> Pages waiting to upload survive browser

@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PAGE_VISITS_SCHEMA, buildPageVisit, buildWebPageDocument } from "./documents.js";
 import { MAX_GATEWAY_REASON_CHARS } from "./response-body.js";
 import { FakeFetch, jsonResponse } from "./test-fakes.js";
-import { PushTransport, parseRetryAfter } from "./transport.js";
+import { CLIENT_VERSION_PARAM, PushTransport, parseRetryAfter } from "./transport.js";
 import type { DocumentQueueItem, FetchLike, FetchLikeResponse, VisitQueueItem } from "./types.js";
 
 const GATEWAY = "https://gateway.example.com:7600";
@@ -109,6 +109,45 @@ describe("PushTransport — constructor", () => {
   it("accepts the canonical origin", () => {
     const fetch = new FakeFetch(() => jsonResponse(200, { ingested: 0 }));
     expect(() => new PushTransport(GATEWAY, TOKEN, fetch.fetch, 1000)).not.toThrow();
+  });
+});
+
+describe("PushTransport — the extension's own version", () => {
+  it("carries it on the probe and on both delivery routes, headers unchanged", async () => {
+    const fetch = new FakeFetch(() => jsonResponse(200, { ingested: 1, deleted: 0 }));
+    const transport = new PushTransport(GATEWAY, TOKEN, fetch.fetch, 1000, "0.7.0");
+    await transport.probeEmptyDocuments();
+    await transport.deliver(await documentItem());
+    await transport.deliver(visitItem());
+
+    expect(CLIENT_VERSION_PARAM).toBe("clientVersion");
+    expect(fetch.requests.map((request) => request.url)).toEqual([
+      `${GATEWAY}/documents?clientVersion=0.7.0`,
+      `${GATEWAY}/documents?clientVersion=0.7.0`,
+      `${GATEWAY}/analytics/ingest?clientVersion=0.7.0`,
+    ]);
+    // A query parameter, never a custom header: the requests stay exactly as
+    // CORS-simple-or-not as they were, and the body schemas are untouched.
+    for (const request of fetch.requests) expect(request.headers).toEqual(JSON_BEARER_HEADERS);
+    expect(fetch.requests[0]!.body).toEqual({ documents: [] });
+  });
+
+  it("encodes the value it was given", async () => {
+    const fetch = new FakeFetch(() => jsonResponse(200, { ingested: 0 }));
+    await new PushTransport(GATEWAY, TOKEN, fetch.fetch, 1000, "0.8.0+a b").probeEmptyDocuments();
+    expect(new URL(fetch.requests[0]!.url).searchParams.get(CLIENT_VERSION_PARAM)).toBe(
+      "0.8.0+a b",
+    );
+  });
+
+  it("sends no parameter when no version was configured", async () => {
+    const fetch = new FakeFetch(() => jsonResponse(200, { ingested: 0 }));
+    await new PushTransport(GATEWAY, TOKEN, fetch.fetch, 1000, "").probeEmptyDocuments();
+    await transportFor(fetch.fetch).probeEmptyDocuments();
+    expect(fetch.requests.map((request) => request.url)).toEqual([
+      `${GATEWAY}/documents`,
+      `${GATEWAY}/documents`,
+    ]);
   });
 });
 

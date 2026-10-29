@@ -415,12 +415,14 @@ describe("MV3 background handoff", () => {
       tab: { id: 7, url: emission.normalizedUrl },
     });
     await vi.waitFor(() =>
-      expect(requests.some((request) => request.input.endsWith("/analytics/ingest"))).toBe(true),
+      expect(
+        requests.some((request) => new URL(request.input).pathname === "/analytics/ingest"),
+      ).toBe(true),
     );
 
     const documentRequest = requests.find(
       (request) =>
-        request.input.endsWith("/documents") &&
+        new URL(request.input).pathname === "/documents" &&
         Array.isArray(request.body.documents) &&
         request.body.documents.length > 0,
     );
@@ -432,7 +434,14 @@ describe("MV3 background handoff", () => {
       },
     });
 
-    const visitRequest = requests.find((request) => request.input.endsWith("/analytics/ingest"));
+    const visitRequest = requests.find(
+      (request) => new URL(request.input).pathname === "/analytics/ingest",
+    );
+    // Both pushes carry the manifest version, so the gateway's device row
+    // follows an extension update without a re-pair.
+    for (const request of [documentRequest!, visitRequest!]) {
+      expect(new URL(request.input).searchParams.get("clientVersion")).toBe("9.8.7");
+    }
     const visit = (visitRequest!.body.records as Array<Record<string, unknown>>)[0]!;
     expect(visit).toMatchObject({
       browser_device_id: "0d0e0f10-1111-4222-8333-444455556666",
@@ -1928,7 +1937,7 @@ describe("MV3 background restart", () => {
   const documentBodies = (fetchImpl: Mock): string[] =>
     fetchImpl.mock.calls.flatMap((call: unknown[]) => {
       const [input, init] = call as [string, { method?: string; body?: string } | undefined];
-      return input.endsWith("/documents") &&
+      return new URL(input).pathname === "/documents" &&
         init?.method === "POST" &&
         typeof init.body === "string"
         ? [init.body]

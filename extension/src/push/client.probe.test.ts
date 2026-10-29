@@ -40,6 +40,23 @@ describe("push liveness probe — probeAuth", () => {
     expect(req.body).toEqual({ documents: [] });
   });
 
+  it("carries the configured extension version, so an idle browser still reports an update", async () => {
+    const fetch = new FakeFetch(() => jsonResponse(200, { ingested: 0, deleted: 0 }));
+    const client = new PushClient({
+      gatewayUrl: "https://gateway.example.com:7600",
+      token: "tok",
+      fetch: fetch.fetch,
+      store: new MemoryStore(),
+      now: () => T0,
+      clientVersion: "0.7.0",
+    });
+
+    expect(await client.probeAuth()).toEqual({ reachable: true, auth: "ok" });
+    expect(fetch.requests.at(-1)!.url).toBe(
+      "https://gateway.example.com:7600/documents?clientVersion=0.7.0",
+    );
+  });
+
   it.each([
     jsonResponse(200, { ingested: 1 }),
     { status: 200, headers: { get: () => null }, text: async () => "<html>login</html>" },

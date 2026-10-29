@@ -55,6 +55,12 @@ export interface PushClientConfig {
   observationSessionId?: string;
   /** Monotonic operation generation within one MV3 worker session. */
   observationGeneration?: number;
+  /**
+   * This extension's product version (the manifest version). Sent with every
+   * push and probe so the gateway's device row follows an update without a
+   * re-pair; omitted, the requests carry no version.
+   */
+  clientVersion?: string;
 }
 
 /**
@@ -121,6 +127,7 @@ export class PushClient {
       config.token,
       config.fetch,
       config.requestTimeoutMs ?? 4_000,
+      config.clientVersion,
     );
     this.observability = new PushObservability(
       config.store,

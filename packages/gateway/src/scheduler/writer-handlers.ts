@@ -379,6 +379,7 @@ import {
   setRelayPushRegistration,
   withdrawRelayPushConsent,
   updateDeviceCapabilities,
+  recordReportedDeviceVersion,
   updateDeviceSelfInfo,
   touchDevice,
   createPairing,
@@ -1131,6 +1132,8 @@ export const writerHandlers = {
   ) => {
     return updateDeviceCapabilities(db, DeviceId(id), capabilities, protocolVersion);
   },
+  "devices.recordReportedVersion": (db: Db, id: string, version: string): boolean =>
+    recordReportedDeviceVersion(db, DeviceId(id), version),
   "devices.setUpdateRequest": (
     db: Db,
     id: string,

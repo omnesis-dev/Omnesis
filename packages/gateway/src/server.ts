@@ -21,6 +21,10 @@ import {
 } from "@omnesis/types";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
+import {
+  CLIENT_VERSION_PARAM,
+  createReportedVersionRecorder,
+} from "./http/reported-client-version.js";
 import { getSource } from "./data/repositories/SourceRepository.js";
 import { getWipeEpoch, listCursorRows } from "./data/repositories/SyncStateRepository.js";
 import {
@@ -864,6 +868,12 @@ export function createServer(
 
   const tokenUsageBuffer = opts?.tokenUsageBuffer;
   const principalCredentialUsageBuffer = opts?.principalCredentialUsageBuffer;
+  // A browser reports its version on the requests it already makes; only a
+  // change from its row reaches the writer, as one background write.
+  const reportedVersions = createReportedVersionRecorder({
+    record: (id, version) =>
+      runWithPriority("background", () => w.recordReportedDeviceVersion(id, version)),
+  });
 
   app.use("*", async (c, next) => {
     const startMs = Date.now();
@@ -976,6 +986,7 @@ export function createServer(
           }
           auth = { authMethod: "bearer", deviceId: info.deviceId, tokenId: info.id, scopes };
           tokenUsageBuffer?.note(info.id, info.deviceId);
+          if (device) reportedVersions.note(device, c.req.query(CLIENT_VERSION_PARAM));
         }
       }
     }

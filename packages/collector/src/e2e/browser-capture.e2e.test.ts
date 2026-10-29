@@ -3,7 +3,9 @@
 
 import "./synth-env.js";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import Database from "better-sqlite3";
 import realWeb from "@omnesis/provider-web";
+import { MINIMUM_CLIENT_VERSIONS, compareProductVersions } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import {
   CapturePolicyClient,
@@ -18,6 +20,7 @@ import {
 } from "@omnesis/extension";
 import { judgeCaptureUrl } from "@omnesis/provider-web/capture-policy";
 import { gatewayLogTail } from "./gateway-request.js";
+import { waitForCondition } from "./multi-collector-harness.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /**
@@ -52,6 +55,10 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
  *       purge made through the policy client are what the gateway serves back,
  *       and a page deleted for good is named in the policy and refused on
  *       re-push, while a copy-only delete lets the page return.
+ *   (8) a running browser keeps its device row's version current without a
+ *       re-pair: the version it reports on its probe and its pushes replaces
+ *       the one it paired with, a malformed report changes nothing, and a
+ *       repeated identical report writes nothing.
  *
  * All fixtures are invented (example.com hosts, fictional titles/text) — never
  * real corpus.
@@ -620,5 +627,128 @@ describe("Browser-capture push path (spawned gateway)", () => {
         .delivered,
     ).toBe(1);
     expect((await searchDocs("soup recipe")).some((d) => d.source_id === "web")).toBe(true);
+  });
+  test("(8) the browser's reported version follows an update without a re-pair", async () => {
+    const gatewayVersion = ((await harness.gatewayJson("/health")) as { version: string }).version;
+    // Paired on the oldest supported build, so the row reads `behind` until the
+    // running build is reported — the operator's symptom this guards.
+    const pairedVersion = MINIMUM_CLIENT_VERSIONS.browser;
+    expect(compareProductVersions(pairedVersion, gatewayVersion)).toBeLessThan(0);
+    const [major, minor, patch] = gatewayVersion.split(/[-+]/u)[0]!.split(".").map(Number);
+    const nextVersion = `${major}.${minor}.${patch! + 1}`;
+
+    const minted = (await harness.gatewayJson("/admin/devices/pair", {
+      method: "POST",
+      body: JSON.stringify({ name: "Browser version refresh (E2E)", kind: "browser" }),
+    })) as { pairingCode: string };
+    const paired = await pair(gatewayUrl, minted.pairingCode, nodeFetch, "Work", {
+      installId: "e2e-version-refresh",
+      version: pairedVersion,
+    });
+    const deviceId = paired.device.id;
+
+    /** The row as SQLite holds it, with no status cache in the way. */
+    const stored = (): { version: string | null; version_seen_at: number | null } => {
+      const db = new Database(harness.getDbPath(), { readonly: true });
+      try {
+        return db
+          .prepare<[string], { version: string | null; version_seen_at: number | null }>(
+            "SELECT version, version_seen_at FROM devices WHERE id = ?",
+          )
+          .get(deviceId)!;
+      } finally {
+        db.close();
+      }
+    };
+    /** The row as `GET /admin/devices` serves it (eventually: a cached snapshot). */
+    const served = async () =>
+      (
+        (await harness.gatewayJson("/admin/devices")) as {
+          items: Array<{
+            id: string;
+            version?: string | null;
+            versionSeenAt?: number | null;
+            versionState?: string;
+          }>;
+        }
+      ).items.find((d) => d.id === deviceId);
+    const clientAt = (clientVersion: string) =>
+      new PushClient({
+        gatewayUrl,
+        token: paired.token,
+        fetch: nodeFetch,
+        store: new MemStore(),
+        clientVersion,
+      });
+    /** Long enough for a background write the request queued to have landed. */
+    const settle = () => new Promise((r) => setTimeout(r, 1_500));
+
+    const atPairing = stored();
+    expect(atPairing.version).toBe(pairedVersion);
+
+    // A malformed report is ignored: the request is served, the row unchanged.
+    for (const malformed of ["not-a-version", `${gatewayVersion}-${"x".repeat(80)}`]) {
+      expect(await clientAt(malformed).probeAuth()).toEqual({ reachable: true, auth: "ok" });
+    }
+    await settle();
+    expect(stored()).toEqual(atPairing);
+
+    // The idle liveness probe carries the running build, and the row follows.
+    const reportedAt = Date.now();
+    expect(await clientAt(gatewayVersion).probeAuth()).toEqual({ reachable: true, auth: "ok" });
+    await waitForCondition(
+      () => stored().version === gatewayVersion,
+      10_000,
+      "the probe's version on the device row",
+    );
+    const afterReport = stored();
+    expect(afterReport.version_seen_at).toBeGreaterThanOrEqual(reportedAt);
+    await waitForCondition(
+      async () => (await served())?.version === gatewayVersion,
+      15_000,
+      "the reported version in GET /admin/devices",
+    );
+    expect(await served()).toMatchObject({
+      version: gatewayVersion,
+      versionSeenAt: afterReport.version_seen_at,
+      versionState: "current",
+    });
+
+    // The same report again, many times over, writes nothing more.
+    const repeat = clientAt(gatewayVersion);
+    for (let i = 0; i < 5; i += 1) {
+      expect(await repeat.probeAuth()).toEqual({ reachable: true, auth: "ok" });
+    }
+    await settle();
+    expect(stored()).toEqual(afterReport);
+
+    // A page push carries the version as well.
+    const pusher = clientAt(nextVersion);
+    const text = "An invented changelog page, pushed by the updated extension build.";
+    await pusher.enqueueDocument(
+      await buildWebPageDocument({
+        normalizedUrl: "https://changelog.example.org/releases/next",
+        title: "Invented changelog",
+        text,
+        contentHash: await hashText(text),
+        visitedAt: new Date().toISOString(),
+        browserProfile: { deviceId, label: "Work" },
+      }),
+    );
+    expect((await pusher.drain()).delivered).toBe(1);
+    await waitForCondition(
+      () => stored().version === nextVersion,
+      10_000,
+      "the push's version on the device row",
+    );
+    expect(stored().version_seen_at).toBeGreaterThanOrEqual(afterReport.version_seen_at!);
+
+    // Another browser's row is untouched by this one's reports.
+    const sibling = (
+      (await harness.gatewayJson("/admin/devices")) as {
+        items: Array<{ id: string; version?: string | null }>;
+      }
+    ).items.find((d) => d.id === browserProfile.deviceId);
+    expect(sibling?.version ?? null).not.toBe(nextVersion);
   });
 });

@@ -546,6 +546,38 @@ export function updateDeviceCapabilities(
   })();
 }
 
+/** True for an `unsupported` update result reported by a different release. */
+const UNSUPPORTED_VERSION_CHANGED = "update_state = 'unsupported' AND version IS NOT ?";
+
+/**
+ * Record the product version a browser extension reported on an ordinary HTTP
+ * request. The extension never opens a device socket, so without this its row
+ * would keep the version it paired with through every Chrome update.
+ *
+ * Only the version reading moves: the capabilities, the protocol column and
+ * `last_seen_at` belong to the pairing and the token beacon. An `unsupported`
+ * update result describes the build that gave it, so a different version
+ * clears it, as a hello does. The statement writes nothing when the row
+ * already reads this version, is not a live browser row, or is gone, and
+ * returns whether it wrote.
+ */
+export function recordReportedDeviceVersion(db: Db, id: DeviceId, version: string): boolean {
+  const at = now();
+  return (
+    db
+      .prepare(
+        `UPDATE devices
+          SET version = ?, version_seen_at = ?,
+              desired_version = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE desired_version END,
+              update_detail = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_detail END,
+              update_state_at = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_state_at END,
+              update_state = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_state END
+        WHERE id = ? AND kind = 'browser' AND revoked_at IS NULL AND version IS NOT ?`,
+      )
+      .run(version, at, version, version, version, version, id, version).changes > 0
+  );
+}
+
 /**
  * Record what an operator asked of one device, and how far that request has
  * got. One statement for the whole lifecycle so the four columns can never

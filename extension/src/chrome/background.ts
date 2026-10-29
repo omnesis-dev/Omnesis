@@ -181,6 +181,9 @@ async function buildClient(): Promise<PushClient | null> {
     batchSize: 1,
     observationSessionId: workerSessionId,
     observationGeneration: clientGeneration,
+    // The same product version pairing reports, so the gateway's device row
+    // follows a Chrome or unpacked-build update without a re-pair.
+    clientVersion: chrome.runtime.getManifest().version,
   });
 }
 
