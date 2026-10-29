@@ -920,13 +920,55 @@ def _single_line(value: str) -> str:
     return _CONTROL_OR_LINE_BREAK.sub(" ", value).strip()
 
 
+_HERMES_CONTEXT_REFERENCE = re.compile(
+    r"(?<![\w/])@(?:[a-zA-Z][a-zA-Z0-9_-]*:"
+    r"(?:`[^`\n]+`|\"[^\"\n]+\"|'[^'\n]+'|\S+)|(?:diff|staged)\b)"
+)
+_HERMES_MEDIA_REFERENCE = re.compile(
+    r"MEDIA:\s*(?:`[^`\n]+`|\"[^\"\n]+\"|'[^'\n]+'|\S*)",
+    re.IGNORECASE,
+)
+_HERMES_LOCAL_PATH = re.compile(
+    r"(?<![\w/:.])(?:~/|/|[A-Za-z]:[/\\])[^\s`\"'<>]+"
+)
+
+
+def _hermes_answer_text(text: str) -> str:
+    """Keep released text from becoming an implicit host file operation.
+
+    Hermes expands context references even inside quotes/code, and extracts
+    attachments from replies that echo tool results. Remove operands, rather
+    than applying reversible Markdown escaping. This protects literal relays;
+    it cannot restrict the agent's tools or paths reconstructed from history.
+    """
+    text = _HERMES_CONTEXT_REFERENCE.sub("[context reference omitted]", text)
+    text = _HERMES_MEDIA_REFERENCE.sub("[attachment reference omitted]", text)
+    return _HERMES_LOCAL_PATH.sub("[local file reference omitted]", text)
+
+
+def _hermes_answer_payload(answer: Dict[str, Any]) -> Dict[str, Any]:
+    if answer.get("status") not in {"released", "released_with_reductions"}:
+        return answer
+
+    def redact(value: Any) -> Any:
+        if isinstance(value, str):
+            return _hermes_answer_text(value)
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        return value
+
+    return redact(answer)
+
+
 def _format_answer_completion(answer: Dict[str, Any]) -> str:
     status = answer.get("status")
     if status in {"released", "released_with_reductions"}:
         text = answer.get("answer")
         if isinstance(text, str) and text:
             sources = _format_answer_citations(answer)
-            return f"{text}\n\n{sources}" if sources else text
+            return _hermes_answer_text(f"{text}\n\n{sources}" if sources else text)
     elif status == "denied":
         reason = answer.get("reason")
         if reason == "expired":
@@ -4378,7 +4420,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         guidance = _describe_answer_outcome(answer)
         if guidance is not None:
             answer = {**answer, "agentGuidance": guidance}
-        return json.dumps(answer, ensure_ascii=False)
+        return json.dumps(_hermes_answer_payload(answer), ensure_ascii=False)
 
     def answer(self, args: Dict[str, Any], session_id: Optional[str]) -> str:
         """Ask an ordinary question while retaining the trusted Hermes origin."""
@@ -4506,7 +4548,7 @@ class OmnesisAdapter(BasePlatformAdapter):
             guidance = _describe_answer_outcome(answer)
             if guidance is not None:
                 answer = {**answer, "agentGuidance": guidance}
-        return json.dumps(answer, ensure_ascii=False)
+        return json.dumps(_hermes_answer_payload(answer), ensure_ascii=False)
 
     def _thread_for_ask(self, session_id: str, question: str) -> Optional[str]:
         """The workflow this ask must be sent under.

@@ -2253,6 +2253,37 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "   Link: https://mail.example.com/thread/fictional-budget",
         )
 
+    async def test_released_tool_results_and_resumed_turns_remove_file_operands(self):
+        args = await self._authorized_answer_session()
+        released = {
+            "status": "released", "taskId": "task_fictional",
+            "answer": "Review MEDIA:/fictional/report.pdf and @file:fictional.txt",
+            "citations": [{"documentId": "doc_fictional", "sourceType": "notes",
+                           "title": "~/Documents/fictional.csv"}],
+        }
+        self.instance._post_json = lambda *args, **kwargs: released
+        subscription = json.loads(self.instance.answer_subscription(args, "session-authorized"))
+        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+            connection.execute("INSERT INTO sessions VALUES (?, ?, ?)",
+                               ("session-human", "telegram", "fictional-chat"))
+        self.instance._await_mcp_answer = Mock(return_value=released)
+        ordinary = json.loads(self.instance.answer({"question": "What changed?"}, "session-human"))
+        for result in (subscription, ordinary):
+            self.assertEqual(result["status"], "released")
+            self.assertNotIn("/fictional", json.dumps(result))
+            self.assertNotIn("@file:", json.dumps(result))
+            self.assertNotIn("~/Documents", json.dumps(result))
+            self.assertIn("omitted]", result["answer"])
+        await self.instance._resume_omnesis_session(
+            "omnesis-wf_fictional_1", "conversation-fictional", "task_fictional", released
+        )
+        resumed = self.instance.events[-1]
+        self.assertTrue(resumed.internal)
+        self.assertNotIn("@file:", resumed.text)
+        self.assertNotIn("/fictional", resumed.text)
+        self.assertNotIn("~/Documents", resumed.text)
+        self.assertIn("omitted]", resumed.text)
+
     async def test_a_socket_timeout_collects_the_answer_it_started(self):
         # The live failure: the client's budget elapsed while the gateway was
         # still running the turn, and the turn then completed.
@@ -3192,6 +3223,56 @@ def _fictional_released(**extra):
 
 
 class AnswerCitationTests(unittest.TestCase):
+    def test_file_operands_are_removed_instead_of_markdown_escaped(self):
+        examples = [
+            "MEDIA:/fictional/report.pdf", "media:relative.pdf",
+            'MEDIA:"relative report.pdf"', "MEDIA:/fictional/Dockerfile",
+            "MEDIA:C:\\fictional\\report.pdf", "~/Documents/fictional.csv",
+            "/fictional/report.pdf", "C:\\fictional\\report.pdf",
+            '@file:"relative report.txt":1-3', "@file:relative.txt",
+            "@folder:/fictional", "@git:HEAD", "@diff", "@staged",
+            "@custom:fictional", "@url:https://example.com/fictional",
+            "https://example.com/?attachment=MEDIA:/fictional/report.pdf",
+            "https://example.com/?attachment=/fictional/report.pdf",
+        ]
+        for reference in examples:
+            for wrap in ("{}", "`{}`", "```\n{}\n```", "> {}", '"{}"'):
+                with self.subTest(reference=reference, wrap=wrap):
+                    result = adapter_module._hermes_answer_text(wrap.format(reference))
+                    self.assertNotIn("fictional", result)
+                    self.assertNotIn("relative", result)
+                    self.assertIn("omitted]", result)
+                    self.assertEqual(adapter_module._hermes_answer_text(result), result)
+
+    def test_normal_prose_links_and_email_survive(self):
+        text = (
+            "The fictional review is on 2026/10/29. 12 / 3 = 4. Contact author@example.com. "
+            "https://example.com/docs/report.pdf?view=1 "
+            "example-mail://thread/fictional-budget"
+        )
+        self.assertEqual(adapter_module._hermes_answer_text(text), text)
+
+    def test_released_payload_redacts_all_derived_fields_without_mutation(self):
+        original = _fictional_released(citations=[{
+            **_FICTIONAL_CITATION,
+            "title": "@file:fictional.txt",
+            "sourceUrl": "https://example.com/?file=MEDIA:/fictional/report.pdf",
+        }])
+        original.update(status="released_with_reductions",
+                        answer="The report is /fictional/report.pdf",
+                        reductions=["@folder:/fictional"],
+                        agentGuidance="MEDIA:fictional.csv")
+        snapshot = json.dumps(original)
+        safe = adapter_module._hermes_answer_payload(original)
+        self.assertEqual(json.dumps(original), snapshot)
+        self.assertNotIn("/fictional/report.pdf", json.dumps(safe))
+        self.assertNotIn("@file:", json.dumps(safe))
+        self.assertNotIn("MEDIA:", json.dumps(safe))
+        self.assertEqual(safe["taskId"], original["taskId"])
+        completed = adapter_module._format_answer_completion(original)
+        self.assertNotIn("/fictional/report.pdf", completed)
+        self.assertNotIn("@file:", completed)
+
     def test_a_response_without_citations_still_validates(self):
         response = _fictional_released()
         self.assertEqual(adapter_module._validate_answer_response(response), response)
