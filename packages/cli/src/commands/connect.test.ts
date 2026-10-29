@@ -126,12 +126,15 @@ vi.mock("../harness-restart.js", async (importOriginal) => ({
 import { ensureGatewayTrust, fetchPeerCert, verifiesUnderSystemTrust } from "@omnesis/core";
 import {
   loadIntegrationCredentials,
+  loadPendingAuthorization,
+  savePendingAuthorization,
   writeIntegrationCredentials,
 } from "@omnesis/agent-integration";
 import {
   IntegrationReauthorizationRequiredError,
   type IntegrationOAuthProvider,
 } from "@omnesis/agent-integration";
+import { EXIT_AUTH, runCli } from "@omnesis/cli-shared";
 import { CliError } from "../utils.js";
 import {
   buildHarnessSkill,
@@ -140,7 +143,7 @@ import {
   type Harness,
 } from "../harness-skills.js";
 import { AgentPairingRefusedError, redeemAgentIntegrationPairingCode } from "./devices.js";
-import { authorizeHarness } from "./connect-oauth.js";
+import { AuthorizationExpiredError, authorizeHarness } from "./connect-oauth.js";
 import { openClawCapabilityConsentSupport } from "./openclaw-capability-consent.js";
 import {
   assertHermesCompletionNotifications,
@@ -1826,7 +1829,38 @@ describe("connect credential wiring", () => {
     expect(integrationMocks.authorizeOAuth).toHaveBeenCalledTimes(2);
   });
 
-  it("resumes denied OAuth without re-pairing or leaking credentials", async () => {
+  it("reports first-connect approval expiry without calling it an installation failure", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-expired-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
+    integrationMocks.authorizeOAuth.mockRejectedValueOnce(
+      new AuthorizationExpiredError("omnesis connect hermes"),
+    );
+    const stderr: string[] = [];
+    const code = await runCli(
+      () =>
+        run({
+          harness: "hermes",
+          dir: home,
+          "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+          code: "PAIR-CODE",
+        }),
+      { stderr: (text) => stderr.push(text) },
+    );
+    expect(code).toBe(EXIT_AUTH);
+    expect(stderr).toEqual([
+      "OAuth approval expired. Run `omnesis connect hermes` to request a new approval.\n",
+    ]);
+    expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(true);
+    expect(
+      loadIntegrationCredentials(join(home, "omnesis", "integration.json")).managementToken,
+    ).toBe(PAIRING.credentials.management.token);
+    await run({ harness: "hermes", dir: home });
+    expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(false);
+  });
+
+  it("resumes denied and expired OAuth without re-pairing or leaking credentials", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied-"));
     tempHomes.push(home);
     writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
@@ -1868,6 +1902,39 @@ describe("connect credential wiring", () => {
       },
     });
     expect(existsSync(join(home, ".env"))).toBe(true);
+
+    const credentialsPath = join(home, "omnesis", "integration.json");
+    const credentials = loadIntegrationCredentials(credentialsPath);
+    savePendingAuthorization(credentialsPath, {
+      gatewayUrl: ENV.OMNESIS_GATEWAY_URL,
+      clientId: "client_retry_fictional",
+      handle: "request_expiring_fictional",
+      consentUrl: `${ENV.OMNESIS_GATEWAY_URL}/oauth/consent?request=request_expiring_fictional`,
+      expiresAt: Date.now() + 60_000,
+      codeVerifier: credentials.oauth.codeVerifier!,
+      state: credentials.oauth.authorizationState!,
+    });
+    let polls = 0;
+    integrationMocks.oauthFetch.mockReturnValueOnce(async () => {
+      polls += 1;
+      return polls === 1
+        ? Response.json({ status: "pending" })
+        : new Response(null, { status: 404 });
+    });
+    const stderr: string[] = [];
+    const exitCode = await runCli(() => run({ harness: "hermes", dir: home }), {
+      stderr: (text) => stderr.push(text),
+    });
+    expect(exitCode).toBe(EXIT_AUTH);
+    expect(stderr).toEqual([
+      `OAuth approval expired. Run \`omnesis connect hermes --dir ${home}\` to request a new approval.\n`,
+    ]);
+    expect(loadPendingAuthorization(credentialsPath)).toBeNull();
+    expect(loadIntegrationCredentials(credentialsPath).managementToken).toBe(
+      credentials.managementToken,
+    );
+    expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(true);
+    expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledTimes(1);
 
     await run({ harness: "hermes", dir: home });
     expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledTimes(1);

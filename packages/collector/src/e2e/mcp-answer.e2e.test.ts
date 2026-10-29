@@ -645,6 +645,117 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
     }
   }, 120_000);
 
+  test("delivers an approved chat answer to the original OpenClaw session after a plugin restart", async () => {
+    const enrolled = await pairedIntegrationAuthorization("openclaw", "approval restart");
+    const stateDir = integrationHome("openclaw", enrolled);
+    const sessionKey = "agent:main:telegram:dm:fictional-approval";
+    const deliveryContext = { channel: "telegram", to: "fictional-recipient" };
+    const runs: Array<{ sessionKey: string; message: string; deliver: boolean }> = [];
+    let directSends = 0;
+
+    const startPlugin = async () => {
+      const host = createFakeOpenClawHost({ runId: "fictional-approved-answer-run" });
+      // Substitute only the external host. OAuth, task polling, the delivery
+      // WebSocket and both plugin ledgers use their production implementations.
+      const api = {
+        ...host.api,
+        runtime: {
+          ...host.api.runtime,
+          agent: {
+            session: {
+              listSessionEntries: () => [
+                {
+                  sessionKey,
+                  entry: {
+                    sessionId: "fictional-original-session",
+                    delivery: { kind: "external", context: deliveryContext },
+                  },
+                },
+              ],
+            },
+          },
+          subagent: {
+            ...host.api.runtime.subagent,
+            run: async (input: { sessionKey: string; message: string; deliver: boolean }) => {
+              runs.push(input);
+              return { runId: "fictional-approved-answer-run" };
+            },
+          },
+          channel: {
+            outbound: {
+              loadAdapter: async () => ({
+                sendText: async () => {
+                  directSends += 1;
+                },
+              }),
+            },
+          },
+        },
+      };
+      registerOpenClawIntegration(api as never);
+      const service = host.services.find((candidate) => candidate.id === "omnesis-integration");
+      const registered = host.tools.find((tool) => tool.options.name === "omnesis_answer");
+      if (!service || !registered) throw new Error("Production OpenClaw plugin did not register.");
+      await service.start({ stateDir, logger: host.logger });
+      return { service, registered };
+    };
+
+    let running: Awaited<ReturnType<typeof startPlugin>> | undefined;
+    try {
+      running = await startPlugin();
+      const tool = running.registered.factory({
+        sessionKey,
+        sessionId: "fictional-original-session",
+        deliveryContext,
+      });
+      if (!tool) throw new Error("Production OpenClaw answer tool was unavailable.");
+      const held = await tool.execute(
+        "fictional-held-chat-call",
+        { question: "What is the Northstar Club member reference?", timeoutMs: 60_000 },
+        new AbortController().signal,
+      );
+      expect(held.details).toMatchObject({ ok: true, response: { status: "approval_required" } });
+      expect(JSON.stringify(held)).not.toContain("NS-4827-ALPHA");
+      expect(runs).toHaveLength(0);
+      const { approvalId, taskId } = held.details.response as {
+        approvalId: string;
+        taskId: string;
+      };
+      await running.service.stop();
+      running = undefined;
+      running = await startPlugin();
+      await harness.gatewayJson(
+        `/admin/privacy/approvals/${encodeURIComponent(approvalId)}/approve`,
+        {
+          method: "POST",
+        },
+      );
+      await expect.poll(() => runs.length, { timeout: 30_000 }).toBe(1);
+      expect(runs[0]).toMatchObject({ sessionKey, deliver: true });
+      expect(runs[0]?.message).toContain("NS-4827-ALPHA");
+      expect(directSends).toBe(0);
+      await expect
+        .poll(
+          () => {
+            const db = new Database(harness.getDbPath(), { readonly: true });
+            try {
+              return db
+                .prepare("SELECT status FROM answer_completion_deliveries WHERE task_id = ?")
+                .get(taskId);
+            } finally {
+              db.close();
+            }
+          },
+          { timeout: 10_000 },
+        )
+        .toEqual({ status: "delivered" });
+    } finally {
+      await running?.service.stop();
+      rmSync(stateDir, { recursive: true, force: true });
+      await closeAuthorized(enrolled.authorization);
+    }
+  }, 120_000);
+
   test("runs the production OpenClaw and Hermes plugins through OAuth-protected /mcp", async () => {
     const openClaw = await pairedIntegrationAuthorization("openclaw");
     const hermes = await pairedIntegrationAuthorization("hermes");
@@ -722,13 +833,17 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
     }
   }, 120_000);
 
-  async function pairedIntegrationAuthorization(integration: "openclaw" | "hermes") {
+  async function pairedIntegrationAuthorization(
+    integration: "openclaw" | "hermes",
+    scenario = "production plugin",
+  ) {
+    const deviceName = `Fictional ${integration} ${scenario}`;
     const pendingPairing = await harness.gatewayJson<{ pairingCode: string }>(
       "/admin/devices/pair",
       {
         method: "POST",
         body: JSON.stringify({
-          name: `Fictional ${integration} production plugin`,
+          name: deviceName,
           kind: "agent",
           scopes: ["subscriptions:receive"],
         }),
@@ -747,7 +862,7 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
         pairingCode: pendingPairing.pairingCode,
         agentIntegration: { harness: integration },
         capabilities: {
-          suggestedName: `Fictional ${integration} production plugin`,
+          suggestedName: deviceName,
           agentIntegration: {
             harness: integration,
             deliveryProtocolMin: 3,

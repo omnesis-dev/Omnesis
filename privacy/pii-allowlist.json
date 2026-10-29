@@ -2226,6 +2226,16 @@
   ],
   "names": [
     {
+      "value": "Tue Jan",
+      "paths": ["packages/core/src/gateway-lock.test.ts"],
+      "reason": "Invented process-start timestamp in locale regression tests, not a person's name."
+    },
+    {
+      "value": "Mon Jan",
+      "paths": ["packages/core/src/gateway-lock.test.ts"],
+      "reason": "Invented process-start timestamp in locale regression tests, not a person's name."
+    },
+    {
       "value": "Brookside Shared Courtyard",
       "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
       "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."

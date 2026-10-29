@@ -423,6 +423,8 @@ function processStart(pid: number): string | null {
     try {
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
         encoding: "utf8",
+        // Lock writers and readers may inherit different launchd/shell locales.
+        env: { ...process.env, LC_ALL: "C" },
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
     } catch {

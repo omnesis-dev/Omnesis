@@ -121,6 +121,13 @@ interface OpenClawSessionEntry {
   spawnedBy?: string;
   lastChannel?: string;
   lastTo?: string;
+  lastAccountId?: string;
+  lastThreadId?: string | number;
+  deliveryContext?: OpenClawConversationRoute;
+  delivery?:
+    | { kind: "none" | "internal" }
+    | { kind: "external"; context: Partial<OpenClawConversationRoute> };
+  sendPolicy?: "allow" | "deny";
   agentHarnessId?: string;
 }
 
@@ -134,8 +141,6 @@ interface OpenClawMessage {
 interface OpenClawIntegrationApi {
   registrationMode: string;
   pluginConfig?: Record<string, unknown>;
-  config?: unknown;
-  getRuntimeConfig?(): unknown;
   logger?: IntegrationLogger;
   registerHook(
     events: string | string[],
@@ -154,19 +159,16 @@ interface OpenClawIntegrationApi {
   runtime: {
     agent: {
       session: {
-        listSessionEntries(input: { agentId: string }): Iterable<{
+        listSessionEntries(input: { agentId: string; readOnly?: boolean }): Iterable<{
           sessionKey: string;
           entry: OpenClawSessionEntry;
         }>;
       };
     };
     subagent: {
-      run(input: {
-        sessionKey: string;
-        message: string;
-        deliver: false;
-        idempotencyKey: string;
-      }): Promise<{ runId: string }>;
+      run(
+        input: Parameters<OfficialOpenClawPluginApi["runtime"]["subagent"]["run"]>[0],
+      ): Promise<{ runId: string }>;
       /**
        * Resolves when the run identified by `runId` reaches its end, which is
        * the only completion signal OpenClaw offers a plugin: `run` resolves at
@@ -182,22 +184,6 @@ interface OpenClawIntegrationApi {
         sessionKey: string;
         limit?: number;
       }): Promise<{ messages: unknown[] }>;
-    };
-    channel: {
-      outbound: {
-        loadAdapter(channel: string): Promise<
-          | {
-              sendText?(input: {
-                cfg: unknown;
-                to: string;
-                text: string;
-                accountId?: string;
-                threadId?: string | number;
-              }): Promise<unknown>;
-            }
-          | undefined
-        >;
-      };
     };
     tasks?: {
       managedFlows?: {
@@ -225,6 +211,8 @@ interface OpenClawPluginToolContext {
 }
 
 export interface OpenClawConversationRoute {
+  sessionKey?: string;
+  sessionId?: string;
   channel: string;
   to: string;
   accountId?: string;
@@ -247,6 +235,8 @@ export function conversationRouteFromContext(
   return {
     channel,
     to,
+    ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+    ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     ...(typeof route.accountId === "string" && route.accountId.trim()
       ? { accountId: route.accountId }
       : {}),
@@ -418,48 +408,20 @@ export function openClawRunIdentity(context: OpenClawPluginToolContext): OpenCla
   return { scheduled: false, generation: context.sessionId ?? sessionKey };
 }
 
-/** Send a terminal privacy outcome directly to its captured native conversation. */
-export interface OpenClawCompletionDeliveryApi {
-  config?: unknown;
-  getRuntimeConfig?(): unknown;
-  runtime: OpenClawIntegrationApi["runtime"];
-}
-
 /**
  * What a resumed run is told when an answer it asked for is finally released.
  *
- * Says plainly that this is the answer to the earlier ask, because the run has
- * no memory of asking: it ended when the gateway said the answer was held, and
- * this is a fresh turn in the same session. Without that framing the model
- * reads an unexplained answer as a new instruction.
+ * This is a fresh turn in the originating session. Frame the terminal outcome
+ * as the result of the earlier question, rather than a new user instruction;
+ * a denial or expiry is an outcome too, never evidence that approval was given.
  */
 export function answerCompletionContinuation(response: AnswerResponse): string {
   return (
-    "The Omnesis answer you asked for earlier was held for the user's approval, " +
-    "and they have now approved it. This is that answer — it is the reply to " +
-    "your earlier question, not a new request:\n\n" +
+    "The Omnesis request you made earlier has finished. This is its outcome — " +
+    "the reply to your earlier question, not a new request. " +
+    "Use it to continue your reply in this conversation:\n\n" +
     formatAnswerCompletion(response)
   );
-}
-
-export async function sendAnswerCompletion(
-  api: OpenClawCompletionDeliveryApi,
-  route: OpenClawConversationRoute,
-  response: AnswerResponse,
-): Promise<void> {
-  const adapter = await api.runtime.channel.outbound.loadAdapter(route.channel);
-  if (!adapter?.sendText) {
-    throw new Error(`OpenClaw outbound adapter is unavailable for ${route.channel}`);
-  }
-  const config = api.getRuntimeConfig?.() ?? api.config;
-  if (!config) throw new Error("OpenClaw runtime config is unavailable for completion delivery");
-  await adapter.sendText({
-    cfg: config,
-    to: route.to,
-    text: formatAnswerCompletion(response),
-    ...(route.accountId ? { accountId: route.accountId } : {}),
-    ...(route.threadId !== undefined ? { threadId: route.threadId } : {}),
-  });
 }
 
 function formatAnswerCompletion(response: AnswerResponse): string {
@@ -1095,7 +1057,21 @@ class OpenClawIntegrationService {
     // messages nowhere, or somewhere other than its origin, and send the model
     // to an unsupervised shell/CLI path instead.
     if (!context.sessionKey) return null;
-    const route = conversationRouteFromContext(context);
+    let route = conversationRouteFromContext(context);
+    if (route && !route.sessionId) {
+      const parsed = parseAgentSessionKey(context.sessionKey);
+      const current = parsed
+        ? [
+            ...this.api.runtime.agent.session.listSessionEntries({
+              agentId: parsed.agentId,
+              readOnly: true,
+            }),
+          ].find((candidate) => candidate.sessionKey === context.sessionKey)?.entry
+        : undefined;
+      // Without an incarnation a later reset could receive an earlier answer.
+      // The ask still works; it simply requests a settled outcome without a hold.
+      route = current?.sessionId ? { ...route, sessionId: current.sessionId } : null;
+    }
     return {
       name: "omnesis_answer",
       label: "Omnesis Answer",
@@ -1757,18 +1733,66 @@ class OpenClawIntegrationService {
       // firing was waiting is read from the answer being delivered, because
       // the session this resumes is shared by every firing of the workflow —
       // so the turn started here reports against the firing that asked.
-      const waiting = this.inbox?.resumeDeferredOutcome(delivery.nativeConversationId) ?? null;
       const resumed = await this.api.runtime.subagent.run({
         sessionKey: route.to,
         message: answerCompletionContinuation(response),
         deliver: false,
         idempotencyKey: `answer-completion:${delivery.deliveryId}`,
       });
+      const waiting = this.inbox?.resumeDeferredOutcome(delivery.nativeConversationId) ?? null;
       this.watchRunOutcome(resumed.runId, route.to, waiting?.deliveryId ?? null);
     } else {
-      await sendAnswerCompletion(this.api, route, response);
+      // The runtime owns both transcript persistence and normal reply delivery.
+      // Never guess a session from channel addressing: multiple sessions can
+      // share the same recipient, especially with threads and account scopes.
+      const sessionKey = route.sessionKey;
+      if (!sessionKey) throw new Error("completion route has no originating OpenClaw session");
+      const assertCurrent = () => {
+        if (this.slot.current !== this) throw new Error("integration service is not running");
+        const parsed = parseAgentSessionKey(sessionKey);
+        if (!parsed) throw new Error("completion route has an invalid OpenClaw session");
+        const current = [
+          ...this.api.runtime.agent.session.listSessionEntries({
+            agentId: parsed.agentId,
+            readOnly: true,
+          }),
+        ].find((candidate) => candidate.sessionKey === sessionKey)?.entry;
+        if (!route.sessionId || !current || current.sessionId !== route.sessionId) {
+          throw new Error("originating OpenClaw session is unavailable or was reset");
+        }
+        // Canonical delivery ownership takes precedence over legacy fields.
+        // An explicit internal/none record must never revive a stale address.
+        const target = current.delivery
+          ? current.delivery.kind === "external"
+            ? current.delivery.context
+            : {}
+          : (current.deliveryContext ?? {
+              channel: current.lastChannel,
+              to: current.lastTo,
+              accountId: current.lastAccountId,
+              threadId: current.lastThreadId,
+            });
+        if (
+          current.sendPolicy === "deny" ||
+          target.channel !== route.channel ||
+          target.to !== route.to ||
+          target.accountId !== route.accountId ||
+          String(target.threadId ?? "") !== String(route.threadId ?? "")
+        ) {
+          throw new Error("originating OpenClaw session reply route is unavailable or changed");
+        }
+      };
+      assertCurrent();
+      await this.api.runtime.subagent.run({
+        sessionKey,
+        message: answerCompletionContinuation(response),
+        deliver: true,
+        idempotencyKey: `answer-completion:${delivery.deliveryId}`,
+        assertCurrent,
+      });
     }
-    routes.delete(delivery.nativeConversationId);
+    // Keep the route until TTL cleanup: a crash after host admission but before
+    // the durable inbox accepts must retry with the same host idempotency key.
   }
 
   private async startNativeRun(

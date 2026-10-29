@@ -65,12 +65,13 @@ import {
   warnOnVersionDrift,
 } from "../connect-gateway-facts.js";
 import { approveInteractive } from "../approve.js";
+import { shellQuote } from "../service/hardened-bootstrap.js";
 import {
   reloadConnectedHarness,
   spawnHarnessCommand,
   type HarnessInvocation,
 } from "../harness-restart.js";
-import { authorizeHarness } from "./connect-oauth.js";
+import { AuthorizationExpiredError, authorizeHarness } from "./connect-oauth.js";
 import { AgentPairingRefusedError, redeemAgentIntegrationPairingCode } from "./devices.js";
 import {
   OPENCLAW_ACCEPT_CAPABILITIES_FLAG,
@@ -1693,6 +1694,15 @@ export const connectCommand = defineCommand({
     const initialStateEnv = existsSync(stateEnvPath) ? readFileSync(stateEnvPath, "utf8") : "";
     const skillOnly = ctx.args["skill-only"] === true;
     const refresh = ctx.args.refresh === true;
+    const approvalRetryCommand = [
+      "omnesis",
+      "connect",
+      harness,
+      ...(dirFlag !== undefined ? ["--dir", home] : []),
+      ...(refresh ? ["--refresh", "--interactive"] : []),
+    ]
+      .map(shellQuote)
+      .join(" ");
     if (skillOnly && refresh) {
       throw new CliError("Use either --refresh or --skill-only, not both.", EXIT_USER_ERROR);
     }
@@ -1826,7 +1836,10 @@ export const connectCommand = defineCommand({
       // fails naming this command; it never opens a request nobody watches.
       const consent =
         typeof ctx.args.interactive === "boolean" ? ctx.args.interactive : interactive;
-      await authorizeHarness(home, harness, credentials, { consent });
+      await authorizeHarness(home, harness, credentials, {
+        consent,
+        approvalRetryCommand,
+      });
       const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
       try {
         prepared.install();
@@ -1885,7 +1898,7 @@ export const connectCommand = defineCommand({
             loadIntegrationCredentials(credentialsPath),
             recoveryTls,
           );
-          await authorizeHarness(home, harness, credentials);
+          await authorizeHarness(home, harness, credentials, { approvalRetryCommand });
           applyConnectRecovery(home, pendingRecovery, prepared, skillCapabilities);
           persistInstalledGatewayTrust(credentialsPath, recoveryTls);
           persistGatewayCapabilities(credentialsPath, skillCapabilities);
@@ -2052,11 +2065,14 @@ export const connectCommand = defineCommand({
           writeConnectRecovery(home, recovery);
           rmSync(connectRedemptionPath(home), { force: true });
           try {
-            await authorizeHarness(home, harness, withRunTrust(runtimeCredentials, tls));
+            await authorizeHarness(home, harness, withRunTrust(runtimeCredentials, tls), {
+              approvalRetryCommand,
+            });
             applyConnectRecovery(home, recovery, prepared, skillCapabilities);
             persistInstalledGatewayTrust(credentialsPath, tls);
             persistGatewayCapabilities(credentialsPath, skillCapabilities);
           } catch (error) {
+            if (error instanceof AuthorizationExpiredError) throw error;
             const detail = error instanceof Error ? error.message : String(error);
             throw new CliError(
               `${detail}\n${c.yellow}The redeemed credentials are saved in their private ` +

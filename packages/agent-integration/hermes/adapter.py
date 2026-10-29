@@ -32,10 +32,12 @@ import time
 import unicodedata
 import urllib.parse
 import uuid
+from copy import copy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+from types import SimpleNamespace
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
@@ -2293,6 +2295,11 @@ class DurableState:
               delivery_id TEXT PRIMARY KEY,
               cancelled_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS integration_api_completion_messages (
+              native_session_id TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              PRIMARY KEY (native_session_id, content_hash)
+            );
             """
         )
         inbox_schema = self.connection.execute(
@@ -2917,6 +2924,16 @@ class DurableState:
                 return None
         return row[0]
 
+    def remember_api_completion(self, native_session_id: str, text: str) -> None:
+        # The API wake endpoint has no internal-notification marker. Record our
+        # exact generated text before dispatch so even a concurrent transcript
+        # sweep can distinguish it from the owner's messages after a restart.
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO integration_api_completion_messages VALUES (?, ?)",
+                (native_session_id, hashlib.sha256(text.encode("utf-8")).hexdigest()),
+            )
+
     def prepare_answer_completion(self, delivery: Dict[str, Any]) -> Dict[str, Any]:
         digest = _answer_completion_payload_hash(delivery)
         delivery_id = delivery["deliveryId"]
@@ -3053,16 +3070,21 @@ def _strip_user_content(raw: str) -> str:
     return text.strip()
 
 
-def _read_transcript_page(path: Path, since_id: int) -> tuple[list[dict], int]:
+def _read_transcript_page(
+    path: Path, since_id: int, api_completion_state: Optional[Path] = None
+) -> tuple[list[dict], int]:
     if not path.exists():
         return [], since_id
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
         connection.execute("PRAGMA query_only = 1")
+        message_columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+        display_kind = "m.display_kind" if "display_kind" in message_columns else "NULL"
         rows = connection.execute(
-            """
+            f"""
             SELECT m.id, s.source, COALESCE(s.chat_id, ''), s.chat_type,
-                   s.display_name, s.origin_json, m.role, m.content, m.timestamp
+                   s.display_name, s.origin_json, m.role, m.content, m.timestamp,
+                   {display_kind}, m.session_id
             FROM messages m JOIN sessions s ON s.id = m.session_id
             WHERE m.id > ? AND m.role IN ('user', 'assistant')
               AND s.source <> 'omnesis'
@@ -3072,11 +3094,29 @@ def _read_transcript_page(path: Path, since_id: int) -> tuple[list[dict], int]:
         ).fetchall()
     finally:
         connection.close()
+    api_notices = set()
+    if api_completion_state is not None:
+        notices = sqlite3.connect(f"file:{api_completion_state}?mode=ro", uri=True, timeout=5)
+        try:
+            for row in rows:
+                if row[1] == "api_server" and row[6] == "user" and isinstance(row[7], str):
+                    digest = hashlib.sha256(row[7].encode("utf-8")).hexdigest()
+                    if notices.execute(
+                        "SELECT 1 FROM integration_api_completion_messages "
+                        "WHERE native_session_id = ? AND content_hash = ?",
+                        (row[10], digest),
+                    ).fetchone():
+                        api_notices.add(row[0])
+        finally:
+            notices.close()
     messages = []
     maximum = since_id
     for row in rows:
-        mid, source, chat_id, chat_type, display_name, origin_json, role, content, ts = row
+        mid, source, chat_id, chat_type, display_name, origin_json, role, content, ts, display_kind, _session_id = row
         maximum = max(maximum, mid)
+        # Advance across internal turns too, including an entirely internal page.
+        if display_kind == "internal_notification" or mid in api_notices:
+            continue
         chat_name = display_name
         if origin_json:
             try:
@@ -4040,9 +4080,20 @@ class OmnesisAdapter(BasePlatformAdapter):
             raise ValueError("completion is not bound to a Hermes conversation")
         route = self._completion_route(native_session_id)
         if route is None:
-            raise ValueError("completion Hermes conversation is unavailable")
-        source, chat_id, chat_type, thread_id, profile = route
+            raise RuntimeError("completion Hermes conversation is unavailable")
+        source, chat_id, _chat_type, _thread_id, profile = route
+        if source == "api_server":
+            await self._resume_api_session(native_session_id, profile, answer)
+            return
         if source == "omnesis":
+            runner = getattr(self, "gateway_runner", None)
+            if (
+                runner is None
+                or not getattr(runner, "_running", False)
+                or getattr(runner, "_draining", False)
+                or not getattr(self, "_message_handler", None)
+            ):
+                raise RuntimeError("Hermes gateway is not accepting completions")
             # A firing wake has no conversation to reply into: its session is
             # one this plugin synthesised, and that adapter's `send` reports
             # success and discards the text. Posting there would mark the
@@ -4052,28 +4103,187 @@ class OmnesisAdapter(BasePlatformAdapter):
                 chat_id, native_conversation_id, task_id, answer
             )
             return
+        await self._resume_chat_session(native_session_id, task_id, answer)
+
+    @staticmethod
+    def _completion_prompt(answer: Dict[str, Any]) -> str:
+        return (
+            "Your earlier Omnesis request has finished. This is its outcome — "
+            "the reply to your earlier question, not a new request:\n\n"
+            + _format_answer_completion(answer)
+        )
+
+    async def _resume_chat_session(
+        self, native_session_id: str, task_id: str, answer: Dict[str, Any]
+    ) -> None:
+        """Resume the exact harness-owned route, preserving participant and scope.
+
+        Internal turns bypass Hermes user authorization, so admission must check
+        it explicitly. A missing or superseded session stays retryable instead
+        of posting private text into a replacement conversation.
+        """
+        from gateway.session import build_session_key
+
         runner = getattr(self, "gateway_runner", None)
-        if runner is None:
-            raise RuntimeError("Hermes gateway runner is unavailable")
-        platform = Platform(source)
-        adapter = None
-        if profile:
-            adapter = getattr(runner, "_profile_adapters", {}).get(profile, {}).get(platform)
+        if (
+            runner is None
+            or not getattr(runner, "_running", False)
+            or getattr(runner, "_draining", False)
+        ):
+            raise RuntimeError("Hermes gateway is not accepting completions")
+        store = getattr(runner, "session_store", None)
+        lookup = getattr(store, "lookup_by_session_id", None)
+        entry = lookup(native_session_id) if callable(lookup) else None
+        if entry is None or entry.origin is None:
+            raise RuntimeError("Hermes completion session is unavailable")
+        # Hermes keeps transport and authorization provenance on the live source
+        # outside its dataclass fields. Preserve it without mutating the session.
+        source = copy(entry.origin)
+        if getattr(source, "profile_route_rejected", False):
+            raise RuntimeError("Hermes completion profile is unavailable")
+        adapter_for_source = getattr(runner, "_adapter_for_source", None)
+        adapter = adapter_for_source(source) if callable(adapter_for_source) else None
+        relay = False
         if adapter is None:
-            adapter = getattr(runner, "adapters", {}).get(platform)
-        if adapter is None:
+            from gateway.delivery import resolve_delivery_transport
+
+            transport = resolve_delivery_transport(source.platform, runner.config, runner.adapters)
+            # A named profile must not fall back to another profile's native bot.
+            # Relay is shared across profiles and explicitly advertises which
+            # logical platforms its authenticated connector owns.
+            if transport is not None and transport.is_relay:
+                adapter = transport.adapter
+                relay = True
+        elif getattr(adapter, "authorization_is_upstream", False) is True:
+            # A live source may already retain its registered relay transport.
+            from gateway.delivery import resolve_delivery_transport
+
+            transport = resolve_delivery_transport(source.platform, runner.config, runner.adapters)
+            relay = transport is not None and transport.is_relay and transport.adapter is adapter
+        if adapter is None or not getattr(adapter, "_message_handler", None):
             raise RuntimeError("Hermes source adapter is unavailable")
-        metadata_builder = getattr(runner, "_thread_metadata_for_target", None)
-        metadata = (
-            metadata_builder(platform, chat_id, thread_id, chat_type=chat_type, adapter=adapter)
-            if callable(metadata_builder)
-            else {"thread_id": thread_id} if thread_id else None
+        if relay:
+            if (
+                getattr(adapter, "authorization_is_upstream", False) is not True
+                or getattr(getattr(adapter, "_transport", None), "auth_revoked", False)
+            ):
+                raise RuntimeError("Hermes completion relay is no longer authorized")
+        else:
+            authorize = getattr(runner, "_is_user_authorized_for_source", None)
+            if not callable(authorize):
+                authorize = getattr(runner, "_is_user_authorized", None)
+            if not callable(authorize) or not authorize(source, allow_adapter_delegation=False):
+                raise RuntimeError("Hermes completion origin is no longer authorized")
+        # Both ingress layers validate the key. Check before calling the adapter,
+        # whose fire-and-forget handler otherwise silently discards a mismatch.
+        adapter_key = build_session_key(
+            source,
+            group_sessions_per_user=adapter.config.extra.get("group_sessions_per_user", True),
+            thread_sessions_per_user=adapter.config.extra.get("thread_sessions_per_user", False),
+            profile=adapter._session_key_profile(source),
         )
-        result = await adapter.send(
-            chat_id, _format_answer_completion(answer), metadata=metadata
+        if (
+            adapter_key != entry.session_key
+            or runner._session_key_for_source(source) != entry.session_key
+            or store.peek_session_id(entry.session_key) != native_session_id
+        ):
+            raise RuntimeError("Hermes completion session route has changed")
+        event = MessageEvent(
+            text=self._completion_prompt(answer),
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id=f"answer-completion:{task_id}",
+            raw_message={"taskId": task_id},
+            timestamp=datetime.now(tz=timezone.utc),
+            internal=True,
+            allow_gateway_control=False,
+            metadata={
+                "gateway_session_key": entry.session_key,
+                "gateway_session_id": native_session_id,
+                "gateway_session_strict": True,
+            },
         )
-        if not getattr(result, "success", False):
-            raise RuntimeError("Hermes source adapter rejected the completion send")
+        prime = getattr(adapter, "prime_routing_cache", None)
+        if callable(prime):
+            prime(event)
+        await adapter.handle_message(event)
+
+    async def _resume_api_session(
+        self, native_session_id: str, profile: Optional[str], answer: Dict[str, Any]
+    ) -> None:
+        from gateway.wake import adapter_supports_push, deliver_wake
+
+        runner = getattr(self, "gateway_runner", None)
+        if (
+            runner is None
+            or not getattr(runner, "_running", False)
+            or getattr(runner, "_draining", False)
+        ):
+            raise RuntimeError("Hermes gateway is not accepting completions")
+        resolve = getattr(runner, "_authorization_adapter", None)
+        if not callable(resolve):
+            raise RuntimeError("Hermes API adapter is unavailable")
+        # The API listener is shared by multiplexed profiles; its HTTP prefix
+        # middleware owns profile selection and profile-specific credentials.
+        adapter = resolve(Platform("api_server"), None)
+        if adapter is None or adapter_supports_push(adapter):
+            raise RuntimeError("Hermes API adapter is unavailable")
+        # API sessions use the raw state.db id, not build_session_key(). The
+        # harness self-post authenticates with this adapter's API key and raises
+        # on rejected admission so the completion ledger remains retryable.
+        text = self._completion_prompt(answer)
+        assert self._state is not None
+        self._state.remember_api_completion(native_session_id, text)
+        if profile not in (None, "", "default"):
+            await self._post_profile_api_completion(adapter, profile, native_session_id, text)
+        else:
+            await deliver_wake(adapter, text=text, session_id=native_session_id)
+
+    @staticmethod
+    async def _post_profile_api_completion(
+        adapter: Any, profile: str, native_session_id: str, text: str
+    ) -> None:
+        import aiohttp
+        from gateway.wake import WAKE_TURN_TIMEOUT_SECONDS
+
+        # Use the same served-profile validation and credential scope as the
+        # API listener's prefix middleware, without changing its request state.
+        resolve_profile = getattr(adapter, "_resolve_request_profile", None)
+        if not callable(resolve_profile):
+            raise RuntimeError("Hermes API profile routing is unavailable")
+        selected = resolve_profile(SimpleNamespace(match_info={"profile": profile}))
+        if selected is None:
+            key = getattr(adapter, "_api_key", None)
+        elif selected == profile:
+            from agent.secret_scope import get_secret
+            from hermes_cli.auth import has_usable_secret
+
+            with adapter._profile_scope(profile):
+                key = get_secret("API_SERVER_KEY", "")
+            if not has_usable_secret(key, min_length=16):
+                raise RuntimeError("Hermes API profile credentials are unavailable")
+        else:
+            raise RuntimeError("Hermes API profile is not served")
+        if not isinstance(key, str) or not key:
+            raise RuntimeError("Hermes API profile credentials are unavailable")
+        host = str(getattr(adapter, "_host", "") or "127.0.0.1")
+        if host in {"0.0.0.0", "::", "*"}:
+            host = "127.0.0.1"
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = int(getattr(adapter, "_port", 0) or 8642)
+        path = f"/p/{urllib.parse.quote(profile, safe='')}/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {key}", "X-Hermes-Session-Id": native_session_id}
+        payload = {"messages": [{"role": "user", "content": text}], "stream": False}
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=WAKE_TURN_TIMEOUT_SECONDS)
+        ) as http:
+            async with http.post(
+                f"http://{host}:{port}{path}", json=payload, headers=headers, allow_redirects=False
+            ) as response:
+                if not 200 <= response.status < 300:
+                    raise RuntimeError(f"Hermes API profile wake rejected: HTTP {response.status}")
+                await response.read()
 
     async def _resume_omnesis_session(
         self,
@@ -4120,18 +4330,14 @@ class OmnesisAdapter(BasePlatformAdapter):
             role_authorized=True,
         )
         event = MessageEvent(
-            text=(
-                "The Omnesis answer you asked for earlier was held for the "
-                "user's approval, and they have now approved it. This is that "
-                "answer — it is the reply to your earlier question, not a new "
-                "request:\n\n" + _format_answer_completion(answer)
-            ),
+            text=self._completion_prompt(answer),
             message_type=MessageType.TEXT,
             source=source,
             message_id=f"answer-completion:{task_id}",
             raw_message={"taskId": task_id},
             timestamp=datetime.now(tz=timezone.utc),
             internal=True,
+            allow_gateway_control=False,
         )
         await self.handle_message(event)
 
@@ -4159,11 +4365,11 @@ class OmnesisAdapter(BasePlatformAdapter):
                 ).fetchone()
         finally:
             connection.close()
-        if not row or not isinstance(row[0], str) or not isinstance(row[1], str):
+        if not row or not isinstance(row[0], str):
             return None
         source = row[0].strip().lower()
-        chat_id = row[1].strip()
-        if not source or not chat_id or source in {"omnesis", "cli"}:
+        chat_id = row[1].strip() if isinstance(row[1], str) else ""
+        if not source or (not chat_id and source != "api_server") or source == "cli":
             return None
         chat_type = row[2] if len(row) > 2 and isinstance(row[2], str) else None
         thread_id = row[3] if len(row) > 3 and isinstance(row[3], str) else None
@@ -4237,7 +4443,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         while not self._stop.is_set():
             since = self._state.cursor("hermes")
             messages, maximum = await asyncio.to_thread(
-                _read_transcript_page, _hermes_home() / "state.db", since
+                _read_transcript_page, _hermes_home() / "state.db", since, self._state.path
             )
             if maximum == since:
                 return

@@ -26,7 +26,7 @@ import {
   type PendingIntegrationAuthorization,
 } from "@omnesis/agent-integration";
 
-import { c } from "../utils.js";
+import { c, CliError, EXIT_AUTH } from "../utils.js";
 import type { Harness } from "../harness-skills.js";
 
 const AUTHORIZATION_POLL_MS = 1_200;
@@ -44,6 +44,8 @@ const EXPIRY_GRACE_MS = 30_000;
 
 export interface HarnessOAuthOptions {
   onCredentialsChanged?: (credentials: IntegrationCredentials) => void;
+  /** Command to request approval again after expiry; defaults to a resumed connect. */
+  approvalRetryCommand?: string;
   /**
    * Whether this run may ask the operator for a new approval. Without it, a
    * connection with no approved access left fails with the command that
@@ -61,9 +63,9 @@ class InteractiveAuthorizationRequired extends Error {
   }
 }
 
-class AuthorizationExpiredError extends Error {
-  constructor() {
-    super("OAuth authorization expired before it was approved");
+export class AuthorizationExpiredError extends CliError {
+  constructor(retryCommand: string) {
+    super(`OAuth approval expired. Run \`${retryCommand}\` to request a new approval.`, EXIT_AUTH);
     this.name = "AuthorizationExpiredError";
   }
 }
@@ -188,7 +190,11 @@ export async function authorizeHarness(
         if (Date.now() > expiresAt + EXPIRY_GRACE_MS) throw error;
       }
       if (status) {
-        if (status.status === "gone") throw new AuthorizationExpiredError();
+        if (status.status === "gone") {
+          throw new AuthorizationExpiredError(
+            options.approvalRetryCommand ?? `omnesis connect ${harness}`,
+          );
+        }
         if (status.status !== "pending") return collectDecision(pending.handle, signal);
         if (status.expiresAt !== undefined && status.expiresAt !== expiresAt) {
           expiresAt = status.expiresAt;

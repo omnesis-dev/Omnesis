@@ -1118,6 +1118,17 @@
           gateway states which tools it offers, and <code>omnesis connect</code> installs only
           those.
         </p>
+        <p>
+          When you approve a held answer, the plugin resumes the agent's original session with the
+          released answer so the agent can reply and retain the context for follow-up questions.
+          This includes Hermes relay-backed chats and API-server sessions. Hermes internal
+          notifications and Omnesis-generated API wake messages are excluded from conversation
+          ingestion; the agent's replies remain part of the indexed conversation.
+        </p>
+        <p>
+          A pending OpenClaw answer saved without its originating session cannot resume
+          automatically. Ask the question again in that conversation to create a new request.
+        </p>
         <h3 id="harness-tools">What the agent can use</h3>
         <p>
           The agent asks questions with <code>omnesis_answer</code>, whatever its connection's
@@ -1267,6 +1278,12 @@
           working sign-in to the plugin, and when nothing approved is left it stops and names the
           command to run. <code>--interactive</code> and <code>--no-interactive</code> override that
           choice.
+        </p>
+        <p>
+          If approval expires, the command prints a retry command. Run
+          <code>omnesis connect openclaw</code> or <code>omnesis connect hermes</code> again to
+          request a fresh approval using the saved pairing, without a new pairing code. For an
+          expired refresh, the retry command includes <code>--refresh --interactive</code>.
         </p>
         <p>
           The OpenClaw and Hermes plugins repair their own sign-in the same way, without a browser,

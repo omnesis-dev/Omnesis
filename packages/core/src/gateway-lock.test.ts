@@ -30,6 +30,53 @@ beforeEach(() => {
   sleeper = null;
 });
 
+describe.skipIf(process.platform === "win32")("macOS process identity across locales", () => {
+  it("keeps a gateway live across writer/reader locales and still rejects a reused PID", async () => {
+    const pid = await spawnSleeper();
+    // Model macOS ps formatting without requiring a particular locale installed on the host.
+    writeFileSync(
+      join(dir, "ps"),
+      `#!${process.execPath}
+process.stdout.write(process.env.LC_ALL === 'C'
+  ? 'Tue Jan 20 08:12:30 2032\\n'
+  : 'Tue 20 Jan 08:12:30 2032\\n');
+`,
+      { mode: 0o700 },
+    );
+    if (process.platform === "linux") {
+      // The claim guard is independent of ps; use the host's equivalent lock utility.
+      writeFileSync(join(dir, "lockf"), '#!/bin/sh\nexec flock -x "$@"\n', { mode: 0o700 });
+    }
+    vi.stubEnv("PATH", `${dir}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("LANG", "en_GB.UTF-8");
+    vi.stubEnv("LC_ALL", "en_GB.UTF-8");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    try {
+      const lock = await acquireGatewayLock(dir, { pid, waitMs: 0 });
+      try {
+        expect(readGatewayLockHolder(dir)?.processStart).toBe("Tue Jan 20 08:12:30 2032");
+        vi.stubEnv("LANG", "fr_FR.UTF-8");
+        vi.stubEnv("LC_ALL", "fr_FR.UTF-8");
+        expect(liveGatewayHolder(dir)?.pid).toBe(pid);
+        await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+          GatewayLockHeldError,
+        );
+        const holder = readGatewayLockHolder(dir)!;
+        writeFileSync(
+          lock.path,
+          JSON.stringify({ ...holder, processStart: "Mon Jan 19 08:12:30 2032" }),
+        );
+        expect(liveGatewayHolder(dir)).toBeNull();
+      } finally {
+        lock.release();
+      }
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+});
+
 describe.skipIf(process.platform !== "linux")("Linux gateway lifetime lease", () => {
   it("rejects a lease symlink without following its target", async () => {
     const target = join(dir, "unrelated-file");

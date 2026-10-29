@@ -16,6 +16,8 @@ import {
   type PendingIntegrationAuthorization,
 } from "@omnesis/agent-integration";
 
+import { EXIT_AUTH, runCli } from "@omnesis/cli-shared";
+
 type OAuthFetch = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 type Provider = {
   readonly redirectUrl: string;
@@ -388,14 +390,67 @@ describe("an interactive refresh", () => {
     expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
   });
 
-  it("ends the record when the request expires unapproved", async () => {
+  it.each(["hermes", "openclaw"] as const)(
+    "reports %s expiry without a stack and permits a new approval",
+    async (harness) => {
+      const home = seed({});
+      record(home);
+      gateway(["pending", 404], new URL("http://127.0.0.1:1/callback"));
+
+      const stderr: string[] = [];
+      const code = await runCli(
+        async () => {
+          await authorizeHarness(home, harness, load(home));
+        },
+        { stderr: (text) => stderr.push(text) },
+      );
+
+      expect(code).toBe(EXIT_AUTH);
+      expect(stderr).toEqual([
+        `OAuth approval expired. Run \`omnesis connect ${harness}\` to request a new approval.\n`,
+      ]);
+      expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+      expect(authorizeRequests()).toBe(0);
+
+      let state = "";
+      mocks.authorize
+        .mockImplementationOnce(async (provider) => {
+          state = (provider as Provider).state();
+          return redirect(provider);
+        })
+        .mockImplementation(exchange);
+      gateway(
+        ["approved"],
+        () => new URL(`http://127.0.0.1:1/callback?code=code_fictional&state=${state}`),
+      );
+      const result = await authorizeHarness(home, harness, load(home));
+      expect(result.oauth.tokens).toMatchObject({ access_token: "access_approved" });
+      expect(authorizeRequests()).toBe(1);
+      expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+    },
+  );
+
+  it("cleans a newly expired request and reports the refresh command", async () => {
     const home = seed({});
-    record(home);
-    gateway(["pending", 404], new URL("http://127.0.0.1:1/callback"));
-
-    await expect(authorizeHarness(home, "hermes", load(home))).rejects.toThrow(/expired/u);
-
+    mocks.authorize.mockImplementation(redirect);
+    gateway([404], new URL("http://127.0.0.1:1/callback"));
+    const stderr: string[] = [];
+    const code = await runCli(
+      async () => {
+        await authorizeHarness(home, "hermes", load(home), {
+          approvalRetryCommand: "omnesis connect hermes --refresh --interactive",
+        });
+      },
+      { stderr: (text) => stderr.push(text) },
+    );
+    expect(code).toBe(EXIT_AUTH);
+    expect(stderr).toEqual([
+      "OAuth approval expired. Run `omnesis connect hermes --refresh --interactive` to request a new approval.\n",
+    ]);
+    expect(authorizeRequests()).toBe(1);
     expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+    expect(load(home).oauth.codeVerifier).toBeUndefined();
+    expect(load(home).oauth.authorizationState).toBeUndefined();
   });
 
   it("does not wait on an open request when the stored refresh token still works", async () => {
