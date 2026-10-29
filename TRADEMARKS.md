@@ -104,3 +104,5 @@ You are free to use, modify, run, and redistribute the code under the AGPL. When
 ## Reporting concerns
 
 If you are a brand owner and have concerns about how Omnesis displays your mark, please open an issue and we will adjust promptly.
+
+The AI-generated interface concepts under `.github/discussion-assets/per-source-scopes/` use Gmail and Google Drive marks (Google LLC), WhatsApp marks (WhatsApp LLC), and the Apple Messages mark (Apple Inc.) to identify proposed source integrations. These are fictional concept interfaces, not implemented product screenshots. The marks remain the property of their owners; their use does not imply endorsement, partnership, or sponsorship.
