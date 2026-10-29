@@ -41,6 +41,15 @@ const ALLOWLIST = {
     "(^1.19.11) and the MCP SDK's request adapter, neither of which serves " +
     "static files, and 1.x has no patched release. Revisit when " +
     "@hono/node-ws supports node-server 2.x.",
+  "GHSA-rmxm-3fg6-px4f":
+    "@hono/node-server serveStatic decodes the request path twice, so a path " +
+    "can slip past middleware in front of static files. Omnesis never calls " +
+    "serveStatic, and the gateway, relay and collector depend on the patched " +
+    "2.x line directly. The vulnerable 1.x copy is reached only through " +
+    "@hono/node-ws, which uses the server's WebSocket upgrade, and the MCP " +
+    "SDK under openclaw, which uses getRequestListener. The fix is 2.1.3, " +
+    "which violates @hono/node-ws@1.x's peer dependency (^1.19.11). Revisit " +
+    "when @hono/node-ws supports node-server 2.x, with GHSA-frvp-7c67-39w9.",
   "GHSA-r292-9mhp-454m":
     "node-tar's stack-overflow DoS needs a crafted archive with member " +
     "selection. Omnesis never imports the package — its own archive handling " +
