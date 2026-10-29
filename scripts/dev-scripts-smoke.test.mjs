@@ -1826,6 +1826,22 @@ describe("release.yml verification permissions", () => {
     expect(workflow.jobs["github-release"].needs).toContain("images-manifest");
   });
 
+  it("names the tag's commit on every image, also when a dispatch from main builds it", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
+    // The metadata action reads the triggering event, which a dispatch puts on main.
+    const labels = workflow.jobs.images.steps.find((step) => step.id === "meta").with.labels;
+    expect(labels).toContain("org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}");
+    expect(labels).toContain(
+      "org.opencontainers.image.version=${{ needs.verify.outputs.version }}",
+    );
+    const tags = workflow.jobs["images-manifest"].steps.find((step) => step.id === "meta").with
+      .tags;
+    expect(tags).toContain("type=raw,value=sha-${{ needs.verify.outputs.short_sha }}");
+    expect(tags).not.toMatch(/^\s*type=sha\s*$/mu);
+    expect(workflow.jobs.verify.outputs.short_sha).toBe("${{ steps.version.outputs.short_sha }}");
+  });
+
   it("keeps publication arming independent from the package destination", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));

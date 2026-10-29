@@ -51,6 +51,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
       armed: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
       # Decided in a step: in an expression an unset variable is null, and
       # null != '0' is false, which silently disabled image publication.
@@ -82,6 +83,7 @@ jobs:
             target_sha="$tag_sha"
           fi
           echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${target_sha:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: The tagged commit is on main
         env:
@@ -394,6 +396,11 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.IMAGE_REPOSITORY }}
+          # The action reads the triggering event, and a dispatch runs on main.
+          # The image is built from the tag's commit, so name that instead.
+          labels: |
+            org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
 
       # Boot the image before any of it is published. Buildx retains the
       # tested layers for the export below.
@@ -504,7 +511,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
-            type=sha
+            type=raw,value=sha-${{ needs.verify.outputs.short_sha }}
 
       - name: Re-attest remote tag before image tagging
         if: needs.verify.outputs.images_armed == 'true'
