@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import pathlib
@@ -40,7 +41,8 @@ class MessageType:
 
 
 class MessageEvent:
-    def __init__(self, **kwargs):
+    def __init__(self, allow_gateway_control=True, **kwargs):
+        self.allow_gateway_control = allow_gateway_control
         self.__dict__.update(kwargs)
 
 
@@ -2755,6 +2757,10 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
             _adapter_for_source=Mock(return_value=source_adapter),
             _session_key_for_source=Mock(return_value=entry.session_key),
         )
+        self.instance.gateway_runner._is_user_authorized_for_source.__signature__ = inspect.Signature([
+            inspect.Parameter("source", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("allow_adapter_delegation", inspect.Parameter.KEYWORD_ONLY, default=True),
+        ])
         session_module = types.ModuleType("gateway.session")
         session_module.build_session_key = Mock(return_value=entry.session_key)
         self.enterContext(patch.dict(sys.modules, {"gateway.session": session_module}))
@@ -3112,6 +3118,38 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api._profile_scope.call_count, scope_calls)
         self.assertEqual(requests[-1][1]["headers"]["Authorization"], f"Bearer {api._api_key}")
 
+    async def test_old_host_completion_capabilities_fail_closed_and_retry_after_update(self):
+        wake, source, entry, source_adapter, session_module = self._completion_chat()
+        await dispatch_frame(self.instance, "prepare", "answer-completion.prepare", wake)
+        control = {"protocolVersion": 4, "deliveryId": wake["deliveryId"]}
+
+        class LegacyMessageEvent:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        with patch.object(adapter_module, "MessageEvent", LegacyMessageEvent):
+            with self.assertRaisesRegex(adapter_module.HostCompatibilityError, "Update Hermes"):
+                await self.instance._resume_api_session("session-human", None, released_answer())
+            with self.assertLogs(adapter_module.logger, level="WARNING") as logs:
+                rejected = await dispatch_frame(self.instance, "old-event", "answer-completion.commit", control)
+            self.assertIn("Update Hermes", " ".join(logs.output))
+            self.assertEqual(rejected["error"]["code"], "retryable_start_failure")
+        with patch.object(self.instance.gateway_runner, "_is_user_authorized_for_source",
+                          lambda source: True):
+            with self.assertLogs(adapter_module.logger, level="WARNING") as logs:
+                rejected = await dispatch_frame(self.instance, "old-auth", "answer-completion.commit", control)
+            self.assertIn("explicit origin authorization", " ".join(logs.output))
+            self.assertEqual(rejected["error"]["code"], "retryable_start_failure")
+        source_adapter.handle_message.assert_not_called()
+        row = self.instance._state.connection.execute(
+            "SELECT state FROM integration_answer_completion_inbox WHERE delivery_id = ?",
+            (wake["deliveryId"],),
+        ).fetchone()
+        self.assertEqual(row[0], "prepared")
+        accepted = await dispatch_frame(self.instance, "updated", "answer-completion.commit", control)
+        self.assertEqual(accepted["result"]["status"], "accepted")
+        source_adapter.handle_message.assert_awaited_once()
+
     async def test_completion_rejections_leave_the_same_delivery_retryable(self):
         wake, source, entry, source_adapter, session_module = self._completion_chat()
         runner = self.instance.gateway_runner
@@ -3172,6 +3210,13 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         refused = await dispatch_frame(self.instance, "commit", "answer-completion.commit", control)
         self.assertEqual(refused["error"]["code"], "retryable_start_failure")
         self.instance.gateway_runner._draining = False
+        deferred = self.instance._state.deferred_outcome_delivery("omnesis-wf_fictional_1", handle)
+        with patch.object(adapter_module, "MessageEvent", lambda **kwargs: kwargs):
+            with self.assertLogs(adapter_module.logger, level="WARNING"):
+                incompatible = await dispatch_frame(self.instance, "old-host", "answer-completion.commit", control)
+            self.assertEqual(incompatible["error"]["code"], "retryable_start_failure")
+            self.assertEqual(self.instance._state.deferred_outcome_delivery(
+                "omnesis-wf_fictional_1", handle), deferred)
         before = len(self.instance.events)
         committed = await dispatch_frame(self.instance, "commit", "answer-completion.commit", control)
         self.assertEqual(committed["result"]["status"], "accepted")

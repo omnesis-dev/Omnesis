@@ -1129,6 +1129,12 @@
           A pending OpenClaw answer saved without its originating session cannot resume
           automatically. Ask the question again in that conversation to create a new request.
         </p>
+        <p>
+          Resuming held answers requires Hermes 0.21.0 or newer, or stable OpenClaw 2026.10.5 or
+          newer. Older hosts lack the controls needed to safely admit an answer into its original
+          session. Update the host and restart its gateway if the integration reports this
+          requirement; the held completion remains available for retry.
+        </p>
         <h3 id="harness-tools">What the agent can use</h3>
         <p>
           The agent asks questions with <code>omnesis_answer</code>, whatever its connection's

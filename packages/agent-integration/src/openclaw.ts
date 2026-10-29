@@ -1745,6 +1745,30 @@ class OpenClawIntegrationService {
       // The runtime owns both transcript persistence and normal reply delivery.
       // Never guess a session from channel addressing: multiple sessions can
       // share the same recipient, especially with threads and account scopes.
+      // Older runtimes silently ignore assertCurrent, so a preflight-only check
+      // cannot protect the session between validation and native admission.
+      const version = this.api.runtime.version;
+      const parts =
+        typeof version === "string"
+          ? /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-\d+)?$/.exec(version)
+          : null;
+      const year = Number(parts?.[1]);
+      const month = Number(parts?.[2]);
+      const day = Number(parts?.[3]);
+      if (
+        !parts ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31 ||
+        year * 10_000 + month * 100 + day < 20_261_005
+      ) {
+        const message =
+          "Update OpenClaw to stable 2026.10.5 or newer and restart its gateway " +
+          "before resuming held chat answers; this host cannot guarantee session admission checks.";
+        this.logger.warn(message);
+        throw new Error(message);
+      }
       const sessionKey = route.sessionKey;
       if (!sessionKey) throw new Error("completion route has no originating OpenClaw session");
       const assertCurrent = () => {

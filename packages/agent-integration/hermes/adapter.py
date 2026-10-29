@@ -18,6 +18,7 @@ import functools
 import hashlib
 import http.client
 import ipaddress
+import inspect
 import json
 import logging
 import math
@@ -461,6 +462,10 @@ _SUBSCRIPTION_UNSUPPORTED_MESSAGES = {
 }
 class ConfigurationError(ValueError):
     pass
+
+
+class HostCompatibilityError(RuntimeError):
+    """The host cannot safely admit a completion until it is updated."""
 
 
 class DeliveryConflictError(ValueError):
@@ -3825,6 +3830,10 @@ class OmnesisAdapter(BasePlatformAdapter):
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             if correlation_id:
                 await self._send_error(websocket, correlation_id, "invalid_payload")
+        except HostCompatibilityError as error:
+            logger.warning("%s", error)
+            if correlation_id:
+                await self._send_error(websocket, correlation_id, "retryable_start_failure")
         except Exception:
             if correlation_id:
                 parked_ambiguous = (
@@ -4155,6 +4164,18 @@ class OmnesisAdapter(BasePlatformAdapter):
             + _format_answer_completion(answer)
         )
 
+    @staticmethod
+    def _require_safe_completion_events() -> None:
+        try:
+            parameter = inspect.signature(MessageEvent).parameters.get("allow_gateway_control")
+        except (TypeError, ValueError):
+            parameter = None
+        if parameter is None:
+            raise HostCompatibilityError(
+                "Update Hermes to 0.21.0 or newer and restart its gateway before resuming "
+                "held answers; this host cannot disable gateway controls for internal turns"
+            )
+
     async def _resume_chat_session(
         self, native_session_id: str, task_id: str, answer: Dict[str, Any]
     ) -> None:
@@ -4164,6 +4185,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         it explicitly. A missing or superseded session stays retryable instead
         of posting private text into a replacement conversation.
         """
+        self._require_safe_completion_events()
         from gateway.session import build_session_key
 
         runner = getattr(self, "gateway_runner", None)
@@ -4214,7 +4236,16 @@ class OmnesisAdapter(BasePlatformAdapter):
             authorize = getattr(runner, "_is_user_authorized_for_source", None)
             if not callable(authorize):
                 authorize = getattr(runner, "_is_user_authorized", None)
-            if not callable(authorize) or not authorize(source, allow_adapter_delegation=False):
+            try:
+                parameter = inspect.signature(authorize).parameters.get("allow_adapter_delegation")
+            except (TypeError, ValueError):
+                parameter = None
+            if parameter is None:
+                raise HostCompatibilityError(
+                    "Update Hermes to 0.21.0 or newer and restart its gateway before resuming "
+                    "held answers; this host lacks explicit origin authorization checks"
+                ) from None
+            if not authorize(source, allow_adapter_delegation=False):
                 raise RuntimeError("Hermes completion origin is no longer authorized")
         # Both ingress layers validate the key. Check before calling the adapter,
         # whose fire-and-forget handler otherwise silently discards a mismatch.
@@ -4253,6 +4284,7 @@ class OmnesisAdapter(BasePlatformAdapter):
     async def _resume_api_session(
         self, native_session_id: str, profile: Optional[str], answer: Dict[str, Any]
     ) -> None:
+        self._require_safe_completion_events()
         from gateway.wake import adapter_supports_push, deliver_wake
 
         runner = getattr(self, "gateway_runner", None)
@@ -4352,6 +4384,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         whichever firing the session ran last — files this run's account over
         a sibling's and flips a status nobody here can vouch for.
         """
+        self._require_safe_completion_events()
         assert self._state is not None
         deferred_delivery = self._state.deferred_outcome_delivery(
             chat_id, native_conversation_id

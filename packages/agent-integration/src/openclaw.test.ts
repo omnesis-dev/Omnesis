@@ -83,6 +83,7 @@ function api(mode: string) {
       ) => tools.push({ factory, options }),
     ),
     runtime: {
+      version: "2026.10.5",
       agent: { session: { listSessionEntries: () => [] } },
       subagent: {
         run: vi.fn(async () => ({ runId: "run-fictional-1" })),
@@ -295,6 +296,47 @@ describe("answer completion transport during a rolling upgrade", () => {
     expect(fake.runtime.channel.outbound.loadAdapter).not.toHaveBeenCalled();
     await service.stop();
   });
+
+  test.each([
+    undefined,
+    "",
+    "unknown",
+    "2026.7.1-2",
+    "2026.10.4",
+    "2026.10.5-beta.1",
+    "2026.11.1-rc.1",
+    "2026.99.1",
+  ])("keeps a chat completion retryable on unsupported host %s", async (version) => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+      status: "released",
+      answer: "Fictional held answer.",
+    } as never);
+    const { fake, service, run } = await setupCompletion(true);
+    fake.runtime.version = version as string;
+    await expect(run()).rejects.toThrow("Update OpenClaw to stable 2026.10.5");
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+    fake.runtime.version = "2026.10.5";
+    await run();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+    await service.stop();
+  });
+
+  test.each(["2026.10.5", "2026.10.5-2", "2026.11.1", "2027.1.1"])(
+    "admits chat completion on stable host %s",
+    async (version) => {
+      vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+      vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+        status: "released",
+        answer: "Fictional held answer.",
+      } as never);
+      const { fake, service, run } = await setupCompletion(true);
+      fake.runtime.version = version;
+      await run();
+      expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+      await service.stop();
+    },
+  );
 
   test.each(["missing", "reset", "rerouted", "denied", "internal", "none"])(
     "does not resume a %s chat session",
