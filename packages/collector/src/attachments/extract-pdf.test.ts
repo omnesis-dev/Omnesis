@@ -105,6 +105,80 @@ describe("extractPdfText", () => {
   });
 });
 
+describe("extractPdfText — corrupt cross-reference tables", () => {
+  /**
+   * PDF parsers leave internal promises behind that reject after the parse
+   * has been given up (a failed page's text task, a prefetched page object),
+   * so a corrupt file can raise an unhandled rejection after extraction has
+   * already returned. Any rejection that escapes is recorded here.
+   */
+  async function strayRejectionsDuring(run: () => Promise<unknown>): Promise<unknown[]> {
+    const stray: unknown[] = [];
+    const onRejection = (reason: unknown) => stray.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      await run();
+      // Let any late rejection surface: it is reported once the microtask
+      // queue drains, which may be well after the call has returned.
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    return stray;
+  }
+
+  test("a page whose content stream cannot be found yields null and leaks nothing", async () => {
+    // The only page's content stream (object 4) sits at a different offset
+    // than the cross-reference table says. Extracted repeatedly, as successive
+    // syncs revisiting the file would: whether a parser's late rejection
+    // escapes depends on its timing, and a warm parser is the one that leaks.
+    const pdf = createPdfWithMisplacedObjects(["Fictional invoice for paper lanterns"], [4]);
+    const results: unknown[] = [];
+    const stray = await strayRejectionsDuring(async () => {
+      for (let i = 0; i < 10; i++) results.push(await extractPdfText(pdf));
+    });
+    expect(results).toEqual(Array(10).fill(null));
+    expect(stray.map(String)).toEqual([]);
+  });
+
+  test("misplaced page objects are recovered without leaking a rejection", async () => {
+    // Both page objects (3 and 5) are misplaced, so the parser's parallel
+    // prefetch of the page tree fails before it falls back to scanning.
+    const pdf = createPdfWithMisplacedObjects(
+      ["Fictional page one about kites", "Fictional page two about gliders"],
+      [3, 5],
+    );
+    let result = null as Awaited<ReturnType<typeof extractPdfText>>;
+    const stray = await strayRejectionsDuring(async () => {
+      result = await extractPdfText(pdf);
+    });
+    expect(stray.map(String)).toEqual([]);
+    expect(result).not.toBeNull();
+  });
+
+  test("one unreadable page does not cost the readable pages their text", async () => {
+    // Page two's content stream (object 6) is misplaced; pages one and three
+    // are intact.
+    const pdf = createPdfWithMisplacedObjects(
+      [
+        "Fictional page one about kites",
+        "Unreachable page two",
+        "Fictional page three about sails",
+      ],
+      [6],
+    );
+    let result = null as Awaited<ReturnType<typeof extractPdfText>>;
+    const stray = await strayRejectionsDuring(async () => {
+      result = await extractPdfText(pdf);
+    });
+    expect(stray.map(String)).toEqual([]);
+    expect(result?.pages).toBe(3);
+    expect(result?.text).toContain("page one about kites");
+    expect(result?.text).toContain("page three about sails");
+    expect(result?.text).not.toContain("Unreachable");
+  });
+});
+
 /**
  * Create a minimal valid PDF buffer with the given text content.
  * This creates a bare-bones PDF 1.4 file.
@@ -162,6 +236,43 @@ function createTwoColumnPdf(left: string, right: string): Uint8Array {
   ];
 
   return new TextEncoder().encode(lines.join("\n"));
+}
+
+/**
+ * A text PDF, one page per entry in `pageTexts`, whose cross-reference table
+ * points the objects numbered in `misplaced` one byte past where they
+ * really start. Object 1 is the catalog, 2 the page tree, then each page and
+ * its content stream (3 and 4 for page one, 5 and 6 for page two, …), and the
+ * font last. Padded past 4 KiB: a smaller Buffer is a slice of Node's shared
+ * pool, and a parser that reads the view's underlying ArrayBuffer would parse
+ * other memory instead of the fixture.
+ */
+function createPdfWithMisplacedObjects(pageTexts: string[], misplaced: number[]): Uint8Array {
+  const fontObj = 3 + pageTexts.length * 2;
+  const kids = pageTexts.map((_, i) => `${3 + i * 2} 0 R`).join(" ");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${kids}] /Count ${pageTexts.length} >>`,
+  ];
+  for (const [i, text] of pageTexts.entries()) {
+    const stream = `BT /F1 12 Tf 72 700 Td (${text}) Tj ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >> >>`,
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    );
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  let content = `%PDF-1.4\n%${"0".repeat(4096)}\n`;
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(content.length + (misplaced.includes(index + 1) ? 1 : 0));
+    content += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = content.length;
+  content += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) content += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  content += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(content);
 }
 
 /** Actual one-page PDF with a raster XObject and no native/hidden text. */

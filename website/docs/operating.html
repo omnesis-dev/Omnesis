@@ -245,6 +245,12 @@ collector    omnesis-collector.service                running        41283</pre>
           cleanly, such as one waiting to be re-paired, stays stopped until you start it.
         </p>
         <p>
+          An error thrown and not caught ends the collector so its service restarts it. An error an
+          asynchronous task reported to no one does not: the collector writes
+          <code>Unhandled rejection (continuing)</code> to its error log and keeps syncing. Include
+          that line when you report the problem.
+        </p>
+        <p>
           The generated services create files owner-only (<code>umask 077</code>). On Linux the
           systemd units also get a private temporary directory, a read-only view of the system and
           home directories apart from Omnesis's own paths, no new privileges and restricted address

@@ -3,27 +3,23 @@
 
 /**
  * Per-page PDF OCR interleave: native text layer + OCR of image-only
- * pages, spliced together in page order. unpdf + the text joiner are mocked so
- * we can construct exact per-page native text (a real mixed PDF fixture would
- * be brittle); the OCR fn is a stub returning page-aligned `pageTexts`.
+ * pages, spliced together in page order. The page reader is mocked so we can
+ * construct exact per-page native text (a real mixed PDF fixture would be
+ * brittle); the OCR fn is a stub returning page-aligned `pageTexts`.
  */
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
 
-vi.mock("unpdf", () => ({ extractTextItems: vi.fn() }));
-vi.mock("./pdf-text-joiner.js", () => ({
-  joinPageTextItems: vi.fn((p: { text?: string }) => p?.text ?? ""),
-}));
+vi.mock("./pdf-pages.js", () => ({ readPdfPages: vi.fn() }));
 
-import { extractTextItems } from "unpdf";
+import { readPdfPages } from "./pdf-pages.js";
 import { SyncError } from "@omnesis/types";
 import { extractPdfText } from "./extract-pdf.js";
 import type { OcrFn } from "@omnesis/core";
 
-const mockedExtract = vi.mocked(extractTextItems);
+const mockedExtract = vi.mocked(readPdfPages);
 const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]); // "%PDF"
-const pages = (...texts: string[]) =>
-  ({ totalPages: texts.length, items: texts.map((t) => ({ text: t })) }) as never;
+const pages = (...texts: string[]) => texts;
 
 beforeEach(() => mockedExtract.mockReset());
 
