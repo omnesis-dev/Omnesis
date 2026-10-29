@@ -514,18 +514,31 @@ describe("website docs", () => {
       diagram.indexOf("arch-built-in-agent"),
     );
     expect(landing).toMatch(/\.arch-privacy-gate \{[\s\S]*?grid-row: 1;/);
-    expect(landing).toMatch(/\.arch-boundary-grid \{[\s\S]*?grid-template-rows: 92px 176px;/);
-    expect(landing).toMatch(/\.arch-built-in-agent \{[\s\S]*?grid-row: 2;/);
-    expect(diagram.match(/class="arch-route-block/g)).toHaveLength(2);
+    expect(landing).toMatch(/\.arch-boundary-grid \{[\s\S]*?grid-template-rows: 58px 50px 150px;/);
+    expect(landing).toMatch(/\.arch-built-in-agent \{[\s\S]*?grid-row: 3;/);
+    expect(diagram.match(/class="arch-route-block/g)).toHaveLength(3);
     expect(diagram).not.toContain("arch-route-junction");
     expect(landing).toMatch(
-      /\.arch-route-block--gate,\s*\.arch-route-block--agent \{\s*fill: var\(--text-dim\);/,
+      /\.arch-route-block--gate,\s*\.arch-route-block--direct,\s*\.arch-route-block--agent \{\s*fill: var\(--text-dim\);/,
     );
     expect(landing).toMatch(/\.external-agent-list \{[\s\S]*?margin-top: 0;/);
     expect(landing).toMatch(/\.arch-arrow--egress \{[\s\S]*?color: var\(--text-dim\);/);
     expect(landing).toMatch(/\.sandbox-badge \{[\s\S]*?color: var\(--text-secondary\);/);
     expect(landing).not.toMatch(/\.arch-built-in-agent \{[^}]*border-color:/);
     expect(landing).not.toMatch(/\.arch-privacy-gate \{[^}]*border-color:/);
+  });
+
+  it("shows Direct access as a separate external-agent path that skips the privacy review", () => {
+    const diagram = landing.match(/<div class="arch-diagram[\s\S]*?<\/section>/)?.[0] ?? "";
+    const gate = diagram.indexOf("arch-privacy-gate");
+    const direct = diagram.indexOf("arch-direct");
+    expect(direct).toBeGreaterThan(gate);
+    expect(direct).toBeLessThan(diagram.indexOf("arch-built-in-agent"));
+    expect(diagram).toContain("arch-route-block--direct");
+    expect(diagram).toContain("arch-mobile-route--direct");
+    expect(landing).toMatch(/\.arch-direct \{[\s\S]*?grid-row: 2;[\s\S]*?border-style: dashed;/);
+    const egress = diagram.match(/<div class="arch-arrow arch-arrow--egress">[\s\S]*?<\/div>/)?.[0];
+    expect(egress?.match(/<svg/g)).toHaveLength(2);
   });
 });
 

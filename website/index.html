@@ -12,7 +12,7 @@
     <meta property="og:title" content="Omnesis — Index and search your entire digital life" />
     <meta
       property="og:description"
-      content="Index and search your entire digital life. Fully local, fully private."
+      content="Index and search your entire digital life. Your index stays on your hardware, and data leaves it only for the models and agents you choose."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -100,7 +100,7 @@
         --accent-glow: rgba(88, 166, 255, 0.15);
         --accent-glow-strong: rgba(88, 166, 255, 0.25);
 
-        /* Secondary brand purple (hero gradient + Vision "tomorrow" card) */
+        /* Secondary brand purple (hero gradient + accents) */
         --purple: #a78bfa;
 
         /* Semantic source colors */
@@ -147,11 +147,6 @@
         /* Component tokens that need a different treatment per theme (deeper,
            higher-contrast values on white) — the light overrides live in the
            light block. Defaults here reproduce the current dark appearance. */
-        /* Vision Today / Tomorrow pill tags. */
-        --tag-today-bg: rgba(88, 166, 255, 0.15);
-        --tag-today-text: var(--accent);
-        --tag-tomorrow-bg: rgba(167, 139, 250, 0.15);
-        --tag-tomorrow-text: var(--purple);
         /* Email signup input. */
         --input-bg: var(--bg-secondary);
         --input-border: var(--border);
@@ -268,12 +263,6 @@
         --frame-glass-edge: #7e858f; /* subtle recessed groove where bezel meets the screen */
         --frame-screen: #ffffff;
 
-        /* Pill tags: soft light-pastel fill with deep, high-contrast text so
-           they read as crisp tags rather than washing out on white. */
-        --tag-today-bg: #dbeafe; /* blue-100 */
-        --tag-today-text: #1d4ed8; /* blue-700 */
-        --tag-tomorrow-bg: #ede9fe; /* violet-100 */
-        --tag-tomorrow-text: #6d28d9; /* violet-700 */
         /* Signup input: a faint fill + a clearly-defined slate border so the
            field holds its structure beside the solid CTA instead of dissolving
            into the white grid. */
@@ -1649,6 +1638,7 @@
         display: none;
       }
       .arch-route-block--gate,
+      .arch-route-block--direct,
       .arch-route-block--agent {
         fill: var(--text-dim);
       }
@@ -1661,12 +1651,12 @@
       }
       .arch-boundary-grid {
         display: grid;
-        grid-template-rows: 92px 176px;
+        grid-template-rows: 58px 50px 150px;
         gap: 10px;
       }
       .arch-built-in-agent {
         position: relative;
-        grid-row: 2;
+        grid-row: 3;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1704,7 +1694,7 @@
         align-items: center;
         justify-content: center;
         text-align: center;
-        padding: 9px 10px;
+        padding: 7px 10px;
       }
       .privacy-gate-name {
         color: var(--text-primary);
@@ -1713,6 +1703,29 @@
         line-height: 1.2;
       }
       .privacy-gate-desc {
+        color: var(--text-muted);
+        font-size: 9px;
+        line-height: 1.35;
+        margin-top: 3px;
+      }
+      /* Direct access returns raw records without the privacy review; the
+         dashed outline marks it as the path that skips the gate. */
+      .arch-direct {
+        grid-row: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 7px 10px;
+        border-style: dashed;
+      }
+      .direct-name {
+        color: var(--text-primary);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .direct-desc {
         color: var(--text-muted);
         font-size: 9px;
         line-height: 1.35;
@@ -1787,8 +1800,11 @@
         align-self: flex-start;
         margin-top: 168px;
       }
+      /* One arrow each from the Privacy Gate and from Direct access. */
       .arch-arrow--egress {
-        margin-top: 65px;
+        flex-direction: column;
+        gap: 46px;
+        margin-top: 46px;
         color: var(--text-dim);
       }
 
@@ -1808,7 +1824,7 @@
         }
         .arch-boundary-grid {
           flex: 1;
-          grid-template-rows: 92px 1fr;
+          grid-template-rows: 58px 50px 1fr;
         }
       }
 
@@ -1831,6 +1847,10 @@
         }
         .arch-arrow svg {
           transform: rotate(90deg);
+        }
+        /* Stacked, both egress routes leave the column through one arrow. */
+        .arch-arrow--egress svg + svg {
+          display: none;
         }
         .arch-col,
         .arch-collector,
@@ -1866,6 +1886,9 @@
         }
         .arch-mobile-route--watch {
           color: var(--color-device);
+        }
+        .arch-mobile-route--direct {
+          color: var(--text-secondary);
         }
         .external-agent-list {
           margin-top: 0;
@@ -3353,8 +3376,8 @@
             </h1>
             <p class="hero-sub">
               A personal data substrate that gives AI agents — and you — instant recall across
-              email, messages, notes, calendar, health, files, and more. Everything stays on your
-              hardware.
+              email, messages, notes, calendar, health, files, and more. The index lives on your
+              hardware, and data leaves it only for the models and agents you choose.
             </p>
             <div class="install-card" id="install">
               <div class="install-tabs" role="tablist" aria-label="How to install">
@@ -4615,24 +4638,30 @@
               <svg
                 viewBox="0 0 36 278"
                 role="img"
-                aria-label="All capabilities can feed Privacy Gate. Search, walk, and SQL can also feed the sandboxed Omnesis Agent."
+                aria-label="All capabilities can feed Privacy Gate. Search, walk, and SQL can also reach external agents through Direct access, which skips the privacy review, and feed the sandboxed Omnesis Agent."
               >
                 <path
                   class="arch-route-block arch-route-block--gate"
-                  d="M0 45H24V41L36 49L24 57V53H0Z"
+                  d="M0 25H24V21L36 29L24 37V33H0Z"
+                />
+                <path
+                  class="arch-route-block arch-route-block--direct"
+                  d="M0 89H24V85L36 93L24 101V97H0Z"
                 />
                 <path
                   class="arch-route-block arch-route-block--agent"
-                  d="M0 189H24V185L36 193L24 201V197H0Z"
+                  d="M0 199H24V195L36 203L24 211V207H0Z"
                 />
               </svg>
               <div class="arch-mobile-routes" aria-hidden="true">
                 <span class="arch-mobile-route--watch">All capabilities → Privacy Gate</span>
+                <span class="arch-mobile-route--direct">Search · Walk · SQL → Direct access</span>
                 <span class="arch-mobile-route--tools">Search · Walk · SQL → Omnesis Agent</span>
               </div>
             </div>
 
-            <!-- Built-in agent and mandatory egress boundary -->
+            <!-- Access boundary: the reviewed Privacy Gate, the unreviewed Direct
+                 path, and the sandboxed built-in agent -->
             <div class="arch-boundary">
               <div class="arch-label arch-label--private">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -4648,6 +4677,12 @@
                     <div class="privacy-gate-desc">Allow · reduce · ask · deny</div>
                   </div>
                 </div>
+                <div class="arch-card arch-direct">
+                  <div>
+                    <div class="direct-name">Direct access</div>
+                    <div class="direct-desc">Raw records, no review</div>
+                  </div>
+                </div>
                 <div class="arch-card arch-built-in-agent">
                   <div class="built-in-name">Omnesis Agent</div>
                   <div class="built-in-desc">
@@ -4661,9 +4696,11 @@
 
             <div class="arch-arrow arch-arrow--egress">
               <svg viewBox="0 0 36 18"><path d="M0 5 H24 V1 L36 9 L24 17 V13 H0 Z" /></svg>
+              <svg viewBox="0 0 36 18"><path d="M0 5 H24 V1 L36 9 L24 17 V13 H0 Z" /></svg>
             </div>
 
-            <!-- External agents receive only Privacy Gate-approved context -->
+            <!-- External agents receive Privacy Gate-reviewed answers, or raw
+                 records when their access level grants Direct -->
             <div class="arch-agents">
               <div class="arch-label">External agents</div>
               <div class="external-agent-list">
@@ -4947,10 +4984,11 @@
             <div class="section-label">Getting started</div>
             <h2 class="section-title">
               Minutes to set up.<br />
-              Zero maintenance.
+              Synced in the background.
             </h2>
             <p class="section-subtitle">
-              Connect a source with one click. Omnesis handles the rest in the background.
+              Most sources connect with one sign-in or scan. Google sources first need an OAuth
+              client in your own Google Cloud project, and the add flow walks you through it.
             </p>
           </div>
 
