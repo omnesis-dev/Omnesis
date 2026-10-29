@@ -646,6 +646,7 @@ export {
 } from "./network-discovery.js";
 
 export {
+  classifyPairingHost,
   isTailnetName,
   judgePairingAddress,
   pairingHost,
@@ -657,6 +658,7 @@ export {
   type PairingAddressPlan,
   type PairingAddressReach,
   type PairingAddressVerdict,
+  type PairingHostClass,
   type PairingPlatform,
 } from "./pairing-address.js";
 

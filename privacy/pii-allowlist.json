@@ -2052,7 +2052,8 @@
       "value": "172.20.0.5",
       "paths": [
         "packages/core/src/pairing-address.test.ts",
-        "packages/gateway/portal/js/views/access/client-setup.test.ts"
+        "packages/gateway/portal/js/views/access/client-setup.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts"
       ],
       "reason": "invented private-address fixture for the RFC 1918 172.16/12 range"
     },
@@ -2088,7 +2089,10 @@
     },
     {
       "value": "10.0.0.9",
-      "paths": ["packages/gateway/src/mdns-advertiser.test.ts"],
+      "paths": [
+        "packages/gateway/src/mdns-advertiser.test.ts",
+        "packages/gateway/src/tls-lifecycle/service.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -2154,13 +2158,15 @@
       "value": "192.168.1.20",
       "paths": [
         "packages/cli/src/commands/phone-pairing.test.ts",
+        "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/collector/src/main.test.ts",
         "packages/core/src/mdns-discovery.test.ts",
         "packages/core/src/mdns-discovery.ts",
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/access.test.ts",
         "packages/gateway/portal/js/views/access/client-setup.test.ts",
-        "packages/gateway/src/http/services/PairingQrService.test.ts"
+        "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "packages/gateway/src/tls-lifecycle/service.test.ts"
       ],
       "reason": "invented private-LAN fixture"
     },

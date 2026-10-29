@@ -935,9 +935,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
           Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
           on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
-          Bridge mode is the default and needs an explicit gateway URL on other devices. Publishing
-          UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use
-          an explicit URL there. Only run one gateway on each chosen port.
+          Bridge mode is the default and needs an explicit gateway URL on other devices; with its
+          own certificate, the gateway offers phones the host addresses the installer wrote into it.
+          Publishing UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside
+          a VM; use an explicit URL there. Only run one gateway on each chosen port.
         </p>
         <p>
           OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider

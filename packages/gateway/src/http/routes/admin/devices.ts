@@ -142,6 +142,8 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     listenPort: deps.gatewayPort,
     advertisedLocalName: deps.advertisedPairingHost,
     certificateRenewsAt: deps.certificateRenewsAt,
+    hostNames: deps.pairingHostNames,
+    inContainer: deps.inContainer,
   });
   // Production shares the instance whose WS lifecycle records reconnects;
   // narrow route tests may omit it and receive the equivalent stateless view.

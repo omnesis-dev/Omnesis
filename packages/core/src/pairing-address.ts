@@ -104,7 +104,7 @@ export interface PairingAddressContext {
 }
 
 /** What kind of host a URL names, as far as reachability and ATS care. */
-type HostClass =
+export type PairingHostClass =
   | "loopback"
   | "local-address"
   | "local-name"
@@ -128,7 +128,7 @@ export function judgePairingAddress(
     return { usable: false, reason: "Phones pair only with a gateway address that uses HTTPS." };
   }
   const host = pairingHost(url);
-  const hostClass = classifyHost(host);
+  const hostClass = classifyPairingHost(host);
   const trusted = publiclyCertifiable(hostClass) && context.isSystemTrusted(url.origin, host);
   const pinnedUntil = trusted ? null : (context.pinnedUntil ?? null);
   const usable = (reach: PairingAddressReach, changingAddress = false): PairingAddressVerdict => {
@@ -194,7 +194,7 @@ export function judgePairingAddress(
  * Tailscale and loopback addresses and `.local` names never carry a publicly
  * trusted certificate, so a trust allowlist entry for one is not honored.
  */
-function publiclyCertifiable(hostClass: HostClass): boolean {
+function publiclyCertifiable(hostClass: PairingHostClass): boolean {
   return (
     hostClass === "tailnet-name" || hostClass === "public-name" || hostClass === "public-address"
   );
@@ -242,7 +242,8 @@ export function isTailnetName(host: string): boolean {
   return host.toLowerCase().replace(/\.$/u, "").endsWith(".ts.net");
 }
 
-function classifyHost(host: string): HostClass {
+/** What kind of host `host` is, written as `pairingHost` returns it. */
+export function classifyPairingHost(host: string): PairingHostClass {
   const family = isIP(host);
   if (family === 4) return classifyIpv4(host);
   if (family === 6) return classifyIpv6(host);
@@ -253,7 +254,7 @@ function classifyHost(host: string): HostClass {
   return "public-name";
 }
 
-function classifyIpv4(host: string): HostClass {
+function classifyIpv4(host: string): PairingHostClass {
   const [a = 0, b = 0] = host.split(".").map(Number);
   if (a === 127) return "loopback";
   // RFC 1918 private ranges and 169.254/16 link-local.
@@ -266,7 +267,7 @@ function classifyIpv4(host: string): HostClass {
   return "public-address";
 }
 
-function classifyIpv6(host: string): HostClass {
+function classifyIpv6(host: string): PairingHostClass {
   if (host === "::1") return "loopback";
   if (/^fe[89ab]/u.test(host)) return "local-address";
   // Tailscale's IPv6 prefix.

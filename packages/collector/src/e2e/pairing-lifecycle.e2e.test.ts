@@ -18,8 +18,14 @@
  * second sets up the repair in the fourth, which burns a one-shot pairing
  * code and rotates `workstation.token` for the fifth. Running one in
  * isolation, or retrying one, will not reproduce that sequence.
+ *
+ * The gateway boots the way a Docker install starts one: told the host's names
+ * in OMNESIS_TLS_EXTRA_NAMES, on a certificate minted before one of them was
+ * added. Phones are offered the names that certificate covers, and only those.
  */
-import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -31,6 +37,51 @@ import {
 const EXCLUSIVE = "gmail-synth:operator@example.com";
 const REPLICATED = "notes-synth:operator@example.com";
 const PARTITIONED = "activity-synth:operator@example.com";
+
+/** The host names a Docker install hands its gateway; the last is not in its certificate. */
+const HOST_NAMES = ["pairing-host", "192.168.1.20", "uncovered-host"];
+
+/** A self-signed pair in `configDir/tls` that covers every host name but the last. */
+function mintCertificateBeforeLastName(configDir: string): void {
+  const tlsDir = join(configDir, "tls");
+  mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+  const scratch = mkdtempSync(join(tmpdir(), "omnesis-pairing-tls-"));
+  const cnf = join(scratch, "openssl.cnf");
+  writeFileSync(
+    cnf,
+    [
+      "[req]",
+      "distinguished_name = dn",
+      "prompt = no",
+      "x509_extensions = v3",
+      "[dn]",
+      "CN = pairing-lifecycle",
+      "[v3]",
+      "basicConstraints = CA:FALSE",
+      "subjectAltName = DNS:localhost, DNS:gateway, DNS:omnesis.local, IP:127.0.0.1, DNS:pairing-host, IP:192.168.1.20",
+    ].join("\n"),
+  );
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "3650",
+      "-keyout",
+      join(tlsDir, "key.pem"),
+      "-out",
+      join(tlsDir, "cert.pem"),
+      "-config",
+      cnf,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  rmSync(scratch, { recursive: true, force: true });
+}
 
 interface DeviceRow {
   id: string;
@@ -110,7 +161,10 @@ describe("pairing lifecycle: revoke, repair, re-pair", () => {
     ).cursor;
 
   beforeAll(async () => {
-    harness = new MultiCollectorHarness();
+    harness = new MultiCollectorHarness({
+      extraGatewayEnv: { OMNESIS_TLS_EXTRA_NAMES: HOST_NAMES.join(",") },
+    });
+    mintCertificateBeforeLastName(harness.gatewayConfigDir);
     writeFileSync(
       join(harness.gatewayConfigDir, ".env"),
       "OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN=https://gateway.example-tailnet.ts.net:7600\n",
@@ -220,6 +274,43 @@ describe("pairing lifecycle: revoke, repair, re-pair", () => {
     expect(JSON.parse((await encode(await mint("android"), tailnetIp)).qrPayload)).toMatchObject({
       v: 3,
       gatewayUrl: tailnetIp,
+    });
+  });
+
+  test("a phone is offered the host names the served certificate covers", async () => {
+    const { pairingCode } = await harness.json<{ pairingCode: string }>("/admin/devices/pair", {
+      method: "POST",
+      body: JSON.stringify({ kind: "android" }),
+    });
+    const plan = await harness.json<{
+      addresses: Array<{ gatewayUrl: string; host: string; label: string; usable: boolean }>;
+    }>("/admin/devices/pair-addresses", {
+      method: "POST",
+      body: JSON.stringify({ pairingCode }),
+    });
+    const port = new URL(harness.gatewayUrl).port;
+    expect(plan.addresses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          gatewayUrl: `https://192.168.1.20:${port}`,
+          label: "Local network",
+          usable: true,
+        }),
+        expect.objectContaining({
+          gatewayUrl: `https://pairing-host:${port}`,
+          label: "Host name",
+          usable: true,
+        }),
+      ]),
+    );
+    expect(plan.addresses.map((a) => a.host)).not.toContain("uncovered-host");
+    const qr = await harness.json<{ qrPayload: string }>("/admin/devices/pair-qr", {
+      method: "POST",
+      body: JSON.stringify({ pairingCode, gatewayUrl: `https://192.168.1.20:${port}` }),
+    });
+    expect(JSON.parse(qr.qrPayload)).toMatchObject({
+      v: 3,
+      gatewayUrl: `https://192.168.1.20:${port}`,
     });
   });
 

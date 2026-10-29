@@ -89,7 +89,7 @@ import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js"
 import { directIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
-import { generateSelfSigned, resolveTlsBundle } from "./tls.js";
+import { generateSelfSigned, resolveTlsBundle, tlsExtraHostNames } from "./tls.js";
 import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycle/addressing.js";
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
@@ -1724,6 +1724,10 @@ if (tlsBundle.source === "auto-generated") {
 // and the lifecycle task is scheduled only then: an activation with nothing
 // listening is refused rather than recorded as served.
 let activeServer: HttpsServer | undefined;
+// A container has no `tailscale` or `mkcert`, and behind a Docker bridge sees
+// only its own network: the host's names reach it in OMNESIS_TLS_EXTRA_NAMES.
+const inContainer = existsSync("/.dockerenv");
+const tlsExtraHosts = tlsExtraHostNames(process.env.OMNESIS_TLS_EXTRA_NAMES);
 const addressedHosts = () =>
   partitionAddressedHosts({
     gatewayUrl: process.env.OMNESIS_GATEWAY_URL,
@@ -1753,8 +1757,8 @@ const tlsLifecycle = new TlsLifecycleService({
       configStore.get().gateway?.tls?.renewBeforeDays ??
       CONFIG_DEFAULTS.gateway.tls.renewBeforeDays,
   }),
-  // A container has no `tailscale` or `mkcert`; those tiers renew on the host.
-  inContainer: existsSync("/.dockerenv"),
+  // Those tiers renew on the host.
+  inContainer,
   onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
 });
 
@@ -2597,6 +2601,10 @@ const app = createServer(db, DB_PATH, {
   publiclyTrustedPairingHosts: () => tlsLifecycle.publiclyTrustedNames(),
   advertisedPairingHost: () => advertiser?.advertisedHost() ?? null,
   certificateRenewsAt: () => tlsLifecycle.nextRenewalAt(),
+  // Offered to phones only while the served certificate still covers them: a
+  // certificate kept from before a name was added does not.
+  pairingHostNames: () => tlsLifecycle.coveredHosts(tlsExtraHosts),
+  inContainer,
   systemTrustPairingOrigins: () => [
     ...(runtime.publicBaseUrl ? [runtime.publicBaseUrl] : []),
     ...runtime.pairingSystemTrustOrigins,

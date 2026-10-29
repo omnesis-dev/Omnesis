@@ -585,6 +585,13 @@ export function createServer(
     /** When the served certificate will next be replaced by the gateway, or null. */
     certificateRenewsAt?: () => Date | null;
     /**
+     * Names the host is reached by that the gateway cannot discover for itself
+     * (OMNESIS_TLS_EXTRA_NAMES), as far as the served certificate covers them.
+     */
+    pairingHostNames?: () => readonly string[];
+    /** Whether the gateway runs inside a container. */
+    inContainer?: boolean;
+    /**
      * Externally-reachable HTTPS base URL of this gateway (no trailing
      * slash). Forwarded to a collector's `auth.begin` so a source's
      * `authFlow` can build `${publicBaseUrl}/oauth/callback`. Populated by
@@ -1468,6 +1475,8 @@ export function createServer(
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
     advertisedPairingHost: opts?.advertisedPairingHost,
     certificateRenewsAt: opts?.certificateRenewsAt,
+    pairingHostNames: opts?.pairingHostNames,
+    inContainer: opts?.inContainer,
     gatewayPort: opts?.port,
     searchSnapshot: opts?.searchSnapshot,
     doctorService,
