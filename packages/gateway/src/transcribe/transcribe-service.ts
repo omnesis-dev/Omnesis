@@ -36,6 +36,22 @@ const log = createLogger("gateway:transcribe");
 /** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
+/** An unavailable capability is distinct from a failed recording or cancelled caller. */
+export type TranscriptionOutcome =
+  | { kind: "transcribed"; result: TranscriptionResult }
+  | { kind: "unavailable" }
+  | { kind: "failed" }
+  | { kind: "cancelled" };
+
+export interface TranscribeOptions {
+  language?: string;
+  minTimeoutMs?: number;
+  context?: TranscriptionContext;
+  allowVocabulary?: boolean;
+  /** Aborted when the caller stops waiting; queued work it covers is skipped. */
+  signal?: AbortSignal;
+}
+
 /**
  * How long a transcription waits for its vocabulary hints. The lookup is a
  * bounded indexed read at user priority on the io worker (a 200 ms latency
@@ -246,29 +262,22 @@ export class TranscribeService {
     });
   }
 
-  /**
-   * Transcribe audio bytes. Returns null when no transcriber is configured or
-   * loadable, AND when the transcription itself fails — a worker crash
-   * (whisper.cpp segfault), a timeout, or a decode/inference error. The caller
-   * (the route) maps null to `{ available: false }`, which the collector treats
-   * as "no transcript yet" and leaves the note to retry on a later sync. A
-   * failed transcription must NEVER propagate as a throw: the worker runs in an
-   * isolated subprocess precisely so its crash can't take the gateway down, and
-   * surfacing it as a 5xx would defeat that — the supervisor already respawns
-   * the worker for the next call.
-   */
+  /** Best-effort transcription for callers that own their retry policy. */
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: {
-      language?: string;
-      minTimeoutMs?: number;
-      context?: TranscriptionContext;
-      allowVocabulary?: boolean;
-      /** Aborted when the caller stops waiting; queued work it covers is skipped. */
-      signal?: AbortSignal;
-    },
+    opts?: TranscribeOptions,
   ): Promise<TranscriptionResult | null> {
+    const outcome = await this.transcribeOutcome(audio, mimeType, opts);
+    return outcome.kind === "transcribed" ? outcome.result : null;
+  }
+
+  /** Preserve failure classification for source audio and its backlog notices. */
+  async transcribeOutcome(
+    audio: Uint8Array,
+    mimeType: string,
+    opts?: TranscribeOptions,
+  ): Promise<TranscriptionOutcome> {
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous
     // capability (kills its worker subprocess); doing that resolution inside the
@@ -280,10 +289,10 @@ export class TranscribeService {
       // still wants.
       if (opts?.signal?.aborted) {
         log.info("Skipped a queued transcription whose caller stopped waiting");
-        return null;
+        return { kind: "cancelled" };
       }
       const capability = await this.ensureCapability();
-      if (!capability) return null;
+      if (!capability) return { kind: "unavailable" };
       try {
         let vocabulary: TranscriptionVocabulary | undefined;
         if (
@@ -302,9 +311,9 @@ export class TranscribeService {
         }
         if (opts?.signal?.aborted) {
           log.info("Skipped a transcription whose caller stopped waiting");
-          return null;
+          return { kind: "cancelled" };
         }
-        return await capability.transcribe(audio, mimeType, {
+        const result = await capability.transcribe(audio, mimeType, {
           ...(opts?.language ? { language: opts.language } : {}),
           ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
           ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -315,15 +324,16 @@ export class TranscribeService {
               }
             : {}),
         });
+        return { kind: "transcribed", result };
       } catch (err) {
         if (opts?.signal?.aborted) {
           log.info("Stopped a transcription whose caller stopped waiting");
-          return null;
+          return { kind: "cancelled" };
         }
         log.warn(
           `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,
         );
-        return null;
+        return { kind: "failed" };
       }
     });
   }

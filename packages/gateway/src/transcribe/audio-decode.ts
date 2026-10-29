@@ -16,6 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { streamableCaf } from "./caf-stream.js";
 
 const FFMPEG_STATIC_SPECIFIER = "ffmpeg-static";
 
@@ -127,6 +128,6 @@ export async function decodeToPcm16kMono(
       /* EPIPE if ffmpeg rejects the input before we finish writing — the
          non-zero exit is reported by the close handler. */
     });
-    ff.stdin.end(Buffer.from(bytes));
+    ff.stdin.end(streamableCaf(bytes));
   });
 }

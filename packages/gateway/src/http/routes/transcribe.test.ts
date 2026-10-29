@@ -81,6 +81,50 @@ describe("POST /inference/transcribe", () => {
     expect(body.text).toBe("meet me at the docks at nine");
   });
 
+  test.each(["decode", "backend"])(
+    "%s failure is retriable, not a missing model, and the next request recovers",
+    async (failure) => {
+      let fail = true;
+      resolved = {
+        role: "transcriber",
+        kind: "http",
+        backendKey: "speech",
+        model: "test-speech",
+        url: "http://127.0.0.1:8003",
+        available: true,
+        allowRemoteInference: false,
+      };
+      const service = new TranscribeService({
+        resolveAssignment: () => resolved,
+        deps: {
+          decodeAudio: async () => {
+            if (fail && failure === "decode") throw new Error("private decoder details");
+            return new Float32Array(1600);
+          },
+          fetchFn: (async () => {
+            if (fail && failure === "backend") throw new Error("private backend details");
+            return Response.json({ text: "recovered speech" });
+          }) as typeof fetch,
+        },
+      });
+      app = createServer(db, dbPath, { transcribeService: service });
+      try {
+        const failed = await post(enc("synthetic audio"));
+        expect(failed.status).toBe(503);
+        expect(await failed.json()).toEqual({
+          error: "Transcription failed; the audio will be retried.",
+          code: "SERVICE_UNAVAILABLE",
+        });
+        fail = false;
+        const recovered = await post(enc("synthetic audio"));
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toMatchObject({ available: true, text: "recovered speech" });
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
   test("reports available:false when no transcriber is configured", async () => {
     resolved = { role: "transcriber", kind: "disabled" };
     const res = await post(enc("hello"));
@@ -98,8 +142,8 @@ describe("POST /inference/transcribe", () => {
       body: enc("nobody is listening") as unknown as BodyInit,
       signal: gone.signal,
     });
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { available: boolean }).available).toBe(false);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "SERVICE_UNAVAILABLE" });
   });
 
   test("rejects an empty body with 400", async () => {

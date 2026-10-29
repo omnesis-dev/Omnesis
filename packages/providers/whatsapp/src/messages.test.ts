@@ -889,7 +889,9 @@ describe("WhatsAppMessagesSource", () => {
           count: 1,
           severity: "warning",
           message: "1 voice note waiting for a transcriber",
-          remediation: expect.objectContaining({ summary: "No transcriber model is assigned" }),
+          remediation: expect.objectContaining({
+            summary: "No transcriber is currently available",
+          }),
         }),
       ]);
     });

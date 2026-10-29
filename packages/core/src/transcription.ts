@@ -76,8 +76,8 @@ export type AudioTranscribeFn = (
 
 /**
  * The error a source records against an audio item when the gateway answered
- * that no transcriber can run. It is the one failure an operator fixes by
- * assigning a model, so the sources keep it distinguishable from every other
+ * that no transcriber can run. The assigned model may be missing or its backend unavailable,
+ * so the sources keep it distinguishable from every other
  * reason a transcript is missing. It is a per-item note in a source's own
  * store, not the HTTP error code the gateway's routes answer with.
  */
@@ -130,8 +130,8 @@ export interface TranscriptionBacklog {
 /**
  * The sync issues a source reports for its transcription backlog, so every
  * client shows the same count next to the source. A backlog a transcriber is
- * working through is information; one that waits for a transcriber nobody
- * assigned is a warning with the fix attached. Audio that is gone is reported
+ * working through is information; one that waits for an unavailable transcriber
+ * is a warning with troubleshooting steps attached. Audio that is gone is reported
  * once as a warning, since nothing will bring it back.
  */
 export function transcriptionSyncIssues(
@@ -153,9 +153,9 @@ export function transcriptionSyncIssues(
       ...(needsTranscriber
         ? {
             remediation: {
-              summary: "No transcriber model is assigned",
+              summary: "No transcriber is currently available",
               steps: [
-                "Assign one under Settings → Models, or run `omnesis model assign transcriber local/<id>`.",
+                "Check the transcriber under Settings → Models: assign a model if needed, or check that its backend is available.",
                 "Already-synced audio is retried on a schedule; resync the source to transcribe it now.",
               ],
               restartRequired: false,

@@ -295,7 +295,9 @@
                   <a href="/docs/operating#models">when a transcriber model is assigned</a>;
                   participants feed the people graph. A clip without a transcript says why in its
                   placeholder and is retried on a schedule; the source's notice on the Sources page
-                  counts the clips still waiting.
+                  counts the clips still waiting. Decoding or transcription failures are retried
+                  without reporting a missing model; an unavailable transcriber notice can also mean
+                  the assigned backend is unreachable.
                 </td>
               </tr>
               <tr>

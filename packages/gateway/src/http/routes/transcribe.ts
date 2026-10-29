@@ -14,10 +14,10 @@
  * Transcription is part of producing a document's content, not an admin op.
  */
 
-import { createLogger } from "@omnesis/core";
+import { assertNever, createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
-import { BadRequestError } from "../errors.js";
+import { BadRequestError, ServiceUnavailableError } from "../errors.js";
 import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
 import { transcriptionContextSchema } from "../schemas/transcription.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
@@ -79,7 +79,7 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
       }
     }
 
-    const result = await transcribeService.transcribe(body, mimeType, {
+    const outcome = await transcribeService.transcribeOutcome(body, mimeType, {
       language,
       context,
       allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
@@ -87,12 +87,20 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
       // work it no longer waits for is skipped or stopped.
       signal: c.req.raw.signal,
     });
-    if (result === null) {
-      // No transcriber configured/loadable. The collector treats this as
-      // "no transcript" and renders the plain placeholder.
-      return c.json({ available: false as const }, 200);
+    switch (outcome.kind) {
+      case "unavailable":
+        return c.json({ available: false as const }, 200);
+      case "failed":
+      case "cancelled":
+        // Keep decoder/backend diagnostics in server logs, not source documents.
+        throw new ServiceUnavailableError("Transcription failed; the audio will be retried.");
+      case "transcribed":
+        log.debug(
+          `Transcribed ${body.byteLength} bytes (${mimeType}) → ${outcome.result.text.length} chars`,
+        );
+        return c.json({ available: true as const, ...outcome.result }, 200);
+      default:
+        return assertNever(outcome);
     }
-    log.debug(`Transcribed ${body.byteLength} bytes (${mimeType}) → ${result.text.length} chars`);
-    return c.json({ available: true as const, ...result }, 200);
   });
 }

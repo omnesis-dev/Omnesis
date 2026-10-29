@@ -39,8 +39,8 @@ describe("transcriptionSyncIssues", () => {
     expect(issue.severity).toBe("warning");
     expect(issue.count).toBe(3);
     expect(issue.message).toBe("3 voice notes waiting for a transcriber");
-    expect(issue.remediation?.summary).toBe("No transcriber model is assigned");
-    expect(issue.remediation?.steps.join(" ")).toContain("omnesis model assign transcriber");
+    expect(issue.remediation?.summary).toBe("No transcriber is currently available");
+    expect(issue.remediation?.steps.join(" ")).toContain("check that its backend is available");
     expect(issue.remediation?.restartRequired).toBe(false);
   });
 
