@@ -354,26 +354,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The published image suffix and the Dockerfile stage that builds it.
-        # The updater is its own image because the container that drives an
-        # upgrade cannot be one of the containers being replaced.
+        # The published image suffix. The updater is its own image because the
+        # container that drives an upgrade cannot be one of the containers
+        # being replaced.
         image: [gateway, combined, collector, updater]
         arch: [amd64, arm64]
         include:
-          - image: gateway
-            target: gateway-runtime
-          - image: combined
-            target: combined-runtime
-          - image: collector
-            target: collector-runtime
-          - image: updater
-            target: updater
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
             runner: ubuntu-24.04-arm
     env:
       IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+      # The Dockerfile stage: <image>-runtime, except the updater's own stage.
+      IMAGE_TARGET: ${{ matrix.image == 'updater' && 'updater' || format('{0}-runtime', matrix.image) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -405,7 +399,6 @@ jobs:
       # tested layers for the export below.
       - name: Test the release image
         env:
-          IMAGE_TARGET: ${{ matrix.target }}
           IMAGE_ROLE: ${{ matrix.image }}
           IMAGE_ARCH: ${{ matrix.arch }}
         run: |
@@ -434,7 +427,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: ${{ env.IMAGE_TARGET }}
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_REPOSITORY }},push-by-digest=true,name-canonical=true,push=${{ needs.verify.outputs.images_armed == 'true' }}
           provenance: mode=max
