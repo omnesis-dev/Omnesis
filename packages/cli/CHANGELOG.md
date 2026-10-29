@@ -1,5 +1,32 @@
 # omnesis
 
+## 0.7.1
+
+### Patch Changes
+
+- 5f69055: The browser extension's version on the gateway now follows an update. `omnesis devices list`, the portal's Devices page and `omnesis doctor` used to keep showing the version a browser was paired with, so an extension Chrome had updated, or an unpacked build reloaded, read as behind until it was paired again. The extension now reports its version with its page uploads and its periodic check, and the gateway records it when it changes, within about fifteen minutes and without a re-pair. An older extension keeps working and keeps its paired version.
+- de385ba: New Discord source, behind the experimental gate. Discord hands message history to bots only — an ordinary account may not be automated and no OAuth2 scope reads messages — so you create an application, enable its Message Content intent, and paste the bot token. Omnesis then builds the invite link itself, asking for View Channels and Read Message History and nothing else, and shows it until the bot is in a server. The token is the credential and the bot's user id the account.
+
+  Each channel's day becomes one conversation document, threads and forum posts included, with every poster in the people graph. A sync re-reads each channel's last indexed day and compares it by content, so an edit or a deletion there lands; older days stay as they were, because Discord's API offers no way to learn what was deleted short of re-reading everything ever sent.
+
+  A bot whose Message Content intent is off is not refused by Discord — it is served blanked message bodies — so a cycle that sees a long run of messages with no content, no attachment and no embed stops and names the intent instead of indexing nothing.
+
+- fd2c652: The gateway, collector, CLI and their workers no longer trust root certificates that Mozilla has removed but Node.js still bundles, starting with the emSign roots NSS 3.131.1 dropped. The npm runs and Node.js header downloads started by the installer, the `omnesis` launcher, `omnesis update`, the hardened gateway's release build and the Codex runtime install do not trust them either, and an OpenClaw connection that verifies the gateway by name leaves them out.
+- 61230be: A machine that runs only a collector in Docker gets next steps that work there: its closing banner sends you to the gateway host or the portal to add sources, and the command for a Mac collector names the gateway it is paired with rather than this machine. `omnesis status` and the other admin commands on such a machine say to run them on the gateway host, instead of asking you to start a gateway or printing a stack trace. Its collector container now takes this machine's name, so its device keeps a readable name, and `omnesis uninstall` there reminds you to remove the device on the gateway host, as a native collector's uninstall does. A combined container no longer prints tini's "not running as PID 1" warning.
+- 61230be: `install.sh --docker` asks which embedding model to install on a host with no Node of its own, reading the model list with the Node in the image it pulled, instead of installing the default without asking. Without a terminal, it checks for `--embedder` (or `--no-model`), `--keyring-passphrase-file` (or `--no-keyring`) and, for a collector, `--code` before it pulls anything, and names every missing flag in one message. It refuses a Docker Compose older than v2.24.0, and generating a keyring passphrase no longer prints `tr: write error: Broken pipe`.
+- d64e605: A gateway installed with `install.sh --docker` on the default bridge network no longer recommends its container's own address for pairing a phone. `omnesis devices pair --kind ios|android` and the portal now offer the host's addresses and name that the installer wrote into the gateway's certificate first, as long as the certificate still covers them; the container's address and `omnesis.local`, which phones cannot reach through the bridge, are listed last.
+- 61230be: `omnesis update --edge` on a Docker install is refused before anything changes, instead of failing at the pull with `manifest unknown` and rolling back: no image follows the main branch. Pin a release with `--target-version`, or an exact commit's published `sha-*` images as the updating guide describes. On a machine that runs only a collector in Docker, `omnesis update` recognises that the collector already runs the newest release instead of planning to reinstall it.
+- @omnesis/agent-integration@0.7.1
+  - @omnesis/cli-shared@0.7.1
+  - @omnesis/collector@0.7.1
+  - @omnesis/config@0.7.1
+  - @omnesis/core@0.7.1
+  - @omnesis/eval@0.7.1
+  - @omnesis/gateway@0.7.1
+  - @omnesis/gateway-client@0.7.1
+  - @omnesis/source-sdk@0.7.1
+  - @omnesis/types@0.7.1
+
 ## 0.7.0
 
 ### Minor Changes

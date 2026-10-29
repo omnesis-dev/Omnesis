@@ -1,5 +1,11 @@
 # @omnesis/watch
 
+## 0.7.1
+
+### Patch Changes
+
+- @omnesis/types@0.7.1
+
 ## 0.7.0
 
 ### Patch Changes

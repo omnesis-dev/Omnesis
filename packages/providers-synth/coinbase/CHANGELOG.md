@@ -1,5 +1,14 @@
 # @omnesis/provider-coinbase-synth
 
+## 0.7.1
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.1
+  - @omnesis/provider-coinbase@0.7.1
+  - @omnesis/source-sdk@0.7.1
+  - @omnesis/types@0.7.1
+
 ## 0.7.0
 
 ### Patch Changes

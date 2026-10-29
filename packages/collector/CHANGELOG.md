@@ -1,5 +1,42 @@
 # @omnesis/collector
 
+## 0.7.1
+
+### Patch Changes
+
+- @omnesis/config@0.7.1
+  - @omnesis/core@0.7.1
+  - @omnesis/gateway-client@0.7.1
+  - @omnesis/provider-apple@0.7.1
+  - @omnesis/provider-browser-history@0.7.1
+  - @omnesis/provider-chrome@0.7.1
+  - @omnesis/provider-claude-code@0.7.1
+  - @omnesis/provider-codex@0.7.1
+  - @omnesis/provider-coinbase@0.7.1
+  - @omnesis/provider-discord@0.7.1
+  - @omnesis/provider-enable-banking@0.7.1
+  - @omnesis/provider-github@0.7.1
+  - @omnesis/provider-google@0.7.1
+  - @omnesis/provider-granola@0.7.1
+  - @omnesis/provider-hermes@0.7.1
+  - @omnesis/provider-imap@0.7.1
+  - @omnesis/provider-local-files@0.7.1
+  - @omnesis/provider-lunchflow@0.7.1
+  - @omnesis/provider-maildir@0.7.1
+  - @omnesis/provider-notion@0.7.1
+  - @omnesis/provider-obsidian@0.7.1
+  - @omnesis/provider-openclaw@0.7.1
+  - @omnesis/provider-outlook@0.7.1
+  - @omnesis/provider-pi@0.7.1
+  - @omnesis/provider-plaid@0.7.1
+  - @omnesis/provider-screen-time@0.7.1
+  - @omnesis/provider-strava@0.7.1
+  - @omnesis/provider-things@0.7.1
+  - @omnesis/provider-web@0.7.1
+  - @omnesis/provider-whatsapp@0.7.1
+  - @omnesis/source-sdk@0.7.1
+  - @omnesis/types@0.7.1
+
 ## 0.7.0
 
 ### Patch Changes
