@@ -123,6 +123,10 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         guard isRecording, let recorder else { return }
         pending.removeValue(forKey: ObjectIdentifier(recorder))
         recorder.stop()
+        self.recorder = nil
+        stopObservingInterruptions()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? FileManager.default.removeItem(at: recorder.url)
         state = .idle
     }
 

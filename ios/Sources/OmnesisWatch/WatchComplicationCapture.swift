@@ -23,6 +23,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     @ObservationIgnored private var meter: Task<Void, Never>?
     @ObservationIgnored private var interruption: NSObjectProtocol?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var audioSessionActive = false
 
     func start() async {
         guard state == .idle || state == .failed || isSent else { return }
@@ -51,6 +52,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .default)
             try session.setActive(true)
+            audioSessionActive = true
             let recorder = try AVAudioRecorder(url: file, settings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: WatchVoiceFormat.sampleRate,
@@ -129,7 +131,10 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         meter = nil
         if let interruption { NotificationCenter.default.removeObserver(interruption) }
         interruption = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if audioSessionActive {
+            audioSessionActive = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
