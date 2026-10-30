@@ -121,7 +121,9 @@ struct WatchAskView: View {
 
     private var idle: some View {
         VStack(spacing: 10) {
-            Image("OmnesisMark").resizable().scaledToFit()
+            Image("OmnesisMark")
+                .resizable()
+                .scaledToFit()
                 .frame(width: 48, height: 48)
                 .foregroundStyle(Color(red: 88 / 255, green: 166 / 255, blue: 1))
             Text("Omnesis").font(.headline)

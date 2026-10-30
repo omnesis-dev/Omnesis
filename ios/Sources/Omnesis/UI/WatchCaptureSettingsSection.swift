@@ -30,8 +30,9 @@ struct WatchCaptureSettingsSection: View {
                     SFSpeechRecognizer.requestAuthorization { result in
                         Task { @MainActor in
                             authorized = result == .authorized
-                            if authorized { WatchRelayReceiver.shared.retryComplicationCaptures() }
-                            else {
+                            if authorized {
+                                WatchRelayReceiver.shared.retryComplicationCaptures()
+                            } else {
                                 error =
                                     "Allow Speech Recognition for Omnesis in iPhone Settings. "
                                         + "On-device recognition also requires a supported language."

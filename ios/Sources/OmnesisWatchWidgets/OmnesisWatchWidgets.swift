@@ -17,7 +17,9 @@ struct OmnesisComplication: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "dev.omnesis.watch.complication.ask", provider: StaticProvider()) { _ in
             Image("OmnesisMark")
-                .resizable().scaledToFit().padding(8)
+                .resizable()
+                .scaledToFit()
+                .padding(8)
                 .widgetAccentable()
                 .widgetURL(WatchComplication.ask.url)
                 .accessibilityLabel("Omnesis")

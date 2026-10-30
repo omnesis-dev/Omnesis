@@ -151,7 +151,8 @@ final class WatchCapturePipelineTests: XCTestCase {
         var item = try receive(.ask, ref: ref)
         let oldTime = NoteCaptureTime(
             capturedAt: Date().addingTimeInterval(-2 * WatchOutboxPolicy.retention),
-            timeZoneId: "UTC", utcOffsetSeconds: 0
+            timeZoneId: "UTC",
+            utcOffsetSeconds: 0
         )
         item.state.metadata = WatchVoiceRecording(ref: ref, captureTime: oldTime, locale: "en_GB", route: .ask).metadata
         try inbox.save(item)

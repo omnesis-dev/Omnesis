@@ -65,8 +65,9 @@ final class WatchVoiceInbox: @unchecked Sendable {
         }
         // All copies of a complication capture share one state file, including
         // the durable Ask-start marker. Legacy notes retain their own inbox IDs.
-        let id: String = if let capture, capture.route != nil { "capture-" + capture.ref.lowercased() }
-        else { UUID().uuidString }
+        let id: String = if let capture, capture.route != nil {
+            "capture-" + capture.ref.lowercased()
+        } else { UUID().uuidString }
         let item = Item(id: id, state: State(metadata: metadata.compactMapValues { $0 as? String }))
         lock.lock()
         guard !owned.contains(id) else { lock.unlock()

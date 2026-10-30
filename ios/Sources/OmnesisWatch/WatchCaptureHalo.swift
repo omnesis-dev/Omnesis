@@ -33,7 +33,9 @@ struct WatchCaptureHalo: View {
             Circle()
                 .fill(RadialGradient(
                     colors: [color.opacity(0.14 + energy * 0.12), color.opacity(0)],
-                    center: .center, startRadius: 16, endRadius: 48
+                    center: .center,
+                    startRadius: 16,
+                    endRadius: 48
                 ))
                 .frame(width: 96, height: 96)
                 .animation(.easeInOut(duration: 0.3), value: level)
@@ -46,7 +48,9 @@ struct WatchCaptureHalo: View {
                     .frame(width: 44 + 52 * travel, height: 44 + 52 * travel)
             }
             Image("OmnesisMark")
-                .resizable().scaledToFit().frame(width: 36, height: 36)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 36, height: 36)
                 .foregroundStyle(color)
                 .shadow(color: color.opacity(0.10 + energy * 0.20), radius: 7)
                 .scaleEffect(reduceMotion ? 1 : 1 + energy * 0.025)

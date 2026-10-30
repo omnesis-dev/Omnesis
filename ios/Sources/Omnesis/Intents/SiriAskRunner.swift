@@ -87,6 +87,24 @@ struct SiriAskRunner {
         self.onActivity = onActivity
     }
 
+    struct CaptureResult: Sendable {
+        let outcome: SiriAskOutcome
+        let conversationId: String?
+        let messageId: String?
+        let notifyLocally: Bool
+    }
+
+    private struct SentResult: Sendable {
+        let outcome: SiriAskOutcome
+        let messageId: String?
+        let notifyLocally: Bool
+    }
+
+    private struct CaptureDelivery {
+        let durable: Bool
+        let completionNotifications: Bool
+    }
+
     /// Run one ask. `question` must already be non-empty and trimmed —
     /// the intents guard emptiness so Siri can re-prompt for the value.
     func run(question: String) async -> SiriAskOutcome {
@@ -101,10 +119,10 @@ struct SiriAskRunner {
         completionNotifications: Bool = false,
         resuming: String? = nil
     ) async
-        -> (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool) {
+        -> CaptureResult {
         let startedAt = now()
         guard let pairing = (try? pairing.current()).flatMap({ $0 }) else {
-            return (.notPaired, nil, nil, true)
+            return CaptureResult(outcome: .notPaired, conversationId: nil, messageId: nil, notifyLocally: true)
         }
         let client = makeClient(pairing.url, pairing.token)
         onActivity?(.connecting)
@@ -115,23 +133,23 @@ struct SiriAskRunner {
             within: budget,
             strictResume: resuming != nil
         ) {
-        case .ended(let outcome): return (outcome, nil, nil, true)
+        case .ended(let outcome): return CaptureResult(outcome: outcome, conversationId: nil, messageId: nil, notifyLocally: true)
         case .opened(let opened): session = opened
         }
         if case .reportPreviousTurnRunning(let conversationId) = SiriAskPreflight.action(for: session) {
-            if resuming != nil { return (
-                .failed(reason: "Your follow-up was not sent because this conversation is still busy. Please ask again shortly."),
-                conversationId,
-                nil,
-                true
+            if resuming != nil { return CaptureResult(
+                outcome: .failed(reason: "Your follow-up was not sent because this conversation is still busy. Please ask again shortly."),
+                conversationId: conversationId,
+                messageId: nil,
+                notifyLocally: true
             ) }
             guard durableCapture else {
                 continuity.record(conversationId: conversationId)
-                return (.previousTurnRunning, conversationId, nil, false)
+                return CaptureResult(outcome: .previousTurnRunning, conversationId: conversationId, messageId: nil, notifyLocally: false)
             }
             let remaining = max(0, budget - now().timeIntervalSince(startedAt))
             switch await openSession(client, resumeFromId: nil, within: remaining) {
-            case .ended(let outcome): return (outcome, nil, nil, true)
+            case .ended(let outcome): return CaptureResult(outcome: outcome, conversationId: nil, messageId: nil, notifyLocally: true)
             case .opened(let opened): session = opened
             }
         }
@@ -140,12 +158,15 @@ struct SiriAskRunner {
             question: question,
             client: client,
             session: session,
-            conversationId: conversationId,
             startedAt: startedAt,
-            durableCapture: durableCapture,
-            completionNotifications: completionNotifications
+            delivery: CaptureDelivery(durable: durableCapture, completionNotifications: completionNotifications)
         )
-        return (sent.outcome, conversationId, sent.messageId, sent.notifyLocally)
+        return CaptureResult(
+            outcome: sent.outcome,
+            conversationId: conversationId,
+            messageId: sent.messageId,
+            notifyLocally: sent.notifyLocally
+        )
     }
 
     /// Ask a question nobody is waiting on: one the watch queued after the
@@ -298,12 +319,13 @@ struct SiriAskRunner {
         question: String,
         client: AgentClient,
         session: CreateSessionResponse,
-        conversationId: String,
         startedAt: Date,
-        durableCapture: Bool,
-        completionNotifications: Bool
+        delivery: CaptureDelivery
     ) async
-        -> (outcome: SiriAskOutcome, messageId: String?, notifyLocally: Bool) {
+        -> SentResult {
+        let conversationId = session.conversationId ?? session.sessionId
+        let durableCapture = delivery.durable
+        let completionNotifications = delivery.completionNotifications
         // Whatever reaching the gateway cost comes out of the budget, so the
         // spoken wait and the armed push both end when the caller's own
         // ceiling does.
@@ -343,15 +365,15 @@ struct SiriAskRunner {
             )
         }
         switch outcome {
-        case .timedOut: return (.stillWorking, posted.messageId, false)
+        case .timedOut: return SentResult(outcome: .stillWorking, messageId: posted.messageId, notifyLocally: false)
         case .finished(let resolved):
             switch resolved {
             case .answered, .emptyAnswer, .failed:
-                return (resolved, posted.messageId, durableCapture && !completionNotifications)
+                return SentResult(outcome: resolved, messageId: posted.messageId, notifyLocally: durableCapture && !completionNotifications)
             case .stillWorking, .previousTurnRunning:
-                return (resolved, posted.messageId, false)
+                return SentResult(outcome: resolved, messageId: posted.messageId, notifyLocally: false)
             default:
-                return (resolved, posted.messageId, true)
+                return SentResult(outcome: resolved, messageId: posted.messageId, notifyLocally: true)
             }
         }
     }

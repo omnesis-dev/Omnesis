@@ -825,19 +825,23 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The same Ask Omnesis and Omnesis note Siri shortcuts are available on the Apple Watch and
           relay through its paired iPhone. The single <strong>Omnesis</strong> logo complication
           starts recording immediately, without showing a transcript. Tap <strong>Ask</strong> to
-          stop recording and open a conversation, with a notification when the answer is ready, or
-          <strong>Tell</strong> to save a note. “Got it. I'll deal with it.” confirms that the Watch
-          has stored the recording; it does not wait for the phone or gateway. Recordings are kept
-          on the Watch and retried for up to a week, then retained by the phone until processed. The
-          phone retries unfinished captures when opened; delivery or transcription failures produce
-          a notification. Interrupting or reaching the recording limit leaves the capture ready for
-          an explicit Ask or Tell; it does not send an undecided recording.
+          stop recording and open a conversation, or <strong>Tell</strong> to save a note. “Got it.
+          I'll deal with it.” confirms that the Watch has stored the recording; it does not wait for
+          the phone or gateway. Recordings are kept on the Watch and retried for up to a week, then
+          retained by the phone until processed. The phone retries unfinished captures when opened;
+          delivery or transcription failures produce a notification. Interrupting or reaching the
+          recording limit leaves the capture ready for an explicit Ask or Tell; it does not send an
+          undecided recording.
         </p>
         <p>
           Opening the Watch app normally shows <strong>Tap to speak</strong>; the complication
           starts recording immediately. Both enter the same capture screen. Notes return to the
           watch face after confirmation once their transfer is safely underway. Questions keep the
-          Watch open for the answer.
+          Watch open for the answer. Playback starts only when you tap the speaker. The microphone
+          records an audio-only Ask follow-up in the same conversation. Cancel returns to the answer
+          during a follow-up, or to the watch face when capture was opened from the complication. If
+          the Watch cannot display the answer, a notification brings you back to it. A confirmed
+          displayed answer suppresses that fallback notification.
         </p>
         <p>
           With a decision model available, the complication shows one <strong>Send</strong> button.
@@ -847,7 +851,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <code>inference.dictation.useDecisionGateForWatch</code>; it defaults on when a decision
           model is available. Older gateways and disabled or unavailable decision models show Ask
           and Tell. If routing fails after Send, the recording is treated as Ask. Existing Siri
-          shortcuts and in-app capture controls keep their separate flows.
+          shortcuts and phone capture controls keep their separate flows.
         </p>
         <p>
           Gateway transcription applies to both Ask and Tell from the complication. When it is
@@ -889,8 +893,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
           recognizer. With gateway dictation on, they also send the recording with the note, and
           your gateway's <strong>Transcriber</strong> — the same model that transcribes voice notes
-          from your sources — transcribes it again and replaces the phone's text with its own. It
-          applies to Tell Omnesis only:
+          from your sources — transcribes it again and replaces the phone's text with its own. For
+          phone capture, it applies to Tell Omnesis:
         </p>
         <ul>
           <li>
@@ -898,7 +902,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
             app shortcut;
           </li>
           <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
-          <li>the Apple Watch's Note complication and the watch app's Dictate.</li>
+          <li>
+            legacy Watch note capture. The unified Omnesis complication uses gateway transcription
+            for both Ask and Tell, as described above.
+          </li>
         </ul>
         <p>
           Agent conversations, Ask Omnesis, Siri, Shortcuts and assistant requests that already

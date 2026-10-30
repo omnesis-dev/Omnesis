@@ -64,11 +64,14 @@ actor WatchCapturePipeline {
                 let text = try await prepareTranscript(
                     &item,
                     recording: recording,
-                    requested: requested,
                     gateway: gateway,
                     inbox: inbox,
                     deps: deps
                 )
+                if item.state.captureRoute == nil {
+                    item.state.captureRoute = requested == .automatic ? try await deps.classify(text) : requested
+                    try inbox.save(item)
+                }
                 await deps.resolved(item.state.captureRoute ?? .ask)
                 if item.state.captureRoute == .note {
                     guard await deps.saveNote(text, recording, nil) else { throw CocoaError(.fileWriteUnknown) }
@@ -94,7 +97,6 @@ actor WatchCapturePipeline {
     private func prepareTranscript(
         _ item: inout WatchVoiceInbox.Item,
         recording: WatchVoiceRecording,
-        requested: WatchCaptureRoute,
         gateway: Bool,
         inbox: WatchVoiceInbox,
         deps: Dependencies
@@ -111,11 +113,6 @@ actor WatchCapturePipeline {
             item.state.transcript = text
             try inbox.save(item)
         }
-        let text = item.state.transcript ?? ""
-        if item.state.captureRoute == nil {
-            item.state.captureRoute = requested == .automatic ? try await deps.classify(text) : requested
-            try inbox.save(item)
-        }
-        return text
+        return item.state.transcript ?? ""
     }
 }

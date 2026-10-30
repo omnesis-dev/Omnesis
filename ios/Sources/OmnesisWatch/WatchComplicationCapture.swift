@@ -277,8 +277,11 @@ struct WatchComplicationCaptureView: View {
         if capture.state == .failed {
             ScrollView {
                 VStack(spacing: 8) {
-                    Image("OmnesisMark").resizable().scaledToFit()
-                        .frame(width: 28, height: 28).foregroundStyle(accent)
+                    Image("OmnesisMark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 28, height: 28)
+                        .foregroundStyle(accent)
                     content
                 }.padding(.horizontal, 10)
             }
@@ -305,7 +308,8 @@ struct WatchComplicationCaptureView: View {
             Button("Cancel") { capture.cancelByUser() }.buttonStyle(.plain)
         case .recording, .ready:
             Text(capture.state == .recording ? "Listening" : "Ready to send")
-                .font(.headline).foregroundStyle(.white)
+                .font(.headline)
+                .foregroundStyle(.white)
             if capture.isFollowUp {
                 sendButton("Ask", route: .ask)
             } else if capture.automatic {
@@ -317,19 +321,25 @@ struct WatchComplicationCaptureView: View {
                 }
             }
             Button("Cancel") { capture.cancelByUser() }
-                .font(.caption2).foregroundStyle(.secondary).buttonStyle(.plain)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
         case .saving:
             ProgressView().tint(accent)
         case .sent(let route):
             Text("Got it.").font(.headline)
             Text(route == .ask ? (capture.activity?.label ?? "Waiting for your answer…") : route == .automatic ?
                 "Working out what you need…" : "I'll deal with it.")
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             Button("Done") { capture.cancel() }.buttonStyle(.plain).font(.caption2)
         case .failed:
             Text("Couldn't record").font(.headline)
             Text("Open the iPhone app. Check microphone access and updates.")
-                .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Try again") {
                 Task { await capture.start(followUp: capture.isFollowUp, fromComplication: capture.openedFromComplication) }
@@ -343,7 +353,9 @@ struct WatchComplicationCaptureView: View {
             Text(title).font(.system(.body, design: .rounded, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 32)
         }
-        .buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black)
+        .buttonStyle(.borderedProminent)
+        .tint(accent)
+        .foregroundStyle(.black)
         .accessibilityIdentifier("watchCapture-\(route.rawValue)")
     }
 }

@@ -369,28 +369,7 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                     return outcome == .saved || outcome == .queuedOnPhone
                 },
                 ask: { question in
-                    let reporter = WatchAskActivityReporter(session: WCSession.default, ref: recording.ref)
-                    let status = try? await SearchClient(baseURL: pairing.url, token: pairing.token).getStatus()
-                    let result: (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool)
-                    if status?.watchCapture?.completionNotifications == true {
-                        result = await self.makeRunner { reporter.report($0) }
-                            .runCapture(question: question, completionNotifications: true, resuming: recording.conversationId)
-                    } else {
-                        let handed = await self.makeHandOffRunner().handOff(question: question, resuming: recording.conversationId)
-                        result = (handed.outcome, handed.conversationId, nil, true)
-                    }
-                    let (outcome, conversationId, messageId, notifyLocally) = result
-                    var message = SiriAskWire.result(for: outcome, ref: recording.ref)
-                    message["captureUpdate"] = "answer"
-                    if let conversationId { message["conversationId"] = conversationId }
-                    let displayed = await self.sendCaptureAnswer(message)
-                    if displayed, case .answered = outcome, let conversationId, let messageId {
-                        try? await AgentClient(baseURL: pairing.url, token: pairing.token)
-                            .markConversationSeen(id: conversationId, viewing: false, messageId: messageId)
-                    }
-                    if !displayed, notifyLocally, let notice = QueuedAskNotice.notice(for: outcome, conversationId: conversationId) {
-                        await self.post(title: notice.title, body: notice.body, userInfo: notice.userInfo)
-                    }
+                    await self.answerCapture(question, recording: recording, pairing: pairing)
                 },
                 notify: { notice in
                     let body = switch notice {
@@ -412,15 +391,53 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         }
     }
 
+    private func answerCapture(_ question: String, recording: WatchVoiceRecording, pairing: Pairing) async {
+        let reporter = WatchAskActivityReporter(session: WCSession.default, ref: recording.ref)
+        let status = try? await SearchClient(baseURL: pairing.url, token: pairing.token).getStatus()
+        let result: SiriAskRunner.CaptureResult
+        if status?.watchCapture?.completionNotifications == true {
+            result = await self.makeRunner { reporter.report($0) }
+                .runCapture(question: question, completionNotifications: true, resuming: recording.conversationId)
+        } else {
+            let handed = await self.makeHandOffRunner().handOff(question: question, resuming: recording.conversationId)
+            result = SiriAskRunner.CaptureResult(
+                outcome: handed.outcome,
+                conversationId: handed.conversationId,
+                messageId: nil,
+                notifyLocally: true
+            )
+        }
+        let outcome = result.outcome
+        let conversationId = result.conversationId
+        let messageId = result.messageId
+        let notifyLocally = result.notifyLocally
+        var message = SiriAskWire.result(for: outcome, ref: recording.ref)
+        message["captureUpdate"] = "answer"
+        if let conversationId { message["conversationId"] = conversationId }
+        let displayed = await self.sendCaptureAnswer(message)
+        if displayed, case .answered = outcome, let conversationId, let messageId {
+            try? await AgentClient(baseURL: pairing.url, token: pairing.token)
+                .markConversationSeen(id: conversationId, viewing: false, messageId: messageId)
+        }
+        if !displayed, notifyLocally,
+           let notice = QueuedAskNotice.notice(for: outcome, conversationId: conversationId) {
+            await self.post(title: notice.title, body: notice.body, userInfo: notice.userInfo)
+        }
+    }
+
     private func sendCaptureAnswer(_ message: [String: String]) async -> Bool {
         let session = WCSession.default
         guard session.activationState == .activated else { return false }
         session.transferUserInfo(message)
         return await withCheckedContinuation { continuation in
             let reply = WatchCaptureDisplayReply(continuation)
-            session.sendMessage(message, replyHandler: { response in
-                reply.finish(response["displayed"] as? Bool == true)
-            }, errorHandler: { _ in reply.finish(false) })
+            session.sendMessage(
+                message,
+                replyHandler: { response in
+                    reply.finish(response["displayed"] as? Bool == true)
+                },
+                errorHandler: { _ in reply.finish(false) }
+            )
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) { reply.finish(false) }
         }
     }

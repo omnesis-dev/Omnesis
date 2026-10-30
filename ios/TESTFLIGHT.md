@@ -46,7 +46,8 @@ candidate build from TestFlight:
 - use the Paste JSON fallback;
 - ask the agent and receive an answer;
 - capture a note from the app and Siri;
-- tap the Ask Omnesis and Omnesis note watch complications and dictate;
+- tap the Omnesis Watch complication, record, and test Ask, Tell, and automatic Send;
+- verify answers, manual playback, audio-only follow-ups, and Cancel returning to the watch face;
 - receive a content-free APNs wake and retrieve its content from the gateway;
 - enable selected HealthKit categories, sync, and confirm buffer drain;
 - deny HealthKit, Camera, Location, Photos, Motion, Microphone, Speech, and
