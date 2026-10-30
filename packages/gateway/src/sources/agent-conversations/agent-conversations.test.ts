@@ -54,6 +54,30 @@ describe("agent_messages storage", () => {
     expect(listBucketMessages(db, bucket)).toHaveLength(1);
   });
 
+  it("enriches an identical legacy turn once without replacing explicit attribution", () => {
+    const legacy = row();
+    insertAgentMessage(db, legacy);
+    const author = { kind: "participant" as const, id: "speaker-1", name: "Casey" };
+    expect(insertAgentMessage(db, { ...legacy, author })).toBe(true);
+    expect(insertAgentMessage(db, { ...legacy, author })).toBe(false);
+    expect(insertAgentMessage(db, { ...legacy, author: { kind: "owner" } })).toBe(false);
+    expect(listBucketMessages(db, legacy)[0].author).toEqual(author);
+  });
+
+  it.each([
+    { text: "different body" },
+    { chatId: "other-chat" },
+    { role: "assistant" as const },
+    { occurredAt: "2026-07-20T10:00:00.000Z" },
+  ])("does not enrich an id collision with different immutable turn data %#", (changed) => {
+    const legacy = row();
+    insertAgentMessage(db, legacy);
+    expect(insertAgentMessage(db, { ...legacy, ...changed, author: { kind: "owner" } })).toBe(
+      false,
+    );
+    expect(listBucketMessages(db, legacy)[0].author).toBeUndefined();
+  });
+
   it("lists a bucket in occurrence order", () => {
     insertAgentMessage(
       db,
@@ -167,6 +191,75 @@ describe("bootAgentConversations — ingest → projection", () => {
     expect(doc.metadata.extra).toMatchObject({ provenance: "harness-pushed", channel: "whatsapp" });
     runtime.dispose();
   });
+
+  it("reprojects legacy turns when their identical retry supplies structured attribution", async () => {
+    const runtime = boot();
+    const input = msg({ id: "attribution-1" });
+    await runtime.ingest([input]);
+    await runtime.flushAll();
+    expect(ingested.at(-1)![0].content).toContain("Unknown participant");
+    const result = await runtime.ingest([
+      { ...input, author: { kind: "participant", name: "Casey" } },
+    ]);
+    expect(result).toEqual({ accepted: 1, buckets: 1 });
+    await runtime.flushAll();
+    expect(ingested.at(-1)![0].content).toContain("Participant (Casey)");
+    expect(ingested.at(-1)![0].content).not.toContain("· You");
+    runtime.dispose();
+  });
+
+  it("keeps simultaneous identical messages by distinct structured participants", async () => {
+    const runtime = boot();
+    const input = msg();
+    const first = { kind: "participant" as const, id: "speaker-a", name: "Casey" };
+    const second = { kind: "participant" as const, id: "speaker-b", name: "River" };
+    expect(
+      await runtime.ingest([
+        { ...input, author: first },
+        { ...input, author: second },
+      ]),
+    ).toEqual({ accepted: 2, buckets: 1 });
+    expect(
+      await runtime.ingest([
+        { ...input, author: { name: "Casey", id: "speaker-a", kind: "participant" } },
+      ]),
+    ).toEqual({ accepted: 0, buckets: 0 });
+    await runtime.flushAll();
+    expect(ingested.at(-1)![0].content).toContain("Participant (Casey)");
+    expect(ingested.at(-1)![0].content).toContain("Participant (River)");
+    runtime.dispose();
+  });
+
+  it("does not confuse structured attribution with a body containing serialized author text", async () => {
+    const runtime = boot();
+    const input = msg({ text: "hello" });
+    const author = { kind: "participant" as const, id: "speaker-a", name: "Casey" };
+    await runtime.ingest([
+      { ...input, author },
+      { ...input, text: `hello\u001f${JSON.stringify([author.kind, author.id, author.name])}` },
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM agent_messages").get()).toEqual({ count: 2 });
+    await runtime.flushAll();
+    runtime.dispose();
+  });
+
+  it.each([
+    ["user", "unknown"],
+    ["assistant", "agent"],
+  ] as const)(
+    "keeps the legacy generated identity when %s gains explicit default %s attribution",
+    async (role, kind) => {
+      const runtime = boot();
+      const input = msg({ role });
+      await runtime.ingest([input]);
+      await runtime.ingest([{ ...input, author: { kind } }]);
+      await runtime.flushAll();
+      expect(db.prepare("SELECT COUNT(*) AS count FROM agent_messages").get()).toEqual({
+        count: 1,
+      });
+      runtime.dispose();
+    },
+  );
 
   it("a re-pushed batch is idempotent (dedup, no second projection change)", async () => {
     const runtime = boot();

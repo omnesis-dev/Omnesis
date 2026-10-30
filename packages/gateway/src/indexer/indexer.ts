@@ -420,7 +420,14 @@ export class Indexer {
         const fullDocs = await this.source.getByIds(needFetchIds);
         for (const doc of fullDocs) {
           if (this.stopping) break;
-          doc.content = normalizeContent(doc.content);
+          // Structured offsets refer to the literal stored content. The chunker
+          // normalizes each extracted body before constructing its new fence.
+          if (
+            doc.metadata.documentType !== "conversation" ||
+            doc.metadata.extra?.conversationTurns === undefined
+          ) {
+            doc.content = normalizeContent(doc.content);
+          }
           const existing = indexedStates.get(doc.id);
           const embeddingChanged =
             !existing ||
@@ -704,7 +711,14 @@ export class Indexer {
         )
           continue;
 
-        doc.content = normalizeContent(doc.content);
+        // Structured offsets refer to the literal stored content. The chunker
+        // normalizes each extracted body before constructing its new fence.
+        if (
+          doc.metadata.documentType !== "conversation" ||
+          doc.metadata.extra?.conversationTurns === undefined
+        ) {
+          doc.content = normalizeContent(doc.content);
+        }
         const chunks = this.chunker.chunk(doc);
         // Zero-chunk docs still flow through for a terminal indexed marker.
         toEmbed.push({ doc, chunks });

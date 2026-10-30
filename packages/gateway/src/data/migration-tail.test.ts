@@ -62,7 +62,7 @@ const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
   191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204,
   // 205 indexes and compacts knowledge_changes, which undoKnowledge drops.
-  205,
+  205, 206,
 ];
 
 let dir: string;
@@ -245,6 +245,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
   undoInterest(db);
   undoDecisionAnchors(db);
   undoTaskSuggestions(db);

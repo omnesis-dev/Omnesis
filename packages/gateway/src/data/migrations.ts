@@ -131,6 +131,7 @@ import { pruneOrphanSourceStats } from "./prune-orphan-source-stats.js";
 import { pruneInvalidEmailAliases } from "./prune-invalid-email-aliases.js";
 import { runSchemaSetup } from "./schema.js";
 import { compactKnowledgeJournal } from "./migration-205-knowledge-journal.js";
+import { addConversationAuthors } from "./migration-206-conversation-authors.js";
 import {
   createLegacyBriefClaimsTables,
   createLegacyBriefTables,
@@ -4874,6 +4875,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 205,
     description: "keep one knowledge journal entry per source, found by index",
     up: compactKnowledgeJournal,
+  },
+  {
+    version: 206,
+    description: "preserve structured authorship on pushed conversation turns",
+    up: addConversationAuthors,
   },
 ];
 

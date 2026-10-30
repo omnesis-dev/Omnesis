@@ -123,6 +123,7 @@ export function buildDocument(
 ): DocumentInput {
   const messages: ConversationMessage[] = rows.map((r) => ({
     role: r.role,
+    ...(r.author ? { author: r.author } : {}),
     text: r.text,
     atMs: new Date(r.occurredAt).getTime(),
   }));

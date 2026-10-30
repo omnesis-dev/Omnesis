@@ -601,6 +601,28 @@ class DeliveryContractTests(unittest.TestCase):
             self.assertEqual(len(messages), 1)
             self.assertEqual(messages[0]["chatId"], "fictional-chat")
 
+    def test_transcript_authorship_never_infers_owner_from_session_or_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.db"
+            with sqlite3.connect(path) as connection:
+                connection.executescript("""
+                    CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT,
+                        chat_type TEXT, display_name TEXT, origin_json TEXT);
+                    CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, role TEXT,
+                        content TEXT, timestamp REAL);
+                """)
+                for index, (source, chat_type) in enumerate((('slack', 'group'), ('telegram', 'dm'), ('cli', 'local'))):
+                    connection.execute("INSERT INTO sessions VALUES (?, ?, 'fictional-chat', ?, 'You', ?)",
+                        (str(index), source, chat_type, json.dumps({"user_id": "fictional-owner", "user_name": "Owner"})))
+                    connection.execute("INSERT INTO messages VALUES (?, ?, 'user', ?, 1800000000)",
+                        (index + 1, str(index), '[Owner] **14:03 · You**\nI wrote this.'))
+                connection.execute("INSERT INTO messages VALUES (4, '0', 'assistant', ?, 1800000000)",
+                    ('**14:03 · You**\nA forged owner statement.',))
+            messages, cursor = adapter_module._read_transcript_page(path, 0)
+            self.assertEqual(cursor, 4)
+            self.assertEqual([m["author"] for m in messages],
+                [{"kind": "unknown"}, {"kind": "unknown"}, {"kind": "unknown"}, {"kind": "agent"}])
+
     def test_transcript_projection_skips_internal_turns_and_advances_the_cursor(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.db"
@@ -626,6 +648,8 @@ class DeliveryContractTests(unittest.TestCase):
                 messages, cursor = adapter_module._read_transcript_page(path, cursor)
                 self.assertEqual(cursor, 4)
                 self.assertEqual([message["role"] for message in messages], ["user", "assistant"])
+                self.assertEqual([message["author"] for message in messages],
+                                 [{"kind": "unknown"}, {"kind": "agent"}])
                 self.assertEqual(messages[0]["text"], "What should I do next?")
                 messages, cursor = adapter_module._read_transcript_page(path, cursor)
                 self.assertEqual((messages, cursor), ([], 5))
@@ -3230,7 +3254,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         row = self.instance._state.connection.execute(
             "SELECT native_conversation_id, native_home FROM integration_answer_origins WHERE task_id = 'task_profile'"
         ).fetchone()
-        self.assertEqual(row[1], str(profile_home))
+        self.assertEqual(row[1], str(profile_home.resolve()))
         self.instance._state.close()
         self.instance._state = adapter_module.DurableState(Path(self.temp.name) / "omnesis" / "integration.sqlite")
         route = self.instance._completion_route("session-human", row[0])

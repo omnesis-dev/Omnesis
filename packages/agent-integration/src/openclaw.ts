@@ -967,6 +967,10 @@ export class OpenClawTranscriptSource {
           channel: identity.channel,
           chatId: identity.chatId,
           role,
+          // Transcript roles describe model input/output, not ownership. The
+          // durable reader supplies no verified per-turn sender identity, and
+          // session routes or names inside the body cannot establish one.
+          author: { kind: role === "assistant" ? "agent" : "unknown" },
           text,
           occurredAt,
         });

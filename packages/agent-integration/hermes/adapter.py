@@ -3199,6 +3199,10 @@ def _read_transcript_page(
             "channel": source,
             "chatId": chat_id,
             "role": role,
+            # Hermes stores the sender on the session, not on each message.
+            # Shared threads may contain multiple people; neither that sender
+            # nor a name embedded in the body proves who authored this turn.
+            "author": {"kind": "agent" if role == "assistant" else "unknown"},
             "text": text,
             "occurredAt": int(float(ts) * 1000),
         }

@@ -15,6 +15,7 @@
  */
 
 import type Database from "better-sqlite3";
+import type { ConversationAuthor } from "@omnesis/core";
 
 type Db = Database.Database;
 
@@ -33,6 +34,8 @@ export interface AgentMessageRow {
   /** Gateway-local calendar day (`YYYY-MM-DD`) of `occurredAt`. */
   day: string;
   role: "user" | "assistant";
+  /** Explicit harness attribution; absent legacy users are never inferred to be the owner. */
+  author?: ConversationAuthor;
   text: string;
   /** ISO-8601 instant the turn occurred. */
   occurredAt: string;
@@ -59,6 +62,7 @@ export function createAgentMessagesTables(db: Db): void {
       chat_type TEXT,
       day TEXT NOT NULL,
       role TEXT NOT NULL,
+      author_json TEXT,
       text TEXT NOT NULL,
       occurred_at TEXT NOT NULL,
       provenance TEXT NOT NULL DEFAULT 'harness-pushed'
@@ -77,6 +81,7 @@ interface AgentMessageDbRow {
   chat_type: string | null;
   day: string;
   role: string;
+  author_json: string | null;
   text: string;
   occurred_at: string;
   provenance: string;
@@ -92,6 +97,7 @@ function rowToMessage(r: AgentMessageDbRow): AgentMessageRow {
     chatType: r.chat_type,
     day: r.day,
     role: r.role === "user" ? "user" : "assistant",
+    ...(r.author_json ? { author: JSON.parse(r.author_json) as ConversationAuthor } : {}),
     text: r.text,
     occurredAt: r.occurred_at,
     provenance: r.provenance,
@@ -102,7 +108,7 @@ function rowToMessage(r: AgentMessageDbRow): AgentMessageRow {
  * Insert one turn. `INSERT OR IGNORE` because the id doubles as the client
  * idempotency key: a retried push (or a live message the install-time
  * backfill also read) re-sends the same id and must not duplicate. Returns
- * whether a new row was actually inserted, so the caller only re-projects a
+ * whether a row was inserted or gained explicit attribution, so the caller only re-projects a
  * bucket that genuinely changed. Chat display metadata is not refreshed here
  * — the projector resolves it from the bucket's freshest non-null row.
  */
@@ -110,8 +116,8 @@ export function insertAgentMessage(db: Db, m: AgentMessageRow): boolean {
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO agent_messages
-         (id, harness, channel, chat_id, chat_name, chat_type, day, role, text, occurred_at, provenance)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, harness, channel, chat_id, chat_name, chat_type, day, role, text, occurred_at, provenance, author_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       m.id,
@@ -125,8 +131,33 @@ export function insertAgentMessage(db: Db, m: AgentMessageRow): boolean {
       m.text,
       m.occurredAt,
       m.provenance,
+      m.author ? JSON.stringify(m.author) : null,
     );
-  return result.changes > 0;
+  if (result.changes > 0) return true;
+  // A newer harness may replay a legacy turn with its structured attribution.
+  // Enrich only the same immutable turn, once. An id collision must not move a
+  // turn, rewrite its body, or replace attribution already supplied.
+  if (!m.author) return false;
+  const enriched = db
+    .prepare(
+      `UPDATE agent_messages SET author_json = ?
+    WHERE id = ? AND author_json IS NULL AND harness = ? AND channel = ?
+      AND chat_id = ? AND day = ? AND role = ? AND text = ? AND occurred_at = ?
+      AND provenance = ?`,
+    )
+    .run(
+      JSON.stringify(m.author),
+      m.id,
+      m.harness,
+      m.channel,
+      m.chatId,
+      m.day,
+      m.role,
+      m.text,
+      m.occurredAt,
+      m.provenance,
+    );
+  return enriched.changes > 0;
 }
 
 /** All turns in one bucket, in occurrence order. */

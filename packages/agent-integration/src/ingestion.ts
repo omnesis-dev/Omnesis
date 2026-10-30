@@ -12,6 +12,11 @@ export interface AgentConversationMessage {
   chatName?: string;
   chatType?: string;
   role: "user" | "assistant";
+  author?: {
+    kind: "owner" | "agent" | "participant" | "unknown";
+    id?: string;
+    name?: string;
+  };
   text: string;
   occurredAt: number;
 }

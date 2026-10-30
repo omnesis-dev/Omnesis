@@ -25,15 +25,23 @@ import { computeContentHash } from "./utils.js";
 import type { DocumentInput, PersonMention, ProviderId, SourceId } from "@omnesis/types";
 
 /** Bump when the rendered identity, content, or metadata contract changes. */
-export const AGENT_CONVERSATION_RENDER_VERSION = 2;
+export const AGENT_CONVERSATION_RENDER_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
+/** Harness-reported authorship, never inferred from message text or role alone. */
+export interface ConversationAuthor {
+  kind: "owner" | "agent" | "participant" | "unknown";
+  id?: string;
+  name?: string;
+}
+
 /** A single user or agent turn, normalized off whatever transport carried it. */
 export interface ConversationMessage {
   role: "user" | "assistant";
+  author?: ConversationAuthor;
   /** The message text (any harness-side context injection already stripped). */
   text: string;
   /** Unix epoch milliseconds. */
@@ -141,12 +149,115 @@ export interface RenderConversationDayOptions {
   provenance?: "harness-pushed" | "local-session-file";
 }
 
-/** Render one message as a titled block, preserving multi-line agent replies. */
-function renderMessage(msg: ConversationMessage, agentName: string): string {
-  const who = msg.role === "user" ? "You" : agentName;
-  // Defensive for transports that don't pre-filter empty turns.
-  const text = msg.text.trim() || "_(empty message)_";
-  return `**${localHourMinute(msg.atMs)} · ${who}**\n${text}`;
+/** Display metadata also travels outside Markdown, for example embedding preambles. */
+function singleLineLabel(value: string): string {
+  return value
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+    .replace(/[\r\n\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ");
+}
+
+/** Labels cannot introduce Markdown, HTML, or a second structural line. */
+function escapeLabel(value: string): string {
+  return singleLineLabel(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/[\\`*_{}\[\]()#+.!|~-]/g, "\\$&");
+}
+
+function messageAuthor(msg: ConversationMessage, agentName: string): ConversationAuthor {
+  const author = msg.author ?? { kind: msg.role === "assistant" ? "agent" : "unknown" };
+  if (
+    (msg.role === "assistant" && !["agent", "unknown"].includes(author.kind)) ||
+    (msg.role === "user" && author.kind === "agent")
+  )
+    return { kind: "unknown" };
+  return author.kind === "agent" ? { ...author, name: author.name ?? agentName } : author;
+}
+
+export interface ConversationTurn {
+  author: ConversationAuthor;
+  /** Original local display time; do not reinterpret it in the indexer's timezone. */
+  time: string;
+  atMs: number;
+  text: string;
+}
+
+/** Literal bodies cannot terminate their own fence, even with nested fences or HTML. */
+export function renderConversationTurn(turn: ConversationTurn): string {
+  const author = turn.author;
+  const name = author.name ? ` (${escapeLabel(author.name)})` : "";
+  const who =
+    author.kind === "owner"
+      ? "You"
+      : author.kind === "agent"
+        ? `Agent${name}`
+        : author.kind === "participant"
+          ? `Participant${name}`
+          : `Unknown participant${name}`;
+  let longest = 0;
+  for (const run of turn.text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `**${turn.time} · ${who}**\n\n${fence}text\n${turn.text}\n${fence}`;
+}
+
+/**
+ * Recover explicit turn boundaries for retrieval without recognizing headings in
+ * message text. Ranges avoid storing a second full copy of each day's transcript.
+ * A malformed declared contract must not fall back to heuristics over its body.
+ */
+export function readConversationTurns(content: string, value: unknown): ConversationTurn[] | null {
+  if (value === undefined) return null;
+  const fail = (): never => {
+    throw new Error("Invalid structured conversation turn ranges");
+  };
+  if (!value || typeof value !== "object") return fail();
+  const contract = value as { version?: unknown; turns?: unknown };
+  if (contract.version !== 1 || !Array.isArray(contract.turns) || !contract.turns.length)
+    return fail();
+  let previousEnd = 0;
+  const turns = contract.turns.map((raw: unknown) => {
+    if (!raw || typeof raw !== "object") return fail();
+    const r = raw as Record<string, unknown>;
+    const author = r.author as ConversationAuthor | undefined;
+    if (
+      !author ||
+      !["owner", "agent", "participant", "unknown"].includes(author.kind) ||
+      (author.name !== undefined &&
+        (typeof author.name !== "string" || author.name.length > 200)) ||
+      (author.id !== undefined && (typeof author.id !== "string" || author.id.length > 256)) ||
+      typeof r.time !== "string" ||
+      !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(r.time) ||
+      typeof r.atMs !== "number" ||
+      !Number.isFinite(r.atMs) ||
+      typeof r.start !== "number" ||
+      !Number.isSafeInteger(r.start) ||
+      r.start < previousEnd ||
+      typeof r.end !== "number" ||
+      !Number.isSafeInteger(r.end) ||
+      r.end > content.length ||
+      typeof r.bodyStart !== "number" ||
+      !Number.isSafeInteger(r.bodyStart) ||
+      r.bodyStart < r.start ||
+      typeof r.bodyEnd !== "number" ||
+      !Number.isSafeInteger(r.bodyEnd) ||
+      r.bodyEnd < r.bodyStart ||
+      r.bodyEnd > r.end
+    )
+      return fail();
+    const turn = {
+      author,
+      time: r.time,
+      atMs: r.atMs,
+      text: content.slice(r.bodyStart, r.bodyEnd),
+    };
+    if (renderConversationTurn(turn) !== content.slice(r.start, r.end)) return fail();
+    if (previousEnd > 0 && content.slice(previousEnd, r.start) !== "\n\n") return fail();
+    previousEnd = r.end;
+    return turn;
+  });
+  if (previousEnd !== content.length) return fail();
+  return turns;
 }
 
 /**
@@ -171,20 +282,40 @@ export function renderConversationDay(opts: RenderConversationDayOptions): Docum
     throw new Error("renderConversationDay called with no messages");
   }
 
-  const title = `${agentName} · ${platformLabel(chat.platform)}${
-    chat.chatName?.trim() ? ` — ${chat.chatName.trim()}` : ""
-  } — ${dayKey}`;
-
-  const content = [`# ${title}`, "", ...messages.map((m) => renderMessage(m, agentName))].join(
-    "\n\n",
+  const title = singleLineLabel(
+    `${agentName} · ${platformLabel(chat.platform)}${
+      chat.chatName?.trim() ? ` — ${chat.chatName.trim()}` : ""
+    } — ${dayKey}`,
   );
 
-  // The human is the only resolved participant; the agent is rendered as body
-  // text, mirroring the built-in agent-chat source (which never adds the
-  // assistant to the people graph). `isSelf` lets the gateway merge these
-  // turns onto the canonical self person without the source knowing the
-  // user's phone or email.
-  const people: PersonMention[] = [{ role: "participant", name: "You", isSelf: true }];
+  let content = `# ${escapeLabel(title)}`;
+  const turns = messages.map((msg) => {
+    const turn = {
+      author: messageAuthor(msg, agentName),
+      time: localHourMinute(msg.atMs),
+      atMs: msg.atMs,
+      text: msg.text.trim() || "(empty message)",
+    };
+    const rendered = renderConversationTurn(turn);
+    content += "\n\n";
+    const start = content.length;
+    // The first two newlines separate the heading; the third starts the body.
+    const bodyStart = start + rendered.indexOf("\n", rendered.indexOf("\n\n") + 2) + 1;
+    content += rendered;
+    return {
+      author: turn.author,
+      time: turn.time,
+      atMs: turn.atMs,
+      start,
+      end: content.length,
+      bodyStart,
+      bodyEnd: bodyStart + turn.text.length,
+    };
+  });
+  // Unknown/group participants must never be linked to the owner's person.
+  const people: PersonMention[] = turns.some((turn) => turn.author.kind === "owner")
+    ? [{ role: "participant", name: "You", isSelf: true }]
+    : [];
 
   const firstMs = messages[0].atMs;
   const lastMs = messages[messages.length - 1].atMs;
@@ -211,6 +342,7 @@ export function renderConversationDay(opts: RenderConversationDayOptions): Docum
         chatName: chat.chatName ?? null,
         chatType: chat.chatType ?? null,
         messageCount: messages.length,
+        conversationTurns: { version: 1, turns },
         // These transcripts are the harness's own report of the conversation —
         // its process could fabricate a message — so they are NOT a trust
         // anchor on their own. Marked so a later corroboration pass can

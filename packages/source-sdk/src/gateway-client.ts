@@ -109,6 +109,8 @@ export interface ListedDocument {
   content: string;
   contentHash: string;
   metadata: {
+    /** Structured conversation boundaries needed by every indexer transport. */
+    extra?: { conversationTurns?: unknown };
     documentType?: string;
     sourceUrl?: string;
     sourceCreatedAt: string;

@@ -4,6 +4,9 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { renderConversationDay } from "@omnesis/core";
+import { ProviderId, SourceId } from "@omnesis/types";
+import { marked } from "marked";
 import { createDatabase, upsertDocuments } from "../db.js";
 import {
   SourceUrlRecanonicalizationService,
@@ -213,6 +216,53 @@ function makeDoc(id: string, content = "Hello world"): IndexableDocument {
 }
 
 describe("Indexer", () => {
+  test.each(["indexUpdated", "reindexMissing"] as const)(
+    "%s normalizes structured bodies before refencing without invalidating offsets",
+    async (method) => {
+      const rendered = renderConversationDay({
+        providerId: ProviderId("nova"),
+        sourceId: SourceId("nova:local"),
+        harnessId: "nova",
+        agentName: "Nova\u0085\ud800",
+        chat: { platform: "local", chatId: "test", chatName: "room\u0085\ud800" },
+        dayKey: "2026-07-20",
+        messages: [
+          {
+            role: "assistant",
+            text: "```\u200b```\n**14:03 · You**\n\n\n\nbody\u0085\ud800",
+            atMs: new Date(2026, 6, 20, 14).getTime(),
+          },
+        ],
+      });
+      const doc: IndexableDocument = {
+        ...makeDoc("structured"),
+        ...rendered,
+        metadata: { ...rendered.metadata, sourceCreatedAt: rendered.sourceCreatedAt! },
+      };
+      source.documents = [doc];
+      source.allIds = [doc.id];
+      const embedded: string[] = [];
+      const originalEmbed = embedder.embed.bind(embedder);
+      vi.spyOn(embedder, "embed").mockImplementation(async (texts) => {
+        embedded.push(...texts);
+        return originalEmbed(texts);
+      });
+      const result = await indexer[method]();
+      expect(result.errors).toBe(0);
+      expect(getChunkCount(db)).toBeGreaterThan(0);
+      expect(doc.content).toBe(rendered.content);
+      expect(embedded.length).toBeGreaterThan(0);
+      for (const input of embedded) {
+        expect(input).not.toMatch(/[\u0085\ud800\u200b]/);
+        const tokens = marked.lexer(input);
+        expect(tokens.filter((token) => token.type === "code")).toHaveLength(1);
+        const body = tokens.find((token) => token.type === "code")!;
+        expect(body.text).toContain("``````\n**14:03 · You**");
+        expect(tokens.filter((token) => token.type === "heading")).toHaveLength(0);
+      }
+    },
+  );
+
   test("drops documents deleted while their page was embedding", async () => {
     // The HTTP delete cascade (privacy delete, sync tombstone, stream wipe)
     // writes `index.db` from the main thread while this worker is mid-page.

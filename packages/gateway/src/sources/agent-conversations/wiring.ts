@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 
-import { createLogger, localDayKey } from "@omnesis/core";
+import { createLogger, localDayKey, type ConversationAuthor } from "@omnesis/core";
 
 import { seedHarnessSourceMeta } from "./meta.js";
 import { AgentConversationsUpserter, type AgentConversationsUpserterDeps } from "./upsert.js";
@@ -50,6 +50,7 @@ export interface PushMessageInput {
   chatName?: string;
   chatType?: string;
   role: "user" | "assistant";
+  author?: ConversationAuthor;
   text: string;
   /** ISO-8601 or epoch-ms instant the turn occurred. */
   occurredAt: string | number;
@@ -57,8 +58,8 @@ export interface PushMessageInput {
 
 export interface AgentConversationsRuntime {
   /**
-   * Append a batch of pushed turns to the ledger and schedule re-projection of
-   * every touched bucket. Returns how many turns were newly inserted (dedup by
+   * Append or enrich a batch of pushed turns to the ledger and schedule re-projection of
+   * every touched bucket. Returns how many turns were inserted or gained explicit attribution (dedup by
    * id) so the caller can report accepted-vs-duplicate.
    */
   ingest(messages: PushMessageInput[]): Promise<{ accepted: number; buckets: number }>;
@@ -162,18 +163,14 @@ function toRow(input: PushMessageInput): AgentMessageRow {
     chatType: input.chatType ?? null,
     day: localDayKey(occurredMs),
     role: input.role,
+    ...(input.author ? { author: input.author } : {}),
     text,
     occurredAt,
     provenance: "harness-pushed",
   };
 }
 
-/**
- * Separates the hashed fields so no two different field splits can hash alike.
- * ASCII unit separator, which none of the fields can contain. Written as an
- * escape: a literal control byte would make git and grep treat this whole file
- * as binary, and its value is part of every synthesized id already stored.
- */
+/** Legacy separator retained for authorless/default-author retry compatibility. */
 const FIELD_SEPARATOR = "\u001f";
 
 /**
@@ -182,13 +179,19 @@ const FIELD_SEPARATOR = "\u001f";
  * re-push of the same turn dedups to the same row.
  */
 function synthesizeId(input: PushMessageInput, occurredAt: string, text: string): string {
-  const h = createHash("sha256")
-    .update(
-      [input.harness, input.channel, input.chatId, input.role, occurredAt, text].join(
-        FIELD_SEPARATOR,
-      ),
-    )
-    .digest("hex")
-    .slice(0, 32);
+  const fields = [input.harness, input.channel, input.chatId, input.role, occurredAt, text];
+  const author = input.author;
+  // Preserve legacy fingerprints for explicit defaults: these add no identity.
+  // Informative attribution distinguishes otherwise identical simultaneous
+  // messages from different participants. A fixed tuple ignores property order.
+  const defaultKind = input.role === "assistant" ? "agent" : "unknown";
+  let fingerprint = fields.join(FIELD_SEPARATOR);
+  if (
+    author &&
+    (author.kind !== defaultKind || author.id !== undefined || author.name !== undefined)
+  ) {
+    fingerprint = `author-v1\u0000${JSON.stringify([fields, [author.kind, author.id ?? null, author.name ?? null]])}`;
+  }
+  const h = createHash("sha256").update(fingerprint).digest("hex").slice(0, 32);
   return `${input.harness}:${input.channel}:${input.chatId}:${h}`;
 }

@@ -1126,6 +1126,14 @@
           ingestion; the agent's replies remain part of the indexed conversation.
         </p>
         <p>
+          Indexed transcripts keep each turn's speaker separate from its message text. Message
+          bodies are displayed literally, so Markdown or HTML inside a reply cannot create another
+          turn heading. Search excerpts retain the speaker and time when a long message is split. A
+          user-role message is not proof that you wrote it: when the host supplies no verified
+          per-message author, it is labelled as an unknown participant rather than you. These
+          transcripts remain reports from the connected agent, not independent identity evidence.
+        </p>
+        <p>
           An answer requested by a Watch can also wait for approval and resume after a restart.
           Approval may arrive after the firing's short-lived asking credential expires: the plugin
           retrieves only that completed answer using its current delivery connection. The Watch's
