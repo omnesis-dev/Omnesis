@@ -2647,48 +2647,60 @@ exit 0
     expect(run.calls).toContain("systemctl --user enable --now omnesis-tls-renew.timer");
   });
 
-  test("on a terminal it asks first, Yes by default, and logs the portal in with a one-time code", () => {
-    installHostTailscale();
-    const run = runInstallerOnTty("ts-ask-yes", QUIET, [""]);
-    expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain(
-      `Tailscale detected — set up a trusted HTTPS certificate for ${TS_NAME}? [Y/n]`,
-    );
-    expect(tailscaleCerts(run)).toHaveLength(1);
-    expect(run.envFile()).toContain(`OMNESIS_TLS_CERT=${tierCert(run)}\n`);
-    // The login link: a code minted for this terminal alone, by the Tailscale name.
-    expect(run.calls).toContain("devices pair --kind portal");
-    expect(run.output).toContain(`Portal:  https://${TS_NAME}:7600/portal/?token=3F9A0C21BE`);
-    expect(run.output).toContain("signs you in once, within 10 minutes");
-  });
+  // script(1) supplies the terminal on Linux only (see HAS_PTY).
+  test.skipIf(!HAS_PTY)(
+    "on a terminal it asks first, Yes by default, and logs the portal in with a one-time code",
+    () => {
+      installHostTailscale();
+      const run = runInstallerOnTty("ts-ask-yes", QUIET, [""]);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).toContain(
+        `Tailscale detected — set up a trusted HTTPS certificate for ${TS_NAME}? [Y/n]`,
+      );
+      expect(tailscaleCerts(run)).toHaveLength(1);
+      expect(run.envFile()).toContain(`OMNESIS_TLS_CERT=${tierCert(run)}\n`);
+      // The login link: a code minted for this terminal alone, by the Tailscale name.
+      expect(run.calls).toContain("devices pair --kind portal");
+      expect(run.output).toContain(`Portal:  https://${TS_NAME}:7600/portal/?token=3F9A0C21BE`);
+      expect(run.output).toContain("signs you in once, within 10 minutes");
+    },
+  );
 
-  test("declined, nothing is issued and the banner warns, naming the re-run that fixes it", () => {
-    installHostTailscale();
-    const run = runInstallerOnTty("ts-ask-no", [...QUIET, "--gateway-only"], ["n"]);
-    expect(run.status, run.output).toBe(0);
-    expect(tailscaleCerts(run)).toEqual([]);
-    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
-    expect(existsSync(renewScript(run))).toBe(false);
-    expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
-    expect(run.output).toContain("You declined the Tailscale certificate");
-    expect(run.output).toContain(
-      "curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --gateway-only",
-    );
-    // The self-signed portal still gets its link, by localhost.
-    expect(run.output).toContain("Portal:  https://localhost:7600/portal/?token=3F9A0C21BE");
-  });
+  // script(1) supplies the terminal on Linux only (see HAS_PTY).
+  test.skipIf(!HAS_PTY)(
+    "declined, nothing is issued and the banner warns, naming the re-run that fixes it",
+    () => {
+      installHostTailscale();
+      const run = runInstallerOnTty("ts-ask-no", [...QUIET, "--gateway-only"], ["n"]);
+      expect(run.status, run.output).toBe(0);
+      expect(tailscaleCerts(run)).toEqual([]);
+      expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+      expect(existsSync(renewScript(run))).toBe(false);
+      expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
+      expect(run.output).toContain("You declined the Tailscale certificate");
+      expect(run.output).toContain(
+        "curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --gateway-only",
+      );
+      // The self-signed portal still gets its link, by localhost.
+      expect(run.output).toContain("Portal:  https://localhost:7600/portal/?token=3F9A0C21BE");
+    },
+  );
 
-  test("HTTPS certificates switched off for the tailnet: said plainly, nothing attempted", () => {
-    installHostTailscale({ certs: "off" });
-    const run = runInstallerOnTty("ts-certs-off", QUIET, []);
-    expect(run.status, run.output).toBe(0);
-    expect(run.output).not.toContain("[Y/n]");
-    expect(tailscaleCerts(run)).toEqual([]);
-    expect(run.output).toContain("HTTPS certificates are switched off for this tailnet");
-    expect(run.output).toContain("HTTPS certificates are off for your tailnet");
-    expect(run.output).toContain("https://login.tailscale.com/admin/dns");
-    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
-  });
+  // script(1) supplies the terminal on Linux only (see HAS_PTY).
+  test.skipIf(!HAS_PTY)(
+    "HTTPS certificates switched off for the tailnet: said plainly, nothing attempted",
+    () => {
+      installHostTailscale({ certs: "off" });
+      const run = runInstallerOnTty("ts-certs-off", QUIET, []);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).not.toContain("[Y/n]");
+      expect(tailscaleCerts(run)).toEqual([]);
+      expect(run.output).toContain("HTTPS certificates are switched off for this tailnet");
+      expect(run.output).toContain("HTTPS certificates are off for your tailnet");
+      expect(run.output).toContain("https://login.tailscale.com/admin/dns");
+      expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+    },
+  );
 
   test("a refused certificate falls back to the self-signed one with tailscaled's reason", () => {
     installHostTailscale({
@@ -2734,7 +2746,10 @@ exit 0
     expect(first.status, first.output).toBe(0);
 
     const minted = installHostTailscale();
-    const again = runInstallerOnTty("ts-rerun", QUIET, []);
+    // On a terminal where one is available, so "without asking again" is tested.
+    const again = HAS_PTY
+      ? runInstallerOnTty("ts-rerun", QUIET, [])
+      : runInstaller("ts-rerun", QUIET);
     expect(again.status, again.output).toBe(0);
     expect(again.output).not.toContain("[Y/n]");
     expect(tailscaleCerts(again)).toHaveLength(1);
