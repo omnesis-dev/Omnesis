@@ -4821,9 +4821,35 @@ print_harness_banner() {
 # ports with `!reset`, which Compose reads from v2.24.0.
 DOCKER_COMPOSE_MIN="2.24.0"
 
+# How many times a failed image pull is tried, and the base of the growing pause
+# between tries (5s, then 10s by default).
+DOCKER_PULL_ATTEMPTS="${OMNESIS_DOCKER_PULL_ATTEMPTS:-3}"
+DOCKER_PULL_RETRY_SECONDS="${OMNESIS_DOCKER_PULL_RETRY_SECONDS:-5}"
+
+# Docker Desktop installed for one user, and OrbStack, leave the CLI off the
+# default PATH and add its directory from ~/.zprofile, which a terminal opened
+# before the install has not read. Prints the CLI found in one of those places.
+docker_cli_off_path() {
+  for DOCKER_CANDIDATE in "$HOME/.docker/bin/docker" \
+                          "${OMNESIS_TEST_HOST_ROOT:-}/Applications/Docker.app/Contents/Resources/bin/docker" \
+                          "$HOME/.orbstack/bin/docker"; do
+    if [ -x "$DOCKER_CANDIDATE" ]; then
+      printf '%s\n' "$DOCKER_CANDIDATE"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_docker() {
-  command -v docker >/dev/null 2>&1 || \
-    fail "--docker needs Docker, which is not installed. Install it from https://docs.docker.com/get-docker/ and re-run."
+  if ! command -v docker >/dev/null 2>&1; then
+    DOCKER_CLI_FOUND="$(docker_cli_off_path)" || \
+      fail "--docker needs Docker, which is not installed. Install it from https://docs.docker.com/get-docker/ and re-run."
+    DOCKER_CLI_DIR="${DOCKER_CLI_FOUND%/docker}"
+    PATH="$PATH:$DOCKER_CLI_DIR"
+    export PATH
+    warn "Docker is installed at $DOCKER_CLI_FOUND, but this terminal's PATH does not include $DOCKER_CLI_DIR yet; this install uses it from there. Open a new terminal before running omnesis commands, which run docker."
+  fi
   docker compose version >/dev/null 2>&1 || \
     fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
   docker_require_compose_version
@@ -4876,6 +4902,12 @@ docker_socket_facts() {
 # because an operator meets it here, where the message can still say what to do
 # about it.
 docker_validate_values() {
+  case "$DOCKER_PULL_ATTEMPTS" in
+    ''|*[!0-9]*|0*) fail "OMNESIS_DOCKER_PULL_ATTEMPTS must be a whole number of at least 1; this run has '$DOCKER_PULL_ATTEMPTS'." ;;
+  esac
+  case "$DOCKER_PULL_RETRY_SECONDS" in
+    ''|*[!0-9]*) fail "OMNESIS_DOCKER_PULL_RETRY_SECONDS must be a whole number of seconds; this run has '$DOCKER_PULL_RETRY_SECONDS'." ;;
+  esac
   case "$CONFIG_DIR" in
     /*) ;;
     *) fail "--docker needs an absolute config directory; this run has '$CONFIG_DIR'. Set OMNESIS_CONFIG_DIR to an absolute path and re-run." ;;
@@ -6113,8 +6145,33 @@ docker_fetch_images() {
   fi
   info "Pulling the $IMAGE_TAG images..."
   REGISTRY_DIAGNOSTIC="$REGISTRY_TMP_DIR/pull.err"
+  # A pull opens a hundred or so connections to the registry and its blob
+  # store, and Docker gives up on the whole image when one of them is refused.
+  # Layers that already landed stay, so another attempt only fetches the rest.
+  # A refusal on credentials or a missing tag is final at once.
+  REGISTRY_PULL_ATTEMPT=1
+  while :; do
+    docker_pull_images_once && return 0
+    docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    [ "$REGISTRY_PULL_ATTEMPT" -lt "$DOCKER_PULL_ATTEMPTS" ] || break
+    REGISTRY_PULL_WAIT=$((REGISTRY_PULL_ATTEMPT * DOCKER_PULL_RETRY_SECONDS))
+    warn "Pulling the images failed (attempt $REGISTRY_PULL_ATTEMPT of $DOCKER_PULL_ATTEMPTS); retrying in ${REGISTRY_PULL_WAIT}s with the layers already downloaded."
+    sleep "$REGISTRY_PULL_WAIT"
+    REGISTRY_PULL_ATTEMPT=$((REGISTRY_PULL_ATTEMPT + 1))
+  done
+  if [ -n "$DOCKER_BUILD_CONTEXT" ]; then
+    fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG after $DOCKER_PULL_ATTEMPTS attempts; the output above names the request that failed. Check this host's network connection to the registry and re-run, which keeps the layers already downloaded, or build the images from $DOCKER_BUILD_CONTEXT instead by re-running with --build."
+  fi
+  fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG after $DOCKER_PULL_ATTEMPTS attempts; the output above names the request that failed. Check this host's network connection to the registry and re-run, which keeps the layers already downloaded. A checkout of the repository can build the images itself: scripts/install.sh --docker --build."
+}
+
+# One `compose pull`, its errors shown as they happen and kept in
+# REGISTRY_DIAGNOSTIC for classification.
+docker_pull_images_once() {
   REGISTRY_PULL_PIPE="$REGISTRY_TMP_DIR/pull.pipe"
   REGISTRY_PULL_STATUS=0
+  rm -f "$REGISTRY_PULL_PIPE"
   if command -v mkfifo >/dev/null 2>&1 && command -v tee >/dev/null 2>&1 && mkfifo "$REGISTRY_PULL_PIPE" 2>/dev/null; then
     tee "$REGISTRY_DIAGNOSTIC" < "$REGISTRY_PULL_PIPE" >&2 &
     REGISTRY_TEE_PID=$!
@@ -6125,15 +6182,7 @@ docker_fetch_images() {
     docker compose -f "$COMPOSE_FILE" --profile update pull 2>"$REGISTRY_DIAGNOSTIC" || REGISTRY_PULL_STATUS=$?
     cat "$REGISTRY_DIAGNOSTIC" >&2
   fi
-  if [ "$REGISTRY_PULL_STATUS" = 0 ]; then
-    return 0
-  fi
-  docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
-  docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
-  if [ -n "$DOCKER_BUILD_CONTEXT" ]; then
-    fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG. Check the tag and your network connection, or build the images from $DOCKER_BUILD_CONTEXT instead by re-running with --build."
-  fi
-  fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG. Check the tag and your network connection. A checkout of the repository can build the images itself: scripts/install.sh --docker --build."
+  return "$REGISTRY_PULL_STATUS"
 }
 
 docker_up() {

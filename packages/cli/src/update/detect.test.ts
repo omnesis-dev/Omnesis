@@ -1692,6 +1692,12 @@ describe("apply plans", () => {
     expect(plan.rollback.map(formatCommandSpec)).toEqual([
       "docker compose -f /cfg/docker-compose.yml pull",
     ]);
+    // A refused registry connection fails a pull without leaving anything to
+    // undo, so each direction pulls once more before giving up.
+    expect(plan.apply[0].retry).toEqual({
+      why: "pulling again, keeping the layers already downloaded",
+    });
+    expect(plan.rollback[0].retry?.reset).toBeUndefined();
     expect(plan.target).toBe("0.4.2");
     expect(plan.previous).toBe("0.4.1");
     // Recorded before the tag moves; complete only once the whole plan, the

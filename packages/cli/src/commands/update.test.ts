@@ -1763,7 +1763,7 @@ describe("updateDocker", () => {
    * occurrence of one — the rollback runs the same `pull` as the apply, so
    * "the first pull" is the failure a revert test needs.
    */
-  function dockerRunner(events: string[], failAt?: { line: string; nth: number }) {
+  function dockerRunner(events: string[], failAt?: { line: string; nth: number | number[] }) {
     const calls: RecordedCall[] = [];
     const seen = new Map<string, number>();
     const run: CommandRunner = (spec, mode) => {
@@ -1772,7 +1772,8 @@ describe("updateDocker", () => {
       events.push(line);
       const nth = (seen.get(line) ?? 0) + 1;
       seen.set(line, nth);
-      const failed = failAt !== undefined && failAt.line === line && failAt.nth === nth;
+      const failed =
+        failAt !== undefined && failAt.line === line && [failAt.nth].flat().includes(nth);
       return Promise.resolve({ code: failed ? 1 : 0, stdout: "" });
     };
     return { run, calls };
@@ -1849,11 +1850,32 @@ describe("updateDocker", () => {
     expect(latestDockerVersion).toHaveBeenCalledWith(composeFile);
   });
 
-  test("a failed pull records the previous tag again and brings the gateway back", async () => {
+  test("a pull a passing network fault broke is pulled once more, and the update lands", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events, {
       line: `docker compose -f ${composeFile} pull`,
       nth: 1,
+    });
+    const landed = await updateDocker(opts(), dockerDeps(events, runner));
+
+    expect(events).toEqual([
+      "backup",
+      "select 0.4.2",
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} up -d --no-deps gateway`,
+      "awaitHealth 0.4.2",
+      `docker compose -f ${composeFile} up -d --no-deps collector`,
+    ]);
+    expect(landed).toBe("0.4.2");
+    expect(output()).toContain("pulling again, keeping the layers already downloaded");
+  });
+
+  test("a failed pull records the previous tag again and brings the gateway back", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events, {
+      line: `docker compose -f ${composeFile} pull`,
+      nth: [1, 2],
     });
     await expect(updateDocker(opts(), dockerDeps(events, runner))).rejects.toMatchObject({
       exitCode: EXIT_FAILURE,
@@ -1862,6 +1884,8 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
+      `docker compose -f ${composeFile} pull`,
+      // Pulled twice: the second attempt rides out a refused connection.
       `docker compose -f ${composeFile} pull`,
       // The way back is the same pull at the tag that was recorded before.
       "select 0.4.1",
@@ -2088,7 +2112,10 @@ describe("updateDocker", () => {
       serializeUpdateApplyState(activeDockerApplyState(projectDir, "applying", "0.4.2", "0.4.1")),
     );
     const events: string[] = [];
-    const runner = dockerRunner(events, { line: `docker compose -f ${composeFile} pull`, nth: 1 });
+    const runner = dockerRunner(events, {
+      line: `docker compose -f ${composeFile} pull`,
+      nth: [1, 2],
+    });
     await expect(
       updateDocker(
         opts({ targetVersion: "0.4.2" }),

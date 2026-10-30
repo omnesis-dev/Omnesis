@@ -20,12 +20,13 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
@@ -137,6 +138,11 @@ for ARG in "$@"; do
       fi
       exit 0 ;;
     pull)
+      if [ -n "\${OMNESIS_TEST_PULL_FAIL_TIMES:-}" ] && \\
+         [ "$(grep -c -- '--profile update pull' "$OMNESIS_TEST_DOCKER")" -le "$OMNESIS_TEST_PULL_FAIL_TIMES" ]; then
+        echo "\${OMNESIS_TEST_PULL_ERROR:-dial tcp 20.26.156.211:443: connect: connection refused}" >&2
+        exit 1
+      fi
       if [ -n "\${OMNESIS_TEST_PULL_FAIL:-}" ]; then
         [ -z "\${OMNESIS_TEST_PULL_ERROR:-}" ] || printf '%s\\n' "$OMNESIS_TEST_PULL_ERROR" >&2
         exit 1
@@ -263,7 +269,8 @@ function dockerLog(home) {
 }
 
 function withDockerEnv(home, extra) {
-  return { OMNESIS_TEST_DOCKER: dockerLog(home), ...extra };
+  // A failed pull is retried after a pause; no run here waits for it.
+  return { OMNESIS_TEST_DOCKER: dockerLog(home), OMNESIS_DOCKER_PULL_RETRY_SECONDS: "0", ...extra };
 }
 
 function readDockerCalls(home) {
@@ -1136,6 +1143,54 @@ describe("install.sh --docker: what it puts on this host", () => {
     // behind the operator's back.
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
     expect(run.docker.some((call) => call.includes(" build"))).toBe(false);
+  });
+
+  test("a pull a refused connection broke is tried again, keeping what it downloaded", () => {
+    const run = runInstaller("pull-transient", QUIET, { OMNESIS_TEST_PULL_FAIL_TIMES: "2" });
+    expect(run.status, run.output).toBe(0);
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(3);
+    expect(run.output).toContain("connection refused");
+    expect(run.output).toContain("attempt 1 of 3");
+    expect(run.output).toContain("attempt 2 of 3");
+    expect(run.docker.some((call) => call.includes("up -d"))).toBe(true);
+  });
+
+  test("a pull that keeps failing stops after its attempts and points at the network", () => {
+    const run = runInstaller("pull-down", QUIET, {
+      OMNESIS_TEST_PULL_FAIL_TIMES: "9",
+      OMNESIS_DOCKER_PULL_ATTEMPTS: "2",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(2);
+    expect(run.output).toContain("after 2 attempts");
+    expect(run.output).toContain("network connection to the registry");
+    expect(run.output).not.toContain("Check the tag");
+    expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
+  });
+
+  test("a pull refused on credentials or a missing tag is not tried again", () => {
+    for (const [name, error] of [
+      ["pull-auth-once", "unauthorized: authentication required"],
+      ["pull-missing-once", "manifest unknown: manifest unknown"],
+    ]) {
+      const run = runInstaller(name, QUIET, {
+        OMNESIS_TEST_MANIFEST_MODE: "unsupported",
+        OMNESIS_TEST_PULL_FAIL: "1",
+        OMNESIS_TEST_PULL_ERROR: error,
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(1);
+      expect(run.output).not.toContain("attempt 1 of");
+    }
+  });
+
+  test.each(["0", "two", "03"])("OMNESIS_DOCKER_PULL_ATTEMPTS=%s is refused", (attempts) => {
+    const run = runInstaller(`pull-attempts-${attempts}`, QUIET, {
+      OMNESIS_DOCKER_PULL_ATTEMPTS: attempts,
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("OMNESIS_DOCKER_PULL_ATTEMPTS must be a whole number");
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 
   test("a pull authentication failure is actionable when manifest inspection is unavailable", () => {
@@ -2172,6 +2227,56 @@ describe("install.sh --docker: a compose plugin too old for the project", () => 
       expect(run.status, run.output).toBe(0);
     },
   );
+});
+
+/**
+ * A PATH on which no `docker` resolves, real or fake: every other command the
+ * installer runs, linked into one directory from wherever this host keeps it.
+ */
+function pathWithoutDocker() {
+  const tools = fixturePath("tools-without-docker");
+  mkdirSync(tools, { recursive: true });
+  const dirs = [
+    fixturePath("fake-bin"),
+    dirname(process.execPath),
+    ...(process.env.PATH ?? "").split(delimiter),
+  ];
+  for (const dir of dirs) {
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (name === "docker" || existsSync(join(tools, name))) continue;
+      symlinkSync(join(dir, name), join(tools, name));
+    }
+  }
+  return tools;
+}
+
+describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
+  test("a CLI in ~/.docker/bin is used, and the operator told to open a new terminal", () => {
+    const home = prepareHome("docker-off-path");
+    const dockerDir = join(home, ".docker", "bin");
+    mkdirSync(dockerDir, { recursive: true });
+    copyFileSync(fixturePath("fake-bin", "docker"), join(dockerDir, "docker"));
+    const tools = pathWithoutDocker();
+    const run = runInstaller("docker-off-path", QUIET, { PATH: tools });
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(`Docker is installed at ${join(dockerDir, "docker")}`);
+    expect(run.output).toContain("Open a new terminal");
+    expect(run.docker.some((call) => call.includes("--profile update pull"))).toBe(true);
+  });
+
+  test("with no CLI there either, Docker is reported missing before anything is written", () => {
+    const run = runInstaller("docker-missing", QUIET, { PATH: pathWithoutDocker() });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("--docker needs Docker, which is not installed");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker).toEqual([]);
+  });
 });
 
 describe("install.sh --docker: without a terminal", () => {

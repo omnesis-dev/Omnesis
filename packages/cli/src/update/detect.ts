@@ -191,11 +191,12 @@ export interface CommandSpec {
   env?: Record<string, string>;
   /**
    * A second attempt for a command whose failure can leave behind the state
-   * that makes it fail again: when the command exits non-zero on its own,
-   * `reset` runs and the command runs once more. `why` tells the operator
-   * reading the output why the second attempt differs from the first.
+   * that makes it fail again, or that a passing network fault can fail: when
+   * the command exits non-zero on its own, `reset` (when there is one) runs and
+   * the command runs once more. `why` tells the operator reading the output
+   * why the second attempt is worth making.
    */
-  retry?: { reset: CommandSpec; why: string };
+  retry?: { reset?: CommandSpec; why: string };
 }
 
 /** `npm view omnesis@<tag> version` — resolve the channel's target version. */
@@ -1635,9 +1636,15 @@ export function dockerApplyPlan(
   target: string,
   previous: string,
 ): ApplyPlan {
+  // A pull opens a hundred or so registry connections and fails the image
+  // when one is refused; the layers that landed stay, so a second pull is cheap.
+  const pull = (): CommandSpec => ({
+    ...dockerComposeSpec(composeFile, ["pull"]),
+    retry: { why: "pulling again, keeping the layers already downloaded" },
+  });
   return {
-    apply: [dockerComposeSpec(composeFile, ["pull"])],
-    rollback: [dockerComposeSpec(composeFile, ["pull"])],
+    apply: [pull()],
+    rollback: [pull()],
     target,
     previous,
     applyState: {

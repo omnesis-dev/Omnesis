@@ -621,9 +621,11 @@ async function attempt(
   console.log(
     `${c.yellow}! \`${formatCommandSpec(spec)}\` failed (exit ${first.code}); ${retry.why}.${c.reset}`,
   );
-  console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
-  const reset = await once(retry.reset);
-  if (reset.code !== 0 || control?.signal?.aborted) return first;
+  if (retry.reset) {
+    console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
+    const reset = await once(retry.reset);
+    if (reset.code !== 0 || control?.signal?.aborted) return first;
+  }
   await prepareHeaders();
   console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
   return once(spec);
@@ -835,7 +837,7 @@ async function rollBackAndFail(
     }
   }
   const rollback = applyPlan.rollback.flatMap((spec) =>
-    memory.resetDependencies && isDependencyInstall(spec) && spec.retry
+    memory.resetDependencies && isDependencyInstall(spec) && spec.retry?.reset
       ? [spec.retry.reset, spec]
       : [spec],
   );
