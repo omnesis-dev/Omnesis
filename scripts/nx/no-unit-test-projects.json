@@ -8,5 +8,6 @@
   "packages/providers-synth/notion",
   "packages/providers-synth/obsidian",
   "packages/providers-synth/plaid",
+  "packages/providers-synth/telegram",
   "packages/providers-synth/whatsapp"
 ]

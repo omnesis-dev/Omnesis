@@ -624,6 +624,20 @@ describe("experimentalDescriptorHidden", () => {
     );
   });
 
+  it("the registered Telegram source is hidden without experimental mode and listed with it", async () => {
+    const { allDefinitions } = await import("./source-descriptors.js");
+    const telegram = allDefinitions.find(
+      (def) => def.type === "provider" && def.provider.id === "telegram",
+    );
+    expect(telegram, "the collector registers @omnesis/provider-telegram").toBeDefined();
+    const [descriptor] = extractDescriptors(telegram!);
+    expect(String(descriptor!.id)).toBe("telegram-messages");
+    expect(descriptor!.experimental).toBe(true);
+    expect(experimentalDescriptorHidden(descriptor!, false)).toBe(true);
+    process.env[EXPERIMENTAL_ENV_VAR] = "1";
+    expect(experimentalDescriptorHidden(descriptor!, false)).toBe(false);
+  });
+
   it("does not hide an experimental descriptor when experimental mode is on", () => {
     process.env[EXPERIMENTAL_ENV_VAR] = "1";
     expect(experimentalDescriptorHidden(fakeDescriptor("acme", "acme-source", true), false)).toBe(

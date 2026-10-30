@@ -12,8 +12,12 @@ import {
   runSourceConformance,
   type SourceConformanceOptions,
 } from "@omnesis/source-sdk/testing";
+import {
+  resolveSourceState,
+  type SourceDefinition,
+  type SourceInstance,
+} from "@omnesis/source-sdk";
 import { allDefinitions } from "./source-descriptors.js";
-import type { SourceDefinition, SourceInstance } from "@omnesis/source-sdk";
 
 // Hand-authored contract fixtures, not captured release output. Keep nonempty
 // bookmarks so dropping a token/map during migration cannot pass as a fresh run.
@@ -182,6 +186,7 @@ const current: Record<string, unknown> = {
     syncedUpTo: timestamp,
   },
   plaid: { phase: "transactions", transactionsCursor: "page-2", lastSnapshotDate: "2026-01-02" },
+  "telegram-messages": { phase: "incremental", committedSeq: 42, storeId: "store-1" },
   "whatsapp-messages": {
     phase: "incremental",
     lastTimestamp: 700,
@@ -199,6 +204,16 @@ const historical: Record<string, unknown> = {
   "screen-time": screenLegacy,
   github: githubCursor,
   "github-commits": githubCursor,
+};
+// Other cursors an install could hold besides the current fixture. Each must
+// resume as itself, whether stored bare or in the envelope the host writes.
+const installed: Record<string, Record<string, Record<string, unknown>>> = {
+  "telegram-messages": {
+    // Mid-way through the history walk: the drain acknowledges during bootstrap.
+    bootstrap: { phase: "bootstrap", committedSeq: 17, storeId: "store-1" },
+    // No archive identity, which the decoder keeps as an older cursor.
+    "no-storeId": { phase: "incremental", committedSeq: 42 },
+  },
 };
 const expectations: Record<string, (state: Record<string, unknown>) => void> = {
   "granola-meetings": (state) =>
@@ -296,6 +311,27 @@ describe("registered provider contract conformance", () => {
       }
     },
   );
+
+  it.each(
+    Object.entries(installed).flatMap(([id, states]) =>
+      Object.entries(states).flatMap(([label, state]) => [
+        { id, label, form: "bare", state },
+        { id, label, form: "enveloped", state },
+      ]),
+    ),
+  )("$id: an installed $label cursor resumes as itself ($form)", ({ id, form, state }) => {
+    const source = allDefinitions
+      .flatMap<Pick<SourceDefinition, "id" | "contract">>((definition) =>
+        "sources" in definition ? definition.sources : [definition],
+      )
+      .find((candidate) => candidate.id === id);
+    const spec = source?.contract?.state;
+    if (!spec) throw new Error(`${id} declares no state spec`);
+    const stored = form === "bare" ? state : { e: 1, v: spec.version, s: id, state };
+    const outcome = resolveSourceState(spec, stored, { sourceId: id });
+    expect(outcome.kind).toBe("resume");
+    expect(outcome.kind === "resume" ? outcome.state : undefined).toEqual(state);
+  });
 
   it("keeps fixtures in exact correspondence with stateful registered sources", () => {
     const sources = allDefinitions.flatMap<Pick<SourceDefinition, "id" | "contract">>(

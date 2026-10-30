@@ -372,12 +372,12 @@ de-duplicating by `name@version`. It includes optional production dependencies
 (e.g. platform-specific native binaries), so multiple platform variants of the
 same library each appear as a distinct entry.
 
-**520 distinct third-party production packages**, grouped by their declared SPDX
+**532 distinct third-party production packages**, grouped by their declared SPDX
 license expression:
 
 | Count | License (as declared in package metadata)            |
 | ----: | ---------------------------------------------------- |
-|   371 | MIT                                                  |
+|   383 | MIT                                                  |
 |    38 | Apache-2.0                                           |
 |    30 | ISC                                                  |
 |    16 | BSD-3-Clause                                         |
@@ -399,6 +399,12 @@ license expression:
 |     1 | MIT-0                                                |
 |     1 | 0BSD                                                 |
 |     1 | Unlicense                                            |
+
+The experimental Telegram provider adds the MTProto client `@mtcute/*`
+(`core`, `node`, `file-id`, `tl-runtime`, `wasm`, `html-parser`,
+`markdown-parser`) and its `@fuman/*` utilities (`io`, `net`, `node`, `utils`),
+all MIT, plus `@types/events` (MIT) as a declared runtime dependency of
+`@mtcute/core`.
 
 Notes on the non-normalized rows: the two `Apache 2.0` entries (`usearch`,
 `qrcode-terminal`) are Apache-2.0; the three bare `BSD` entries (`duck`,

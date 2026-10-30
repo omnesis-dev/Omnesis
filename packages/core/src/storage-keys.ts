@@ -38,6 +38,7 @@ export const STORAGE_KEY_NAMES = [
   "analytics-db",
   "whatsapp-store",
   "imessage-transcripts",
+  "telegram-store",
   /**
    * The watch journal's key. The file is `watch.db`; this name is not.
    *
@@ -80,6 +81,7 @@ const STORAGE_KEY_HOSTS: Record<(typeof STORAGE_KEY_NAMES)[number], StorageKeyHo
   "watch2-db": "gateway",
   "whatsapp-store": "collector",
   "imessage-transcripts": "collector",
+  "telegram-store": "collector",
 };
 
 /** The registered key names a process of `host` is responsible for. */

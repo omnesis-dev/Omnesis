@@ -3,10 +3,10 @@
 
 /**
  * Narrow predicate that recognises the known-benign Baileys
- * `useMultiFileAuthState` ENOENT race. Used by `main.ts` to suppress
- * exactly that race in the collector's `unhandledRejection` /
- * `uncaughtException` handlers — every other error escalates so the
- * supervisor can restart the process.
+ * `useMultiFileAuthState` ENOENT race. Used by `process-failure-policy.ts`
+ * to suppress exactly that race in the collector's `unhandledRejection` /
+ * `uncaughtException` handlers — every other error is handled by that
+ * policy.
  *
  * The race shape: Baileys's `saveCreds` debounce fires after the
  * WhatsApp socket has been torn down and the auth directory has

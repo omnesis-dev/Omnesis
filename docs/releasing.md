@@ -476,6 +476,13 @@ build from source, so the gateway cannot run there however long you wait.
 `better-sqlite3` and `usearch` additionally compile from source on musl. Windows
 is unsupported.
 
+`@mtcute/node` (the experimental Telegram provider) declares `better-sqlite3@^12`.
+A root `overrides` entry resolves it to the workspace's 13, so the lockfile holds
+one `better-sqlite3` and no second native build; mtcute only calls
+`sqlite3(filename, opts)` and `.pragma()`, both unchanged in 13. The provider
+never uses mtcute's own SQLite storage either way. `npm ls` reports the
+overridden edge as `invalid`, as it does for the existing `simple-git` override.
+
 This is documented rather than solved. Publishing our own prebuilds for the
 modules that lack them is a separate piece of work; until then the honest
 statement is the table above.

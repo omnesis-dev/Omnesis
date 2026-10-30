@@ -67,7 +67,7 @@ describe("createAttachmentExtractor — OCR", () => {
       return { text: "page one text", pages: 1 };
     });
     const extract = createAttachmentExtractor({ ocr });
-    // Bytes unpdf/pdf-parse can't extract → the OCR fallback runs.
+    // Bytes the PDF parser can't read → the OCR fallback runs.
     const result = await extract(new Uint8Array([1, 2, 3]), "application/pdf");
     expect(result).not.toBeNull();
     expect(result!.text).toBe("page one text");

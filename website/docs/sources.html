@@ -287,6 +287,19 @@
               </tr>
               <tr>
                 <td>
+                  Telegram Messages<br /><span class="pill">any collector</span>
+                  <span class="pill">QR sign-in</span> <span class="pill">experimental</span>
+                </td>
+                <td>
+                  <strong>Experimental</strong> — offered only when the gateway and collector run
+                  with <code>OMNESIS_EXPERIMENTAL=1</code>. Your chats as conversational documents,
+                  one per chat per day, through a Telegram API app you create yourself. Voice notes
+                  are transcribed when a transcriber model is assigned, and photo and document text
+                  is extracted. See <a href="#telegram">Telegram</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
                   Apple iMessage<br /><span class="pill">macOS collector</span>
                   <span class="pill">Full Disk Access</span>
                 </td>
@@ -501,6 +514,114 @@
             adds the rest without duplicating them.
           </li>
         </ul>
+
+        <h3 id="telegram">Telegram</h3>
+        <div class="callout warn">
+          <strong>Experimental.</strong> The Telegram source is unstable and offered in
+          <strong>Add source</strong> only when the gateway and the collector run with
+          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+        </div>
+        <p>
+          Telegram Messages archives your own Telegram account — signed in as you, not as a bot —
+          into Omnesis. It reads your chats through the Telegram API with a developer app that you
+          create, and never sends a message or marks anything as read.
+        </p>
+        <p>
+          <strong>Your own API app.</strong> Omnesis ships no Telegram app credential; the add flow
+          asks for an <code>api_id</code> and <code>api_hash</code>, which stay on the collector's
+          host.
+        </p>
+        <ol>
+          <li>
+            Open <code>https://my.telegram.org/apps</code> and sign in with your phone number. The
+            login code arrives inside the Telegram app, not by SMS.
+          </li>
+          <li>
+            Create an app with a title that does not contain the word "Telegram", such as
+            <em>Omnesis archive</em>, a short name of 5 to 32 letters or digits, and the platform
+            <em>Desktop</em>.
+          </li>
+          <li>
+            Paste the <code>api_id</code> (digits) and <code>api_hash</code> (32 hexadecimal
+            characters) into the add flow.
+          </li>
+        </ol>
+        <p>
+          Telegram allows one app per phone number: if you already created one, reuse its
+          <code>api_id</code> and <code>api_hash</code>. If the form answers with a bare
+          <em>ERROR</em>, turn off any VPN, proxy or ad blocker, try another browser or network,
+          keep the title free of non-ASCII characters and of the word "Telegram", and try again
+          later — a newly registered number is often refused for a while.
+        </p>
+        <p>
+          <strong>Signing in.</strong> The add flow shows a QR code; scan it in Telegram under
+          <strong>Settings → Devices → Link Desktop Device</strong>. An account with a two-step
+          password is asked for it once; it is used to sign in and never stored. The session appears
+          in Telegram's device list as <em>Omnesis</em>. Ending it there stops the source, which
+          then asks to be signed in again; run
+          <code>omnesis sources reauth telegram:&lt;account&gt;</code> and scan a new code. One
+          collector hosts an account: the session cannot be shared between machines.
+        </p>
+        <p>
+          <strong>The session is your whole account.</strong> The stored session is a full
+          authorization of your Telegram account: anyone holding it can read your chats and act as
+          you. The collector stores it encrypted, protected by its keyring.
+        </p>
+        <ul>
+          <li>
+            <strong>What it archives.</strong> Private chats, Saved Messages, basic groups,
+            supergroups and forums, archived chats included: one document per chat per UTC day, with
+            each message's time, sender, replies, forwards and edits. A forum message carries its
+            topic's title, and the day lists its topics. Edits and deletions made in Telegram
+            follow, and a day whose messages are all deleted leaves the index.
+          </li>
+          <li>
+            <strong>Media.</strong> Voice notes are transcribed into the day
+            <a href="/docs/operating#models">when a transcriber model is assigned</a>; until then
+            the placeholder says why, as for WhatsApp. Photos and documents follow the shared
+            attachment settings and become attachment documents of their day, with images OCR'd when
+            an OCR model is assigned. Audio, video, round video messages, stickers and GIFs are
+            placeholders such as <code>[Video, 0:42]</code> and are never downloaded. Media is
+            downloaded a little at a time after its text is indexed, never in bulk.
+          </li>
+          <li>
+            <strong>Channels are opt-in.</strong> Broadcast channels are left out until you turn on
+            <em>Include broadcast channels</em> in the source's settings; turning it off again
+            removes every channel's days and files from the index. <em>Excluded chats</em> takes
+            chat IDs or <code>@usernames</code> to skip, and removes what was already archived from
+            them.
+          </li>
+          <li>
+            <strong>Never archived.</strong> Secret chats, which Telegram keeps only on the two
+            devices in them; view-once photos and videos; messages under an auto-delete timer; and
+            stories.
+          </li>
+          <li>
+            <strong>History.</strong> The whole history is read in the background, most recent chats
+            first, at a pace Telegram tolerates. The first read asks Telegram for a data export,
+            which it limits less tightly. Telegram may hold the export until you approve it in the
+            notification it sends to your other devices; until then history is read the slower way
+            and the source's notice on the Sources page says so. After approving, re-sync the source
+            to start the export at once. If Telegram asks Omnesis to slow down, the notice says when
+            history resumes; the source's advanced settings lower the requests per sync page and
+            raise the delay between them.
+          </li>
+          <li>
+            <strong>Its archive.</strong> Messages are kept in an archive in the collector's
+            configuration directory, encrypted with the collector's storage key, so a re-sync never
+            reads Telegram again. Removing the source deletes the archive and ends the source's
+            Telegram session: the collector logs that authorization out at Telegram, best effort, so
+            it leaves your device list.
+          </li>
+        </ul>
+        <p>
+          <strong>Telegram's terms.</strong> Using this source is subject to the
+          <a href="https://telegram.org/tos">Telegram Terms of Service</a> and the
+          <a href="https://core.telegram.org/api/terms">Telegram API Terms of Service</a>. It is
+          your responsibility to read them before connecting the source and to follow them while you
+          use it. Omnesis signs in as a third-party API client with the app you register; it paces
+          its requests and backs off when Telegram asks.
+        </p>
 
         <h2 id="notes-tasks-meetings">Notes, tasks &amp; meetings</h2>
         <div class="table-wrap">
@@ -861,6 +982,11 @@
             that look like keys or secrets are never read, even inside a chosen folder. Git working
             trees and Obsidian vaults are skipped whole — the Obsidian source indexes vaults — and
             naming one as a folder is refused at setup with the reason.
+          </li>
+          <li>
+            <strong>Files it cannot read.</strong> A damaged PDF keeps the text of the pages that
+            can be read. A file with no readable text at all — encrypted, corrupt, or a scan with
+            OCR off — is set aside and tried again when it changes, or a day later.
           </li>
           <li>
             <strong>Ranked low.</strong> A working disk holds far more documents than any other

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { extractTextItems } from "unpdf";
-import pdf from "pdf-parse";
 import { createLogger, type OcrFn, type OcrResult } from "@omnesis/core";
-import { joinPageTextItems } from "./pdf-text-joiner.js";
+import { readPdfPages } from "./pdf-pages.js";
 import type { ExtractionResult } from "./types.js";
 
 const log = createLogger("attachments:pdf");
@@ -21,7 +19,9 @@ const PAGE_TEXT_MIN_CHARS = 15;
  * Extract text from a PDF buffer, **per page**, interleaving the native text
  * layer with OCR of image-only pages.
  *
- * For each page we take its native text (via unpdf's per-page items). Pages
+ * For each page we take its native text (unpdf's per-page items, read in a
+ * worker thread — see `pdf-pages.ts`; a page that fails to parse reads as
+ * empty instead of failing the document). Pages
  * that carry little or no native text are image-only — when an `ocr` fn is
  * wired, only those pages are rasterized + OCR'd on the gateway and their
  * recognized text is spliced back in at the right page position. So a mixed PDF
@@ -29,7 +29,9 @@ const PAGE_TEXT_MIN_CHARS = 15;
  * document with everything searchable, in reading order.
  *
  * Returns null if the PDF can't be read (encrypted or corrupt) and OCR is
- * unavailable. Successful OCR with no recognized text returns `noText`.
+ * unavailable. Successful OCR with no recognized text returns `noText`. A
+ * corrupt file never throws and never leaves a rejection behind; the only
+ * rejection is a PDF worker that cannot start, which is not the file's fault.
  */
 export async function extractPdfText(
   data: Uint8Array,
@@ -37,13 +39,11 @@ export async function extractPdfText(
 ): Promise<ExtractionResult | null> {
   const maxLen = opts?.maxTextLength ?? 512_000;
 
-  const perPage = await perPageNativeText(data);
+  const perPage = await readPdfPages(data);
 
-  // unpdf couldn't read the page structure (encrypted / corrupt / non-PDF):
-  // fall back to pdf-parse for any text layer, then whole-PDF OCR.
+  // The page structure couldn't be read (encrypted / corrupt / non-PDF):
+  // whole-PDF OCR is the remaining chance.
   if (!perPage) {
-    const pdfParseResult = await tryPdfParse(data, maxLen);
-    if (pdfParseResult) return pdfParseResult;
     if (opts?.ocr) {
       try {
         const ocrResult = await opts.ocr(data, "application/pdf");
@@ -122,35 +122,6 @@ function ocrNoText(pages?: number): ExtractionResult {
 }
 
 /**
- * Per-page native text via unpdf's structured per-run items (preserves spacing
- * / line breaks that the flat `extractText` glues together). Returns one entry
- * per page (empty string for an image-only page), or null when the PDF can't be
- * parsed at all (encrypted, corrupt) so the caller can fall back.
- */
-async function perPageNativeText(data: Uint8Array): Promise<string[] | null> {
-  try {
-    // PDF.js may transfer and detach the parser input buffer. Keep the caller's
-    // bytes intact for pdf-parse fallback and sparse-page/whole-PDF OCR. Always
-    // construct a Uint8Array: Buffer.slice() would share the original buffer.
-    const result = await extractTextItems(new Uint8Array(data));
-    const pages = result.items ?? [];
-    if (pages.length === 0) {
-      log.debug(`unpdf: 0 pages (${data.length} bytes)`);
-      return null;
-    }
-    return pages.map((pageItems) => joinPageTextItems(pageItems).trim());
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("encrypt") || msg.includes("password")) {
-      log.warn(`PDF is encrypted (${data.length} bytes): ${msg}`);
-    } else {
-      log.debug(`unpdf failed (${data.length} bytes): ${msg}, trying pdf-parse`);
-    }
-    return null;
-  }
-}
-
-/**
  * Join per-page text into one document body, truncated to `maxLen`. Returns
  * null when there's no text at all. `ocrPageCount > 0` stamps OCR provenance.
  */
@@ -180,37 +151,4 @@ function assemble(
         }
       : undefined;
   return { text, pages: totalPages, truncated, ...(extra ? { extra } : {}) };
-}
-
-async function tryPdfParse(data: Uint8Array, maxLen: number): Promise<ExtractionResult | null> {
-  try {
-    const result = await pdf(Buffer.from(data));
-    const pages = result.numpages ?? 0;
-
-    if (!result.text?.trim()) {
-      log.warn(
-        `PDF has ${pages} pages but no extractable text (${data.length} bytes, likely scanned/image-only)`,
-      );
-      return null;
-    }
-
-    let text = result.text.trim();
-    let truncated = false;
-
-    if (text.length > maxLen) {
-      text = text.slice(0, maxLen);
-      truncated = true;
-    }
-
-    log.debug(`PDF extracted via pdf-parse: ${pages} pages, ${text.length} chars`);
-    return { text, pages, truncated };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("encrypt") || msg.includes("password")) {
-      log.warn(`PDF is encrypted (${data.length} bytes): ${msg}`);
-      return null;
-    }
-    log.warn(`PDF extraction failed (${data.length} bytes): ${msg}`);
-    return null;
-  }
 }

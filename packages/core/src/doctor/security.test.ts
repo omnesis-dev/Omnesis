@@ -705,6 +705,7 @@ describe("collectSecurityData — collector component", () => {
     expect(data.databaseEncryption.stores.map((store) => store.keyName)).toEqual([
       "whatsapp-store",
       "imessage-transcripts",
+      "telegram-store",
     ]);
   });
 });

@@ -21,7 +21,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 describe("release package selection", () => {
   test("publishes exactly the product packages and excludes synthetic providers", () => {
     const packages = listPublishablePackages();
-    expect(packages).toHaveLength(42);
+    expect(packages).toHaveLength(43);
     expect(packages.map(({ dir }) => dir)).not.toContainEqual(
       expect.stringMatching(/^packages\/providers-synth\//u),
     );

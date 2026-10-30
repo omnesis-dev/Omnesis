@@ -41,7 +41,11 @@ function tempConfigDir(): string {
 
 describe("prepareCollectorStorageEncryption", () => {
   test("the collector's key set is the provider stores, not the gateway's databases", () => {
-    expect([...COLLECTOR_STORAGE_KEYS]).toEqual(["whatsapp-store", "imessage-transcripts"]);
+    expect([...COLLECTOR_STORAGE_KEYS]).toEqual([
+      "whatsapp-store",
+      "imessage-transcripts",
+      "telegram-store",
+    ]);
   });
 
   test("a fresh collector with a root key mints its own keys before any store opens", async () => {
@@ -50,7 +54,7 @@ describe("prepareCollectorStorageEncryption", () => {
 
     const readiness = await prepareCollectorStorageEncryption(dir);
     expect(readiness.enabled).toBe(true);
-    expect(readiness.created).toEqual(["whatsapp-store", "imessage-transcripts"]);
+    expect(readiness.created).toEqual(["whatsapp-store", "imessage-transcripts", "telegram-store"]);
     expect(storageEncryptionRequired(dir)).toBe(true);
     for (const keyName of COLLECTOR_STORAGE_KEYS) {
       await expect(inspectStorageKey(keyName, { configDir: dir })).resolves.toMatchObject({

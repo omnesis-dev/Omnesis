@@ -1,0 +1,30 @@
+{
+  "self": "p_self",
+  "people": [
+    {
+      "id": "p_self",
+      "name": "Sarah Mendez",
+      "emails": ["sarah.mendez@example.com"],
+      "phones": ["+15550100121"],
+      "extra": { "telegramId": "5550100201" }
+    },
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "phones": ["+15550100122"],
+      "extra": { "telegramId": "5550100202" }
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "phones": ["+15550100123"],
+      "extra": { "telegramId": "5550100203" }
+    },
+    {
+      "id": "p_david",
+      "name": "David Lin",
+      "extra": { "telegramId": "5550100204" }
+    }
+  ],
+  "orgs": []
+}

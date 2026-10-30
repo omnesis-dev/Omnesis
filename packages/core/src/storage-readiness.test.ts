@@ -40,7 +40,7 @@ describe("storageKeyNamesForHost", () => {
     const gateway = storageKeyNamesForHost("gateway");
     const collector = storageKeyNamesForHost("collector");
     expect([...gateway]).toEqual(["main-db", "index-db", "analytics-db", "watch2-db"]);
-    expect([...collector]).toEqual(["whatsapp-store", "imessage-transcripts"]);
+    expect([...collector]).toEqual(["whatsapp-store", "imessage-transcripts", "telegram-store"]);
   });
 });
 

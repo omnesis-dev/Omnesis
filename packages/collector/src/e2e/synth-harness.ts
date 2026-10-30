@@ -51,9 +51,16 @@ import {
   type UniverseDeviceEntry,
   type UniverseMultiDeviceMode,
 } from "@omnesis/providers-synth-common";
-import { createLogger, readSecretTextFile, type SourceConfig } from "@omnesis/core";
+import {
+  createLogger,
+  readSecretTextFile,
+  type AttachmentExtractFn,
+  type AudioTranscribeFn,
+  type SourceConfig,
+} from "@omnesis/core";
 import { SyncEngine, type StatusChangeEvent } from "../sync-engine.js";
 import { setupSources } from "../source-instantiator.js";
+import { createAttachmentExtractor } from "../attachments/index.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { reportSetupFailures } from "./setup-failure-report.js";
 import {
@@ -257,6 +264,15 @@ export interface SyntheticHarnessOptions {
    */
   ocrBackend?: "off" | "replay";
   /**
+   * Hand every source the collector's media seams, as `main.ts` does: the
+   * production attachment extractor (OCR through the gateway, on only when
+   * `ocrBackend` is `"replay"`) and the gateway transcriber. Off by default,
+   * so a suite's corpus does not change unless it asks for media processing.
+   * Pair it with `transcriberBackend: "replay"` to have voice notes
+   * transcribed without a model.
+   */
+  sourceMediaProcessing?: boolean;
+  /**
    * Decision backend to wire on the spawned gateway. Defaults to `"off"` (the
    * `decision` role stays unassigned, so the Brain's worth gate is absent).
    * `"replay"` assigns `inference.assignments.decision = "replay"` and points
@@ -445,6 +461,7 @@ export class SyntheticE2EHarness {
   private agentBackend: "off" | "replay";
   private embedderBackend: "off" | "fake";
   private transcriberBackend: "off" | "replay";
+  private readonly sourceMediaProcessing: boolean;
   private ocrBackend: "off" | "replay";
   private decisionBackend: "off" | "replay";
   private fakeEmbedderOptions: FakeEmbedderOptions;
@@ -477,6 +494,7 @@ export class SyntheticE2EHarness {
     this.agentBackend = opts.agentBackend ?? "off";
     this.embedderBackend = opts.embedderBackend ?? "off";
     this.transcriberBackend = opts.transcriberBackend ?? "off";
+    this.sourceMediaProcessing = opts.sourceMediaProcessing ?? false;
     this.ocrBackend = opts.ocrBackend ?? "off";
     this.decisionBackend = opts.decisionBackend ?? "off";
     this.fakeEmbedderOptions = opts.fakeEmbedderOptions ?? {};
@@ -738,6 +756,9 @@ export class SyntheticE2EHarness {
           // store.db + Baileys auth state under `<configDir>/whatsapp/<account>`.
           configDir: this.configDir,
           ingestionContext: this.ingestionContext,
+          ...(this.sourceMediaProcessing
+            ? collectorMediaSeams(gateway, this.ocrBackend === "replay")
+            : {}),
         },
         deviceSources,
       );
@@ -1792,4 +1813,21 @@ export class SyntheticE2EHarness {
     if (!proc) return;
     await killSubprocessGroup(proc);
   }
+}
+
+/** The media seams `main.ts` hands the source manager, over one device's gateway client. */
+function collectorMediaSeams(
+  gateway: HttpGatewayClient,
+  ocrEnabled: boolean,
+): { transcribeAudio: AudioTranscribeFn; extractAttachment: AttachmentExtractFn } {
+  const transcribeAudio: AudioTranscribeFn = (data, mimeType, opts) =>
+    gateway.transcribe(data, mimeType, opts);
+  return {
+    transcribeAudio,
+    extractAttachment: createAttachmentExtractor({
+      ocr: (data, mimeType, opts) => gateway.ocr(data, mimeType, opts),
+      ocrEnabled: () => ocrEnabled,
+      transcribe: transcribeAudio,
+    }),
+  };
 }

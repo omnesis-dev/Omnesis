@@ -15,7 +15,7 @@
  *     declarations, trims/lowercases, and de-duplicates.
  */
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { collectOwnedWebDomains } from "./source-manager.js";
 import type { SourceOrProviderDefinition } from "@omnesis/source-sdk";
 
@@ -119,6 +119,45 @@ describe("collectOwnedWebDomains aggregation", () => {
     ] as unknown as SourceOrProviderDefinition[];
 
     expect(collectOwnedWebDomains(defs)).toEqual(["b.example.com"]);
+  });
+
+  describe("experimental sources", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    const defs = [
+      { type: "source", id: "stable", ownedWebDomains: ["stable.example.com"] },
+      {
+        type: "source",
+        id: "trial",
+        experimental: true,
+        ownedWebDomains: ["trial.example.com"],
+      },
+      {
+        type: "provider",
+        provider: { id: "lab", name: "Lab" },
+        experimental: true,
+        sources: [{ id: "lab-one", ownedWebDomains: ["lab.example.org"] }],
+      },
+    ] as unknown as SourceOrProviderDefinition[];
+
+    test("claim no hosts while experimental mode is off", () => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+      expect(collectOwnedWebDomains(defs, false)).toEqual(["stable.example.com"]);
+    });
+
+    test("claim their hosts once experimental mode is on", () => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+      expect(collectOwnedWebDomains(defs, false)).toEqual([
+        "lab.example.org",
+        "stable.example.com",
+        "trial.example.com",
+      ]);
+    });
+
+    test("claim their hosts in synthetic mode", () => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+      expect(collectOwnedWebDomains(defs, true)).toHaveLength(3);
+    });
   });
 
   test("the real in-tree registry yields the expected vendor hosts", async () => {

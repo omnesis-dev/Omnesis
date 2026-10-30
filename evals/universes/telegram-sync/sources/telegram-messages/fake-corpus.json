@@ -1,0 +1,188 @@
+{
+  "self": {
+    "id": 5550100201,
+    "firstName": "Sarah",
+    "lastName": "Mendez",
+    "username": "sarah_mendez_example",
+    "phone": "15550100121"
+  },
+  "users": [
+    {
+      "id": 5550100202,
+      "firstName": "Maya",
+      "lastName": "Reeves",
+      "username": "maya_reeves_example",
+      "phone": "15550100122"
+    },
+    {
+      "id": 5550100203,
+      "firstName": "Jamie",
+      "lastName": "Lopez",
+      "phone": "15550100123"
+    },
+    {
+      "id": 5550100204,
+      "firstName": "David",
+      "lastName": "Lin"
+    }
+  ],
+  "chats": [
+    {
+      "id": 5550100202,
+      "kind": "private",
+      "title": "Maya Reeves",
+      "username": "maya_reeves_example",
+      "messages": [
+        {
+          "id": 101,
+          "at": "2026-03-10T09:00:00Z",
+          "from": 5550100202,
+          "text": "The pelican migration figures in section four look off by a factor of ten."
+        },
+        {
+          "id": 102,
+          "at": "2026-03-10T09:05:00Z",
+          "from": 5550100201,
+          "text": "I will rerun the heron counts before the Q4 budget review."
+        },
+        {
+          "id": 103,
+          "at": "2026-03-10T09:12:00Z",
+          "from": 5550100202,
+          "text": "Draft attached for the marathon entry form",
+          "media": {
+            "kind": "document",
+            "fileName": "entry-form.pdf",
+            "isViewOnce": false
+          }
+        },
+        {
+          "id": 106,
+          "at": "2026-03-10T09:20:00Z",
+          "from": 5550100202,
+          "text": "The tally sheet",
+          "media": {
+            "kind": "document",
+            "fileId": "tg-file-heron-tally",
+            "fileName": "heron-tally.txt",
+            "mimeType": "text/plain",
+            "isViewOnce": false,
+            "content": "Heron tally for the north marsh: forty-two adults, nine fledglings."
+          }
+        },
+        {
+          "id": 107,
+          "at": "2026-03-11T18:30:00Z",
+          "from": 5550100202,
+          "text": "Tickets for the Stellar Sound matinee are booked."
+        },
+        {
+          "id": 108,
+          "at": "2026-03-11T18:35:00Z",
+          "from": 5550100202,
+          "text": "",
+          "media": {
+            "kind": "voice",
+            "fileId": "tg-file-maya-voice",
+            "mimeType": "audio/ogg",
+            "durationSec": 9,
+            "isViewOnce": false,
+            "content": "Remember the spotting scope for the Saturday survey."
+          }
+        }
+      ]
+    },
+    {
+      "id": -1001500000001,
+      "kind": "supergroup",
+      "title": "Marathon training club",
+      "messages": [
+        {
+          "id": 1,
+          "at": "2026-03-10T06:30:00Z",
+          "from": 5550100203,
+          "text": "Long run on Saturday: 28 km along the Riverside Estate loop."
+        },
+        {
+          "id": 2,
+          "at": "2026-03-10T06:45:00Z",
+          "from": 5550100201,
+          "text": "Count me in, I will bring the electrolyte tablets.",
+          "replyTo": 1
+        }
+      ]
+    },
+    {
+      "id": -4001500001,
+      "kind": "group",
+      "title": "Studio Northstar crew",
+      "isArchived": true,
+      "messages": [
+        {
+          "id": 104,
+          "at": "2026-03-12T14:00:00Z",
+          "from": 5550100204,
+          "text": "The lighting rig for the launch demo arrives Thursday."
+        }
+      ]
+    },
+    {
+      "id": 5550100201,
+      "kind": "saved",
+      "title": "Saved Messages",
+      "messages": [
+        {
+          "id": 105,
+          "at": "2026-03-12T20:00:00Z",
+          "from": 5550100201,
+          "text": "Reminder: renew the kayak club membership."
+        }
+      ]
+    },
+    {
+      "id": -1001500000003,
+      "kind": "forum",
+      "title": "Kayak club forum",
+      "topics": [
+        {
+          "id": 10,
+          "title": "Equipment"
+        },
+        {
+          "id": 20,
+          "title": "Trips"
+        }
+      ],
+      "messages": [
+        {
+          "id": 11,
+          "at": "2026-03-13T07:00:00Z",
+          "from": 5550100203,
+          "topic": 10,
+          "text": "The spare paddles are in the blue locker."
+        },
+        {
+          "id": 21,
+          "at": "2026-03-13T07:30:00Z",
+          "from": 5550100204,
+          "topic": 20,
+          "text": "Estuary trip is planned for the first calm weekend."
+        }
+      ]
+    },
+    {
+      "id": -1001500000002,
+      "kind": "channel",
+      "title": "Riverside Estate news",
+      "username": "riverside_news_example",
+      "messages": [
+        {
+          "id": 1,
+          "at": "2026-03-12T08:00:00Z",
+          "from": -1001500000002,
+          "text": "The community garden opens on Sunday."
+        }
+      ]
+    }
+  ]
+}

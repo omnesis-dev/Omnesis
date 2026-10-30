@@ -12268,6 +12268,127 @@
       "value": "Message Content Intent",
       "paths": ["packages/providers/discord/src/source.test.ts"],
       "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/provider.test.ts"
+      ],
+      "reason": "invented Telegram fixture user from the CLAUDE.md example set (packages/providers/telegram/src/testing/fixtures.ts)"
+    },
+    {
+      "value": "This Omnesis",
+      "paths": ["packages/providers/telegram/src/session-store.test.ts"],
+      "reason": "sentence start in a connection-state detail string, not a name"
+    },
+    {
+      "value": "Sarah Mendez",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/media.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Stellar Sound",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/takeout.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Riverside Estate",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/history-walker.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts",
+        "packages/providers/telegram/src/takeout.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Studio Northstar",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/history-walker.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Saved Messages",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "evals/universes/telegram-sync/universe.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "Telegram's own name for the chat with oneself, not a person."
+    },
+    {
+      "value": "Example Street",
+      "paths": [
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented address placeholder from the CLAUDE.md example set."
+    },
+    {
+      "value": "Ping David Lin",
+      "paths": ["packages/providers/telegram/src/document-event-profile.test.ts"],
+      "reason": "invented Telegram fixture text naming a user from the CLAUDE.md example set."
+    },
+    {
+      "value": "Call Sarah Mendez",
+      "paths": ["packages/providers/telegram/src/normalizer.test.ts"],
+      "reason": "invented Telegram fixture text naming a user from the CLAUDE.md example set."
+    },
+    {
+      "value": "Stellar Sound Bot",
+      "paths": ["packages/providers/telegram/src/testing/fixtures.ts"],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
     }
   ],
   "secretFixtures": [

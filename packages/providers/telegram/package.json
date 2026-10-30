@@ -1,0 +1,26 @@
+{
+  "name": "@omnesis/provider-telegram",
+  "version": "0.7.1",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/simulated-telegram.ts"
+  },
+  "dependencies": {
+    "@mtcute/core": "0.32.7",
+    "@mtcute/node": "0.32.7",
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "better-sqlite3": "^13.0.3",
+    "better-sqlite3-multiple-ciphers": "^13.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

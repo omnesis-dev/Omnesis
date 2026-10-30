@@ -285,6 +285,40 @@ describe("local-files sync", () => {
     expect(second.deletedExternalIds ?? []).toHaveLength(0);
   });
 
+  test("a file that failed extraction is attempted once per content, not once per cycle", async () => {
+    write(root, "corrupt.pdf", Buffer.from("%PDF-1.4 fictional corrupt body"));
+    const attempts: string[] = [];
+    const instance = await definition.create!({
+      accountId: "host",
+      sourceId,
+      providerId,
+      config: { roots: [root], exclude: [] },
+      host: fakeSourceHost({
+        extractAttachment: async (data) => {
+          attempts.push(Buffer.from(data).toString("latin1"));
+          return null;
+        },
+      }),
+    });
+    let cursor = (await instance.sync(null)).cursor as LocalFilesSyncCursor;
+    expect(cursor.fileMap[join(root, "corrupt.pdf")]?.skipped).toBe("unextractable");
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const result = await instance.sync(cursor);
+      expect(result.documents).toEqual([]);
+      cursor = result.cursor as LocalFilesSyncCursor;
+    }
+    expect(attempts).toHaveLength(1);
+
+    // New content is a new attempt — once.
+    write(root, "corrupt.pdf", Buffer.from("%PDF-1.4 fictional corrupt body, rewritten"));
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(root, "corrupt.pdf"), later, later);
+    cursor = (await instance.sync(cursor)).cursor as LocalFilesSyncCursor;
+    await instance.sync(cursor);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toContain("rewritten");
+  });
+
   test("paged cycles terminate across many files", async () => {
     for (let i = 0; i < 120; i++) {
       write(root, `f${i}.txt`, `paged file number ${i} with enough text to index`);

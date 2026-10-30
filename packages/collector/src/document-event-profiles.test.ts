@@ -92,6 +92,22 @@ describe("published document-event profiles", () => {
     expect(paths("maildir")).not.toEqual(paths("gmail"));
   });
 
+  test("Telegram is told apart from WhatsApp by its fields", () => {
+    // Both chat sources emit one conversation per chat per day, with
+    // attachments and the same person roles. What separates Telegram is the
+    // kind of chat it reports and its own chat identifier; losing them would
+    // leave the compiler guessing between the two.
+    const profile = (sourceType: string) => bySourceType.get(sourceType);
+    const paths = (sourceType: string): string[] =>
+      (profile(sourceType)?.metadataFields ?? []).map((f) => f.path).sort();
+    expect(profile("telegram-messages")?.documentTypes).toEqual(
+      profile("whatsapp-messages")?.documentTypes,
+    );
+    expect(paths("telegram-messages")).toContain("extra.chatKind");
+    expect(paths("telegram-messages")).toContain("extra.chatId");
+    expect(paths("telegram-messages")).not.toEqual(paths("whatsapp-messages"));
+  });
+
   test.each(["openclaw", "hermes"])(
     "the %s source is not something a collector offers to add",
     (sourceType) => {
