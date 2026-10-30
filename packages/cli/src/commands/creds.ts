@@ -82,11 +82,7 @@ const credsSetCommand = defineCommand({
     if (!entry) throw new CliError("", EXIT_USER_ERROR);
 
     const sameHost = isSameHostAsCollector(status.hostname);
-    const ok = await runCredentialsWizard(entry, {
-      deviceId: status.deviceId,
-      sameHost,
-      destination: status,
-    });
+    const ok = await runCredentialsWizard(entry, { deviceId: status.deviceId, sameHost });
     if (!ok) throw new CliError("", EXIT_FAILURE);
   },
 });

@@ -238,12 +238,6 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         return {
           ...buildPage(result.entries, { hasMore: false, limit: result.entries.length }),
           hostname: result.hostname,
-          // Where a credential is written and whether it is encrypted there,
-          // from collectors that say.
-          ...(result.configDir !== undefined ? { configDir: result.configDir } : {}),
-          ...(result.secretsEncrypted !== undefined
-            ? { secretsEncrypted: result.secretsEncrypted }
-            : {}),
         };
       },
     );

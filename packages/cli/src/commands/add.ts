@@ -904,11 +904,7 @@ async function recoverFromMissingCredentials(
       );
       return false;
     }
-    const fields = await collectCredentialFields(entry, {
-      sameHost,
-      perAccount: true,
-      destination: status,
-    });
+    const fields = await collectCredentialFields(entry, { sameHost, perAccount: true });
     if (!fields) {
       console.error(`${c.red}Aborting — credentials not provided.${c.reset}`);
       return false;
@@ -917,11 +913,7 @@ async function recoverFromMissingCredentials(
     return true;
   }
 
-  const ok = await runCredentialsWizard(entry, {
-    deviceId: ctx.deviceId,
-    sameHost,
-    destination: status,
-  });
+  const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
   if (!ok) {
     // Known bug: #100 — declining the wizard still exits 0.
     console.error(`${c.red}Aborting — credentials not set up.${c.reset}`);
@@ -1090,11 +1082,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       console.log(
         `\n${c.yellow}${descriptor.provider.name} needs the credentials for the account you're connecting.${c.reset}`,
       );
-      const fields = await collectCredentialFields(entry, {
-        sameHost,
-        perAccount: true,
-        destination: status,
-      });
+      const fields = await collectCredentialFields(entry, { sameHost, perAccount: true });
       if (!fields) {
         console.error(
           `${c.red}Aborting — ${descriptor.provider.name} credentials not provided.${c.reset}`,
@@ -1106,11 +1094,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       console.log(
         `\n${c.yellow}${descriptor.provider.name} needs OAuth credentials before we can add this source.${c.reset}`,
       );
-      const ok = await runCredentialsWizard(entry, {
-        deviceId: ctx.deviceId,
-        sameHost,
-        destination: status,
-      });
+      const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
       if (!ok) {
         console.error(
           `${c.red}Aborting — ${descriptor.provider.name} credentials not set up.${c.reset}`,

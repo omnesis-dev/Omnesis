@@ -2664,6 +2664,15 @@ describe("install.sh --docker: what the compose file names", () => {
     expect(gateway.environment).toContain("OMNESIS_COLLECTOR_HOSTNAME=studio-northstar");
   });
 
+  test("the gateway container names the collector container's host, for the CLI in it", () => {
+    plantHostname();
+    const run = runInstaller("split-hostname", QUIET);
+    expect(run.status).toBe(0);
+    const { gateway, collector } = parseYaml(composeAt(run)).services;
+    expect(collector.hostname).toBe("studio-northstar");
+    expect(gateway.environment).toContain("OMNESIS_COLLECTOR_HOSTNAME=studio-northstar");
+  });
+
   test("a gateway without a collector beside it names none", () => {
     plantHostname();
     const run = runInstaller("gateway-only-hostname", [...QUIET, "--gateway-only"]);

@@ -19,7 +19,6 @@ import {
   KEYRING_ENV_KEYS,
   collectorHostname,
   createLogger,
-  secretFileWritesEncrypted,
   toErrorMessage,
   hasProviderCredentials,
   writeProviderCredentials,
@@ -858,16 +857,8 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     }));
   }
 
-  async function handleCredentialsStatus(): Promise<WsResponsePayload<"credentials.status">> {
-    const configDir = sourceManager.getConfigDir();
-    return {
-      hostname: collectorHostname(),
-      entries: listCredentialEntries(),
-      // Where a credential the wizard collects lands, and whether it lands
-      // encrypted — so the CLI can say both rather than guess.
-      configDir,
-      secretsEncrypted: await secretFileWritesEncrypted({ configDir }),
-    };
+  function handleCredentialsStatus(): WsResponsePayload<"credentials.status"> {
+    return { hostname: collectorHostname(), entries: listCredentialEntries() };
   }
 
   async function handleCredentialsSet(

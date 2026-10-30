@@ -37,17 +37,7 @@ interface CredentialsStatusResponse {
   /** Page<CredentialsEntry> shape — `items` replaces the legacy `entries`. */
   items: CredentialsEntry[];
   pageInfo: { hasMore: boolean; limit: number; nextCursor?: string };
-  /** The collector's config directory; absent from collectors that predate it. */
-  configDir?: string;
-  /** Whether a credential the collector writes now is encrypted at rest. */
-  secretsEncrypted?: boolean;
 }
-
-/** What the collector said about where a credential goes, for the wizard to repeat. */
-export type CredentialsDestination = Pick<
-  CredentialsStatusResponse,
-  "hostname" | "configDir" | "secretsEncrypted"
->;
 
 /** `GET /admin/config` envelope — only the field the wizard needs. */
 interface AdminConfigResponse {
@@ -141,53 +131,43 @@ export function defaultWizardHost(): WizardHost {
  * Where a credential the wizard collects is saved and whether it is encrypted
  * there, in the words the operator reads before pasting it.
  *
- * The collector says both when it is new enough; otherwise this CLI answers
- * for a collector that shares its config directory and stays vague about one
- * elsewhere. Under Docker the path is the one on this machine — the config
- * directory is mounted at the same absolute path — so it is printed whole and
- * said to be here, rather than as a `~` that would name the container's home.
+ * A collector on this machine shares this CLI's config directory, so the path
+ * and the encryption are this CLI's to state. Under Docker the path is the one
+ * on the host too — the config directory is mounted at the same absolute
+ * path — so it is printed whole and said to be on this machine, rather than as
+ * a `~` that would name the container's home. A collector elsewhere keeps its
+ * own directory and keyring, which this CLI cannot see.
  */
 export async function credentialsDestinationLines(input: {
   fileKey: string;
   perAccount: boolean;
   sameHost: boolean;
-  destination?: CredentialsDestination;
   host: WizardHost;
 }): Promise<string[]> {
-  const { fileKey, perAccount, sameHost, destination, host } = input;
-  const collectorDir = destination?.configDir ?? (sameHost ? host.configDir : undefined);
+  const { fileKey, perAccount, sameHost, host } = input;
   const inDocker =
+    sameHost &&
     host.dockerProjectDir !== null &&
-    collectorDir !== undefined &&
-    isWithinDir(collectorDir, host.dockerProjectDir);
-  const local = sameHost || inDocker;
-  const file = collectorDir ? join(collectorDir, `${fileKey}-credentials.json`) : null;
+    isWithinDir(host.configDir, host.dockerProjectDir);
+  const file = join(host.configDir, `${fileKey}-credentials.json`);
 
   let where: string;
   if (perAccount) {
     where = "They'll be stored under the account they turn out to belong to, once verified";
-  } else if (file && inDocker) {
+  } else if (inDocker) {
     where = `They'll be saved on this machine to ${file}`;
-  } else if (file && local) {
+  } else if (sameHost) {
     where = `They'll be saved to ${file}`;
-  } else if (file && destination?.hostname) {
-    where = `They'll be saved on ${destination.hostname}, to ${file}`;
   } else {
     where = "They'll be saved to the collector's config dir";
   }
-
-  const encrypted =
-    destination?.secretsEncrypted ?? (local ? await host.secretsEncrypted() : undefined);
   const lines = [`${where} (mode 0600).`];
-  if (encrypted === true) {
-    lines.push("Encrypted at rest with this install's keyring.");
-  } else if (encrypted === false) {
-    lines.push(
-      local
-        ? "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file."
-        : `Not encrypted at rest: ${destination?.hostname ?? "the collector's machine"} has no keyring armed. Run \`omnesis secure\` there to encrypt it.`,
-    );
-  }
+  if (!sameHost) return lines;
+  lines.push(
+    (await host.secretsEncrypted())
+      ? "Encrypted at rest with this install's keyring."
+      : "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file.",
+  );
   return lines;
 }
 
@@ -220,7 +200,6 @@ export async function collectCredentialFields(
   ctx: {
     sameHost: boolean;
     perAccount?: boolean;
-    destination?: CredentialsDestination;
     host?: WizardHost;
   },
 ): Promise<Record<string, string> | null> {
@@ -298,7 +277,6 @@ export async function collectCredentialFields(
     fileKey,
     perAccount: ctx.perAccount === true,
     sameHost: ctx.sameHost,
-    destination: ctx.destination,
     host: ctx.host ?? defaultWizardHost(),
   });
   console.log(`${c.dim}${destinationLines.join("\n")}${c.reset}\n`);
@@ -346,7 +324,6 @@ export async function runCredentialsWizard(
   ctx: {
     deviceId: string;
     sameHost: boolean;
-    destination?: CredentialsDestination;
     host?: WizardHost;
   },
 ): Promise<boolean> {

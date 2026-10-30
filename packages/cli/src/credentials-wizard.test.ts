@@ -129,25 +129,19 @@ describe("credentialsDestinationLines", () => {
   const dockerHost = (encrypted: boolean): WizardHost => ({
     configDir: "/home/maya/.config/omnesis",
     dockerProjectDir: "/home/maya/.config/omnesis",
-    secretsEncrypted: async () => encrypted,
+    secretsEncrypted: () => Promise.resolve(encrypted),
   });
   const nativeHost = (encrypted: boolean): WizardHost => ({
     configDir: "/srv/omnesis",
     dockerProjectDir: null,
-    secretsEncrypted: async () => encrypted,
+    secretsEncrypted: () => Promise.resolve(encrypted),
   });
 
-  test("under Docker: the absolute path, on this machine, and that it is not encrypted", async () => {
+  test("under docker: the absolute path, on this machine, and that it is not encrypted", async () => {
     const lines = await credentialsDestinationLines({
       fileKey: "example",
       perAccount: false,
-      // The collector runs in its own container, under the host's name.
-      sameHost: false,
-      destination: {
-        hostname: "studio-northstar",
-        configDir: "/home/maya/.config/omnesis",
-        secretsEncrypted: false,
-      },
+      sameHost: true,
       host: dockerHost(false),
     });
     expect(lines).toEqual([
@@ -156,27 +150,21 @@ describe("credentialsDestinationLines", () => {
     ]);
   });
 
-  test("under Docker with the keyring armed, it says so", async () => {
+  test("with the keyring armed, it says so", async () => {
     const lines = await credentialsDestinationLines({
       fileKey: "example",
       perAccount: false,
       sameHost: true,
-      destination: {
-        hostname: "gateway",
-        configDir: "/home/maya/.config/omnesis",
-        secretsEncrypted: true,
-      },
       host: dockerHost(true),
     });
     expect(lines[1]).toBe("Encrypted at rest with this install's keyring.");
   });
 
-  test("a collector that predates the report: this CLI answers for its own directory", async () => {
+  test("a collector on this machine: this CLI's own config directory, in full", async () => {
     const lines = await credentialsDestinationLines({
       fileKey: "example",
       perAccount: false,
       sameHost: true,
-      destination: { hostname: "studio-northstar" },
       host: nativeHost(true),
     });
     expect(lines).toEqual([
@@ -185,30 +173,11 @@ describe("credentialsDestinationLines", () => {
     ]);
   });
 
-  test("a collector on another machine is named, and told to secure itself", async () => {
+  test("a collector elsewhere is described no more precisely than this CLI can see", async () => {
     const lines = await credentialsDestinationLines({
       fileKey: "example",
       perAccount: false,
       sameHost: false,
-      destination: {
-        hostname: "riverside-mini",
-        configDir: "/Users/jamie/.config/omnesis",
-        secretsEncrypted: false,
-      },
-      host: nativeHost(true),
-    });
-    expect(lines).toEqual([
-      "They'll be saved on riverside-mini, to /Users/jamie/.config/omnesis/example-credentials.json (mode 0600).",
-      "Not encrypted at rest: riverside-mini has no keyring armed. Run `omnesis secure` there to encrypt it.",
-    ]);
-  });
-
-  test("an older remote collector is described no more precisely than it reports", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: false,
-      sameHost: false,
-      destination: { hostname: "riverside-mini" },
       host: nativeHost(false),
     });
     expect(lines).toEqual(["They'll be saved to the collector's config dir (mode 0600)."]);
@@ -219,7 +188,6 @@ describe("credentialsDestinationLines", () => {
       fileKey: "example",
       perAccount: true,
       sameHost: true,
-      destination: { hostname: "gateway", configDir: "/srv/omnesis", secretsEncrypted: false },
       host: nativeHost(false),
     });
     expect(lines[0]).toBe(

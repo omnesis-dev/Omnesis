@@ -5531,9 +5531,14 @@ docker_compose_gateway_service() {
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_GATEWAY_PORT=%s\n' "$GATEWAY_PORT"
   if [ "$DOCKER_COMBINED" = 1 ]; then
     printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url local)"
-    # The container answers to `gateway`, the name its certificate carries,
-    # so the collector inside it is told this host's name for its device —
-    # the name a separate collector container answers to.
+  fi
+  # The container answers to `gateway`, the name its certificate carries. The
+  # collector of this machine reports the host's name instead: the combined
+  # container's collector is told it here, for its device, and a separate
+  # collector container answers to it. Either way the CLI that runs in this
+  # container reads the same name, so it recognises that collector as being on
+  # this machine and its config directory as this one.
+  if [ "$DOCKER_COMBINED" = 1 ] || { [ "$DOCKER_GATEWAY_ONLY" = 0 ] && [ "$DOCKER_NETWORK" != host ]; }; then
     DOCKER_COLLECTOR_HOSTNAME="$(docker_collector_hostname)"
     [ -z "$DOCKER_COLLECTOR_HOSTNAME" ] || printf '      - OMNESIS_COLLECTOR_HOSTNAME=%s\n' "$DOCKER_COLLECTOR_HOSTNAME"
   fi
