@@ -20,14 +20,19 @@ actor WatchCapturePipeline {
         let ask: @Sendable (String) async -> Void
         let notify: @Sendable (WatchCaptureNotice) async -> Void
     }
+
     private var active: Set<String> = []
 
     func handle(_ original: WatchVoiceInbox.Item, inbox: WatchVoiceInbox, deps: Dependencies) async {
         var item = original
         guard let recording = WatchVoiceRecording(metadata: item.state.metadata),
               let requested = recording.route, UUID(uuidString: recording.ref) != nil
-        else { inbox.discard(item); return }
-        guard !active.contains(recording.ref) else { inbox.release(item); return }
+        else { inbox.discard(item)
+            return
+        }
+        guard !active.contains(recording.ref) else { inbox.release(item)
+            return
+        }
         active.insert(recording.ref)
         defer { active.remove(recording.ref) }
         if Date().timeIntervalSince(recording.captureTime.capturedAt) > WatchOutboxPolicy.retention {
@@ -35,7 +40,9 @@ actor WatchCapturePipeline {
             inbox.discard(item)
             return
         }
-        if inbox.wasCompleted(recording.ref) { inbox.discard(item); return }
+        if inbox.wasCompleted(recording.ref) { inbox.discard(item)
+            return
+        }
         do {
             // A crash during Ask's network hand-off has an ambiguous outcome.
             // Do not replay it and risk performing the same action twice.
@@ -47,7 +54,7 @@ actor WatchCapturePipeline {
             }
             let audio = inbox.audioURL(item.id)
             let gateway = try await deps.gatewayDictation()
-            if requested == .note && gateway {
+            if requested == .note, gateway {
                 guard await deps.saveNote("", recording, NoteAudio(file: audio, locale: recording.locale)) else {
                     throw CocoaError(.fileWriteUnknown)
                 }

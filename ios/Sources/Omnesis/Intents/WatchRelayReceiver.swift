@@ -301,7 +301,9 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     }
 
     func retryComplicationCaptures() {
-        for item in voiceInbox.claimLeftovers() { processRecording(item) }
+        for item in voiceInbox.claimLeftovers() {
+            processRecording(item)
+        }
     }
 
     private func processRecording(_ item: WatchVoiceInbox.Item) {
@@ -364,14 +366,13 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                 },
                 ask: { await self.handOff($0) },
                 notify: { notice in
-                    let body: String
-                    switch notice {
+                    let body = switch notice {
                     case .delayed:
-                        body = "Your recording is kept for retry. Open Omnesis on iPhone and check the gateway connection. For iPhone transcription, enable Speech Recognition in Settings and use a supported language."
+                        "Your recording is kept for retry. Open Omnesis on iPhone and check the gateway connection. For iPhone transcription, enable Speech Recognition in Settings and use a supported language."
                     case .expired:
-                        body = "Your recording couldn't be processed for a week and was removed. Please record it again."
+                        "Your recording couldn't be processed for a week and was removed. Please record it again."
                     case .interruptedAsk:
-                        body = "Your question's delivery was interrupted. Check the conversation on your phone before asking again."
+                        "Your question's delivery was interrupted. Check the conversation on your phone before asking again."
                     }
                     await self.post(title: "Check your Watch capture", body: body, userInfo: [:])
                 }

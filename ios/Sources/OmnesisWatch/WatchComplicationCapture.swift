@@ -35,11 +35,15 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         WatchSpeaker.shared.stop()
         let gate = await WatchLink.shared.dictationGate()
         guard current == generation, state == .preparing else { return }
-        guard gate?.captureSupported == true else { state = .failed; return }
+        guard gate?.captureSupported == true else { state = .failed
+            return
+        }
         automatic = gate.map { $0.decisionGate && Date().timeIntervalSince($0.updatedAt) < WatchDictationGate.staleAfter } ?? false
         let allowed = await AVAudioApplication.requestRecordPermission()
         guard current == generation, state == .preparing else { return }
-        guard allowed else { state = .failed; return }
+        guard allowed else { state = .failed
+            return
+        }
         do {
             let ref = UUID().uuidString
             let file = try WatchVoiceOutbox.shared.recordingURL(ref: ref)
@@ -62,8 +66,11 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             startedAt = Date()
             state = .recording
             WKInterfaceDevice.current().play(.start)
-            interruption = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
-                object: session, queue: .main) { _ in
+            interruption = NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: session,
+                queue: .main
+            ) { _ in
                 Task { @MainActor in WatchComplicationCapture.shared.pause() }
             }
             meter = Task { [weak self] in
@@ -79,16 +86,23 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         }
     }
 
-    var isSent: Bool { if case .sent = state { return true }; return false }
+    var isSent: Bool {
+        if case .sent = state { return true }
+        return false
+    }
 
     func send(_ route: WatchCaptureRoute) {
         guard state == .recording || state == .ready else { return }
         selectedRoute = route
-        if state == .ready { persist() } else { state = .saving; recorder?.stop() }
+        if state == .ready { persist() } else { state = .saving
+            recorder?.stop()
+        }
     }
 
     func pause() {
-        if state == .preparing { cancel(); return }
+        if state == .preparing { cancel()
+            return
+        }
         guard state == .recording else { return }
         recorder?.stop()
     }
@@ -123,7 +137,10 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         Task { @MainActor in
             guard self.recorder.map(ObjectIdentifier.init) == id else { return }
             self.releaseMicrophone()
-            guard flag else { self.discard(); self.state = .failed; return }
+            guard flag else { self.discard()
+                self.state = .failed
+                return
+            }
             if self.selectedRoute != nil { self.persist() } else { self.state = .ready }
         }
     }
@@ -135,8 +152,12 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     private func persist() {
         guard let recording, let route = selectedRoute else { return }
         do {
-            try WatchVoiceOutbox.shared.add(WatchVoiceRecording(ref: recording.ref,
-                captureTime: recording.captureTime, locale: recording.locale, route: route))
+            try WatchVoiceOutbox.shared.add(WatchVoiceRecording(
+                ref: recording.ref,
+                captureTime: recording.captureTime,
+                locale: recording.locale,
+                route: route
+            ))
             // The outbox owns the file now. Never remove it on dismissal.
             recorder?.delegate = nil
             recorder = nil
@@ -145,7 +166,10 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             state = .sent(route)
             WKInterfaceDevice.current().play(.success)
             _ = WatchLink.shared.flushOutbox(.linkMayHaveChanged)
-        } catch { discard(); state = .failed; WKInterfaceDevice.current().play(.failure) }
+        } catch { discard()
+            state = .failed
+            WKInterfaceDevice.current().play(.failure)
+        }
     }
 
     #if DEBUG
@@ -164,18 +188,15 @@ struct WatchComplicationCaptureView: View {
     private let accent = Color(red: 0.76, green: 0.94, blue: 0.50)
 
     var body: some View {
-        Group {
-            if capture.state == .failed {
-                ScrollView {
-                    VStack(spacing: 8) {
-                        Image("OmnesisMark").resizable().scaledToFit()
-                            .frame(width: 28, height: 28).foregroundStyle(accent)
-                        content
-                    }.padding(.horizontal, 10)
-                }
+        if capture.state == .failed {
+            ScrollView {
+                VStack(spacing: 8) {
+                    Image("OmnesisMark").resizable().scaledToFit()
+                        .frame(width: 28, height: 28).foregroundStyle(accent)
+                    content
+                }.padding(.horizontal, 10)
             }
-            else { layout }
-        }
+        } else { layout }
     }
 
     private var layout: some View {
@@ -248,15 +269,19 @@ struct WatchComplicationCaptureView: View {
 #Preview("Capture Ask and Tell") {
     WatchComplicationCaptureView().onAppear { WatchComplicationCapture.shared.stage(.recording) }
 }
+
 #Preview("Capture Send") {
     WatchComplicationCaptureView().onAppear { WatchComplicationCapture.shared.stage(.recording, automatic: true) }
 }
+
 #Preview("Capture ready") {
     WatchComplicationCaptureView().onAppear { WatchComplicationCapture.shared.stage(.ready) }
 }
+
 #Preview("Capture accepted") {
     WatchComplicationCaptureView().onAppear { WatchComplicationCapture.shared.stage(.sent(.note)) }
 }
+
 #Preview("Capture permission error") {
     WatchComplicationCaptureView().onAppear { WatchComplicationCapture.shared.stage(.failed) }
 }

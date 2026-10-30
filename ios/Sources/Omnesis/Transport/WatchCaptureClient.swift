@@ -18,11 +18,17 @@ struct WatchCaptureClient: Sendable {
     }
 
     func transcribe(_ file: URL, locale: String?, legacyGateway: Bool = false) async throws -> String? {
-        struct Response: Decodable { let available: Bool; let text: String? }
+        struct Response: Decodable { let available: Bool
+            let text: String?
+        }
         let language = locale?.split(whereSeparator: { $0 == "_" || $0 == "-" }).first.map(String.init) ?? ""
         let suffix = language.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let endpoint = legacyGateway ? "/inference/transcribe" : "/watch/capture/transcribe"
-        let data = try await post(path: "\(endpoint)?language=\(suffix)", body: Data(contentsOf: file), contentType: WatchVoiceFormat.contentType)
+        let data = try await post(
+            path: "\(endpoint)?language=\(suffix)",
+            body: Data(contentsOf: file),
+            contentType: WatchVoiceFormat.contentType
+        )
         let result = try JSONDecoder().decode(Response.self, from: data)
         return result.available ? result.text : nil
     }

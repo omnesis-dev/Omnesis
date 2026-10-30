@@ -79,7 +79,13 @@ public struct WatchDictationGate: Equatable, Sendable {
               let seconds = fields[Self.updatedAtKey].flatMap({ TimeInterval($0) }),
               seconds.isFinite
         else { return nil }
-        self.init(active: active == "1", maxAudioBytes: bytes, updatedAt: Date(timeIntervalSince1970: seconds), decisionGate: fields["decisionGate"] == "1", captureSupported: fields["captureSupported"] == "1")
+        self.init(
+            active: active == "1",
+            maxAudioBytes: bytes,
+            updatedAt: Date(timeIntervalSince1970: seconds),
+            decisionGate: fields["decisionGate"] == "1",
+            captureSupported: fields["captureSupported"] == "1"
+        )
     }
 
     /// How long the watch may record for the gateway, or nil when it should

@@ -8,7 +8,9 @@ import WidgetKit
 /// One logo complication. The Ask kind is retained for installed watch faces.
 @main
 struct OmnesisWatchWidgetsBundle: WidgetBundle {
-    var body: some Widget { OmnesisComplication() }
+    var body: some Widget {
+        OmnesisComplication()
+    }
 }
 
 struct OmnesisComplication: Widget {

@@ -6,7 +6,9 @@ import XCTest
 
 private actor CaptureEvents {
     var events: [String] = []
-    func add(_ event: String) { events.append(event) }
+    func add(_ event: String) {
+        events.append(event)
+    }
 }
 
 final class WatchCapturePipelineTests: XCTestCase {
@@ -19,7 +21,9 @@ final class WatchCapturePipelineTests: XCTestCase {
         inbox = WatchVoiceInbox(directory: directory.appendingPathComponent("inbox"))
     }
 
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: directory) }
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
 
     private func receive(_ route: WatchCaptureRoute, ref: String = UUID().uuidString) throws -> WatchVoiceInbox.Item {
         let file = directory.appendingPathComponent(UUID().uuidString + ".m4a")
@@ -29,15 +33,32 @@ final class WatchCapturePipelineTests: XCTestCase {
         return try XCTUnwrap(inbox.admit(file: file, metadata: metadata))
     }
 
-    private func dependencies(_ events: CaptureEvents, gateway: Bool, route: WatchCaptureRoute = .note,
-                              localText: String? = "The bicycle is at the workshop", saved: Bool = true) -> WatchCapturePipeline.Dependencies {
-        .init(gatewayDictation: { gateway },
-              transcribeGateway: { _, _ in await events.add("gateway"); return "Where is the bicycle?" },
-              transcribeLocal: { _, _ in await events.add("local"); return localText },
-              classify: { _ in await events.add("classify"); return route },
-              saveNote: { text, _, audio in await events.add(audio == nil ? "note:\(text)" : "audio-note"); return saved },
-              ask: { _ in await events.add("ask") },
-              notify: { _ in await events.add("notice") })
+    private func dependencies(
+        _ events: CaptureEvents,
+        gateway: Bool,
+        route: WatchCaptureRoute = .note,
+        localText: String? = "The bicycle is at the workshop",
+        saved: Bool = true
+    )
+        -> WatchCapturePipeline
+        .Dependencies {
+        .init(
+            gatewayDictation: { gateway },
+            transcribeGateway: { _, _ in await events.add("gateway")
+                return "Where is the bicycle?"
+            },
+            transcribeLocal: { _, _ in await events.add("local")
+                return localText
+            },
+            classify: { _ in await events.add("classify")
+                return route
+            },
+            saveNote: { text, _, audio in await events.add(audio == nil ? "note:\(text)" : "audio-note")
+                return saved
+            },
+            ask: { _ in await events.add("ask") },
+            notify: { _ in await events.add("notice") }
+        )
     }
 
     func testExplicitAskUsesGatewayTranscriptionWithoutDecisionOrLocalTranscription() async throws {
@@ -51,14 +72,14 @@ final class WatchCapturePipelineTests: XCTestCase {
 
     func testTellHandsAudioToDurableNoteQueueWithoutWaitingForAnyTranscript() async throws {
         let events = CaptureEvents()
-        await WatchCapturePipeline().handle(try receive(.note), inbox: inbox, deps: dependencies(events, gateway: true))
+        try await WatchCapturePipeline().handle(receive(.note), inbox: inbox, deps: dependencies(events, gateway: true))
         let actual = await events.events
         XCTAssertEqual(actual, ["audio-note"])
     }
 
     func testAutomaticUsesLocalTranscriptAndDecisionWhenGatewayTranscriptionIsOff() async throws {
         let events = CaptureEvents()
-        await WatchCapturePipeline().handle(try receive(.automatic), inbox: inbox, deps: dependencies(events, gateway: false))
+        try await WatchCapturePipeline().handle(receive(.automatic), inbox: inbox, deps: dependencies(events, gateway: false))
         let actual = await events.events
         XCTAssertEqual(actual, ["local", "classify", "note:The bicycle is at the workshop"])
     }
@@ -79,8 +100,11 @@ final class WatchCapturePipelineTests: XCTestCase {
     func testFailedNoteSaveKeepsTranscriptForRetryAndDoesNotClassifyTwice() async throws {
         let events = CaptureEvents()
         let pipeline = WatchCapturePipeline()
-        await pipeline.handle(try receive(.automatic), inbox: inbox,
-                              deps: dependencies(events, gateway: false, saved: false))
+        try await pipeline.handle(
+            receive(.automatic),
+            inbox: inbox,
+            deps: dependencies(events, gateway: false, saved: false)
+        )
         let retry = try XCTUnwrap(inbox.claimLeftovers().first)
         await pipeline.handle(retry, inbox: inbox, deps: dependencies(events, gateway: false))
         let actual = await events.events
@@ -107,14 +131,20 @@ final class WatchCapturePipelineTests: XCTestCase {
     func testCompletedCaptureCannotBeSubmittedAgain() async throws {
         let ref = UUID().uuidString
         let events = CaptureEvents()
-        await WatchCapturePipeline().handle(try receive(.ask, ref: ref), inbox: inbox, deps: dependencies(events, gateway: true))
-        await WatchCapturePipeline().handle(try receive(.ask, ref: ref), inbox: inbox, deps: dependencies(events, gateway: true))
+        try await WatchCapturePipeline().handle(receive(.ask, ref: ref), inbox: inbox, deps: dependencies(events, gateway: true))
+        try await WatchCapturePipeline().handle(receive(.ask, ref: ref), inbox: inbox, deps: dependencies(events, gateway: true))
         let actual = await events.events
         XCTAssertEqual(actual, ["gateway", "ask"])
     }
 
     func testCapabilityRoundTripAndLegacyFallback() {
-        let gate = WatchDictationGate(active: false, maxAudioBytes: 0, updatedAt: Date(timeIntervalSince1970: 1_800_000_000), decisionGate: true, captureSupported: true)
+        let gate = WatchDictationGate(
+            active: false,
+            maxAudioBytes: 0,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            decisionGate: true,
+            captureSupported: true
+        )
         XCTAssertEqual(WatchDictationGate(applicationContext: gate.applicationContext), gate)
         let old = WatchDictationGate(active: true, maxAudioBytes: 10000, updatedAt: Date())
         XCTAssertFalse(old.decisionGate)

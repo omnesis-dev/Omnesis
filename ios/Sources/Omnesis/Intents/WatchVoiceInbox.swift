@@ -65,12 +65,13 @@ final class WatchVoiceInbox: @unchecked Sendable {
         }
         // All copies of a complication capture share one state file, including
         // the durable Ask-start marker. Legacy notes retain their own inbox IDs.
-        let id: String
-        if let capture, capture.route != nil { id = "capture-" + capture.ref.lowercased() }
-        else { id = UUID().uuidString }
+        let id: String = if let capture, capture.route != nil { "capture-" + capture.ref.lowercased() }
+        else { UUID().uuidString }
         let item = Item(id: id, state: State(metadata: metadata.compactMapValues { $0 as? String }))
         lock.lock()
-        guard !owned.contains(id) else { lock.unlock(); return nil }
+        guard !owned.contains(id) else { lock.unlock()
+            return nil
+        }
         owned.insert(id)
         lock.unlock()
         if let data = try? Data(contentsOf: stateURL(id)),
@@ -94,7 +95,8 @@ final class WatchVoiceInbox: @unchecked Sendable {
     /// or a recording without its state file, is deleted.
     func claimLeftovers() -> [Item] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        let ids = Set(files.filter { ["json", WatchVoiceFormat.fileExtension].contains($0.pathExtension) }.map { $0.deletingPathExtension().lastPathComponent })
+        let ids = Set(files.filter { ["json", WatchVoiceFormat.fileExtension].contains($0.pathExtension) }
+            .map { $0.deletingPathExtension().lastPathComponent })
         var claimed: [Item] = []
         for id in ids.sorted() {
             lock.lock()
@@ -136,7 +138,9 @@ final class WatchVoiceInbox: @unchecked Sendable {
         lock.unlock()
     }
 
-    private var receiptsURL: URL { directory.appendingPathComponent("receipts", isDirectory: true) }
+    private var receiptsURL: URL {
+        directory.appendingPathComponent("receipts", isDirectory: true)
+    }
 
     func wasCompleted(_ ref: String) -> Bool {
         guard UUID(uuidString: ref) != nil else { return false }
@@ -147,7 +151,10 @@ final class WatchVoiceInbox: @unchecked Sendable {
         guard UUID(uuidString: ref) != nil else { throw CocoaError(.fileWriteInvalidFileName) }
         try FileManager.default.createDirectory(at: receiptsURL, withIntermediateDirectories: true)
         try Data().write(to: receiptsURL.appendingPathComponent(ref.lowercased()), options: .atomic)
-        let receipts = (try? FileManager.default.contentsOfDirectory(at: receiptsURL, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let receipts = (try? FileManager.default.contentsOfDirectory(
+            at: receiptsURL,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
         for receipt in receipts {
             if let stamp = try? receipt.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
                Date().timeIntervalSince(stamp) > 2 * WatchOutboxPolicy.retention {
