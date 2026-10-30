@@ -119,6 +119,47 @@ final class SiriAskRunnerTests: XCTestCase {
 
     /// A first ask has no thread to resume, so it sends no cap — the
     /// request is the one a build predating the cap would send.
+    func testWatchFollowUpResumesTheDisplayedAnswerInsteadOfAnotherVoiceThread() async throws {
+        let clock = FrozenClock()
+        let pairing = try pairingService()
+        let continuity = try continuityStore(resuming: "another-voice-thread", now: { clock.now })
+        defer { continuity.discard() }
+        StubGatewayProtocol.answerTurn(sessionId: "displayed-answer-thread", text: "Friday afternoon.", priorMessageCount: 8)
+        let result = await runner(pairing: pairing, continuity: continuity.store, budget: 45, now: { clock.now })
+            .runCapture(question: "And in the afternoon?", completionNotifications: true, resuming: "displayed-answer-thread")
+        XCTAssertEqual(result.outcome, .answered(text: "Friday afternoon."))
+        let create = try XCTUnwrap(StubGatewayProtocol.sessionCreates().first)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(create.stubbedBody)) as? [String: Any])
+        XCTAssertEqual(body["resumeFromId"] as? String, "displayed-answer-thread")
+    }
+
+    func testWatchFollowUpDoesNotStartAnUnrelatedThreadWhenItsConversationIsBusy() async throws {
+        let clock = FrozenClock()
+        let pairing = try pairingService()
+        let continuity = try continuityStore(resuming: nil, now: { clock.now })
+        defer { continuity.discard() }
+        StubGatewayProtocol.resumeIsBusy(sessionId: "displayed-answer-thread")
+        let result = await runner(pairing: pairing, continuity: continuity.store, budget: 45, now: { clock.now })
+            .runCapture(question: "And Friday?", completionNotifications: true, resuming: "displayed-answer-thread")
+        guard case .failed = result.outcome else { return XCTFail("Expected a visible follow-up failure") }
+        XCTAssertTrue(result.notifyLocally)
+        XCTAssertTrue(StubGatewayProtocol.sends().isEmpty)
+        XCTAssertEqual(StubGatewayProtocol.sessionCreates().count, 1)
+    }
+
+    func testWatchFollowUpReportsAnUnavailableConversationInsteadOfStartingFresh() async throws {
+        let clock = FrozenClock()
+        let pairing = try pairingService()
+        let continuity = try continuityStore(resuming: nil, now: { clock.now })
+        defer { continuity.discard() }
+        StubGatewayProtocol.rejectSessionCreate(status: 404)
+        let result = await runner(pairing: pairing, continuity: continuity.store, budget: 45, now: { clock.now })
+            .runCapture(question: "And Friday?", completionNotifications: true, resuming: "missing-thread")
+        guard case .failed = result.outcome else { return XCTFail("Expected an explicit follow-up failure") }
+        XCTAssertTrue(StubGatewayProtocol.sends().isEmpty)
+        XCTAssertEqual(StubGatewayProtocol.sessionCreates().count, 1)
+    }
+
     func testAFirstAskCreatesAFreshSessionWithNoCap() async throws {
         let clock = FrozenClock()
         let pairing = try pairingService()

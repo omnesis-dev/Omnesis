@@ -108,6 +108,8 @@ public enum WatchCaptureRoute: String, Codable, Sendable {
 public struct WatchVoiceRecording: Equatable, Sendable {
     /// Nil marks the existing in-app note flow. Complication captures carry a route.
     public let route: WatchCaptureRoute?
+    /// The answer being followed up, independent of the voice continuity timeout.
+    public let conversationId: String?
 
     /// Identifies the note across transfers and relaunches: the iPhone saves
     /// it under this id, so it is saved once.
@@ -126,8 +128,15 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     static let utcOffsetSecondsKey = "capturedUtcOffsetSeconds"
     static let localeKey = "locale"
 
-    public init(ref: String, captureTime: NoteCaptureTime, locale: String?, route: WatchCaptureRoute? = nil) {
+    public init(
+        ref: String,
+        captureTime: NoteCaptureTime,
+        locale: String?,
+        route: WatchCaptureRoute? = nil,
+        conversationId: String? = nil
+    ) {
         self.route = route
+        self.conversationId = conversationId
         self.ref = ref
         self.captureTime = captureTime
         self.locale = locale
@@ -143,6 +152,7 @@ public struct WatchVoiceRecording: Equatable, Sendable {
             Self.utcOffsetSecondsKey: String(captureTime.utcOffsetSeconds),
         ]
         if let route { fields["captureRoute"] = route.rawValue }
+        if let conversationId { fields["conversationId"] = conversationId }
         if let locale { fields[Self.localeKey] = locale }
         return fields
     }
@@ -164,7 +174,9 @@ public struct WatchVoiceRecording: Equatable, Sendable {
             ref: ref,
             captureTime: NoteCaptureTime(capturedAt: capturedAt, timeZoneId: timeZoneId, utcOffsetSeconds: offset),
             locale: metadata[Self.localeKey] as? String,
-            route: route
+            route: route,
+            conversationId: route == .ask ? (metadata["conversationId"] as? String)
+                .flatMap { !$0.isEmpty && $0.count <= 200 ? $0 : nil } : nil
         )
     }
 }

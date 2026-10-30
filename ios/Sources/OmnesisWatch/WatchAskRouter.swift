@@ -14,7 +14,7 @@ import WatchKit
 /// interactive messaging needs `isReachable`, which on watchOS holds only in the
 /// foreground), and opening the app ends Siri's session — long before an agent
 /// turn settles. So the intent hands the question here and returns immediately;
-/// the app owns the wait, then shows and speaks the answer on the wrist.
+/// the app owns the wait, then shows the answer on the wrist, with optional playback.
 ///
 /// The router, not a view, owns the relay. The screen switches between the
 /// ask and note flows while a relay is out, and a relay tied to a view would
@@ -35,6 +35,7 @@ final class WatchAskRouter {
     }
 
     private(set) var state: State = .idle
+    private(set) var conversationId: String?
 
     var isAsking: Bool {
         if case .asking = state { return true }
@@ -49,10 +50,13 @@ final class WatchAskRouter {
     private var relay: Task<Void, Never>?
 
     /// A new capture owns presentation even before its route is known.
-    func cancelPending() {
+    func cancelPending(preserveAnswer: Bool = false) {
         relay?.cancel()
         relay = nil
-        state = .idle
+        if !preserveAnswer {
+            state = .idle
+            conversationId = nil
+        }
         activity = nil
         WatchSpeaker.shared.stop()
     }
@@ -60,6 +64,7 @@ final class WatchAskRouter {
     func submit(question: String) {
         WatchComplicationCapture.shared.cancel()
         let ref = UUID().uuidString
+        conversationId = nil
         state = .asking(question: question, ref: ref)
         activity = nil
         relay?.cancel()
@@ -74,9 +79,8 @@ final class WatchAskRouter {
             // announces itself through the one channel that reaches it. The
             // three kinds stay distinguishable without looking.
             WKInterfaceDevice.current().play(Self.haptic(for: outcome.kind))
-            // Everything is spoken, failures included: the whole point is not
-            // having to look at the wrist, and "I couldn't reach your iPhone"
-            // is exactly the sentence you need to hear rather than discover.
+            // Siri hand-over retains its spoken reply. Audio-only captures
+            // present via answered() directly and require explicit playback.
             WatchSpeaker.shared.speak(SiriAskDialog.text(for: outcome))
         }
     }
@@ -87,7 +91,9 @@ final class WatchAskRouter {
         self.activity = activity
     }
 
-    func answered(outcome: SiriAskOutcome) {
+    func answered(outcome: SiriAskOutcome, conversationId: String? = nil) {
+        self.conversationId = conversationId
+        WatchSpeaker.shared.prepare(SiriAskDialog.text(for: outcome))
         state = .answered(
             text: SiriAskDialog.text(for: outcome),
             kind: outcome.kind,
@@ -157,6 +163,13 @@ final class WatchSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
+    /// Store the displayed answer for explicit playback without starting audio.
+    func prepare(_ text: String) {
+        stop()
+        self.text = text
+        spokenUpTo = 0
+    }
+
     /// Speak `text`. While the microphone is recording for gateway
     /// dictation the text is only kept for Replay: taking the audio session
     /// for playback would end the recording.
@@ -164,7 +177,9 @@ final class WatchSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         guard !text.isEmpty else { return }
         self.text = text
         spokenUpTo = 0
-        guard !WatchVoiceCapture.shared.isRecording else {
+        guard !WatchVoiceCapture.shared.isRecording,
+              WatchComplicationCapture.shared.state != .recording,
+              WatchComplicationCapture.shared.state != .preparing else {
             spokenUpTo = text.utf16.count
             return
         }

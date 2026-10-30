@@ -25,9 +25,9 @@ cd "$(dirname "$0")/.."
 
 # Must match WatchStateStaging.known — the app refuses anything else, and a
 # name checked only there would fail one launch at a time.
-KNOWN_STATES="idle received thinking searching reading widest long-question answered working failed note-idle note-done capture-listening capture-auto capture-ready capture-sent capture-error"
+KNOWN_STATES="idle received thinking searching reading widest long-question answered working failed note-idle note-done capture-listening capture-follow-up capture-auto capture-ready capture-sent capture-error"
 
-STATES="idle received thinking searching reading widest long-question answered working failed note-idle note-done capture-listening capture-auto capture-ready capture-sent capture-error"
+STATES="idle received thinking searching reading widest long-question answered working failed note-idle note-done capture-listening capture-follow-up capture-auto capture-ready capture-sent capture-error"
 SIZES="small large"
 KEEP=0
 while [ $# -gt 0 ]; do

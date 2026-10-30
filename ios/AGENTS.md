@@ -86,6 +86,14 @@ Tap to speak button that opens the same recorder; only the complication starts
 listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
 Tell returns to the watch face after confirmation once WatchConnectivity owns
 the transfer. Automatic Send waits for a note classification before dismissal.
+Audio-only capture answers are opt-in via the playback control; Siri hand-over
+keeps its existing spoken reply. The answer's microphone opens
+this same recorder with a single Ask action, bypassing the decision gate. The
+recording carries the displayed answer's conversation id so a follow-up does
+not drift to another voice thread or expire with the short Siri continuity window.
+The Watch halo follows the iPhone Tell surface: two staggered expanding/fading
+ripples, with smoothed microphone energy changing only the light. Reduce Motion
+uses static rings; animations stop outside active recording.
 
 `WatchCapturePipeline` handles complication audio on the phone using
 `WatchVoiceInbox`. Ref-keyed state and completion receipts deduplicate transfers

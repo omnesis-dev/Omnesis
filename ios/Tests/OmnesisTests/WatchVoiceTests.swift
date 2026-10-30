@@ -10,6 +10,30 @@ import XCTest
 final class WatchVoiceTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
+    func testFollowUpCarriesItsConversationThroughTheDurableWire() throws {
+        let recording = WatchVoiceRecording(
+            ref: UUID().uuidString,
+            captureTime: .now(),
+            locale: "en_GB",
+            route: .ask,
+            conversationId: "conversation-follow-up"
+        )
+        let decoded = try XCTUnwrap(WatchVoiceRecording(metadata: recording.metadata))
+        XCTAssertEqual(decoded.conversationId, "conversation-follow-up")
+        XCTAssertEqual(decoded.route, .ask)
+    }
+
+    func testNoteMetadataCannotSelectAConversation() throws {
+        let recording = WatchVoiceRecording(
+            ref: UUID().uuidString,
+            captureTime: .now(),
+            locale: "en_GB",
+            route: .note,
+            conversationId: "unrelated-conversation"
+        )
+        XCTAssertNil(try XCTUnwrap(WatchVoiceRecording(metadata: recording.metadata)).conversationId)
+    }
+
     // MARK: - Gate
 
     func testGateRoundTripsThroughTheApplicationContext() throws {

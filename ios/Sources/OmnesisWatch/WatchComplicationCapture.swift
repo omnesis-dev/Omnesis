@@ -7,7 +7,8 @@ import Observation
 import SwiftUI
 import WatchKit
 
-/// Complication-only recorder. Explicit submission is required even after a
+/// Audio-only recorder for the home screen, complication and follow-ups.
+/// Explicit submission is required even after a
 /// time limit, interruption, or background transition stops the microphone.
 @MainActor @Observable
 final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
@@ -15,6 +16,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     enum State: Equatable { case idle, preparing, recording, ready, saving, sent(WatchCaptureRoute), failed }
     private(set) var state: State = .idle
     private(set) var automatic = false
+    private(set) var isFollowUp = false
     private(set) var level: Float = 0
     private(set) var activity: SiriAskActivitySnapshot?
     @ObservationIgnored private var recorder: AVAudioRecorder?
@@ -28,9 +30,10 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     @ObservationIgnored private var answeredRef: String?
     @ObservationIgnored private var carried = false
 
-    func start() async {
+    func start(followUp: Bool = false) async {
         guard state == .idle || state == .failed || isSent else { return }
-        WatchAskRouter.shared.cancelPending()
+        let resume = followUp ? WatchAskRouter.shared.conversationId : nil
+        WatchAskRouter.shared.cancelPending(preserveAnswer: followUp)
         WatchDictation.cancelPending()
         WatchVoiceCapture.shared.cancel()
         WatchVoiceCapture.shared.dismiss()
@@ -41,13 +44,16 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         generation += 1
         let current = generation
         state = .preparing
+        isFollowUp = followUp
+        level = 0
         WatchSpeaker.shared.stop()
         let gate = await WatchLink.shared.dictationGate()
         guard current == generation, state == .preparing else { return }
         guard gate?.captureSupported == true else { state = .failed
             return
         }
-        automatic = gate.map { $0.decisionGate && Date().timeIntervalSince($0.updatedAt) < WatchDictationGate.staleAfter } ?? false
+        automatic = !followUp &&
+            (gate.map { $0.decisionGate && Date().timeIntervalSince($0.updatedAt) < WatchDictationGate.staleAfter } ?? false)
         let allowed = await AVAudioApplication.requestRecordPermission()
         guard current == generation, state == .preparing else { return }
         guard allowed else { state = .failed
@@ -56,7 +62,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         do {
             let ref = UUID().uuidString
             let file = try WatchVoiceOutbox.shared.recordingURL(ref: ref)
-            recording = WatchVoiceRecording(ref: ref, captureTime: .now(), locale: Locale.current.identifier)
+            recording = WatchVoiceRecording(ref: ref, captureTime: .now(), locale: Locale.current.identifier, conversationId: resume)
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .default)
             try session.setActive(true)
@@ -85,7 +91,13 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             meter = Task { [weak self] in
                 while !Task.isCancelled {
                     self?.recorder?.updateMeters()
-                    self?.level = max(0, min(1, ((self?.recorder?.averagePower(forChannel: 0) ?? -50) + 50) / 50))
+                    if let self {
+                        let power = self.recorder?.averagePower(forChannel: 0) ?? -55
+                        let target = pow(max(0, min(1, (power + 55) / 40)), 1.5)
+                        // A soft attack and slower release keep breath and
+                        // syllables from making the halo twitch.
+                        self.level += (target - self.level) * (target > self.level ? 0.32 : 0.14)
+                    }
                     try? await Task.sleep(for: .milliseconds(80))
                 }
             }
@@ -171,7 +183,8 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
                 ref: recording.ref,
                 captureTime: recording.captureTime,
                 locale: recording.locale,
-                route: route
+                route: route,
+                conversationId: recording.conversationId
             ))
             // The outbox owns the file now. Never remove it on dismissal.
             recorder?.delegate = nil
@@ -205,15 +218,14 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     }
 
     @discardableResult
-    func answered(_ outcome: SiriAskOutcome, ref: String) -> Bool {
+    func answered(_ outcome: SiriAskOutcome, ref: String, conversationId: String? = nil) -> Bool {
         if answeredRef == ref { return WKExtension.shared().applicationState == .active }
         guard sentRef == ref, isSent else { return false }
         cancel()
         answeredRef = ref
         WatchPresenter.shared.screen = .ask
-        WatchAskRouter.shared.answered(outcome: outcome)
+        WatchAskRouter.shared.answered(outcome: outcome, conversationId: conversationId)
         WKInterfaceDevice.current().play(.notification)
-        WatchSpeaker.shared.speak(SiriAskDialog.text(for: outcome))
         return WKExtension.shared().applicationState == .active
     }
 
@@ -231,9 +243,10 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     }
 
     #if DEBUG
-    func stage(_ state: State, automatic: Bool = false) {
+    func stage(_ state: State, automatic: Bool = false, followUp: Bool = false) {
         discard()
         self.automatic = automatic
+        self.isFollowUp = followUp
         self.state = state
         self.level = 0.6
     }
@@ -260,18 +273,7 @@ struct WatchComplicationCaptureView: View {
     private var layout: some View {
         VStack(spacing: 6) {
             Spacer(minLength: 0)
-            ZStack {
-                Circle().fill(accent.opacity(0.14 + Double(capture.level) * 0.22))
-                    .frame(width: 88, height: 88)
-                ForEach(0 ..< 3) { ring in
-                    Circle().stroke(accent.opacity(0.75 - Double(ring) * 0.16), lineWidth: 3 - CGFloat(ring) * 0.5)
-                        .frame(width: 54 + CGFloat(ring) * 14, height: 54 + CGFloat(ring) * 14)
-                        .scaleEffect(reduceMotion ? 1 : 1 + CGFloat(capture.level) * (0.28 + CGFloat(ring) * 0.08))
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: capture.level)
-                }
-                Image("OmnesisMark").resizable().scaledToFit().frame(width: 36, height: 36)
-                    .foregroundStyle(accent)
-            }.frame(height: 96).accessibilityHidden(true)
+            WatchCaptureHalo(listening: capture.state == .recording, level: capture.level, color: accent)
             content
             Spacer(minLength: 0)
         }
@@ -289,7 +291,9 @@ struct WatchComplicationCaptureView: View {
         case .recording, .ready:
             Text(capture.state == .recording ? "Listening" : "Ready to send")
                 .font(.headline).foregroundStyle(.white)
-            if capture.automatic {
+            if capture.isFollowUp {
+                sendButton("Ask", route: .ask)
+            } else if capture.automatic {
                 sendButton("Send", route: .automatic)
             } else {
                 HStack(spacing: 8) {
@@ -312,7 +316,7 @@ struct WatchComplicationCaptureView: View {
             Text("Open the iPhone app. Check microphone access and updates.")
                 .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Try again") { Task { await capture.start() } }
+            Button("Try again") { Task { await capture.start(followUp: capture.isFollowUp) } }
             Button("Cancel") { capture.cancel() }.buttonStyle(.plain).font(.caption2)
         }
     }

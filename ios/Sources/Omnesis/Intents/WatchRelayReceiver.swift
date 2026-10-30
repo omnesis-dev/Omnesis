@@ -374,14 +374,15 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                     let result: (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool)
                     if status?.watchCapture?.completionNotifications == true {
                         result = await self.makeRunner { reporter.report($0) }
-                            .runCapture(question: question, completionNotifications: true)
+                            .runCapture(question: question, completionNotifications: true, resuming: recording.conversationId)
                     } else {
-                        let handed = await self.makeHandOffRunner().handOff(question: question)
+                        let handed = await self.makeHandOffRunner().handOff(question: question, resuming: recording.conversationId)
                         result = (handed.outcome, handed.conversationId, nil, true)
                     }
                     let (outcome, conversationId, messageId, notifyLocally) = result
                     var message = SiriAskWire.result(for: outcome, ref: recording.ref)
                     message["captureUpdate"] = "answer"
+                    if let conversationId { message["conversationId"] = conversationId }
                     let displayed = await self.sendCaptureAnswer(message)
                     if displayed, case .answered = outcome, let conversationId, let messageId {
                         try? await AgentClient(baseURL: pairing.url, token: pairing.token)

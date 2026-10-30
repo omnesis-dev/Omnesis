@@ -98,7 +98,8 @@ struct SiriAskRunner {
     func runCapture(
         question: String,
         durableCapture: Bool = true,
-        completionNotifications: Bool = false
+        completionNotifications: Bool = false,
+        resuming: String? = nil
     ) async
         -> (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool) {
         let startedAt = now()
@@ -108,11 +109,22 @@ struct SiriAskRunner {
         let client = makeClient(pairing.url, pairing.token)
         onActivity?(.connecting)
         var session: CreateSessionResponse
-        switch await openSession(client, resumeFromId: continuity.conversationToResume(), within: budget) {
+        switch await openSession(
+            client,
+            resumeFromId: resuming ?? continuity.conversationToResume(),
+            within: budget,
+            strictResume: resuming != nil
+        ) {
         case .ended(let outcome): return (outcome, nil, nil, true)
         case .opened(let opened): session = opened
         }
         if case .reportPreviousTurnRunning(let conversationId) = SiriAskPreflight.action(for: session) {
+            if resuming != nil { return (
+                .failed(reason: "Your follow-up was not sent because this conversation is still busy. Please ask again shortly."),
+                conversationId,
+                nil,
+                true
+            ) }
             guard durableCapture else {
                 continuity.record(conversationId: conversationId)
                 return (.previousTurnRunning, conversationId, nil, false)
@@ -159,7 +171,7 @@ struct SiriAskRunner {
     /// did settle inside the push budget reads the same only when the stream
     /// missed its end and the transcript read-back failed too; its answer is
     /// then in the conversation without a notification.
-    func handOff(question: String) async -> (outcome: SiriAskOutcome, conversationId: String?) {
+    func handOff(question: String, resuming: String? = nil) async -> (outcome: SiriAskOutcome, conversationId: String?) {
         let startedAt = now()
         guard let pairing = (try? pairing.current()).flatMap({ $0 }) else {
             return (.notPaired, nil)
@@ -169,11 +181,20 @@ struct SiriAskRunner {
         // background time a queued relay's launch is granted.
         let left = { max(0, budget - now().timeIntervalSince(startedAt)) }
         var session: CreateSessionResponse
-        switch await openSession(client, resumeFromId: continuity.conversationToResume(), within: left()) {
+        switch await openSession(
+            client,
+            resumeFromId: resuming ?? continuity.conversationToResume(),
+            within: left(),
+            strictResume: resuming != nil
+        ) {
         case .ended(let outcome): return (outcome, nil)
         case .opened(let opened): session = opened
         }
         if case .reportPreviousTurnRunning = SiriAskPreflight.action(for: session) {
+            if resuming != nil { return (
+                .failed(reason: "Your follow-up was not sent because this conversation is still busy. Please ask again shortly."),
+                session.conversationId ?? session.sessionId
+            ) }
             // A live ask would tell its caller to try again; nobody is here to
             // hear that, so the question goes to a fresh conversation instead
             // of being dropped behind the running one.
@@ -222,17 +243,18 @@ struct SiriAskRunner {
     private func openSession(
         _ client: AgentClient,
         resumeFromId: String?,
-        within seconds: TimeInterval
+        within seconds: TimeInterval,
+        strictResume: Bool = false
     ) async
         -> OpenedSession {
-        switch await Self.beforeDeadline(seconds, { await Self.voiceSession(client, resumeFromId) }) {
+        switch await Self.beforeDeadline(seconds, { await Self.voiceSession(client, resumeFromId, strictResume: strictResume) }) {
         case .timedOut:
             .ended(.unreachable)
         case .finished(.failure(GatewayClient.Error.forbidden)),
              .finished(.failure(GatewayClient.Error.unauthorized)):
             .ended(.unauthorized)
         case .finished(.failure):
-            .ended(.unreachable)
+            .ended(strictResume ? .failed(reason: "Couldn't reopen that conversation. Try again or start a new question.") : .unreachable)
         case .finished(.success(let created)):
             .opened(created)
         }
@@ -420,12 +442,14 @@ struct SiriAskRunner {
     /// `@Sendable` closure.
     private static func voiceSession(
         _ client: AgentClient,
-        _ resumeFromId: String?
+        _ resumeFromId: String?,
+        strictResume: Bool = false
     ) async
         -> Result<CreateSessionResponse, Error> {
         if let resumeFromId, let resumed = await resume(client, resumeFromId) {
             return .success(resumed)
         }
+        if strictResume { return .failure(GatewayClient.Error.invalidResponse) }
         do {
             return try await .success(client.createSession(profile: "voice"))
         } catch {

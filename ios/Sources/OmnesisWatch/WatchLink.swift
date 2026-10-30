@@ -499,7 +499,11 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
             return
         }
         Task { @MainActor in
-            let displayed = WatchComplicationCapture.shared.answered(result.outcome, ref: ref)
+            let displayed = WatchComplicationCapture.shared.answered(
+                result.outcome,
+                ref: ref,
+                conversationId: message["conversationId"] as? String
+            )
             replyHandler(["displayed": displayed])
         }
     }
@@ -514,7 +518,8 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         if update == "route", let route = (message["route"] as? String).flatMap(WatchCaptureRoute.init(rawValue:)) {
             Task { @MainActor in WatchComplicationCapture.shared.resolved(route, ref: ref) }
         } else if update == "answer", let result = SiriAskWire.resultOutcome(from: message) {
-            Task { @MainActor in WatchComplicationCapture.shared.answered(result.outcome, ref: ref) }
+            let conversationId = message["conversationId"] as? String
+            Task { @MainActor in WatchComplicationCapture.shared.answered(result.outcome, ref: ref, conversationId: conversationId) }
         }
         return true
     }

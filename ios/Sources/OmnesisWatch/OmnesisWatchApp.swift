@@ -237,11 +237,11 @@ struct WatchAskView: View {
         .padding()
     }
 
-    /// Opens dictation for a new question — the in-app twin of the Ask
-    /// complication.
+    /// Follow-ups use the same audio-only recorder and explicitly ask;
+    /// they never invoke system dictation or the decision gate.
     private func dictateButton(_ title: LocalizedStringKey) -> some View {
         Button {
-            Task { await WatchDictation.start(.ask) }
+            Task { await WatchComplicationCapture.shared.start(followUp: true) }
         } label: {
             Label(title, systemImage: "mic.fill")
         }
@@ -280,7 +280,7 @@ struct WatchAskView: View {
                 Button {
                     speaker.replay()
                 } label: {
-                    Label("Replay", systemImage: "speaker.wave.2.fill")
+                    Label("Speak answer", systemImage: "speaker.wave.2.fill")
                 }
             }
         }

@@ -161,7 +161,7 @@ enum WatchStateStaging {
         "idle", "received", "thinking", "searching", "reading",
         "widest", "long-question", "answered", "working", "failed",
         "note-idle", "note-done",
-        "capture-listening", "capture-auto", "capture-ready", "capture-sent", "capture-error",
+        "capture-listening", "capture-follow-up", "capture-auto", "capture-ready", "capture-sent", "capture-error",
     ]
 
     /// How long a staged state is given to settle before its capture.
@@ -183,6 +183,7 @@ enum WatchStateStaging {
         guard known.contains(state) else { return false }
         if state.hasPrefix("capture-") {
             switch state {
+            case "capture-follow-up": WatchComplicationCapture.shared.stage(.recording, followUp: true)
             case "capture-auto": WatchComplicationCapture.shared.stage(.recording, automatic: true)
             case "capture-ready": WatchComplicationCapture.shared.stage(.ready)
             case "capture-sent": WatchComplicationCapture.shared.stage(.sent(.note))

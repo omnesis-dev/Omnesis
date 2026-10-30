@@ -182,7 +182,7 @@ if [[ "$ONLY_TESTING" == "--watch" ]]; then
   set +e
   ssh "$HOST" "bash -lc '
     cd \"$RESOLVED_TARGET\" || exit 1
-    bash scripts/shot-watch-ask.sh --states capture-listening,capture-auto,capture-ready,capture-sent,capture-error
+    bash scripts/shot-watch-ask.sh --states idle,answered,capture-listening,capture-follow-up,capture-auto,capture-ready,capture-sent,capture-error
 '"
   WATCH_RC=$?
   set -e
