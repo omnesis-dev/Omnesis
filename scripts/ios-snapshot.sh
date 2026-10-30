@@ -180,7 +180,10 @@ if [[ "$ONLY_TESTING" == "--watch" ]]; then
   ssh "$HOST" "mkdir -p \"$RESOLVED_TARGET/scripts\""
   rsync -az "$ROOT/scripts/shot-watch-ask.sh" "$HOST:$RESOLVED_TARGET/scripts/"
   set +e
-  ssh "$HOST" "bash -lc 'cd \"$RESOLVED_TARGET\" && bash scripts/shot-watch-ask.sh --states capture-listening,capture-auto,capture-ready,capture-sent,capture-error'"
+  ssh "$HOST" "bash -lc '
+    cd \"$RESOLVED_TARGET\" || exit 1
+    bash scripts/shot-watch-ask.sh --states capture-listening,capture-auto,capture-ready,capture-sent,capture-error
+'"
   WATCH_RC=$?
   set -e
   mkdir -p "$OUT_DIR"
