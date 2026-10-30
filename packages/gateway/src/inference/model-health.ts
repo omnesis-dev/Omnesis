@@ -37,7 +37,22 @@ const persistedState = z
   .array(z.object({ fingerprint: z.string(), warning: persistedWarning }))
   .max(CAPABILITY_ROLES.length);
 type Selection = { identity: string; fingerprint: string; assignment: string };
-type State = Selection & { latest: number; latestSuccess: number; warning?: ModelHealthWarning };
+type Failure = { sequence: number; at: number; category: ModelHealthWarning["category"] };
+type State = Selection & { latestSuccess: number; failures: Failure[] };
+
+function warningFor(role: CapabilityRole, state: State): ModelHealthWarning | undefined {
+  const newest = state.failures.at(-1);
+  if (!newest) return undefined;
+  return {
+    role,
+    assignment: state.assignment,
+    consecutiveFailures: state.failures.length,
+    firstFailedAt: Math.min(...state.failures.map((failure) => failure.at)),
+    lastFailedAt: Math.max(...state.failures.map((failure) => failure.at)),
+    category: newest.category,
+    message: descriptionForCategory(newest.category),
+  };
+}
 
 /**
  * Runtime evidence, bounded to one entry per capability. Connection/assignment
@@ -66,13 +81,16 @@ export class InferenceHealth {
         if (selected.fingerprint !== fingerprint) continue;
         this.states.set(warning.role, {
           ...selected,
-          latest: 0,
           latestSuccess: 0,
-          warning: {
-            ...warning,
-            // Only the fixed category descriptions are ever restored for display.
-            message: descriptionForCategory(warning.category),
-          },
+          // Restored evidence predates every request in this process.
+          failures: Array.from(
+            { length: Math.min(REPEATED_FAILURES, warning.consecutiveFailures) },
+            (_, index) => ({
+              sequence: index - REPEATED_FAILURES,
+              at: index === 0 ? warning.firstFailedAt : warning.lastFailedAt,
+              category: warning.category,
+            }),
+          ),
         });
       }
     } catch (error) {
@@ -87,11 +105,12 @@ export class InferenceHealth {
 
   private persist(): void {
     if (!this.statePath) return;
-    const entries = [...this.states.values()].flatMap((state) =>
-      state.warning
-        ? [{ fingerprint: state.fingerprint, warning: { ...state.warning, message: undefined } }]
-        : [],
-    );
+    const entries = [...this.states.entries()].flatMap(([role, state]) => {
+      const warning = warningFor(role, state);
+      return warning
+        ? [{ fingerprint: state.fingerprint, warning: { ...warning, message: undefined } }]
+        : [];
+    });
     this.pendingState = JSON.stringify(entries);
     this.saving ??= this.savePending();
   }
@@ -126,8 +145,8 @@ export class InferenceHealth {
       if (this.selection(role).identity !== state.identity) {
         this.states.delete(role);
         changed = true;
-      } else if (state.warning && state.warning.consecutiveFailures >= REPEATED_FAILURES) {
-        warnings.push({ ...state.warning });
+      } else if (state.failures.length >= REPEATED_FAILURES) {
+        warnings.push(warningFor(role, state)!);
       }
     }
     if (changed) this.persist();
@@ -227,36 +246,29 @@ export class InferenceHealth {
       if (this.selection(role).identity !== selected.identity) return;
       let state = this.states.get(role);
       if (!state || state.identity !== selected.identity) {
-        state = { ...selected, latest: 0, latestSuccess: 0 };
+        state = { ...selected, latestSuccess: 0, failures: [] };
         this.states.set(role, state);
       }
       if (error === undefined) {
-        // An older success cannot erase a failure from a newer request.
-        if (sequence <= state.latest) return;
-        state.latest = sequence;
+        if (sequence <= state.latestSuccess) return;
+        // Every success excludes earlier-started failures, including when a
+        // newer failure settled first. Newer failures remain evidence.
         state.latestSuccess = sequence;
-        const hadWarning = !!state.warning;
-        delete state.warning;
-        if (hadWarning) this.persist();
+        const previousCount = state.failures.length;
+        state.failures = state.failures.filter((failure) => failure.sequence > sequence);
+        if (state.failures.length !== previousCount) this.persist();
         return;
       }
-      // Count concurrent failures even when they settle in reverse order;
-      // evidence older than an already successful request remains stale.
       if (sequence <= state.latestSuccess) return;
-      state.latest = Math.max(state.latest, sequence);
-      const now = Date.now();
-      const description = describeModelFailure(error);
-      state.warning = {
-        role,
-        assignment: selected.assignment,
-        consecutiveFailures: Math.min(
-          Number.MAX_SAFE_INTEGER,
-          (state.warning?.consecutiveFailures ?? 0) + 1,
-        ),
-        firstFailedAt: state.warning?.firstFailedAt ?? now,
-        lastFailedAt: now,
-        ...description,
-      };
+      state.failures.push({
+        sequence,
+        at: Date.now(),
+        category: describeModelFailure(error).category,
+      });
+      state.failures.sort((left, right) => left.sequence - right.sequence);
+      // Only the threshold's newest witnesses are needed. A later success can
+      // prune their prefix without retaining an unbounded outcome journal.
+      if (state.failures.length > REPEATED_FAILURES) state.failures.shift();
       this.persist();
     };
     return { success: () => finish(), failure: (error: unknown) => finish(error ?? new Error()) };

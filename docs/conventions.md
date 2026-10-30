@@ -1025,9 +1025,10 @@ factory with workers and providers so late results cannot affect a replacement.
 Record streamed terminal outcomes before yielding them: a consumer may stop at
 that event without resuming the generator.
 
-The recorder counts failed logical requests, ignores cancellation, rejects stale
-recovery, and clears evidence on successful requests or relevant configuration
-changes. Warnings persist as bounded, content-free metadata: fixed error
+The recorder retains the three newest failed logical requests and ignores
+cancellation. A successful request removes failure evidence from earlier requests,
+preserving failures from later requests that overlap it. Relevant configuration
+changes clear the old assignment's evidence. Counts are bounded lower bounds. Warnings persist as bounded, content-free metadata: fixed error
 categories and descriptions, counts, timestamps and assignment identifiers. Never
 retain provider bodies, prompts, credentials or arbitrary exception text here.
 Clients explain the warning beside the capability picker; navigation only marks

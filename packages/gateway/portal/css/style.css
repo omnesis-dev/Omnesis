@@ -19075,3 +19075,8 @@ summary.decision-card-head {
 .model-health-warning p { margin: 0 0 8px; font-size: 13px; }
 .model-health-warning-meta { color: var(--text-secondary); }
 .model-health-warning a { font-size: 13px; }
+
+.cap-detail-active--warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 7%, var(--bg-secondary));
+}

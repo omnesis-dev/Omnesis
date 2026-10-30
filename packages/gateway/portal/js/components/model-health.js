@@ -30,7 +30,7 @@ export function ModelHealthWarnings({ overview, role = null }) {
           <h3>${capability.title}: repeated model failures</h3>
           <p>${display?.modelName ? [display.providerLabel, display.modelName].filter(Boolean).join(" · ") : warning.assignment}</p>
           <p>${warning.message}</p>
-          <p class="model-health-warning-meta">${warning.consecutiveFailures} consecutive failed requests.
+          <p class="model-health-warning-meta">At least ${warning.consecutiveFailures} consecutive failed requests.
             Last failure: <time datetime=${new Date(warning.lastFailedAt).toISOString()}>${new Date(warning.lastFailedAt).toLocaleString()}</time>.
             This warning clears after a successful request.</p>
           ${!role && html`<a href=${`/portal/settings/models/${warning.role}`}

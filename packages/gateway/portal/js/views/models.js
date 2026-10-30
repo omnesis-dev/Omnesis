@@ -359,10 +359,11 @@ function capabilityFor(overview, role) {
   return (overview.capabilities ?? []).find((c) => c.role === role);
 }
 
-function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
+export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
   const cap = capabilityFor(overview, role);
   const assignment = overview.inference.assignments[role];
   const display = overview.assignmentDisplays?.[role];
+  const runtimeWarning = overview.inference.health?.warnings?.some((warning) => warning.role === role);
   const enabled = isEnabled(assignment);
   const configured = isConfigured(assignment);
   const settings = overview.modelSettings?.[role];
@@ -383,9 +384,9 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
 
       <div class="cap-detail-status">
         ${enabled && display
-          ? html`<div class="cap-detail-active">
+          ? html`<div class=${`cap-detail-active${runtimeWarning ? " cap-detail-active--warning" : ""}`}>
               <div class="cap-detail-active-head">
-                <span class="cap-detail-tick">✓</span>
+                ${runtimeWarning ? html`<${WarningTriangle} label="Repeated model failures" />` : html`<span class="cap-detail-tick">✓</span>`}
                 <div>
                   <div class="cap-detail-active-model"><${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}</div>
                   <div class="cap-detail-active-provider">${display.providerLabel}</div>

@@ -623,6 +623,7 @@ export interface CapabilityVerdict {
 export interface ModelHealthWarning {
   role: CapabilityRole;
   assignment: string;
+  /** Lower bound, capped at the repeated-failure threshold to keep concurrent evidence bounded. */
   consecutiveFailures: number;
   firstFailedAt: number;
   lastFailedAt: number;

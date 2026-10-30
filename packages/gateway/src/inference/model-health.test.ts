@@ -179,6 +179,59 @@ describe("InferenceHealth", () => {
     expect(health.snapshot().warnings).toEqual([]);
   });
 
+  it("an overlapping older success prunes only failures that started before it", () => {
+    const health = new InferenceHealth(() => selection);
+    const a = health.beginCall("decision");
+    const b = health.beginCall("decision");
+    const c = health.beginCall("decision");
+    const d = health.beginCall("decision");
+    a.failure(new Error("quota exhausted"));
+    c.failure(new Error("HTTP 503"));
+    b.success();
+    d.failure(new Error("HTTP 401"));
+    expect(health.snapshot().warnings).toEqual([]);
+    health.beginCall("decision").failure(new Error("quota exhausted"));
+    expect(health.snapshot().warnings[0]).toMatchObject({
+      consecutiveFailures: 3,
+      category: "quota",
+    });
+  });
+
+  it("bounds repeated failure witnesses while retaining the newest request's category", () => {
+    const health = new InferenceHealth(() => selection);
+    for (let i = 0; i < 20; i++) health.beginCall("decision").failure(new Error("quota exhausted"));
+    const older = health.beginCall("decision");
+    const newest = health.beginCall("decision");
+    newest.failure(new Error("HTTP 401"));
+    older.failure(new Error("HTTP 503"));
+    expect(health.snapshot().warnings[0]).toMatchObject({
+      consecutiveFailures: 3,
+      category: "authentication",
+    });
+  });
+
+  it.each([1, 2])(
+    "restores %i failures below the threshold and clears them on success",
+    async (count) => {
+      const folder = mkdtempSync(join(tmpdir(), "model-health-"));
+      folders.push(folder);
+      const path = join(folder, "health.json");
+      const first = fixture(path);
+      await failures(first.provider, count);
+      await first.health.flush();
+      const restored = fixture(path);
+      expect(restored.health.snapshot().warnings).toEqual([]);
+      await failures(restored.provider, 3 - count);
+      expect(restored.health.snapshot().warnings[0]?.consecutiveFailures).toBe(3);
+      await restored.health.flush();
+      const recovered = fixture(path);
+      recovered.setError(null);
+      await recovered.provider.decide();
+      expect(recovered.health.snapshot().warnings).toEqual([]);
+      await recovered.health.flush();
+    },
+  );
+
   it.each([
     ["HTTP 401", "authentication"],
     ["HTTP 404 model missing", "configuration"],

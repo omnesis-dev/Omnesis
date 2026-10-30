@@ -10,7 +10,7 @@ vi.mock("../lib/router.js", () => ({ navigate: vi.fn() }));
 // @ts-expect-error — portal modules are plain JS.
 import { ModelHealthWarnings } from "./model-health.js";
 // @ts-expect-error — portal modules are plain JS.
-import { CapabilityGrid } from "../views/models.js";
+import { CapabilityGrid, CapabilityDetail } from "../views/models.js";
 // @ts-expect-error — portal modules are plain JS.
 import { navigate } from "../lib/router.js";
 
@@ -58,6 +58,20 @@ describe("model runtime warnings", () => {
     expect(navigate).toHaveBeenCalledWith("/portal/settings/models/agent");
     await act(async () => { render(h(ModelHealthWarnings, { overview: overview([]) }), host); });
     expect(host.querySelector(".model-health-warning")).toBeNull();
+  });
+
+  test("marks the assigned model in capability details until recovery", async () => {
+    const data = { ...overview([failure]), assignmentDisplays: {
+      agent: { providerLabel: "Example provider", modelName: "Example model" },
+    } };
+    await act(async () => { render(h(CapabilityDetail, { role: "agent", overview: data }), host); });
+    expect(host.querySelector('.cap-detail-active--warning [aria-label="Repeated model failures"]')).not.toBeNull();
+    expect(host.querySelector(".cap-detail-tick")).toBeNull();
+    await act(async () => { render(h(CapabilityDetail, { role: "agent", overview: {
+      ...data, inference: { ...data.inference, health: { warnings: [] } },
+    } }), host); });
+    expect(host.querySelector(".cap-detail-tick")).not.toBeNull();
+    expect(host.querySelector(".cap-detail-active--warning")).toBeNull();
   });
 
   test("shows only served capabilities and scopes a detail page to its own failures", async () => {
