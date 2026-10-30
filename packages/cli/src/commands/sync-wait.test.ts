@@ -8,6 +8,7 @@ import {
   allResolved,
   markTimedOut,
   isOverallSuccess,
+  MAX_CONSECUTIVE_FETCH_FAILURES,
   waitForSyncCompletion,
   type SyncStatusObservation,
 } from "./sync-wait.js";
@@ -171,6 +172,58 @@ describe("waitForSyncCompletion — loop with injected clock/sleep/feed", () => 
     );
     expect(states.get("s:1")!.outcome).toBe("success");
     expect(isOverallSuccess(states)).toBe(true);
+  });
+
+  /** A refused connect, as Node's fetch reports one. */
+  const refused = () =>
+    Object.assign(new TypeError("fetch failed"), { cause: { code: "ETIMEDOUT" } });
+  const isTransient = (err: unknown) => err instanceof TypeError;
+
+  test("a poll that cannot connect is polled again, and the sync it waits on still lands", async () => {
+    const { deps } = harness(
+      [[{ sourceId: "s:1", state: "syncing" }], [{ sourceId: "s:1", state: "synced" }]],
+      { pollIntervalMs: 1000 },
+    );
+    let polls = 0;
+    const fetchStatus = () => (++polls === 2 ? Promise.reject(refused()) : deps.fetchStatus());
+    const states = await waitForSyncCompletion(
+      { sourceIds: ["s:1"], timeoutMs: 60_000, pollIntervalMs: 1000 },
+      { ...deps, fetchStatus, isTransient },
+    );
+    expect(states.get("s:1")!.outcome).toBe("success");
+    expect(polls).toBe(3);
+  });
+
+  test("a gateway unreachable for several polls in a row ends the wait with that error", async () => {
+    const { deps } = harness([[{ sourceId: "s:1", state: "syncing" }]], { pollIntervalMs: 1000 });
+    let polls = 0;
+    const fetchStatus = () => {
+      polls++;
+      return Promise.reject(refused());
+    };
+    await expect(
+      waitForSyncCompletion(
+        { sourceIds: ["s:1"], timeoutMs: 60_000, pollIntervalMs: 1000 },
+        { ...deps, fetchStatus, isTransient },
+      ),
+    ).rejects.toThrow("fetch failed");
+    expect(polls).toBe(MAX_CONSECUTIVE_FETCH_FAILURES);
+  });
+
+  test("a failure that is not a connection fault ends the wait at once", async () => {
+    const { deps } = harness([[{ sourceId: "s:1", state: "syncing" }]], { pollIntervalMs: 1000 });
+    let polls = 0;
+    const fetchStatus = () => {
+      polls++;
+      return Promise.reject(new Error("HTTP 500"));
+    };
+    await expect(
+      waitForSyncCompletion(
+        { sourceIds: ["s:1"], timeoutMs: 60_000, pollIntervalMs: 1000 },
+        { ...deps, fetchStatus, isTransient },
+      ),
+    ).rejects.toThrow("HTTP 500");
+    expect(polls).toBe(1);
   });
 
   test("times out when a source never starts syncing (race guard holds)", async () => {
