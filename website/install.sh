@@ -6017,7 +6017,7 @@ docker_tls_renewal_install() {
   case "$TS_RENEW_KIND" in
     launchd) TS_RENEW_FILES="$HOME/Library/LaunchAgents/$TS_RENEW_LABEL.plist" ;;
     systemd-user)
-      TS_RENEW_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+      TS_RENEW_UNIT_DIR="$HOME/.config/systemd/user"
       TS_RENEW_FILES="$TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.service $TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.timer" ;;
     systemd-system)
       TS_RENEW_UNIT_DIR="${OMNESIS_TEST_HOST_ROOT:-}/etc/systemd/system"
