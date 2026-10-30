@@ -100,7 +100,7 @@ public struct WatchDictationGate: Equatable, Sendable {
     }
 }
 
-/// The metadata travelling with one recorded note.
+/// The metadata travelling with a recording from either Watch capture flow.
 public enum WatchCaptureRoute: String, Codable, Sendable {
     case ask, note, automatic
 }
@@ -117,7 +117,7 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     /// recognizer's locale, and the note's `language` for the gateway.
     public let locale: String?
 
-    /// Marks the metadata as a watch voice note's.
+    /// Distinguishes legacy voice notes from unified complication captures.
     static let kindKey = "voiceKind"
     static let noteKind = "note"
     static let refKey = "ref"

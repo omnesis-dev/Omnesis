@@ -15,7 +15,6 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     enum State: Equatable { case idle, preparing, recording, ready, saving, sent(WatchCaptureRoute), failed }
     private(set) var state: State = .idle
     private(set) var automatic = false
-    private(set) var startedAt = Date()
     private(set) var level: Float = 0
     @ObservationIgnored private var recorder: AVAudioRecorder?
     @ObservationIgnored private var recording: WatchVoiceRecording?
@@ -66,7 +65,6 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             guard recorder.record(forDuration: gate?.recordingLimit(now: Date()) ?? WatchVoiceFormat.maxDuration) else {
                 throw CocoaError(.fileWriteUnknown)
             }
-            startedAt = Date()
             state = .recording
             WKInterfaceDevice.current().play(.start)
             interruption = NotificationCenter.default.addObserver(
