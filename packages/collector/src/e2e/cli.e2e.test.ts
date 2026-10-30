@@ -352,6 +352,35 @@ describe("CLI end-to-end (e2e-minimal)", () => {
     }
   });
 
+  // The harness gateway serves its own self-signed certificate, which the
+  // Chrome extension can never use: the browser code is still issued, and both
+  // the machine answer and the printed instructions say so.
+  test("`omnesis devices pair --kind browser` warns that the extension cannot use a self-signed gateway", async () => {
+    const json = await runCli(harness, ["devices", "pair", "--kind", "browser", "--json"]);
+    expect(json.exitCode, json.stderr).toBe(0);
+    const record = JSON.parse(json.stdout) as {
+      pairingCode?: string;
+      browserCertificate?: { status: string; certificate: string; reason: string | null };
+    };
+    expect(record.pairingCode).toBeTruthy();
+    expect(record.browserCertificate).toMatchObject({
+      status: "untrusted",
+      certificate: "self-signed",
+      reason: "self-signed",
+    });
+
+    const text = await runCli(harness, ["devices", "pair", "--kind", "browser"]);
+    expect(text.exitCode, text.stderr).toBe(0);
+    expect(text.stdout).toContain("WARNING:");
+    expect(text.stdout).toContain("Chrome extension cannot connect to this gateway.");
+    expect(text.stdout).toContain("https://omnesis.dev/docs/setup#browser-extension");
+
+    // The CLI pins or trusts the certificate itself, so its code carries no such verdict.
+    const cli = await runCli(harness, ["devices", "pair", "--kind", "cli", "--json"]);
+    expect(cli.exitCode, cli.stderr).toBe(0);
+    expect(JSON.parse(cli.stdout)).not.toHaveProperty("browserCertificate");
+  });
+
   test("`omnesis devices redeem` with a bogus code fails with a friendly error", async () => {
     let r: CliResult;
     try {

@@ -40,6 +40,7 @@ import { PairingService } from "../../services/PairingService.js";
 import { isStaleDeviceRevocationImpactError } from "../../../access/agent-device-authorization.js";
 import { deviceVersionState } from "../../../device-version.js";
 import { FleetUpdateService } from "../../services/FleetUpdateService.js";
+import { browserExtensionTrust } from "../../../tls-lifecycle/browser-trust.js";
 import { log, type AdminRoutesDeps } from "./internals.js";
 import type { RouteApp, AuthContext } from "../types.js";
 
@@ -656,6 +657,18 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         typeof tlsFingerprintSha256 === "function" ? tlsFingerprintSha256() : tlsFingerprintSha256,
     });
     log.info(`Pairing code issued: ${name || "(unnamed)"} (${kind}) scopes=[${scopes.join(",")}]`);
+    // The extension cannot pin a certificate or click through a warning, so a
+    // browser code says whether Chrome will trust the one served now. The
+    // code is still issued: a browser may trust an authority Omnesis cannot see.
+    const tlsSnapshot = kind === "browser" ? deps.tlsLifecycle?.snapshot() : undefined;
+    if (tlsSnapshot) {
+      return c.json({
+        ...pending,
+        browserCertificate: browserExtensionTrust(tlsSnapshot, {
+          inContainer: deps.inContainer === true,
+        }),
+      });
+    }
     return c.json(pending);
   });
 

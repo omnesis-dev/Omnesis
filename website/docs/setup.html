@@ -813,6 +813,18 @@ omnesis.example.com {
           </div>
         </div>
         <p>
+          The code comes with the gateway's verdict on the certificate it serves. Against a
+          self-signed, expired or not-yet-valid certificate, the CLI and the portal show a warning
+          that the extension cannot connect, with the fix: re-run the installer on the gateway host
+          with Tailscale up, or run <code>omnesis tls provision</code> there on a native install. A
+          mkcert certificate gets a note that only browsers on machines trusting its authority can
+          connect, and a certificate you supplied a note that Chrome must trust its issuer. The code
+          is issued either way. With <code>--json</code>, the record's
+          <code>browserCertificate.status</code> is <code>untrusted</code> when the extension cannot
+          connect, and <code>trusted</code>, <code>local-ca</code> or
+          <code>unknown</code> otherwise.
+        </p>
+        <p>
           On the extension's Options page, enter the Chrome profile name shown in Chrome's profile
           menu, the gateway URL and the code. Chrome does not tell extensions its profile name, so
           this label marks every visit from this browser; you can change it later on the same page.

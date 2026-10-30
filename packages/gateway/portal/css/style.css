@@ -4902,6 +4902,52 @@ p.devices-pair-expiry {
   padding: 1px 5px;
 }
 
+/* What the gateway says about the certificate the browser extension will
+   meet. One it can never use is framed in the danger colour above the steps,
+   so a code that cannot work does not look like one that will; a certificate
+   it may not trust everywhere gets the quieter warning frame. */
+.devices-ext-cert {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.devices-ext-cert.is-blocked {
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+.devices-ext-cert.is-note {
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+.devices-ext-cert p {
+  margin: 0 0 6px;
+}
+.devices-ext-cert p:last-child {
+  margin-bottom: 0;
+}
+.devices-ext-cert-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.devices-ext-cert.is-blocked .devices-ext-cert-title {
+  color: var(--danger);
+}
+.devices-ext-cert-aside {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.devices-ext-cert code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 .devices-phone-qr {
   display: flex;
   flex-direction: column;

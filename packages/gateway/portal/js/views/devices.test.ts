@@ -736,6 +736,130 @@ describe("browser extension pairing", () => {
     expect(host.textContent).not.toContain("Pair a new device");
   });
 
+  const untrustedCertificate = {
+    status: "untrusted",
+    certificate: "self-signed",
+    reason: "self-signed",
+    names: ["localhost"],
+    proxiedHosts: [],
+    title: "the Chrome extension cannot connect to this gateway",
+    message: "The gateway serves a self-signed certificate.",
+    remedy:
+      "Re-run the installer on the gateway host — with Tailscale up it sets up a trusted certificate — or run `omnesis tls provision` there.",
+    docsUrl: "https://omnesis.dev/docs/setup#browser-extension",
+  };
+
+  async function renderBrowserInstructions(browserCertificate?: Record<string, unknown>) {
+    await act(async () => {
+      render(
+        h(PairInstructions, {
+          pairResult: {
+            kind: "browser",
+            pairingCode: "FICTION-2486",
+            ...(browserCertificate ? { browserCertificate } : {}),
+          },
+          identities: [],
+          selectedHostIdx: 0,
+          setSelectedHostIdx: () => {},
+        }),
+        host,
+      );
+    });
+    return host.querySelector(".devices-ext-cert") as HTMLElement | null;
+  }
+
+  test("a browser code against an untrusted certificate leads with an alert naming why and the fix", async () => {
+    const notice = await renderBrowserInstructions(untrustedCertificate);
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.classList.contains("is-blocked")).toBe(true);
+    expect(notice?.querySelector(".devices-ext-cert-title")?.textContent).toBe(
+      "the Chrome extension cannot connect to this gateway",
+    );
+    expect(notice?.textContent).toContain("self-signed certificate");
+    expect(notice?.textContent).toContain("Fix: Re-run the installer on the gateway host");
+    // The gateway's backticked command is shown as code, not as literal backticks.
+    expect(notice?.querySelector("code")?.textContent).toBe("omnesis tls provision");
+    expect(notice?.textContent).not.toContain("`");
+    const docs = notice?.querySelector("a") as HTMLAnchorElement;
+    expect(docs.getAttribute("href")).toBe("https://omnesis.dev/docs/setup#browser-extension");
+    expect(docs.getAttribute("target")).toBe("_blank");
+    expect(notice?.textContent).toContain("still valid");
+    // Above the steps, not a footnote under them.
+    const snippet = host.querySelector(".devices-pair-snippet")!;
+    expect(snippet.firstElementChild).toBe(notice);
+  });
+
+  test.each(["local-ca", "unknown"])("a %s certificate is a note, not an alert", async (status) => {
+    const notice = await renderBrowserInstructions({
+      ...untrustedCertificate,
+      status,
+      reason: null,
+      title: "the Chrome extension connects only where the mkcert authority is installed",
+      message: "Chrome trusts it only on a machine where that authority is installed.",
+      remedy: null,
+    });
+    expect(notice?.getAttribute("role")).toBe("note");
+    expect(notice?.classList.contains("is-note")).toBe(true);
+    expect(notice?.textContent).toContain("only where the mkcert authority is installed");
+    expect(notice?.textContent).not.toContain("Fix:");
+    expect(notice?.textContent).not.toContain("still valid");
+  });
+
+  test("a trusted certificate, or a gateway that sends no verdict, shows no notice", async () => {
+    expect(
+      await renderBrowserInstructions({
+        ...untrustedCertificate,
+        status: "trusted",
+        certificate: "tailscale",
+        reason: null,
+        title: null,
+        message: null,
+        remedy: null,
+      }),
+    ).toBeNull();
+    expect(await renderBrowserInstructions()).toBeNull();
+    expect(host.textContent).toContain("open Options");
+  });
+
+  test("minting a browser code from the modal shows the gateway's warning with the code", async () => {
+    apiMocks.pairDevice.mockResolvedValue({
+      pairingCode: "FICTION-2486",
+      expiresAt: Date.now() + 60000,
+      browserCertificate: untrustedCertificate,
+    });
+    await act(async () => {
+      render(h(DevicesView, { pairKindRequest: "browser" }), host);
+    });
+    await act(async () => {
+      (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    const result = host.querySelector(".devices-pair-result")!;
+    expect(result.querySelector(".devices-pair-code")?.textContent).toBe("FICTION-2486");
+    expect(result.querySelector(".devices-ext-cert[role=alert]")?.textContent).toContain(
+      "the Chrome extension cannot connect to this gateway",
+    );
+  });
+
+  test("no other kind of code shows the browser certificate notice", async () => {
+    for (const kind of ["agent", "collector", "integration", "portal", "cli"]) {
+      await act(async () => {
+        render(
+          h(PairInstructions, {
+            pairResult: { kind, pairingCode: "FICTION-2486", browserCertificate: untrustedCertificate },
+            identities: [],
+            selectedHostIdx: 0,
+            setSelectedHostIdx: () => {},
+          }),
+          host,
+        );
+      });
+      expect(host.querySelector(".devices-ext-cert"), kind).toBeNull();
+      render(null, host);
+    }
+  });
+
   test("browser instructions link to the Chrome Web Store", async () => {
     await act(async () => {
       render(

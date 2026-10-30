@@ -559,6 +559,11 @@ const devicesPairCommand = defineCommand({
       description:
         "Legacy: annotate the device with a self phone, E.164 (repeatable). Prefer `omnesis self`.",
     },
+    json: {
+      type: "boolean",
+      description:
+        "Machine-readable JSON: the gateway's pairing record {pairingCode, kind, scopes, expiresAt, …}; a browser code adds browserCertificate {status, …}, where status `untrusted` means the extension cannot connect",
+    },
   },
   async run(ctx) {
     const prompts = await import("@clack/prompts");
@@ -643,6 +648,7 @@ const devicesPairCommand = defineCommand({
         scopes: Scope[];
         expiresAt: number;
         tlsFingerprint?: string;
+        browserCertificate?: BrowserCertificateVerdict;
       }>("/admin/devices/pair", {
         method: "POST",
         body: JSON.stringify({
@@ -657,6 +663,12 @@ const devicesPairCommand = defineCommand({
         }),
       }),
     );
+    // The record as the gateway minted it, so a script reads the same
+    // certificate verdict the instructions below are built from.
+    if (ctx.args.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
     if (selfEmails.length > 0 || selfPhones.length > 0) {
       console.log(
         `${c.dim}Will annotate the paired device with ${selfEmails.length} email(s) + ${selfPhones.length} phone(s).${c.reset}`,
@@ -684,7 +696,12 @@ const devicesPairCommand = defineCommand({
     } else {
       // Every non-QR kind gets
       // guidance tailored to how that kind actually redeems the code.
-      for (const line of pairInstructionLines(kind, result.pairingCode, GATEWAY_URL)) {
+      for (const line of pairInstructionLines(
+        kind,
+        result.pairingCode,
+        GATEWAY_URL,
+        result.browserCertificate,
+      )) {
         console.log(line);
       }
     }
@@ -1548,6 +1565,7 @@ export function repairInstructionLines(
   device: { name: string },
   code: string,
   gatewayUrl: string,
+  browserCertificate?: BrowserCertificateVerdict,
 ): string[] {
   const head = [
     "",
@@ -1591,7 +1609,13 @@ export function repairInstructionLines(
     case "browser":
       // The extension redeems the code from its Options page; it never reads
       // a terminal.
-      return [...head, ...browserPairingLines(gatewayUrl, code, { install: false })];
+      return [
+        ...head,
+        ...browserPairingLines(gatewayUrl, code, {
+          install: false,
+          certificate: browserCertificate,
+        }),
+      ];
     default:
       return [
         ...head,
@@ -1647,13 +1671,15 @@ const devicesRepairCommand = defineCommand({
     }
 
     const result = await withSpinner(`Minting a repair code for ${dev.name}`, () =>
-      gatewayJson<{ pairingCode: string; scopes: Scope[]; expiresAt: number }>(
-        "/admin/devices/pair",
-        {
-          method: "POST",
-          body: JSON.stringify({ kind: dev.kind, repairDeviceId: dev.id }),
-        },
-      ),
+      gatewayJson<{
+        pairingCode: string;
+        scopes: Scope[];
+        expiresAt: number;
+        browserCertificate?: BrowserCertificateVerdict;
+      }>("/admin/devices/pair", {
+        method: "POST",
+        body: JSON.stringify({ kind: dev.kind, repairDeviceId: dev.id }),
+      }),
     );
     const ttlSec = Math.max(0, Math.floor((result.expiresAt - Date.now()) / 1000));
     console.log();
@@ -1679,7 +1705,13 @@ const devicesRepairCommand = defineCommand({
           })
         : (gatewayUrlFlag ?? GATEWAY_URL);
 
-    for (const line of repairInstructionLines(dev.kind, dev, result.pairingCode, reachableUrl)) {
+    for (const line of repairInstructionLines(
+      dev.kind,
+      dev,
+      result.pairingCode,
+      reachableUrl,
+      result.browserCertificate,
+    )) {
       console.log(line);
     }
     console.log();
@@ -2000,7 +2032,12 @@ function integrationRedeemLines(code: string, gatewayUrl: string): string[] {
   ];
 }
 
-export function pairInstructionLines(kind: DeviceKind, code: string, gatewayUrl: string): string[] {
+export function pairInstructionLines(
+  kind: DeviceKind,
+  code: string,
+  gatewayUrl: string,
+  browserCertificate?: BrowserCertificateVerdict,
+): string[] {
   switch (kind) {
     case "portal":
       // The portal redeems the code itself: the operator pastes it into the
@@ -2033,7 +2070,13 @@ export function pairInstructionLines(kind: DeviceKind, code: string, gatewayUrl:
     case "browser":
       // The extension redeems the code itself and stores its own credential —
       // it never reads a terminal, so there is no curl/redeem to show here.
-      return ["", ...browserPairingLines(gatewayUrl, code, { install: true })];
+      return [
+        "",
+        ...browserPairingLines(gatewayUrl, code, {
+          install: true,
+          certificate: browserCertificate,
+        }),
+      ];
     case "integration":
       // A code minted here carries no access level: that is an access decision,
       // made from a portal session. Until it is, the integration's questions
@@ -2068,15 +2111,81 @@ export const CHROME_WEB_STORE_URL =
   "https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn";
 
 /**
+ * What the gateway says, on a browser pairing code, about the certificate the
+ * extension will meet: the extension can neither pin a certificate nor click
+ * through a warning, so a gateway Chrome does not trust is one it cannot
+ * reach. Judged by the gateway (`tls-lifecycle/browser-trust.ts`), which
+ * knows what it serves, so this CLI may run anywhere. Absent from gateways
+ * that predate it.
+ */
+export interface BrowserCertificateVerdict {
+  /** `untrusted`: the extension cannot connect. */
+  status: "trusted" | "local-ca" | "unknown" | "untrusted";
+  certificate: string;
+  reason: string | null;
+  names: string[];
+  proxiedHosts: string[];
+  /** Headline of the warning or note; null when there is nothing to say. */
+  title: string | null;
+  message: string | null;
+  remedy: string | null;
+  docsUrl: string;
+}
+
+const BROWSER_EXTENSION_DOCS_URL = "https://omnesis.dev/docs/setup#browser-extension";
+
+/**
+ * The certificate guidance under a browser pairing code. A certificate the
+ * extension cannot use gets a framed warning, since the code alone looks like
+ * it works and the extension's eventual error says nothing about why. One it
+ * may not be able to use gets a note; a trusted one gets the reminder that it
+ * covers only certain names.
+ */
+export function browserCertificateLines(verdict: BrowserCertificateVerdict | undefined): string[] {
+  if (!verdict) {
+    return [
+      `${c.dim}The extension needs a browser-trusted HTTPS gateway, dialled by a name the certificate covers: ${BROWSER_EXTENSION_DOCS_URL}${c.reset}`,
+    ];
+  }
+  const docs = verdict.docsUrl || BROWSER_EXTENSION_DOCS_URL;
+  if (verdict.status === "untrusted") {
+    const rule = `${c.red}${"━".repeat(72)}${c.reset}`;
+    return [
+      "",
+      rule,
+      `${c.bold}${c.red}WARNING: ${verdict.title ?? "The Chrome extension cannot connect to this gateway"}.${c.reset}`,
+      ...(verdict.message ? [`${c.red}${verdict.message}${c.reset}`] : []),
+      ...(verdict.remedy ? [`${c.bold}Fix:${c.reset} ${verdict.remedy}`] : []),
+      `${c.bold}Docs:${c.reset} ${docs}`,
+      `${c.dim}The code above is still valid, for a browser that already trusts this certificate.${c.reset}`,
+      rule,
+    ];
+  }
+  if (verdict.title || verdict.message) {
+    return [
+      "",
+      ...(verdict.title ? [`${c.yellow}${c.bold}Note: ${verdict.title}.${c.reset}`] : []),
+      ...(verdict.message ? [`${c.yellow}${verdict.message}${c.reset}`] : []),
+      ...(verdict.remedy ? [`${c.dim}${verdict.remedy}${c.reset}`] : []),
+      `${c.dim}See ${docs}${c.reset}`,
+    ];
+  }
+  const names = verdict.names.length > 0 ? ` (${verdict.names.join(", ")})` : "";
+  return [
+    `${c.dim}Enter the gateway URL by a name the certificate covers${names}: ${docs}${c.reset}`,
+  ];
+}
+
+/**
  * How a browser pairing code is redeemed: in the extension's Options page,
- * never in a terminal. Names where the extension comes from and the one
- * thing its service worker cannot do, which is click through a certificate
- * warning.
+ * never in a terminal. Names where the extension comes from and whether its
+ * service worker, which cannot click through a certificate warning, can
+ * reach this gateway at all.
  */
 function browserPairingLines(
   gatewayUrl: string,
   code: string,
-  options: { install: boolean },
+  options: { install: boolean; certificate?: BrowserCertificateVerdict },
 ): string[] {
   return [
     ...(options.install
@@ -2087,11 +2196,7 @@ function browserPairingLines(
       : [`${c.dim}In the Omnesis browser extension, open Options and enter:${c.reset}`]),
     `  ${c.dim}Gateway URL:${c.reset}  ${gatewayUrl}`,
     `  ${c.dim}Pairing code:${c.reset} ${code}`,
-    ...(options.install
-      ? [
-          `${c.dim}The extension needs a browser-trusted HTTPS gateway, dialled by a name the certificate covers: https://omnesis.dev/docs/setup#browser-extension${c.reset}`,
-        ]
-      : []),
+    ...browserCertificateLines(options.certificate),
   ];
 }
 
