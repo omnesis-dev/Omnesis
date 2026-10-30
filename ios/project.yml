@@ -29,7 +29,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
     MARKETING_VERSION: "0.6.0"
-    CURRENT_PROJECT_VERSION: "331"
+    CURRENT_PROJECT_VERSION: "333"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
     # The pinned WebRTC binary has an arm64 simulator slice. Apply this
     # consistently to apps, hosted tests and their embedded iOS targets;
