@@ -12840,36 +12840,59 @@ div.source-activity-popover-link:hover {
   padding: 1px 8px;
 }
 
-/* MergePicker — the modal-style "merge this person with..." panel.
-   The container previously carried an inline 2px accent border + a
-   header row with inline flex/justify; the search input and reason
-   input stacked their margins inline. Pulled into a small set of
-   classes so the panel reads cleanly in JSX and the design tokens
-   live in one place. */
+/* Merge target selection shares the People page's avatars and source icons. */
 .merge-picker {
   margin-bottom: 24px;
-  border: 2px solid var(--border, #555);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
 }
 .merge-picker-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
-.merge-picker-cancel {
-  font-size: 12px;
-  padding: 2px 10px;
-}
-.merge-picker-search { margin-top: 8px; margin-bottom: 8px; }
+.merge-picker-cancel { flex-shrink: 0; }
+.merge-picker-search { width: 100%; min-width: 0; margin-top: 8px; margin-bottom: 8px; }
 .merge-picker-results {
-  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
   overflow-y: auto;
+  padding: 3px;
 }
-.merge-picker-card-selected {
-  border: 2px solid var(--accent, #4a9);
+.merge-picker-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+.merge-picker-result:hover { background: var(--bg-hover); }
+.merge-picker-result[aria-pressed="true"] { border-color: var(--accent); background: var(--bg-hover); }
+.merge-picker-result:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.merge-picker-result-body { flex: 1; min-width: 0; }
+.merge-picker-result-name { display: block; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.merge-picker-result-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+.merge-picker-result-check { width: 16px; flex-shrink: 0; color: var(--accent); }
 .merge-picker-detail {
-  margin-top: 12px;
-  padding: 8px;
-  border-top: 1px solid var(--border, #333);
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 .merge-picker-loading-inline { margin: 8px 0; }
 .merge-picker-rule-preview {
@@ -12896,6 +12919,7 @@ div.source-activity-popover-link:hover {
   color: var(--type-bookmark);
 }
 .merge-picker-radio { display: block; margin-bottom: 6px; }
+.merge-picker-radio input[type="radio"] { margin-inline-end: 8px; }
 .merge-picker-confirm { margin-top: 6px; }
 .merge-picker-selected-label { margin-bottom: 8px; }
 
