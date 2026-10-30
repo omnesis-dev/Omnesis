@@ -13,9 +13,14 @@
 #   3. Install the `omnesis` CLI from the newest stable source tag. `--method
 #      package` installs the published npm package instead, and `--method auto`
 #      prefers the package when the registry serves it.
-#   4. Provision TLS: if Tailscale is up, mint a real cert via
-#      `tailscale cert` and point the gateway at it; `--mkcert` opts into a
-#      local CA instead; otherwise the gateway's self-signed cert stands.
+#   4. Provision TLS: if Tailscale is up, offer a trusted certificate for this
+#      machine's MagicDNS name (Yes by default; without a terminal it is
+#      issued unless --no-tls), mint it via `tailscale cert` and point the
+#      gateway at it; `--mkcert` opts into a local CA instead; otherwise the
+#      gateway's self-signed cert stands, and the closing banner says loudly
+#      what that means. Under --docker the host issues the certificate into
+#      the config directory the containers mount and registers a host job
+#      (launchd agent or systemd timer) that renews it.
 #   5. Initialize the OS keyring root key when a durable keyring is already
 #      available. When it is not, ask whether to continue without encryption
 #      at rest, arm the passphrase backend now, or stop.
@@ -34,7 +39,8 @@
 #      operator's own `claude auth login` if it is signed out; Omnesis never
 #      handles Claude credentials.
 #  10. Print the next step (add a source), then the optional follow-ons a
-#      gateway host can offer: a phone, a browser, another machine.
+#      gateway host can offer: a phone, a browser, another machine. On a
+#      terminal the portal address carries a one-time login code.
 #
 # Roles, one per invocation. With no role flag this is the gateway machine and
 # every step above runs. `--client-only` installs the CLI alone. `--collector`
@@ -169,7 +175,11 @@
 #   --embedder <id>                (OMNESIS_EMBEDDER_ID) embedding model to
 #                                  install; skips the question
 #   --no-model                     skip the embedding-model download
-#   --no-tls                       skip TLS provisioning (self-signed)
+#   --no-tls                       skip TLS provisioning: no Tailscale
+#                                  certificate is offered or issued, and the
+#                                  gateway serves its self-signed one (under
+#                                  --docker too). A certificate an earlier run
+#                                  set up is left as it is.
 #   --no-keyring                   skip opportunistic keyring init/migrate
 #   --keyring-passphrase-file <p>  arm encryption at rest from this passphrase
 #                                  file (absolute path) when no OS keyring is
@@ -393,6 +403,15 @@ BANNER_HOST=""
 MKCERT_ADDRESS_CERT=""
 MKCERT_ADDRESS_DEFAULT=""
 MKCERT_ADDRESS_PREVIOUS=""
+# Why this gateway has no trusted certificate, for the closing warning: absent
+# (no Tailscale here), declined, disabled (the tailnet's HTTPS certificates are
+# off), failed, nomagicdns, or skipped (--no-tls). Empty when it has one.
+TLS_TRUST_REASON=""
+# A Docker gateway's Tailscale certificate is renewed by a job on this host.
+TS_RENEW_WANTED=0
+TS_RENEW_KIND=""
+PORTAL_LOGIN_URL=""
+PORTAL_LOGIN_MINUTES=10
 
 info()  { printf '\033[0;32m[omnesis]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[omnesis]\033[0m %s\n' "$*" >&2; }
@@ -3045,16 +3064,57 @@ tailscale_cli_bounded() {
   fi
 }
 
+# One field of the `tailscale status --json` text in $1, read with awk rather
+# than Node because a Docker host need have no Node: `backend` is BackendState,
+# `name` this machine's MagicDNS name (Self.DNSName, without its final dot),
+# and `certs` whether the tailnet issues HTTPS certificates — `on` when
+# CertDomains lists a domain, `off` when it lists none (HTTPS certificates are
+# switched off in the admin console), `unknown` for a client too old to say.
+# The top-level keys come first in the order tailscaled writes them, so the
+# first "Self" is this machine's, and only that object is searched for its
+# name: a peer's DNSName is never taken for it.
+tailscale_status_field() {
+  printf '%s' "$1" | tr '\n\r\t' '   ' | awk -v field="$2" '
+    { s = s $0 " " }
+    function value(text, key,   v) {
+      if (!match(text, "\"" key "\"[ ]*:[ ]*\"[^\"]*\"")) return ""
+      v = substr(text, RSTART, RLENGTH)
+      sub("^\"" key "\"[ ]*:[ ]*\"", "", v)
+      sub(/"$/, "", v)
+      return v
+    }
+    END {
+      if (field == "backend") { printf "%s", value(s, "BackendState"); exit }
+      if (field == "certs") {
+        if (match(s, /"CertDomains"[ ]*:[ ]*\[[ ]*"/)) printf "on"
+        else if (match(s, /"CertDomains"[ ]*:/)) printf "off"
+        else printf "unknown"
+        exit
+      }
+      i = index(s, "\"Self\"")
+      if (i == 0) exit
+      t = substr(s, i)
+      j = index(t, "{")
+      if (j == 0) exit
+      depth = 0; quoted = 0
+      for (k = j; k <= length(t); k++) {
+        c = substr(t, k, 1)
+        if (quoted) { if (c == "\\") k++; else if (c == "\"") quoted = 0; continue }
+        if (c == "\"") quoted = 1
+        else if (c == "{") depth++
+        else if (c == "}") { depth--; if (depth == 0) break }
+      }
+      name = value(substr(t, j, k - j + 1), "DNSName")
+      sub(/\.$/, "", name)
+      printf "%s", name
+    }'
+}
+
 tailscale_cli_ready() {
   TAILSCALE_CLI="$1"
   TAILSCALE_CLI_BUNDLED="$2"
-  TS_BACKEND_STATE="$(tailscale_cli_bounded 10 status --json 2>/dev/null | node -e '
-    let s = ""; process.stdin.on("data", (d) => (s += d));
-    process.stdin.on("end", () => {
-      try { process.stdout.write(JSON.parse(s).BackendState || ""); }
-      catch { /* unavailable */ }
-    });' 2>/dev/null || true)"
-  [ "$TS_BACKEND_STATE" = Running ]
+  TS_STATUS_JSON="$(tailscale_cli_bounded 10 status --json 2>/dev/null || true)"
+  [ "$(tailscale_status_field "$TS_STATUS_JSON" backend)" = Running ]
 }
 
 find_tailscale_cli() {
@@ -3095,7 +3155,11 @@ find_mkcert_cli() {
 
 provision_tls() {
   PORTAL_HOST="localhost"
-  [ "$WANT_TLS" = 1 ] || return 0
+  if [ "$WANT_TLS" = 0 ]; then
+    TLS_TRUST_REASON=skipped
+    keep_tailscale_portal_host_if_configured
+    return 0
+  fi
 
   if [ "$USE_MKCERT" = 1 ]; then
     if find_mkcert_cli; then
@@ -3199,6 +3263,7 @@ try {
       BANNER_HOST="$HOSTLOCAL"
       info "mkcert certificate installed — the portal will load without warnings."
     else
+      TLS_TRUST_REASON=mkcert
       warn "--mkcert requested but mkcert is not installed (https://mkcert.dev). Continuing with the self-signed cert."
     fi
     return 0
@@ -3211,47 +3276,59 @@ try {
   fi
 
   if find_tailscale_cli; then
-    TS_NAME="$(tailscale_cli_bounded 10 status --json 2>/dev/null | node -e '
-      let s = ""; process.stdin.on("data", (d) => (s += d));
-      process.stdin.on("end", () => {
-        try {
-          const dns = JSON.parse(s).Self.DNSName || "";
-          process.stdout.write(dns.replace(/\.$/, ""));
-        } catch { /* no name */ }
-      });' 2>/dev/null || true)"
-    if [ -n "$TS_NAME" ]; then
-      info "Tailscale detected — minting a real certificate for $TS_NAME..."
-      mkdir -p "$CONFIG_DIR/tls"
-      if mint_tailscale_cert "$CONFIG_DIR/tls/tailscale.crt" \
-                             "$CONFIG_DIR/tls/tailscale.key" "$TS_NAME"; then
-        TAILSCALE_GATEWAY_URL="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' \
-          "https://$TS_NAME:$GATEWAY_PORT")"
-        set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/tailscale.crt"
-        set_env OMNESIS_TLS_KEY "$CONFIG_DIR/tls/tailscale.key"
-        # The cert only covers the MagicDNS name, so every local client
-        # addresses the gateway by that name from now on — including a re-run
-        # whose .env still carries the localhost URL of an untrusted-cert
-        # install, which this certificate would reject.
-        set_env OMNESIS_GATEWAY_URL "$TAILSCALE_GATEWAY_URL"
-        set_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN "$TAILSCALE_GATEWAY_URL"
-        PORTAL_HOST="$TS_NAME"
-        info "Certificate installed — the portal will load without warnings at $TAILSCALE_GATEWAY_URL/portal/"
+    TS_NAME="$(tailscale_status_field "$TS_STATUS_JSON" name)"
+    TS_CERTS="$(tailscale_status_field "$TS_STATUS_JSON" certs)"
+    if [ -z "$TS_NAME" ]; then
+      if installer_tailscale_tls_configured; then
+        info "Tailscale reported no MagicDNS name — keeping the existing Tailscale certificate."
+        keep_tailscale_portal_host
       else
-        if installer_tailscale_tls_configured; then
-          warn "tailscale cert renewal failed: $(tailscale_cert_reason). Keeping the existing Tailscale certificate."
-        else
-          unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
-          warn "tailscale cert failed: $(tailscale_cert_reason). Continuing with the self-signed cert."
-        fi
-        print_tailscale_cert_fix
+        unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
+        TLS_TRUST_REASON=nomagicdns
+        warn "Tailscale reported no MagicDNS name — continuing with the self-signed certificate."
       fi
-    elif installer_tailscale_tls_configured; then
-      info "Tailscale reported no MagicDNS name — keeping the existing Tailscale certificate."
       print_tailscale_magicdns_fix
-    else
+      return 0
+    fi
+    if [ "$TS_CERTS" = off ] && ! installer_tailscale_tls_configured; then
       unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
-      warn "Tailscale reported no MagicDNS name — continuing with the self-signed certificate."
-      print_tailscale_magicdns_fix
+      TLS_TRUST_REASON=disabled
+      print_tailscale_certs_disabled "$TS_NAME"
+      return 0
+    fi
+    # A certificate an earlier run set up is renewed without asking again.
+    if ! installer_tailscale_tls_configured && ! ask_tailscale_certificate "$TS_NAME"; then
+      unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
+      TLS_TRUST_REASON=declined
+      info "Skipped — the gateway will use its self-signed certificate."
+      return 0
+    fi
+    info "Tailscale detected — minting a real certificate for $TS_NAME..."
+    mkdir -p "$CONFIG_DIR/tls"
+    if mint_tailscale_cert "$CONFIG_DIR/tls/tailscale.crt" \
+                           "$CONFIG_DIR/tls/tailscale.key" "$TS_NAME"; then
+      TAILSCALE_GATEWAY_URL="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' \
+        "https://$TS_NAME:$GATEWAY_PORT")"
+      set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/tailscale.crt"
+      set_env OMNESIS_TLS_KEY "$CONFIG_DIR/tls/tailscale.key"
+      # The cert only covers the MagicDNS name, so every local client
+      # addresses the gateway by that name from now on — including a re-run
+      # whose .env still carries the localhost URL of an untrusted-cert
+      # install, which this certificate would reject.
+      set_env OMNESIS_GATEWAY_URL "$TAILSCALE_GATEWAY_URL"
+      set_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN "$TAILSCALE_GATEWAY_URL"
+      PORTAL_HOST="$TS_NAME"
+      info "Certificate installed — the portal will load without warnings at $TAILSCALE_GATEWAY_URL/portal/"
+    else
+      if installer_tailscale_tls_configured; then
+        warn "tailscale cert renewal failed: $(tailscale_cert_reason). Keeping the existing Tailscale certificate."
+        keep_tailscale_portal_host
+      else
+        unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
+        TLS_TRUST_REASON=failed
+        warn "tailscale cert failed: $(tailscale_cert_reason). Continuing with the self-signed cert."
+      fi
+      print_tailscale_cert_fix
     fi
     return 0
   fi
@@ -3261,13 +3338,52 @@ try {
   # into system trust explicitly through gateway configuration.
   if installer_tailscale_tls_configured; then
     info "Tailscale is unavailable — keeping the existing Tailscale certificate."
+    keep_tailscale_portal_host
     return 0
   fi
   unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
+  TLS_TRUST_REASON=absent
   info "No Tailscale detected — the gateway will use its self-signed certificate."
-  info "Your browser will warn once; see the docs for trusted-cert options (Tailscale or mkcert)."
-  info "For Tailscale: install it, join your tailnet with 'tailscale up', enable HTTPS certificates and MagicDNS in its admin console, then run: omnesis tls provision"
   info "The installer never joins a network or changes tailnet settings for you."
+}
+
+keep_tailscale_portal_host_if_configured() {
+  ! installer_tailscale_tls_configured || keep_tailscale_portal_host
+}
+
+# A kept Tailscale certificate covers only the MagicDNS name the recorded
+# gateway URL carries, so the banner addresses the portal by it too.
+keep_tailscale_portal_host() {
+  KEPT_HOST="$(dotenv_value OMNESIS_GATEWAY_URL 2>/dev/null | sed -n 's#^https://\([^:/]*\).*$#\1#p')" || KEPT_HOST=""
+  [ -z "$KEPT_HOST" ] || PORTAL_HOST="$KEPT_HOST"
+}
+
+# The visible Tailscale step: say what the certificate is for, then ask, with
+# Yes the default. Without a terminal (or with --no-prompt) the answer is that
+# default, so an unattended install keeps getting a trusted certificate;
+# --no-tls is how a script opts out.
+ask_tailscale_certificate() {
+  is_promptable || return 0
+  echo "" >/dev/tty
+  printf 'Browsers, the Chrome extension and AI agents connect only to a gateway with a trusted\n' >/dev/tty
+  printf 'certificate; without one it serves a self-signed certificate they refuse. Tailscale issues\n' >/dev/tty
+  printf 'one from Let'"'"'s Encrypt for this machine'"'"'s tailnet name, which is then published in the\n' >/dev/tty
+  printf 'public Certificate Transparency logs.\n' >/dev/tty
+  TS_ASK_ATTEMPTS=0
+  while [ "$TS_ASK_ATTEMPTS" -lt 5 ]; do
+    TS_ANSWER="$(ask_tty "Tailscale detected — set up a trusted HTTPS certificate for $1? [Y/n] ")"
+    TS_ANSWER="$(printf '%s' "$TS_ANSWER" | tr '[:upper:]' '[:lower:]')"
+    case "$TS_ANSWER" in
+      ''|y|yes) return 0 ;;
+      n|no) return 1 ;;
+      *)
+        printf 'Please answer y or n.\n' >/dev/tty
+        TS_ASK_ATTEMPTS=$((TS_ASK_ATTEMPTS + 1))
+        ;;
+    esac
+  done
+  warn "No valid answer was entered — setting up the Tailscale certificate, the default."
+  return 0
 }
 
 # tailscaled answers an account that is neither root nor this machine's
@@ -3317,7 +3433,7 @@ tailscale_cert_reason() {
 # asks tailscaled for a certificate; the tailnet settings and the permission
 # to ask are the operator's, so it names them instead of changing anything.
 print_tailscale_magicdns_fix() {
-  info "A Tailscale certificate needs MagicDNS: enable it for the tailnet in the Tailscale admin console, then run: omnesis tls provision"
+  info "A Tailscale certificate needs MagicDNS: enable it for the tailnet in the Tailscale admin console, then run: $(tls_fix_command)"
 }
 
 print_tailscale_cert_fix() {
@@ -3325,7 +3441,35 @@ print_tailscale_cert_fix() {
   if [ "$PLATFORM" = linux ]; then
     info "On Linux, tailscale cert also needs your user to be the Tailscale operator: sudo tailscale set --operator=\$USER"
   fi
-  info "Then run: omnesis tls provision"
+  info "Then run: $(tls_fix_command)"
+}
+
+# Tailscale is up, but the tailnet's HTTPS certificates are switched off, so
+# `tailscale cert` could only fail: say so instead of asking for one.
+print_tailscale_certs_disabled() {
+  warn "Tailscale is connected, but HTTPS certificates are switched off for this tailnet, so it cannot issue one for $1. Continuing with the self-signed certificate."
+  info "Nothing on your tailnet was changed. Turn on HTTPS Certificates in the DNS page of the Tailscale admin console (https://login.tailscale.com/admin/dns), then run: $(tls_fix_command)"
+}
+
+# The one command that gives this gateway a trusted certificate once Tailscale
+# can issue one: the host CLI on a native install; on a Docker install, whose
+# containers cannot reach the host's tailscaled, this installer again.
+tls_fix_command() {
+  if [ "$DOCKER" = 1 ]; then
+    printf 'curl -fsSL https://omnesis.dev/install.sh | sh -s -- %s' "$(docker_rerun_flags)"
+  else
+    printf 'omnesis tls provision'
+  fi
+}
+
+# The flags that re-run this Docker install as it is: its role, network and port.
+docker_rerun_flags() {
+  DOCKER_RERUN="--docker"
+  [ "$DOCKER_COMBINED" = 0 ] || DOCKER_RERUN="$DOCKER_RERUN --combined"
+  [ "$DOCKER_GATEWAY_ONLY" = 0 ] || DOCKER_RERUN="$DOCKER_RERUN --gateway-only"
+  [ "$DOCKER_NETWORK" = bridge ] || DOCKER_RERUN="$DOCKER_RERUN --docker-network $DOCKER_NETWORK"
+  [ "$GATEWAY_PORT" = 7600 ] || DOCKER_RERUN="$DOCKER_RERUN --port $GATEWAY_PORT"
+  printf '%s' "$DOCKER_RERUN"
 }
 
 # ── Step 5: opportunistic keyring setup ──────────────────────────────────────
@@ -5689,6 +5833,368 @@ print_docker_self_signed_join() {
   echo "    phone and collector already paired with this gateway."
 }
 
+# ── a Tailscale certificate issued on this host ─────────────────────────────
+#
+# The containers cannot reach the host's tailscaled (and on a Mac, Tailscale is
+# an app the Linux VM behind Docker never sees), so the host issues the
+# certificate: into the config directory's tls/, which the containers mount at
+# the same path, exactly as if it had been handed over with --tls-cert and
+# --tls-key. A job on this host renews it, and the gateway activates what it
+# finds on disk within the hour, or at once on `omnesis tls reload`.
+
+docker_tailscale_tier_cert() { printf '%s' "$CONFIG_DIR/tls/tailscale.crt"; }
+docker_tailscale_tier_key() { printf '%s' "$CONFIG_DIR/tls/tailscale.key"; }
+
+# Decide, and when it is wanted issue, a Tailscale certificate for a Docker
+# gateway. Leaves TLS_CERT_PATH/TLS_KEY_PATH naming it when issued; leaves an
+# earlier run's record for docker_tls_adopt to keep otherwise.
+docker_tls_tailscale() {
+  [ "$COLLECTOR" = 0 ] || return 0
+  TS_TIER_CERT="$(docker_tailscale_tier_cert)"
+  TS_TIER_KEY="$(docker_tailscale_tier_key)"
+  TS_RECORDED=0
+  if [ "$TLS_FILES_FLAG" = 1 ]; then
+    [ "$TLS_CERT_PATH|$TLS_KEY_PATH" = "$TS_TIER_CERT|$TS_TIER_KEY" ] || {
+      # An operator's own certificate: nothing on this host renews it.
+      docker_tls_renewal_remove
+      return 0
+    }
+    TS_RECORDED=1
+  else
+    TS_RECORDED_CERT="$(dotenv_value OMNESIS_TLS_CERT)" || TS_RECORDED_CERT=""
+    TS_RECORDED_KEY="$(dotenv_value OMNESIS_TLS_KEY)" || TS_RECORDED_KEY=""
+    if [ -n "$TS_RECORDED_CERT$TS_RECORDED_KEY" ]; then
+      [ "$TS_RECORDED_CERT|$TS_RECORDED_KEY" = "$TS_TIER_CERT|$TS_TIER_KEY" ] || {
+        docker_tls_renewal_remove
+        return 0
+      }
+      TS_RECORDED=1
+    fi
+  fi
+  if [ "$NO_TLS_FLAG" = 1 ]; then
+    [ "$TS_RECORDED" = 1 ] || TLS_TRUST_REASON=skipped
+    return 0
+  fi
+  if ! find_tailscale_cli; then
+    if [ "$TS_RECORDED" = 1 ]; then
+      info "Tailscale is unavailable on this host — keeping the existing Tailscale certificate."
+    else
+      TLS_TRUST_REASON=absent
+      info "No Tailscale on this host — the gateway container will serve its self-signed certificate."
+    fi
+    return 0
+  fi
+  TS_NAME="$(tailscale_status_field "$TS_STATUS_JSON" name)"
+  TS_CERTS="$(tailscale_status_field "$TS_STATUS_JSON" certs)"
+  if [ -z "$TS_NAME" ]; then
+    if [ "$TS_RECORDED" = 1 ]; then
+      info "Tailscale reported no MagicDNS name — keeping the existing Tailscale certificate."
+    else
+      TLS_TRUST_REASON=nomagicdns
+      warn "Tailscale reported no MagicDNS name — the gateway container will serve its self-signed certificate."
+    fi
+    print_tailscale_magicdns_fix
+    return 0
+  fi
+  if [ "$TS_CERTS" = off ] && [ "$TS_RECORDED" = 0 ]; then
+    TLS_TRUST_REASON=disabled
+    print_tailscale_certs_disabled "$TS_NAME"
+    return 0
+  fi
+  if [ "$TS_RECORDED" = 0 ] && ! ask_tailscale_certificate "$TS_NAME"; then
+    TLS_TRUST_REASON=declined
+    info "Skipped — the gateway container will serve its self-signed certificate."
+    return 0
+  fi
+  info "Tailscale detected on this host — minting a real certificate for $TS_NAME..."
+  if ! docker_tailscale_mint "$TS_NAME"; then
+    if [ "$TS_RECORDED" = 1 ]; then
+      warn "tailscale cert renewal failed: $(tailscale_cert_reason). Keeping the existing Tailscale certificate."
+    else
+      TLS_TRUST_REASON=failed
+      warn "tailscale cert failed: $(tailscale_cert_reason). The gateway container will serve its self-signed certificate."
+    fi
+    print_tailscale_cert_fix
+    return 0
+  fi
+  if [ "$TLS_FILES_FLAG" = 0 ]; then
+    # docker_tls_adopt then leaves these as they are; a CA an earlier run
+    # recorded vouched for another certificate, not this publicly chained one.
+    TLS_FILES_FLAG=1
+    TLS_CA_PATH=""
+  fi
+  TLS_CERT_PATH="$TS_TIER_CERT"
+  TLS_KEY_PATH="$TS_TIER_KEY"
+  TS_RENEW_WANTED=1
+  info "Certificate issued into $CONFIG_DIR/tls/ — the gateway container serves it."
+}
+
+# A staging directory for a freshly issued pair, outside the directory the
+# containers can write: beside the config directory when its parent takes
+# one, else the temporary directory.
+docker_tailscale_stage() {
+  TS_STAGE="$(mktemp -d "${CONFIG_DIR%/*}/.omnesis-tls.XXXXXX" 2>/dev/null)" || \
+    TS_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/omnesis-tls.XXXXXX")" || return 1
+}
+
+# Issue the pair for $1 and move it into tls/ by rename, so the gateway never
+# reads half of one and a link the container planted there is replaced, never
+# followed.
+docker_tailscale_mint() {
+  [ -d "$CONFIG_DIR/tls" ] && [ ! -L "$CONFIG_DIR/tls" ] || {
+    TS_CERT_ERROR="$CONFIG_DIR/tls is not a plain directory"
+    return 1
+  }
+  docker_tailscale_stage || { TS_CERT_ERROR="no staging directory could be created"; return 1; }
+  if ! mint_tailscale_cert "$TS_STAGE/tailscale.crt" "$TS_STAGE/tailscale.key" "$1"; then
+    rm -rf "$TS_STAGE"
+    return 1
+  fi
+  chmod 600 "$TS_STAGE/tailscale.key" 2>/dev/null || true
+  chmod 644 "$TS_STAGE/tailscale.crt" 2>/dev/null || true
+  if ! mv -f "$TS_STAGE/tailscale.key" "$(docker_tailscale_tier_key)" ||
+     ! mv -f "$TS_STAGE/tailscale.crt" "$(docker_tailscale_tier_cert)"; then
+    rm -rf "$TS_STAGE"
+    TS_CERT_ERROR="the issued certificate could not be moved into $CONFIG_DIR/tls"
+    return 1
+  fi
+  rm -rf "$TS_STAGE"
+}
+
+# Where the renewal job lives. Nothing of it is inside the config directory:
+# the containers can write there, and a host job must not run, or log to,
+# anything a container could have replaced.
+docker_tls_renewal_paths() {
+  COMPOSE_PROJECT="${COMPOSE_PROJECT:-$(docker_project_name)}"
+  TS_RENEW_SUFFIX="${COMPOSE_PROJECT#omnesis}"
+  TS_RENEW_SCRIPT="$HOME/.local/share/omnesis/$COMPOSE_PROJECT-tls-renew.sh"
+  TS_RENEW_LABEL="dev.omnesis.tls-renew${TS_RENEW_SUFFIX:+.${TS_RENEW_SUFFIX#-}}"
+  TS_RENEW_UNIT="omnesis-tls-renew$TS_RENEW_SUFFIX"
+}
+
+# Remove the renewal job an earlier run installed for this config directory.
+docker_tls_renewal_remove() {
+  docker_tls_renewal_paths
+  [ -f "$TS_RENEW_SCRIPT" ] || return 0
+  sh "$TS_RENEW_SCRIPT" --remove >/dev/null 2>&1 || true
+  rm -f "$TS_RENEW_SCRIPT"
+  info "Removed the Tailscale renewal job of an earlier install."
+}
+
+# Which scheduler this host offers the job: launchd on a Mac, a systemd timer
+# on Linux — the system manager for root, the user manager otherwise.
+docker_tls_renewal_kind() {
+  if [ "$PLATFORM" = darwin ]; then
+    printf 'launchd'
+  elif [ "$HOST_UID" = 0 ]; then
+    if command -v systemctl >/dev/null 2>&1 && [ -d "${OMNESIS_TEST_HOST_ROOT:-}/run/systemd/system" ]; then
+      printf 'systemd-system'
+    else
+      printf 'none'
+    fi
+  elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    printf 'systemd-user'
+  else
+    printf 'none'
+  fi
+}
+
+# Write the renewal script and register it with this host's scheduler. It runs
+# daily; `tailscale cert` hands back the certificate it already holds until
+# that nears its end, so most runs change nothing.
+docker_tls_renewal_install() {
+  [ "$TS_RENEW_WANTED" = 1 ] || return 0
+  docker_tls_renewal_paths
+  TS_RENEW_KIND="$(docker_tls_renewal_kind)"
+  case "$TS_RENEW_SCRIPT$HOME" in
+    *[\"%\\]*) TS_RENEW_KIND=none ;;
+  esac
+  TS_RENEW_OWNER=""
+  if [ "$HOST_UID" = 0 ] && [ "$DOCKER_DAEMON_UID" != 0 ]; then
+    TS_RENEW_OWNER="$DOCKER_DAEMON_UID:$DOCKER_DAEMON_GID"
+  fi
+  TS_RENEW_LOG_DIR="$HOME/Library/Logs/Omnesis"
+  case "$TS_RENEW_KIND" in
+    launchd) TS_RENEW_FILES="$HOME/Library/LaunchAgents/$TS_RENEW_LABEL.plist" ;;
+    systemd-user)
+      TS_RENEW_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+      TS_RENEW_FILES="$TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.service $TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.timer" ;;
+    systemd-system)
+      TS_RENEW_UNIT_DIR="${OMNESIS_TEST_HOST_ROOT:-}/etc/systemd/system"
+      TS_RENEW_FILES="$TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.service $TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.timer" ;;
+    *) TS_RENEW_FILES="" ;;
+  esac
+  mkdir -p "${TS_RENEW_SCRIPT%/*}" || { warn "Could not create ${TS_RENEW_SCRIPT%/*} for the Tailscale renewal job."; TS_RENEW_KIND=none; return 0; }
+  docker_tls_renewal_script > "$TS_RENEW_SCRIPT.$$" && chmod 700 "$TS_RENEW_SCRIPT.$$" && \
+    mv -f "$TS_RENEW_SCRIPT.$$" "$TS_RENEW_SCRIPT" || {
+      rm -f "$TS_RENEW_SCRIPT.$$"
+      warn "Could not write $TS_RENEW_SCRIPT; renew the certificate yourself before it expires (see https://omnesis.dev/docs/install#docker-tls)."
+      TS_RENEW_KIND=none
+      return 0
+    }
+  case "$TS_RENEW_KIND" in
+    launchd)
+      mkdir -p "$HOME/Library/LaunchAgents" "$TS_RENEW_LOG_DIR"
+      docker_tls_renewal_plist > "$HOME/Library/LaunchAgents/$TS_RENEW_LABEL.plist"
+      launchctl bootout "gui/$HOST_UID/$TS_RENEW_LABEL" >/dev/null 2>&1 || true
+      if launchctl bootstrap "gui/$HOST_UID" "$HOME/Library/LaunchAgents/$TS_RENEW_LABEL.plist" >/dev/null 2>&1; then
+        info "Registered the launchd agent $TS_RENEW_LABEL, which renews the certificate daily."
+      else
+        warn "Could not load the launchd agent $TS_RENEW_LABEL; it loads at your next login. To load it now: launchctl bootstrap gui/$HOST_UID ~/Library/LaunchAgents/$TS_RENEW_LABEL.plist"
+      fi ;;
+    systemd-user|systemd-system)
+      mkdir -p "$TS_RENEW_UNIT_DIR"
+      docker_tls_renewal_service > "$TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.service"
+      docker_tls_renewal_timer > "$TS_RENEW_UNIT_DIR/$TS_RENEW_UNIT.timer"
+      if [ "$TS_RENEW_KIND" = systemd-user ]; then set -- --user; else set --; fi
+      if systemctl "$@" daemon-reload >/dev/null 2>&1 &&
+         systemctl "$@" enable --now "$TS_RENEW_UNIT.timer" >/dev/null 2>&1; then
+        info "Enabled the systemd timer $TS_RENEW_UNIT.timer, which renews the certificate daily."
+      else
+        warn "Could not enable the systemd timer $TS_RENEW_UNIT.timer. Enable it with: systemctl $* enable --now $TS_RENEW_UNIT.timer"
+      fi
+      # A user timer runs only while this account has a session unless it
+      # lingers; the certificate lasts 90 days, so a missed day is caught up.
+      if [ "$TS_RENEW_KIND" = systemd-user ]; then
+        loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+      fi ;;
+    *)
+      warn "This host has no scheduler the installer can register a job with (launchd or systemd). Renew the certificate before it expires by running, daily or at least monthly: $TS_RENEW_SCRIPT" ;;
+  esac
+}
+
+# The renewal script. Everything it acts on is fixed here, at install time.
+docker_tls_renewal_script() {
+  printf '#!/bin/sh\n'
+  printf '# Renews the Tailscale certificate of the Omnesis Docker install in %s.\n' "$CONFIG_DIR"
+  printf '# Written by install.sh --docker; `omnesis uninstall` removes it and its job.\n'
+  printf '# --remove unregisters the job and deletes this script.\n'
+  printf 'set -eu\n'
+  printf 'CONFIG_DIR=%s\n' "$(shell_single_quote "$CONFIG_DIR")"
+  printf 'TS_NAME=%s\n' "$(shell_single_quote "$TS_NAME")"
+  printf 'TAILSCALE_CLI=%s\n' "$(shell_single_quote "$TAILSCALE_CLI")"
+  printf 'TAILSCALE_CLI_BUNDLED=%s\n' "$(shell_single_quote "${TAILSCALE_CLI_BUNDLED:-0}")"
+  printf 'OWNER=%s\n' "$(shell_single_quote "$TS_RENEW_OWNER")"
+  printf 'OMNESIS_BIN=%s\n' "$(shell_single_quote "$HOME/.local/bin/omnesis")"
+  printf 'JOB_KIND=%s\n' "$(shell_single_quote "$TS_RENEW_KIND")"
+  printf 'JOB_LABEL=%s\n' "$(shell_single_quote "$TS_RENEW_LABEL")"
+  printf 'JOB_UNIT=%s\n' "$(shell_single_quote "$TS_RENEW_UNIT")"
+  printf 'JOB_FILES=%s\n' "$(shell_single_quote "$TS_RENEW_FILES")"
+  cat <<'RENEW_EOF'
+# A scheduler's PATH is minimal; docker, for the reload, may live in one of these.
+PATH="${PATH:-/usr/bin:/bin}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+
+if [ "${1:-}" = --remove ]; then
+  case "$JOB_KIND" in
+    launchd) launchctl bootout "gui/$(id -u)/$JOB_LABEL" >/dev/null 2>&1 || true ;;
+    systemd-user) systemctl --user disable --now "$JOB_UNIT.timer" >/dev/null 2>&1 || true ;;
+    systemd-system) systemctl disable --now "$JOB_UNIT.timer" >/dev/null 2>&1 || true ;;
+  esac
+  for FILE in $JOB_FILES; do rm -f "$FILE"; done
+  case "$JOB_KIND" in
+    systemd-user) systemctl --user daemon-reload >/dev/null 2>&1 || true ;;
+    systemd-system) systemctl daemon-reload >/dev/null 2>&1 || true ;;
+  esac
+  rm -f "$0"
+  rmdir "${0%/*}" 2>/dev/null || true
+  exit 0
+fi
+
+TLS_DIR="$CONFIG_DIR/tls"
+# The containers can write the config directory. A link planted where the pair
+# goes is replaced by the rename below, never followed; a linked tls/ is refused.
+if [ ! -d "$TLS_DIR" ] || [ -L "$TLS_DIR" ]; then
+  echo "omnesis tls renew: $TLS_DIR is not a plain directory; nothing was renewed." >&2
+  exit 1
+fi
+STAGE="$(mktemp -d "${CONFIG_DIR%/*}/.omnesis-tls.XXXXXX" 2>/dev/null)" || \
+  STAGE="$(mktemp -d "${TMPDIR:-/tmp}/omnesis-tls.XXXXXX")"
+trap 'rm -rf "$STAGE"' EXIT
+if [ "$TAILSCALE_CLI_BUNDLED" = 1 ]; then
+  TAILSCALE_BE_CLI=1 "$TAILSCALE_CLI" cert --cert-file "$STAGE/tailscale.crt" --key-file "$STAGE/tailscale.key" "$TS_NAME"
+else
+  "$TAILSCALE_CLI" cert --cert-file "$STAGE/tailscale.crt" --key-file "$STAGE/tailscale.key" "$TS_NAME"
+fi
+if cmp -s "$STAGE/tailscale.crt" "$TLS_DIR/tailscale.crt" && cmp -s "$STAGE/tailscale.key" "$TLS_DIR/tailscale.key"; then
+  echo "The Tailscale certificate for $TS_NAME is current; nothing to renew."
+  exit 0
+fi
+chmod 600 "$STAGE/tailscale.key"
+chmod 644 "$STAGE/tailscale.crt"
+[ -z "$OWNER" ] || chown "$OWNER" "$STAGE/tailscale.key" "$STAGE/tailscale.crt"
+mv -f "$STAGE/tailscale.key" "$TLS_DIR/tailscale.key"
+mv -f "$STAGE/tailscale.crt" "$TLS_DIR/tailscale.crt"
+echo "Renewed the Tailscale certificate for $TS_NAME."
+# The gateway activates a renewed pair it finds on disk within the hour; a
+# reload makes it at once.
+"$OMNESIS_BIN" tls reload >/dev/null 2>&1 || echo "The gateway picks it up within the hour."
+RENEW_EOF
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+docker_tls_renewal_plist() {
+  cat <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$(xml_escape "$TS_RENEW_LABEL")</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/sh</string>
+      <string>$(xml_escape "$TS_RENEW_SCRIPT")</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>3</integer>
+      <key>Minute</key>
+      <integer>17</integer>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>$(xml_escape "$TS_RENEW_LOG_DIR/$TS_RENEW_LABEL.log")</string>
+    <key>StandardErrorPath</key>
+    <string>$(xml_escape "$TS_RENEW_LOG_DIR/$TS_RENEW_LABEL.log")</string>
+  </dict>
+</plist>
+PLIST_EOF
+}
+
+docker_tls_renewal_service() {
+  cat <<UNIT_EOF
+[Unit]
+Description=Renew the Tailscale certificate of the Omnesis Docker gateway in $CONFIG_DIR
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "$TS_RENEW_SCRIPT"
+UNIT_EOF
+}
+
+docker_tls_renewal_timer() {
+  cat <<UNIT_EOF
+[Unit]
+Description=Renew the Tailscale certificate of the Omnesis Docker gateway daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+}
+
 # ── a certificate the operator supplies ─────────────────────────────────────
 
 # A re-run that names no certificate keeps the one an earlier run recorded, the
@@ -5752,6 +6258,10 @@ docker_tls_read_certificate() {
     if [ -n "$TLS_CA_PATH" ]; then
       openssl verify -CAfile "$TLS_CA_PATH" -untrusted "$TLS_CERT_PATH" "$TLS_CERT_PATH" >/dev/null 2>&1 || \
         fail "$TLS_CA_PATH did not issue $TLS_CERT_PATH: the containers could not verify the gateway with it. Pass the CA that issued the certificate (for a self-signed certificate, the certificate itself)."
+    elif docker_tls_is_tailscale_tier; then
+      # Issued by this host's tailscaled from Let's Encrypt, whose roots the
+      # containers' Node carries whatever this host's own bundle holds.
+      :
     else
       openssl verify -untrusted "$TLS_CERT_PATH" "$TLS_CERT_PATH" >/dev/null 2>&1 || \
         fail "$TLS_CERT_PATH chains to no root this host trusts, so the containers could not verify it either. Pass --tls-ca naming the CA that issued it (for a self-signed certificate, the certificate itself); a publicly chained certificate, such as Tailscale's, needs no --tls-ca."
@@ -5770,7 +6280,7 @@ docker_tls_read_certificate() {
   fi
   # Without openssl there is no way to check a chain against this host's
   # roots; a private CA can still be named and checked directly.
-  [ -n "$TLS_CA_PATH" ] || \
+  [ -n "$TLS_CA_PATH" ] || docker_tls_is_tailscale_tier || \
     fail "Reading $TLS_CERT_PATH needs openssl on this host to check what it chains to. Install openssl, or pass --tls-ca naming the CA that issued it (for a self-signed certificate, the certificate itself)."
   docker pull -q "$IMAGE_REPO/omnesis-gateway:$IMAGE_TAG" >/dev/null 2>&1 || \
     fail "Could not pull $IMAGE_REPO/omnesis-gateway:$IMAGE_TAG to read $TLS_CERT_PATH with. Install openssl on this host, or log Docker in to $IMAGE_REPO first."
@@ -5790,16 +6300,26 @@ docker_tls_read_certificate() {
       catch { refuse(`${keyPath} could not be read as an unencrypted PEM private key.`); }
       if (!cert.checkPrivateKey(key)) refuse(`${keyPath} is not the key of ${certPath}: the pair does not belong together.`);
       if (Date.parse(cert.validTo) <= Date.now()) refuse(`${certPath} has already expired; renew it before handing it to the gateway container.`);
-      let ca;
-      try { ca = new X509Certificate(readFileSync(caPath)); }
-      catch { refuse(`${caPath} could not be read as a PEM certificate.`); }
-      if (!cert.checkIssued(ca) || !cert.verify(ca.publicKey)) refuse(`${caPath} did not issue ${certPath}: the containers could not verify the gateway with it.`);
+      if (caPath) {
+        let ca;
+        try { ca = new X509Certificate(readFileSync(caPath)); }
+        catch { refuse(`${caPath} could not be read as a PEM certificate.`); }
+        if (!cert.checkIssued(ca) || !cert.verify(ca.publicKey)) refuse(`${caPath} did not issue ${certPath}: the containers could not verify the gateway with it.`);
+      }
       for (const entry of (cert.subjectAltName ?? "").split(",")) {
         const m = /^\s*DNS:(\S+)/.exec(entry);
         if (m) console.log(`DNS:${m[1].toLowerCase()}`);
       }
       console.log(`FP:${cert.fingerprint256.replace(/:/g, "").toLowerCase()}`);
     ' "$TLS_CERT_PATH" "$TLS_KEY_PATH" "$TLS_CA_PATH" || fail "The certificate at $TLS_CERT_PATH was refused (see above), or the image could not read the config directory."
+}
+
+# Whether the pair to serve is the Tailscale tier: the paths this installer
+# issues a host Tailscale certificate to, which is how the gateway tells that
+# tier apart too.
+docker_tls_is_tailscale_tier() {
+  [ -z "$TLS_CA_PATH" ] &&
+    [ "$TLS_CERT_PATH|$TLS_KEY_PATH" = "$(docker_tailscale_tier_cert)|$(docker_tailscale_tier_key)" ]
 }
 
 # Read the certificate, decide the name the collector dials, and record the
@@ -5955,6 +6475,10 @@ if [ "${1:-}" = uninstall ]; then
     printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
   fi
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
+  # The host job that renews a Tailscale certificate goes with the install;
+  # it lives outside the config directory, so --purge alone would leave it.
+  UNINSTALL_RENEW="$HOME/.local/share/omnesis/$(sed -n 's/^name: *//p' "$COMPOSE_FILE" 2>/dev/null | head -n 1)-tls-renew.sh"
+  [ ! -f "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
   # A collector is a device of a gateway elsewhere, which keeps it, and the
   # sources it hosts, until it is removed there; the same note a native
   # collector's uninstall leaves.
@@ -5995,6 +6519,7 @@ if [ "${1:-}" = uninstall ]; then
   else
     rm -f "$COMPOSE_FILE" "$UNINSTALL_DIR/install-method"
   fi
+  [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
   rm -f "$UNINSTALL_LAUNCHER"
   # The installer's PATH line goes too, unless other programs share the directory.
   if [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null)" ]; then
@@ -6311,22 +6836,41 @@ print_docker_banner() {
   echo ""
   printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
   echo ""
-  echo "  Portal:  https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
-  echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
+  print_portal_lines "https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
   if [ -n "$TLS_CERT_PATH" ]; then
     echo "  Certificate: $TLS_CERT_PATH (sha256:$TLS_FINGERPRINT)"
-    echo "           Renew it in place with the tool that issued it; the gateway picks the"
-    echo "           renewal up within the hour, or at once with: omnesis tls reload"
+    if [ "$TS_RENEW_WANTED" = 1 ] && [ "$TS_RENEW_KIND" != none ]; then
+      echo "           Issued by Tailscale on this host and renewed here daily; the gateway picks"
+      echo "           each renewal up within the hour, or at once with: omnesis tls reload"
+    elif [ "$TS_RENEW_WANTED" = 1 ]; then
+      echo "           Issued by Tailscale on this host. Renew it before it expires by running"
+      echo "           $TS_RENEW_SCRIPT (the gateway picks the renewal up within the hour)."
+    else
+      echo "           Renew it in place with the tool that issued it; the gateway picks the"
+      echo "           renewal up within the hour, or at once with: omnesis tls reload"
+    fi
   fi
   echo ""
-  printf '\033[1mThe CLI runs in the containers:\033[0m\n'
-  echo ""
+  print_trust_warning
+  # The host's omnesis is the wrapper docker_write_wrapper wrote: each command
+  # runs in the gateway container, so nothing is to be entered by hand.
   if [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+    printf '\033[1mPair a collector\033[0m — in this terminal, as usual:\n'
+    echo ""
     echo "    omnesis devices pair --kind collector"
   else
+    printf '\033[1mAdd your first source\033[0m — in this terminal, as usual:\n'
+    echo ""
     echo "    omnesis sources add gmail"
   fi
   echo "    omnesis status"
+  echo ""
+  case "$OMNESIS_BIN" in
+    "$HOME"/*) OMNESIS_BIN_SHOWN="~/${OMNESIS_BIN#"$HOME"/}" ;;
+    *) OMNESIS_BIN_SHOWN="$OMNESIS_BIN" ;;
+  esac
+  echo "  The omnesis command here ($OMNESIS_BIN_SHOWN) runs each one inside the gateway"
+  echo "  container for you; there is no container to open or enter."
   echo ""
   print_phone_lines
   print_browser_lines
@@ -6454,6 +6998,7 @@ docker_install() {
   docker_preflight_images
   docker_validate_topology_transition
   docker_prepare_dirs
+  docker_tls_tailscale
   docker_tls_adopt
   docker_own_path "$TLS_CERT_PATH"
   docker_own_path "$TLS_KEY_PATH"
@@ -6464,6 +7009,7 @@ docker_install() {
   docker_write_compose
   docker_write_wrapper
   docker_record_method
+  docker_tls_renewal_install
   docker_fetch_images
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
@@ -6733,9 +7279,9 @@ print_banner() {
     echo "    omnesis collector run    # terminal 2"
   fi
   echo ""
-  echo "  Portal:  $PORTAL_URL"
-  echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
+  print_portal_lines "$PORTAL_URL"
   echo ""
+  print_trust_warning
   printf '\033[1mAdd your first source:\033[0m\n'
   echo ""
   echo "    omnesis sources add gmail"
@@ -6774,26 +7320,117 @@ print_phone_lines() {
 # host for a native install, or issued on the host and handed to a Docker
 # gateway, whose CLI cannot provision one from inside the container.
 print_browser_lines() {
+  if ! browser_trusted_certificate; then
+    # Pairing steps that cannot work are not presented as if they would: the
+    # extension's service worker cannot click through a certificate warning,
+    # so it fails before the gateway answers.
+    printf '\033[1mConnect your browser (optional)\033[0m — not yet: it needs a trusted certificate first.\n'
+    echo ""
+    echo "  The Chrome extension cannot connect to this gateway while it serves a self-signed"
+    echo "  certificate (see the warning above). Once it has a trusted one, install Omnesis"
+    echo "  Browser Capture from the Chrome Web Store and pair it:"
+    echo "    $CHROME_WEB_STORE_URL"
+    echo "    omnesis devices pair --kind browser"
+    echo "  https://omnesis.dev/docs/setup#browser-extension"
+    echo ""
+    return 0
+  fi
   printf '\033[1mConnect your browser (optional):\033[0m\n'
   echo ""
   echo "    Install Omnesis Browser Capture from the Chrome Web Store:"
   echo "    $CHROME_WEB_STORE_URL"
   echo "    omnesis devices pair --kind browser    # then enter the gateway URL and code in its Options page"
   echo ""
-  if browser_trusted_certificate; then
-    echo "  Pair it by the name the certificate covers; the extension needs a browser-trusted HTTPS gateway."
-    if [ -n "$TLS_CA_PATH" ]; then
-      echo "  A browser trusts this certificate once its issuing CA is installed in it: $TLS_CA_PATH"
-    fi
-  elif [ "$DOCKER" = 1 ]; then
-    echo "  The extension needs a browser-trusted HTTPS gateway, and this one serves a self-signed"
-    echo "  certificate; issue one on the host and re-run with --tls-cert/--tls-key:"
-    echo "  https://omnesis.dev/docs/install#docker-tls"
-  else
-    echo "  The extension needs a browser-trusted HTTPS gateway, and this one serves a self-signed"
-    echo "  certificate; provision one first with: omnesis tls provision (Tailscale or mkcert)"
+  echo "  Pair it by the name the certificate covers; the extension needs a browser-trusted HTTPS gateway."
+  if [ -n "$TLS_CA_PATH" ]; then
+    echo "  A browser trusts this certificate once its issuing CA is installed in it: $TLS_CA_PATH"
   fi
   echo "  https://omnesis.dev/docs/setup#browser-extension"
+  echo ""
+}
+
+# The portal address, signed in: on a terminal, a one-time pairing code minted
+# here rides in the link (`?token=`, which the portal redeems and strips), so a
+# click logs in. A code is single-use and short-lived, and is printed only to a
+# terminal, never into output a log could keep; a long-lived token never is.
+print_portal_lines() {
+  mint_portal_login_link "$1"
+  if [ -n "$PORTAL_LOGIN_URL" ]; then
+    echo "  Portal:  $PORTAL_LOGIN_URL"
+    echo "           (this link signs you in once, within $PORTAL_LOGIN_MINUTES minutes. For a fresh code, run"
+    echo "           'omnesis devices pair --kind portal' in this terminal and paste it in the portal.)"
+  else
+    echo "  Portal:  $1"
+    echo "           (to sign in, run 'omnesis devices pair --kind portal' in this terminal and paste"
+    echo "           the code it prints)"
+  fi
+}
+
+# Mint a one-time portal pairing code with this host's omnesis, as
+# `omnesis devices pair --kind portal` does, and build the login link for the
+# portal at $1. Leaves PORTAL_LOGIN_URL empty without a terminal on stdout, a
+# healthy gateway, or a code.
+mint_portal_login_link() {
+  PORTAL_LOGIN_URL=""
+  [ -t 1 ] || return 0
+  [ "$GATEWAY_HEALTHY" = 1 ] || return 0
+  [ -n "${OMNESIS_BIN:-}" ] || return 0
+  PORTAL_PAIR_OUT="$("$OMNESIS_BIN" devices pair --kind portal </dev/null 2>/dev/null)" || return 0
+  PORTAL_ESC="$(printf '\033')"
+  PORTAL_PAIR_OUT="$(printf '%s\n' "$PORTAL_PAIR_OUT" | tr -d '\r' | sed "s/$PORTAL_ESC\[[0-9;]*m//g")"
+  PORTAL_CODE="$(printf '%s\n' "$PORTAL_PAIR_OUT" \
+    | sed -n 's/^[[:space:]]*Pairing code:[[:space:]]*\([0-9A-Fa-f]\{10\}\)[[:space:]]*$/\1/p' | head -n 1)"
+  [ -n "$PORTAL_CODE" ] || return 0
+  PORTAL_TTL="$(printf '%s\n' "$PORTAL_PAIR_OUT" | sed -n 's/^[[:space:]]*Expires in \([0-9][0-9]*\)s\..*$/\1/p' | head -n 1)"
+  case "$PORTAL_TTL" in
+    ''|*[!0-9]*) PORTAL_LOGIN_MINUTES=10 ;;
+    *) PORTAL_LOGIN_MINUTES=$(((PORTAL_TTL + 59) / 60)) ;;
+  esac
+  [ "$PORTAL_LOGIN_MINUTES" -gt 0 ] || return 0
+  PORTAL_LOGIN_URL="$1?token=$PORTAL_CODE"
+}
+
+# The warning a gateway on its self-signed certificate ends with, prominent
+# because it decides what can connect at all, and the one thing that fixes it.
+print_trust_warning() {
+  browser_trusted_certificate && return 0
+  TRUST_FIX="$(tls_fix_command)"
+  printf '\033[1;31m%s\033[0m\n' "================================================================================"
+  printf '\033[1;31m%s\033[0m\n' " WARNING: no trusted HTTPS certificate — browsers and the Chrome extension"
+  printf '\033[1;31m%s\033[0m\n' " cannot connect to this gateway."
+  printf '\033[1;31m%s\033[0m\n' "================================================================================"
+  echo ""
+  echo "  It serves its own self-signed certificate. Browsers warn on every device, and the"
+  echo "  Chrome extension and Claude Code cannot connect at all (\"The connection to the"
+  echo "  gateway failed before it answered\"). The CLI, collectors and the phone apps work."
+  echo ""
+  case "$TLS_TRUST_REASON" in
+    declined)
+      echo "  You declined the Tailscale certificate. To set it up, run:" ;;
+    skipped)
+      echo "  --no-tls skipped the Tailscale certificate. To set it up, run:" ;;
+    disabled)
+      echo "  Tailscale is connected, but HTTPS certificates are off for your tailnet. Turn on"
+      echo "  HTTPS Certificates at https://login.tailscale.com/admin/dns, then run:" ;;
+    nomagicdns)
+      echo "  Tailscale reported no MagicDNS name. Turn on MagicDNS and HTTPS Certificates at"
+      echo "  https://login.tailscale.com/admin/dns, then run:" ;;
+    failed)
+      echo "  Tailscale could not issue a certificate (the reason is above). Once that is fixed, run:" ;;
+    mkcert)
+      echo "  mkcert is not installed (https://mkcert.dev). Install it and re-run with --mkcert, or"
+      echo "  use Tailscale instead: join your tailnet with MagicDNS and HTTPS certificates on, then run:" ;;
+    *)
+      if [ "$DOCKER" = 1 ]; then
+        echo "  The fix: install Tailscale on this host (the one running Docker), join your"
+      else
+        echo "  The fix: install Tailscale on this machine, join your"
+      fi
+      echo "  tailnet with 'tailscale up', turn on MagicDNS and HTTPS Certificates in its admin"
+      echo "  console (https://tailscale.com/kb/1153/enabling-https), then run:" ;;
+  esac
+  echo ""
+  echo "    $TRUST_FIX"
   echo ""
 }
 
@@ -6811,13 +7448,9 @@ print_agent_certificate_lines() {
     echo "  domain of your own), Claude Code, ChatGPT and the Claude apps cannot connect."
     echo "  OpenClaw, Hermes and the phone apps work as they are. Codex works with one setting"
     echo "  (SSL_CERT_FILE), shown in the portal under Settings → Access → Connect an agent."
-    if [ "$DOCKER" = 1 ]; then
-      echo "  To fix it, issue a Tailscale certificate on the host and re-run with --tls-cert/--tls-key:"
-      echo "  https://omnesis.dev/docs/install#docker-tls"
-    else
-      echo "  To fix it, set up Tailscale (MagicDNS and HTTPS certificates on), then run:"
-      echo "    omnesis tls provision"
-    fi
+    echo "  The fix is the Tailscale certificate in the warning above:"
+    echo "    $(tls_fix_command)"
+    [ "$DOCKER" = 0 ] || echo "  https://omnesis.dev/docs/install#docker-tls"
     echo "  ChatGPT and the Claude apps also need the gateway published (Tailscale Funnel or a"
     echo "  domain of your own): https://omnesis.dev/docs/connect#bring-your-own-agent"
     echo ""
@@ -7243,9 +7876,9 @@ main() {
       fail "--registry selects the npm registry a package is installed from; --docker resolves and pulls images from the container repository named by OMNESIS_IMAGE_REPO."
     [ "$MKCERT_EXPLICIT" = 0 ] || \
       fail "--mkcert provisions a certificate on this host; the gateway container mints its own on first boot. To serve an mkcert certificate from the container, mint it on this host into the config directory — mkcert -cert-file $CONFIG_DIR/tls/mkcert.crt -key-file $CONFIG_DIR/tls/mkcert.key <names> — copy \"\$(mkcert -CAROOT)/rootCA.pem\" to $CONFIG_DIR/tls/rootCA.pem, and re-run with --tls-cert, --tls-key and --tls-ca naming those files. See https://omnesis.dev/docs/install#docker-tls."
+    [ "$NO_TLS_FLAG" = 0 ] || [ -z "$TLS_CERT_PATH$TLS_KEY_PATH" ] || \
+      fail "--no-tls skips issuing a certificate on this host, and --tls-cert/--tls-key hand the gateway container one; pass one or the other."
     docker_validate_tls_flags
-    [ "$NO_TLS_FLAG" = 0 ] || \
-      fail "--no-tls skips provisioning a certificate on this host. The gateway container always mints its own and always serves HTTPS, so there is nothing here to skip."
     [ "$NO_SERVICE_FLAG" = 0 ] || \
       fail "--no-service skips user service registration; --docker registers no services — the containers restart themselves."
     [ "$FORCE" = 0 ] || \
@@ -7268,9 +7901,10 @@ main() {
       DOCKER_CLI_SERVICE="collector"
       WANT_MODEL=0
     fi
-    # Nothing on this host is registered with a service manager, and the
-    # certificate is either the gateway container's own or the one --tls-cert
-    # names; the host tiers this script provisions natively do not apply.
+    # Nothing on this host is registered with a service manager. The
+    # certificate is the gateway container's own, the one --tls-cert names,
+    # or a Tailscale one issued on this host (docker_tls_tailscale); the
+    # native provisioning step does not run.
     WANT_SERVICE=0
     WANT_TLS=0
     PORTAL_HOST="localhost"

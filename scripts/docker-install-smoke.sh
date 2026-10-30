@@ -366,11 +366,16 @@ grep -q "is outside $TLS_CONFIG_DIR" "$WORK/refusal.err" || die "the refusal did
 [[ ! -f "$TLS_COMPOSE_FILE" ]] || die "the refused run wrote a compose file"
 ok "refused, and wrote nothing"
 
-step "install.sh --docker with the supplied certificate and its CA"
-"${omnesis_env[@]}" OMNESIS_CONFIG_DIR="$TLS_CONFIG_DIR" sh "$REPO/scripts/install.sh" \
+step "install.sh --docker with the supplied certificate and its CA, on a terminal"
+# On a terminal the closing banner carries a one-time portal login code, which
+# the host wrapper mints in the gateway container. The output is kept in the
+# scratch directory and never echoed: the code is a credential until used.
+TLS_INSTALL_COMMAND="$(printf '%q ' "${omnesis_env[@]}" OMNESIS_CONFIG_DIR="$TLS_CONFIG_DIR" sh "$REPO/scripts/install.sh" \
   --docker --no-model --no-keyring --version "$TAG_B" --port "$TLS_PORT" \
   --tls-cert "$TLS_CONFIG_DIR/tls/gateway.crt" --tls-key "$TLS_CONFIG_DIR/tls/gateway.key" \
-  --tls-ca "$TLS_CONFIG_DIR/tls/rootCA.pem"
+  --tls-ca "$TLS_CONFIG_DIR/tls/rootCA.pem")"
+script -qec "$TLS_INSTALL_COMMAND" /dev/null </dev/null >"$WORK/tls-install.out" 2>&1 \
+  || die "the install on a terminal failed: $(grep -v 'token=' "$WORK/tls-install.out" | tail -n 20)"
 grep -q "OMNESIS_TLS_CERT=$TLS_CONFIG_DIR/tls/gateway.crt" "$TLS_CONFIG_DIR/.env" || die "the certificate was not recorded"
 grep -q "OMNESIS_GATEWAY_URL=https://$TLS_NAME:7600" "$TLS_CONFIG_DIR/.env" || die "the gateway URL was not recorded"
 grep -q "OMNESIS_GATEWAY_URL=https://$TLS_NAME:7600" "$TLS_COMPOSE_FILE" || die "the collector does not dial the certificate's name"
@@ -391,6 +396,20 @@ tls_health || die "the gateway never answered with a certificate the fixture CA 
 [[ "$(served_fingerprint)" == "$(leaf_fingerprint "$WORK/leaf-1.crt")" ]] \
   || die "the gateway serves $(served_fingerprint), not the supplied certificate"
 ok "a host client verifies the chain and the name without any bypass"
+
+# The link signs a browser in once: the code redeems through the portal's own
+# login, and is refused the second time.
+PORTAL_CODE="$(grep -o 'portal/?token=[0-9A-Fa-f]\{10\}' "$WORK/tls-install.out" | head -n 1 | sed 's/^.*=//')"
+[[ -n "$PORTAL_CODE" ]] || die "the banner on a terminal carried no portal login link"
+grep -q "signs you in once" "$WORK/tls-install.out" || die "the banner did not say the link works once"
+portal_login() {
+  curl -s -o /dev/null -w '%{http_code}' --cacert "$TLS_CONFIG_DIR/tls/rootCA.pem" \
+    --resolve "$TLS_NAME:$TLS_PORT:127.0.0.1" -H 'Content-Type: application/json' \
+    --data "{\"token\":\"$PORTAL_CODE\"}" "https://$TLS_NAME:$TLS_PORT/portal/api/login"
+}
+[[ "$(portal_login)" == 200 ]] || die "the portal did not accept the one-time code from the banner"
+[[ "$(portal_login)" == 401 ]] || die "the portal accepted the banner's code a second time"
+ok "the banner's portal link signs in once, then is spent"
 
 for _ in $(seq 1 80); do
   docker compose -f "$TLS_COMPOSE_FILE" logs collector 2>/dev/null \

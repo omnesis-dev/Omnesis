@@ -612,8 +612,9 @@ installing it takes one command as root:
           <code>OMNESIS_TLS_KEY</code> is checked and reported but never renewed or overwritten:
           renew it with the tool that issued it, into the same files, and the gateway picks it up. A
           gateway in Docker renews only its self-signed pair; a Tailscale or mkcert certificate is
-          renewed on the host, by re-running its issuer into the same file.
-          <code>gateway.tls.autoRenew: false</code> turns automatic renewal off and
+          renewed on the host, by re-running its issuer into the same file. For the Tailscale
+          certificate the installer issues on a Docker host, a job it registers there does that
+          daily. <code>gateway.tls.autoRenew: false</code> turns automatic renewal off and
           <code>gateway.tls.renewBeforeDays</code> moves the threshold;
           <code>omnesis tls renew</code> renews on request, and <code>--force</code> renews one that
           is not yet due. <code>omnesis update</code> never renews certificates.

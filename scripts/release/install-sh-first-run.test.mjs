@@ -317,6 +317,11 @@ case "$1" in
       [ -n "\${OMNESIS_TEST_DEVICES_JSON:-}" ] || exit 1
       printf '%s' "$OMNESIS_TEST_DEVICES_JSON"
     fi
+    # What the real "devices pair --kind portal" prints, colours and all.
+    if [ "$2 \${3:-} \${4:-}" = "pair --kind portal" ]; then
+      [ -z "\${OMNESIS_TEST_PORTAL_PAIR_FAIL:-}" ] || exit 1
+      printf '\\n\\033[1mPairing code:\\033[0m \\033[36m%s\\033[0m\\n\\033[2mExpires in %ss. Scopes: admin\\033[0m\\n' "\${OMNESIS_TEST_PORTAL_CODE:-7C2E91A04D}" "\${OMNESIS_TEST_PORTAL_TTL:-599}"
+    fi
     ;;
   service)
     case "$2" in
@@ -2199,12 +2204,18 @@ describe("install.sh gateway URL", () => {
     expect(run.status).toBe(0);
     expect(run.envFile()).toContain("OMNESIS_GATEWAY_URL=https://localhost:8443");
     // What a trusted certificate would take is named; nothing is joined or changed for the user.
-    expect(run.output).toContain("enable HTTPS certificates and MagicDNS");
+    expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
+    expect(run.output).toContain("install Tailscale on this machine");
+    expect(run.output).toContain("turn on MagicDNS and HTTPS Certificates");
     expect(run.output).toContain("The installer never joins a network or changes tailnet settings");
     // On the self-signed default the browser step says what to provision first.
     expect(run.output).toContain("Connect your browser (optional)");
     expect(run.output).toContain("serves a self-signed");
-    expect(run.output).toContain("omnesis tls provision");
+    expect(run.output).toContain("    omnesis tls provision");
+    // No terminal: no login code is minted; the hint says where to run the command.
+    expect(run.calls).not.toContain("devices pair --kind portal");
+    expect(run.output).not.toContain("?token=");
+    expect(run.output).toContain("run 'omnesis devices pair --kind portal' in this terminal");
     // Which agents can connect without a Tailscale certificate, and the fix.
     expect(run.output).toContain(
       "Connecting AI agents — this gateway has no Tailscale certificate",
@@ -2212,6 +2223,139 @@ describe("install.sh gateway URL", () => {
     expect(run.output).toMatch(/claude code, chatgpt and the claude apps cannot connect/iu);
     expect(run.output).toContain("Codex works with one setting");
     expect(run.output).toContain("(SSL_CERT_FILE)");
+  });
+});
+
+describe.skipIf(!HAS_PTY)(
+  "install.sh: the Tailscale certificate offer and the portal login link",
+  () => {
+    const TS_NAME = "workstation.example-tailnet.ts.net";
+    const args = ["--embedder", EMBED_IDS[0]];
+    const env = { OMNESIS_TEST_KEYRING: "ready" };
+    const certCalls = (run) => run.calls.filter((call) => call.startsWith("tailscale cert"));
+
+    /** A connected tailscale whose status says whether the tailnet issues certificates. */
+    function installTailscaleWithCertDomains(certDomains) {
+      writeExecutable(
+        fixturePath("fake-bin", "tailscale"),
+        `#!/bin/sh
+case "$1" in
+  status) printf '{"BackendState":"Running","Self":{"DNSName":"${TS_NAME}."},"CertDomains":${certDomains}}\\n'; exit 0 ;;
+  cert) printf 'tailscale cert %s\\n' "$*" >> "$OMNESIS_TEST_CALLS"; : > "$3"; : > "$5"; exit 0 ;;
+esac
+exit 1
+`,
+      );
+    }
+
+    test("asks, Yes by default, mints it, and signs the portal in by the Tailscale name", () => {
+      installTailscaleWithCertDomains(`["${TS_NAME}"]`);
+      const run = runInstallerOnTty("ts-offer-yes", args, [""], env);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).toContain(
+        `Tailscale detected — set up a trusted HTTPS certificate for ${TS_NAME}? [Y/n]`,
+      );
+      expect(run.output).toContain("public Certificate");
+      expect(certCalls(run)).toHaveLength(1);
+      expect(run.envFile()).toContain(`OMNESIS_GATEWAY_URL=https://${TS_NAME}:7600`);
+      expect(run.output).not.toContain("WARNING: no trusted HTTPS certificate");
+      // One code, minted for this terminal, inside a link that logs in once.
+      expect(run.calls.filter((call) => call === "devices pair --kind portal")).toHaveLength(1);
+      expect(run.output).toContain(`Portal:  https://${TS_NAME}:7600/portal/?token=7C2E91A04D`);
+      expect(run.output).toContain("this link signs you in once, within 10 minutes");
+      expect(run.output).toContain("For a fresh code, run");
+    });
+
+    test("declined, the gateway stays self-signed and the banner warns with the one fix", () => {
+      installTailscaleWithCertDomains(`["${TS_NAME}"]`);
+      const run = runInstallerOnTty("ts-offer-no", args, ["n"], env);
+      expect(run.status, run.output).toBe(0);
+      expect(certCalls(run)).toEqual([]);
+      expect(run.envFile()).not.toContain("tailscale.crt");
+      expect(run.envFile()).not.toContain("OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN");
+      expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
+      expect(run.output).toContain("You declined the Tailscale certificate. To set it up, run:");
+      expect(run.output).toContain("    omnesis tls provision");
+      // The warning comes before the steps it qualifies.
+      expect(run.output.indexOf("WARNING: no trusted HTTPS certificate")).toBeLessThan(
+        run.output.indexOf("omnesis devices pair --kind browser"),
+      );
+      expect(run.output).toContain("Portal:  https://localhost:7600/portal/?token=7C2E91A04D");
+    });
+
+    test("with HTTPS certificates off for the tailnet it does not ask, and says why", () => {
+      installTailscaleWithCertDomains("null");
+      const run = runInstallerOnTty("ts-offer-off", args, [], env);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).not.toContain("[Y/n]");
+      expect(certCalls(run)).toEqual([]);
+      expect(run.output).toContain("HTTPS certificates are switched off for this tailnet");
+      expect(run.output).toContain("HTTPS certificates are off for your tailnet");
+      expect(run.output).toContain("admin/dns), then run: omnesis tls provision");
+    });
+
+    test("--no-tls offers nothing and says what it skipped", () => {
+      installTailscaleWithCertDomains(`["${TS_NAME}"]`);
+      const run = runInstallerOnTty("ts-offer-skipped", ["--no-tls", ...args], [], env);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).not.toContain("[Y/n]");
+      expect(certCalls(run)).toEqual([]);
+      expect(run.output).toContain("--no-tls skipped the Tailscale certificate");
+    });
+
+    test("without a code to put in it, the link falls back to the hint", () => {
+      installAbsentTailscale();
+      const run = runInstallerOnTty("ts-portal-fails", args, [], {
+        ...env,
+        OMNESIS_TEST_PORTAL_PAIR_FAIL: "1",
+      });
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).not.toContain("?token=");
+      expect(run.output).toContain("run 'omnesis devices pair --kind portal' in this terminal");
+    });
+
+    test("the link's lifetime is the one the gateway gave the code", () => {
+      installAbsentTailscale();
+      const run = runInstallerOnTty("ts-portal-ttl", args, [], {
+        ...env,
+        OMNESIS_TEST_PORTAL_TTL: "1799",
+      });
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).toContain("within 30 minutes");
+    });
+  },
+);
+
+describe("install.sh: the Tailscale certificate without a terminal", () => {
+  test("is issued without asking, and no login code is minted", () => {
+    installFakeTailscale("workstation.example-tailnet.ts.net");
+    const run = runInstaller("ts-unattended", ["--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+    });
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Certificate installed");
+    expect(run.output).not.toContain("WARNING: no trusted HTTPS certificate");
+    expect(run.calls).not.toContain("devices pair --kind portal");
+    expect(run.output).toContain(
+      "Portal:  https://workstation.example-tailnet.ts.net:7600/portal/\n",
+    );
+  });
+
+  test("a kept certificate keeps the portal on its name while Tailscale is down", () => {
+    installFakeTailscale("workstation.example-tailnet.ts.net");
+    const first = runInstaller("ts-kept-host", ["--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+    });
+    expect(first.status, first.output).toBe(0);
+    installAbsentTailscale();
+    const rerun = runInstaller("ts-kept-host", ["--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+    });
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(rerun.output).toContain(
+      "Portal:  https://workstation.example-tailnet.ts.net:7600/portal/",
+    );
+    expect(rerun.output).not.toContain("WARNING: no trusted HTTPS certificate");
   });
 });
 
@@ -2691,6 +2835,8 @@ describe("install.sh second-machine banner", () => {
         expect(run.output).toContain(`--gateway-url https://${selectedHost}:7600`);
       }
     },
+    // Seven whole installs on a terminal, one per variant.
+    180_000,
   );
 
   test("a Tailscale certificate makes the banner name the tailnet address", () => {

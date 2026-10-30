@@ -795,6 +795,31 @@ test.describe("Portal", () => {
     await expect(page.locator("button.settings-logout-btn")).toBeVisible({ timeout: 30000 });
   });
 
+  test("a one-time portal pairing code in ?token= signs in once", async ({ page, context }) => {
+    // What the installer prints on a terminal: the portal address with a code
+    // minted as `omnesis devices pair --kind portal` mints one, not a token.
+    const res = await fetch(`${BASE}/admin/devices/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify({ kind: "portal" }),
+    });
+    expect(res.ok).toBe(true);
+    const { pairingCode } = (await res.json()) as { pairingCode: string };
+    expect(pairingCode).toMatch(/^[0-9A-F]{10}$/u);
+
+    await page.goto(`/portal/?token=${encodeURIComponent(pairingCode)}`);
+    await page.locator("nav.sidebar-nav").waitFor({ state: "visible", timeout: 15000 });
+    // The code is consumed and stripped from the address bar.
+    expect(new URL(page.url()).searchParams.has("token")).toBe(false);
+
+    // Single-use: a second browser (no session) following the same link lands
+    // on the login screen.
+    await context.clearCookies();
+    await page.goto(`/portal/?token=${encodeURIComponent(pairingCode)}`);
+    await expect(page.locator(".login-container")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("nav.sidebar-nav")).toHaveCount(0);
+  });
+
   test("no console errors throughout navigation flow", async ({ page }) => {
     const errors = trackConsoleErrors(page);
 

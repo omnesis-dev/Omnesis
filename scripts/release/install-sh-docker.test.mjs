@@ -107,6 +107,12 @@ if [ "$SEEN" = 1 ]; then
         printf '{"default":"fast-embed","assignedId":"%s","entries":[{"id":"fast-embed","name":"Fast embed","sizeBytes":140000000,"embedDim":768},{"id":"wide-embed","name":"Wide embed","sizeBytes":600000000,"embedDim":1024}]}\\n' "\${OMNESIS_TEST_ASSIGNED_EMBEDDER:-}"
       fi
       ;;
+    devices)
+      # What the real "devices pair --kind portal" prints, colours and all.
+      if [ "$2 \${3:-} \${4:-}" = "pair --kind portal" ]; then
+        printf '\\n\\033[1mPairing code:\\033[0m \\033[36m%s\\033[0m\\n\\033[2mExpires in 599s. Scopes: admin\\033[0m\\n' "\${OMNESIS_TEST_PORTAL_CODE:-3F9A0C21BE}"
+      fi
+      ;;
     pair)
       if [ -t 0 ]; then printf 'pair stdin is a tty\n' >> "$OMNESIS_TEST_CALLS"; fi
       if [ -n "\${OMNESIS_TEST_PAIR_FAIL:-}" ]; then
@@ -1351,10 +1357,28 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).toContain("Omnesis is running in Docker.");
     expect(run.output).toContain("Pair a phone (optional)");
     expect(run.output).toContain("Connect your browser (optional)");
-    // The container's CLI cannot provision a certificate; the host issues one.
-    expect(run.output).toContain("serves a self-signed");
-    expect(run.output).toContain("re-run with --tls-cert/--tls-key");
+    // Without tailscale on this host: a prominent warning, and the one fix — this
+    // installer again, once Tailscale is up — since the container's CLI cannot
+    // provision a certificate.
+    expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
+    expect(run.output).toContain("install Tailscale on this host (the one running Docker)");
+    expect(run.output).toContain("curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker\n");
     expect(run.output).not.toContain("omnesis tls provision");
+    // The extension's pairing steps come after the caveat, not as if they work.
+    expect(run.output).toContain(
+      "Connect your browser (optional)\u001b[0m — not yet: it needs a trusted certificate first.",
+    );
+    expect(
+      run.output.indexOf("cannot connect to this gateway while it serves a self-signed"),
+    ).toBeLessThan(run.output.indexOf("omnesis devices pair --kind browser"));
+    // The CLI is the host's own command, not something to run in a container.
+    expect(run.output).toContain("Add your first source\u001b[0m — in this terminal, as usual:");
+    expect(run.output).toContain("there is no container to open or enter");
+    expect(run.output).not.toContain("The CLI runs in the containers");
+    // No terminal: no login code is minted, and the hint says where to run it.
+    expect(run.calls).not.toContain("devices pair --kind portal");
+    expect(run.output).toContain("run 'omnesis devices pair --kind portal' in this terminal");
+    expect(run.output).not.toContain("?token=");
     expect(run.output).toContain(
       "Connecting AI agents — this gateway has no Tailscale certificate",
     );
@@ -2018,7 +2042,6 @@ describe("install.sh --docker: the flags it refuses", () => {
       ["--docker", "--registry", "https://registry.example.com"],
       "--registry selects the npm registry",
     ],
-    [["--docker", "--no-tls"], "The gateway container always mints its own"],
     [["--docker", "--force"], "--version is all a downgrade needs"],
     [["--docker", "--mkcert"], "re-run with --tls-cert, --tls-key and --tls-ca"],
     [["--docker", "--no-service"], "the containers restart themselves"],
@@ -2485,5 +2508,408 @@ describe("the wrapper's uninstall on a host that only collects", () => {
     const done = runWrapper(run, ["uninstall", "--yes"]);
     expect(done.status).toBe(0);
     expect(done.stdout).not.toContain(REMINDER);
+  });
+});
+
+describe("install.sh --docker: a Tailscale certificate issued on this host", () => {
+  const TS_NAME = "studio.tail-example.ts.net";
+  let mints = 0;
+
+  /**
+   * A `tailscale` on this host, connected, whose `cert` writes a real pair —
+   * a fresh one per call unless `same` — so the installer's key, expiry and
+   * name checks run against something real. `certs` is what CertDomains says:
+   * on, off (HTTPS certificates switched off for the tailnet) or absent.
+   * Every `cert` call is recorded, with its arguments.
+   */
+  function installHostTailscale({ certs = "on", fail = "", path } = {}) {
+    mints += 1;
+    const tag = `host-ts-${mints}`;
+    const minted = mintCert(tag, `DNS:${TS_NAME}`);
+    const certSource = fixturePath(`${tag}-source.crt`);
+    writeFileSync(certSource, minted.pem);
+    const keySource = fixturePath(`${tag}.key`);
+    const certDomains =
+      certs === "on"
+        ? `,"CertDomains":["${TS_NAME}"]`
+        : certs === "off"
+          ? ',"CertDomains":null'
+          : "";
+    const target = path ?? fixturePath("fake-bin", "tailscale");
+    mkdirSync(dirname(target), { recursive: true });
+    writeExecutable(
+      target,
+      `#!/bin/sh
+case "$1" in
+  status)
+    printf '{\\n  "BackendState": "Running",\\n  "Self": {\\n    "HostName": "studio",\\n    "DNSName": "${TS_NAME}."\\n  }${certDomains},\\n  "Peer": {"p1": {"DNSName": "peer.tail-example.ts.net."}}\\n}\\n'
+    exit 0 ;;
+  cert)
+    printf 'tailscale %s bundled=%s\\n' "$*" "\${TAILSCALE_BE_CLI:-0}" >> "$OMNESIS_TEST_CALLS"
+    ${fail ? `echo ${JSON.stringify(fail)} >&2; exit 1 ;;` : `cp "${certSource}" "$3"; cp "${keySource}" "$5"; exit 0 ;;`}
+esac
+exit 1
+`,
+    );
+    return minted;
+  }
+
+  /** A `systemctl` with a user manager, recording what it is asked. */
+  function installUserSystemd() {
+    writeExecutable(
+      fixturePath("fake-bin", "systemctl"),
+      `#!/bin/sh
+printf 'systemctl %s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
+exit 0
+`,
+    );
+    writeExecutable(fixturePath("fake-bin", "loginctl"), "#!/bin/sh\nexit 0\n");
+  }
+
+  /** This host as `uname` reports it, so the scheduler chosen never depends on the runner. */
+  function installUname(os) {
+    const machine = os === "Darwin" ? "arm64" : "x86_64";
+    writeExecutable(
+      fixturePath("fake-bin", "uname"),
+      `#!/bin/sh\ncase "$1" in -m) echo ${machine} ;; *) echo ${os} ;; esac\n`,
+    );
+  }
+
+  const services = (run) => parseYaml(composeAt(run)).services;
+  const tierCert = (run) => join(run.configDir, "tls", "tailscale.crt");
+  const tierKey = (run) => join(run.configDir, "tls", "tailscale.key");
+  const renewScript = (run) => join(run.home, ".local", "share", "omnesis", "omnesis-tls-renew.sh");
+  const userUnits = (run) => join(run.home, ".config", "systemd", "user");
+  const tailscaleCerts = (run) => run.calls.filter((call) => call.startsWith("tailscale cert"));
+
+  function runWrapper(run, args) {
+    return spawnSync(run.wrapper, args, {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        OMNESIS_TEST_DOCKER: dockerLog(run.home),
+        OMNESIS_TEST_CALLS: join(run.home, "cli-calls.log"),
+      },
+      input: "",
+      encoding: "utf8",
+    });
+  }
+
+  beforeEach(() => {
+    installUname("Linux");
+    installUserSystemd();
+  });
+
+  test("unattended, it is issued on the host and wired like a supplied pair", () => {
+    const minted = installHostTailscale();
+    const run = runInstaller("ts-issued", [...QUIET, "--combined"]);
+    expect(run.status, run.output).toBe(0);
+    // Minted on this host, into the directory the containers mount.
+    expect(tailscaleCerts(run)).toHaveLength(1);
+    expect(tailscaleCerts(run)[0]).toMatch(
+      new RegExp(
+        `^tailscale cert --cert-file \\S+/tailscale\\.crt --key-file \\S+/tailscale\\.key ${TS_NAME.replaceAll(".", "\\.")} bundled=0$`,
+        "u",
+      ),
+    );
+    expect(readFileSync(tierCert(run), "utf8")).toBe(minted.pem);
+    // Staged outside the config directory, then moved in.
+    expect(tailscaleCerts(run)[0]).not.toContain(`${run.configDir}/tls/`);
+    const env = run.envFile();
+    expect(env).toContain(`OMNESIS_TLS_CERT=${tierCert(run)}\n`);
+    expect(env).toContain(`OMNESIS_TLS_KEY=${tierKey(run)}\n`);
+    expect(env).toContain(`OMNESIS_GATEWAY_URL=https://${TS_NAME}:7600\n`);
+    expect(env).toContain(`OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN=https://${TS_NAME}:7600\n`);
+    expect(env).not.toContain("OMNESIS_TLS_CA=");
+    const { gateway, updater } = services(run);
+    expect(gateway.networks.default.aliases).toEqual([TS_NAME]);
+    expect(gateway.environment).toContain(`OMNESIS_GATEWAY_URL=https://${TS_NAME}:7600`);
+    expect(updater.environment).toContain(`OMNESIS_GATEWAY_URL=https://${TS_NAME}:7600`);
+    // The banner and the join line name the Tailscale address; no warning.
+    expect(run.output).toContain(`https://${TS_NAME}:7600/portal/`);
+    expect(run.output).toContain(`--gateway-url https://${TS_NAME}:7600\n`);
+    expect(run.output).toContain(`sha256:${minted.fingerprint}`);
+    expect(run.output).not.toContain("WARNING: no trusted HTTPS certificate");
+    expect(run.output).not.toContain("this gateway has no Tailscale certificate");
+    expect(run.output).toContain("Connect your browser (optional):");
+    expect(run.output).toContain("Issued by Tailscale on this host and renewed here daily");
+
+    // The renewal job: a user timer running a script outside the config directory.
+    const script = readFileSync(renewScript(run), "utf8");
+    expect(script).toContain(`CONFIG_DIR='${run.configDir}'`);
+    expect(script).toContain(`TS_NAME='${TS_NAME}'`);
+    expect(readFileSync(join(userUnits(run), "omnesis-tls-renew.service"), "utf8")).toContain(
+      `ExecStart=/bin/sh "${renewScript(run)}"`,
+    );
+    expect(readFileSync(join(userUnits(run), "omnesis-tls-renew.timer"), "utf8")).toContain(
+      "OnCalendar=daily",
+    );
+    expect(run.calls).toContain("systemctl --user enable --now omnesis-tls-renew.timer");
+  });
+
+  test("on a terminal it asks first, Yes by default, and logs the portal in with a one-time code", () => {
+    installHostTailscale();
+    const run = runInstallerOnTty("ts-ask-yes", QUIET, [""]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(
+      `Tailscale detected — set up a trusted HTTPS certificate for ${TS_NAME}? [Y/n]`,
+    );
+    expect(tailscaleCerts(run)).toHaveLength(1);
+    expect(run.envFile()).toContain(`OMNESIS_TLS_CERT=${tierCert(run)}\n`);
+    // The login link: a code minted for this terminal alone, by the Tailscale name.
+    expect(run.calls).toContain("devices pair --kind portal");
+    expect(run.output).toContain(`Portal:  https://${TS_NAME}:7600/portal/?token=3F9A0C21BE`);
+    expect(run.output).toContain("signs you in once, within 10 minutes");
+  });
+
+  test("declined, nothing is issued and the banner warns, naming the re-run that fixes it", () => {
+    installHostTailscale();
+    const run = runInstallerOnTty("ts-ask-no", [...QUIET, "--gateway-only"], ["n"]);
+    expect(run.status, run.output).toBe(0);
+    expect(tailscaleCerts(run)).toEqual([]);
+    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+    expect(existsSync(renewScript(run))).toBe(false);
+    expect(run.output).toContain("WARNING: no trusted HTTPS certificate");
+    expect(run.output).toContain("You declined the Tailscale certificate");
+    expect(run.output).toContain(
+      "curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --gateway-only",
+    );
+    // The self-signed portal still gets its link, by localhost.
+    expect(run.output).toContain("Portal:  https://localhost:7600/portal/?token=3F9A0C21BE");
+  });
+
+  test("HTTPS certificates switched off for the tailnet: said plainly, nothing attempted", () => {
+    installHostTailscale({ certs: "off" });
+    const run = runInstallerOnTty("ts-certs-off", QUIET, []);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).not.toContain("[Y/n]");
+    expect(tailscaleCerts(run)).toEqual([]);
+    expect(run.output).toContain("HTTPS certificates are switched off for this tailnet");
+    expect(run.output).toContain("HTTPS certificates are off for your tailnet");
+    expect(run.output).toContain("https://login.tailscale.com/admin/dns");
+    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+  });
+
+  test("a refused certificate falls back to the self-signed one with tailscaled's reason", () => {
+    installHostTailscale({
+      fail: "500 internal server error: HTTPS is not enabled on your tailnet",
+    });
+    const run = runInstaller("ts-cert-fails", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(
+      "tailscale cert failed: 500 internal server error: HTTPS is not enabled on your tailnet",
+    );
+    expect(run.output).toContain("Tailscale could not issue a certificate");
+    expect(run.output).toContain(
+      "Then run: curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker",
+    );
+    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+    expect(existsSync(renewScript(run))).toBe(false);
+    expect(readdirSync(join(run.configDir, "tls"))).toEqual([]);
+  });
+
+  test("--no-tls never asks tailscale for one", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-no-tls", [...QUIET, "--no-tls"]);
+    expect(run.status, run.output).toBe(0);
+    expect(tailscaleCerts(run)).toEqual([]);
+    expect(run.output).toContain("--no-tls skipped the Tailscale certificate");
+    expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT=");
+
+    const both = runInstaller("ts-no-tls-cert", [
+      ...QUIET,
+      "--no-tls",
+      "--tls-cert",
+      "/x.crt",
+      "--tls-key",
+      "/x.key",
+    ]);
+    expect(both.status).not.toBe(0);
+    expect(both.output).toContain("pass one or the other");
+  });
+
+  test("re-runs keep the certificate and its job, without asking again; an outage keeps it too", () => {
+    installHostTailscale();
+    const first = runInstaller("ts-rerun", QUIET);
+    expect(first.status, first.output).toBe(0);
+
+    const minted = installHostTailscale();
+    const again = runInstallerOnTty("ts-rerun", QUIET, []);
+    expect(again.status, again.output).toBe(0);
+    expect(again.output).not.toContain("[Y/n]");
+    expect(tailscaleCerts(again)).toHaveLength(1);
+    expect(readFileSync(tierCert(again), "utf8")).toBe(minted.pem);
+    expect(again.envFile()).toContain(`OMNESIS_TLS_CERT=${tierCert(again)}\n`);
+    expect(existsSync(renewScript(again))).toBe(true);
+
+    // tailscaled down for this run: the recorded certificate is still served.
+    writeExecutable(fixturePath("fake-bin", "tailscale"), "#!/bin/sh\nexit 1\n");
+    const offline = runInstaller("ts-rerun", QUIET);
+    expect(offline.status, offline.output).toBe(0);
+    expect(offline.output).toContain(
+      "Tailscale is unavailable on this host — keeping the existing Tailscale certificate",
+    );
+    expect(offline.output).toContain(`Keeping the certificate at ${tierCert(offline)}`);
+    expect(readFileSync(tierCert(offline), "utf8")).toBe(minted.pem);
+    expect(services(offline).gateway.networks.default.aliases).toEqual([TS_NAME]);
+    expect(offline.output).not.toContain("WARNING: no trusted HTTPS certificate");
+    expect(existsSync(renewScript(offline))).toBe(true);
+  });
+
+  test("the renewal script replaces the pair by rename and reloads the gateway", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-renew", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const renew = () =>
+      spawnSync("sh", [renewScript(run)], {
+        env: {
+          PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+          HOME: run.home,
+          OMNESIS_TEST_DOCKER: dockerLog(run.home),
+          OMNESIS_TEST_CALLS: join(run.home, "cli-calls.log"),
+        },
+        encoding: "utf8",
+      });
+
+    // The same certificate again: nothing moves.
+    const unchanged = renew();
+    expect(unchanged.status, unchanged.stderr).toBe(0);
+    expect(unchanged.stdout).toContain("is current; nothing to renew");
+
+    // A renewed one, with a link planted where the certificate goes: the link
+    // is replaced, and what it pointed at is untouched.
+    const renewed = installHostTailscale();
+    const bystander = fixturePath("bystander.txt");
+    writeFileSync(bystander, "not a certificate\n");
+    rmSync(tierCert(run));
+    symlinkSync(bystander, tierCert(run));
+    const done = renew();
+    expect(done.status, done.stderr).toBe(0);
+    expect(done.stdout).toContain(`Renewed the Tailscale certificate for ${TS_NAME}`);
+    expect(readFileSync(tierCert(run), "utf8")).toBe(renewed.pem);
+    expect(readFileSync(bystander, "utf8")).toBe("not a certificate\n");
+    expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain("tls reload\n");
+
+    // A linked tls/ is refused outright.
+    const tlsDir = join(run.configDir, "tls");
+    rmSync(tlsDir, { recursive: true });
+    mkdirSync(fixturePath("elsewhere"));
+    symlinkSync(fixturePath("elsewhere"), tlsDir);
+    const refused = renew();
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("is not a plain directory");
+    expect(readdirSync(fixturePath("elsewhere"))).toEqual([]);
+  });
+
+  test("omnesis uninstall removes the renewal job with the install", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-uninstall", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const dry = runWrapper(run, ["uninstall", "--dry-run"]);
+    expect(dry.stdout).toContain("Remove the job that renews the Tailscale certificate");
+    expect(existsSync(renewScript(run))).toBe(true);
+
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(renewScript(run))).toBe(false);
+    expect(existsSync(join(userUnits(run), "omnesis-tls-renew.service"))).toBe(false);
+    expect(existsSync(join(userUnits(run), "omnesis-tls-renew.timer"))).toBe(false);
+    expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain(
+      "systemctl --user disable --now omnesis-tls-renew.timer\n",
+    );
+  });
+
+  test("handing over a certificate of the operator's own retires the job", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-replaced", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(existsSync(renewScript(run))).toBe(true);
+    const own = mintCert("ts-replaced-own", "DNS:gateway.example.com");
+    writeFileSync(join(run.configDir, "tls", "gateway.crt"), own.pem);
+    copyFileSync(fixturePath("ts-replaced-own.key"), join(run.configDir, "tls", "gateway.key"));
+    writeFileSync(join(run.configDir, "tls", "rootCA.pem"), own.pem);
+    const swapped = runInstaller("ts-replaced", [
+      ...QUIET,
+      "--tls-cert",
+      join(run.configDir, "tls", "gateway.crt"),
+      "--tls-key",
+      join(run.configDir, "tls", "gateway.key"),
+      "--tls-ca",
+      join(run.configDir, "tls", "rootCA.pem"),
+    ]);
+    expect(swapped.status, swapped.output).toBe(0);
+    expect(tailscaleCerts(swapped)).toEqual([]);
+    expect(swapped.output).toContain("Removed the Tailscale renewal job of an earlier install");
+    expect(existsSync(renewScript(swapped))).toBe(false);
+    expect(existsSync(join(userUnits(swapped), "omnesis-tls-renew.timer"))).toBe(false);
+  });
+
+  test("on a Mac, the app's bundled CLI issues it and a launchd agent renews it", () => {
+    installUname("Darwin");
+    writeExecutable(
+      fixturePath("fake-bin", "launchctl"),
+      `#!/bin/sh\nprintf 'launchctl %s\\n' "$*" >> "$OMNESIS_TEST_CALLS"\nexit 0\n`,
+    );
+    // No CLI on PATH: only the app's, which answers as the CLI when told to.
+    writeExecutable(fixturePath("fake-bin", "tailscale"), "#!/bin/sh\nexit 1\n");
+    const home = prepareHome("ts-mac");
+    installHostTailscale({
+      path: join(
+        home,
+        "host-root",
+        "Applications",
+        "Tailscale.app",
+        "Contents",
+        "MacOS",
+        "Tailscale",
+      ),
+    });
+    const run = runInstaller("ts-mac", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(tailscaleCerts(run)).toHaveLength(1);
+    expect(tailscaleCerts(run)[0]).toMatch(/ bundled=1$/u);
+    const plist = join(run.home, "Library", "LaunchAgents", "dev.omnesis.tls-renew.plist");
+    const body = readFileSync(plist, "utf8");
+    expect(body).toContain("<string>dev.omnesis.tls-renew</string>");
+    expect(body).toContain(`<string>${renewScript(run)}</string>`);
+    expect(body).toContain("<key>StartCalendarInterval</key>");
+    // Logs go under ~/Library/Logs, never into the directory a container writes.
+    expect(body).not.toContain(run.configDir);
+    expect(run.calls).toContain(`launchctl bootstrap gui/${process.getuid()} ${plist}`);
+    expect(readFileSync(renewScript(run), "utf8")).toContain("TAILSCALE_CLI_BUNDLED='1'");
+
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(plist)).toBe(false);
+    expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain(
+      `launchctl bootout gui/${process.getuid()}/dev.omnesis.tls-renew\n`,
+    );
+  });
+
+  test("without a scheduler it says how to renew by hand", () => {
+    writeExecutable(fixturePath("fake-bin", "systemctl"), "#!/bin/sh\nexit 1\n");
+    installHostTailscale();
+    const run = runInstaller("ts-no-scheduler", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("no scheduler the installer can register a job with");
+    expect(run.output).toContain(`Renew it before it expires by running`);
+    expect(existsSync(renewScript(run))).toBe(true);
+  });
+
+  test("a root install renews through a system timer and hands the pair to the daemon account", () => {
+    writeExecutable(
+      fixturePath("fake-bin", "id"),
+      '#!/bin/sh\ncase "$1" in -u|-g) echo 0 ;; *) echo root ;; esac\n',
+    );
+    writeExecutable(fixturePath("fake-bin", "chown"), "#!/bin/sh\nexit 0\n");
+    const home = prepareHome("ts-root");
+    mkdirSync(join(home, "host-root", "run", "systemd", "system"), { recursive: true });
+    installHostTailscale();
+    const run = runInstaller("ts-root", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const units = join(run.home, "host-root", "etc", "systemd", "system");
+    expect(existsSync(join(units, "omnesis-tls-renew.timer"))).toBe(true);
+    expect(run.calls).toContain("systemctl enable --now omnesis-tls-renew.timer");
+    expect(readFileSync(renewScript(run), "utf8")).toContain("OWNER='10001:10001'");
   });
 });

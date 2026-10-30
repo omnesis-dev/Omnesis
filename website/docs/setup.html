@@ -251,8 +251,9 @@
           you do first.
         </p>
         <p>
-          For a Docker gateway, issue Tailscale, mkcert or other supplied certificates on the host
-          and pass them to the installer as described in
+          For a Docker gateway, the installer issues the Tailscale certificate on the host, when
+          Tailscale runs there, and registers a host job that renews it. Issue mkcert or other
+          certificates on the host yourself and pass them to the installer, as described in
           <a href="/docs/install#docker-tls">TLS in Docker</a>. The container cannot use the host's
           Tailscale daemon. It renews its own self-signed certificate; renew supplied certificates
           on the host and keep their mounted files readable by the container account. The automatic
@@ -402,8 +403,8 @@
           <li>
             Enable MagicDNS and HTTPS certificates for the tailnet. On a native gateway, run
             <code>omnesis tls provision</code> (see <a href="#certificates">Certificates</a>). For a
-            Docker gateway, issue the certificate on the host and follow
-            <a href="/docs/install#docker-tls">TLS in Docker</a> instead.
+            Docker gateway, run the installer again on the host, which issues the certificate there
+            (see <a href="/docs/install#docker-tls">TLS in Docker</a>).
           </li>
           <li>
             Pair the phone from <strong>Settings → Devices → Pair device</strong> in the portal, or

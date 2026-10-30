@@ -21,6 +21,61 @@ const cliFunctions = installer.slice(
   installer.indexOf("provision_tls() {"),
 );
 
+/** `tailscale_status_field`, run with only the tools a Docker host is sure to have. */
+function statusField(json, field) {
+  return execFileSync(
+    "/bin/sh",
+    ["-c", `${cliFunctions}\ntailscale_status_field "$1" "$2"`, "sh", json, field],
+    { encoding: "utf8" },
+  );
+}
+
+describe("install.sh reads tailscale status without Node", () => {
+  // The shape tailscaled prints: indented, Self before Health and Peer, every
+  // peer carrying a DNSName of its own.
+  const STATUS = `{
+  "Version": "1.80.0",
+  "BackendState": "Running",
+  "Self": {
+    "HostName": "studio",
+    "DNSName": "studio.tail-example.ts.net.",
+    "CapMap": { "https://tailscale.com/cap/example": [{ "note": "a } and a \\" inside" }] }
+  },
+  "Health": ["a warning that quotes \\"Self\\" and \\"DNSName\\": \\"decoy.example.com.\\""],
+  "CertDomains": [
+    "studio.tail-example.ts.net"
+  ],
+  "Peer": {
+    "nodekey:1": { "HostName": "peer", "DNSName": "peer.tail-example.ts.net." }
+  }
+}
+`;
+
+  test("this machine's state, name and certificate domains", () => {
+    expect(statusField(STATUS, "backend")).toBe("Running");
+    expect(statusField(STATUS, "name")).toBe("studio.tail-example.ts.net");
+    expect(statusField(STATUS, "certs")).toBe("on");
+  });
+
+  test("a Self without a name never borrows a peer's", () => {
+    const json =
+      '{"BackendState":"Running","Self":{"HostName":"studio"},"Peer":{"k":{"DNSName":"peer.example.com."}}}';
+    expect(statusField(json, "name")).toBe("");
+  });
+
+  test("HTTPS certificates switched off, and a client too old to say", () => {
+    expect(statusField('{"BackendState":"Running","CertDomains":null}', "certs")).toBe("off");
+    expect(statusField('{"BackendState":"Running","CertDomains": [ ]}', "certs")).toBe("off");
+    expect(statusField('{"BackendState":"Running"}', "certs")).toBe("unknown");
+  });
+
+  test("a stopped or unreadable status is not Running", () => {
+    expect(statusField('{"BackendState":"NeedsLogin"}', "backend")).toBe("NeedsLogin");
+    expect(statusField("not json at all", "backend")).toBe("");
+    expect(statusField("", "name")).toBe("");
+  });
+});
+
 describe("install.sh Tailscale CLI detection", () => {
   test("finds a connected macOS app when the PATH CLI is disconnected", () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-detection-"));
@@ -63,10 +118,16 @@ describe("install.sh Tailscale CLI detection", () => {
   test("finds Homebrew's CLI by absolute path when PATH does not reach it", () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-detection-"));
     try {
-      // The isolated PATH contains node, so an installed CLI cannot mask the fixture.
+      // The isolated PATH holds only the tools the status is read with, so an
+      // installed CLI cannot mask the fixture.
       const bin = join(home, "bin");
       mkdirSync(bin);
-      symlinkSync(process.execPath, join(bin, "node"));
+      for (const tool of ["awk", "tr"]) {
+        symlinkSync(
+          execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim(),
+          join(bin, tool),
+        );
+      }
       const brew = join(home, "opt/homebrew/bin");
       mkdirSync(brew, { recursive: true });
       writeFileSync(

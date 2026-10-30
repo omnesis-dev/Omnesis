@@ -293,10 +293,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             the current terminal.
           </li>
           <li>
-            Sets up TLS: a Tailscale certificate when Tailscale is running, a mkcert certificate
-            with <code>--mkcert</code>, and otherwise the gateway's own self-signed certificate.
-            <a href="/docs/setup#certificates">Certificates</a> explains what each one means for
-            browsers and phones.
+            Sets up TLS. When Tailscale is running it asks
+            <em>Tailscale detected — set up a trusted HTTPS certificate for &lt;name&gt;? [Y/n]</em
+            >, Yes by default, and mints the certificate for the machine's MagicDNS name; without a
+            terminal it mints it unasked unless you pass <code>--no-tls</code>. When the tailnet has
+            HTTPS certificates switched off, it says so instead of asking.
+            <code>--mkcert</code> uses a mkcert certificate instead. Otherwise the gateway keeps its
+            own self-signed certificate. <a href="/docs/setup#certificates">Certificates</a>
+            explains what each one means for browsers and phones.
           </li>
           <li>
             Sets up encryption at rest when the machine has a usable OS keyring, and asks what to do
@@ -318,8 +322,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             the pairing code that command asks for.
           </li>
           <li>
-            Ends with a warning when the gateway has no Tailscale certificate, naming the AI agents
-            that cannot connect to the certificate it serves.
+            Ends with the portal address. On a terminal that address carries a one-time login code
+            (<code>?token=…</code>) the installer mints for you, which signs you in once, within 10
+            minutes. Without a terminal, the code is never printed. On a self-signed gateway, the
+            closing summary leads with a warning that browsers and the Chrome extension cannot
+            connect, and names the one command that fixes it. It also names the AI agents that
+            cannot connect to the certificate it serves.
           </li>
         </ol>
         <div class="callout warn">
@@ -333,7 +341,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           Claude apps connect from their providers' servers, so they also need the gateway
           <a href="/docs/connect#tailscale-funnel">published</a>. To move to a Tailscale certificate
           later, set up Tailscale with MagicDNS and HTTPS certificates, then run
-          <code>omnesis tls provision</code>.
+          <code>omnesis tls provision</code>; on a Docker install, run the installer again.
         </div>
 
         <h3 id="roles">Roles</h3>
@@ -487,7 +495,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
               </tr>
               <tr>
                 <td><code>--no-tls</code></td>
-                <td>Skip TLS setup; the gateway keeps its self-signed certificate.</td>
+                <td>
+                  Skip TLS setup: no Tailscale certificate is offered or minted, natively or with
+                  <code>--docker</code>, and the gateway keeps its self-signed certificate. A
+                  certificate an earlier run set up stays.
+                </td>
               </tr>
               <tr>
                 <td>
@@ -747,9 +759,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         <p>
           Open the portal at the address the installer printed:
           <code>https://&lt;magicdns-name&gt;:7600/portal/</code> after a Tailscale certificate,
-          otherwise <code>https://localhost:7600/portal/</code>. With the self-signed certificate
-          your browser warns once; accept it. The portal asks for a pairing code, which you mint on
-          the gateway host:
+          otherwise <code>https://localhost:7600/portal/</code>. On a terminal the installer prints
+          it with a one-time login code, <code>/portal/?token=&lt;code&gt;</code>: opening it signs
+          you in, and the portal removes the code from the address bar. The code works once, within
+          10 minutes. With the self-signed certificate your browser warns once; accept it. For a
+          fresh code, or to sign in from another browser, mint one in a terminal on the gateway
+          host, Docker installs included, and paste it into the portal's login screen:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1075,13 +1090,53 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
 
         <h3 id="docker-tls">TLS in Docker</h3>
         <p>
-          Under Docker the gateway serves its own self-signed certificate unless you give it one.
+          Under Docker the gateway serves its own self-signed certificate unless it is given one.
           That is enough for the CLI, the phone apps and collectors. It is not enough for browsers
           or the <a href="/docs/setup#browser-extension">browser extension</a>, which cannot connect
-          through it at all. For those, issue a certificate on the host and hand it to the
-          container, as below. The container cannot reach the host's Tailscale daemon or install a
-          mkcert authority in your browser, so <code>--mkcert</code> and <code>--no-tls</code> are
-          refused under <code>--docker</code>.
+          through it at all. The container cannot reach the host's Tailscale daemon, so the
+          installer issues the certificate on the host, the machine that runs Docker, as it does for
+          a native install:
+        </p>
+        <ul>
+          <li>
+            When Tailscale is running on the host (on a Mac, the app counts, including the App Store
+            one), it asks
+            <em>Tailscale detected — set up a trusted HTTPS certificate for &lt;name&gt;? [Y/n]</em
+            >, Yes by default. Without a terminal it goes ahead unasked unless you pass
+            <code>--no-tls</code>.
+          </li>
+          <li>
+            It runs <code>tailscale cert</code> for the host's MagicDNS name, writes the pair to
+            <code>~/.config/omnesis/tls/tailscale.crt</code> and <code>tailscale.key</code>, and
+            wires it as if you had passed it with <code>--tls-cert</code> and
+            <code>--tls-key</code>. The containers dial the gateway by that name. The banner, the
+            pairing addresses and the join command for another machine use it too.
+          </li>
+          <li>
+            It registers a job on the host that renews the certificate daily: a launchd agent
+            (<code>dev.omnesis.tls-renew</code>) on macOS, and a systemd timer
+            (<code>omnesis-tls-renew.timer</code>) on Linux. That is a user timer, or a system timer
+            when Docker runs as root. The job runs
+            <code>~/.local/share/omnesis/omnesis-tls-renew.sh</code>, which lives outside the config
+            directory the containers can write. The gateway picks each renewal up within the hour,
+            or at once, since the job also runs <code>omnesis tls reload</code>.
+          </li>
+          <li>
+            A re-run keeps the certificate and its job without asking again, even while Tailscale is
+            down. <code>omnesis uninstall</code> removes the job with the install.
+          </li>
+        </ul>
+        <p>
+          The host needs what a <a href="/docs/setup#certificates">native install</a> needs: it has
+          joined the tailnet, with MagicDNS and HTTPS certificates turned on in the admin console.
+          When HTTPS certificates are off, the installer says so and keeps the self-signed
+          certificate. On Linux, <code>tailscale cert</code> needs your user to be the machine's
+          Tailscale operator; the installer asks <code>sudo</code> for that permission, which
+          changes nothing on the tailnet. Without Tailscale, or when you decline, the closing banner
+          warns that browsers and the extension cannot connect, and names the re-run that fixes it.
+          The installer refuses <code>--mkcert</code> under <code>--docker</code>, because the
+          container cannot install a mkcert authority in your browser. To use your own certificate
+          instead, issue it on the host and hand it over, as below.
         </p>
         <p>
           The self-signed certificate covers <code>localhost</code>, the gateway's mDNS names, the
@@ -1150,47 +1205,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           </figcaption>
         </figure>
         <p>
-          With Tailscale on the host, issue the certificate for the machine's MagicDNS name. The
-          host needs what a <a href="/docs/setup#certificates">native install</a> needs: it has
-          joined the tailnet, with MagicDNS and HTTPS certificates enabled. On Linux,
-          <code>tailscale cert</code> runs as root unless your user is the machine's Tailscale
-          operator (<code>tailscale set --operator=$USER</code>); a key written under
-          <code>sudo</code> belongs to root, so <code>chown</code> both files to your user before
-          installing. A publicly chained certificate like this one needs no <code>--tls-ca</code>,
-          and phones paired against it keep working when it renews.
+          A certificate you renew yourself has to keep the container account's read access. Keep
+          private keys mode 0600 and owned by the daemon UID/GID (10001:10001 for root-run Docker
+          installs), or use an equally restricted group grant. A renewal command running as root can
+          replace a key with a root-owned file the container cannot read. Replace the files
+          atomically, and check <code>omnesis tls status</code> after renewing.
         </p>
-        <p>
-          The renewal hook must preserve the container account's read access. Keep private keys mode
-          0600 and owned by the daemon UID/GID (10001:10001 for root-run Docker installs), or use an
-          equally restricted group grant. A renewal command running as root can replace a key with a
-          root-owned file the container cannot read. Mount the certificate directory so an atomic
-          file replacement is visible, and check <code>omnesis tls status</code>
-          after renewing.
-        </p>
-        <div class="term">
-          <div class="term-bar"><span></span><span></span><span></span></div>
-          <div class="term-body">
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd">mkdir -p ~/.config/omnesis/tls</span>
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >tailscale cert --cert-file ~/.config/omnesis/tls/tailscale.crt --key-file
-                ~/.config/omnesis/tls/tailscale.key studio.tail-example.ts.net</span
-              >
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --tls-cert
-                ~/.config/omnesis/tls/tailscale.crt --tls-key
-                ~/.config/omnesis/tls/tailscale.key</span
-              >
-            </p>
-          </div>
-        </div>
         <p>
           With mkcert, issue the certificate for the names you will use and pass the authority's
           root with <code>--tls-ca</code>. Your browser needs that root installed once, and phones
@@ -1229,10 +1249,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           to verify a gateway behind a private authority.
         </p>
         <p>
-          Renewing is up to you: re-issue into the same files with the tool that made them. The
-          gateway picks the new certificate up within the hour, or at once after
-          <code>omnesis tls reload</code>, without a restart. A later run of the installer without
-          the flags keeps the certificate it recorded. What a renewal means for paired clients is in
+          Renewing a certificate you handed over is up to you: re-issue into the same files with the
+          tool that made them. The gateway picks the new certificate up within the hour, or at once
+          after <code>omnesis tls reload</code>, without a restart. A later run of the installer
+          without the flags keeps the certificate it recorded. Handing over a certificate of your
+          own removes the Tailscale renewal job an earlier run registered. What a renewal means for
+          paired clients is in
           <a href="/docs/security#pinned-clients">Clients that pinned the old certificate</a>.
         </p>
 
@@ -1252,8 +1274,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           </li>
           <li>
             <strong>Certificates are issued on the host.</strong> The container cannot run
-            <code>tailscale cert</code> or <code>mkcert</code>; it serves what
-            <a href="#docker-tls">you hand it</a>, and renews only its own self-signed default.
+            <code>tailscale cert</code> or <code>mkcert</code>. The installer issues a Tailscale
+            certificate on the host and a host job renews it; any other certificate is
+            <a href="#docker-tls">one you hand it</a>. The gateway renews only its own self-signed
+            default.
           </li>
           <li>
             <strong>There is no OS keyring in a container.</strong> Encryption at rest uses a
