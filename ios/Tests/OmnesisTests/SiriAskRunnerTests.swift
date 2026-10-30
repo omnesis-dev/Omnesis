@@ -534,7 +534,7 @@ private final class FrozenClock: @unchecked Sendable {
 extension URLRequest {
     /// `URLProtocol` moves a request body into a stream, so the bytes have
     /// to be read back from `httpBodyStream` rather than `httpBody`.
-    fileprivate var stubbedBody: Data? {
+    var stubbedBody: Data? {
         if let httpBody { return httpBody }
         guard let stream = httpBodyStream else { return nil }
         stream.open()
