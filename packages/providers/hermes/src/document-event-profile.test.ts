@@ -25,16 +25,21 @@ const SOURCE = SourceId("hermes:local");
 const AGENT = "Hermes";
 
 const messages: ConversationMessage[] = [
-  { role: "user", text: "can you draft the release note", atMs: 1_772_000_000_000 },
+  {
+    role: "user",
+    author: { kind: "owner" },
+    text: "can you draft the release note",
+    atMs: 1_772_000_000_000,
+  },
   { role: "assistant", text: "Here is a draft.", atMs: 1_772_000_060_000 },
   { role: "user", text: "ship it", atMs: 1_772_000_120_000 },
 ];
 
-function render(chat: ConversationChat): DocumentInput {
+function render(chat: ConversationChat, turns = messages): DocumentInput {
   return renderConversationDay({
     chat,
     dayKey: "2026-02-25",
-    messages,
+    messages: turns,
     providerId: PROVIDER,
     sourceId: SOURCE,
     agentName: AGENT,
@@ -99,8 +104,17 @@ describe("hermes documentEventProfile", () => {
     expect(hostDoc().metadata.documentType).toBe("conversation");
   });
 
+  test("unidentified user roles never imply the owner's person", () => {
+    const doc = render(
+      { platform: "cli", chatId: "fictional-room" },
+      messages.map((message) => ({ ...message, author: undefined })),
+    );
+    expect(doc.metadata.people).toEqual([]);
+    expect(doc.content).toContain("Unknown participant");
+  });
+
   test("the declared person roles are exactly the roles the push path emits", () => {
-    // The agent's own replies are body text; the operator is the sole mention.
+    // Only the explicitly identified owner is a resolved person mention.
     const emitted = new Set<PersonRole>(
       (platformDoc().metadata.people ?? []).map((p) => p.role as PersonRole),
     );
