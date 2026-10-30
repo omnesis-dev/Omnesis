@@ -5433,6 +5433,8 @@ p.devices-pair-expiry {
 .confirm-modal.devices-modal {
   width: 520px;
   max-width: calc(100vw - 40px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   text-align: left;
 }
 /* Kind selector above the action row, both spanning the modal's width. */
@@ -5441,6 +5443,69 @@ p.devices-pair-expiry {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
+}
+.devices-kind-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 8px;
+  min-width: 0;
+}
+.devices-kind-picker legend {
+  padding: 0;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.devices-kind-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.devices-kind-option {
+  position: relative;
+  cursor: pointer;
+}
+.devices-kind-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.devices-kind-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 108px;
+  padding: 12px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+.devices-kind-option:hover .devices-kind-tile {
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
+}
+.devices-kind-option input:checked + .devices-kind-tile {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  color: var(--text-primary);
+}
+.devices-kind-option input:focus-visible + .devices-kind-tile {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.devices-pair-logo { flex-shrink: 0; object-fit: contain; }
+.devices-pair-logo-apple { filter: invert(1); }
+[data-theme="light"] .devices-pair-logo-apple { filter: none; }
+@media (max-width: 480px) {
+  .devices-kind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* Generate + Close on one row. */
 .devices-modal .devices-pair-actions {

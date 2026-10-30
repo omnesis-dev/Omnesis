@@ -714,6 +714,38 @@ test.describe("Portal", () => {
     await expect(page).toHaveURL(/\/portal\/settings\/models$/);
   });
 
+  test("device pairing tiles support keyboard selection and a narrow viewport", async ({
+    page,
+  }) => {
+    await loginToPortal(page);
+    await page.goto("/portal/settings/devices");
+    await page.getByRole("button", { name: "Pair device", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Pair a new device" });
+    const cli = dialog.getByRole("radio", { name: "CLI", exact: true });
+    await expect(cli).toBeChecked();
+    await cli.focus();
+    await cli.press("ArrowRight");
+    await expect(dialog.getByRole("radio", { name: "Portal", exact: true })).toBeChecked();
+    await dialog.getByText("Browser extension", { exact: true }).click();
+    await expect(dialog.getByRole("radio", { name: "Browser extension" })).toBeChecked();
+    await dialog.getByRole("button", { name: "Generate pairing code" }).click();
+    await expect(dialog.locator(".devices-pair-result")).toContainText("Chrome Web Store");
+    await dialog.getByText("Integration", { exact: true }).click();
+    await expect(dialog.locator(".devices-pair-result")).toHaveCount(0);
+    await expect(dialog.getByLabel("Name", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 667 });
+    const modal = dialog.locator(".devices-modal");
+    const bounds = await modal.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(667);
+    await dialog.getByLabel("Name", { exact: true }).fill("Example display");
+    await dialog.getByRole("button", { name: "Generate pairing code" }).click();
+    await expect(dialog.locator(".devices-pair-result")).toBeVisible();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+
   test("picking a Settings tab moves the URL with it", async ({ page }) => {
     await loginToPortal(page);
     await page.goto("/portal/settings");

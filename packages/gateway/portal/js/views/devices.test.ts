@@ -514,9 +514,8 @@ describe("browser extension pairing", () => {
     // The modal title is specific to the open modal — the page button reads
     // "Pair device", without "a new".
     expect(host.textContent).toContain("Pair a new device");
-    // Minting from the deep-linked modal carries the preselected kind: the
-    // select's value is unreadable under linkedom, so the minted request is
-    // the observable proof of preselection.
+    expect(host.querySelector('input[name="pair-kind"][value="browser"]').hasAttribute("checked")).toBe(true);
+    // Minting from the deep-linked modal carries the preselected kind.
     await act(async () => {
       (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
         new window.Event("submit", { bubbles: true, cancelable: true }),
@@ -524,6 +523,36 @@ describe("browser extension pairing", () => {
     });
     expect(apiMocks.pairDevice).toHaveBeenCalledWith({ kind: "browser" });
   });
+
+  test.each(["collector", "cli", "portal", "ios", "android", "agent", "integration", "browser"])(
+    "the %s tile selects the kind used to generate a code",
+    async (kind) => {
+      apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
+      await act(async () => {
+        render(h(DevicesView, { pairKindRequest: "cli" }), host);
+      });
+      const radios = host.querySelectorAll('input[name="pair-kind"]');
+      expect(radios).toHaveLength(8);
+      for (const radio of radios) {
+        expect(radio.closest("label")?.textContent?.trim()).toBeTruthy();
+        expect(radio.closest("label")?.querySelector("svg, img")).not.toBeNull();
+      }
+      await act(async () => {
+        host.querySelector(`input[name="pair-kind"][value="${kind}"]`).dispatchEvent(
+          new window.Event("change", { bubbles: true }),
+        );
+      });
+      expect(host.querySelector(`input[name="pair-kind"][value="${kind}"]`).hasAttribute("checked")).toBe(true);
+      expect(host.querySelector('input[name="pair-kind"][value="cli"]').hasAttribute("checked")).toBe(kind === "cli");
+      expect(host.querySelector("#pair-name") !== null).toBe(kind === "integration");
+      await act(async () => {
+        (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
+          new window.Event("submit", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(apiMocks.pairDevice).toHaveBeenCalledWith(expect.objectContaining({ kind }));
+    },
+  );
 
   test("a portal pairing shows its code once", async () => {
     apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });

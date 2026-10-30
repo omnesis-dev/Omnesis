@@ -7,6 +7,9 @@
 // everywhere. Do NOT inline device-kind SVGs anywhere else.
 
 import { html } from "htm/preact";
+import { APPLE_LOGO_URL } from "./ios-links.js";
+import { ANDROID_LOGO_URL } from "./android-links.js";
+import { CHROME_LOGO_URL } from "./extension-links.js";
 
 /**
  * Inner markup for a device-kind glyph, drawn inside a shared 16×16 viewBox.
@@ -71,4 +74,12 @@ export function KindIcon({ kind, size = 16, class: className = "devices-kind-ico
     stroke-linecap="round"
     stroke-linejoin="round"
   >${kindGlyph(kind)}</svg>`;
+}
+
+/** Larger pairing tiles use the bundled platform marks where available. */
+export function PairKindIcon({ kind }) {
+  const logo = { ios: APPLE_LOGO_URL, android: ANDROID_LOGO_URL, browser: CHROME_LOGO_URL }[kind];
+  return logo
+    ? html`<img class=${`devices-pair-logo${kind === "ios" ? " devices-pair-logo-apple" : ""}`} src=${logo} alt="" width="32" height="32" />`
+    : html`<${KindIcon} kind=${kind} size=${32} class="devices-pair-logo" />`;
 }

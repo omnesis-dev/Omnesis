@@ -33,7 +33,7 @@ import { navigate } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
-import { KindIcon } from "../lib/device-kind-icon.js";
+import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { DoctorReportView } from "./doctor.js";
 import {
@@ -1231,12 +1231,25 @@ function PairModal({
           </p>
         `}
         <form class="devices-pair-form" onSubmit=${onPair}>
-          ${!repairTarget && html`<div class="form-group">
-            <label for="pair-kind">Kind</label>
-            <select id="pair-kind" autoFocus value=${pairKind} onChange=${(e) => onKindChange(e.target.value)}>
-              ${deviceKinds().map((k) => html`<option key=${k} value=${k}>${KIND_LABELS[k]}</option>`)}
-            </select>
-          </div>`}
+          ${!repairTarget && html`<fieldset class="devices-kind-picker">
+            <legend>What would you like to pair?</legend>
+            <div class="devices-kind-grid">
+              ${deviceKinds().map((kind) => html`<label key=${kind} class="devices-kind-option">
+                <input
+                  type="radio"
+                  name="pair-kind"
+                  value=${kind}
+                  checked=${pairKind === kind}
+                  autoFocus=${pairKind === kind}
+                  onChange=${() => onKindChange(kind)}
+                />
+                <span class="devices-kind-tile">
+                  <${PairKindIcon} kind=${kind} />
+                  <span>${KIND_LABELS[kind]}</span>
+                </span>
+              </label>`)}
+            </div>
+          </fieldset>`}
           ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
             <label for="pair-name">Name</label>
             <input
