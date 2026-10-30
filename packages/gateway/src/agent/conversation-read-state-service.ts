@@ -210,7 +210,13 @@ export class ConversationReadStateService implements ConversationReadStatePort {
   }
 
   expectContentViewed(conversationId: string, messageId: string, durationMs: number): void {
-    const until = this.now() + durationMs;
+    const now = this.now();
+    // A display receipt can arrive after the transcript was persisted, so
+    // there may be no future arrival to consume that entry.
+    for (const [key, expiresAt] of this.expectedViewingUntil) {
+      if (expiresAt <= now) this.expectedViewingUntil.delete(key);
+    }
+    const until = now + durationMs;
     this.expectedViewingUntil.set(this.expectedViewingKey(conversationId, messageId), until);
   }
 

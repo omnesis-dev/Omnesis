@@ -90,35 +90,50 @@ struct SiriAskRunner {
     /// Run one ask. `question` must already be non-empty and trimmed —
     /// the intents guard emptiness so Siri can re-prompt for the value.
     func run(question: String) async -> SiriAskOutcome {
-        // The budget clock starts here, before the first round trip — see
-        // `answerBudget`.
+        await runCapture(question: question, durableCapture: false).outcome
+    }
+
+    /// Complication audio is already accepted durably. If the previous turn
+    /// is busy, post this question in a new conversation instead of losing it.
+    func runCapture(
+        question: String,
+        durableCapture: Bool = true,
+        completionNotifications: Bool = false
+    ) async
+        -> (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool) {
         let startedAt = now()
         guard let pairing = (try? pairing.current()).flatMap({ $0 }) else {
-            return .notPaired
+            return (.notPaired, nil, nil, true)
         }
         let client = makeClient(pairing.url, pairing.token)
         onActivity?(.connecting)
-        let session: CreateSessionResponse
+        var session: CreateSessionResponse
         switch await openSession(client, resumeFromId: continuity.conversationToResume(), within: budget) {
-        case .ended(let outcome): return outcome
+        case .ended(let outcome): return (outcome, nil, nil, true)
         case .opened(let opened): session = opened
         }
-        switch SiriAskPreflight.action(for: session) {
-        case .reportPreviousTurnRunning(let conversationId):
-            // The previous ask's turn is still running — its own armed
-            // push delivers that answer. Refresh the continuity stamp so
-            // the promised follow-up resumes this same thread.
-            continuity.record(conversationId: conversationId)
-            return .previousTurnRunning
-        case .send(let conversationId):
-            return await send(
-                question: question,
-                client: client,
-                session: session,
-                conversationId: conversationId,
-                startedAt: startedAt
-            )
+        if case .reportPreviousTurnRunning(let conversationId) = SiriAskPreflight.action(for: session) {
+            guard durableCapture else {
+                continuity.record(conversationId: conversationId)
+                return (.previousTurnRunning, conversationId, nil, false)
+            }
+            let remaining = max(0, budget - now().timeIntervalSince(startedAt))
+            switch await openSession(client, resumeFromId: nil, within: remaining) {
+            case .ended(let outcome): return (outcome, nil, nil, true)
+            case .opened(let opened): session = opened
+            }
         }
+        let conversationId = session.conversationId ?? session.sessionId
+        let sent = await send(
+            question: question,
+            client: client,
+            session: session,
+            conversationId: conversationId,
+            startedAt: startedAt,
+            durableCapture: durableCapture,
+            completionNotifications: completionNotifications
+        )
+        return (sent.outcome, conversationId, sent.messageId, sent.notifyLocally)
     }
 
     /// Ask a question nobody is waiting on: one the watch queued after the
@@ -228,6 +243,13 @@ struct SiriAskRunner {
     private final class PostedFlag: @unchecked Sendable {
         private let lock = NSLock()
         private var posted = false
+        private var postedMessageId: String?
+
+        var messageId: String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return postedMessageId
+        }
 
         var value: Bool {
             lock.lock()
@@ -235,9 +257,10 @@ struct SiriAskRunner {
             return posted
         }
 
-        func set() {
+        func set(messageId: String? = nil) {
             lock.lock()
             posted = true
+            postedMessageId = messageId
             lock.unlock()
         }
     }
@@ -254,9 +277,11 @@ struct SiriAskRunner {
         client: AgentClient,
         session: CreateSessionResponse,
         conversationId: String,
-        startedAt: Date
+        startedAt: Date,
+        durableCapture: Bool,
+        completionNotifications: Bool
     ) async
-        -> SiriAskOutcome {
+        -> (outcome: SiriAskOutcome, messageId: String?, notifyLocally: Bool) {
         // Whatever reaching the gateway cost comes out of the budget, so the
         // spoken wait and the armed push both end when the caller's own
         // ceiling does.
@@ -272,13 +297,16 @@ struct SiriAskRunner {
         // the still-working dialog rather than a failure: the send's
         // `notifyAfterMs` armed a push for exactly this wait, so a turn
         // whose answer this ask never sees is still delivered.
+        let posted = PostedFlag()
         let pending = PendingTurn(
             question: question,
             client: client,
             session: session,
             conversationId: conversationId,
             remaining: remaining,
-            viewingForMs: Self.viewingForMs(remaining: remaining, settleGrace: settleGrace)
+            viewingForMs: durableCapture ? nil : Self.viewingForMs(remaining: remaining, settleGrace: settleGrace),
+            onPosted: { posted.set(messageId: $0) },
+            notificationRemaining: durableCapture ? (completionNotifications ? 0 : SiriAskBudget.minimumRemaining) : nil
         )
         let outcome = await Self.beforeDeadline(remaining + settleGrace) {
             await Self.turn(
@@ -293,8 +321,16 @@ struct SiriAskRunner {
             )
         }
         switch outcome {
-        case .timedOut: return .stillWorking
-        case .finished(let resolved): return resolved
+        case .timedOut: return (.stillWorking, posted.messageId, false)
+        case .finished(let resolved):
+            switch resolved {
+            case .answered, .emptyAnswer, .failed:
+                return (resolved, posted.messageId, durableCapture && !completionNotifications)
+            case .stillWorking, .previousTurnRunning:
+                return (resolved, posted.messageId, false)
+            default:
+                return (resolved, posted.messageId, true)
+            }
         }
     }
 
@@ -308,6 +344,8 @@ struct SiriAskRunner {
         /// The read-state lease for a caller presenting the answer as it is
         /// produced; nil when nothing is.
         let viewingForMs: Int?
+        var onPosted: (@Sendable (String) -> Void)?
+        var notificationRemaining: TimeInterval?
     }
 
     /// Post the question and fold the turn's stream into a spoken outcome.
@@ -332,12 +370,13 @@ struct SiriAskRunner {
             sent = try await client.sendMessage(
                 sessionId: session.sessionId,
                 text: question,
-                notifyAfterMs: SiriAskBudget.notifyAfterMs(remaining: remaining),
+                notifyAfterMs: pending.notificationRemaining.map { Int($0 * 1000) } ?? SiriAskBudget.notifyAfterMs(remaining: remaining),
                 viewingForMs: pending.viewingForMs
             )
         } catch {
             return .sendFailed
         }
+        pending.onPosted?(sent.messageId)
         onSent()
         let engine = VoiceAnswerEngine(
             sessionId: session.sessionId,

@@ -48,6 +48,15 @@ final class WatchAskRouter {
     /// The relay in flight, cancelled when a newer question replaces it.
     private var relay: Task<Void, Never>?
 
+    /// A new capture owns presentation even before its route is known.
+    func cancelPending() {
+        relay?.cancel()
+        relay = nil
+        state = .idle
+        activity = nil
+        WatchSpeaker.shared.stop()
+    }
+
     func submit(question: String) {
         WatchComplicationCapture.shared.cancel()
         let ref = UUID().uuidString

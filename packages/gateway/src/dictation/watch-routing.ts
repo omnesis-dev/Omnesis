@@ -16,9 +16,19 @@ export class WatchRoutingService {
     },
   ) {}
 
-  status(): { supported: boolean; enabled: boolean; active: boolean } {
+  status(): {
+    supported: boolean;
+    enabled: boolean;
+    active: boolean;
+    completionNotifications: boolean;
+  } {
     const enabled = this.deps.getConfig()?.inference?.dictation?.useDecisionGateForWatch !== false;
-    return { supported: true, enabled, active: enabled && this.deps.getDecision() !== null };
+    return {
+      supported: true,
+      enabled,
+      active: enabled && this.deps.getDecision() !== null,
+      completionNotifications: true,
+    };
   }
 
   async route(text: string, signal?: AbortSignal): Promise<"ask" | "note"> {

@@ -121,19 +121,20 @@ struct WatchAskView: View {
 
     private var idle: some View {
         VStack(spacing: 10) {
-            Image(systemName: "questionmark.bubble")
-                .font(.system(size: 34))
-                .foregroundStyle(.tint)
-            Text("Ask Omnesis")
-                .font(.headline)
+            Image("OmnesisMark").resizable().scaledToFit()
+                .frame(width: 48, height: 48)
+                .foregroundStyle(Color(red: 88 / 255, green: 166 / 255, blue: 1))
+            Text("Omnesis").font(.headline)
             if hintVisible {
-                dictateButton("Ask")
-                    .transition(.opacity)
-                Text("Or say \u{201C}Ask Omnesis\u{201D} to Siri.")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .transition(.opacity)
+                Button {
+                    Task { await WatchComplicationCapture.shared.start() }
+                } label: {
+                    Label("Tap to speak", systemImage: "mic.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 88 / 255, green: 166 / 255, blue: 1))
+                .foregroundStyle(.black)
+                .transition(.opacity)
             }
         }
         .padding()

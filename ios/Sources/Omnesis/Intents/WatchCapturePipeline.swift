@@ -19,6 +19,7 @@ actor WatchCapturePipeline {
         let saveNote: @Sendable (String, WatchVoiceRecording, NoteAudio?) async -> Bool
         let ask: @Sendable (String) async -> Void
         let notify: @Sendable (WatchCaptureNotice) async -> Void
+        var resolved: @Sendable (WatchCaptureRoute) async -> Void = { _ in }
     }
 
     private var active: Set<String> = []
@@ -55,6 +56,7 @@ actor WatchCapturePipeline {
             let audio = inbox.audioURL(item.id)
             let gateway = try await deps.gatewayDictation()
             if requested == .note, gateway {
+                await deps.resolved(.note)
                 guard await deps.saveNote("", recording, NoteAudio(file: audio, locale: recording.locale)) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -67,6 +69,7 @@ actor WatchCapturePipeline {
                     inbox: inbox,
                     deps: deps
                 )
+                await deps.resolved(item.state.captureRoute ?? .ask)
                 if item.state.captureRoute == .note {
                     guard await deps.saveNote(text, recording, nil) else { throw CocoaError(.fileWriteUnknown) }
                 } else {

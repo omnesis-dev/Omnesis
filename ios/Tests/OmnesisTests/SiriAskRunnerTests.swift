@@ -381,6 +381,37 @@ final class SiriAskRunnerTests: XCTestCase {
         XCTAssertEqual(continuity.store.conversationToResume(), "sess-fresh")
     }
 
+    func testAComplicationAskBehindARunningTurnStartsAFreshConversation() async throws {
+        let clock = FrozenClock()
+        let pairing = try pairingService()
+        let continuity = try continuityStore(resuming: "conv-1", now: { clock.now })
+        defer { continuity.discard() }
+        StubGatewayProtocol.answerTurn(sessionId: "sess-fresh", text: "Friday.")
+        StubGatewayProtocol.resumeIsBusy(sessionId: "conv-1")
+
+        let handed = await runner(
+            pairing: pairing,
+            continuity: continuity.store,
+            budget: 20,
+            now: { clock.now }
+        ).runCapture(question: "and the one after that?", completionNotifications: true)
+
+        XCTAssertEqual(handed.outcome, .answered(text: "Friday."))
+        let creates = StubGatewayProtocol.sessionCreates()
+        XCTAssertEqual(creates.count, 2)
+        let fresh = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(creates[1].stubbedBody)) as? [String: Any]
+        )
+        XCTAssertNil(fresh["resumeFromId"])
+        let send = try XCTUnwrap(StubGatewayProtocol.sends().first)
+        XCTAssertEqual(send.url?.path, "/agent/sessions/sess-fresh/messages")
+        XCTAssertEqual(continuity.store.conversationToResume(), "sess-fresh")
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(send.stubbedBody)) as? [String: Any])
+        XCTAssertEqual(payload["notifyAfterMs"] as? Int, 0)
+        XCTAssertNil(payload["viewingForMs"])
+        XCTAssertFalse(handed.notifyLocally)
+    }
+
     func testAQueuedAskOnAnUnpairedPhoneIsNotSent() async throws {
         let clock = FrozenClock()
         let continuity = try continuityStore(resuming: nil, now: { clock.now })

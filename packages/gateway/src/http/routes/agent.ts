@@ -108,7 +108,7 @@ const messageBody = z.object({
   // Mutually exclusive with `deepResearch` — the Deep Research loop never
   // arms the slow-answer watcher, so the handler rejects the pair with 400
   // rather than silently dropping the promised push.
-  notifyAfterMs: z.number().int().min(1000).max(600_000).optional(),
+  notifyAfterMs: z.union([z.literal(0), z.number().int().min(1000).max(600_000)]).optional(),
   // A bounded promise that this turn's answer is being presented while it is
   // produced (the Watch ask surface). Registered immediately after the turn
   // is accepted, before its asynchronous completion can persist read state.
@@ -134,6 +134,7 @@ const conversationPatchBody = z
 const conversationSeenBody = z
   .object({
     viewing: z.boolean().optional(),
+    messageId: z.string().min(1).max(200).optional(),
   })
   .strict();
 
@@ -757,6 +758,11 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       const id = c.req.param("id");
       if (!id) throw new BadRequestError("conversation id required");
       const body = c.req.valid("json") as z.infer<typeof conversationSeenBody>;
+      if (body.messageId) {
+        // Actual display was confirmed for this turn. Keep that fact through
+        // a final transcript write that may still be racing the stream.
+        deps.conversationReadState?.expectContentViewed(id, body.messageId, 60_000);
+      }
       await deps.conversationReadState?.markSeen(id, { viewing: body.viewing ?? true });
       return c.json({ ok: true });
     },

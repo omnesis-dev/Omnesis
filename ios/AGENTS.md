@@ -81,8 +81,11 @@ The recorder starts immediately without system dictation or live text, then
 Ask/Tell stop and durably enqueue the recording in one tap. The phone publishes
 unified-capture support and the gateway's decision-gate status in
 `WatchDictationGate`. With the decision gate active, Send replaces Ask/Tell.
-Legacy deep links enter the unified capture, while in-app buttons retain their
-existing flow. A Siri relay or in-app dictation dismisses the complication UI.
+Legacy deep links enter the unified capture. Normal app launch shows a branded
+Tap to speak button that opens the same recorder; only the complication starts
+listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
+Tell returns to the watch face after confirmation once WatchConnectivity owns
+the transfer. Automatic Send waits for a note classification before dismissal.
 
 `WatchCapturePipeline` handles complication audio on the phone using
 `WatchVoiceInbox`. Ref-keyed state and completion receipts deduplicate transfers
@@ -93,7 +96,15 @@ vocabulary cache and requires prior speech authorization, offered in Settings â†
 Apple Watch. Failures retain the original recording for retry on activation;
 captures older than a week are reported and removed. Ambiguous Ask hand-offs are
 reported rather than automatically replayed. Explicit Ask uses the existing
-queued-ask runner and notification path. The decision service defaults unknown
+bounded answer runner. Correlated live and queued phone updates carry routing,
+progress and the answer back to the Watch. The gateway advertises
+`watchCapture.completionNotifications`; supported gateways accept
+`notifyAfterMs: 0` to arm a completion fallback without a viewing lease.
+The Watch acknowledges an actual displayed answer; the phone marks it seen
+with the accepted message id so the receipt survives a racing persistence write. The
+gateway gives this acknowledgement three seconds before notifying only if
+the answer remains unread. Older gateways retain the short hand-off and
+local notification fallback. The decision service defaults unknown
 or failed classifications to Ask. The gateway's
 `inference.dictation.useDecisionGateForWatch` opt-out restores two buttons.
 

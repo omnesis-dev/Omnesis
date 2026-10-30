@@ -322,8 +322,11 @@ public final class AgentClient: Sendable {
     ///
     /// `viewing` says whether it is still on screen. True holds it open, so an
     /// answer arriving now counts as seen; false says the user moved on.
-    public func markConversationSeen(id: String, viewing: Bool) async throws {
-        let body = try JSONEncoder().encode(["viewing": viewing])
+    public func markConversationSeen(id: String, viewing: Bool, messageId: String? = nil) async throws {
+        struct Seen: Encodable { let viewing: Bool
+            let messageId: String?
+        }
+        let body = try JSONEncoder().encode(Seen(viewing: viewing, messageId: messageId))
         _ = try await dispatch(
             method: "POST",
             path: "/agent/conversations/\(percentEncode(id))/seen",

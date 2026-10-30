@@ -24,12 +24,22 @@ describe("Watch complication routing", () => {
         ({ inference: { dictation: { useDecisionGateForWatch: enabled } } }) as OmnesisConfig,
       getDecision: () => decision,
     });
-    expect(service.status()).toEqual({ supported: true, enabled: true, active: false });
+    expect(service.status()).toEqual({
+      supported: true,
+      enabled: true,
+      active: false,
+      completionNotifications: true,
+    });
     decision = model;
     expect(service.status().active).toBe(true);
     expect(await service.route("Remember that the bicycle is at the workshop")).toBe("note");
     enabled = false;
-    expect(service.status()).toEqual({ supported: true, enabled: false, active: false });
+    expect(service.status()).toEqual({
+      supported: true,
+      enabled: false,
+      active: false,
+      completionNotifications: true,
+    });
     expect(await service.route("Where is my bicycle?")).toBe("ask");
     expect(model.decide).toHaveBeenCalledTimes(1);
   });

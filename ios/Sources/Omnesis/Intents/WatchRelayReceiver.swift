@@ -336,6 +336,10 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                 voiceInbox.release(item)
                 return
             }
+            guard let recording = WatchVoiceRecording(metadata: item.state.metadata) else {
+                voiceInbox.discard(item)
+                return
+            }
             let client = WatchCaptureClient(baseURL: pairing.url, token: pairing.token)
             let assertion = WatchRelayBackgroundAssertion()
             await assertion.begin()
@@ -364,7 +368,29 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                     let outcome = await self.saveNote(text, captureTime: recording.captureTime, id: recording.ref, audio: ownedAudio)
                     return outcome == .saved || outcome == .queuedOnPhone
                 },
-                ask: { await self.handOff($0) },
+                ask: { question in
+                    let reporter = WatchAskActivityReporter(session: WCSession.default, ref: recording.ref)
+                    let status = try? await SearchClient(baseURL: pairing.url, token: pairing.token).getStatus()
+                    let result: (outcome: SiriAskOutcome, conversationId: String?, messageId: String?, notifyLocally: Bool)
+                    if status?.watchCapture?.completionNotifications == true {
+                        result = await self.makeRunner { reporter.report($0) }
+                            .runCapture(question: question, completionNotifications: true)
+                    } else {
+                        let handed = await self.makeHandOffRunner().handOff(question: question)
+                        result = (handed.outcome, handed.conversationId, nil, true)
+                    }
+                    let (outcome, conversationId, messageId, notifyLocally) = result
+                    var message = SiriAskWire.result(for: outcome, ref: recording.ref)
+                    message["captureUpdate"] = "answer"
+                    let displayed = await self.sendCaptureAnswer(message)
+                    if displayed, case .answered = outcome, let conversationId, let messageId {
+                        try? await AgentClient(baseURL: pairing.url, token: pairing.token)
+                            .markConversationSeen(id: conversationId, viewing: false, messageId: messageId)
+                    }
+                    if !displayed, notifyLocally, let notice = QueuedAskNotice.notice(for: outcome, conversationId: conversationId) {
+                        await self.post(title: notice.title, body: notice.body, userInfo: notice.userInfo)
+                    }
+                },
                 notify: { notice in
                     let body = switch notice {
                     case .delayed:
@@ -376,10 +402,35 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                         "Your question's delivery was interrupted. Check the conversation on your phone before asking again."
                     }
                     await self.post(title: "Check your Watch capture", body: body, userInfo: [:])
+                },
+                resolved: { route in
+                    self.sendCaptureUpdate(["captureUpdate": "route", "ref": recording.ref, "route": route.rawValue])
                 }
             ))
             await assertion.end()
         }
+    }
+
+    private func sendCaptureAnswer(_ message: [String: String]) async -> Bool {
+        let session = WCSession.default
+        guard session.activationState == .activated else { return false }
+        session.transferUserInfo(message)
+        return await withCheckedContinuation { continuation in
+            let reply = WatchCaptureDisplayReply(continuation)
+            session.sendMessage(message, replyHandler: { response in
+                reply.finish(response["displayed"] as? Bool == true)
+            }, errorHandler: { _ in reply.finish(false) })
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { reply.finish(false) }
+        }
+    }
+
+    private func sendCaptureUpdate(_ message: [String: String]) {
+        // Queued delivery survives the wrist going down; the capture ref keeps
+        // a late result from replacing a newer recording or Siri question.
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+        session.transferUserInfo(message)
+        session.sendMessage(message, replyHandler: nil) { _ in }
     }
 
     /// A question nobody is waiting on: asked on the gateway, and announced
@@ -467,6 +518,24 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
             await completion(self.saveNote(text, captureTime: captureTime, id: id))
             await assertion.end()
         }
+    }
+}
+
+/// A Watch reply and its deadline race to settle one display receipt.
+private final class WatchCaptureDisplayReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    init(_ continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    func finish(_ displayed: Bool) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: displayed)
     }
 }
 

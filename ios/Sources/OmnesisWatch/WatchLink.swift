@@ -491,11 +491,40 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         }
     }
 
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        guard message["captureUpdate"] as? String == "answer",
+              let ref = message["ref"] as? String,
+              let result = SiriAskWire.resultOutcome(from: message) else {
+            replyHandler(["displayed": false])
+            return
+        }
+        Task { @MainActor in
+            let displayed = WatchComplicationCapture.shared.answered(result.outcome, ref: ref)
+            replyHandler(["displayed": displayed])
+        }
+    }
+
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        _ = receiveCaptureUpdate(userInfo)
+    }
+
+    private func receiveCaptureUpdate(_ message: [String: Any]) -> Bool {
+        guard let update = message["captureUpdate"] as? String,
+              let ref = message["ref"] as? String else { return false }
+        if update == "route", let route = (message["route"] as? String).flatMap(WatchCaptureRoute.init(rawValue:)) {
+            Task { @MainActor in WatchComplicationCapture.shared.resolved(route, ref: ref) }
+        } else if update == "answer", let result = SiriAskWire.resultOutcome(from: message) {
+            Task { @MainActor in WatchComplicationCapture.shared.answered(result.outcome, ref: ref) }
+        }
+        return true
+    }
+
     /// Mid-turn progress pushed by the phone (no reply expected): the tool the
     /// agent just started, so the wait can name its current step. Anything
     /// else on this channel is ignored — the ask itself travels as a reply to
     /// the watch's own `sendMessage`, never as an inbound message.
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        if receiveCaptureUpdate(message) { return }
         if let result = SiriAskWire.resultOutcome(from: message) {
             // A result without a ref comes from a phone build that predates
             // correlation; accepting it blind could answer the wrong ask, so
@@ -506,6 +535,7 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         guard let activity = SiriAskWire.activitySnapshot(from: message) else { return }
         Task { @MainActor in
             WatchAskRouter.shared.report(activity: activity.snapshot, ref: activity.ref)
+            WatchComplicationCapture.shared.report(activity.snapshot, ref: activity.ref)
         }
     }
 }

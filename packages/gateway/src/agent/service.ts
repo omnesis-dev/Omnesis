@@ -30,6 +30,7 @@ import {
 } from "./voice-session.js";
 export type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   BACKGROUND_RATE_LIMIT_PATIENCE,
@@ -2707,13 +2708,20 @@ export class AgentService {
         // budget stays silent even when its persistence straddled it. A
         // failed turn may emit no terminal event; then the settle time is
         // now, the earliest point the failure is known.
-        if ((settledAt ?? Date.now()) - acceptedAt <= notifyAfterMs) return;
+        if (notifyAfterMs > 0 && (settledAt ?? Date.now()) - acceptedAt <= notifyAfterMs) return;
         // The user cancelled from a live client — no notification owed.
         if (stopReason === "canceled") return;
         const answer =
           completed && stopReason === "end_turn" && answerText.trim().length > 0
             ? answerText
             : null;
+        if (notifyAfterMs === 0 && answer !== null && this.readState) {
+          // Give a live Watch a brief opportunity to confirm actual display.
+          // No viewing lease is taken while waiting: a suspended phone cannot
+          // silently consume the answer. A confirmed display marks it seen.
+          await delay(3000, undefined, { ref: false });
+          if (!this.readState.unreadAmong([sessionId]).has(sessionId)) return;
+        }
         await this.notifyAnswer?.({ conversationId: sessionId, answer });
       })
       .catch((err) => {

@@ -16,6 +16,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     private(set) var state: State = .idle
     private(set) var automatic = false
     private(set) var level: Float = 0
+    private(set) var activity: SiriAskActivitySnapshot?
     @ObservationIgnored private var recorder: AVAudioRecorder?
     @ObservationIgnored private var recording: WatchVoiceRecording?
     @ObservationIgnored private var selectedRoute: WatchCaptureRoute?
@@ -23,13 +24,20 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     @ObservationIgnored private var interruption: NSObjectProtocol?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var audioSessionActive = false
+    @ObservationIgnored private var sentRef: String?
+    @ObservationIgnored private var answeredRef: String?
+    @ObservationIgnored private var carried = false
 
     func start() async {
         guard state == .idle || state == .failed || isSent else { return }
+        WatchAskRouter.shared.cancelPending()
         WatchDictation.cancelPending()
         WatchVoiceCapture.shared.cancel()
         WatchVoiceCapture.shared.dismiss()
         discard()
+        sentRef = nil
+        answeredRef = nil
+        activity = nil
         generation += 1
         let current = generation
         state = .preparing
@@ -110,6 +118,9 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
 
     func cancel() {
         generation += 1
+        sentRef = nil
+        answeredRef = nil
+        activity = nil
         discard()
         state = .idle
     }
@@ -167,12 +178,55 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
             recorder = nil
             self.recording = nil
             selectedRoute = nil
+            sentRef = recording.ref
             state = .sent(route)
             WKInterfaceDevice.current().play(.success)
-            _ = WatchLink.shared.flushOutbox(.linkMayHaveChanged)
+            carried = WatchLink.shared.flushOutbox(.linkMayHaveChanged).contains(recording.ref)
+            if route == .note { leaveAfterConfirmation() }
         } catch { discard()
             state = .failed
             WKInterfaceDevice.current().play(.failure)
+        }
+    }
+
+    func resolved(_ route: WatchCaptureRoute, ref: String) {
+        guard sentRef == ref, isSent else { return }
+        state = .sent(route)
+        if route == .note {
+            // The phone resolving the route proves it owns the audio.
+            carried = true
+            leaveAfterConfirmation()
+        }
+    }
+
+    func report(_ activity: SiriAskActivitySnapshot, ref: String?) {
+        guard sentRef == ref, isSent else { return }
+        self.activity = activity
+    }
+
+    @discardableResult
+    func answered(_ outcome: SiriAskOutcome, ref: String) -> Bool {
+        if answeredRef == ref { return WKExtension.shared().applicationState == .active }
+        guard sentRef == ref, isSent else { return false }
+        cancel()
+        answeredRef = ref
+        WatchPresenter.shared.screen = .ask
+        WatchAskRouter.shared.answered(outcome: outcome)
+        WKInterfaceDevice.current().play(.notification)
+        WatchSpeaker.shared.speak(SiriAskDialog.text(for: outcome))
+        return WKExtension.shared().applicationState == .active
+    }
+
+    private func leaveAfterConfirmation() {
+        let current = generation
+        Task {
+            try? await Task.sleep(for: .seconds(WatchVoiceDismissal.confirmationDelay))
+            let otherWork = WatchAskRouter.shared.isAsking || WatchSpeaker.shared.isSpeaking
+                || WatchVoiceCapture.shared.state != .idle
+            guard current == generation, state == .sent(.note),
+                  WatchVoiceDismissal.shouldLeave(showingSent: isSent, carriedByTransfer: carried, otherWorkInFlight: otherWork)
+            else { return }
+            exit(0)
         }
     }
 
@@ -189,7 +243,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
 struct WatchComplicationCaptureView: View {
     private var capture = WatchComplicationCapture.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let accent = Color(red: 0.76, green: 0.94, blue: 0.50)
+    private let accent = Color(red: 88 / 255, green: 166 / 255, blue: 1)
 
     var body: some View {
         if capture.state == .failed {
@@ -204,17 +258,20 @@ struct WatchComplicationCaptureView: View {
     }
 
     private var layout: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             Spacer(minLength: 0)
             ZStack {
-                Circle().fill(accent.opacity(0.08)).frame(width: 76, height: 76)
-                Circle().stroke(accent.opacity(0.35), lineWidth: 1)
-                    .frame(width: 64, height: 64)
-                    .scaleEffect(reduceMotion ? 1 : 1 + CGFloat(capture.level) * 0.17)
-                    .animation(.easeOut(duration: 0.16), value: capture.level)
+                Circle().fill(accent.opacity(0.14 + Double(capture.level) * 0.22))
+                    .frame(width: 88, height: 88)
+                ForEach(0 ..< 3) { ring in
+                    Circle().stroke(accent.opacity(0.75 - Double(ring) * 0.16), lineWidth: 3 - CGFloat(ring) * 0.5)
+                        .frame(width: 54 + CGFloat(ring) * 14, height: 54 + CGFloat(ring) * 14)
+                        .scaleEffect(reduceMotion ? 1 : 1 + CGFloat(capture.level) * (0.28 + CGFloat(ring) * 0.08))
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: capture.level)
+                }
                 Image("OmnesisMark").resizable().scaledToFit().frame(width: 36, height: 36)
                     .foregroundStyle(accent)
-            }.accessibilityHidden(true)
+            }.frame(height: 96).accessibilityHidden(true)
             content
             Spacer(minLength: 0)
         }
@@ -246,7 +303,8 @@ struct WatchComplicationCaptureView: View {
             ProgressView().tint(accent)
         case .sent(let route):
             Text("Got it.").font(.headline)
-            Text(route == .ask ? "I'll notify you when it's ready." : "I'll deal with it.")
+            Text(route == .ask ? (capture.activity?.label ?? "Waiting for your answer…") : route == .automatic ?
+                "Working out what you need…" : "I'll deal with it.")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("Done") { capture.cancel() }.buttonStyle(.plain).font(.caption2)
         case .failed:

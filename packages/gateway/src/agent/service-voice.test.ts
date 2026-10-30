@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AgentService,
@@ -13,6 +13,7 @@ import {
   type AgentPromptProfile,
 } from "./service.js";
 import { FsConversationStore, type ConversationStore } from "./conversation-store.js";
+import type { ConversationReadStatePort } from "./conversation-read-state-service.js";
 import type { ChatBackend, DocumentPort, SearchPort, TurnInput } from "@omnesis/agent";
 import type { AgentEvent } from "@omnesis/core";
 
@@ -130,6 +131,7 @@ function makeService(
     systemPrompt?: (profile: AgentPromptProfile) => string;
     notifyAnswer?: (notification: AgentAnswerNotification) => void | Promise<void>;
     store?: ConversationStore;
+    readState?: ConversationReadStatePort;
   } = {},
 ): AgentService {
   let n = 0;
@@ -139,6 +141,7 @@ function makeService(
     systemPrompt: extra.systemPrompt ?? "test",
     notifyAnswer: extra.notifyAnswer,
     store: extra.store,
+    readState: extra.readState,
     sessionIdGen: () => `S_voice_${++n}`,
     idleTimeoutMs: 60_000,
   });
@@ -396,6 +399,56 @@ describe("prompt profile on resume", () => {
 });
 
 describe("sendMessage notifyAfterMs", () => {
+  it("always notifies at completion when the caller requests a zero budget", async () => {
+    const notifications: AgentAnswerNotification[] = [];
+    const service = makeService(new SlowBackend(0), {
+      notifyAnswer: (n) => {
+        notifications.push(n);
+      },
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const created = await service.createSession("device:A");
+      service.sendMessage("device:A", created.sessionId, "hi", { notifyAfterMs: 0 });
+      await sleep(20);
+      await settle();
+      expect(notifications).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+      await service.dispose();
+    }
+  });
+
+  it.each([true, false])("completion fallback respects confirmed display=%s", async (displayed) => {
+    const notifications: AgentAnswerNotification[] = [];
+    const readState: ConversationReadStatePort = {
+      agentContentArrived: async () => ({ notify: false }),
+      markSeen: async () => {},
+      expectContentViewed: () => {},
+      finishExpectedContent: () => {},
+      unreadAmong: (ids) => new Set(displayed ? [] : ids),
+      forget: async () => {},
+      viewingTtlMs: () => 1000,
+    };
+    const service = makeService(new SlowBackend(0), {
+      readState,
+      notifyAnswer: (n) => {
+        notifications.push(n);
+      },
+    });
+    try {
+      const created = await service.createSession("device:A");
+      service.sendMessage("device:A", created.sessionId, "hi", { notifyAfterMs: 0 });
+      await sleep(100);
+      expect(notifications).toHaveLength(0);
+      await sleep(3100);
+      await settle();
+      expect(notifications).toHaveLength(displayed ? 0 : 1);
+    } finally {
+      await service.dispose();
+    }
+  });
+
   it("sends no notification when the turn settles within the budget", async () => {
     const notifications: AgentAnswerNotification[] = [];
     const service = makeService(new SlowBackend(0), {

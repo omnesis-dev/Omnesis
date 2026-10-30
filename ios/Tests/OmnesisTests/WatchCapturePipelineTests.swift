@@ -61,6 +61,15 @@ final class WatchCapturePipelineTests: XCTestCase {
         )
     }
 
+    func testAutomaticCaptureReportsTheResolvedRouteBeforeAsking() async throws {
+        let events = CaptureEvents()
+        var deps = dependencies(events, gateway: true, route: .ask)
+        deps.resolved = { route in await events.add("resolved:\(route.rawValue)") }
+        try await WatchCapturePipeline().handle(receive(.automatic), inbox: inbox, deps: deps)
+        let actual = await events.events
+        XCTAssertEqual(actual, ["gateway", "classify", "resolved:ask", "ask"])
+    }
+
     func testExplicitAskUsesGatewayTranscriptionWithoutDecisionOrLocalTranscription() async throws {
         let events = CaptureEvents()
         let item = try receive(.ask)

@@ -1613,6 +1613,21 @@ describe("conversation read state over HTTP", () => {
     expect(readState.isViewing(created.sessionId)).toBe(false);
   });
 
+  test("confirmed Watch display survives a later content-arrival write for that message only", async () => {
+    const created = await service.createSession("token:tokenA");
+    const res = await readStateApp.request(`/agent/conversations/${created.sessionId}/seen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ viewing: false, messageId: "watch-answer-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(readState.isViewing(created.sessionId)).toBe(false);
+    await readState.agentContentArrived(created.sessionId, { messageId: "watch-answer-1" });
+    expect(readState.unreadAmong([created.sessionId]).size).toBe(0);
+    await readState.agentContentArrived(created.sessionId, { messageId: "watch-answer-2" });
+    expect(readState.unreadAmong([created.sessionId])).toEqual(new Set([created.sessionId]));
+  });
+
   test("holds an accepted voice answer open before it can become unread", async () => {
     delete process.env.OMNESIS_EXPERIMENTAL;
     const created = await service.createSession("token:tokenA");
@@ -1746,23 +1761,26 @@ describe("POST /agent/sessions/:id/messages — notifyAfterMs", () => {
     else process.env.OMNESIS_EXPERIMENTAL = originalExp;
   });
 
-  test("accepts notifyAfterMs without experimental mode and hands it to the service", async () => {
-    delete process.env.OMNESIS_EXPERIMENTAL;
-    const created = await service.createSession("token:tokenA");
-    const sendSpy = vi.spyOn(service, "sendMessage");
-    const res = await app.request(`/agent/sessions/${created.sessionId}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "hi", notifyAfterMs: 5000 }),
-    });
-    expect(res.status).toBe(200);
-    expect(sendSpy).toHaveBeenCalledWith(
-      "token:tokenA",
-      created.sessionId,
-      "hi",
-      expect.objectContaining({ notifyAfterMs: 5000 }),
-    );
-  });
+  test.each([0, 5000])(
+    "accepts notifyAfterMs=%i without experimental mode and hands it to the service",
+    async (notifyAfterMs) => {
+      delete process.env.OMNESIS_EXPERIMENTAL;
+      const created = await service.createSession("token:tokenA");
+      const sendSpy = vi.spyOn(service, "sendMessage");
+      const res = await app.request(`/agent/sessions/${created.sessionId}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi", notifyAfterMs }),
+      });
+      expect(res.status).toBe(200);
+      expect(sendSpy).toHaveBeenCalledWith(
+        "token:tokenA",
+        created.sessionId,
+        "hi",
+        expect.objectContaining({ notifyAfterMs }),
+      );
+    },
+  );
 
   test("rejects notifyAfterMs combined with deepResearch with 400 (no watcher is armed for Deep Research)", async () => {
     delete process.env.OMNESIS_EXPERIMENTAL;

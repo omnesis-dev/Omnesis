@@ -136,6 +136,15 @@ public struct DictationStatus: Decodable, Equatable, Sendable {
 }
 
 public struct WatchCaptureStatus: Decodable, Equatable, Sendable {
+    public let completionNotifications: Bool?
+
+    public init(supported: Bool, enabled: Bool, active: Bool, completionNotifications: Bool? = nil) {
+        self.supported = supported
+        self.enabled = enabled
+        self.active = active
+        self.completionNotifications = completionNotifications
+    }
+
     public let supported: Bool
     public let enabled: Bool
     public let active: Bool
