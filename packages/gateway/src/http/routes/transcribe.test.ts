@@ -12,7 +12,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
-import { SCOPE_WRITE_ALL, SCOPE_READ, type Scope } from "@omnesis/types";
+import { SCOPE_WRITE_ALL, SCOPE_READ, SCOPE_ADMIN, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
@@ -28,6 +28,8 @@ let dbPath: string;
 let app: ReturnType<typeof createServer>;
 let WRITE_TOKEN: string;
 let READ_TOKEN: string;
+let ADMIN_TOKEN: string;
+let dictationActive: boolean;
 let resolved: ResolvedAssignment;
 
 function cleanupDb(path: string) {
@@ -62,9 +64,20 @@ beforeEach(() => {
   db = createDatabase(dbPath);
   WRITE_TOKEN = mintToken([SCOPE_WRITE_ALL]);
   READ_TOKEN = mintToken([SCOPE_READ]);
+  ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
+  dictationActive = true;
   resolved = { role: "transcriber", kind: "replay" };
   const transcribeService = new TranscribeService({ resolveAssignment: () => resolved });
-  app = createServer(db, dbPath, { transcribeService });
+  app = createServer(db, dbPath, {
+    transcribeService,
+    getDictationStatus: () => ({
+      visible: true,
+      enabled: dictationActive,
+      active: dictationActive,
+      modelAssigned: true,
+      maxAudioBytes: 25 * 1024 * 1024,
+    }),
+  });
 });
 
 afterEach(() => {
@@ -125,5 +138,34 @@ describe("POST /inference/transcribe", () => {
       body: enc("hello") as unknown as BodyInit,
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /watch/capture/transcribe", () => {
+  const capture = (token = ADMIN_TOKEN) =>
+    app.request("/watch/capture/transcribe", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "audio/mp4" },
+      body: enc("Where is the bicycle?") as unknown as BodyInit,
+    });
+  test("transcribes a complication Ask only while gateway dictation is active", async () => {
+    const response = await capture();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ available: true, text: "Where is the bicycle?" });
+    dictationActive = false;
+    const disabled = await capture();
+    expect(disabled.status).toBe(409);
+    expect(await disabled.json()).toMatchObject({ code: "DICTATION_DISABLED" });
+  });
+  test("limits capture transcription without limiting collector transcription", async () => {
+    for (let i = 0; i < 120; i++) expect((await capture()).status).toBe(200);
+    const limited = await capture();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect((await post(enc("A collector recording"))).status).toBe(200);
+  });
+  test("does not expose personal capture transcription to collector write scopes", async () => {
+    expect((await capture(WRITE_TOKEN)).status).toBe(403);
+    expect((await capture(READ_TOKEN)).status).toBe(403);
   });
 });

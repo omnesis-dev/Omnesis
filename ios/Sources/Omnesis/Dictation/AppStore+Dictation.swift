@@ -70,7 +70,9 @@ extension AppStore {
                 status: dictationStatus,
                 statusKnown: statusSnapshot != nil,
                 paired: pairing != nil,
-                now: Date()
+                now: Date(),
+                decisionGate: statusSnapshot?.watchCapture?.active == true,
+                captureSupported: true
             )
         } onChange: { [weak self] in
             guard let self else { return }

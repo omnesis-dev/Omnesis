@@ -37,6 +37,7 @@ enum WatchDictation {
 
     static func start(_ complication: WatchComplication) async {
         guard !presenting else { return }
+        WatchComplicationCapture.shared.cancel()
         presenting = true
         generation += 1
         let current = generation

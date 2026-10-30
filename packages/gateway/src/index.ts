@@ -2431,6 +2431,14 @@ const app = createServer(db, DB_PATH, {
   searchSnapshot,
   agentRouteDeps: agentLifecycle.routeDeps,
   getDecision: () => decisionService.get(),
+  recordWatchDecisionSpend: (modelId, inputTokens) =>
+    recordDecisionSpend(
+      writeGate,
+      cognitionSpendDay(Date.now()),
+      "watch-capture-decision",
+      modelId,
+      inputTokens,
+    ),
   recordFindDecisionSpend: (modelId, inputTokens) =>
     recordDecisionSpend(
       writeGate,

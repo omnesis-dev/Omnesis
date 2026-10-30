@@ -96,6 +96,7 @@ targetTemplates:
       - path: Sources/Omnesis/Intents/WatchVoice.swift
       # The complication link contract, shared with OmnesisWatchWidgets so
       # the link a complication opens is the one this app parses.
+      - path: Resources/WatchBrand.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
       # Watch app icon — a separate asset catalog (not the iOS
       # Assets.xcassets, which carries iOS-only image sets) holding the
@@ -140,6 +141,7 @@ targetTemplates:
         excludes:
           - PrivacyInfo.xcprivacy
       - path: Sources/OmnesisWatchWidgets/PrivacyInfo.xcprivacy
+      - path: Resources/WatchBrand.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
     settings:
       base:

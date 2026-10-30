@@ -30,6 +30,7 @@ final class WatchNoteRouter {
     private(set) var state: State = .idle
 
     func submit(text: String) {
+        WatchComplicationCapture.shared.cancel()
         let message = WatchNoteWire.request(text: text, captureTime: .now(), ref: UUID().uuidString)
         do {
             try WatchVoiceOutbox.shared.add(textNote: message)

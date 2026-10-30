@@ -154,6 +154,11 @@ struct SettingsView: View {
                     VoiceSettingsSection(status: dictation)
                 }
 
+                if store.pairing != nil {
+                    WatchCaptureSettingsSection(status: store.statusSnapshot?.watchCapture
+                        ?? WatchCaptureStatus(supported: false, enabled: false, active: false))
+                }
+
                 phoneSetupSection
 
                 if store.appleHealthEnabled {

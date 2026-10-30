@@ -62,6 +62,7 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     private var handledRefs = WatchRelayRecentRefs()
     private var liveAsks = LiveAskLedger<([String: Any]) -> Void>()
     private let voiceInbox = WatchVoiceInbox()
+    private let capturePipeline = WatchCapturePipeline()
     private let gateStore = WatchDictationGateStore()
 
     init(
@@ -299,7 +300,15 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         processRecording(item)
     }
 
+    func retryComplicationCaptures() {
+        for item in voiceInbox.claimLeftovers() { processRecording(item) }
+    }
+
     private func processRecording(_ item: WatchVoiceInbox.Item) {
+        if WatchVoiceRecording(metadata: item.state.metadata)?.route != nil {
+            processComplicationRecording(item)
+            return
+        }
         let pipeline = WatchVoicePipeline(
             transcribeOnDevice: { await OnDeviceFileTranscriber.transcribe($0, locale: $1) },
             saveVoiceNote: { text, captureTime, id, audio in
@@ -315,6 +324,58 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
             await assertion.begin()
             let outcome = await pipeline.handle(item, inbox: inbox)
             self.log.info("Watch recording settled as \(String(describing: outcome), privacy: .private)")
+            await assertion.end()
+        }
+    }
+
+    private func processComplicationRecording(_ item: WatchVoiceInbox.Item) {
+        Task {
+            guard let pairing = try? PairingService().current() else {
+                voiceInbox.release(item)
+                return
+            }
+            let client = WatchCaptureClient(baseURL: pairing.url, token: pairing.token)
+            let assertion = WatchRelayBackgroundAssertion()
+            await assertion.begin()
+            await capturePipeline.handle(item, inbox: voiceInbox, deps: .init(
+                gatewayDictation: {
+                    let status = try await SearchClient(baseURL: pairing.url, token: pairing.token).getStatus()
+                    return status.dictation?.routesToGateway == true
+                },
+                transcribeGateway: { file, locale in
+                    let status = try await SearchClient(baseURL: pairing.url, token: pairing.token).getStatus()
+                    guard status.dictation?.routesToGateway == true else { throw GatewayClient.Error.invalidResponse }
+                    return try await client.transcribe(file, locale: locale, legacyGateway: status.watchCapture == nil)
+                },
+                transcribeLocal: { await OnDeviceFileTranscriber.transcribe($0, locale: $1) },
+                classify: { try await client.route($0) },
+                saveNote: { text, recording, audio in
+                    // Note capture consumes its audio, including on rejection. Keep
+                    // the inbox original until durable acceptance is confirmed.
+                    var ownedAudio: NoteAudio?
+                    if let audio {
+                        let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+                        do { try FileManager.default.copyItem(at: audio.file, to: copy) } catch { return false }
+                        ownedAudio = NoteAudio(file: copy, locale: recording.locale)
+                    }
+                    defer { if let ownedAudio { try? FileManager.default.removeItem(at: ownedAudio.file) } }
+                    let outcome = await self.saveNote(text, captureTime: recording.captureTime, id: recording.ref, audio: ownedAudio)
+                    return outcome == .saved || outcome == .queuedOnPhone
+                },
+                ask: { await self.handOff($0) },
+                notify: { notice in
+                    let body: String
+                    switch notice {
+                    case .delayed:
+                        body = "Your recording is kept for retry. Open Omnesis on iPhone and check the gateway connection. For iPhone transcription, enable Speech Recognition in Settings and use a supported language."
+                    case .expired:
+                        body = "Your recording couldn't be processed for a week and was removed. Please record it again."
+                    case .interruptedAsk:
+                        body = "Your question's delivery was interrupted. Check the conversation on your phone before asking again."
+                    }
+                    await self.post(title: "Check your Watch capture", body: body, userInfo: [:])
+                }
+            ))
             await assertion.end()
         }
     }

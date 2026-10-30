@@ -3,18 +3,9 @@
 
 import Foundation
 
-/// The two Apple Watch complications, and the deep link each one opens.
-///
-/// A complication cannot listen by itself: a widget can only open its own
-/// app. So each one opens the watch app at its link, and the app presents
-/// the system dictation screen for that flow the moment it is on screen —
-/// one tap to talking. The dictated words then take the same relay as the
-/// matching Siri shortcut.
-///
-/// Pure and platform-free so the sim-less logic lane covers the link
-/// contract, and so the widget extension (which builds the links) and the
-/// watch app (which reads them) compile the same definition. The scheme is
-/// also declared in the watch app's Info.plist.
+/// Watch deep links. Both legacy links enter the unified complication
+/// recorder; in-app controls use these cases to retain their explicit flows.
+/// Shared with the widget extension so link validation stays identical.
 public enum WatchComplication: String, CaseIterable, Sendable {
     /// Ask Omnesis a question; the answer is shown and spoken on the wrist.
     case ask

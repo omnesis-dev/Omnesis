@@ -3342,6 +3342,12 @@ const entailmentSettings = z
 // `dictation` on `GET /status`.
 const dictationSettings = z
   .object({
+    useDecisionGateForWatch: z
+      .boolean()
+      .describe(
+        "Use the decision model for the Apple Watch complication: show Send and choose Ask or Tell from the recording. Enabled by default when a decision model is available; set false to show Ask and Tell buttons.",
+      )
+      .optional(),
     transcribeOnGateway: z
       .boolean()
       .describe(

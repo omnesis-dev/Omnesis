@@ -823,16 +823,36 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           listening.
         </p>
         <p>
-          The same Ask Omnesis and Omnesis note shortcuts are available on the Apple Watch and relay
-          through its paired iPhone. The Watch app also offers <strong>Ask Omnesis</strong> and
-          <strong>Omnesis note</strong> complications: add them to a watch face, and tapping one
-          opens dictation straight away; tap Done to send. A note is kept on the watch until the
-          iPhone confirms it has it: the watch says it is sent at once, returns to the watch face,
-          and sends it again whenever the iPhone comes back in range, for up to a week, saving it
-          with its original time. When the iPhone app does not pick up a question within about
-          twenty seconds, the watch queues it for the next time the iPhone app runs; a queued
-          question is answered by notification, or dropped if the iPhone receives it more than ten
-          minutes later.
+          The same Ask Omnesis and Omnesis note Siri shortcuts are available on the Apple Watch and
+          relay through its paired iPhone. The single <strong>Omnesis</strong> logo complication
+          starts recording immediately, without showing a transcript. Tap <strong>Ask</strong> to
+          stop recording and open a conversation, with a notification when the answer is ready, or
+          <strong>Tell</strong> to save a note. “Got it. I'll deal with it.” confirms that the Watch
+          has stored the recording; it does not wait for the phone or gateway. Recordings are kept
+          on the Watch and retried for up to a week, then retained by the phone until processed. The
+          phone retries unfinished captures when opened; delivery or transcription failures produce
+          a notification. Interrupting or reaching the recording limit leaves the capture ready for
+          an explicit Ask or Tell; it does not send an undecided recording.
+        </p>
+        <p>
+          With a decision model available, the complication shows one <strong>Send</strong> button.
+          The gateway decides whether the words need an answer or should become a note. Disable
+          <strong>Use decision gate for Apple Watch complication</strong> in iPhone Settings to
+          restore Ask and Tell. The corresponding gateway setting is
+          <code>inference.dictation.useDecisionGateForWatch</code>; it defaults on when a decision
+          model is available. Older gateways and disabled or unavailable decision models show Ask
+          and Tell. If routing fails after Send, the recording is treated as Ask. Existing Siri
+          shortcuts and in-app capture controls keep their separate flows.
+        </p>
+        <p>
+          Gateway transcription applies to both Ask and Tell from the complication. When it is
+          disabled, audio travels to the iPhone for strictly on-device transcription, including
+          enabled personal vocabulary hints. Enable Speech Recognition from the Apple Watch section
+          in iPhone Settings first. A supported on-device language is required; audio is never sent
+          to Apple's speech service by this flow. A suspended phone or unavailable recognizer can
+          delay processing. Pending recordings expire after a week, with a notification. Update the
+          paired phone app before using the unified complication. Replace an installed Omnesis note
+          complication with the Omnesis logo complication.
         </p>
         <p>
           On Android, Gemini or Google Assistant can invoke the installed App Actions for
@@ -938,11 +958,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           read from its final words.
         </p>
         <p>
-          A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
-          first. The watch keeps each note, recorded or dictated, until the iPhone confirms it has
-          it, retrying for up to a week when the phone is out of reach. When the phone has no
-          transcript to offer, the note reads "Voice note — transcribing…" until the gateway's
-          arrives.
+          A Tell recording from the Apple Watch complication travels through your iPhone directly
+          into the gateway's voice-note queue when gateway transcription is enabled. Other in-app
+          Watch voice notes also carry the phone's fallback transcript when available. The watch
+          keeps each note, recorded or dictated, until the iPhone confirms it has it, retrying for
+          up to a week when the phone is out of reach. When the phone has no transcript to offer,
+          the note reads "Voice note — transcribing…" until the gateway's arrives.
         </p>
         <p>
           The gateway keeps the recording in its database, alongside the rest of your data and under

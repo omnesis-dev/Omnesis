@@ -16,11 +16,13 @@
 
 import { createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
+import { notesRateLimiter } from "../../rate-limit.js";
 import { scope } from "../scope.js";
-import { BadRequestError } from "../errors.js";
+import { BadRequestError, HttpError } from "../errors.js";
 import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
 import { transcriptionContextSchema } from "../schemas/transcription.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
+import { clientIp } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:transcribe");
@@ -44,55 +46,69 @@ const transcribeBodyLimit = bodyLimit({
 
 export interface TranscribeRoutesDeps {
   transcribeService: TranscribeService;
+  getDictationStatus?: () => import("../../dictation/index.js").DictationFeatureStatus;
 }
 
 export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps): void {
   const { transcribeService } = deps;
+  const captureLimiter = notesRateLimiter();
 
-  app.post("/inference/transcribe", scope.writeAny(), transcribeBodyLimit, async (c) => {
-    const body = new Uint8Array(await c.req.arrayBuffer());
-    if (body.byteLength === 0) {
-      throw new BadRequestError("empty audio body");
+  app.post("/watch/capture/transcribe", scope.admin(), async (c, next) => {
+    if (!deps.getDictationStatus?.().active) {
+      throw new HttpError(409, "DICTATION_DISABLED", "Gateway dictation is unavailable.");
     }
-    // Backstop for the chunked / unknown-Content-Length case the bodyLimit
-    // middleware can't reject up front. Match its 413 response shape.
-    if (body.byteLength > MAX_AUDIO_BYTES) {
-      return c.json(
-        {
-          error: `Audio body too large (max ${Math.floor(MAX_AUDIO_BYTES / (1024 * 1024))} MB)`,
-          code: "PAYLOAD_TOO_LARGE",
-        },
-        413,
-      );
+    if (captureLimiter.consume(clientIp(c))) {
+      return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
     }
-
-    const mimeType = c.req.header("content-type") ?? "application/octet-stream";
-    const language = c.req.query("language") || undefined;
-    const rawContext = c.req.header("x-omnesis-transcription-context");
-    let context;
-    if (rawContext !== undefined) {
-      if (rawContext.length > 8192) throw new BadRequestError("Transcription context is too large");
-      try {
-        context = transcriptionContextSchema.parse(JSON.parse(decodeURIComponent(rawContext)));
-      } catch {
-        throw new BadRequestError("Invalid transcription context");
-      }
-    }
-
-    const result = await transcribeService.transcribe(body, mimeType, {
-      language,
-      context,
-      allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
-      // A collector that stopped waiting retries the note on a later sync, so
-      // work it no longer waits for is skipped or stopped.
-      signal: c.req.raw.signal,
-    });
-    if (result === null) {
-      // No transcriber configured/loadable. The collector treats this as
-      // "no transcript" and renders the plain placeholder.
-      return c.json({ available: false as const }, 200);
-    }
-    log.debug(`Transcribed ${body.byteLength} bytes (${mimeType}) → ${result.text.length} chars`);
-    return c.json({ available: true as const, ...result }, 200);
+    return next();
   });
+  for (const path of ["/inference/transcribe", "/watch/capture/transcribe"]) {
+    app.post(path, scope.writeAny(), transcribeBodyLimit, async (c) => {
+      const body = new Uint8Array(await c.req.arrayBuffer());
+      if (body.byteLength === 0) {
+        throw new BadRequestError("empty audio body");
+      }
+      // Backstop for the chunked / unknown-Content-Length case the bodyLimit
+      // middleware can't reject up front. Match its 413 response shape.
+      if (body.byteLength > MAX_AUDIO_BYTES) {
+        return c.json(
+          {
+            error: `Audio body too large (max ${Math.floor(MAX_AUDIO_BYTES / (1024 * 1024))} MB)`,
+            code: "PAYLOAD_TOO_LARGE",
+          },
+          413,
+        );
+      }
+
+      const mimeType = c.req.header("content-type") ?? "application/octet-stream";
+      const language = c.req.query("language") || undefined;
+      const rawContext = c.req.header("x-omnesis-transcription-context");
+      let context;
+      if (rawContext !== undefined) {
+        if (rawContext.length > 8192)
+          throw new BadRequestError("Transcription context is too large");
+        try {
+          context = transcriptionContextSchema.parse(JSON.parse(decodeURIComponent(rawContext)));
+        } catch {
+          throw new BadRequestError("Invalid transcription context");
+        }
+      }
+
+      const result = await transcribeService.transcribe(body, mimeType, {
+        language,
+        context,
+        allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
+        // A collector that stopped waiting retries the note on a later sync, so
+        // work it no longer waits for is skipped or stopped.
+        signal: c.req.raw.signal,
+      });
+      if (result === null) {
+        // No transcriber configured/loadable. The collector treats this as
+        // "no transcript" and renders the plain placeholder.
+        return c.json({ available: false as const }, 200);
+      }
+      log.debug(`Transcribed ${body.byteLength} bytes (${mimeType}) → ${result.text.length} chars`);
+      return c.json({ available: true as const, ...result }, 200);
+    });
+  }
 }

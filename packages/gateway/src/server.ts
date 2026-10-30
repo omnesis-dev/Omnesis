@@ -54,6 +54,8 @@ import { cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
+import { WatchRoutingService } from "./dictation/watch-routing.js";
+import { mountWatchCaptureRoutes } from "./http/routes/watch-capture.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
 import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-vocabulary.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
@@ -296,6 +298,7 @@ export function createServer(
     watchV2Routes?: import("./http/routes/watch.js").WatchV2RoutesDeps;
     searchPipeline?: SearchPipeline;
     getDecision?: () => import("@omnesis/core").DecisionCapability | null;
+    recordWatchDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
     recordFindDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
     /** Read-worker gate for the Direct MCP `lookup_people` port. */
     personLookupGate?: PersonLookupGate;
@@ -1232,6 +1235,13 @@ export function createServer(
   // ── Routes ──────────────────────────────────────────────────────────
   mountMobilePermissionHealthRoute(app, mobilePermissionHealthService);
 
+  const watchRouting = new WatchRoutingService({
+    getConfig: () => opts?.configStore?.get() ?? opts?.config,
+    getDecision: opts?.getDecision ?? (() => null),
+    recordSpend: opts?.recordWatchDecisionSpend,
+  });
+  mountWatchCaptureRoutes(app, watchRouting);
+
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
     db,
@@ -1246,6 +1256,7 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getWatchCaptureStatus: () => watchRouting.status(),
     getNoteAgentStatus: opts?.getNoteAgentStatus,
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
@@ -1290,7 +1301,10 @@ export function createServer(
   // Speech-to-text route for source audio from the collector. Mounted only
   // when a transcribe service was wired.
   if (opts?.transcribeService) {
-    mountTranscribeRoutes(app, { transcribeService: opts.transcribeService });
+    mountTranscribeRoutes(app, {
+      transcribeService: opts.transcribeService,
+      getDictationStatus: opts.getDictationStatus,
+    });
   }
   if (opts?.transcriptionVocabularyService) {
     mountTranscriptionVocabularyRoutes(app, opts.transcriptionVocabularyService);

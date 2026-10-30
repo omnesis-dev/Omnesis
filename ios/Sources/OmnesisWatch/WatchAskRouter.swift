@@ -49,6 +49,7 @@ final class WatchAskRouter {
     private var relay: Task<Void, Never>?
 
     func submit(question: String) {
+        WatchComplicationCapture.shared.cancel()
         let ref = UUID().uuidString
         state = .asking(question: question, ref: ref)
         activity = nil

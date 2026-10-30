@@ -20,6 +20,7 @@
 # or a CI runner clone (a `_work` path).
 #
 # Usage:
+#   scripts/ios-snapshot.sh --watch                          # Watch capture states
 #   scripts/ios-snapshot.sh                                  # the default snapshot suite
 #   scripts/ios-snapshot.sh OmnesisTests/PreviewSnapshotTests/testPersonDetail   # one case
 #   scripts/ios-snapshot.sh --only OmnesisTests/PreviewSnapshotTests             # a filter
@@ -172,6 +173,20 @@ ssh "$HOST" "mkdir -p \"$RESOLVED_TARGET/evals/universes\"" || true
 rsync -az --delete \
   "$ROOT/evals/universes/" "$HOST:$RESOLVED_TARGET/evals/universes/" \
   || fail "rsync of evals/universes to '$HOST' failed"
+
+# The Watch uses its own simulator and staging harness under the same host
+# reservation and scratch-path safeguards as the phone snapshot lane.
+if [[ "$ONLY_TESTING" == "--watch" ]]; then
+  ssh "$HOST" "mkdir -p \"$RESOLVED_TARGET/scripts\""
+  rsync -az "$ROOT/scripts/shot-watch-ask.sh" "$HOST:$RESOLVED_TARGET/scripts/"
+  set +e
+  ssh "$HOST" "bash -lc 'cd \"$RESOLVED_TARGET\" && bash scripts/shot-watch-ask.sh --states capture-listening,capture-auto,capture-ready,capture-sent,capture-error'"
+  WATCH_RC=$?
+  set -e
+  mkdir -p "$OUT_DIR"
+  rsync -az --delete "$HOST:/tmp/omnesis-watch-shots/" "$OUT_DIR/"
+  exit "$WATCH_RC"
+fi
 
 # --- 2. run the snapshot suite over ssh. --------------------------------------
 # A simulator render needs no signing; hardware-backed tests can opt into ad-hoc

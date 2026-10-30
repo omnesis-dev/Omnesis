@@ -29,6 +29,9 @@ final class WatchVoiceInbox: @unchecked Sendable {
         /// the process before it finishes is given up rather than retried
         /// forever.
         var attempts = 0
+        var captureRoute: WatchCaptureRoute?
+        var askStarted: Bool?
+        var failureNotified: Bool?
         /// The phone's transcript, once attempted — empty when it heard
         /// nothing — so a later attempt goes straight to saving the note.
         var transcript: String?
@@ -56,11 +59,25 @@ final class WatchVoiceInbox: @unchecked Sendable {
     /// Move a just-received recording in, owned by the caller. Nil when it
     /// could not be kept, in which case there is nothing to process.
     func admit(file: URL, metadata: [String: Any]) -> Item? {
-        let id = UUID().uuidString
+        let capture = WatchVoiceRecording(metadata: metadata)
+        if metadata["captureRoute"] != nil {
+            guard let capture, capture.route != nil, UUID(uuidString: capture.ref) != nil else { return nil }
+        }
+        // All copies of a complication capture share one state file, including
+        // the durable Ask-start marker. Legacy notes retain their own inbox IDs.
+        let id: String
+        if let capture, capture.route != nil { id = "capture-" + capture.ref.lowercased() }
+        else { id = UUID().uuidString }
         let item = Item(id: id, state: State(metadata: metadata.compactMapValues { $0 as? String }))
         lock.lock()
+        guard !owned.contains(id) else { lock.unlock(); return nil }
         owned.insert(id)
         lock.unlock()
+        if let data = try? Data(contentsOf: stateURL(id)),
+           let state = try? JSONDecoder().decode(State.self, from: data),
+           FileManager.default.fileExists(atPath: audioURL(id).path) {
+            return Item(id: id, state: state)
+        }
         do {
             try prepareDirectory()
             try FileManager.default.moveItem(at: file, to: audioURL(id))
@@ -77,7 +94,7 @@ final class WatchVoiceInbox: @unchecked Sendable {
     /// or a recording without its state file, is deleted.
     func claimLeftovers() -> [Item] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        let ids = Set(files.map { $0.deletingPathExtension().lastPathComponent })
+        let ids = Set(files.filter { ["json", WatchVoiceFormat.fileExtension].contains($0.pathExtension) }.map { $0.deletingPathExtension().lastPathComponent })
         var claimed: [Item] = []
         for id in ids.sorted() {
             lock.lock()
@@ -110,6 +127,33 @@ final class WatchVoiceInbox: @unchecked Sendable {
         lock.lock()
         owned.remove(item.id)
         lock.unlock()
+    }
+
+    /// Leave a retained recording available for the next delivery attempt.
+    func release(_ item: Item) {
+        lock.lock()
+        owned.remove(item.id)
+        lock.unlock()
+    }
+
+    private var receiptsURL: URL { directory.appendingPathComponent("receipts", isDirectory: true) }
+
+    func wasCompleted(_ ref: String) -> Bool {
+        guard UUID(uuidString: ref) != nil else { return false }
+        return FileManager.default.fileExists(atPath: receiptsURL.appendingPathComponent(ref.lowercased()).path)
+    }
+
+    func complete(_ ref: String) throws {
+        guard UUID(uuidString: ref) != nil else { throw CocoaError(.fileWriteInvalidFileName) }
+        try FileManager.default.createDirectory(at: receiptsURL, withIntermediateDirectories: true)
+        try Data().write(to: receiptsURL.appendingPathComponent(ref.lowercased()), options: .atomic)
+        let receipts = (try? FileManager.default.contentsOfDirectory(at: receiptsURL, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for receipt in receipts {
+            if let stamp = try? receipt.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+               Date().timeIntervalSince(stamp) > 2 * WatchOutboxPolicy.retention {
+                try? FileManager.default.removeItem(at: receipt)
+            }
+        }
     }
 
     private func prepareDirectory() throws {

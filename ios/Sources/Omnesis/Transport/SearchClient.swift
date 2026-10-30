@@ -1353,6 +1353,7 @@ public struct StatusSnapshot: Decodable, Sendable {
     public let tasks: TasksStatus?
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
+    public let watchCapture: WatchCaptureStatus?
     public let dictation: DictationStatus?
     /// Gateway personal vocabulary opt-in; absent on older gateways.
     public let transcriptionVocabulary: Bool
@@ -1368,6 +1369,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         developer: Bool = false,
         tasks: TasksStatus? = nil,
         dictation: DictationStatus? = nil,
+        watchCapture: WatchCaptureStatus? = nil,
         transcriptionVocabulary: Bool = false,
         capabilities: GatewayCapabilities = GatewayCapabilities()
     ) {
@@ -1378,6 +1380,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.experimental = experimental
         self.developer = developer
         self.tasks = tasks
+        self.watchCapture = watchCapture
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
         self.capabilities = capabilities
@@ -1392,6 +1395,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case developer
         case tasks
         case dictation
+        case watchCapture
         case transcriptionVocabulary
         case capabilities
     }
@@ -1411,6 +1415,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         tasks = try? c.decodeIfPresent(TasksStatus.self, forKey: .tasks)
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
+        watchCapture = try? c.decodeIfPresent(WatchCaptureStatus.self, forKey: .watchCapture)
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
         transcriptionVocabulary = try c.decodeIfPresent(Bool.self, forKey: .transcriptionVocabulary) ?? false
         // An unreadable map offers no features rather than failing the snapshot.

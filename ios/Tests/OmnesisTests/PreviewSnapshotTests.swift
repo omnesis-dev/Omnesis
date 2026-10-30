@@ -7214,6 +7214,19 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     /// Settings → Voice in each state the gateway can advertise.
+    func testWatchCaptureSettingsStates() {
+        for (index, status) in [
+            WatchCaptureStatus(supported: true, enabled: true, active: true),
+            WatchCaptureStatus(supported: true, enabled: false, active: false),
+            WatchCaptureStatus(supported: true, enabled: true, active: false),
+            WatchCaptureStatus(supported: false, enabled: false, active: false),
+        ].enumerated() {
+            let form = Form { WatchCaptureSettingsSection(status: status) }
+                .environment(AppStore.preview())
+            snapshot(form, name: "watch-capture-settings-\(index)", size: CGSize(width: 393, height: 540))
+        }
+    }
+
     func testSettingsVoiceSectionStates() {
         struct VoiceCase {
             let status: DictationStatus

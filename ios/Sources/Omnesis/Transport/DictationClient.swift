@@ -33,6 +33,15 @@ public final class DictationClient: Sendable {
         }
     }
 
+    public func setWatchDecisionGate(_ enabled: Bool) async throws {
+        var request = try Self.optInRequest(baseURL: baseURL, token: token, enabled: enabled)
+        request.httpBody = try JSONEncoder().encode(["inference": ["dictation": ["useDecisionGateForWatch": enabled]]])
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+            throw GatewayClient.Error.invalidResponse
+        }
+    }
+
     static func optInRequest(baseURL: URL, token: String, enabled: Bool) throws -> URLRequest {
         guard let url = URL(string: "/admin/config", relativeTo: baseURL)?.absoluteURL else {
             throw GatewayClient.Error.invalidURL
@@ -124,4 +133,10 @@ public struct DictationStatus: Decodable, Equatable, Sendable {
         guard enabled, !modelAssigned else { return nil }
         return reason ?? "No transcriber model can run."
     }
+}
+
+public struct WatchCaptureStatus: Decodable, Equatable, Sendable {
+    public let supported: Bool
+    public let enabled: Bool
+    public let active: Bool
 }

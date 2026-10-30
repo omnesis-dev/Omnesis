@@ -97,6 +97,7 @@ public struct OmnesisApp: App {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                WatchRelayReceiver.shared.retryComplicationCaptures()
                 Task { await store.onActive() }
             case .background:
                 Task { await store.onBackground() }

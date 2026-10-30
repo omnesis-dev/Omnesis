@@ -19,19 +19,21 @@ enum WatchGatePublishing {
 
     /// The gate a status implies, or nil while it is unknown. Unpaired, the
     /// phone knows the answer without any status: there is no gateway.
-    static func gate(status: DictationStatus?, statusKnown: Bool, paired: Bool, now: Date) -> WatchDictationGate? {
+    static func gate(status: DictationStatus?, statusKnown: Bool, paired: Bool, now: Date, decisionGate: Bool = false, captureSupported: Bool = false) -> WatchDictationGate? {
         guard paired else { return WatchDictationGate(active: false, maxAudioBytes: 0, updatedAt: now) }
         guard statusKnown else { return nil }
         guard let status, status.routesToGateway else {
-            return WatchDictationGate(active: false, maxAudioBytes: 0, updatedAt: now)
+            return WatchDictationGate(active: false, maxAudioBytes: 0, updatedAt: now, decisionGate: decisionGate, captureSupported: captureSupported)
         }
-        return WatchDictationGate(active: true, maxAudioBytes: status.maxAudioBytes, updatedAt: now)
+        return WatchDictationGate(active: true, maxAudioBytes: status.maxAudioBytes, updatedAt: now, decisionGate: decisionGate, captureSupported: captureSupported)
     }
 
     /// Whether `gate` should replace `last`, the gate last published.
     static func shouldPublish(_ gate: WatchDictationGate, after last: WatchDictationGate?, now: Date) -> Bool {
         guard let last else { return true }
-        return gate.active != last.active
+        return gate.captureSupported != last.captureSupported
+            || gate.decisionGate != last.decisionGate
+            || gate.active != last.active
             || gate.maxAudioBytes != last.maxAudioBytes
             || now.timeIntervalSince(last.updatedAt) >= refreshInterval
     }

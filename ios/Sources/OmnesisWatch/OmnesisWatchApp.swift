@@ -9,8 +9,8 @@ import WatchKit
 /// The Apple Watch companion app. It carries the "Ask Omnesis" and
 /// "Omnesis note" App Shortcuts so watch Siri recognises those phrases,
 /// and — because Siri hands over as soon as the intent opens the app — it
-/// presents the result itself. Its two complications open it at a link that
-/// starts dictation for their flow. Activating the WatchConnectivity session
+/// presents the result itself. Its logo complication opens the
+/// unified audio capture. Activating the WatchConnectivity session
 /// at launch means the relay is ready by the time the question or note
 /// arrives.
 @main
@@ -25,11 +25,14 @@ struct OmnesisWatchApp: App {
         WindowGroup {
             WatchRootView()
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .background { WatchDictation.appDidEnterBackground() }
+                    if phase == .background {
+                        WatchDictation.appDidEnterBackground()
+                        WatchComplicationCapture.shared.pause()
+                    }
                 }
                 .onOpenURL { url in
-                    guard let complication = WatchComplication(url: url) else { return }
-                    Task { await WatchDictation.start(complication) }
+                    guard WatchComplication(url: url) != nil else { return }
+                    Task { await WatchComplicationCapture.shared.start() }
                 }
             #if DEBUG
                 .watchDemoAutoPilot()
@@ -63,7 +66,9 @@ struct WatchRootView: View {
 
     var body: some View {
         Group {
-            if capture.state != .idle {
+            if WatchComplicationCapture.shared.state != .idle {
+                WatchComplicationCaptureView()
+            } else if capture.state != .idle {
                 WatchVoiceCaptureView()
             } else {
                 switch presenter.screen {

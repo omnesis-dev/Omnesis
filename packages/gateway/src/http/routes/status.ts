@@ -72,6 +72,7 @@ export interface StatusRoutesDeps {
    * Gateway dictation gate. When omitted, `/status` advertises
    * the feature inactive, so clients keep on-device dictation.
    */
+  getWatchCaptureStatus?: () => { supported: boolean; enabled: boolean; active: boolean };
   getDictationStatus?: () => DictationFeatureStatus;
   /** Whether a Tell Omnesis note runs an agent turn that can change tasks, and why not. */
   getNoteAgentStatus?: () => NoteAgentStatus;
@@ -512,6 +513,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // assigned, and whether the mobile apps should send a voice note's audio
       // to `POST /notes/voice`. A client that finds no field, or finds it
       // inactive, saves the phone's own transcript as a plain note.
+      watchCapture: deps.getWatchCaptureStatus?.() ?? {
+        supported: false,
+        enabled: false,
+        active: false,
+      },
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
       // Tasks are available on every install; `noteAgent` says whether a Tell
       // Omnesis note is read by an agent that can add and change them.

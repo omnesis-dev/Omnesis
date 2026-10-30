@@ -224,6 +224,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         Task {
             try? await Task.sleep(for: .seconds(WatchVoiceDismissal.confirmationDelay))
             let otherWork = WatchAskRouter.shared.isAsking || WatchSpeaker.shared.isSpeaking || self.isRecording
+                || WatchComplicationCapture.shared.state != .idle
             guard WatchVoiceDismissal.shouldLeave(
                 showingSent: self.isShowingSent,
                 carriedByTransfer: carried,

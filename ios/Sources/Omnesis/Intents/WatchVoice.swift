@@ -33,6 +33,8 @@ public enum WatchVoiceFormat {
 /// session's application context: whether to record for the gateway, and how
 /// large a recording it accepts.
 public struct WatchDictationGate: Equatable, Sendable {
+    public let captureSupported: Bool
+    public let decisionGate: Bool
     public let active: Bool
     public let maxAudioBytes: Int
     /// When the iPhone last read the gateway's status.
@@ -47,7 +49,9 @@ public struct WatchDictationGate: Equatable, Sendable {
     /// watch goes back to system dictation rather than act on old news.
     public static let staleAfter: TimeInterval = 7 * 24 * 60 * 60
 
-    public init(active: Bool, maxAudioBytes: Int, updatedAt: Date) {
+    public init(active: Bool, maxAudioBytes: Int, updatedAt: Date, decisionGate: Bool = false, captureSupported: Bool = false) {
+        self.captureSupported = captureSupported
+        self.decisionGate = decisionGate
         self.active = active
         self.maxAudioBytes = maxAudioBytes
         self.updatedAt = updatedAt
@@ -58,6 +62,8 @@ public struct WatchDictationGate: Equatable, Sendable {
         [
             Self.contextKey: [
                 Self.activeKey: active ? "1" : "0",
+                "decisionGate": decisionGate ? "1" : "0",
+                "captureSupported": captureSupported ? "1" : "0",
                 Self.maxAudioBytesKey: String(maxAudioBytes),
                 Self.updatedAtKey: String(updatedAt.timeIntervalSince1970),
             ],
@@ -73,7 +79,7 @@ public struct WatchDictationGate: Equatable, Sendable {
               let seconds = fields[Self.updatedAtKey].flatMap({ TimeInterval($0) }),
               seconds.isFinite
         else { return nil }
-        self.init(active: active == "1", maxAudioBytes: bytes, updatedAt: Date(timeIntervalSince1970: seconds))
+        self.init(active: active == "1", maxAudioBytes: bytes, updatedAt: Date(timeIntervalSince1970: seconds), decisionGate: fields["decisionGate"] == "1", captureSupported: fields["captureSupported"] == "1")
     }
 
     /// How long the watch may record for the gateway, or nil when it should
@@ -89,7 +95,14 @@ public struct WatchDictationGate: Equatable, Sendable {
 }
 
 /// The metadata travelling with one recorded note.
+public enum WatchCaptureRoute: String, Codable, Sendable {
+    case ask, note, automatic
+}
+
 public struct WatchVoiceRecording: Equatable, Sendable {
+    /// Nil marks the existing in-app note flow. Complication captures carry a route.
+    public let route: WatchCaptureRoute?
+
     /// Identifies the note across transfers and relaunches: the iPhone saves
     /// it under this id, so it is saved once.
     public let ref: String
@@ -107,7 +120,8 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     static let utcOffsetSecondsKey = "capturedUtcOffsetSeconds"
     static let localeKey = "locale"
 
-    public init(ref: String, captureTime: NoteCaptureTime, locale: String?) {
+    public init(ref: String, captureTime: NoteCaptureTime, locale: String?, route: WatchCaptureRoute? = nil) {
+        self.route = route
         self.ref = ref
         self.captureTime = captureTime
         self.locale = locale
@@ -116,12 +130,13 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     /// Watch side: the `transferFile` metadata.
     public var metadata: [String: String] {
         var fields = [
-            Self.kindKey: Self.noteKind,
+            Self.kindKey: route == nil ? Self.noteKind : "capture",
             Self.refKey: ref,
             Self.capturedAtKey: captureTime.isoString,
             Self.timeZoneIdKey: captureTime.timeZoneId,
             Self.utcOffsetSecondsKey: String(captureTime.utcOffsetSeconds),
         ]
+        if let route { fields["captureRoute"] = route.rawValue }
         if let locale { fields[Self.localeKey] = locale }
         return fields
     }
@@ -129,17 +144,21 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     /// iPhone side: the recording described by transfer metadata, or nil when
     /// it is not a watch recording or is missing what the pipelines need.
     public init?(metadata: [String: Any]) {
-        guard metadata[Self.kindKey] as? String == Self.noteKind,
+        guard let kind = metadata[Self.kindKey] as? String, [Self.noteKind, "capture"].contains(kind),
               let ref = metadata[Self.refKey] as? String, !ref.isEmpty,
               let capturedAt = (metadata[Self.capturedAtKey] as? String).flatMap(NoteCaptureTime.parseDate),
               let timeZoneId = metadata[Self.timeZoneIdKey] as? String, !timeZoneId.isEmpty,
               let offset = (metadata[Self.utcOffsetSecondsKey] as? String).flatMap({ Int($0) }),
               (-64800 ... 64800).contains(offset)
         else { return nil }
+        let route = (metadata["captureRoute"] as? String).flatMap(WatchCaptureRoute.init(rawValue:))
+        guard kind != "capture" || route != nil else { return nil }
+        guard kind != Self.noteKind || metadata["captureRoute"] == nil else { return nil }
         self.init(
             ref: ref,
             captureTime: NoteCaptureTime(capturedAt: capturedAt, timeZoneId: timeZoneId, utcOffsetSeconds: offset),
-            locale: metadata[Self.localeKey] as? String
+            locale: metadata[Self.localeKey] as? String,
+            route: route
         )
     }
 }
