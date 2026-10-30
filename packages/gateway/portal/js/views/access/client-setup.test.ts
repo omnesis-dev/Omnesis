@@ -78,6 +78,7 @@ describe("agentSetups", () => {
       "codex",
       "chatgpt",
       "claude-apps",
+      "grok-bot",
       "antigravity",
       "openclaw",
       "hermes",
@@ -94,6 +95,19 @@ describe("agentSetups", () => {
       expect(existsSync(join(portalRoot, entry.icon.src!.replace(/^\/portal\//u, "")))).toBe(true);
     }
   });
+
+  test.each([RESOURCE, "https://gateway.example.org:17600/mcp"])(
+    "gives Grok bot a prompt with the exact MCP address %s and OAuth",
+    (resource) => {
+      const setup = agent("grok-bot", { resource });
+      expect(setup.name).toBe("Grok bot");
+      expect(setup.commands).toEqual([{
+        label: "Paste this into Grok bot",
+        value: `Please connect to Omnesis using my MCP server at ${resource} and authenticate with OAuth.`,
+      }]);
+      expect(setup.pairs).toBeUndefined();
+    },
+  );
 
   test("builds the terminal commands each CLI documents", () => {
     expect(commands("claude-code")).toEqual([
@@ -415,11 +429,13 @@ describe("connection app logos", () => {
     ["anthropic claude", "claude-apps"], ["claude code 2.0", "claude-apps"],
     ["google antigravity", "antigravity"], ["OpenClaw Agent", "openclaw"],
     ["hermes agent", "hermes"],
+    ["Grok", "grok-bot"], ["Grok bot", "grok-bot"],
+    ["grok_bot", "grok-bot"], ["GrokBot", "grok-bot"],
   ])("reuses the setup logo for %s", (name, id) => {
     expect(agentIconForApp(name)).toBe(AGENT_ICONS[id]);
   });
 
-  test.each([null, undefined, "", "Guv", "Fictional reader", "My ChatGPT helper", "Claudeish", "OpenAIish"])(
+  test.each([null, undefined, "", "Guv", "Fictional reader", "My ChatGPT helper", "Claudeish", "OpenAIish", "Grokish", "my grok helper"])(
     "leaves unrecognized names text-only: %s", (name) => {
       expect(agentIconForApp(name)).toBeNull();
     },

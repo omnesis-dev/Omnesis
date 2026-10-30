@@ -64,6 +64,8 @@ describe("AgentPromoCard", () => {
     ]);
     expect(marks.querySelector(".provider-icon")?.getAttribute("style")).toContain("/model-logos/openai.svg");
 
+    expect(marks.querySelector("[aria-label='xAI']")?.getAttribute("style")).toContain("/model-logos/xai.svg");
+
     const connect = host.querySelector("a.agent-promo-connect") as HTMLAnchorElement;
     expect(connect.getAttribute("href")).toBe(AGENT_CONNECT_PATH);
     await act(async () => {

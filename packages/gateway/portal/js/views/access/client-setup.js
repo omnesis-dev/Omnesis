@@ -286,6 +286,17 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       docs: `${DOCS}/connect#claude-desktop`,
     },
     {
+      id: "grok-bot",
+      name: "Grok bot",
+      icon: AGENT_ICONS["grok-bot"],
+      commands: [{
+        label: "Paste this into Grok bot",
+        value: `Please connect to Omnesis using my MCP server at ${oauth.resource} and authenticate with OAuth.`,
+      }],
+      note: [],
+      docs: `${DOCS}/connect#grok-bot`,
+    },
+    {
       id: "antigravity",
       name: "Antigravity",
       icon: AGENT_ICONS["antigravity"],

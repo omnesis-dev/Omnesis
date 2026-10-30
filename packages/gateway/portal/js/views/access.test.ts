@@ -1636,6 +1636,7 @@ describe("AccessView", () => {
       "codex",
       "chatgpt",
       "claude-apps",
+      "grok-bot",
       "antigravity",
       "openclaw",
       "hermes",
@@ -1664,6 +1665,26 @@ describe("AccessView", () => {
 
     await act(async () => { cards[2]!.click(); });
     expect(picker.querySelector(".access-agent-steps")).toBeNull();
+  });
+
+  test("selecting Grok bot shows a copyable OAuth prompt for this gateway", async () => {
+    api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
+    await mount({ connectOpen: true });
+    const card = host.querySelector<HTMLButtonElement>("button[data-agent='grok-bot']")!;
+    expect(card.textContent).toContain("Grok bot");
+    expect(card.querySelector(".provider-icon")?.getAttribute("style")).toContain("/model-logos/xai.svg");
+    await act(async () => { card.click(); });
+    const steps = host.querySelector(".access-agent-steps")!;
+    expect(steps.getAttribute("data-agent")).toBe("grok-bot");
+    expect(steps.textContent).toContain("Paste this into Grok bot");
+    expect(steps.querySelector("code")?.textContent).toBe(
+      "Please connect to Omnesis using my MCP server at https://gateway.example.org/mcp and authenticate with OAuth.",
+    );
+    expect(steps.querySelector("button[title='Copy command for Grok bot']")).not.toBeNull();
+    expect(steps.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
+      "https://omnesis.dev/docs/connect#grok-bot",
+    );
+    expect(api.pairDevice).not.toHaveBeenCalled();
   });
 
   test("points a hosted app at the publishing docs, and warns about a private address", async () => {
