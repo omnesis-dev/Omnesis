@@ -139,6 +139,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     /// leave the microphone running behind the watch face, keeping the app
     /// alive long enough to hand the recording over.
     func appDidEnterBackground() {
+        startGeneration += 1
         guard isRecording else { return }
         let handedOver = DispatchSemaphore(value: 0)
         endBackgroundHandOff = { handedOver.signal() }
