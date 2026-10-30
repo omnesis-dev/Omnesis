@@ -15,6 +15,7 @@ import { getSystemInfo } from "../system-info.js";
 import { createServer } from "../server.js";
 import { DecisionService } from "./decision/decision-service.js";
 import { InferenceRegistry } from "./registry.js";
+import type { OmnesisConfig } from "@omnesis/config";
 import type { ModelHealth, ModelsOverview } from "@omnesis/core";
 
 /** Exercises the real TypeSafe adapter and authenticated status/models projections. */
@@ -123,9 +124,10 @@ describe("model health API", () => {
     const configuration = {
       inference: {
         allowRemoteInference: true,
+        entailment: { promptStyle: "judge" },
         assignments: { decision: "typesafe/example-model" },
       },
-    };
+    } satisfies OmnesisConfig;
     registry.loadConfig(configuration);
     const provider = registry.health.observe(
       registry.resolve("decision"),
@@ -145,7 +147,10 @@ describe("model health API", () => {
     expect(registry.modelHealth().warnings).toEqual([]);
     await fail();
     expect(registry.modelHealth().warnings).toEqual([]);
-    registry.loadConfig({ inference: { assignments: { decision: null } } });
+    registry.loadConfig({
+      ...configuration,
+      inference: { ...configuration.inference, assignments: { decision: null } },
+    });
     registry.loadConfig(configuration);
     await fail();
     expect(registry.modelHealth().warnings).toEqual([]);
