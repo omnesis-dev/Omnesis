@@ -24,6 +24,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  acquireGatewayLock,
   clearSecretFileKeyCacheForTests,
   inspectInstallRootKey,
   isEncryptedSecretFile,
@@ -151,11 +152,11 @@ describe("secure under Docker: the launcher restarts the containers", () => {
 
     const summary = await runSecure(d, { dryRun: false, skipBackup: false });
 
-    // Native's safety order, with the passphrase first: nothing can be
-    // sealed before there is a passphrase the containers can read.
+    // Native's safety order: the backup first, then the passphrase is
+    // recorded where the containers read it, before anything is sealed.
     expect(stepIds(summary.steps)).toEqual([
-      "passphrase",
       "backup",
+      "passphrase",
       "root-key",
       "escrow",
       "migrate",
@@ -261,6 +262,38 @@ describe("secure under Docker: the launcher restarts the containers", () => {
     expect(readFileSync(join(configDir, ".env"), "utf8")).toContain(
       "OMNESIS_SECRET_STORE=passphrase",
     );
+  });
+});
+
+describe("secure under Docker: a gateway that is still starting", () => {
+  test("is waited for, and backed up online, rather than copied under its feet", async () => {
+    const configDir = gatewayHost();
+    const lock = await acquireGatewayLock(configDir);
+    try {
+      let probes = 0;
+      const d = deps(configDir, { gatewayHealthy: async () => ++probes > 2 });
+      const summary = await runSecure(d, { dryRun: false, skipBackup: false, startWaitMs: 30_000 });
+      expect(d.onlineBackup).toHaveBeenCalledWith("pre-secure");
+      expect(step(summary.steps, "backup")?.detail).toContain("online backup");
+    } finally {
+      lock.release();
+    }
+  });
+
+  test("a backup failure leaves what the containers read untouched", async () => {
+    const configDir = gatewayHost();
+    const before = readFileSync(join(configDir, ".env"), "utf8");
+    const d = deps(configDir, {
+      gatewayHealthy: async () => true,
+      onlineBackup: vi.fn(async () => {
+        throw new Error("fictional backup failure");
+      }),
+    });
+    await expect(runSecure(d, { dryRun: false, skipBackup: false })).rejects.toThrow(
+      "fictional backup failure",
+    );
+    expect(readFileSync(join(configDir, ".env"), "utf8")).toBe(before);
+    expect(existsSync(join(configDir, "keyring"))).toBe(false);
   });
 });
 

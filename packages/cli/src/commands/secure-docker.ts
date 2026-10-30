@@ -159,24 +159,35 @@ export function writeGeneratedPassphrase(path: string): void {
 }
 
 /**
- * Carry the plan out: write the passphrase when it is generated, record it in
- * the `.env` the daemons load, and point this process at it. A host that only
- * collects records it beside the compose file too, as the installer does.
+ * Make the passphrase reachable by this process: write it when it is
+ * generated, and point this process's secret store at it. Nothing the daemons
+ * read changes yet — see `recordDockerPassphrase`.
  */
-export function applyDockerPassphrase(
+export function prepareDockerPassphrase(
   plan: DockerPassphrasePlan,
-  docker: DockerContext,
-  configDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (plan.kind === "generate") writeGeneratedPassphrase(plan.file);
-  if (plan.kind !== "configured") {
-    const updates = { [SECRET_STORE_ENV]: "passphrase", [PASSPHRASE_FILE_ENV]: plan.file };
-    upsertDotEnv(configDir, updates);
-    if (docker.collectorOnly) upsertDotEnv(docker.projectDir, updates);
-  }
   env[SECRET_STORE_ENV] = "passphrase";
   if (plan.file) env[PASSPHRASE_FILE_ENV] = plan.file;
+}
+
+/**
+ * Record the passphrase in the `.env` the daemons load, so they start with
+ * it. A host that only collects records it beside the compose file too, as
+ * the installer does. Run after the backup: until then nothing the daemons
+ * read has changed.
+ */
+export function recordDockerPassphrase(
+  plan: DockerPassphrasePlan,
+  docker: DockerContext,
+  configDir: string,
+): boolean {
+  if (plan.kind === "configured") return false;
+  const updates = { [SECRET_STORE_ENV]: "passphrase", [PASSPHRASE_FILE_ENV]: plan.file };
+  upsertDotEnv(configDir, updates);
+  if (docker.collectorOnly) upsertDotEnv(docker.projectDir, updates);
+  return true;
 }
 
 /** Record a non-passphrase backend the operator chose, so the daemons use it too. */

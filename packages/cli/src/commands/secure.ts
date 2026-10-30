@@ -88,8 +88,9 @@ import { c, CliError, EXIT_FAILURE, EXIT_USER_ERROR, gatewayFetch, isJSON } from
 import { collectSecretFileCandidates } from "./keyring.js";
 import { restore } from "./restore.js";
 import {
-  applyDockerPassphrase,
   dockerRestartCommand,
+  prepareDockerPassphrase,
+  recordDockerPassphrase,
   dockerSecureBackend,
   dockerSecureContext,
   planDockerPassphrase,
@@ -132,6 +133,8 @@ export interface SecureOptions {
   skipBackup: boolean;
   /** The processes to secure for, when the operator names them instead of letting the wizard detect. */
   hosts?: StorageKeyHost[];
+  /** How long to wait for a gateway that is still starting; tests shorten it. */
+  startWaitMs?: number;
 }
 
 interface StepResult {
@@ -267,43 +270,60 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   let changed = false;
 
   // ── 0. a passphrase the containers can read ─────────────────────────
-  // A dry run that would generate the passphrase has no store to inspect yet:
-  // everything after it is planned against an empty keyring.
+  // Decided, and generated when there is none, before anything else, so a
+  // passphrase the containers could not read is refused before any work and a
+  // root key sealed under another passphrase is caught by the posture check.
+  // It is recorded where the daemons read it only after the backup. A dry run
+  // that would generate it has no store to inspect yet: everything after it is
+  // planned against an empty keyring.
   let passphrasePending = false;
+  let recordKeyring: (() => void) | null = null;
   if (docker && backend === "passphrase") {
     const pass = planDockerPassphrase(docker, configDir);
     const envFile = join(configDir, ".env");
-    if (pass.kind === "configured") {
-      applyDockerPassphrase(pass, docker, configDir);
-      plan(
-        "passphrase",
-        "Keyring passphrase",
-        "skipped",
-        describePassphrasePlan(pass, envFile, true),
-      );
-    } else if (opts.dryRun) {
-      plan(
-        "passphrase",
-        "Keyring passphrase",
-        "planned",
-        describePassphrasePlan(pass, envFile, false),
-      );
-      if (pass.kind === "generate") passphrasePending = true;
-      // Read, not written: this process alone looks through the file.
-      else applyDockerPassphrase({ kind: "configured", file: pass.file }, docker, configDir);
+    if (opts.dryRun && pass.kind === "generate") {
+      passphrasePending = true;
     } else {
-      applyDockerPassphrase(pass, docker, configDir);
-      changed = true;
-      plan("passphrase", "Keyring passphrase", "done", describePassphrasePlan(pass, envFile, true));
+      // A dry run only reads the file: this process alone looks through it.
+      prepareDockerPassphrase(opts.dryRun ? { kind: "configured", file: pass.file } : pass);
     }
-  } else if (docker && !opts.dryRun && recordDockerBackend(backend, docker, configDir)) {
-    changed = true;
-    plan(
-      "secret-store",
-      "Secret store",
-      "done",
-      `recorded ${backend} in ${join(configDir, ".env")}`,
-    );
+    recordKeyring = () => {
+      if (pass.kind === "configured") {
+        plan(
+          "passphrase",
+          "Keyring passphrase",
+          "skipped",
+          describePassphrasePlan(pass, envFile, true),
+        );
+      } else if (opts.dryRun) {
+        plan(
+          "passphrase",
+          "Keyring passphrase",
+          "planned",
+          describePassphrasePlan(pass, envFile, false),
+        );
+      } else {
+        recordDockerPassphrase(pass, docker, configDir);
+        changed = true;
+        plan(
+          "passphrase",
+          "Keyring passphrase",
+          "done",
+          describePassphrasePlan(pass, envFile, true),
+        );
+      }
+    };
+  } else if (docker && !opts.dryRun) {
+    recordKeyring = () => {
+      if (!recordDockerBackend(backend, docker, configDir)) return;
+      changed = true;
+      plan(
+        "secret-store",
+        "Secret store",
+        "done",
+        `recorded ${backend} in ${join(configDir, ".env")}`,
+      );
+    };
   }
 
   // ── 1. posture ──────────────────────────────────────────────────────
@@ -338,7 +358,13 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   );
   // A collector host has no gateway beside it: the gateway in its config is
   // remote, and its health says nothing about this host's stores.
-  const healthy = hasGateway ? await deps.gatewayHealthy() : false;
+  // A gateway still starting holds the stores while it does not answer yet;
+  // wait for it rather than refuse an offline copy it would be racing.
+  let healthy = hasGateway ? await deps.gatewayHealthy() : false;
+  if (hasGateway && !healthy && !opts.dryRun && liveGatewayHolder(configDir)) {
+    deps.log(`${c.dim}The gateway is starting; waiting for it to answer…${c.reset}`);
+    healthy = await waitForHealthy(deps, opts.startWaitMs ?? 120_000);
+  }
   const mainDbPlain = hasGateway ? sqliteLooksPlaintext(join(configDir, "omnesis.db")) : null;
   const storageKeyNames = storageKeyNamesForHosts(hosts);
   const storeStates = passphrasePending
@@ -379,6 +405,9 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
     );
     plan("backup", "Pre-migration backup", "done", `offline snapshot at ${dir}`);
   }
+
+  // ── 2b. record the keyring where the containers read it ─────────────
+  recordKeyring?.();
 
   // ── 3. root key ─────────────────────────────────────────────────────
   if (root.valid) {
@@ -529,7 +558,7 @@ export async function runVerify(
   if (deps.docker && backend === "passphrase") {
     const pass = planDockerPassphrase(deps.docker, configDir);
     if (pass.kind === "configured" || pass.kind === "reuse" || pass.kind === "record") {
-      applyDockerPassphrase({ kind: "configured", file: pass.file }, deps.docker, configDir);
+      prepareDockerPassphrase({ kind: "configured", file: pass.file });
     }
   }
   const hosts = detectHosts(configDir, opts.hosts);
