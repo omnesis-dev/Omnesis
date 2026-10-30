@@ -276,9 +276,21 @@ ok "returned to $TAG_A"
 # The backup runs for real here: it is taken through the gateway's API from
 # inside the updater container, which is the one step that proves that
 # container can authenticate against the gateway beside it.
+# The launcher on this host is the one part of the install no image carries,
+# so an update brings it up to the release the containers land on. Left as an
+# older release wrote it, a command that needs the host's help — `secure`
+# restarting the containers — would run new code behind an old launcher.
 step "omnesis update to $TAG_B"
+expected_launcher="$(sh "$REPO/scripts/install.sh" --print-docker-launcher "$COMPOSE_FILE" gateway)"
+[[ "$(cat "$OMNESIS")" == "$expected_launcher" ]] || die "the installer's launcher is not what it renders"
+printf '# left by an older release\n' >> "$OMNESIS"
 "${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --health-timeout 300 \
-  || die "the update to $TAG_B failed"
+  > "$WORK/update-b.out" 2>&1 || { cat "$WORK/update-b.out" >&2; die "the update to $TAG_B failed"; }
+cat "$WORK/update-b.out"
+[[ "$(cat "$OMNESIS")" == "$expected_launcher" ]] || die "the update did not refresh the launcher on this host"
+[[ -x "$OMNESIS" ]] || die "the refreshed launcher is not executable"
+grep -q "Refreshed the omnesis command at $OMNESIS" "$WORK/update-b.out" || die "the update did not say it refreshed the launcher"
+ok "the update brought the host launcher up to $TAG_B's"
 ls "$CONFIG_DIR"/backups/* >/dev/null 2>&1 || die "the pre-update backup was not taken"
 ok "the pre-update backup was taken through the gateway API"
 grep -q "OMNESIS_IMAGE_TAG=$TAG_B" "$CONFIG_DIR/.env" || die "the recorded tag did not move to $TAG_B"
@@ -320,6 +332,56 @@ grep -Fq "Rolled back to $TAG_B" "$WORK/automatic.out" \
   || { cat "$WORK/automatic.out" >&2; die "automatic update did not recover the prior image"; }
 wait_served "$TAG_B" 120 || die "the automatic update rollback did not restore the gateway"
 ok "registry-based automatic release discovery and rollback"
+
+# ── encryption at rest, after the fact ──────────────────────────────────────
+
+# The install above declined encryption (--no-keyring). `omnesis secure`,
+# typed on this host, has to finish the job end to end: generate and record
+# the passphrase the containers read, seal every secret file, restart both
+# containers from the host — which no container can do to itself — and verify
+# that the gateway came back with encrypted databases.
+step "omnesis secure on the host encrypts the running install"
+printf '{"installed":{"client_id":"fictional-smoke-client"}}\n' > "$CONFIG_DIR/example-credentials.json"
+chmod 600 "$CONFIG_DIR/example-credentials.json"
+[[ "$(head -c 15 "$CONFIG_DIR/omnesis.db")" == "SQLite format 3" ]] || die "the corpus should start plaintext"
+
+"${omnesis_env[@]}" "$OMNESIS" secure --dry-run > "$WORK/secure-dry.out" 2>&1 \
+  || { cat "$WORK/secure-dry.out" >&2; die "secure --dry-run failed"; }
+grep -q "generate $CONFIG_DIR/keyring.pass (owner-only)" "$WORK/secure-dry.out" \
+  || { cat "$WORK/secure-dry.out" >&2; die "the dry run did not plan the passphrase file"; }
+grep -q "restart gateway and collector from this machine" "$WORK/secure-dry.out" \
+  || { cat "$WORK/secure-dry.out" >&2; die "the dry run did not plan the host restart"; }
+[[ ! -e "$CONFIG_DIR/keyring.pass" ]] || die "the dry run wrote a passphrase file"
+ok "the dry run plans the passphrase file and the host restart, and writes nothing"
+
+authenticated_before="$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)"
+"${omnesis_env[@]}" "$OMNESIS" secure < /dev/null > "$WORK/secure.out" 2>&1 \
+  || { cat "$WORK/secure.out" >&2; die "omnesis secure failed"; }
+cat "$WORK/secure.out"
+grep -q "Omnesis recovery code" "$WORK/secure.out" || die "no recovery code was printed"
+grep -q "Restarting gateway collector from this machine" "$WORK/secure.out" || die "the launcher did not restart the containers"
+grep -q "Encryption at rest is in effect" "$WORK/secure.out" || die "the restarted install was not verified"
+[[ "$(stat -c '%a' "$CONFIG_DIR/keyring.pass")" == 600 ]] || die "the passphrase file is not owner-only"
+grep -qx "OMNESIS_SECRET_STORE=passphrase" "$CONFIG_DIR/.env" || die "the secret store was not recorded"
+grep -qx "OMNESIS_KEYRING_PASSPHRASE_FILE=$CONFIG_DIR/keyring.pass" "$CONFIG_DIR/.env" || die "the passphrase file was not recorded"
+[[ "$(head -c 15 "$CONFIG_DIR/omnesis.db")" != "SQLite format 3" ]] || die "the gateway database is still plaintext"
+grep -q "fictional-smoke-client" "$CONFIG_DIR/example-credentials.json" && die "the credential file is still plaintext"
+[[ ! -e "$CONFIG_DIR/secure-restart" ]] || die "the restart request was left behind"
+ok "passphrase recorded, secrets sealed, containers restarted, databases encrypted"
+
+for _ in $(seq 1 80); do
+  [[ "$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)" -gt "$authenticated_before" ]] && break
+  sleep 3
+done
+[[ "$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)" -gt "$authenticated_before" ]] \
+  || die "the restarted collector never authenticated with its sealed token"
+"${omnesis_env[@]}" "$OMNESIS" tokens list >/dev/null || die "the CLI could not use the sealed admin token"
+"${omnesis_env[@]}" "$OMNESIS" secure --verify >/dev/null || die "secure --verify failed on the secured install"
+"${omnesis_env[@]}" "$OMNESIS" secure < /dev/null > "$WORK/secure-again.out" 2>&1 \
+  || { cat "$WORK/secure-again.out" >&2; die "a second omnesis secure failed"; }
+grep -q "encryption at rest is already in effect" "$WORK/secure-again.out" || die "a second run restarted the containers again"
+grep -q "Restarting" "$WORK/secure-again.out" && die "a second run restarted the containers again"
+ok "the collector re-authenticated, the CLI reads its sealed token, and a re-run changes nothing"
 
 # ── a certificate the operator supplies ─────────────────────────────────────
 

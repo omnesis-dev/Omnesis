@@ -14,11 +14,12 @@
  * gateway forwards them to subscribers (SSE on the admin client side).
  */
 
-import { hostname as osHostname } from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   KEYRING_ENV_KEYS,
+  collectorHostname,
   createLogger,
+  secretFileWritesEncrypted,
   toErrorMessage,
   hasProviderCredentials,
   writeProviderCredentials,
@@ -211,7 +212,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         .getDescriptors()
         .filter((d) => !d.gatewayHosted)
         .map(serializeDescriptor),
-      hostname: osHostname(),
+      hostname: collectorHostname(),
     };
   }
 
@@ -857,8 +858,16 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     }));
   }
 
-  function handleCredentialsStatus(): WsResponsePayload<"credentials.status"> {
-    return { hostname: osHostname(), entries: listCredentialEntries() };
+  async function handleCredentialsStatus(): Promise<WsResponsePayload<"credentials.status">> {
+    const configDir = sourceManager.getConfigDir();
+    return {
+      hostname: collectorHostname(),
+      entries: listCredentialEntries(),
+      // Where a credential the wizard collects lands, and whether it lands
+      // encrypted — so the CLI can say both rather than guess.
+      configDir,
+      secretsEncrypted: await secretFileWritesEncrypted({ configDir }),
+    };
   }
 
   async function handleCredentialsSet(

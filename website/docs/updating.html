@@ -776,6 +776,15 @@
           trusting the recorded tag. A host that only collects has no gateway to ask, so there it
           checks the tag Docker started the collector container from.
         </p>
+        <p>
+          The <code>omnesis</code> command on the machine is the one part of a Docker install that
+          no image carries, so once the containers run the new release, the update also replaces
+          that command with the new release's, through a one-shot container that mounts only its
+          directory. It replaces only the file the installer wrote for this install. An install made
+          before the location was recorded is found at <code>~/.local/bin/omnesis</code> when its
+          configuration directory is <code>~/.config/omnesis</code>; otherwise the update says to
+          run the installer again with the options you installed with.
+        </p>
 
         <p>
           Stable Docker updates select the newest release tag present in every image controlled by

@@ -178,6 +178,10 @@ FROM gateway-runtime AS updater
 # image has to match their libc.
 COPY --from=docker:28.5.2-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker:28.5.2-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+# The installer renders the host's launcher, and an update brings an older
+# install's launcher up to this release by rendering it the same way
+# (`install.sh --print-docker-launcher`).
+COPY --chmod=0444 scripts/install.sh /app/scripts/install.sh
 # The inherited probe curls the gateway's port, which nothing serves here.
 HEALTHCHECK NONE
 ENTRYPOINT ["/usr/local/bin/omnesis"]

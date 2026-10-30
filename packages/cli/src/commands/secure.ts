@@ -34,7 +34,14 @@
  * restarted from a collector host, and its health is never taken as proof
  * of this host's encryption.
  *
+ * A Docker install (see `secure-docker.ts`) secures with the passphrase
+ * backend, generating and recording the passphrase file the containers read
+ * when none is configured, and its restart is the host launcher's: the
+ * containers cannot restart themselves.
+ *
  * `--dry-run` prints the plan for this install without changing anything.
+ * `--verify` checks that encryption at rest is in effect, changing nothing —
+ * the last step the Docker launcher runs after its restart.
  * `--rollback` restores the pre-secure backup recorded by a previous run
  * (databases only for offline snapshots; the keyring material stays, so a
  * re-run simply re-encrypts).
@@ -66,6 +73,7 @@ import {
   generateRecoveryCode,
   inspectInstallRootKey,
   inspectStorageKey,
+  isEncryptedSecretFile,
   markSecretFileEncryptionRequired,
   migrateSecretTextFile,
   parseSecretStoreBackend,
@@ -79,6 +87,17 @@ import {
 import { c, CliError, EXIT_FAILURE, EXIT_USER_ERROR, gatewayFetch, isJSON } from "../utils.js";
 import { collectSecretFileCandidates } from "./keyring.js";
 import { restore } from "./restore.js";
+import {
+  applyDockerPassphrase,
+  dockerRestartCommand,
+  dockerSecureBackend,
+  dockerSecureContext,
+  planDockerPassphrase,
+  recordDockerBackend,
+  writeRestartRequest,
+  type DockerPassphrasePlan,
+  type DockerSecureContext,
+} from "./secure-docker.js";
 
 const WIZARD_STATE_FILE = "keyring/secure-wizard.json";
 const CLI_VERSION = readPackageVersion(import.meta.url);
@@ -104,6 +123,8 @@ export interface SecureDeps {
   ): Promise<"restarted" | "not-installed" | "failed">;
   now(): Date;
   log(line: string): void;
+  /** The Docker install this command runs in, or null/absent for any other. */
+  docker?: DockerSecureContext | null;
 }
 
 export interface SecureOptions {
@@ -187,43 +208,127 @@ function assertNoLiveGateway(configDir: string, action: string): void {
   );
 }
 
-export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<SecureSummary> {
-  const { configDir, backend } = deps;
-  const steps: StepResult[] = [];
-  const summary: SecureSummary = { steps };
+/** Narrate one step and record it in the summary. */
+function stepRecorder(deps: SecureDeps, steps: StepResult[]): PlanStep {
+  return (id, title, status, detail) => {
+    steps.push({ id, title, status, detail });
+    deps.log(
+      `${status === "done" ? `${c.green}✔` : status === "skipped" ? `${c.dim}∅` : status === "action-required" ? `${c.yellow}▶` : `${c.cyan}·`}${c.reset} ${title} ${c.dim}— ${detail}${c.reset}`,
+    );
+  };
+}
 
-  // ── 1. posture ──────────────────────────────────────────────────────
-  const store = createSecretStore({ backend, configDir });
-  const storeStatus: SecretStoreStatus = await store.status();
-  if (!storeStatus.available) {
-    throw new CliError(
-      `The "${storeStatus.backend}" secret store is not available: ${storeStatus.detail}`,
-      EXIT_USER_ERROR,
-    );
-  }
-  const root = await inspectInstallRootKey({ backend, configDir });
-  if (root.present && !root.valid) {
-    throw new CliError(
-      "An install root key exists but cannot be read (wrong passphrase or corrupt entry). " +
-        "Fix the secret-store configuration before securing this install.",
-      EXIT_FAILURE,
-    );
-  }
-  // The host's role, from the state each process leaves behind: a paired
-  // collector's token and the gateway's database — or its lock, since a
-  // running gateway whose database was moved elsewhere still owns this
-  // directory. A fresh directory is a gateway install until a collector
-  // pairs in it; `--host` overrides the detection.
+/**
+ * The host's role, from the state each process leaves behind: a paired
+ * collector's token and the gateway's database — or its lock, since a running
+ * gateway whose database was moved elsewhere still owns this directory. A
+ * fresh directory is a gateway install until a collector pairs in it; `--host`
+ * overrides the detection.
+ */
+function detectHosts(configDir: string, override: StorageKeyHost[] | undefined): StorageKeyHost[] {
+  if (override) return override;
   const collectorPaired = existsSync(join(configDir, "collector-token"));
   const gatewayPresent =
     existsSync(join(configDir, GATEWAY_STORE_FILE)) || liveGatewayHolder(configDir) !== null;
-  const hosts: StorageKeyHost[] =
-    opts.hosts ??
-    (collectorPaired && !gatewayPresent
-      ? ["collector"]
-      : collectorPaired
-        ? ["gateway", "collector"]
-        : ["gateway"]);
+  return collectorPaired && !gatewayPresent
+    ? ["collector"]
+    : collectorPaired
+      ? ["gateway", "collector"]
+      : ["gateway"];
+}
+
+function describePassphrasePlan(
+  plan: DockerPassphrasePlan,
+  envFile: string,
+  done: boolean,
+): string {
+  switch (plan.kind) {
+    case "configured":
+      return plan.file ? `using ${plan.file}` : `configured in ${envFile}`;
+    case "record":
+      return `${done ? "recorded" : "record"} ${plan.file} in ${envFile}, where the containers read it`;
+    case "reuse":
+      return `${done ? "using" : "use"} ${plan.file}, ${done ? "recorded" : "and record it"} in ${envFile}`;
+    case "generate":
+      return done
+        ? `generated ${plan.file} (owner-only), recorded in ${envFile}`
+        : `generate ${plan.file} (owner-only) and record it in ${envFile}, where the containers read it`;
+  }
+}
+
+export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<SecureSummary> {
+  const { configDir, backend } = deps;
+  const docker = deps.docker ?? null;
+  const steps: StepResult[] = [];
+  const summary: SecureSummary = { steps };
+  const plan = stepRecorder(deps, steps);
+  // Whether this run changed what the daemons must start with, so a re-run
+  // over an install already secured restarts nothing.
+  let changed = false;
+
+  // ── 0. a passphrase the containers can read ─────────────────────────
+  // A dry run that would generate the passphrase has no store to inspect yet:
+  // everything after it is planned against an empty keyring.
+  let passphrasePending = false;
+  if (docker && backend === "passphrase") {
+    const pass = planDockerPassphrase(docker, configDir);
+    const envFile = join(configDir, ".env");
+    if (pass.kind === "configured") {
+      applyDockerPassphrase(pass, docker, configDir);
+      plan(
+        "passphrase",
+        "Keyring passphrase",
+        "skipped",
+        describePassphrasePlan(pass, envFile, true),
+      );
+    } else if (opts.dryRun) {
+      plan(
+        "passphrase",
+        "Keyring passphrase",
+        "planned",
+        describePassphrasePlan(pass, envFile, false),
+      );
+      if (pass.kind === "generate") passphrasePending = true;
+      // Read, not written: this process alone looks through the file.
+      else applyDockerPassphrase({ kind: "configured", file: pass.file }, docker, configDir);
+    } else {
+      applyDockerPassphrase(pass, docker, configDir);
+      changed = true;
+      plan("passphrase", "Keyring passphrase", "done", describePassphrasePlan(pass, envFile, true));
+    }
+  } else if (docker && !opts.dryRun && recordDockerBackend(backend, docker, configDir)) {
+    changed = true;
+    plan(
+      "secret-store",
+      "Secret store",
+      "done",
+      `recorded ${backend} in ${join(configDir, ".env")}`,
+    );
+  }
+
+  // ── 1. posture ──────────────────────────────────────────────────────
+  const store = createSecretStore({ backend, configDir });
+  let storeBackend: string = backend;
+  let root: { present: boolean; valid: boolean } = { present: false, valid: false };
+  if (!passphrasePending) {
+    const storeStatus: SecretStoreStatus = await store.status();
+    if (!storeStatus.available) {
+      throw new CliError(
+        `The "${storeStatus.backend}" secret store is not available: ${storeStatus.detail}`,
+        EXIT_USER_ERROR,
+      );
+    }
+    storeBackend = storeStatus.backend;
+    root = await inspectInstallRootKey({ backend, configDir });
+    if (root.present && !root.valid) {
+      throw new CliError(
+        "An install root key exists but cannot be read (wrong passphrase or corrupt entry). " +
+          "Fix the secret-store configuration before securing this install.",
+        EXIT_FAILURE,
+      );
+    }
+  }
+  const hosts = detectHosts(configDir, opts.hosts);
   const hasGateway = hosts.includes("gateway");
   const hasCollector = hosts.includes("collector");
   deps.log(
@@ -236,19 +341,12 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   const healthy = hasGateway ? await deps.gatewayHealthy() : false;
   const mainDbPlain = hasGateway ? sqliteLooksPlaintext(join(configDir, "omnesis.db")) : null;
   const storageKeyNames = storageKeyNamesForHosts(hosts);
-  const storeStates = await Promise.all(
-    storageKeyNames.map((k) => inspectStorageKey(k, { backend, configDir })),
-  );
+  const storeStates = passphrasePending
+    ? storageKeyNames.map(() => ({ present: false, valid: false }))
+    : await Promise.all(storageKeyNames.map((k) => inspectStorageKey(k, { backend, configDir })));
   const allKeysPresent = storeStates.every((s) => s.present && s.valid);
   const envelopeExists = existsSync(recoveryEnvelopePath(configDir));
   const candidates = collectSecretFileCandidates(configDir);
-
-  const plan = (id: string, title: string, status: StepResult["status"], detail: string) => {
-    steps.push({ id, title, status, detail });
-    deps.log(
-      `${status === "done" ? `${c.green}✔` : status === "skipped" ? `${c.dim}∅` : status === "action-required" ? `${c.yellow}▶` : `${c.cyan}·`}${c.reset} ${title} ${c.dim}— ${detail}${c.reset}`,
-    );
-  };
 
   // ── 2. backup ───────────────────────────────────────────────────────
   if (!hasGateway) {
@@ -284,13 +382,14 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
 
   // ── 3. root key ─────────────────────────────────────────────────────
   if (root.valid) {
-    plan("root-key", "Install root key", "skipped", `already present (${storeStatus.backend})`);
+    plan("root-key", "Install root key", "skipped", `already present (${storeBackend})`);
   } else if (opts.dryRun) {
-    plan("root-key", "Install root key", "planned", `create in ${storeStatus.backend}`);
+    plan("root-key", "Install root key", "planned", `create in ${storeBackend}`);
   } else {
     await ensureInstallRootKey({ backend, configDir });
     await markSecretFileEncryptionRequired(configDir);
-    plan("root-key", "Install root key", "done", `created in ${storeStatus.backend}`);
+    changed = true;
+    plan("root-key", "Install root key", "done", `created in ${storeBackend}`);
   }
 
   // ── 4. recovery escrow ──────────────────────────────────────────────
@@ -320,12 +419,13 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   if (opts.dryRun) {
     plan("migrate", "Encrypt secret files", "planned", `${candidates.length} candidate file(s)`);
   } else {
-    let changed = 0;
+    let migrated = 0;
     for (const path of candidates) {
       const result = await migrateSecretTextFile(path, { backend, configDir });
-      if (result.changed) changed += 1;
+      if (result.changed) migrated += 1;
     }
-    plan("migrate", "Encrypt secret files", "done", `${changed} file(s) newly encrypted`);
+    if (migrated > 0) changed = true;
+    plan("migrate", "Encrypt secret files", "done", `${migrated} file(s) newly encrypted`);
   }
 
   // ── 6. wrapped live-storage keys ────────────────────────────────────
@@ -342,13 +442,176 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
     for (const keyName of storageKeyNames) {
       await ensureStorageKey(keyName, { backend, configDir });
     }
+    changed = true;
     plan("storage-keys", "Live-storage keys", "done", "wrapped keys ready; migration armed");
   }
 
   // ── 7. restart + verify ─────────────────────────────────────────────
+  if (docker) {
+    dockerRestartStep(docker, opts, { changed, hasGateway, mainDbPlain }, plan);
+    return summary;
+  }
   if (hasGateway) await restartGatewayStep(deps, opts, { healthy, mainDbPlain }, plan);
   if (hasCollector) await restartCollectorStep(deps, opts, plan);
   return summary;
+}
+
+/**
+ * The containers start with the new keyring only once restarted, which the
+ * host does: through the launcher, which then runs `--verify`, or by the
+ * command named here. Nothing is restarted when nothing changed and the
+ * databases are already encrypted.
+ */
+function dockerRestartStep(
+  docker: DockerSecureContext,
+  opts: SecureOptions,
+  posture: { changed: boolean; hasGateway: boolean; mainDbPlain: boolean | null },
+  plan: PlanStep,
+): void {
+  const services = docker.services.join(" and ");
+  const title = "Container restart";
+  if (docker.services.length === 0) {
+    plan(
+      "restart",
+      title,
+      "action-required",
+      `${docker.composeFile} declares no gateway or collector service to restart — re-run the installer to repair it`,
+    );
+    return;
+  }
+  const settled = !posture.hasGateway || posture.mainDbPlain === false;
+  if (!opts.dryRun && !posture.changed && settled) {
+    plan("restart", title, "skipped", "encryption at rest is already in effect");
+    return;
+  }
+  const command = dockerRestartCommand(docker);
+  const then = posture.hasGateway
+    ? "verify the databases are encrypted"
+    : "its sources encrypt their stores as they open them";
+  if (opts.dryRun) {
+    plan(
+      "restart",
+      title,
+      "planned",
+      docker.hostRestart
+        ? `restart ${services} from this machine, then ${then}`
+        : `restart ${services} from this machine with \`${command}\`, then ${then}`,
+    );
+    return;
+  }
+  if (docker.hostRestart) {
+    writeRestartRequest(docker);
+    plan("restart", title, "planned", `restarting ${services} from this machine next`);
+    return;
+  }
+  plan(
+    "restart",
+    title,
+    "action-required",
+    `restart ${services} from this machine with \`${command}\`, then check with \`omnesis secure --verify\``,
+  );
+}
+
+/**
+ * Whether encryption at rest is in effect, changing nothing: the root key and
+ * live-storage keys are there, every secret file is sealed, and — after the
+ * gateway answers — its database is no longer plaintext. The Docker launcher
+ * runs this after restarting the containers, so the wait for the gateway
+ * covers the boot in which it encrypts the databases.
+ */
+export async function runVerify(
+  deps: SecureDeps,
+  opts: { hosts?: StorageKeyHost[]; timeoutMs?: number },
+): Promise<{ steps: StepResult[]; verified: boolean }> {
+  const { configDir, backend } = deps;
+  const steps: StepResult[] = [];
+  const plan = stepRecorder(deps, steps);
+  if (deps.docker && backend === "passphrase") {
+    const pass = planDockerPassphrase(deps.docker, configDir);
+    if (pass.kind === "configured" || pass.kind === "reuse" || pass.kind === "record") {
+      applyDockerPassphrase({ kind: "configured", file: pass.file }, deps.docker, configDir);
+    }
+  }
+  const hosts = detectHosts(configDir, opts.hosts);
+  let verified = true;
+  const fail = (id: string, title: string, detail: string) => {
+    verified = false;
+    plan(id, title, "action-required", detail);
+  };
+
+  const store = createSecretStore({ backend, configDir });
+  const status = await store.status();
+  const root = status.available
+    ? await inspectInstallRootKey({ backend, configDir })
+    : { present: false, valid: false };
+  if (root.valid) {
+    plan("root-key", "Install root key", "done", `present (${status.backend})`);
+  } else {
+    fail(
+      "root-key",
+      "Install root key",
+      status.available ? "missing — run `omnesis secure`" : status.detail,
+    );
+  }
+
+  const plaintext = collectSecretFileCandidates(configDir).filter(
+    (path) => existsSync(path) && !isEncryptedSecretFile(readFileSync(path, "utf8")),
+  );
+  if (plaintext.length === 0) {
+    plan("migrate", "Secret files", "done", "every secret file is encrypted");
+  } else {
+    fail(
+      "migrate",
+      "Secret files",
+      `${plaintext.length} still plaintext (${plaintext.join(", ")}) — run \`omnesis secure\``,
+    );
+  }
+
+  if (root.valid) {
+    const names = storageKeyNamesForHosts(hosts);
+    const states = await Promise.all(
+      names.map((k) => inspectStorageKey(k, { backend, configDir })),
+    );
+    if (states.every((s) => s.present && s.valid) && storageEncryptionRequired(configDir)) {
+      plan("storage-keys", "Live-storage keys", "done", `ready for ${names.join(", ")}`);
+    } else {
+      fail("storage-keys", "Live-storage keys", "missing — run `omnesis secure`");
+    }
+  }
+
+  if (hosts.includes("gateway")) {
+    const logs = deps.docker
+      ? `\`docker compose -f ${deps.docker.composeFile} logs -f gateway\``
+      : "`omnesis service logs gateway -f`";
+    const up = await waitForHealthy(deps, opts.timeoutMs ?? 90_000);
+    const plain = sqliteLooksPlaintext(join(configDir, "omnesis.db"));
+    if (up && plain === false) {
+      plan("restart", "Gateway", "done", "the gateway is up; its databases are encrypted");
+    } else if (up && plain === true) {
+      fail(
+        "restart",
+        "Gateway",
+        `the gateway is up but its database still looks plaintext — check ${logs} for the migration line`,
+      );
+    } else if (up) {
+      plan("restart", "Gateway", "done", "the gateway is up");
+    } else {
+      fail(
+        "restart",
+        "Gateway",
+        `the gateway did not answer in time — a large corpus can take longer to encrypt; watch ${logs}`,
+      );
+    }
+  }
+  if (hosts.includes("collector")) {
+    plan(
+      "collector-restart",
+      "Collector",
+      "done",
+      "its sources encrypt their stores as they open them",
+    );
+  }
+  return { steps, verified };
 }
 
 type PlanStep = (id: string, title: string, status: StepResult["status"], detail: string) => void;
@@ -517,10 +780,15 @@ export async function runRollback(deps: SecureDeps, opts: { yes: boolean }): Pro
   );
 }
 
-function defaultDeps(backend: SecretStoreBackend): SecureDeps {
+function defaultDeps(
+  backend: SecretStoreBackend,
+  configDir: string,
+  docker: DockerSecureContext | null,
+): SecureDeps {
   return {
-    configDir: process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+    configDir,
     backend,
+    docker,
     async gatewayHealthy() {
       try {
         const res = await gatewayFetch("/health", { signal: AbortSignal.timeout(3000) });
@@ -560,6 +828,10 @@ export const secureCommand = defineCommand({
       description: `Secret-store backend (${SECRET_STORE_BACKENDS.join(", ")})`,
     },
     "dry-run": { type: "boolean", description: "Print the plan for this install; change nothing" },
+    verify: {
+      type: "boolean",
+      description: "Check that encryption at rest is in effect; change nothing",
+    },
     host: {
       type: "string",
       description:
@@ -577,15 +849,19 @@ export const secureCommand = defineCommand({
     json: { type: "boolean", description: "Machine-readable JSON output" },
   },
   async run(ctx) {
+    const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
+    const docker = dockerSecureContext(configDir);
     const backend = ((): SecretStoreBackend => {
       const raw: unknown = ctx.args.backend;
-      if (raw == null || raw === false || raw === "") {
-        return parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE);
+      if (raw != null && raw !== false && raw !== "" && typeof raw !== "string") {
+        throw new CliError("Invalid --backend value", EXIT_USER_ERROR);
       }
-      if (typeof raw !== "string") throw new CliError("Invalid --backend value", EXIT_USER_ERROR);
-      return parseSecretStoreBackend(raw);
+      const requested = typeof raw === "string" && raw !== "" ? raw : undefined;
+      // A container has no OS keyring for `auto` to find.
+      if (docker) return dockerSecureBackend(requested);
+      return parseSecretStoreBackend(requested ?? process.env.OMNESIS_SECRET_STORE);
     })();
-    const deps = defaultDeps(backend);
+    const deps = defaultDeps(backend, configDir, docker);
     // In --json mode stdout must be a single JSON document; suppress the
     // human step narration so machine callers can parse it directly.
     if (isJSON) deps.log = () => {};
@@ -605,6 +881,15 @@ export const secureCommand = defineCommand({
         EXIT_USER_ERROR,
       );
     })();
+    if (ctx.args.verify === true) {
+      const result = await runVerify(deps, { hosts });
+      if (isJSON) console.log(JSON.stringify(result, null, 2));
+      if (!result.verified) {
+        throw new CliError("Encryption at rest is not fully in effect yet.", EXIT_FAILURE);
+      }
+      if (!isJSON) console.log(`${c.green}Encryption at rest is in effect.${c.reset}`);
+      return;
+    }
     const summary = await runSecure(deps, {
       hosts,
       dryRun: ctx.args["dry-run"] === true,
@@ -621,7 +906,11 @@ export const secureCommand = defineCommand({
       console.log(
         `${c.yellow}Write this down and keep it offline — it is shown only once.${c.reset}`,
       );
-      console.log("It is the only way back into your encrypted data if the OS keyring is lost.");
+      console.log(
+        backend === "passphrase"
+          ? "It is the only way back into your encrypted data if the keyring passphrase file is lost."
+          : "It is the only way back into your encrypted data if the OS keyring is lost.",
+      );
     }
   },
 });

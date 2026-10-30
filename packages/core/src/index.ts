@@ -391,6 +391,7 @@ export {
   writeSecretJsonFile,
   writeSecretJsonFileSync,
   migrateSecretTextFile,
+  secretFileWritesEncrypted,
   type SecretFileOptions,
   type SecretFileWriteResult,
   type SecretFileMigrationResult,
@@ -1302,6 +1303,7 @@ export {
   servedCertificateCoversLocalhost,
 } from "./local-gateway-url.js";
 export { homebrewCliPaths, mkcertCliCandidates } from "./host-cli.js";
+export { COLLECTOR_HOSTNAME_ENV, collectorHostname } from "./collector-hostname.js";
 export {
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,

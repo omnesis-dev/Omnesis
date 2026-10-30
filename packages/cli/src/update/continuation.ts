@@ -524,6 +524,9 @@ export const CONTAINER_OWN_ENV: ReadonlySet<string> = new Set([
   "OMNESIS_LOG_FILE",
   "OMNESIS_TLS_CERT",
   "OMNESIS_TLS_KEY",
+  // What the host launcher tells a container about itself.
+  "OMNESIS_DOCKER_HOST_RESTART",
+  "OMNESIS_DOCKER_LAUNCHER",
   UPDATE_LOCK_ENV,
 ]);
 

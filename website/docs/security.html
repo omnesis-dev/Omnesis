@@ -198,6 +198,9 @@
           <code>--rollback --yes</code>, run with the gateway stopped, puts that snapshot back if
           the database step went wrong. A backup taken through the running gateway is restored with
           <code>omnesis restore</code> instead (see <a href="/docs/updating#restore">Restore</a>).
+          <code>--verify</code> checks, without changing anything, that the root key and store keys
+          exist, every secret file is encrypted, and the running gateway's database is no longer
+          plaintext.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -206,8 +209,32 @@
               <span class="t-prompt">❯</span> <span class="t-cmd">omnesis secure --dry-run</span>
             </p>
             <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis secure</span></p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis secure --verify</span>
+            </p>
           </div>
         </div>
+        <h3 id="encryption-docker">Encryption in Docker</h3>
+        <p>
+          On a Docker install, run <code>omnesis secure</code> on the machine that runs the
+          containers, as any other command. A container has no OS keyring, so it uses the
+          <code>passphrase</code> backend. When no passphrase is configured, it generates an
+          owner-only passphrase file at <code>~/.config/omnesis/keyring.pass</code> (on a machine
+          that only collects, beside its <code>docker-compose.yml</code>) and records it in the
+          <code>.env</code> the containers read at start. A passphrase file you name with
+          <code>OMNESIS_KEYRING_PASSPHRASE_FILE</code> must sit inside the configuration directory,
+          the one directory the containers see.
+        </p>
+        <p>
+          The steps then run in the same order as on any machine: backup, root key, recovery code,
+          secret files and store keys. A container cannot restart itself, so the
+          <code>omnesis</code> command on the machine restarts the gateway and collector containers
+          once the steps succeed, and then runs <code>omnesis secure --verify</code>. An install
+          whose <code>omnesis</code> command predates this prints the
+          <code>docker compose … restart</code> command to run instead; <code>omnesis update</code>
+          brings that command up to date (see
+          <a href="/docs/updating#docker-update">Docker installs</a>).
+        </p>
         <p>The steps it runs are also available one by one:</p>
         <ul>
           <li>

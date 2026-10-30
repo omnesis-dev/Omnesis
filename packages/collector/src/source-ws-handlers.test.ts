@@ -537,6 +537,41 @@ describe("source-ws-handlers (descriptors / credentials)", () => {
     expect(typeof result.entries[0].configured).toBe("boolean");
   });
 
+  // The CLI wizard repeats these to the operator: where a pasted credential
+  // lands, and whether it lands encrypted.
+  test("credentials.status says where credentials are written and whether they are encrypted", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { clearSecretFileKeyCacheForTests, ensureInstallRootKey } = await import("@omnesis/core");
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-creds-status-"));
+    const priorStore = process.env.OMNESIS_SECRET_STORE;
+    process.env.OMNESIS_SECRET_STORE = "file";
+    clearSecretFileKeyCacheForTests();
+    try {
+      const manager = { ...fakeManager(), getConfigDir: () => configDir };
+      const handlers = createSourceWsHandlers({
+        sourceManager: manager as never,
+        gateway: fakeGateway,
+        emitEvent: () => {},
+      });
+      const status = async () =>
+        (await handlers.handle(makeCommand("credentials.status", {}))) as {
+          configDir?: string;
+          secretsEncrypted?: boolean;
+        };
+      expect(await status()).toMatchObject({ configDir, secretsEncrypted: false });
+
+      await ensureInstallRootKey({ backend: "file", configDir });
+      expect(await status()).toMatchObject({ configDir, secretsEncrypted: true });
+    } finally {
+      clearSecretFileKeyCacheForTests();
+      if (priorStore === undefined) delete process.env.OMNESIS_SECRET_STORE;
+      else process.env.OMNESIS_SECRET_STORE = priorStore;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("credentials.set rejects unknown fileKey", async () => {
     const handlers = createSourceWsHandlers({
       sourceManager: fakeManager() as never,

@@ -10,13 +10,17 @@
  * by `cli add` when a required-credentials provider has none configured.
  */
 
-import { hostname as osHostname } from "node:os";
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import {
+  collectorHostname,
+  DEFAULT_CONFIG_DIR,
   expandSpecTokens,
   publicBaseUrlFromAdminConfig,
+  secretFileWritesEncrypted,
   type SerializedProviderCredentialsSpec,
 } from "@omnesis/core";
+import { detectDockerContext, isWithinDir } from "./docker-install.js";
 import { c, gatewayJson, withSpinner, GATEWAY_URL } from "./utils.js";
 
 interface CredentialsEntry {
@@ -33,7 +37,17 @@ interface CredentialsStatusResponse {
   /** Page<CredentialsEntry> shape — `items` replaces the legacy `entries`. */
   items: CredentialsEntry[];
   pageInfo: { hasMore: boolean; limit: number; nextCursor?: string };
+  /** The collector's config directory; absent from collectors that predate it. */
+  configDir?: string;
+  /** Whether a credential the collector writes now is encrypted at rest. */
+  secretsEncrypted?: boolean;
 }
+
+/** What the collector said about where a credential goes, for the wizard to repeat. */
+export type CredentialsDestination = Pick<
+  CredentialsStatusResponse,
+  "hostname" | "configDir" | "secretsEncrypted"
+>;
 
 /** `GET /admin/config` envelope — only the field the wizard needs. */
 interface AdminConfigResponse {
@@ -95,9 +109,86 @@ async function fetchWizardOrigin(): Promise<string> {
  * can safely auto-open browser tabs (the OAuth callback server runs on
  * this machine). When unequal we just print URLs.
  */
-export function isSameHostAsCollector(collectorHostname?: string): boolean {
-  if (!collectorHostname) return false;
-  return collectorHostname === osHostname();
+export function isSameHostAsCollector(reportedHostname?: string): boolean {
+  if (!reportedHostname) return false;
+  return reportedHostname === collectorHostname();
+}
+
+/** The facts of this CLI's host the destination wording depends on. */
+export interface WizardHost {
+  /** This CLI's own config directory. */
+  configDir: string;
+  /**
+   * The Docker install this CLI runs in: its config directory is bind-mounted
+   * at the same absolute path, so a path in it means the same file on the
+   * machine the operator is typing on.
+   */
+  dockerProjectDir: string | null;
+  /** Whether a secret this CLI's config directory receives now is encrypted. */
+  secretsEncrypted(): Promise<boolean>;
+}
+
+export function defaultWizardHost(): WizardHost {
+  const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
+  return {
+    configDir,
+    dockerProjectDir: detectDockerContext(configDir)?.projectDir ?? null,
+    secretsEncrypted: () => secretFileWritesEncrypted({ configDir }),
+  };
+}
+
+/**
+ * Where a credential the wizard collects is saved and whether it is encrypted
+ * there, in the words the operator reads before pasting it.
+ *
+ * The collector says both when it is new enough; otherwise this CLI answers
+ * for a collector that shares its config directory and stays vague about one
+ * elsewhere. Under Docker the path is the one on this machine — the config
+ * directory is mounted at the same absolute path — so it is printed whole and
+ * said to be here, rather than as a `~` that would name the container's home.
+ */
+export async function credentialsDestinationLines(input: {
+  fileKey: string;
+  perAccount: boolean;
+  sameHost: boolean;
+  destination?: CredentialsDestination;
+  host: WizardHost;
+}): Promise<string[]> {
+  const { fileKey, perAccount, sameHost, destination, host } = input;
+  const collectorDir = destination?.configDir ?? (sameHost ? host.configDir : undefined);
+  const inDocker =
+    host.dockerProjectDir !== null &&
+    collectorDir !== undefined &&
+    isWithinDir(collectorDir, host.dockerProjectDir);
+  const local = sameHost || inDocker;
+  const file = collectorDir ? join(collectorDir, `${fileKey}-credentials.json`) : null;
+
+  let where: string;
+  if (perAccount) {
+    where = "They'll be stored under the account they turn out to belong to, once verified";
+  } else if (file && inDocker) {
+    where = `They'll be saved on this machine to ${file}`;
+  } else if (file && local) {
+    where = `They'll be saved to ${file}`;
+  } else if (file && destination?.hostname) {
+    where = `They'll be saved on ${destination.hostname}, to ${file}`;
+  } else {
+    where = "They'll be saved to the collector's config dir";
+  }
+
+  const encrypted =
+    destination?.secretsEncrypted ?? (local ? await host.secretsEncrypted() : undefined);
+  const lines = [`${where} (mode 0600).`];
+  if (encrypted === true) {
+    lines.push("Encrypted at rest with this install's keyring.");
+  } else if (encrypted === false) {
+    lines.push(
+      local
+        ? "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file."
+        : `Not encrypted at rest: ${destination?.hostname ?? "the collector's machine"} has no keyring armed. Run \`omnesis secure\` there to encrypt it.`,
+    );
+  }
+  return lines;
 }
 
 /** Spawn `open <url>` (macOS) / `xdg-open` (linux). Best-effort, never throws. */
@@ -126,7 +217,12 @@ function openInBrowser(url: string): void {
  */
 export async function collectCredentialFields(
   entry: CredentialsEntry,
-  ctx: { sameHost: boolean; perAccount?: boolean },
+  ctx: {
+    sameHost: boolean;
+    perAccount?: boolean;
+    destination?: CredentialsDestination;
+    host?: WizardHost;
+  },
 ): Promise<Record<string, string> | null> {
   const prompts = await import("@clack/prompts");
   const { providerName, fileKey } = entry;
@@ -198,17 +294,14 @@ export async function collectCredentialFields(
   }
 
   console.log(`\n${c.bold}Paste the credentials you just created${c.reset}`);
-  if (ctx.perAccount) {
-    console.log(
-      `${c.dim}They'll be stored under the account they turn out to belong to, once verified (mode 0600).${c.reset}\n`,
-    );
-  } else if (ctx.sameHost) {
-    console.log(
-      `${c.dim}They'll be saved to ~/.config/omnesis/${fileKey}-credentials.json (mode 0600).${c.reset}\n`,
-    );
-  } else {
-    console.log(`${c.dim}They'll be saved to the collector's config dir (mode 0600).${c.reset}\n`);
-  }
+  const destinationLines = await credentialsDestinationLines({
+    fileKey,
+    perAccount: ctx.perAccount === true,
+    sameHost: ctx.sameHost,
+    destination: ctx.destination,
+    host: ctx.host ?? defaultWizardHost(),
+  });
+  console.log(`${c.dim}${destinationLines.join("\n")}${c.reset}\n`);
 
   const fields: Record<string, string> = {};
   for (const field of spec.fields) {
@@ -250,7 +343,12 @@ export async function collectCredentialFields(
  */
 export async function runCredentialsWizard(
   entry: CredentialsEntry,
-  ctx: { deviceId: string; sameHost: boolean },
+  ctx: {
+    deviceId: string;
+    sameHost: boolean;
+    destination?: CredentialsDestination;
+    host?: WizardHost;
+  },
 ): Promise<boolean> {
   // Refuse before collecting anything. The collector rejects a provider-wide
   // write for a per-account spec, so walking the user through the explainer and

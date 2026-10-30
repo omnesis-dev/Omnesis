@@ -17,6 +17,7 @@ import {
   GatewayCertificateChangedError,
   isTlsCertError,
   classifyCollectorAuth,
+  collectorHostname,
   credentialEverAuthenticated,
   needsPairingLogLine,
   readCollectorPairingState,
@@ -334,7 +335,12 @@ export async function resolveCollectorToken(
   configDir: string,
 ): Promise<CollectorTokenResolution> {
   const persisted = readCollectorPairingState(configDir);
-  const deviceName = collectorDeviceName();
+  // The name this collector last paired as is the identity the gateway knows
+  // it by: a revoked row is adopted back by name, so registering under a name
+  // derived afresh — a renamed host, or a container that now reports the
+  // host's name instead of its own — would leave that row and its sources
+  // behind and add a second one.
+  const deviceName = persisted?.deviceName || collectorDeviceName();
 
   // A saved collector token from a prior self-pair is always preferred.
   const existing = readCollectorTokenFile(configDir);
@@ -362,7 +368,6 @@ export async function resolveCollectorToken(
     );
   }
 
-  const os = await import("node:os");
   log.info(
     `No valid collector token found — self-pairing as ${deviceName} using bootstrap admin token`,
   );
@@ -378,7 +383,7 @@ export async function resolveCollectorToken(
       kind: "collector",
       scopes: defaultScopesForDeviceKind("collector"),
       capabilities: {
-        hostname: os.hostname(),
+        hostname: collectorHostname(),
         platform: process.platform,
         version: COLLECTOR_VERSION,
       },
@@ -409,7 +414,12 @@ export async function resolveCollectorToken(
   log.info(
     `${body.reclaimed ? "Reclaimed" : "Self-paired"} collector device id=${body.device?.id} → token saved to ${tokenPath}`,
   );
-  recordCollectorPaired({ configDir, gatewayUrl, deviceName, token: body.token });
+  recordCollectorPaired({
+    configDir,
+    gatewayUrl,
+    deviceName: body.device?.name ?? deviceName,
+    token: body.token,
+  });
   return { outcome: "token", token: body.token };
 }
 
@@ -526,7 +536,7 @@ export async function main() {
   // same check guards requests and commands for a gateway replaced at runtime.
   await requireSourceContract();
 
-  const deviceName = collectorDeviceName();
+  const deviceName = readCollectorPairingState(configDir)?.deviceName || collectorDeviceName();
   const halt = (): Promise<never> =>
     haltForRepair({
       configDir,
@@ -554,7 +564,6 @@ export async function main() {
   });
   log.info(`Connected to gateway at ${gatewayUrl}`);
 
-  const os = await import("node:os");
   const ingestionContext = detectDocumentIngestionContext();
   setDefaultPhoneRegion(ingestionContext.phoneRegion);
   log.info(
@@ -668,7 +677,7 @@ export async function main() {
     onSocketError: retrustOnCertError,
     capabilities: {
       sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
-      hostname: os.hostname(),
+      hostname: collectorHostname(),
       platform: process.platform,
       version: COLLECTOR_VERSION,
       ...(sourceCommit ? { sourceCommit } : {}),

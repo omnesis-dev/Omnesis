@@ -444,6 +444,10 @@ const credentialsEntrySchema = z.object({
 const credentialsStatusResponse = z.object({
   hostname: z.string(),
   entries: z.array(credentialsEntrySchema),
+  /** The collector's config directory, where a provider-wide credential is written. */
+  configDir: z.string().optional(),
+  /** Whether a credential written now is encrypted at rest (the install root key is readable). */
+  secretsEncrypted: z.boolean().optional(),
 });
 
 const credentialsSetRequest = z.object({

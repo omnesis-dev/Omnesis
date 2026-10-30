@@ -328,6 +328,62 @@ describe("resolveCollectorToken", () => {
     expect(readCollectorPairingState(dir)?.tokenFingerprint).toBe(tokenFingerprint("omn_fresh"));
   });
 
+  /** The name each self-pair asked the gateway for. */
+  const registeredNames = (fetchMock: typeof globalThis.fetch): string[] =>
+    (
+      fetchMock as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }
+    ).mock.calls
+      .filter(([url]) => String(url).endsWith("/admin/devices"))
+      .map(([, init]) => (JSON.parse(String(init?.body)) as { name: string }).name);
+
+  // A container that used to report its own name and now reports the host's
+  // (the Docker combined role) must come back onto the row it already owns,
+  // or a revoke-and-reclaim would leave that row and its sources behind.
+  test("re-registers under the name it last paired as, not one derived afresh", async () => {
+    const saved = process.env.OMNESIS_COLLECTOR_HOSTNAME;
+    process.env.OMNESIS_COLLECTOR_HOSTNAME = "studio-northstar";
+    try {
+      writeCollectorTokenFile("omn_dead", dir);
+      recordAuthenticated("omn_dead");
+      process.env.OMNESIS_TOKEN = "omn_admin";
+      const fetchMock = answer({ config: 401, register: registered("omn_fresh", true) });
+      globalThis.fetch = fetchMock;
+
+      await resolveCollectorToken(GATEWAY, dir);
+      expect(registeredNames(fetchMock)).toEqual(["host-collector"]);
+      expect(readCollectorPairingState(dir)?.deviceName).toBe("host-collector");
+    } finally {
+      if (saved === undefined) delete process.env.OMNESIS_COLLECTOR_HOSTNAME;
+      else process.env.OMNESIS_COLLECTOR_HOSTNAME = saved;
+    }
+  });
+
+  test("a first registration takes the reported host name", async () => {
+    const saved = process.env.OMNESIS_COLLECTOR_HOSTNAME;
+    process.env.OMNESIS_COLLECTOR_HOSTNAME = "studio-northstar";
+    try {
+      process.env.OMNESIS_TOKEN = "omn_admin";
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/admin/devices")) {
+          return Response.json({
+            token: "omn_new",
+            reclaimed: false,
+            device: { id: "dev-2", name: "studio-northstar-collector" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${String(input)}`);
+      }) as unknown as typeof globalThis.fetch;
+      globalThis.fetch = fetchMock;
+
+      await resolveCollectorToken(GATEWAY, dir);
+      expect(registeredNames(fetchMock)).toEqual(["studio-northstar-collector"]);
+      expect(readCollectorPairingState(dir)?.deviceName).toBe("studio-northstar-collector");
+    } finally {
+      if (saved === undefined) delete process.env.OMNESIS_COLLECTOR_HOSTNAME;
+      else process.env.OMNESIS_COLLECTOR_HOSTNAME = saved;
+    }
+  });
+
   // The remote case: nothing here can register a device, and the credential
   // demonstrably worked before, so this is a revoke and retrying is futile.
   test("reports needs-pairing when a credential that worked is refused and nothing can register", async () => {

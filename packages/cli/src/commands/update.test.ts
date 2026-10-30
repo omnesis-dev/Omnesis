@@ -1842,6 +1842,68 @@ describe("updateDocker", () => {
     );
   });
 
+  /** The release this checkout's CLI is: the updater image's own. */
+  const OWN = (
+    JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+      version: string;
+    }
+  ).version;
+
+  // The launcher on the host is the one part of the install no image carries:
+  // the updater that runs the release the containers land on renders it.
+  test("landing on this updater's own release brings the host launcher up to it", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events);
+    const refreshDockerLauncher = vi.fn(() => {
+      events.push("refresh launcher");
+      return Promise.resolve();
+    });
+    await updateDocker(
+      opts({ targetVersion: OWN }),
+      dockerDeps(events, runner, { refreshDockerLauncher }),
+    );
+    expect(refreshDockerLauncher).toHaveBeenCalledWith({ composeFile, projectDir });
+    // Only once the containers run that release.
+    expect(events.at(-1)).toBe("refresh launcher");
+    expect(events.indexOf(`awaitHealth ${OWN}`)).toBeLessThan(events.indexOf("refresh launcher"));
+  });
+
+  test("another release's updater refreshes the launcher, not this one", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events);
+    const refreshDockerLauncher = vi.fn(() => Promise.resolve());
+    await updateDocker(opts(), dockerDeps(events, runner, { refreshDockerLauncher }));
+    expect(refreshDockerLauncher).not.toHaveBeenCalled();
+  });
+
+  test("an install already on this release still gets its launcher refreshed", async () => {
+    writeFileSync(envFile, `OMNESIS_IMAGE_TAG=${OWN}\n`, "utf8");
+    const events: string[] = [];
+    const runner = dockerRunner(events);
+    const refreshDockerLauncher = vi.fn(() => Promise.resolve());
+    await updateDocker(
+      opts(),
+      dockerDeps(events, runner, {
+        latestDockerVersion: () => Promise.resolve(OWN),
+        servedVersion: () => Promise.resolve(OWN),
+        refreshDockerLauncher,
+      }),
+    );
+    expect(output()).toContain(`Already up to date (${OWN})`);
+    expect(refreshDockerLauncher).toHaveBeenCalledWith({ composeFile, projectDir });
+
+    refreshDockerLauncher.mockClear();
+    await updateDocker(
+      opts({ dryRun: true }),
+      dockerDeps(events, runner, {
+        latestDockerVersion: () => Promise.resolve(OWN),
+        servedVersion: () => Promise.resolve(OWN),
+        refreshDockerLauncher,
+      }),
+    );
+    expect(refreshDockerLauncher).not.toHaveBeenCalled();
+  });
+
   test("the newest published release becomes the image tag", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events);
@@ -5338,6 +5400,33 @@ describe("hand-over paths a single run never had", () => {
       });
       return { run, prepare, interruptions };
     }
+
+    // A 0.7.1 updater pulls the new images and hands the rest to the new
+    // release's updater — the one whose launcher the host should now have.
+    test("a container install's continuing build refreshes the host launcher once it finishes", async () => {
+      const subject = dockerOffer().subject;
+      writeContinuation(configDir, doc({ subject, deferredBackup: null }));
+      const refreshDockerLauncher = vi.fn(() => Promise.resolve());
+      const { run } = take({
+        detection: {
+          method: "docker",
+          composeFile: "/srv/omnesis/docker-compose.yml",
+          projectDir: "/srv/omnesis",
+        },
+        deps: { refreshDockerLauncher },
+      });
+      await run;
+      expect(readContinuation(configDir)?.state).toBe("accepted");
+      expect(refreshDockerLauncher).toHaveBeenCalledWith(subject);
+    });
+
+    test("a source checkout's continuing build has no container launcher to refresh", async () => {
+      writeContinuation(configDir, doc());
+      const refreshDockerLauncher = vi.fn(() => Promise.resolve());
+      const { run } = take({ deps: { refreshDockerLauncher } });
+      await run;
+      expect(refreshDockerLauncher).not.toHaveBeenCalled();
+    });
 
     test("the installed build adopts the lock, accepts, finishes, and hands the lock back", async () => {
       writeContinuation(configDir, doc());

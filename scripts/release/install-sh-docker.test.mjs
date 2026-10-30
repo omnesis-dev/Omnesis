@@ -23,6 +23,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -2067,18 +2068,296 @@ describe.skipIf(!HAS_PTY)("install.sh --docker: the questions it asks", () => {
     expect(callStartingWith(run.calls, "model install")).toBe("model install wide-embed");
   });
 
-  test("a container has no OS keyring, so the passphrase backend is the offer", () => {
+  // A container has no OS keyring and none on this host could reach one, so
+  // the question is only whether to encrypt — and encrypting is the default.
+  test("pressing Enter encrypts at rest with a generated passphrase file", () => {
     const run = runInstallerOnTty(
       "keyring-question",
       ["--docker", "--no-model", "--version", "9.9.0"],
-      ["2"],
+      [""],
     );
-    expect(run.status).toBe(0);
+    expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("A container has no OS keyring");
-    expect(run.output).toContain("Arm a passphrase keyring now");
-    expect(existsSync(join(run.configDir, "keyring.pass"))).toBe(true);
+    expect(run.output).toContain("Encrypt at rest with a generated passphrase file (recommended)");
+    expect(run.output).toContain(`${run.configDir}/keyring.pass, readable only by you`);
+    expect(run.output).toContain("Choice [2]: ");
+    // Unlocking a keyring on this host can never help a container.
+    expect(run.output).not.toContain("unlock");
+    expect(run.output).not.toContain("3)");
+    expect(statSync(join(run.configDir, "keyring.pass")).mode & 0o777).toBe(0o600);
     expect(callStartingWith(run.calls, "keyring init")).toBe("keyring init --backend passphrase");
+    expect(callStartingWith(run.calls, "keyring export-recovery")).toBe(
+      "keyring export-recovery --backend passphrase",
+    );
     expect(run.envFile()).toContain("OMNESIS_SECRET_STORE=passphrase");
+    expect(run.envFile()).toContain(
+      `OMNESIS_KEYRING_PASSPHRASE_FILE=${run.configDir}/keyring.pass`,
+    );
+  });
+
+  test("1 still installs without encryption at rest, and says how to arm it later", () => {
+    const run = runInstallerOnTty(
+      "keyring-question-decline",
+      ["--docker", "--no-model", "--version", "9.9.0"],
+      ["1"],
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Continuing without encryption at rest");
+    expect(run.output).toContain("Arm it later with: omnesis secure");
+    expect(existsSync(join(run.configDir, "keyring.pass"))).toBe(false);
+    expect(run.calls.some((call) => call.startsWith("keyring init"))).toBe(false);
+    expect(run.envFile()).not.toContain("OMNESIS_SECRET_STORE");
+  });
+
+  test("an answer that is neither choice is asked again", () => {
+    const run = runInstallerOnTty(
+      "keyring-question-retry",
+      ["--docker", "--no-model", "--version", "9.9.0"],
+      ["3", "2"],
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Enter 1 or 2.");
+    expect(existsSync(join(run.configDir, "keyring.pass"))).toBe(true);
+  });
+
+  test("a re-run reads the passphrase file the install records instead of asking again", () => {
+    const first = runInstallerOnTty(
+      "keyring-rerun",
+      ["--docker", "--no-model", "--version", "9.9.0"],
+      [""],
+    );
+    expect(first.status, first.output).toBe(0);
+    const passphrase = readFileSync(join(first.configDir, "keyring.pass"), "utf8");
+
+    // No terminal and no keyring flag: the record is the answer.
+    const again = runInstaller("keyring-rerun", ["--docker", "--no-model", "--version", "9.9.0"]);
+    expect(again.status, again.output).toBe(0);
+    expect(again.output).toContain(
+      `Using the keyring passphrase file this install records: ${again.configDir}/keyring.pass`,
+    );
+    expect(again.output).not.toContain("already exists");
+    expect(again.output).not.toContain("already set in");
+    expect(readFileSync(join(again.configDir, "keyring.pass"), "utf8")).toBe(passphrase);
+    expect(callStartingWith(again.calls, "keyring init")).toBe("keyring init --backend passphrase");
+    expect(again.envFile().match(/OMNESIS_SECRET_STORE=/g)).toHaveLength(1);
+  });
+});
+
+describe("install.sh --docker: the launcher an update renders", () => {
+  /** The installer's own rendering, as the updater image runs it. */
+  function printed(composeFile, service) {
+    const proc = spawnSync("sh", [installer, "--print-docker-launcher", composeFile, service], {
+      encoding: "utf8",
+    });
+    expect(proc.status, proc.stderr).toBe(0);
+    return proc.stdout;
+  }
+
+  test("is byte for byte the launcher an install writes", () => {
+    const run = runInstaller("launcher-render", QUIET);
+    expect(run.status).toBe(0);
+    expect(printed(join(run.configDir, "docker-compose.yml"), "gateway")).toBe(
+      readFileSync(run.wrapper, "utf8"),
+    );
+  });
+
+  test("and a collector-only host's", () => {
+    const run = runInstaller("launcher-render-collector", [
+      "--docker",
+      "--collector",
+      "--no-keyring",
+      "--gateway-url",
+      GATEWAY_URL,
+      "--code",
+      PAIRING_CODE,
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(printed(join(run.configDir, "docker-compose.yml"), "collector")).toBe(
+      readFileSync(run.wrapper, "utf8"),
+    );
+  });
+
+  test("the updater is told where the launcher is", () => {
+    const run = runInstaller("launcher-record", QUIET);
+    expect(parseYaml(composeAt(run)).services.updater.environment).toContain(
+      `OMNESIS_DOCKER_LAUNCHER=${run.wrapper}`,
+    );
+  });
+
+  test("refuses what it could not render faithfully", () => {
+    for (const args of [
+      ["relative/docker-compose.yml", "gateway"],
+      ["/srv/it's/docker-compose.yml", "gateway"],
+      ["/srv/omnesis/docker-compose.yml", "updater"],
+      ["/srv/omnesis/docker-compose.yml"],
+    ]) {
+      const proc = spawnSync("sh", [installer, "--print-docker-launcher", ...args], {
+        encoding: "utf8",
+      });
+      expect(proc.status, args.join(" ")).not.toBe(0);
+      expect(proc.stdout).toBe("");
+    }
+  });
+});
+
+describe("the wrapper's secure, on the host", () => {
+  /**
+   * A `docker` that plays the containers' side of `omnesis secure`: the
+   * in-container command leaves a restart request (the lines in
+   * SHIM_SECURE_REQUEST) beside the compose file and exits with
+   * SHIM_SECURE_STATUS; `restart` exits with SHIM_RESTART_STATUS.
+   * Every call is logged one per line. Its settings are not OMNESIS_*, which
+   * the wrapper would carry into the container's command line.
+   */
+  const SECURE_SHIM = `#!/bin/sh
+printf '%s\n' "$*" >> "$SHIM_LOG"
+COMPOSE_DIR="$(dirname "$3")"
+case " $* " in
+  *" ps --status running --services "*)
+    [ -z "\${SHIM_RUNNING:-}" ] || printf '%s\n' gateway collector
+    exit 0 ;;
+  *" restart "*) exit "\${SHIM_RESTART_STATUS:-0}" ;;
+  *" omnesis secure --verify"*) echo "verified"; exit "\${SHIM_VERIFY_STATUS:-0}" ;;
+  *" omnesis secure"*)
+    case " $* " in
+      *" --dry-run "*) ;;
+      *) [ -z "\${SHIM_SECURE_REQUEST:-}" ] || printf '%b' "$SHIM_SECURE_REQUEST" > "$COMPOSE_DIR/secure-restart" ;;
+    esac
+    exit "\${SHIM_SECURE_STATUS:-0}" ;;
+esac
+exit 0
+`;
+
+  function installed(name, args = QUIET) {
+    const run = runInstaller(name, args);
+    expect(run.status, run.output).toBe(0);
+    writeExecutable(fixturePath("fake-bin", "docker"), SECURE_SHIM);
+    writeFileSync(dockerLog(run.home), "");
+    return run;
+  }
+
+  function secure(run, args, extraEnv = {}) {
+    const proc = spawnSync(run.wrapper, ["secure", ...args], {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        SHIM_LOG: dockerLog(run.home),
+        SHIM_RUNNING: "1",
+        SHIM_SECURE_REQUEST: "gateway\ncollector\n",
+        ...extraEnv,
+      },
+      input: "",
+      encoding: "utf8",
+    });
+    return { ...proc, docker: readDockerCalls(run.home) };
+  }
+
+  test("runs secure in the container, restarts what it asks for from the host, then verifies", () => {
+    const run = installed("secure-flow");
+    const compose = join(run.configDir, "docker-compose.yml");
+
+    const proc = secure(run, []);
+
+    expect(proc.status, proc.stderr).toBe(0);
+    const work = proc.docker.filter((call) => !call.includes(" ps --status running"));
+    expect(work).toEqual([
+      `compose -f ${compose} exec -T --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis secure`,
+      `compose -f ${compose} restart gateway collector`,
+      `compose -f ${compose} exec -T gateway omnesis secure --verify`,
+    ]);
+    expect(proc.stdout).toContain("Restarting gateway collector from this machine");
+    expect(proc.stdout).toContain("verified");
+    // The request is consumed, so a later run cannot replay it.
+    expect(existsSync(join(run.configDir, "secure-restart"))).toBe(false);
+  });
+
+  test("a stopped stack is secured from a throwaway container, and verified the same way", () => {
+    const run = installed("secure-stopped");
+    const compose = join(run.configDir, "docker-compose.yml");
+    const proc = secure(run, [], { SHIM_RUNNING: "" });
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.docker).toContain(
+      `compose -f ${compose} run --rm --no-deps -T --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis secure`,
+    );
+    expect(proc.docker).toContain(`compose -f ${compose} restart gateway collector`);
+    expect(proc.docker.at(-1)).toBe(
+      `compose -f ${compose} run --rm --no-deps -T gateway omnesis secure --verify`,
+    );
+  });
+
+  test("a failed or dry run restarts nothing and keeps its exit status", () => {
+    const run = installed("secure-failed");
+    // A request an earlier, interrupted run left is not acted on.
+    writeFileSync(join(run.configDir, "secure-restart"), "gateway\n");
+    const failed = secure(run, [], { SHIM_SECURE_STATUS: "3" });
+    expect(failed.status).toBe(3);
+    expect(failed.docker.some((call) => call.includes(" restart "))).toBe(false);
+    expect(existsSync(join(run.configDir, "secure-restart"))).toBe(false);
+
+    const dry = secure(run, ["--dry-run"]);
+    expect(dry.status).toBe(0);
+    expect(dry.docker.some((call) => call.includes(" restart "))).toBe(false);
+    // The plan it prints is the host-restart one.
+    expect(dry.docker.some((call) => call.includes("OMNESIS_DOCKER_HOST_RESTART=1"))).toBe(true);
+  });
+
+  test("output meant for a program passes straight through", () => {
+    const run = installed("secure-json");
+    const proc = secure(run, ["--json"]);
+    expect(proc.status).toBe(0);
+    expect(proc.docker.some((call) => call.includes("OMNESIS_DOCKER_HOST_RESTART"))).toBe(false);
+    expect(proc.docker.some((call) => call.includes(" restart "))).toBe(false);
+  });
+
+  test("only service names in the request become arguments", () => {
+    const run = installed("secure-hostile");
+    const pwned = join(run.home, "pwned");
+    const proc = secure(run, [], {
+      SHIM_SECURE_REQUEST: `gateway\ncollector; touch ${pwned}\n--force-recreate\n`,
+    });
+    expect(proc.status).toBe(0);
+    expect(proc.docker).toContain(
+      `compose -f ${join(run.configDir, "docker-compose.yml")} restart gateway`,
+    );
+    expect(existsSync(pwned)).toBe(false);
+  });
+
+  test("a failed restart names the host command and the check", () => {
+    const run = installed("secure-restart-fails");
+    const compose = join(run.configDir, "docker-compose.yml");
+    const proc = secure(run, [], { SHIM_RESTART_STATUS: "1" });
+    expect(proc.status).toBe(1);
+    expect(proc.stderr).toContain(`docker compose -f ${compose} restart gateway collector`);
+    expect(proc.stderr).toContain("omnesis secure --verify");
+    expect(proc.docker.some((call) => call.includes("--verify"))).toBe(false);
+  });
+
+  test("a failed verification is the command's exit status", () => {
+    const run = installed("secure-unverified");
+    expect(secure(run, [], { SHIM_VERIFY_STATUS: "1" }).status).toBe(1);
+  });
+
+  test("a host that only collects restarts its collector container", () => {
+    const run = installed("secure-collector", [
+      "--docker",
+      "--collector",
+      "--no-keyring",
+      "--gateway-url",
+      GATEWAY_URL,
+      "--code",
+      PAIRING_CODE,
+      "--version",
+      "9.9.0",
+    ]);
+    const compose = join(run.configDir, "docker-compose.yml");
+    const proc = secure(run, [], { SHIM_SECURE_REQUEST: "collector\n" });
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.docker).toContain(`compose -f ${compose} restart collector`);
+    expect(proc.docker.at(-1)).toBe(
+      `compose -f ${compose} exec -T collector omnesis secure --verify`,
+    );
   });
 });
 
@@ -2371,6 +2650,29 @@ describe("install.sh --docker: what the compose file names", () => {
     const run = runInstaller("collector-hostname-host", [...QUIET, "--docker-network", "host"]);
     expect(run.status).toBe(0);
     expect(parseYaml(composeAt(run)).services.collector.hostname).toBeUndefined();
+  });
+
+  // Its own name is `gateway`, the name its certificate carries; the
+  // collector inside it registers under this host's, as a separate collector
+  // container does.
+  test("the combined container's collector is told this host's name", () => {
+    plantHostname();
+    const run = runInstaller("combined-hostname", [...QUIET, "--combined"]);
+    expect(run.status).toBe(0);
+    const { gateway } = parseYaml(composeAt(run)).services;
+    expect(gateway.hostname).toBe("gateway");
+    expect(gateway.environment).toContain("OMNESIS_COLLECTOR_HOSTNAME=studio-northstar");
+  });
+
+  test("a gateway without a collector beside it names none", () => {
+    plantHostname();
+    const run = runInstaller("gateway-only-hostname", [...QUIET, "--gateway-only"]);
+    expect(run.status).toBe(0);
+    expect(
+      parseYaml(composeAt(run)).services.gateway.environment.some((line) =>
+        line.startsWith("OMNESIS_COLLECTOR_HOSTNAME="),
+      ),
+    ).toBe(false);
   });
 
   test("the combined container starts under its own tini, with no init in front of it", () => {

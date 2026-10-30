@@ -437,6 +437,12 @@ export interface UpdateFlowDeps {
   /** Install the source launcher that remains runnable through npm ci. */
   prepareSourceLauncher?(rootDir: string): void | Promise<void>;
   /**
+   * Bring a container install's host launcher up to this build, once the
+   * containers run it (see `update/docker-launcher.ts`). Never fails the
+   * update: what it could not do, it says.
+   */
+  refreshDockerLauncher?(install: { composeFile: string; projectDir: string }): Promise<void>;
+  /**
    * Make node-gyp's Node headers whole before a source checkout's `npm ci`
    * (`prepareNodeGypHeaders`). Best effort: it never fails the update.
    */
@@ -2622,6 +2628,9 @@ export async function updateDocker(
         collectorOnly ? "collector runs" : "gateway serves"
       } it. Pass --force to pull and recreate the containers at that tag anyway.`,
     );
+    // A launcher an earlier release left behind is brought up to this one
+    // even when there are no images to move.
+    if (!opts.dryRun) await refreshLauncherIfOwnRelease(target, opts, deps);
     return target;
   }
 
@@ -2673,7 +2682,26 @@ export async function updateDocker(
     ...(offer ? { offer } : {}),
     downgrade: assessment.direction === "downgrade",
   });
+  await refreshLauncherIfOwnRelease(target, opts, deps);
   return target;
+}
+
+/**
+ * Refresh the host launcher when the release the containers now run is this
+ * updater's own. An update to another release is finished by that release's
+ * updater, which refreshes the launcher with its own renderer; this build
+ * rendering it would put an older launcher in front of newer images.
+ */
+async function refreshLauncherIfOwnRelease(
+  landed: string,
+  install: { composeFile: string; projectDir: string },
+  deps: UpdateFlowDeps,
+): Promise<void> {
+  if (normalizeVersion(landed) !== normalizeVersion(readPackageVersion(import.meta.url))) return;
+  await deps.refreshDockerLauncher?.({
+    composeFile: install.composeFile,
+    projectDir: install.projectDir,
+  });
 }
 
 // ── Effects ─────────────────────────────────────────────────────────────
@@ -3128,6 +3156,21 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     prepareSourceLauncher: (rootDir) => {
       prepareSourceRecoveryLauncher(rootDir, configDir, homedir());
     },
+    refreshDockerLauncher: async (install) => {
+      const launcher = await import("../update/docker-launcher.js");
+      try {
+        await launcher.refreshDockerLauncher(install, {
+          run: launcher.runLauncherCommand,
+          installScript: () => launcher.bundledInstallScript(),
+          env: process.env,
+          log: (line) => console.log(line.startsWith("!") ? `${c.yellow}${line}${c.reset}` : line),
+        });
+      } catch (err) {
+        console.log(
+          `${c.yellow}! The omnesis command on this host was not refreshed: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
+        );
+      }
+    },
     prepareNodeGypHeaders: (rootDir) => prepareNodeGypHeaders(rootDir),
     buildEnv: () => buildHeapEnv(),
     currentVersion: ctx.currentVersion,
@@ -3360,6 +3403,11 @@ export async function continueOffer(run: ContinuationRun): Promise<void> {
           throw refusal(err);
         }
         await runUpdateContinuation(offer, deps);
+        // The containers run this build now, so its launcher is the one the
+        // host should have.
+        if (offer.subject.method === "docker") {
+          await deps.refreshDockerLauncher?.(offer.subject);
+        }
       },
       run.env,
       { continuation: true },

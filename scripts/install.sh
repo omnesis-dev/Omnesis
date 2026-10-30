@@ -2991,7 +2991,10 @@ append_env() {
   # things a neighbouring account has no business reading.
   chmod 600 "$CONFIG_DIR/.env" 2>/dev/null || true
   if env_key_set "$KEY"; then
-    warn "$KEY already set in $CONFIG_DIR/.env — leaving it alone."
+    # A re-run records what an earlier run already did; only a different
+    # value is worth a word.
+    [ "$(dotenv_value "$KEY" 2>/dev/null || true)" = "$VALUE" ] || \
+      warn "$KEY already set in $CONFIG_DIR/.env — leaving it alone."
   else
     printf '%s=%s\n' "$KEY" "$VALUE" >> "$CONFIG_DIR/.env"
     docker_own_path "$CONFIG_DIR/.env"
@@ -3394,6 +3397,11 @@ setup_keyring_init() {
     fail "This machine has no usable OS keyring, and no terminal to ask what to do about it. Re-run with $KEYRING_REMEDY (you can arm it later with: omnesis secure)."
   fi
 
+  if [ "$DOCKER" = 1 ]; then
+    docker_keyring_question
+    return 0
+  fi
+
   echo "" >/dev/tty
   printf 'This machine has no usable OS keyring, so Omnesis cannot encrypt your\n' >/dev/tty
   printf 'index at rest yet. How would you like to proceed?\n' >/dev/tty
@@ -3415,9 +3423,7 @@ setup_keyring_init() {
         return 0
         ;;
       2)
-        generate_keyring_passphrase_file
-        arm_passphrase_keyring "$KEYRING_PASSPHRASE_FILE"
-        if [ "$KEYRING_READY" = 1 ]; then print_recovery_code; fi
+        arm_generated_passphrase_keyring
         return 0
         ;;
       3)
@@ -3436,6 +3442,65 @@ setup_keyring_init() {
     esac
   done
   fail "No valid answer after $KEYRING_TRIES attempts. Re-run with --keyring-passphrase-file <abs-path> or --no-keyring."
+}
+
+# A container never has an OS keyring, and no keyring this host could unlock
+# would reach one, so the only question is whether to encrypt at all — and
+# encrypting is the answer offered by default. Option 1 keeps the meaning it
+# has everywhere else, so an answer typed for the native question still means
+# the same thing here.
+docker_keyring_question() {
+  echo "" >/dev/tty
+  printf 'Encryption at rest in a container uses a passphrase file, because a\n' >/dev/tty
+  printf 'container has no OS keyring. How would you like to proceed?\n' >/dev/tty
+  printf '\n' >/dev/tty
+  printf '   1) Continue without encryption at rest (arm it later: omnesis secure)\n' >/dev/tty
+  printf '   2) Encrypt at rest with a generated passphrase file (recommended):\n' >/dev/tty
+  printf '      %s, readable only by you, which the\n' "$CONFIG_DIR/keyring.pass" >/dev/tty
+  printf '      containers read at start\n' >/dev/tty
+  printf '\n' >/dev/tty
+
+  KEYRING_TRIES=0
+  while [ "$KEYRING_TRIES" -lt 5 ]; do
+    KEYRING_TRIES=$((KEYRING_TRIES + 1))
+    ANSWER="$(ask_tty "Choice [2]: ")"
+    case "${ANSWER:-2}" in
+      1)
+        warn "Continuing without encryption at rest. Secret files stay owner-only."
+        warn "Arm it later with: omnesis secure"
+        return 0
+        ;;
+      2)
+        arm_generated_passphrase_keyring
+        return 0
+        ;;
+      *) warn "Enter 1 or 2." ;;
+    esac
+  done
+  fail "No valid answer after $KEYRING_TRIES attempts. Re-run with --keyring-passphrase-file <abs-path> or --no-keyring."
+}
+
+arm_generated_passphrase_keyring() {
+  generate_keyring_passphrase_file
+  arm_passphrase_keyring "$KEYRING_PASSPHRASE_FILE"
+  if [ "$KEYRING_READY" = 1 ]; then print_recovery_code; fi
+}
+
+# A Docker re-run of an install whose keyring was armed reads the passphrase
+# file this config directory already records, the one the containers read at
+# start: that answers the keyring question, and generating a second file would
+# seal nothing the first one opens.
+docker_recorded_passphrase_file() {
+  [ "$DOCKER" = 1 ] && [ "$WANT_KEYRING" = 1 ] && [ -z "$KEYRING_PASSPHRASE_FILE" ] || return 0
+  [ "$(dotenv_value OMNESIS_SECRET_STORE 2>/dev/null || true)" = passphrase ] || return 0
+  RECORDED_PASS_FILE="$(dotenv_value OMNESIS_KEYRING_PASSPHRASE_FILE 2>/dev/null || true)"
+  case "$RECORDED_PASS_FILE" in
+    "$CONFIG_DIR"/*) ;;
+    *) return 0 ;;
+  esac
+  [ -s "$RECORDED_PASS_FILE" ] || return 0
+  KEYRING_PASSPHRASE_FILE="$RECORDED_PASS_FILE"
+  info "Using the keyring passphrase file this install records: $KEYRING_PASSPHRASE_FILE"
 }
 
 # Mint the passphrase the keyring backend will be sealed with. Written before
@@ -5466,6 +5531,11 @@ docker_compose_gateway_service() {
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_GATEWAY_PORT=%s\n' "$GATEWAY_PORT"
   if [ "$DOCKER_COMBINED" = 1 ]; then
     printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url local)"
+    # The container answers to `gateway`, the name its certificate carries,
+    # so the collector inside it is told this host's name for its device —
+    # the name a separate collector container answers to.
+    DOCKER_COLLECTOR_HOSTNAME="$(docker_collector_hostname)"
+    [ -z "$DOCKER_COLLECTOR_HOSTNAME" ] || printf '      - OMNESIS_COLLECTOR_HOSTNAME=%s\n' "$DOCKER_COLLECTOR_HOSTNAME"
   fi
   if [ -n "$DOCKER_EXTRA_NAMES" ]; then
     # The host's own names, which the container cannot see, for the
@@ -5576,6 +5646,10 @@ docker_compose_updater_service() {
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
   printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url)"
+  # The launcher on this host, which an update brings up to the release it
+  # installs. Only its path: the updater reaches it through a container of
+  # its own that mounts that one directory.
+  printf '      - OMNESIS_DOCKER_LAUNCHER=%s\n' "$HOME/.local/bin/omnesis"
   docker_compose_ca_env
 }
 
@@ -5910,13 +5984,32 @@ docker_write_wrapper() {
   mkdir -p "$BIN_DIR" || \
     fail "Could not create $BIN_DIR, which is where the omnesis command goes. Create it yourself (or free the path if something else is there) and re-run."
   OMNESIS_BIN="$BIN_DIR/omnesis"
-  cat > "$OMNESIS_BIN" <<EOF || fail "Could not write $OMNESIS_BIN. Check that $BIN_DIR is writable and re-run."
+  docker_render_wrapper > "$OMNESIS_BIN" || fail "Could not write $OMNESIS_BIN. Check that $BIN_DIR is writable and re-run."
+  chmod +x "$OMNESIS_BIN"
+  info "Wrote $OMNESIS_BIN"
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *)
+      PATH_HINT_DIR="$BIN_DIR"
+      print_path_hint "$BIN_DIR"
+      PATH="$BIN_DIR:$PATH"
+      export PATH
+      ;;
+  esac
+}
+
+# The launcher's text, on stdout. `omnesis update` renders it with this same
+# function (install.sh --print-docker-launcher, from the updater image) to
+# bring an older install's launcher up to the release it moved to, so
+# everything the launcher does lives here and nowhere else.
+docker_render_wrapper() {
+  cat <<EOF
 #!/bin/sh
 # Omnesis in Docker — written by install.sh --docker.
 COMPOSE_FILE='$COMPOSE_FILE'
 SERVICE='$DOCKER_CLI_SERVICE'
 EOF
-  cat >> "$OMNESIS_BIN" <<'WRAPPER_EOF' || fail "Could not write $OMNESIS_BIN. Check that $BIN_DIR is writable and re-run."
+  cat <<'WRAPPER_EOF'
 set -eu
 
 # `uninstall` removes this install from the host — the containers and images,
@@ -6043,6 +6136,21 @@ fi
 UPDATE=0
 if [ "${1:-}" = update ]; then UPDATE=1; fi
 
+# `secure` encrypts this install at rest from inside the container, and its
+# last step is a restart of the containers that read the new keyring — which
+# no container can do to itself. So the container leaves the services it needs
+# restarted in a request file beside the compose file, and this launcher
+# restarts them from here, then has the container verify the result. Output
+# meant for a program, and the commands that restart nothing, pass straight
+# through.
+SECURE=0
+if [ "${1:-}" = secure ]; then
+  SECURE=1
+  for ARG in "$@"; do
+    case "$ARG" in --json|--rollback|--verify|-h|--help) SECURE=0 ;; esac
+  done
+fi
+
 # Docker allocates a pseudo-terminal by default, which corrupts output the
 # moment a command is piped or captured. Ask for one only when there is one.
 TTY_FLAG=""
@@ -6070,12 +6178,16 @@ for NAME in $(env | sed -n 's/^\(OMNESIS_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
     OMNESIS_CONFIG_DIR|OMNESIS_GATEWAY_URL|OMNESIS_GATEWAY_PORT) continue ;;
     OMNESIS_DB_PATH|OMNESIS_INDEX_DB_PATH|OMNESIS_ANALYTICS_DB_PATH) continue ;;
     OMNESIS_LOG_FILE|OMNESIS_TLS_CERT|OMNESIS_TLS_KEY) continue ;;
+    # What this launcher tells the container about itself is this launcher's
+    # to say.
+    OMNESIS_DOCKER_HOST_RESTART|OMNESIS_DOCKER_LAUNCHER) continue ;;
   esac
   # A value containing a newline makes `env` look like it listed another
   # variable; the default keeps that from ending the run under `set -u`.
   eval "VALUE=\${$NAME-}"
   set -- "$@" --env "$NAME=$VALUE"
 done
+[ "$SECURE" = 0 ] || set -- "$@" --env OMNESIS_DOCKER_HOST_RESTART=1
 
 if [ "$UPDATE" = 1 ]; then
   set -- "$@" updater
@@ -6090,22 +6202,43 @@ done
 if [ "$UPDATE" = 1 ]; then
   exec docker compose -f "$COMPOSE_FILE" --profile update run --rm --no-deps $TTY_FLAG "$@"
 fi
+service_running() {
+  docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -qx "$SERVICE"
+}
+if [ "$SECURE" = 1 ]; then
+  RESTART_REQUEST="$(dirname "$COMPOSE_FILE")/secure-restart"
+  rm -f "$RESTART_REQUEST"
+  SECURE_STATUS=0
+  if service_running; then
+    docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@" || SECURE_STATUS=$?
+  else
+    docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@" || SECURE_STATUS=$?
+  fi
+  if [ "$SECURE_STATUS" != 0 ] || [ ! -f "$RESTART_REQUEST" ]; then
+    rm -f "$RESTART_REQUEST"
+    exit "$SECURE_STATUS"
+  fi
+  # Service names only: the request is read from a directory the containers
+  # write to, so nothing else in it may become an argument.
+  RESTART_SERVICES="$(grep -Ex 'gateway|collector' "$RESTART_REQUEST" | tr '\n' ' ' | sed 's/ *$//' || true)"
+  rm -f "$RESTART_REQUEST"
+  [ -n "$RESTART_SERVICES" ] || exit 0
+  printf '\nRestarting %s from this machine so the keyring takes effect...\n' "$RESTART_SERVICES"
+  # shellcheck disable=SC2086
+  if ! docker compose -f "$COMPOSE_FILE" restart $RESTART_SERVICES; then
+    printf 'omnesis secure: the restart failed. Restart from this machine with: docker compose -f %s restart %s\nthen check the result with: omnesis secure --verify\n' "$COMPOSE_FILE" "$RESTART_SERVICES" >&2
+    exit 1
+  fi
+  if service_running; then
+    exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$SERVICE" omnesis secure --verify
+  fi
+  exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$SERVICE" omnesis secure --verify
+fi
 if docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -qx "$SERVICE"; then
   exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@"
 fi
 exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@"
 WRAPPER_EOF
-  chmod +x "$OMNESIS_BIN"
-  info "Wrote $OMNESIS_BIN"
-  case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-      PATH_HINT_DIR="$BIN_DIR"
-      print_path_hint "$BIN_DIR"
-      PATH="$BIN_DIR:$PATH"
-      export PATH
-      ;;
-  esac
 }
 
 # Building the images needs about this much free where Docker keeps them: the
@@ -6428,7 +6561,7 @@ docker_require_unattended_answers() {
   # A container has no OS keyring, so this question is always asked.
   if [ "$WANT_KEYRING" = 1 ] && [ -z "$KEYRING_PASSPHRASE_FILE" ]; then
     DOCKER_UNANSWERED="$DOCKER_UNANSWERED
-    --keyring-passphrase-file $CONFIG_DIR/keyring.pass   an owner-only passphrase file you created there, to encrypt at rest; or --no-keyring"
+    --keyring-passphrase-file $CONFIG_DIR/keyring.pass   an owner-only passphrase file you created there, to encrypt at rest; or --no-keyring, and encrypt later with: omnesis secure"
   fi
   if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
     DOCKER_UNANSWERED="$DOCKER_UNANSWERED
@@ -6444,6 +6577,7 @@ docker_install() {
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_recorded_passphrase_file
   docker_require_unattended_answers
   docker_runtime_identity
   docker_registry_prepare
@@ -7207,6 +7341,18 @@ parse_args() {
 }
 
 main() {
+  # Internal: the Docker launcher for a compose file and service, on stdout,
+  # with nothing else done. The updater image runs this to refresh an older
+  # install's launcher.
+  if [ "${1:-}" = --print-docker-launcher ]; then
+    [ "$#" = 3 ] || fail "--print-docker-launcher takes a compose file and a service."
+    COMPOSE_FILE="$2"
+    DOCKER_CLI_SERVICE="$3"
+    case "$COMPOSE_FILE" in *\'*) fail "A compose file path cannot contain a single quote." ;; /*) ;; *) fail "The compose file path must be absolute." ;; esac
+    case "$DOCKER_CLI_SERVICE" in gateway|collector) ;; *) fail "The service must be gateway or collector." ;; esac
+    docker_render_wrapper
+    exit 0
+  fi
   parse_args "$@"
   valid_gateway_port "$GATEWAY_PORT" || fail "--port must be a whole number from 1 through 65535."
   validate_hardened_flags

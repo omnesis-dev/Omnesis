@@ -685,7 +685,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           unlocked login keyring, or on a Mac whose login keychain is locked. Encryption at rest
           needs a key the machine can keep, so the installer offers three answers: continue without
           encryption at rest, protect the key with a generated passphrase file, or stop so you can
-          unlock a keyring first.
+          unlock a keyring first. Under <code>--docker</code> no keyring on the machine could reach
+          a container, so there are two answers, and pressing Enter takes the generated passphrase
+          file.
         </p>
         <p>
           The passphrase option creates an owner-only passphrase file, prints a recovery code once
@@ -1257,9 +1259,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           </li>
           <li>
             <strong>There is no OS keyring in a container.</strong> Encryption at rest uses a
-            passphrase file instead: the installer offers to generate one, readable only by you, in
-            the config directory, and the gateway reads it at start. Keep that file; without it the
-            data cannot be opened.
+            passphrase file instead: the installer generates one by default, readable only by you,
+            at <code>~/.config/omnesis/keyring.pass</code>, and the containers read it at start.
+            Keep that file; without it the data cannot be opened. An install without encryption at
+            rest adds it later with <code>omnesis secure</code> on the same machine (see
+            <a href="/docs/security#encryption-docker">Encryption in Docker</a>).
           </li>
           <li>
             <strong>The OAuth callback ports stay published.</strong> A provider redirects your

@@ -7,6 +7,7 @@ import { hostname as osHostname } from "node:os";
 import { join as pathJoin, resolve as pathResolve } from "node:path";
 import { defineCommand } from "citty";
 import {
+  collectorHostname,
   DEFAULT_CONFIG_DIR,
   discoverGatewayViaMdns,
   ensureGatewayTrust,
@@ -1522,7 +1523,7 @@ const devicesRevokeCommand = defineCommand({
         revokedCollectorReRegisters({
           kind: dev.kind,
           deviceHostname: dev.capabilities?.hostname,
-          localHostname: osHostname(),
+          localHostname: collectorHostname(),
           hasLocalAdminToken: hasAdminTokenFile(),
         })
       ) {

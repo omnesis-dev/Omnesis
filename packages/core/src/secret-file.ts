@@ -119,6 +119,21 @@ export function markSecretFileEncryptionRequiredSync(
   writeSecureMarkerSync("secret-files", { ...opts, configDir });
 }
 
+/**
+ * Whether a secret file written now would be encrypted at rest: the install
+ * root key is readable through this process's secret store. False on any
+ * failure to read it, which is when a write stays plaintext (or is refused).
+ */
+export async function secretFileWritesEncrypted(
+  opts: CreateSecretStoreOptions = {},
+): Promise<boolean> {
+  try {
+    return (await installRootKey(opts)) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function isEncryptedSecretFile(raw: string): boolean {
   return parseEnvelope(raw) !== null;
 }
