@@ -17,6 +17,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     private(set) var state: State = .idle
     private(set) var automatic = false
     private(set) var isFollowUp = false
+    private(set) var openedFromComplication = false
     private(set) var level: Float = 0
     private(set) var activity: SiriAskActivitySnapshot?
     @ObservationIgnored private var recorder: AVAudioRecorder?
@@ -30,7 +31,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
     @ObservationIgnored private var answeredRef: String?
     @ObservationIgnored private var carried = false
 
-    func start(followUp: Bool = false) async {
+    func start(followUp: Bool = false, fromComplication: Bool = false) async {
         guard state == .idle || state == .failed || isSent else { return }
         let resume = followUp ? WatchAskRouter.shared.conversationId : nil
         WatchAskRouter.shared.cancelPending(preserveAnswer: followUp)
@@ -45,6 +46,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         let current = generation
         state = .preparing
         isFollowUp = followUp
+        openedFromComplication = fromComplication
         level = 0
         WatchSpeaker.shared.stop()
         let gate = await WatchLink.shared.dictationGate()
@@ -135,6 +137,19 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
         activity = nil
         discard()
         state = .idle
+    }
+
+    /// Cancelling a complication capture finishes that brief interaction.
+    /// Home capture and follow-ups keep their underlying screen available.
+    func cancelByUser() {
+        let returnToFace = openedFromComplication && !isFollowUp
+        cancel()
+        guard returnToFace else { return }
+        // Cancellation has stopped/deactivated the microphone and discarded
+        // only this unsent recording. Hand any older durable work to the OS
+        // before leaving, just as the note confirmation path does.
+        _ = WatchLink.shared.flushOutbox(.linkMayHaveChanged)
+        exit(0)
     }
 
     private func discard() {
@@ -287,7 +302,7 @@ struct WatchComplicationCaptureView: View {
         case .idle: EmptyView()
         case .preparing:
             Text("Opening microphone…").font(.caption)
-            Button("Cancel") { capture.cancel() }.buttonStyle(.plain)
+            Button("Cancel") { capture.cancelByUser() }.buttonStyle(.plain)
         case .recording, .ready:
             Text(capture.state == .recording ? "Listening" : "Ready to send")
                 .font(.headline).foregroundStyle(.white)
@@ -301,7 +316,7 @@ struct WatchComplicationCaptureView: View {
                     sendButton("Tell", route: .note)
                 }
             }
-            Button("Cancel") { capture.cancel() }
+            Button("Cancel") { capture.cancelByUser() }
                 .font(.caption2).foregroundStyle(.secondary).buttonStyle(.plain)
         case .saving:
             ProgressView().tint(accent)
@@ -316,8 +331,10 @@ struct WatchComplicationCaptureView: View {
             Text("Open the iPhone app. Check microphone access and updates.")
                 .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Try again") { Task { await capture.start(followUp: capture.isFollowUp) } }
-            Button("Cancel") { capture.cancel() }.buttonStyle(.plain).font(.caption2)
+            Button("Try again") {
+                Task { await capture.start(followUp: capture.isFollowUp, fromComplication: capture.openedFromComplication) }
+            }
+            Button("Cancel") { capture.cancelByUser() }.buttonStyle(.plain).font(.caption2)
         }
     }
 

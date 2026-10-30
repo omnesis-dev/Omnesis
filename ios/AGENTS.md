@@ -84,6 +84,9 @@ unified-capture support and the gateway's decision-gate status in
 Legacy deep links enter the unified capture. Normal app launch shows a branded
 Tap to speak button that opens the same recorder; only the complication starts
 listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
+Cancel from a complication-launched capture discards its recording and returns
+to the watch face; home capture Cancel stays in the app, and follow-up Cancel
+returns to the previous answer.
 Tell returns to the watch face after confirmation once WatchConnectivity owns
 the transfer. Automatic Send waits for a note classification before dismissal.
 Audio-only capture answers are opt-in via the playback control; Siri hand-over

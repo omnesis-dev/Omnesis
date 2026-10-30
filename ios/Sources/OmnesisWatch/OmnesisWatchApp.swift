@@ -32,7 +32,7 @@ struct OmnesisWatchApp: App {
                 }
                 .onOpenURL { url in
                     guard WatchComplication(url: url) != nil else { return }
-                    Task { await WatchComplicationCapture.shared.start() }
+                    Task { await WatchComplicationCapture.shared.start(fromComplication: true) }
                 }
             #if DEBUG
                 .watchDemoAutoPilot()
