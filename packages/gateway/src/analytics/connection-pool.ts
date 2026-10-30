@@ -282,7 +282,11 @@ export class AnalyticsConnectionPool {
   async open(init?: (conn: DuckDBConnection) => Promise<void>): Promise<void> {
     recoverInterruptedPlaintextMigration(this.dbPath);
     if (this.encryptionKeyHex) {
-      await migratePlaintextDuckDbIfNeeded(this.dbPath, this.encryptionKeyHex);
+      await migratePlaintextDuckDbIfNeeded(
+        this.dbPath,
+        this.encryptionKeyHex,
+        this.extensionDirectory,
+      );
     }
     const instance = await DuckDBInstance.create(":memory:");
     const bootstrap = await instance.connect();
@@ -959,6 +963,7 @@ function recoverInterruptedPlaintextMigration(path: string): void {
 async function migratePlaintextDuckDbIfNeeded(
   path: string,
   encryptionKeyHex: string,
+  extensionDirectory: string,
 ): Promise<void> {
   if (!existsSync(path)) return;
   const keyed = await probeEncryptedDuckDb(path, encryptionKeyHex);
@@ -979,6 +984,11 @@ async function migratePlaintextDuckDbIfNeeded(
   const inst = await DuckDBInstance.create(":memory:");
   const conn = await inst.connect();
   try {
+    // The store's own extension directory, as `open` uses: DuckDB's default is
+    // in $HOME, which a service unit mounts read-only and a container run as
+    // the host's account cannot write, so the copy would fail on every start.
+    mkdirSync(extensionDirectory, { recursive: true });
+    await conn.run(`SET extension_directory='${escapeStr(extensionDirectory)}'`);
     await loadEncryptionModule(conn);
     await conn.run(attachSql(path, "_omnesis_plaintext_source", undefined, { readonly: true }));
     await conn.run(attachSql(tmp, "_omnesis_encrypted_dest", encryptionKeyHex));

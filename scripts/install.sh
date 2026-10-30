@@ -6228,7 +6228,9 @@ if [ "$SECURE" = 1 ]; then
   RESTART_SERVICES="$(grep -Ex 'gateway|collector' "$RESTART_REQUEST" | tr '\n' ' ' | sed 's/ *$//' || true)"
   rm -f "$RESTART_REQUEST"
   [ -n "$RESTART_SERVICES" ] || exit 0
-  printf '\nRestarting %s from this machine so the keyring takes effect...\n' "$RESTART_SERVICES"
+  # Progress, not output: a program reading this command's output (it is JSON
+  # whenever that output is not a terminal) gets the two documents alone.
+  printf '\nRestarting %s from this machine so the keyring takes effect...\n' "$RESTART_SERVICES" >&2
   # shellcheck disable=SC2086
   if ! docker compose -f "$COMPOSE_FILE" restart $RESTART_SERVICES; then
     printf 'omnesis secure: the restart failed. Restart from this machine with: docker compose -f %s restart %s\nthen check the result with: omnesis secure --verify\n' "$COMPOSE_FILE" "$RESTART_SERVICES" >&2

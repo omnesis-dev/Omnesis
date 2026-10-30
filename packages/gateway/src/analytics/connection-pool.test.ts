@@ -383,6 +383,35 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     },
   );
 
+  // `omnesis secure` on an install whose analytics store is plaintext: the
+  // gateway's next start copies it into an encrypted store. In a container run
+  // as the host's account, $HOME is not writable, so the copy must load its
+  // extension from beside the store too, or the gateway exits on every start.
+  it.skipIf(!encrypted)("migrates a plaintext store without writing to $HOME", async () => {
+    pool = new AnalyticsConnectionPool(dbPath);
+    await pool.open(async (conn) => {
+      await conn.run("CREATE TABLE sample AS SELECT 3 AS id");
+    });
+    await pool.close();
+    pool = null;
+    const home = join(directory, "read-only-home");
+    await mkdir(home, { mode: 0o500 });
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+      await pool.open();
+    } finally {
+      process.env.HOME = priorHome;
+    }
+    const rows = await pool.withConn(async ({ conn }) =>
+      (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
+    );
+    expect(rows).toEqual([[3]]);
+    expect(readdirSync(home)).toEqual([]);
+    expect(existsSync(`${dbPath}.extensions`)).toBe(true);
+  });
+
   it.skipIf(!encrypted)("removes a plaintext copy a completed migration left behind", async () => {
     pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
     await pool.open(async (conn) => {

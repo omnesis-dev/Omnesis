@@ -355,12 +355,17 @@ grep -q "restart gateway and collector from this machine" "$WORK/secure-dry.out"
 ok "the dry run plans the passphrase file and the host restart, and writes nothing"
 
 authenticated_before="$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)"
+# The log is public: the recovery code is a throwaway install's, but it is
+# still withheld from it.
+redacted() { sed -E 's/("recoveryCode": ")[^"]*"/\1<withheld>"/' "$1"; }
 "${omnesis_env[@]}" "$OMNESIS" secure < /dev/null > "$WORK/secure.out" 2>&1 \
-  || { cat "$WORK/secure.out" >&2; die "omnesis secure failed"; }
-cat "$WORK/secure.out"
-grep -q "Omnesis recovery code" "$WORK/secure.out" || die "no recovery code was printed"
+  || { redacted "$WORK/secure.out" >&2; die "omnesis secure failed"; }
+redacted "$WORK/secure.out"
+# Captured rather than on a terminal, the CLI answers in JSON: the wizard's
+# summary, then the verification the launcher runs after its restart.
+grep -q '"recoveryCode": "' "$WORK/secure.out" || die "no recovery code was printed"
 grep -q "Restarting gateway collector from this machine" "$WORK/secure.out" || die "the launcher did not restart the containers"
-grep -q "Encryption at rest is in effect" "$WORK/secure.out" || die "the restarted install was not verified"
+grep -q '"verified": true' "$WORK/secure.out" || die "the restarted install was not verified"
 [[ "$(stat -c '%a' "$CONFIG_DIR/keyring.pass")" == 600 ]] || die "the passphrase file is not owner-only"
 grep -qx "OMNESIS_SECRET_STORE=passphrase" "$CONFIG_DIR/.env" || die "the secret store was not recorded"
 grep -qx "OMNESIS_KEYRING_PASSPHRASE_FILE=$CONFIG_DIR/keyring.pass" "$CONFIG_DIR/.env" || die "the passphrase file was not recorded"

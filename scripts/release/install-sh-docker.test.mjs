@@ -2267,7 +2267,7 @@ exit 0
       `compose -f ${compose} restart gateway collector`,
       `compose -f ${compose} exec -T gateway omnesis secure --verify`,
     ]);
-    expect(proc.stdout).toContain("Restarting gateway collector from this machine");
+    expect(proc.stderr).toContain("Restarting gateway collector from this machine");
     expect(proc.stdout).toContain("verified");
     // The request is consumed, so a later run cannot replay it.
     expect(existsSync(join(run.configDir, "secure-restart"))).toBe(false);
