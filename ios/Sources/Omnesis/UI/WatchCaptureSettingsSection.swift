@@ -33,7 +33,8 @@ struct WatchCaptureSettingsSection: View {
                             if authorized { WatchRelayReceiver.shared.retryComplicationCaptures() }
                             else {
                                 error =
-                                    "Allow Speech Recognition for Omnesis in iPhone Settings. On-device recognition also requires a supported language."
+                                    "Allow Speech Recognition for Omnesis in iPhone Settings. "
+                                        + "On-device recognition also requires a supported language."
                             }
                         }
                     }
@@ -43,7 +44,9 @@ struct WatchCaptureSettingsSection: View {
         } header: { Text("Apple Watch") }
             footer: {
                 Text(
-                    "Speak from the Omnesis complication, then tap once to send. When gateway transcription is off, your iPhone transcribes privately on-device with vocabulary hints. No live transcript appears on the Watch."
+                    "Speak from the Omnesis complication, then tap once to send. "
+                        + "When gateway transcription is off, your iPhone transcribes privately on-device with vocabulary hints. "
+                        + "No live transcript appears on the Watch."
                 )
             }
             .listRowBackground(Theme.bgSecondary)

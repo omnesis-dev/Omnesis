@@ -368,7 +368,8 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                 notify: { notice in
                     let body = switch notice {
                     case .delayed:
-                        "Your recording is kept for retry. Open Omnesis on iPhone and check the gateway connection. For iPhone transcription, enable Speech Recognition in Settings and use a supported language."
+                        "Your recording is kept for retry. Open Omnesis on iPhone and check the gateway connection. "
+                            + "For iPhone transcription, enable Speech Recognition in Settings and use a supported language."
                     case .expired:
                         "Your recording couldn't be processed for a week and was removed. Please record it again."
                     case .interruptedAsk:

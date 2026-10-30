@@ -3,13 +3,13 @@
 
 import Foundation
 
-/// Processes only unified complication recordings. Retryable failures keep
-/// the original audio on disk; successful note delivery transfers ownership
-/// to the phone's durable note queue. No transcript goes back to the watch.
 enum WatchCaptureNotice: Sendable {
     case delayed, expired, interruptedAsk
 }
 
+/// Processes only unified complication recordings. Retryable failures keep
+/// the original audio on disk; successful note delivery transfers ownership
+/// to the phone's durable note queue. No transcript goes back to the watch.
 actor WatchCapturePipeline {
     struct Dependencies: Sendable {
         let gatewayDictation: @Sendable () async throws -> Bool
@@ -59,21 +59,14 @@ actor WatchCapturePipeline {
                     throw CocoaError(.fileWriteUnknown)
                 }
             } else {
-                if item.state.transcript == nil {
-                    let transcript = gateway
-                        ? try await deps.transcribeGateway(audio, recording.locale)
-                        : await deps.transcribeLocal(audio, recording.locale)
-                    guard let text = transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
-                        throw CocoaError(.fileReadUnknown)
-                    }
-                    item.state.transcript = text
-                    try inbox.save(item)
-                }
-                let text = item.state.transcript ?? ""
-                if item.state.captureRoute == nil {
-                    item.state.captureRoute = requested == .automatic ? try await deps.classify(text) : requested
-                    try inbox.save(item)
-                }
+                let text = try await prepareTranscript(
+                    &item,
+                    recording: recording,
+                    requested: requested,
+                    gateway: gateway,
+                    inbox: inbox,
+                    deps: deps
+                )
                 if item.state.captureRoute == .note {
                     guard await deps.saveNote(text, recording, nil) else { throw CocoaError(.fileWriteUnknown) }
                 } else {
@@ -93,5 +86,33 @@ actor WatchCapturePipeline {
             }
             inbox.release(item)
         }
+    }
+
+    private func prepareTranscript(
+        _ item: inout WatchVoiceInbox.Item,
+        recording: WatchVoiceRecording,
+        requested: WatchCaptureRoute,
+        gateway: Bool,
+        inbox: WatchVoiceInbox,
+        deps: Dependencies
+    ) async throws
+        -> String {
+        if item.state.transcript == nil {
+            let audio = inbox.audioURL(item.id)
+            let transcript = gateway
+                ? try await deps.transcribeGateway(audio, recording.locale)
+                : await deps.transcribeLocal(audio, recording.locale)
+            guard let text = transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            item.state.transcript = text
+            try inbox.save(item)
+        }
+        let text = item.state.transcript ?? ""
+        if item.state.captureRoute == nil {
+            item.state.captureRoute = requested == .automatic ? try await deps.classify(text) : requested
+            try inbox.save(item)
+        }
+        return text
     }
 }
