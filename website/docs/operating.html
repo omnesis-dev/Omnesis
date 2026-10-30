@@ -532,6 +532,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           Search and ingestion work with no role assigned: without an embedder, search ranks on
           keywords alone. A feature that needs a role says so when it is missing.
         </p>
+        <h3 id="model-capabilities">Capabilities and their uses</h3>
+        <p>
+          Choose a capability under <strong>Settings → Models</strong> to read its purpose and
+          assign a model. Assignments are independent: choosing a decision model does not assign the
+          agent that answers questions or the background agent that processes notes. You can assign
+          the same compatible model to several roles.
+        </p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -552,7 +559,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><code>agent</code></td>
                 <td>
                   Powers <a href="/docs/agent">the agent</a> in the portal and mobile apps, and the
-                  agent that prepares Answer results for external agents.
+                  agent that prepares Answer results for external agents. Also handles Ask requests
+                  from Apple Watch and every stage of Deep Research.
                 </td>
               </tr>
               <tr>
@@ -560,11 +568,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td>
                   Reads each note you capture with Tell Omnesis from the portal, the apps or the CLI
                   and acts on it: adds or updates tasks, remembers stated facts, answers a question
-                  (see
-                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
-                  takes the same chat models as <code>agent</code> and is never assigned
-                  automatically. Without it, or with <code>agent.noteAgent</code> set to
-                  <code>false</code>, notes are saved and indexed but not acted on.
+                  (see <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>).
+                  Also handles model-assisted contact matching. It takes the same chat models as
+                  <code>agent</code> and is never assigned automatically. Without it, or with
+                  <code>agent.noteAgent</code> set to <code>false</code>, notes are saved and
+                  indexed but not acted on.
                 </td>
               </tr>
               <tr>
@@ -591,25 +599,59 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td><code>decision</code></td>
                 <td>
-                  Judges whether an email is worth recording, so that time queries can leave out the
-                  dates in marketing and newsletters when
-                  <code>enrichment.dates.worthGate</code> is on (see
-                  <a href="/docs#documents-and-the-index">Documents and the index</a>). Served only
-                  by TypeSafe Jev, a cloud model, so it needs
-                  <strong>Allow cloud inference</strong>: add its key with
-                  <code>omnesis backend key set typesafe</code> or under
-                  <strong>Settings → Models → Decision model</strong>, then
-                  <code>omnesis model assign decision typesafe/jev-1.13.0</code>. Each email with a
-                  date mention has its subject, sender and first 2,000 characters sent to TypeSafe;
-                  an email is asked about again only when its content changes. The iPhone and
-                  Android apps show this role's model without offering to change it; assign it from
-                  the portal or the terminal.
+                  Makes bounded choices and scores, including Apple Watch complication routing
+                  between Ask and Tell, and email-date filtering for time queries. See
+                  <a href="#decision-model">Decision model</a> for uses, setup and fallbacks.
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p>Each role can run its model in one of five places:</p>
+        <p>
+          Additional capabilities and uses require experimental mode and are described only under
+          <a href="/docs/experimental#model-capabilities">Experimental → Model capabilities</a>.
+        </p>
+        <h3 id="decision-model">Decision model</h3>
+        <p>
+          The <code>decision</code> role answers a bounded question: yes or no, a score, or one
+          choice. It selects a route or judges significance; the <code>agent</code> and
+          <code>background-agent</code> roles handle the work that follows.
+        </p>
+        <ul>
+          <li>
+            <strong>Apple Watch complication: Ask or Tell.</strong> After transcription, the
+            decision model chooses whether your words need an answer or immediate action
+            (<strong>Ask</strong>) or should be saved as a note for later processing
+            (<strong>Tell</strong>). Explicit Ask and Tell actions and Siri shortcuts bypass this
+            choice. The setting <code>inference.dictation.useDecisionGateForWatch</code> defaults
+            on; the iPhone exposes it as
+            <strong>Use decision gate for Apple Watch complication</strong>. Without an available
+            decision model, the complication offers Ask and Tell. If routing fails after Send, or
+            the intent is uncertain, it falls back to Ask. The transcript is sent to the decision
+            backend. See <a href="/docs/apps#voice-and-quick-capture">Apple Watch</a> for the
+            capture flow.
+          </li>
+          <li>
+            <strong>Email dates in time queries.</strong> When
+            <code>enrichment.dates.worthGate</code> is on (off by default), the model judges whether
+            an email is worth recording so time queries can leave out dates in marketing and
+            newsletters. It receives the subject, sender and first 2,000 characters. Attachments
+            inherit their parent email's verdict. Without the model, this filtering is skipped; the
+            email stays indexed either way. See
+            <a href="/docs#documents-and-the-index">Documents and the index</a>.
+          </li>
+        </ul>
+        <p>
+          Assigning a decision model does not enable every use automatically; each flow keeps its
+          own controls. It is served by TypeSafe Jev, a cloud model, and requires
+          <strong>Allow cloud inference</strong>. Add its key under
+          <strong>Settings → Models → Decision model</strong> or with
+          <code>omnesis backend key set typesafe</code>, then assign
+          <code>omnesis model assign decision typesafe/jev-1.13.0</code>. The iPhone and Android
+          apps show the assignment; change it from the portal or terminal.
+        </p>
+        <p>Backend support depends on the capability. Available backend families are:</p>
+
         <ul>
           <li>
             <strong>Local GGUF models</strong>, downloaded with

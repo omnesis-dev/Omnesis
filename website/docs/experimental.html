@@ -679,7 +679,14 @@
           <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot serve
           <code>background-agent</code>, which needs a chat backend; it can serve
           <code>entailment-verifier</code>. The portal's <strong>Settings → Models</strong> page
-          lists the same roles under <strong>Cognition</strong>. Two further roles are optional:
+          lists the Brain's model roles under <strong>Cognition</strong>. Optional capabilities can
+          add checks and routing decisions:
+        </p>
+        <h3 id="model-capabilities">Model capabilities</h3>
+        <p>
+          These experimental uses require <code>OMNESIS_EXPERIMENTAL=1</code> and are unstable. The
+          stable roles and their setup are listed under
+          <a href="/docs/operating#model-capabilities">Operating → Models</a>.
         </p>
         <div class="table-wrap">
           <table>
@@ -727,14 +734,63 @@
                   remains separate.
                 </td>
               </tr>
+              <tr>
+                <td><code>watch-judge</code></td>
+                <td>
+                  Judges semantic conditions for automation Watches. This is separate from the
+                  <code>decision</code> role that routes Apple Watch complication captures.
+                </td>
+                <td>Conditions that need a semantic judge cannot be evaluated.</td>
+              </tr>
+              <tr>
+                <td><code>speech-to-speech</code></td>
+                <td>
+                  Handles listening and speaking during <a href="#realtime-voice">live calls</a>.
+                  The separately assigned <code>agent</code> handles research and tools.
+                </td>
+                <td>Live calls are disabled.</td>
+              </tr>
             </tbody>
           </table>
         </div>
+        <h4 id="decision-model-uses">Decision model uses in experimental mode</h4>
         <p>
-          Codex can serve the first two through the same ChatGPT login, and Claude Code through the
-          same Claude Code sign-in. The verifier runs as its own model turn even when it uses the
-          same model as the agent waiting on its verdict, and every role shares the account's usage
-          allowance.
+          The same <code>decision</code> assignment used by stable features also serves these flows.
+          Assigning it does not enable the Brain or browser features by itself. Depending on the
+          flow, TypeSafe receives the query, relevant source content, memory records, task context
+          or past reactions needed for the decision.
+        </p>
+        <ul>
+          <li>
+            <strong>Browser Find routing.</strong> Chooses direct index search or read-only agent
+            research. Without an available verdict, Find uses direct search. See
+            <a href="#browser-extension-find">Find and reopen indexed content</a>.
+          </li>
+          <li>
+            <strong>Brain prioritization.</strong> Judges whether evidence is worth inspecting, how
+            urgently to handle it, how a change affects existing knowledge, and when to review it.
+            See <a href="#brain-worth-gate">Routing maintenance</a>.
+          </li>
+          <li>
+            <strong>Memory and task checks.</strong> Checks whether proposed records belong in
+            durable memory, whether a renamed task is still the same task, and whether a task note
+            repeats its history. See <a href="#brain-record-check">Checking what it writes</a>.
+          </li>
+          <li>
+            <strong>Learning from reactions.</strong> Compares suggestions with your past reactions
+            to decide whether to adopt, suggest or withhold them.
+          </li>
+          <li>
+            <strong>Brief selection.</strong> Scores observations for significance, whether you
+            already know them, and when they matter, then rechecks them for the morning brief.
+          </li>
+        </ul>
+
+        <p>
+          Codex can serve <code>background-agent</code> and <code>entailment-verifier</code>
+          through the same ChatGPT login, and Claude Code through the same Claude Code sign-in. The
+          verifier runs as its own model turn even when it uses the same model as the agent waiting
+          on its verdict, and every role shares the account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
           <code>active</code>; the portal's <strong>Debug → Cognition</strong> pages say which of
