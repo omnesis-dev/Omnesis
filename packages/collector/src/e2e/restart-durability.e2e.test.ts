@@ -369,10 +369,9 @@ describe("gateway restart durability", () => {
     return readDb(
       (db) =>
         db
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM notification_deliveries WHERE device_id = ?")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(*) AS count FROM notification_deliveries WHERE device_id = ?",
+          )
           .get(deviceId)!.count,
     );
   }
@@ -587,10 +586,9 @@ describe("gateway restart durability", () => {
       await waitForIndexSettled(CORPUS_SIZE, "the index to settle before the no-wipe baseline");
       const before = readIndexDb((db) =>
         db
-          .prepare<
-            [],
-            IndexedDocumentRow
-          >("SELECT document_id, content_hash, chunk_count, indexed_at FROM indexed_documents ORDER BY document_id")
+          .prepare<[], IndexedDocumentRow>(
+            "SELECT document_id, content_hash, chunk_count, indexed_at FROM indexed_documents ORDER BY document_id",
+          )
           .all(),
       );
       expect(before).toHaveLength(CORPUS_SIZE);
@@ -615,10 +613,9 @@ describe("gateway restart durability", () => {
 
       const after = readIndexDb((db) =>
         db
-          .prepare<
-            [],
-            IndexedDocumentRow
-          >("SELECT document_id, content_hash, chunk_count, indexed_at FROM indexed_documents ORDER BY document_id")
+          .prepare<[], IndexedDocumentRow>(
+            "SELECT document_id, content_hash, chunk_count, indexed_at FROM indexed_documents ORDER BY document_id",
+          )
           .all(),
       );
       const beforeIds = new Set(before.map((row) => row.document_id));
@@ -763,10 +760,9 @@ describe("gateway restart durability", () => {
         readDb(
           (db) =>
             db
-              .prepare<
-                [string],
-                { count: number }
-              >("SELECT COUNT(*) AS count FROM answer_tasks WHERE client_request_id = ?")
+              .prepare<[string], { count: number }>(
+                "SELECT COUNT(*) AS count FROM answer_tasks WHERE client_request_id = ?",
+              )
               .get(ANSWER_REQUEST_ID)!.count,
         );
       const externalRequests = (taskId: string): number =>
@@ -795,10 +791,9 @@ describe("gateway restart durability", () => {
       expect(
         readDb((db) =>
           db
-            .prepare<
-              [string],
-              { active_task_id: string | null }
-            >("SELECT active_task_id FROM answer_conversations WHERE id = ?")
+            .prepare<[string], { active_task_id: string | null }>(
+              "SELECT active_task_id FROM answer_conversations WHERE id = ?",
+            )
             .get(started.conversation_id),
         ),
         "the conversation must be held by this task before the restart, or freeing it afterwards proves nothing",
@@ -824,10 +819,9 @@ describe("gateway restart durability", () => {
       expect(
         readDb((db) =>
           db
-            .prepare<
-              [string],
-              { active_task_id: string | null }
-            >("SELECT active_task_id FROM answer_conversations WHERE id = ?")
+            .prepare<[string], { active_task_id: string | null }>(
+              "SELECT active_task_id FROM answer_conversations WHERE id = ?",
+            )
             .get(started.conversation_id),
         ),
         "a conversation still pinned to a dead task is `conversation_busy` forever",

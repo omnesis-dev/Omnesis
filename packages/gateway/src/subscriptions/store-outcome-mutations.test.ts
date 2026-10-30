@@ -173,10 +173,9 @@ describe("workflow outcome reporting", () => {
       }),
     ).toMatchObject({ outcome: "recorded", runs: 2 });
     const stored = db
-      .prepare<
-        [string],
-        { status: string; runs: number; first_reported_at: number }
-      >("SELECT status, runs, first_reported_at FROM subscription_firing_outcomes WHERE firing_id = ?")
+      .prepare<[string], { status: string; runs: number; first_reported_at: number }>(
+        "SELECT status, runs, first_reported_at FROM subscription_firing_outcomes WHERE firing_id = ?",
+      )
       .get(firingId);
     // The later word stands, and the earlier one stays legible as a run.
     expect(stored).toMatchObject({ status: "completed", runs: 2, first_reported_at: 5_000 });

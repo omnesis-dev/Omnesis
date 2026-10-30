@@ -53,8 +53,7 @@ export async function assessPersonWithdrawal(
       const sources = profile.sourceIds.map(
         (sourceId) =>
           db.prepare("SELECT id,title,content FROM documents WHERE id=?").get(sourceId) as
-            | { id: string; title: string; content: string }
-            | undefined,
+            { id: string; title: string; content: string } | undefined,
       );
       if (
         sources.every((s) => s && typeof s.content === "string") &&

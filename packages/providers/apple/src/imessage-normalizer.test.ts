@@ -785,10 +785,24 @@ describe("normalizeDayChat", () => {
       expect(content).toContain("[Audio: Audio Message.caf]");
     });
 
-    test("an empty transcript (no speech) still renders the inline form, not the placeholder", () => {
-      const content = renderAudioMessage(audioAtt({ transcript: "", durationSec: 3 }));
-      expect(content).toContain("[Audio, 0:03]: ");
+    test("an empty transcript (no speech) says so instead of rendering an empty transcript", () => {
+      const content = renderAudioMessage(
+        audioAtt({ transcript: "", durationSec: 3, transcription: "no-speech" }),
+      );
+      expect(content).toContain("[Audio, 0:03 — no speech detected]");
       expect(content).not.toContain("[Audio: Audio Message.caf]");
+    });
+
+    test("a clip without a transcript says why when the source recorded a reason", () => {
+      expect(renderAudioMessage(audioAtt({ transcription: "awaiting" }))).toContain(
+        "[Audio: Audio Message.caf — awaiting transcription]",
+      );
+      expect(renderAudioMessage(audioAtt({ transcription: "transcriber-unavailable" }))).toContain(
+        "[Audio: Audio Message.caf — no transcriber available]",
+      );
+      expect(renderAudioMessage(audioAtt({ transcription: "audio-missing" }))).toContain(
+        "[Audio: Audio Message.caf — audio not downloaded on this device]",
+      );
     });
 
     test("non-audio attachments are unaffected by the audio path", () => {

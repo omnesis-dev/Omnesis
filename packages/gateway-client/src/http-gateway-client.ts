@@ -353,7 +353,7 @@ export class HttpGatewayClient implements GatewayClient {
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
     // Content-Type; the gateway holds them only for the request. The gateway
     // owns the transcription deadline, which for a long recording on a slow
-    // host runs to many minutes; the client waits past it and only cuts the
+    // host runs to hours; the client waits past it and only cuts the
     // request off itself when the gateway does not answer at all.
     const qs = opts?.language ? `?language=${encodeURIComponent(opts.language)}` : "";
     let contextHeader = opts?.context

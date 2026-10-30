@@ -111,10 +111,9 @@ function inClause(n: number): string {
 function seedAnchorMs(db: Db, seedDocIds: readonly string[]): number | null {
   if (seedDocIds.length === 0) return null;
   const rows = db
-    .prepare<
-      string[],
-      { source_created_at: string }
-    >(`SELECT source_created_at FROM documents WHERE id IN (${inClause(seedDocIds.length)})`)
+    .prepare<string[], { source_created_at: string }>(
+      `SELECT source_created_at FROM documents WHERE id IN (${inClause(seedDocIds.length)})`,
+    )
     .all(...seedDocIds);
   let anchor: number | null = null;
   for (const r of rows) {

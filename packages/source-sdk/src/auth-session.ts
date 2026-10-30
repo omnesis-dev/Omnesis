@@ -181,12 +181,7 @@ export type AuthChallengeKind = (typeof AUTH_CHALLENGE_KINDS)[number];
 export const DEFAULT_CLIENT_RENDERS: readonly AuthChallengeKind[] = ["redirect", "qr"];
 
 export type AuthChallenge =
-  | RedirectChallenge
-  | CodeChallenge
-  | QrChallenge
-  | FieldsChallenge
-  | WidgetChallenge
-  | WaitNotice;
+  RedirectChallenge | CodeChallenge | QrChallenge | FieldsChallenge | WidgetChallenge | WaitNotice;
 
 /**
  * A challenge the operator answers through the host.
@@ -196,10 +191,7 @@ export type AuthChallenge =
  * provider calling `ask` rather than `show`.
  */
 export type AskableChallenge =
-  | RedirectChallenge
-  | CodeChallenge
-  | FieldsChallenge
-  | WidgetChallenge;
+  RedirectChallenge | CodeChallenge | FieldsChallenge | WidgetChallenge;
 
 /** A challenge that expects nothing back through the session. */
 export type ShowableChallenge = RedirectChallenge | QrChallenge | WaitNotice;

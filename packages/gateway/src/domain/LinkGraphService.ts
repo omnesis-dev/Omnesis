@@ -87,10 +87,9 @@ export function resolveInboundLinks(
   //    resolves forward, so a link waiting on this document and one written
   //    after it reach it by the same rule.
   const arriving = db
-    .prepare<
-      [string],
-      { title: string | null; metadata: string | null }
-    >("SELECT title, metadata FROM documents WHERE id = ?")
+    .prepare<[string], { title: string | null; metadata: string | null }>(
+      "SELECT title, metadata FROM documents WHERE id = ?",
+    )
     .get(docId);
   const names = new Set<string>([externalId.toLowerCase()]);
   if (arriving?.title) names.add(arriving.title.toLowerCase());
@@ -497,10 +496,9 @@ export type DocumentContainment =
  */
 export function resolveContainingDocument(db: Db, documentId: string): DocumentContainment {
   const row = db
-    .prepare<
-      [string],
-      { external_id: string; source_id: string; metadata: string }
-    >(`SELECT external_id, source_id, metadata FROM documents WHERE id = ?`)
+    .prepare<[string], { external_id: string; source_id: string; metadata: string }>(
+      `SELECT external_id, source_id, metadata FROM documents WHERE id = ?`,
+    )
     .get(documentId);
   if (!row) return { kind: "standalone" };
   const metadata = documentsMetadataCodec.parseWithFallback(row.metadata, {
@@ -590,10 +588,9 @@ export interface LinkReconcileBatch {
  */
 function readReconcileCursor(db: Db): { cursor: number; cycleMaxId: number } {
   const row = db
-    .prepare<
-      [],
-      { cursor: number; url_cycle_max_id: number }
-    >("SELECT cursor, url_cycle_max_id FROM link_reconcile_state WHERE id = 1")
+    .prepare<[], { cursor: number; url_cycle_max_id: number }>(
+      "SELECT cursor, url_cycle_max_id FROM link_reconcile_state WHERE id = 1",
+    )
     .get();
   return { cursor: row?.cursor ?? 0, cycleMaxId: row?.url_cycle_max_id ?? 0 };
 }
@@ -810,10 +807,9 @@ export function computeLinkResolutions(
     : cursorState.cycleMaxId > 0
       ? cursorState.cycleMaxId
       : (db
-          .prepare<
-            [],
-            { maxId: number }
-          >("SELECT COALESCE(MAX(id), 0) AS maxId FROM document_links")
+          .prepare<[], { maxId: number }>(
+            "SELECT COALESCE(MAX(id), 0) AS maxId FROM document_links",
+          )
           .get()?.maxId ?? 0);
   const knownUrlPatterns = getCachedSafeUrlPatternMatchers(knownUrlPatternSources);
   // (1) URL cursor scan — fair-share progression across the full
@@ -883,10 +879,9 @@ export function computeLinkResolutions(
   const directRows = !urlTargetRolesReady
     ? []
     : db
-        .prepare<
-          unknown[],
-          { link_id: number; normalized_target: string }
-        >(directResolvableScanSql(directReferencePredicate.sql))
+        .prepare<unknown[], { link_id: number; normalized_target: string }>(
+          directResolvableScanSql(directReferencePredicate.sql),
+        )
         .all(DIRECT_SCAN_EXAMINE_LIMIT, ...directReferencePredicate.params, limit);
 
   // (4) Historical URL ownership repair. The collaborator performs both

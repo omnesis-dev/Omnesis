@@ -39,6 +39,12 @@ FROM workspace-install AS runtime-build
 COPY scripts/release/ scripts/release/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/seeded-state/ scripts/seeded-state/
+# Node settles its heap near 2 GB on a small builder, and `tsc --build` across
+# the runtime closure outgrows that and dies with a heap OOM. This is the floor
+# the source installer and `omnesis update` give the same build
+# (packages/cli/src/update/build-heap.ts); a builder short of memory pages
+# rather than failing. `--build-arg NODE_OPTIONS=...` replaces it.
+ARG NODE_OPTIONS=--max-old-space-size=3072
 RUN node scripts/runtime/stage-runtime.mjs --build \
       --package omnesis --out /opt/omnesis-runtime
 
@@ -149,8 +155,10 @@ FROM gateway-runtime AS combined-runtime
 COPY --chmod=0555 scripts/docker/supervisor.mjs /app/scripts/docker/supervisor.mjs
 EXPOSE 3000 3001 3002 3003
 # tini reaps orphaned provider subprocesses; the supervisor forwards signals
-# to both daemon groups and lets the collector drain before the gateway.
-ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/seeded-state/entrypoint.sh"]
+# to both daemon groups and lets the collector drain before the gateway. `-s`
+# keeps that working, without a "not running as PID 1" warning, when another
+# init runs in front of it (Compose's `init: true`, `docker run --init`).
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/app/scripts/seeded-state/entrypoint.sh"]
 CMD ["node", "/app/scripts/docker/supervisor.mjs"]
 
 # ── Updater ───────────────────────────────────────────────────────────────────

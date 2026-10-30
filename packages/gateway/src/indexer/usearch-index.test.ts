@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } 
 import { tmpdir } from "node:os";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { UsearchWriteHandle, UsearchReadHandle } from "./usearch-index.js";
-import { EMBEDDING_DIM, createIndexDatabase, upsertChunks } from "./db.js";
+import { EMBEDDING_DIM, createIndexDatabase, getVectorChangeHead, upsertChunks } from "./db.js";
 import type Database from "better-sqlite3";
 
 const DIMS = 32;
@@ -578,5 +578,165 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     // Five good vectors indexed; the corrupt one skipped rather than crashing.
     expect(handle.size()).toBe(5);
     handle.close();
+  });
+});
+
+describe("UsearchWriteHandle durable rebuild and catch-up", () => {
+  let dir: string;
+  let path: string;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "usearch-durable-"));
+    path = join(dir, "test.usearch");
+    db = createIndexDatabase(`/tmp/omnesis-durable-test-${randomUUID()}.db`);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function upsert(index: number, seed: number = index + 1): void {
+    upsertChunks(db, [
+      {
+        id: `chunk-${index}`,
+        documentId: `doc-${index}`,
+        chunkIndex: 0,
+        content: `content ${index}`,
+        embedding: makeEmbedding(seed),
+        sourceId: "test-source",
+        title: `Doc ${index}`,
+        sourceCreatedAt: "2026-03-10T00:00:00Z",
+      },
+    ]);
+  }
+
+  function rowidOf(index: number): number {
+    return db
+      .prepare<[string], { rowid: number }>("SELECT rowid FROM chunks WHERE id = ?")
+      .get(`chunk-${index}`)!.rowid;
+  }
+
+  function nearest(vector: Float32Array): { key: bigint; distance: number } {
+    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    try {
+      return reader.search(vector, 1)[0]!;
+    } finally {
+      reader.close();
+    }
+  }
+
+  it("logs every vector insert, embedding update and delete", () => {
+    upsert(0);
+    upsert(1);
+    upsert(0, 99);
+    db.prepare("DELETE FROM chunks WHERE id = ?").run("chunk-1");
+    db.prepare("UPDATE chunks SET title = 'renamed' WHERE id = ?").run("chunk-0");
+    const logged = db
+      .prepare<[], { chunk_rowid: number }>("SELECT chunk_rowid FROM vector_changes ORDER BY seq")
+      .all()
+      .map((row) => row.chunk_rowid);
+    // Insert, insert, re-embed, delete — a title change is not a vector change.
+    expect(logged).toEqual([rowidOf(0), 2, rowidOf(0), 2]);
+  });
+
+  it("a stopped build saves its partial graph and a resumed build completes it", () => {
+    for (let i = 0; i < 10; i++) upsert(i);
+    let pages = 0;
+    let rebuildStarts = 0;
+    const first = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const outcome = first.backfillFromDb(db, {
+      pageSize: 2,
+      checkpointIntervalMs: 60_000,
+      onRebuildStart: () => rebuildStarts++,
+      shouldStop: () => ++pages === 3,
+    });
+    expect(outcome).toBe("stopped");
+    expect(first.backfillCursor).toBe(rowidOf(5));
+    expect(existsSync(path)).toBe(true);
+
+    const resumed = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    expect(resumed.size()).toBe(6);
+    const progress: number[] = [];
+    expect(
+      resumed.backfillFromDb(db, {
+        pageSize: 2,
+        resumeAfterRowid: rowidOf(5),
+        onRebuildStart: () => rebuildStarts++,
+        onProgress: (fraction) => progress.push(fraction),
+      }),
+    ).toBe("complete");
+    expect(rebuildStarts).toBe(1);
+    expect(resumed.size()).toBe(10);
+    expect(resumed.backfillCursor).toBeNull();
+    // Progress counts the vectors the resumed graph already had.
+    expect(progress[0]).toBeCloseTo(0.8);
+  });
+
+  it("a resumed build replaces rowids its file already holds past the cursor", () => {
+    for (let i = 0; i < 6; i++) upsert(i);
+    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db);
+    const resumed = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    expect(resumed.backfillFromDb(db, { pageSize: 2, resumeAfterRowid: rowidOf(2) })).toBe(
+      "complete",
+    );
+    expect(resumed.size()).toBe(6);
+  });
+
+  it("catching up from the change log brings a stale graph level with the database", async () => {
+    for (let i = 0; i < 10; i++) upsert(i);
+    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db);
+    const savedAt = getVectorChangeHead(db);
+    const deletedRowid = rowidOf(2);
+
+    // Changes the saved graph never saw: a re-embed, a delete, a new chunk.
+    upsert(1, 501);
+    db.prepare("DELETE FROM chunks WHERE id = ?").run("chunk-2");
+    upsert(10);
+
+    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    await expect(handle.catchUpFromChangeLog(db, savedAt)).resolves.toBe("complete");
+    handle.save();
+
+    expect(handle.size()).toBe(10);
+    const reembedded = nearest(makeEmbedding(501));
+    expect(reembedded.key).toBe(BigInt(rowidOf(1)));
+    expect(reembedded.distance).toBeLessThan(1e-4);
+    expect(nearest(makeEmbedding(11)).key).toBe(BigInt(rowidOf(10)));
+    expect(nearest(makeEmbedding(3)).key).not.toBe(BigInt(deletedRowid));
+  });
+
+  it("a released handle gives the graph up and leaves the file alone", () => {
+    for (let i = 0; i < 4; i++) upsert(i);
+    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    handle.backfillFromDb(db);
+    const before = readFileSync(path);
+
+    handle.release();
+    handle.add(99n, makeEmbedding(99));
+    handle.remove(BigInt(rowidOf(0)));
+    handle.save();
+
+    expect(handle.isDetached).toBe(true);
+    expect(handle.size()).toBe(0);
+    expect(readFileSync(path).equals(before)).toBe(true);
+    // A detached open is the same: nothing loaded, nothing written.
+    const detached = new UsearchWriteHandle(path, EMBEDDING_DIM, { detached: true });
+    expect(detached.size()).toBe(0);
+    expect(detached.backfillFromDb(db)).toBe("skipped");
+    expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("scans with a small page cache and restores the connection's own afterwards", () => {
+    for (let i = 0; i < 4; i++) upsert(i);
+    db.pragma("cache_size = -65536");
+    const during: number[] = [];
+    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db, {
+      pageSize: 2,
+      onProgress: () => during.push(db.pragma("cache_size", { simple: true }) as number),
+    });
+    expect(during.slice(0, -1).every((size) => size === -16384)).toBe(true);
+    expect(db.pragma("cache_size", { simple: true })).toBe(-65536);
   });
 });

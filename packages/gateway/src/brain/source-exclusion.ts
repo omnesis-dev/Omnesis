@@ -14,9 +14,10 @@
  * change takes effect on the next tick or tool call without a restart. The
  * consumers are the admission paths (knowledge intake, historical and recent
  * inventory admission, organization cohorts, the daily batch enqueuer and the
- * waker), the retirement of pending work already queued, and the read fence
- * around a background run's tools (`steward/source-fence.ts`). The interactive
- * agent never consults it.
+ * waker), the retirement of pending work already queued, the read fence
+ * around a background run's tools (`steward/source-fence.ts`), and the
+ * verifier and judges behind a background run's page saves and the morning
+ * recheck. The interactive agent never consults it.
  */
 
 import { sourceIdAddresses } from "@omnesis/types";
@@ -64,10 +65,9 @@ export function excludedDocumentIds(
   for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
     const chunk = ids.slice(i, i + LOOKUP_CHUNK);
     const rows = db
-      .prepare<
-        unknown[],
-        { id: string }
-      >(`SELECT id FROM documents WHERE id IN (${chunk.map(() => "?").join(",")}) AND NOT (${inclusion.sql})`)
+      .prepare<unknown[], { id: string }>(
+        `SELECT id FROM documents WHERE id IN (${chunk.map(() => "?").join(",")}) AND NOT (${inclusion.sql})`,
+      )
       .all(...chunk, ...inclusion.params);
     for (const row of rows) out.add(row.id);
   }

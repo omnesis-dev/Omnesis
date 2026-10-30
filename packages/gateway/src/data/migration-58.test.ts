@@ -57,10 +57,9 @@ function columns(d: Db, table: string): string[] {
 function tableExists(d: Db, table: string): boolean {
   return (
     d
-      .prepare<
-        [string],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      )
       .get(table) !== undefined
   );
 }
@@ -131,10 +130,9 @@ describe("migration 58 — brief_claims sidecar", () => {
         .run(),
     ).not.toThrow();
     const row = db
-      .prepare<
-        [],
-        { verification_state: string | null }
-      >("SELECT verification_state FROM brief_claims")
+      .prepare<[], { verification_state: string | null }>(
+        "SELECT verification_state FROM brief_claims",
+      )
       .get();
     expect(row?.verification_state).toBeNull();
   });
@@ -183,10 +181,9 @@ describe("migration 58 — brief_claims sidecar", () => {
     expect(v58).toBeDefined();
     expect(() => v58!.up(db)).not.toThrow();
     const row = db
-      .prepare<
-        [],
-        { claim_text: string; invalidated_at: number | null }
-      >("SELECT claim_text, invalidated_at FROM brief_claims")
+      .prepare<[], { claim_text: string; invalidated_at: number | null }>(
+        "SELECT claim_text, invalidated_at FROM brief_claims",
+      )
       .get();
     expect(row).toEqual({ claim_text: "the booking moved to Saturday", invalidated_at: null });
   });

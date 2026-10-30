@@ -97,10 +97,9 @@ export function settleAnswerCompletionDelivery(
 ): boolean {
   return db.transaction(() => {
     const row = db
-      .prepare<
-        [string],
-        { status: string; claim_id: string | null }
-      >("SELECT status, claim_id FROM answer_completion_deliveries WHERE id = ?")
+      .prepare<[string], { status: string; claim_id: string | null }>(
+        "SELECT status, claim_id FROM answer_completion_deliveries WHERE id = ?",
+      )
       .get(input.deliveryId);
     if (!row || row.claim_id !== input.claimId) return false;
     switch (input.outcome.kind) {

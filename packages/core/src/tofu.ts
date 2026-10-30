@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  connect as tlsConnect,
-  getCACertificates,
-  setDefaultCACertificates,
-  type ConnectionOptions,
-} from "node:tls";
+// setDefaultCACertificates is read off the module, not imported by name: Node
+// before 24.5, which the published engines range admits, lacks it, and a named
+// import would stop the @omnesis/core barrel loading at all there.
+import tls, { connect as tlsConnect, getCACertificates, type ConnectionOptions } from "node:tls";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -14,6 +12,7 @@ import { isIP } from "node:net";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { publicRoots } from "./tls-distrust.js";
 
 const log = createLogger("tofu");
 
@@ -156,7 +155,7 @@ export function verifiesUnderSystemTrust(
   port: number,
   expectedFingerprint: string,
   options: {
-    /** The public roots to verify against. Defaults to Node's bundled set. */
+    /** The public roots to verify against. Defaults to `publicRoots()`. */
     roots?: readonly string[];
     /** Name resolution for the dial; the default resolves `host` as usual. */
     lookup?: ConnectionOptions["lookup"];
@@ -178,7 +177,7 @@ export function verifiesUnderSystemTrust(
         host,
         port,
         servername: host,
-        ca: [...(options.roots ?? getCACertificates("bundled"))],
+        ca: [...(options.roots ?? publicRoots())],
         rejectUnauthorized: true,
         timeout: options.timeoutMs ?? 10_000,
         ...(options.lookup ? { lookup: options.lookup } : {}),
@@ -270,7 +269,12 @@ export function applyCaTrustInProcess(certPath: string): void {
   if (!certs || certs.length === 0) {
     throw new Error(`No PEM certificates found in ${certPath}`);
   }
-  setDefaultCACertificates([...getCACertificates("default"), ...certs]);
+  if (typeof tls.setDefaultCACertificates !== "function") {
+    throw new Error(
+      `Trusting ${certPath} in this process needs Node.js 24.5 or later; this is ${process.version}`,
+    );
+  }
+  tls.setDefaultCACertificates([...getCACertificates("default"), ...certs]);
   appliedCaPaths.set(certPath, contentHash);
   log.debug(`Added ${certs.length} certificate(s) from ${certPath} to the process CA store`);
 }

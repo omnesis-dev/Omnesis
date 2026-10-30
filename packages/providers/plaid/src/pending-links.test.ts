@@ -89,8 +89,7 @@ function linkedLegacy(
 const running: Session = { link_session_id: "sess-open", finished_at: null };
 
 type ExchangeResult =
-  | { access_token: string; item_id: string }
-  | { status: number; errorCode?: string };
+  { access_token: string; item_id: string } | { status: number; errorCode?: string };
 
 interface FakeOpts {
   sessions?: Session[];

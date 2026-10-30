@@ -350,10 +350,9 @@ describe("GenerationBuilder.catchUp (mid-rebuild ingest fan-out)", () => {
 
     // chunks.embedding for the late arrival was promoted to the new dimension.
     const promoted = db
-      .prepare<
-        [],
-        { embedding: Buffer }
-      >("SELECT embedding FROM chunks WHERE document_id = 'doc-99'")
+      .prepare<[], { embedding: Buffer }>(
+        "SELECT embedding FROM chunks WHERE document_id = 'doc-99'",
+      )
       .get();
     expect(promoted?.embedding.byteLength).toBe(DIM_B * 4);
     // No staged orphans linger after the flip.

@@ -38,13 +38,13 @@ import {
   answerCompletionContinuation,
   backgroundPrompt,
   describeManagementFailure,
-  sendAnswerCompletion,
 } from "./openclaw.js";
 import { GatewayTlsError } from "./tls.js";
 import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
   type SubscriptionDelivery,
+  type AnswerCompletionDelivery,
 } from "./protocol.js";
 
 const tempDirs: string[] = [];
@@ -84,6 +84,7 @@ function api(mode: string) {
       ) => tools.push({ factory, options }),
     ),
     runtime: {
+      version: "2026.10.5",
       agent: { session: { listSessionEntries: () => [] } },
       subagent: {
         run: vi.fn(async () => ({ runId: "run-fictional-1" })),
@@ -142,7 +143,7 @@ describe("who owns an answer's identity", () => {
 });
 
 describe("answer completion transport during a rolling upgrade", () => {
-  async function setupCompletion() {
+  async function setupCompletion(chat = false) {
     const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-completion-transport-"));
     tempDirs.push(stateDir);
     mkdirSync(join(stateDir, "omnesis"));
@@ -188,22 +189,42 @@ describe("answer completion transport during a rolling upgrade", () => {
     routes.put({
       nativeConversationId: "native_completion",
       taskId: "task_completion",
-      channel: SESSION_ROUTE_CHANNEL,
-      to: "agent:main:fictional-completion",
+      ...(chat
+        ? {
+            channel: "telegram",
+            to: "fictional-recipient",
+            accountId: "fictional-account",
+            threadId: "thread-a",
+            sessionKey: "agent:main:telegram:dm:fictional",
+            sessionId: "fictional-era",
+          }
+        : { channel: SESSION_ROUTE_CHANNEL, to: "agent:main:fictional-completion" }),
     });
+    if (chat) {
+      fake.runtime.agent.session.listSessionEntries = () =>
+        [
+          {
+            sessionKey: "agent:main:telegram:dm:fictional",
+            entry: {
+              sessionId: "fictional-era",
+              deliveryContext: {
+                channel: "telegram",
+                to: "fictional-recipient",
+                accountId: "fictional-account",
+                threadId: "thread-a",
+              },
+            },
+          },
+        ] as never;
+    }
     routes.close();
     const delivery: AnswerCompletionDelivery = {
-      protocolVersion: 3,
+      protocolVersion: AGENT_INTEGRATION_PROTOCOL_VERSION,
       deliveryId: "acdl_completion",
       taskId: "task_completion",
       nativeConversationId: "native_completion",
-      answer: {
-        token: "omn_fictional_completion",
-        expiresAt: 1_900_000_000_000,
-        endpoint: "/mcp",
-      },
     };
-    return { fake, service, delivery, run: () => completionStarter!(delivery) };
+    return { fake, service, delivery, stateDir, run: () => completionStarter!(delivery) };
   }
 
   test("retrieves a completion through the installation OAuth principal", async () => {
@@ -236,11 +257,308 @@ describe("answer completion transport during a rolling upgrade", () => {
         answer: "Fictional approved answer.",
       });
     });
-    const { fake, service, run } = await setupCompletion();
+    const { fake, service, run } = await setupCompletion(true);
     await run();
     expect(tokens).toEqual(["omn_fictional_agent"]);
     expect(registeredNames).toEqual(["OpenClaw", "OpenClaw"]);
     expect(fake.runtime.subagent.run).toHaveBeenCalledTimes(1);
+    await service.stop();
+  });
+  test("retrieves a persisted Watch completion without its expired firing bearer", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+    const requests: Array<{ method: string; path: string; token: string }> = [];
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockImplementation(
+      async function (method, path) {
+        if (path === "/health") return { status: "ok" };
+        requests.push({ method, path, token: (this as unknown as { token: string }).token });
+        return {
+          workflowId: "wf_fictional",
+          conversationId: "conv_fictional",
+          taskId: "task_completion",
+          status: "released",
+          releaseId: "release_fictional",
+          answer: "Fictional approved Watch answer.",
+        };
+      },
+    );
+    const { fake, service, delivery, stateDir, run } = await setupCompletion();
+    // Only the persisted route survives this service restart. No original
+    // firing token or its expiry is needed to retrieve an approved completion.
+    await service.stop();
+    await service.start({ stateDir, logger: { warn: vi.fn() } });
+    await run();
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        path: `/subscriptions/answer-completions/${delivery.deliveryId}`,
+        token: "omn_fictional_delivery",
+      },
+    ]);
+    expect(oauth).not.toHaveBeenCalled();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledWith({
+      sessionKey: "agent:main:fictional-completion",
+      message: expect.stringContaining("Fictional approved Watch answer."),
+      deliver: false,
+      idempotencyKey: `answer-completion:${delivery.deliveryId}`,
+    });
+    await service.stop();
+  });
+
+  test("resumes a denied Watch completion without inventing a released answer", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockResolvedValue({
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      taskId: "task_completion",
+      status: "denied",
+      reason: "user_denied",
+    });
+    const { fake, service, run } = await setupCompletion();
+    await run();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliver: false,
+        message: expect.stringContaining("no answer was released"),
+      }),
+    );
+    await service.stop();
+  });
+
+  test("retries repeated Watch fetch failures without exhausting native admission", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const http = vi
+      .spyOn(PinnedGatewayHttpClient.prototype, "requestJson")
+      .mockRejectedValue(new IntegrationHttpError(503, "completion unavailable"));
+    const { fake, service, delivery, stateDir, run } = await setupCompletion();
+    const inbox = new DurableIntegrationInbox(join(stateDir, "omnesis", "integration.sqlite"));
+    inbox.prepareAnswerCompletion(delivery);
+    try {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(inbox.commitAnswerCompletion(delivery.deliveryId, run)).rejects.toThrow(
+          "completion unavailable",
+        );
+        expect(inbox.getAnswerCompletionState(delivery.deliveryId)).toBe("prepared");
+      }
+      expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+      http.mockResolvedValue({
+        workflowId: "wf_fictional",
+        conversationId: "conv_fictional",
+        taskId: delivery.taskId,
+        status: "released",
+        releaseId: "release_fictional",
+        answer: "Recovered fictional answer.",
+      });
+      await expect(inbox.commitAnswerCompletion(delivery.deliveryId, run)).resolves.toMatchObject({
+        status: "accepted",
+      });
+      expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+    } finally {
+      inbox.close();
+      await service.stop();
+    }
+  });
+
+  test.each([401, 403, 404, 409, 503])(
+    "does not fall back to OAuth or resume a Watch on completion HTTP %s",
+    async (status) => {
+      vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+      const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+      vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockRejectedValue(
+        new IntegrationHttpError(status, "completion unavailable"),
+      );
+      const { fake, service, run } = await setupCompletion();
+      await expect(run()).rejects.toThrow("completion unavailable");
+      expect(oauth).not.toHaveBeenCalled();
+      expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+      await service.stop();
+    },
+  );
+
+  test.each([
+    {
+      status: "released",
+      taskId: "task_other",
+      releaseId: "release_fictional",
+      answer: "Other task.",
+    },
+    {
+      status: "approval_required",
+      taskId: "task_completion",
+      approvalId: "approval_fictional",
+      approvalExpiresAt: 1_900_000_000_000,
+    },
+    { status: "released", taskId: "task_completion", releaseId: "release_fictional" },
+  ])("refuses a mismatched or nonterminal Watch response %#", async (response) => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockResolvedValue({
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      ...response,
+    });
+    const { fake, service, run } = await setupCompletion();
+    await expect(run()).rejects.toThrow();
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  test("resumes the captured chat session after restart and retries without direct posting", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+      status: "released",
+      answer: "The fictional review is at noon.",
+    } as never);
+    const { fake, service, delivery, stateDir, run } = await setupCompletion(true);
+    await service.stop();
+    await service.start({ stateDir, logger: { warn: vi.fn() } });
+    fake.runtime.subagent.run.mockRejectedValueOnce(new Error("gateway is restarting"));
+    await expect(run()).rejects.toThrow("gateway is restarting");
+    await run();
+    await run();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledTimes(3);
+    for (const [request] of fake.runtime.subagent.run.mock.calls as unknown as Array<
+      [Record<string, unknown>]
+    >) {
+      expect(request).toMatchObject({
+        sessionKey: "agent:main:telegram:dm:fictional",
+        deliver: true,
+        idempotencyKey: `answer-completion:${delivery.deliveryId}`,
+        message: expect.stringContaining("The fictional review is at noon."),
+        assertCurrent: expect.any(Function),
+      });
+    }
+    expect(fake.runtime.channel.outbound.loadAdapter).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  test.each([
+    undefined,
+    "",
+    "unknown",
+    "2026.7.1-2",
+    "2026.10.4",
+    "2026.10.5-beta.1",
+    "2026.11.1-rc.1",
+    "2026.99.1",
+  ])("keeps a chat completion retryable on unsupported host %s", async (version) => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+      status: "released",
+      answer: "Fictional held answer.",
+    } as never);
+    const { fake, service, run } = await setupCompletion(true);
+    fake.runtime.version = version as string;
+    await expect(run()).rejects.toThrow("Update OpenClaw to stable 2026.10.5");
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+    fake.runtime.version = "2026.10.5";
+    await run();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+    await service.stop();
+  });
+
+  test.each(["2026.10.5", "2026.10.5-2", "2026.11.1", "2027.1.1"])(
+    "admits chat completion on stable host %s",
+    async (version) => {
+      vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+      vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+        status: "released",
+        answer: "Fictional held answer.",
+      } as never);
+      const { fake, service, run } = await setupCompletion(true);
+      fake.runtime.version = version;
+      await run();
+      expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+      await service.stop();
+    },
+  );
+
+  test.each(["missing", "reset", "rerouted", "denied", "internal", "none"])(
+    "does not resume a %s chat session",
+    async (kind) => {
+      vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+      vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+        status: "released",
+        answer: "A fictional private answer.",
+      } as never);
+      const { fake, service, run } = await setupCompletion(true);
+      const entry = {
+        sessionId: kind === "reset" ? "different-era" : "fictional-era",
+        sendPolicy: kind === "denied" ? "deny" : "allow",
+        ...(kind === "internal" || kind === "none" ? { delivery: { kind } } : {}),
+        deliveryContext: {
+          channel: "telegram",
+          to: kind === "rerouted" ? "different-recipient" : "fictional-recipient",
+          accountId: "fictional-account",
+          threadId: "thread-a",
+        },
+      };
+      fake.runtime.agent.session.listSessionEntries = () =>
+        (kind === "missing"
+          ? []
+          : [
+              {
+                sessionKey: "agent:main:telegram:dm:fictional",
+                entry,
+              },
+            ]) as never;
+      await expect(run()).rejects.toThrow(/unavailable|reset|changed/);
+      expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+      expect(fake.runtime.channel.outbound.loadAdapter).not.toHaveBeenCalled();
+      await service.stop();
+    },
+  );
+
+  test("rechecks session authority at host admission", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+      status: "released",
+      answer: "A fictional private answer.",
+    } as never);
+    const { fake, service, run } = await setupCompletion(true);
+    fake.runtime.subagent.run.mockImplementation((async (request: {
+      assertCurrent: () => void;
+    }) => {
+      fake.runtime.agent.session.listSessionEntries = () => [];
+      request.assertCurrent();
+      return { runId: "must-not-be-admitted" };
+    }) as never);
+    await expect(run()).rejects.toThrow(/unavailable/);
+    await service.stop();
+  });
+
+  test("refuses legacy chat routes without guessing a session from their recipient", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({
+      status: "released",
+      answer: "A fictional answer.",
+    } as never);
+    const { fake, service, delivery, stateDir, run } = await setupCompletion(true);
+    const routes = new OpenClawCompletionRoutes(
+      join(stateDir, "omnesis", "answer-completion-routes.sqlite"),
+    );
+    routes.put({
+      nativeConversationId: delivery.nativeConversationId,
+      taskId: delivery.taskId,
+      channel: "telegram",
+      to: "fictional-recipient",
+    });
+    routes.close();
+    await expect(run()).rejects.toThrow("no originating OpenClaw session");
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+    expect(fake.runtime.channel.outbound.loadAdapter).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  test("does not resume when the current OAuth principal cannot retrieve the answer", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockRejectedValue(
+      new Error("grant revoked"),
+    );
+    const { fake, service, run } = await setupCompletion(true);
+    await expect(run()).rejects.toThrow("grant revoked");
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
     await service.stop();
   });
 });
@@ -948,6 +1266,7 @@ describe("OpenClaw plugin registration", () => {
     expect(
       ordinaryAnswer.factory({
         sessionKey: "agent:main:telegram:dm:fictional",
+        sessionId: "agent:main:telegram:dm:fictional",
         deliveryContext: { channel: "telegram", to: "fictional-recipient" },
       } as never),
     ).toMatchObject({ name: "omnesis_answer" });
@@ -1399,6 +1718,7 @@ describe("OpenClaw plugin registration", () => {
       .find(({ options }) => options.name === "omnesis_answer")!
       .factory({
         sessionKey: "agent:main:telegram:dm:fictional",
+        sessionId: "agent:main:telegram:dm:fictional",
         deliveryContext: { channel: "telegram", to: "fictional-recipient" },
       } as never) as { execute(id: string, input: Record<string, unknown>): Promise<unknown> };
 
@@ -1458,6 +1778,7 @@ describe("OpenClaw plugin registration", () => {
       .find(({ options }) => options.name === "omnesis_answer")!
       .factory({
         sessionKey: "agent:main:telegram:dm:fictional",
+        sessionId: "agent:main:telegram:dm:fictional",
         deliveryContext: { channel: "telegram", to: "fictional-recipient" },
       } as never) as { execute(id: string, input: Record<string, unknown>): Promise<unknown> };
 
@@ -1589,93 +1910,133 @@ describe("OpenClaw plugin registration", () => {
     await service.stop();
   });
 
-  test("posts a held ordinary answer to the captured trusted route without accepting model routing", async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-ordinary-answer-"));
-    tempDirs.push(stateDir);
-    mkdirSync(join(stateDir, "omnesis"));
-    writeFileSync(
-      join(stateDir, "omnesis", "integration.json"),
-      `${JSON.stringify({
-        gatewayUrl: "http://127.0.0.1:1",
-        deliveryToken: "omn_fictional_delivery",
-        ingestionToken: "omn_fictional_ingestion",
-        managementToken: "omn_fictional_management",
-        oauth: {
-          redirectUri: "http://127.0.0.1:48123/callback",
-          clientInformation: { client_id: "client_fictional" },
-          tokens: {
-            access_token: "omn_fictional_agent",
-            refresh_token: "refresh_fictional",
-            token_type: "Bearer",
+  test.each(["context", "store", "unavailable"] as const)(
+    "captures session identity from %s without accepting model routing",
+    async (identitySource) => {
+      const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-ordinary-answer-"));
+      tempDirs.push(stateDir);
+      mkdirSync(join(stateDir, "omnesis"));
+      writeFileSync(
+        join(stateDir, "omnesis", "integration.json"),
+        `${JSON.stringify({
+          gatewayUrl: "http://127.0.0.1:1",
+          deliveryToken: "omn_fictional_delivery",
+          ingestionToken: "omn_fictional_ingestion",
+          managementToken: "omn_fictional_management",
+          oauth: {
+            redirectUri: "http://127.0.0.1:48123/callback",
+            clientInformation: { client_id: "client_fictional" },
+            tokens: {
+              access_token: "omn_fictional_agent",
+              refresh_token: "refresh_fictional",
+              token_type: "Bearer",
+            },
           },
-        },
-      })}\n`,
-    );
-    vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(() => {});
-    vi.spyOn(DurableTranscriptIngestor.prototype, "start").mockImplementation(() => {});
-    vi.spyOn(AgentIntegrationClient.prototype, "stop").mockResolvedValue();
-    vi.spyOn(DurableTranscriptIngestor.prototype, "stop").mockResolvedValue();
-    const postJson = vi
-      .spyOn(NativeAnswerMcpClient.prototype, "postJson")
-      .mockResolvedValueOnce({
-        workflowId: "wf_fictional",
-        conversationId: "conv_fictional",
-        taskId: "task_fictional",
-        status: "approval_required",
-        approvalId: "approval_fictional",
-        approvalExpiresAt: 1_900_000_000_000,
-      })
-      .mockResolvedValueOnce({ ok: true });
-    const fake = api("full");
-    registerOpenClawIntegration(fake as never);
-    const service = fake.services[0] as {
-      start(context: { stateDir: string; logger: { warn(message: string): void } }): Promise<void>;
-      stop(): Promise<void>;
-    };
-    await service.start({ stateDir, logger: { warn: vi.fn() } });
-    const tool = fake.tools
-      .find(({ options }) => options.name === "omnesis_answer")!
-      .factory({
-        sessionKey: "agent:main:telegram:dm:fictional",
-        deliveryContext: { channel: "telegram", to: "fictional-recipient", threadId: "thread-a" },
-      } as never) as {
-      execute(id: string, input: Record<string, unknown>): Promise<{ details: unknown }>;
-    };
+        })}\n`,
+      );
+      vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(() => {});
+      vi.spyOn(DurableTranscriptIngestor.prototype, "start").mockImplementation(() => {});
+      vi.spyOn(AgentIntegrationClient.prototype, "stop").mockResolvedValue();
+      vi.spyOn(DurableTranscriptIngestor.prototype, "stop").mockResolvedValue();
+      const routePut = vi.spyOn(OpenClawCompletionRoutes.prototype, "put");
+      const postJson = vi
+        .spyOn(NativeAnswerMcpClient.prototype, "postJson")
+        .mockResolvedValueOnce({
+          workflowId: "wf_fictional",
+          conversationId: "conv_fictional",
+          taskId: "task_fictional",
+          ...(identitySource === "unavailable"
+            ? { status: "released", answer: "The fictional project review is at noon." }
+            : {
+                status: "approval_required",
+                approvalId: "approval_fictional",
+                approvalExpiresAt: 1_900_000_000_000,
+              }),
+        })
+        .mockResolvedValueOnce({ ok: true });
+      const fake = api("full");
+      fake.runtime.agent.session.listSessionEntries = () =>
+        [
+          { sessionKey: "agent:main:telegram:dm:other", entry: { sessionId: "other-era" } },
+          {
+            sessionKey: "agent:main:telegram:dm:fictional",
+            entry: identitySource === "store" ? { sessionId: "captured-store-era" } : {},
+          },
+        ] as never;
+      registerOpenClawIntegration(fake as never);
+      const service = fake.services[0] as {
+        start(context: {
+          stateDir: string;
+          logger: { warn(message: string): void };
+        }): Promise<void>;
+        stop(): Promise<void>;
+      };
+      await service.start({ stateDir, logger: { warn: vi.fn() } });
+      const tool = fake.tools
+        .find(({ options }) => options.name === "omnesis_answer")!
+        .factory({
+          sessionKey: "agent:main:telegram:dm:fictional",
+          ...(identitySource === "context"
+            ? { sessionId: "agent:main:telegram:dm:fictional" }
+            : {}),
+          deliveryContext: { channel: "telegram", to: "fictional-recipient", threadId: "thread-a" },
+        } as never) as {
+        execute(id: string, input: Record<string, unknown>): Promise<{ details: unknown }>;
+      };
 
-    await expect(
-      tool.execute("tool-call", {
-        question: "When is the fictional project review?",
-        to: "attacker-controlled-recipient",
-      }),
-    ).resolves.toMatchObject({
-      content: [
-        {
-          text: expect.stringContaining("you will reply in this conversation automatically"),
-        },
-      ],
-      details: { ok: true },
-    });
-    expect(postJson).toHaveBeenNthCalledWith(
-      1,
-      "/mcp",
-      expect.objectContaining({
-        question: "When is the fictional project review?",
-        clientRequestId: integrationAnswerRequestId({
-          runGeneration: "agent:main:telegram:dm:fictional",
-          askId: "tool-call",
+      await expect(
+        tool.execute("tool-call", {
           question: "When is the fictional project review?",
-          workflowName: "OpenClaw conversation",
+          to: "attacker-controlled-recipient",
         }),
-      }),
-      undefined,
-      { timeoutMs: openClawAnswerBudget({}).submitTimeoutMs },
-    );
-    // A conversation has someone present to decide, so it never forces a
-    // settled outcome the way a scheduled run does.
-    expect(postJson.mock.calls[0]?.[1]).not.toHaveProperty("approval");
-    expect(postJson).toHaveBeenCalledTimes(1);
-    await service.stop();
-  });
+      ).resolves.toMatchObject({
+        content: [
+          {
+            text: expect.stringContaining(
+              identitySource === "unavailable"
+                ? "The fictional project review is at noon."
+                : "you will reply in this conversation automatically",
+            ),
+          },
+        ],
+        details: { ok: true },
+      });
+      expect(postJson).toHaveBeenNthCalledWith(
+        1,
+        "/mcp",
+        expect.objectContaining({
+          question: "When is the fictional project review?",
+          clientRequestId: integrationAnswerRequestId({
+            runGeneration: "agent:main:telegram:dm:fictional",
+            askId: "tool-call",
+            question: "When is the fictional project review?",
+            workflowName: "OpenClaw conversation",
+            ...(identitySource === "unavailable" ? { approval: "never" as const } : {}),
+          }),
+        }),
+        undefined,
+        { timeoutMs: openClawAnswerBudget({}).submitTimeoutMs },
+      );
+      if (identitySource === "unavailable") {
+        expect(postJson.mock.calls[0]?.[1]).toHaveProperty("approval", "never");
+        expect(routePut).not.toHaveBeenCalled();
+      } else {
+        expect(postJson.mock.calls[0]?.[1]).not.toHaveProperty("approval");
+        expect(routePut).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionKey: "agent:main:telegram:dm:fictional",
+            sessionId:
+              identitySource === "store"
+                ? "captured-store-era"
+                : "agent:main:telegram:dm:fictional",
+            to: "fictional-recipient",
+          }),
+        );
+      }
+      expect(postJson).toHaveBeenCalledTimes(1);
+      await service.stop();
+    },
+  );
 
   /** A route store in a temp dir the suite's afterEach already drains. */
   function openRoutes(name: string): OpenClawCompletionRoutes {
@@ -1750,6 +2111,15 @@ describe("OpenClaw plugin registration", () => {
     expect(text).toContain("The fictional shipment left on Tuesday.");
   });
 
+  test.each(["expired", "user_denied", "canceled", "privacy_policy"] as const)(
+    "a %s completion is not described as approved",
+    (reason) => {
+      const message = answerCompletionContinuation({ status: "denied", reason });
+      expect(message).not.toContain("approved it");
+      expect(message).toMatch(/expired|declined|cancelled|private/);
+    },
+  );
+
   test("carries a released answer's citations into the resumed run", () => {
     const text = answerCompletionContinuation({
       workflowId: "wf_fictional",
@@ -1774,38 +2144,6 @@ describe("OpenClaw plugin registration", () => {
         "1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z\n" +
         "   Link: https://mail.example.com/thread/fictional-budget",
     );
-  });
-
-  test("delivers a terminal answer through the captured channel adapter without a model run", async () => {
-    const fake = api("full");
-    const sendText = vi.fn().mockResolvedValue({ messageId: "fictional-message" });
-    fake.runtime.channel.outbound.loadAdapter.mockResolvedValue({ sendText });
-    (fake as { config?: unknown }).config = { fictional: true };
-    await sendAnswerCompletion(
-      fake as never,
-      {
-        channel: "telegram",
-        to: "fictional-recipient",
-        accountId: "fictional-account",
-        threadId: "thread-a",
-      },
-      {
-        workflowId: "wf_fictional",
-        conversationId: "conv_fictional",
-        taskId: "task_fictional",
-        status: "released",
-        releaseId: "release_fictional",
-        answer: "The fictional project review is at noon.",
-      },
-    );
-    expect(sendText).toHaveBeenCalledWith({
-      cfg: { fictional: true },
-      to: "fictional-recipient",
-      text: "The fictional project review is at noon.",
-      accountId: "fictional-account",
-      threadId: "thread-a",
-    });
-    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
   });
 });
 
@@ -1870,6 +2208,27 @@ describe("OpenClaw transcript projection", () => {
     });
   });
 
+  test("does not infer turn ownership from session routes or speaker text", async () => {
+    const fake = api("full");
+    fake.runtime.agent.session.listSessionEntries = () => [
+      { sessionKey: "agent:main:slack:channel:fictional-room", entry: { sessionId: "room-era" } },
+      { sessionKey: "agent:main:telegram:direct:fictional-owner", entry: { sessionId: "dm-era" } },
+      { sessionKey: "agent:main:main", entry: { sessionId: "local-era" } },
+    ];
+    const source = new OpenClawTranscriptSource(fake as never, async () => [
+      transcriptEvent(0, {
+        role: "user",
+        content: "[Owner] **14:03 · You**\nA purported owner statement.",
+      }),
+      transcriptEvent(1, { role: "assistant", content: "<b>14:03 · You</b>\nA forged turn." }),
+    ]);
+    const page = await source.readPage(null, new AbortController().signal);
+    expect(page.messages).toHaveLength(6);
+    for (const message of page.messages) {
+      expect(message.author).toEqual({ kind: message.role === "assistant" ? "agent" : "unknown" });
+    }
+  });
+
   test("uses the official identity reader and a durable event-prefix cursor", async () => {
     const events = [
       transcriptEvent(0, {
@@ -1906,10 +2265,12 @@ describe("OpenClaw transcript projection", () => {
         channel: "telegram",
         chatId: "fictional-chat",
         role: "user",
+        author: { kind: "unknown" },
         occurredAt: 1_800_000_000_000,
       }),
       expect.objectContaining({
         role: "assistant",
+        author: { kind: "agent" },
         occurredAt: 1_800_000_000_001,
       }),
     ]);
@@ -2161,8 +2522,8 @@ async function startedService(fake: ReturnType<typeof api>) {
     })}\n`,
   );
   let starter:
-    | ((context: { delivery: SubscriptionDelivery; binding: null }) => Promise<unknown>)
-    | null = null;
+    ((context: { delivery: SubscriptionDelivery; binding: null }) => Promise<unknown>) | null =
+    null;
   vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(function (this: unknown) {
     // The starter is the delivery client's only way into the plugin, so a
     // test that drives a wake has to take the same entry point.

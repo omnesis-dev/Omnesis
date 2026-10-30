@@ -308,10 +308,9 @@ export function createDocAnnotation(
     if (requireDocuments) {
       const placeholders = evidenceDocIds.map(() => "?").join(", ");
       const existing = db
-        .prepare<
-          unknown[],
-          { id: string }
-        >(`SELECT id FROM documents WHERE id IN (${placeholders})`)
+        .prepare<unknown[], { id: string }>(
+          `SELECT id FROM documents WHERE id IN (${placeholders})`,
+        )
         .all(...evidenceDocIds);
       if (existing.length !== evidenceDocIds.length) {
         throw new Error("annotation evidence document no longer exists");
@@ -489,9 +488,9 @@ export function updateDocAnnotation(
     // Only a LIVE prior is revisable — a retracted/invalidated row stays dead
     // rather than being edited back into circulation.
     const res = db
-      .prepare<
-        unknown[]
-      >(`UPDATE doc_annotations SET ${sets.join(", ")} WHERE id = ? AND invalidated_at IS NULL`)
+      .prepare<unknown[]>(
+        `UPDATE doc_annotations SET ${sets.join(", ")} WHERE id = ? AND invalidated_at IS NULL`,
+      )
       .run(...vals, id);
     if (res.changes === 0) return null;
     if (patch.evidence !== undefined) {
@@ -594,10 +593,9 @@ export function supersedeDocAnnotationBy(
 /** Single annotation by id — the read the revise firewall re-check needs. */
 export function getDocAnnotation(db: Db, id: string): DocAnnotationRow | null {
   const row = db
-    .prepare<
-      [string],
-      DocAnnotationDbRow
-    >(`SELECT * FROM doc_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")}`)
+    .prepare<[string], DocAnnotationDbRow>(
+      `SELECT * FROM doc_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")}`,
+    )
     .get(id);
   return row ? rowToAnnotation(row) : null;
 }
@@ -954,10 +952,9 @@ function regroundDocAnnotations(
       cause === "deleted"
         ? undefined
         : db
-            .prepare<
-              [string],
-              { content: string | null }
-            >("SELECT content FROM documents WHERE id = ?")
+            .prepare<[string], { content: string | null }>(
+              "SELECT content FROM documents WHERE id = ?",
+            )
             .get(docId);
     const docGone = doc === undefined;
     const content = doc?.content ?? "";

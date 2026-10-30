@@ -114,10 +114,9 @@ describe("migration 103", () => {
 
     expect(
       db
-        .prepare<
-          [],
-          { runs: number }
-        >("SELECT runs FROM cognition_spend WHERE mechanism = 'subscription-compile'")
+        .prepare<[], { runs: number }>(
+          "SELECT runs FROM cognition_spend WHERE mechanism = 'subscription-compile'",
+        )
         .get()?.runs,
     ).toBe(3);
   });

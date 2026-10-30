@@ -85,10 +85,9 @@ describe("real Notion database lifecycle through both storage planes", () => {
   const stored = () =>
     readDb((db) =>
       db
-        .prepare<
-          [string],
-          { external_id: string; partition_key: string }
-        >("SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id")
+        .prepare<[string], { external_id: string; partition_key: string }>(
+          "SELECT external_id, partition_key FROM documents WHERE source_id = ? ORDER BY external_id",
+        )
         .all(sourceId),
     );
   const absent = () =>

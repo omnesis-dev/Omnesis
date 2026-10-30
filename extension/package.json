@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/extension",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "@types/turndown": "^5.0.6",
     "esbuild": "^0.28.2",
     "jszip": "^3.10.2",
-    "linkedom": "^0.18.13",
+    "linkedom": "^0.18.14",
     "playwright": "^1.60.0",
     "sharp": "^0.35.5"
   }

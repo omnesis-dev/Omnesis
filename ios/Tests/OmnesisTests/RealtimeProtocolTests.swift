@@ -105,6 +105,19 @@ final class RealtimeCapabilityTests: XCTestCase {
         XCTAssertEqual(session.request?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
     }
 
+    func testProductionBuildNeverOffersVoiceThatTheGatewayAdvertises() async throws {
+        let session = Session(body: #"{"live":{"version":1,"transport":"webrtc","model":"gpt-live-1","configuredAgent":true}}"#)
+        let advertised = try await RealtimeCapability.available(pairing: pairing, session: session)
+        XCTAssertTrue(advertised)
+        session.request = nil
+        XCTAssertFalse(RealtimeCapability.includedInBuild)
+        let offered = await RealtimeCapability.offered(pairing: pairing, experimental: true, session: session)
+        XCTAssertFalse(offered)
+        XCTAssertNil(session.request, "A build without realtime voice must not probe the gateway")
+        XCTAssertFalse(Bundle.allFrameworks.contains { $0.bundleURL.lastPathComponent == "WebRTC.framework" })
+        XCTAssertNil(Bundle.main.url(forResource: "WebRTC-LICENSE.md", withExtension: nil))
+    }
+
     func testOlderGatewayWithoutCapabilityHidesVoice() async throws {
         let session = Session(status: 404, body: "Not found")
         let available = try await RealtimeCapability.available(pairing: pairing, session: session)

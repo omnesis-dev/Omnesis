@@ -205,6 +205,26 @@ describe("buildSourceNotices", () => {
     });
   });
 
+  test("an issue the source marks as information is an info notice", () => {
+    const [notice] = buildSourceNotices({
+      ...base,
+      issues: [
+        {
+          code: "transcription-awaiting",
+          scope: "item",
+          kind: "transient",
+          count: 4,
+          severity: "info",
+          message: "4 voice notes awaiting transcription",
+          since: Date.UTC(2026, 2, 3),
+        },
+      ],
+    });
+    expect(notice.kind).toBe("sync-issue");
+    expect(notice.severity).toBe("info");
+    expect(notice.title).toBe("4 voice notes awaiting transcription");
+  });
+
   test("notices come most severe first", () => {
     const notices = buildSourceNotices(
       {

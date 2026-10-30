@@ -193,10 +193,9 @@ export function findAuthorizationRowByBrowserHandle(
 ): AuthorizationRequestRow | null {
   return (
     db
-      .prepare<
-        [string],
-        AuthorizationRequestRow
-      >("SELECT * FROM oauth_authorization_requests WHERE browser_handle_hash = ?")
+      .prepare<[string], AuthorizationRequestRow>(
+        "SELECT * FROM oauth_authorization_requests WHERE browser_handle_hash = ?",
+      )
       .get(hashSecret(browserHandle)) ?? null
   );
 }
@@ -207,10 +206,9 @@ export function findAuthorizationRowById(
 ): AuthorizationRequestRow | null {
   return (
     db
-      .prepare<
-        [string],
-        AuthorizationRequestRow
-      >("SELECT * FROM oauth_authorization_requests WHERE id = ?")
+      .prepare<[string], AuthorizationRequestRow>(
+        "SELECT * FROM oauth_authorization_requests WHERE id = ?",
+      )
       .get(approvalId) ?? null
   );
 }
@@ -279,10 +277,9 @@ export function selectionIsUsable(
   if (selection.kind === "new-grant") {
     if (selection.expiresAt !== null && selection.expiresAt <= now) return false;
     const principal = db
-      .prepare<
-        [string],
-        { kind: string; revoked_at: number | null }
-      >("SELECT kind, revoked_at FROM access_principals WHERE id = ?")
+      .prepare<[string], { kind: string; revoked_at: number | null }>(
+        "SELECT kind, revoked_at FROM access_principals WHERE id = ?",
+      )
       .get(selection.principalId);
     return !!principal && principal.kind === "interactive" && principal.revoked_at === null;
   }
@@ -362,10 +359,9 @@ export function getActiveCredential(
     (row.grant_expires_at !== null && row.grant_expires_at <= now) ||
     (row.execution_device_id !== null &&
       db
-        .prepare<
-          [string],
-          { present: number }
-        >("SELECT 1 AS present FROM devices WHERE id = ? AND revoked_at IS NULL")
+        .prepare<[string], { present: number }>(
+          "SELECT 1 AS present FROM devices WHERE id = ? AND revoked_at IS NULL",
+        )
         .get(row.execution_device_id) === undefined)
   ) {
     return null;

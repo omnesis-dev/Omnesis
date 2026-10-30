@@ -248,10 +248,9 @@ describe("LexicalIndex", () => {
       chunk({ id: "c3", documentId: "d3", content: "marathon training" }),
     ]);
     const first = db
-      .prepare<
-        [],
-        { seq: number }
-      >("SELECT min(seq) AS seq FROM chunks_fts_changes WHERE chunk_rowid = 2")
+      .prepare<[], { seq: number }>(
+        "SELECT min(seq) AS seq FROM chunks_fts_changes WHERE chunk_rowid = 2",
+      )
       .get()!;
     db.prepare("DELETE FROM chunks_fts_changes WHERE seq <= ?").run(first.seq);
     expect(index.rank(db, "zephyr", 10)).toBeNull();
@@ -275,6 +274,48 @@ describe("LexicalIndex", () => {
     upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "quokka final" })]);
     expect(index.rank(db, "zephyr", 10)).toEqual([]);
     expect(index.rank(db, "quokka", 10)!.map((r) => r.rowid)).toEqual([1]);
+  });
+
+  test("a chunk rewritten again after the ranker read its first rewrite drops the earlier text", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      upsertChunks(db, [
+        chunk({ id: "c1", documentId: "d1", content: "budget review" }),
+        chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
+      ]);
+      const index = LexicalIndex.build(db);
+      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
+      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
+      // c1 now lives in the delta; the next rewrite must retire that copy.
+      vi.advanceTimersByTime(1_000);
+      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "quokka final" })]);
+      expect(index.rank(db, "quokka", 10)!.map((r) => r.rowid)).toEqual([1]);
+      expect(index.rank(db, "zephyr", 10)).toEqual([]);
+      expect(index.rank(db, "zep", 10, { prefixLastToken: true })).toEqual([]);
+      expect(index.stats(db)!.chunkCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a chunk deleted after the ranker read its rewrite stops matching", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      upsertChunks(db, [
+        chunk({ id: "c1", documentId: "d1", content: "budget review" }),
+        chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
+      ]);
+      const index = LexicalIndex.build(db);
+      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
+      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
+      vi.advanceTimersByTime(1_000);
+      db.prepare("DELETE FROM chunks WHERE id = 'c1'").run();
+      expect(index.rank(db, "zephyr", 10)).toEqual([]);
+      expect(index.rank(db, "budget", 10)).toEqual([]);
+      expect(index.stats(db)!.chunkCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("past its time budget it declines, then resumes where it stopped", () => {
@@ -348,6 +389,125 @@ describe("LexicalIndex", () => {
       expect(viaMemory.ranker).toBe("memory");
       expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
         viaFts.map((c) => c.chunkRowid),
+      );
+    }
+  });
+
+  test("matches what FTS5 matches through a seeded stream of inserts, rewrites and deletes", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const vocabulary = [
+        "budget",
+        "review",
+        "marathon",
+        "training",
+        "invoice",
+        "studio",
+        "northstar",
+        "zephyr",
+        "quokka",
+        "notes",
+      ];
+      let seed = 20_261_027;
+      const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+      const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
+      const text = () => Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => pick(vocabulary));
+      const write = (n: number) =>
+        upsertChunks(db, [
+          chunk({
+            id: `c${n}`,
+            documentId: `d${n}`,
+            content: text().join(" "),
+            title: pick(vocabulary),
+          }),
+        ]);
+      const live: number[] = [];
+      let next = 0;
+      for (; next < 40; next++) {
+        write(next);
+        live.push(next);
+      }
+      // Small batches, so one chunk's changes often straddle reads.
+      const index = new LexicalIndex(LexicalIndex.build(db).data, { changesBatch: 3 });
+      const viaFts = (match: string) =>
+        db
+          .prepare<[string], { rowid: number }>(
+            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rowid",
+          )
+          .all(match)
+          .map((r) => r.rowid);
+      const viaMemory = (query: string, opts?: { prefixLastToken?: boolean }) =>
+        index
+          .rank(db, query, 1_000, opts)!
+          .map((r) => r.rowid)
+          .sort((a, b) => a - b);
+
+      for (let step = 0; step < 300; step++) {
+        const op = rnd();
+        if (op < 0.3 || live.length === 0) {
+          write(next);
+          live.push(next++);
+        } else if (op < 0.75) {
+          write(pick(live));
+        } else {
+          const [n] = live.splice(Math.floor(rnd() * live.length), 1);
+          db.prepare("DELETE FROM chunks WHERE id = ?").run(`c${n}`);
+        }
+        if (step % 5 !== 4) continue;
+        vi.advanceTimersByTime(1_000);
+        for (const word of vocabulary) {
+          expect(viaMemory(word), `step ${step}, "${word}"`).toEqual(viaFts(`"${word}"`));
+        }
+        for (const prefix of ["mar", "qu", "st"]) {
+          expect(viaMemory(prefix, { prefixLastToken: true }), `step ${step}, ${prefix}*`).toEqual(
+            viaFts(`"${prefix}"*`),
+          );
+        }
+        expect(index.stats(db)!.chunkCount(), `step ${step}`).toBe(live.length);
+      }
+
+      const rebuilt = LexicalIndex.build(db);
+      for (const query of ["budget", "zephyr quokka", "marathon training notes"]) {
+        const match = query
+          .split(" ")
+          .map((w) => `"${w}"`)
+          .join(" OR ");
+        const expected = ftsTop(match, 1_000);
+        const actual = rebuilt.rank(db, query, 1_000)!;
+        expect(actual.map((r) => r.rowid)).toEqual(expected.map((r) => r.rowid));
+        actual.forEach((r, i) => expect(r.score).toBeCloseTo(expected[i].score, 6));
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("bm25Search — type-ahead prefixes", () => {
+  test("a prefix that spells an operator word completes on both engines", () => {
+    upsertChunks(db, [
+      chunk({ id: "c1", documentId: "order", content: "order confirmation for the studio" }),
+      chunk({ id: "c2", documentId: "android", content: "android release checklist" }),
+      chunk({ id: "c3", documentId: "notes", content: "quarterly notes" }),
+      chunk({ id: "c4", documentId: "nearby", content: "nearby cafés" }),
+      chunk({ id: "c5", documentId: "budget", content: "budget review" }),
+    ]);
+    const index = LexicalIndex.build(db);
+    const cases: [string, string[]][] = [
+      ["or", ["order"]],
+      ["and", ["android"]],
+      ["not", ["notes"]],
+      ["near", ["nearby"]],
+      ["budget NOT and", ["android", "budget"]],
+    ];
+    for (const [typed, expected] of cases) {
+      const opts = { prefixLastToken: true, commonTokenThreshold: 0.5 };
+      const viaFts = bm25Search(db, typed, {}, 10, opts);
+      const viaMemory = bm25Search(db, typed, {}, 10, { ...opts, ranker: index });
+      expect(viaMemory.ranker).toBe("memory");
+      expect(viaFts.candidates.map((c) => c.documentId).sort()).toEqual(expected);
+      expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+        viaFts.candidates.map((c) => c.chunkRowid),
       );
     }
   });
@@ -486,6 +646,72 @@ describe("bm25Search — rank-first", () => {
     expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
     expect(viaMemory.ranker).toBe("memory");
     expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+      viaFts.candidates.map((c) => c.chunkRowid),
+    );
+  });
+
+  test("the first query after writes drops common words by the counts it ranks with", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      upsertChunks(db, [
+        ...[0, 1, 2, 3].map((i) =>
+          chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
+        ),
+        chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
+        chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
+      ]);
+      const index = LexicalIndex.build(db);
+      const opts = { commonTokenThreshold: 0.5 };
+      // 6 chunks, cutoff 3: "budget" (4) is common, "quokka" (0) is not.
+      expect(
+        bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index }).droppedTokens,
+      ).toEqual(["budget"]);
+
+      // 14 chunks, cutoff 7: now "quokka" (8) is the common word and "budget" (4) is not.
+      upsertChunks(
+        db,
+        [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+          chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
+        ),
+      );
+      vi.advanceTimersByTime(1_000);
+      const viaMemory = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
+      const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
+      expect(viaMemory.ranker).toBe("memory");
+      expect(viaFts.droppedTokens).toEqual(["quokka"]);
+      expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
+      expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+        viaFts.candidates.map((c) => c.chunkRowid),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a ranker that cannot catch up leaves the common-word filter to FTS5 too", () => {
+    upsertChunks(db, [
+      ...[0, 1, 2, 3].map((i) =>
+        chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
+      ),
+      chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
+      chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
+    ]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: -1,
+    });
+    upsertChunks(
+      db,
+      [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+        chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
+      ),
+    );
+    const opts = { commonTokenThreshold: 0.5 };
+    const behind = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
+    const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
+    expect(behind.ranker).toBe("fts5");
+    expect(behind.droppedTokens).toEqual(["quokka"]);
+    expect(behind.candidates.map((c) => c.chunkRowid)).toEqual(
       viaFts.candidates.map((c) => c.chunkRowid),
     );
   });

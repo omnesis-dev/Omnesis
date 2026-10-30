@@ -44,10 +44,9 @@ export function resolveLoopPersonRef(db: Db, ref: string): string | null {
 
   if (!ref.includes("@")) return null;
   const owners = db
-    .prepare<
-      [string],
-      { person_id: string }
-    >("SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?")
+    .prepare<[string], { person_id: string }>(
+      "SELECT person_id FROM person_aliases WHERE alias_type = 'email' AND alias = ?",
+    )
     .all(normalizeEmail(ref));
   if (owners.length === 0) return null;
   const canonicals = new Set(owners.map((o) => resolvePersonId(db, o.person_id)));
@@ -132,10 +131,9 @@ export async function normalizeOpenLoopPersonRefs(deps: {
   log: { info(msg: string): void };
 }): Promise<number> {
   const rows = deps.db
-    .prepare<
-      [],
-      { id: string; actors_json: string; involved_json: string }
-    >("SELECT id, actors_json, involved_json FROM open_loops")
+    .prepare<[], { id: string; actors_json: string; involved_json: string }>(
+      "SELECT id, actors_json, involved_json FROM open_loops",
+    )
     .all();
   let rewritten = 0;
   for (const row of rows) {

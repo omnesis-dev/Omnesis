@@ -62,7 +62,10 @@ mutations. Citation tools decorate the canonical answer, so speech preserves ans
 text around citations while discarding preambles before further research.
 
 Live media uses WebRTC to the provider, with gateway-owned authenticated signaling
-and sideband control. A separate versioned optional capability preserves the legacy
+and sideband control. On iOS the WebRTC transport and every realtime voice entry point build only
+into the `OmnesisDemo` app (the `OMNESIS_REALTIME_VOICE` compilation condition, read
+through `RealtimeCapability.includedInBuild`), so the production app links no
+non-Apple encryption. A separate versioned optional capability preserves the legacy
 Realtime transport. The lifecycle stream carries safe call status and errors, not
 a second conversation protocol. Provider duration accounting stays separate from
 the configured agent's token accounting.
@@ -974,8 +977,17 @@ or levels by OAuth client id or name. Only an explicit replace-connection select
 credential on an existing grant, and activating that credential revokes the
 grant's other credentials. Operational device tokens do
 not grant MCP reads. A paired OpenClaw or Hermes device may receive an
-identifier-only completion wake, but retrieving the result still requires the
-integration's OAuth principal credential and current Access Grant.
+identifier-only completion wake. Retrieving an ordinary chat answer still
+requires the integration's OAuth principal credential and current Access Grant.
+A Watch firing answer instead belongs to the approved subscription. During an
+active completion commit, `GET /subscriptions/answer-completions/:deliveryId`
+uses the installation's current `subscriptions:receive` credential to retrieve
+only that delivery's exact terminal task. The writer revalidates the device,
+credential, commit lease, task/firing binding, subscription revision, grant,
+workflow, evidence and privacy policy before recording egress. This does not
+renew the firing's short-lived asking token or authorize another question;
+approval can outlast that token while the subscription's actual authority must
+still be active. Neither transport falls back to the other's credentials.
 
 Do not add a stdio bridge, static bearer-token profile, separate capability
 endpoint, or client-side copy of the tool inventory. Supported clients connect
@@ -1061,7 +1073,7 @@ caller holds a slot while it waits, so sharing it could deadlock.
 
 ### `assertNever` for discriminated-union exhaustiveness
 
-Every internal-discriminator switch ends with `default: assertNever(x);` so adding a new variant breaks the build at every switch that hasn't been updated. External-data switches (parsing user/network input) use typed defaults instead — `assertNever` only applies when the type system guarantees a closed union.
+Every internal-discriminator switch ends with `default: assertNever(x);` so adding a new variant breaks the build at every switch that hasn't been updated. External-data switches (parsing user/network input) use typed defaults instead — `assertNever` only applies when the type system guarantees a closed union. A union that crosses a wire from a peer that may be newer — what a CLI reads from its gateway is the common case — keeps the compile-time check without the throw: `default: { const _exhaustive: never = x; return <fallback>; }`, rendering the value by its name.
 
 - Helper: `packages/core/src/utils.ts`
 
@@ -1228,7 +1240,7 @@ Also enforced:
 - **Cross-surface parity guard** — `scripts/check-parity.mjs` (`npm run parity:check`) extracts the actual literal at each `// PARITY:<key>` marker across listed surfaces and fails if a mirrored timing/cap or numeric protocol version diverges or a marker went missing. Wired both as a CI step in `ci.yml` and as a standing vitest check (`scripts/check-parity.test.mjs`). See the `// PARITY:<key>` pattern in Layer 1.
 - **Snapshot-contract guard** — `packages/source-sdk/src/snapshot-contract.test.ts` walks every file under `packages/providers/` and `packages/source-sdk/` for an actual `presentExternalIds` / `presentIds` emission and fails unless the file is registered in `snapshot-emitters.json` with a sentence saying how completeness is guaranteed. It cannot judge whether the discipline is correct — no static check can — but it guarantees no snapshot emission exists that nobody has thought about, and hands the reviewer the claim to check. The semantic half is `SnapshotEnumeration` and the spawned-gateway sweep in `packages/collector/src/e2e/snapshot-absence.e2e.test.ts`.
 - **Privacy guard** — `scripts/pii-scan.mjs` scans staged diffs, commit messages, and the full tracked tree (`npm run privacy:scan`) for real-looking emails, phone numbers, private/tailnet IPs, common secret shapes, and full-name candidates in high-risk fixture/test paths. Existing reviewed fixture values live in `privacy/pii-allowlist.json`; identity entries are path-scoped so a value reviewed in one fixture cannot bless the same value elsewhere. New values must be invented and added deliberately in the same PR. CI runs the full-tree scan as the first gate of every run.
-- **CI** — `.github/workflows/full-validation.yml` runs the whole suite on GitHub-hosted runners for every push to `main`, every pull request into it, and manual dispatch; a newer push to a pull request cancels its older run, while `main` executes one run at a time and a newer push replaces a waiting one; the README badge reads `ci-status.yml`, which reports the newest `main` run that finished, never a replaced one. On a pull request, a `scope` job (`scripts/nx/ci-scope.mjs`) runs only the lanes the change affects, so a pull request's cost scales with the change: the Node lanes follow the Nx affected plan of its merge commit (the affected projects' unit suites and typechecks, format and lint of the changed files, and the E2E files of the selected behavioral bundles, re-sharded), and the native, install, Docker, harness and security lanes follow path rules for what each covers — the macOS lanes by path only, because only a few macOS runners are available at a time. A shared input (lockfile, manifests, root configs, workflows, `packages/core`, the check runners and planner), an unsupported path or a planner failure runs everything, and a change most projects depend on runs the whole-repository unit suite and typechecks. Pushes to `main` and manual runs always run every lane; the verdict accepts a skipped lane only on a pull request whose scope turned it off. It calls the reusable lane workflows (`ci.yml` for Node, plus the native, install, Docker, harness and security lanes) at one exact revision, gates every Node job behind the privacy scan, and ends in one `verdict` job. Pull-request runs use the plain `pull_request` trigger — read-only token, no secrets.
+- **CI** — `.github/workflows/full-validation.yml` runs the whole suite on GitHub-hosted runners for every push to `main`, every pull request into it, and manual dispatch; a newer push to a pull request cancels its older run, while every push to `main` keeps its own run, so a burst of merges leaves no commit of `main` untested; the README badge reads `ci-status.yml`, which reports the newest `main` run that finished, never a cancelled one. On a pull request, a `scope` job (`scripts/nx/ci-scope.mjs`) runs only the lanes the change affects, so a pull request's cost scales with the change: the Node lanes follow the Nx affected plan of its merge commit (the affected projects' unit suites and typechecks, format and lint of the changed files, and the E2E files of the selected behavioral bundles, re-sharded), the Android lane runs when that plan selects an Android bundle, and the native, install, Docker, harness and security lanes follow path rules for what each covers. A shared input (lockfile, manifests, root configs, workflows, `packages/core`, the check runners and planner), an unsupported path or a planner failure runs every Linux lane, and a change most projects depend on runs the whole-repository unit suite and typechecks. The macOS lanes (`MACOS_LANES` in the planner: the macOS Node lane, the Swift linters, iOS, the Android screenshot goldens, the Mac installer scenarios) run on a pull request only for the paths they cover, never for a shared input or a planner failure that still knows the changed files, because GitHub lends the repository only a few macOS runners at a time — except that iOS also runs when the plan selects an iOS bundle for a gateway wire path the app decodes; `main` runs them on every push, and a red `main` stops merging until it is fixed forward or reverted. Pushes to `main` and manual runs always run every lane; the verdict accepts a skipped lane only on a pull request whose scope turned it off. It calls the reusable lane workflows (`ci.yml` for Node, plus the native, install, Docker, harness and security lanes) at one exact revision, gates every Node job behind the privacy scan, and ends in one `verdict` job. Pull-request runs use the plain `pull_request` trigger — read-only token, no secrets.
 - **Pre-commit / commit-msg / pre-push hooks** — Lefthook (`lefthook.yml`) runs a license-header check, eslint, prettier, and the PII scan pre-commit; strips AI co-author trailers and scans the message on commit-msg; and runs the bounded format and privacy checks on pre-push. Whole-program typecheck, lint, tests, and dead-code analysis stay in the explicit final-validation and CI lanes so a push does not repeat queue-backed work after the required validation has passed.
 
 Known state, not a guard:

@@ -114,6 +114,15 @@ describe("a legacy row recovered from its dedupe key", () => {
   });
 });
 
+describe("a trigger type this CLI does not know", () => {
+  test("is labelled by its type in the runs table", () => {
+    // A newer gateway may record a run for a trigger added after this CLI shipped.
+    expect(triggerLabel({ type: "future-trigger" } as unknown as RunTrigger)).toBe(
+      "future-trigger",
+    );
+  });
+});
+
 test("knowledge maintenance identifies its batch in compact and detailed output", () => {
   const trigger: RunTrigger = { type: "knowledge-maintenance", batchId: "batch_example" };
   expect(triggerLabel(trigger)).toBe("knowledge maintenance batch_example");

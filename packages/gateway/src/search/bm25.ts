@@ -60,7 +60,7 @@ export function toFts5Query(query: string, prefixLastToken = false): string {
   if (prefixLastToken) {
     // Suggestions never accept raw FTS syntax. Quote generated literal terms,
     // and append the only wildcard outside the final term's quoted boundary.
-    const terms = queryWords(trimmed);
+    const terms = queryWords(trimmed, true);
     return terms
       .map((term, index) => `"${term}"${index === terms.length - 1 ? "*" : ""}`)
       .join(" OR ");
@@ -85,30 +85,33 @@ export function toFts5Query(query: string, prefixLastToken = false): string {
  * "example.com" into example/com instead of concatenating to "examplecom".
  * `\p{L}\p{N}_` keeps letters (incl. non-Latin scripts), digits, and
  * underscores; the `u` flag makes the Unicode property escapes work. Bare
- * operator words (`AND`, `OR`, `NOT`, `NEAR`) are dropped.
+ * operator words (`AND`, `OR`, `NOT`, `NEAR`) are dropped, except a type-ahead
+ * prefix: "or" is the start of "order", and the caller quotes it.
  */
-export function queryWords(query: string): string[] {
-  return query
+export function queryWords(query: string, prefixLastToken = false): string[] {
+  const words = query
     .replace(/[^\p{L}\p{N}_\s]/gu, " ")
     .split(/\s+/)
-    .map(sanitizeFts5Term)
+    .filter(Boolean);
+  return words
+    .map((word, i) => sanitizeFts5Term(word, prefixLastToken && i === words.length - 1))
     .filter(Boolean);
 }
 
 /**
  * Per-term sanitizer for FTS5 MATCH input. Strips characters that
  * FTS5 treats as syntax (`* " ( ) : ^ -`) and discards tokens that
- * are nothing but punctuation or that name an FTS5 operator
- * (`AND` / `OR` / `NOT` / `NEAR`). Returns `""` to signal "drop this
- * term"; callers filter empty terms out before joining.
+ * are nothing but punctuation or, unless `keepOperator`, that name an
+ * FTS5 operator (`AND` / `OR` / `NOT` / `NEAR`). Returns `""` to signal
+ * "drop this term"; callers filter empty terms out before joining.
  */
-function sanitizeFts5Term(term: string): string {
+function sanitizeFts5Term(term: string, keepOperator = false): string {
   // Strip FTS5 syntax punctuation. `toFts5Query` already replaces all
   // non-word characters with spaces, so by the time terms reach here
   // they're word-only; this strip stays as defence-in-depth for the other
   // caller (`filterCommonTokens`), which sanitizes terms without that pass.
   const stripped = term.replace(/[*"():^\-]/g, "");
-  if (!stripped) return "";
+  if (!stripped || keepOperator) return stripped;
   // Bare operator tokens trigger FTS5 errors when surrounded by
   // implicit OR/AND joins. Drop them silently — phrase-quoted
   // queries can still use these words as literals.
@@ -179,6 +182,9 @@ function corpusStats(db: Db): CorpusStats {
  * "the", "from" are unchanged by Porter stemming), but inflected forms
  * like "recipes" (stemmed to "recip") won't match their vocab entry.
  *
+ * `stats` stands in for FTS5's vocabulary; with `prefixLastToken` the last
+ * word is a type-ahead prefix and is kept even when it spells an operator.
+ *
  * Returns `{ filtered, dropped }` — the filtered query string and
  * the list of dropped tokens (for diagnostics).
  */
@@ -186,7 +192,7 @@ export function filterCommonTokens(
   db: Db,
   query: string,
   threshold: number,
-  stats?: CorpusStats,
+  opts: { stats?: CorpusStats; prefixLastToken?: boolean } = {},
 ): { filtered: string; dropped: string[] } {
   if (threshold <= 0 || threshold >= 1) return { filtered: query, dropped: [] };
 
@@ -195,16 +201,16 @@ export function filterCommonTokens(
     return { filtered: query, dropped: [] };
   }
 
-  const tokens = trimmed
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((t) => sanitizeFts5Term(t))
+  const words = trimmed.split(/\s+/);
+  const tokens = words
+    .map((t, i) => sanitizeFts5Term(t, opts.prefixLastToken && i === words.length - 1))
     .filter(Boolean);
   if (tokens.length <= 1) return { filtered: query, dropped: [] };
 
+  let stats: CorpusStats;
   let totalChunks: number;
   try {
-    stats ??= corpusStats(db);
+    stats = opts.stats ?? corpusStats(db);
     totalChunks = stats.chunkCount();
   } catch {
     return { filtered: query, dropped: [] };
@@ -248,8 +254,12 @@ export interface LexicalRanker {
     k: number,
     opts?: { prefixLastToken?: boolean },
   ): RankedChunk[] | null;
-  /** The ranker's corpus statistics, read without touching FTS5. */
-  readonly stats?: CorpusStats;
+  /**
+   * The ranker's corpus statistics, read without touching FTS5, once it has
+   * caught up on the change log as `rank` would. Null when it cannot follow
+   * the log just now; the caller then filters and ranks with FTS5.
+   */
+  stats?(db: Db): CorpusStats | null;
 }
 
 export interface RankedChunk {
@@ -292,7 +302,9 @@ export type Bm25Ranker = "memory" | "fts5";
  *
  * Both rankers see the query after the common-token filter, so they rank the
  * same words; with the in-memory ranker attached, the filter reads its corpus
- * statistics from the ranker instead of from FTS5's vocabulary.
+ * statistics from the ranker instead of from FTS5's vocabulary, after the
+ * ranker has caught up on the change log, so the filter counts the chunks the
+ * ranking scores.
  *
  * @param db Index database (has chunks + chunks_fts tables)
  * @param query Search query text
@@ -326,23 +338,22 @@ export function bm25Search(
   }
   const filter = buildMetadataFilter(filters, "c");
 
+  let ranker = opts?.ranker;
   let effectiveQuery = query;
   let droppedTokens: string[] = [];
   if (opts?.commonTokenThreshold && opts.commonTokenThreshold > 0) {
-    const result = filterCommonTokens(db, query, opts.commonTokenThreshold, opts.ranker?.stats);
+    const stats = ranker?.stats?.(db);
+    if (stats === null) ranker = undefined;
+    const result = filterCommonTokens(db, query, opts.commonTokenThreshold, {
+      stats: stats ?? undefined,
+      prefixLastToken: opts.prefixLastToken,
+    });
     effectiveQuery = result.filtered;
     droppedTokens = result.dropped;
   }
 
-  if (!docIds && opts?.ranker) {
-    const rows = rankWithRanker(
-      db,
-      opts.ranker,
-      effectiveQuery,
-      filter,
-      limit,
-      opts.prefixLastToken,
-    );
+  if (!docIds && ranker) {
+    const rows = rankWithRanker(db, ranker, effectiveQuery, filter, limit, opts?.prefixLastToken);
     if (rows) return { candidates: rows.map(toCandidate), droppedTokens, ranker: "memory" };
   }
 

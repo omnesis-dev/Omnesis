@@ -37,11 +37,14 @@ import type { CapabilityRole } from "./capabilities.js";
 const EMBED_RE = /embed|\bbge\b|\bgte\b|\be5\b|\bstella\b|\bm2-bert\b|\buae\b/i;
 
 /**
- * Speech-to-text families. Whisper is the dominant name; the rest are the
- * generic tokens an OpenAI-compatible audio server might use for its
+ * Speech-to-text families. Whisper is the dominant name; `voxtral` (Mistral),
+ * `scribe` (ElevenLabs), `parakeet` and `canary` (NVIDIA) are the hosted and
+ * server-side families whose ids carry none of the generic tokens; the rest
+ * are the generic tokens an OpenAI-compatible audio server might use for its
  * transcription model id.
  */
-const TRANSCRIBE_RE = /whisper|transcrib|\bstt\b|speech[-_]?to[-_]?text|\basr\b/i;
+const TRANSCRIBE_RE =
+  /whisper|transcrib|\bstt\b|speech[-_]?to[-_]?text|\basr\b|voxtral|\bscribe|parakeet|\bcanary\b/i;
 
 /**
  * Dedicated OCR / document-parsing model families. Kept deliberately narrow —

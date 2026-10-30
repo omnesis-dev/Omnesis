@@ -115,15 +115,7 @@ export const transcodeHeicToPng: ImageTranscoder = async (heic) => {
  * source on one bad file. The OCR service sniffs and skips them instead.
  */
 export type ImageKind =
-  | "png"
-  | "jpeg"
-  | "gif"
-  | "bmp"
-  | "webp"
-  | "tiff"
-  | "heic"
-  | "svg"
-  | "unknown";
+  "png" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "heic" | "svg" | "unknown";
 
 export function sniffImageKind(bytes: Uint8Array): ImageKind {
   const b = bytes;

@@ -155,10 +155,9 @@ export interface LoopPeople {
 export function loopPeople(db: Db, loopId: string): LoopPeople {
   if (!isKnowledgeOwnerReadable(db, loopId)) return { actors: [], involved: [] };
   const rows = db
-    .prepare<
-      [string],
-      { person_id: string; role: string }
-    >("SELECT person_id, role FROM open_loop_people WHERE loop_id = ? ORDER BY role, person_id")
+    .prepare<[string], { person_id: string; role: string }>(
+      "SELECT person_id, role FROM open_loop_people WHERE loop_id = ? ORDER BY role, person_id",
+    )
     .all(loopId);
   return {
     actors: rows.filter((r) => r.role === "actor").map((r) => r.person_id),
@@ -282,10 +281,9 @@ export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
 export function getActiveLoopTitle(db: Db, id: string): string | null {
   if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db
-    .prepare<
-      [string],
-      { title: string; state: string }
-    >("SELECT title, state FROM open_loops WHERE id = ?")
+    .prepare<[string], { title: string; state: string }>(
+      "SELECT title, state FROM open_loops WHERE id = ?",
+    )
     .get(id);
   if (!row) return null;
   return row.state === "open" || row.state === "snoozed" ? row.title : null;
@@ -560,9 +558,9 @@ export function rewriteOpenLoopPeople(
   involved: readonly string[],
 ): boolean {
   const res = db
-    .prepare<
-      [string, string, string]
-    >("UPDATE open_loops SET actors_json = ?, involved_json = ? WHERE id = ?")
+    .prepare<[string, string, string]>(
+      "UPDATE open_loops SET actors_json = ?, involved_json = ? WHERE id = ?",
+    )
     .run(JSON.stringify(actors), JSON.stringify(involved), id);
   if (res.changes === 0) return false;
   replaceLoopPeople(db, id, actors, involved);
@@ -663,9 +661,9 @@ export function appendOpenLoopLedger(
 ): number {
   const seq = Number(
     db
-      .prepare<
-        [string, string, number, string, string | null]
-      >("INSERT INTO open_loop_ledger (loop_id, run_id, at, note, event_json) VALUES (?, ?, ?, ?, ?)")
+      .prepare<[string, string, number, string, string | null]>(
+        "INSERT INTO open_loop_ledger (loop_id, run_id, at, note, event_json) VALUES (?, ?, ?, ?, ?)",
+      )
       .run(loopId, entry.runId, now, entry.note, entry.event ? JSON.stringify(entry.event) : null)
       .lastInsertRowid,
   );

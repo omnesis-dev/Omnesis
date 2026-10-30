@@ -82,16 +82,22 @@ export function countDuePendingCognitionRuns(
 export function hasCognitionRunWithDedupeKey(db: Db, dedupeKey: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
+      )
       .get(dedupeKey)!.n > 0
   );
 }
 
 /** Default retry cap before a run is marked terminally `failed`. */
 export const DEFAULT_COGNITION_RUN_MAX_ATTEMPTS = 5;
+
+/**
+ * A run claimed this long ago, and not executing in this process, is presumed
+ * lost — the cognition queue's counterpart of the note agent's
+ * `NOTE_RUN_STALE_MS`, longer because a maintenance run has no turn timeout.
+ */
+export const COGNITION_RUN_STALE_MS = 60 * 60_000;
 
 /** Default per-tick claim size. */
 const DEFAULT_COGNITION_RUN_CLAIM_LIMIT = 1;
@@ -374,10 +380,9 @@ export function enqueueCognitionRun(
 /** The pending row for a fold key, or null. */
 export function getPendingRunByDedupeKey(db: Db, dedupeKey: string): CognitionRunRow | null {
   const row = db
-    .prepare<
-      [string],
-      CognitionRunDbRow
-    >("SELECT * FROM cognition_runs WHERE dedupe_key = ? AND status = 'pending'")
+    .prepare<[string], CognitionRunDbRow>(
+      "SELECT * FROM cognition_runs WHERE dedupe_key = ? AND status = 'pending'",
+    )
     .get(dedupeKey);
   return row ? rowToRun(row) : null;
 }
@@ -776,10 +781,9 @@ function claimOneCognitionRun(db: Db, opts: ClaimCognitionRunsOpts): ClaimedCogn
     for (const row of history) insert.run(row.joint);
   }
   const history = db
-    .prepare<
-      [],
-      { joint: number; repair: number }
-    >("SELECT COALESCE(MAX(joint_work),0) AS joint,COALESCE(MAX(policy_repair),0) AS repair FROM cognition_synthesis_admissions")
+    .prepare<[], { joint: number; repair: number }>(
+      "SELECT COALESCE(MAX(joint_work),0) AS joint,COALESCE(MAX(policy_repair),0) AS repair FROM cognition_synthesis_admissions",
+    )
     .get()!;
   const preferJointWork = history.joint === 0;
   const preferPolicyRepair = history.repair === 0;
@@ -977,6 +981,29 @@ export function failCognitionRun(
 }
 
 /**
+ * Settle as failed a run that died on its last attempt: still `pending` at
+ * the attempts cap, so the drainer can never claim it again, and last claimed
+ * at or before `claimedBefore`. Returns whether the row matched; a run that
+ * settled or was claimed since is left alone.
+ */
+export function failExhaustedCognitionRun(
+  db: Db,
+  id: string,
+  opts: { maxAttempts: number; claimedBefore: number; now: number },
+): boolean {
+  return (
+    db
+      .prepare<[number, string, number, number]>(
+        `UPDATE cognition_runs
+           SET status = 'failed', last_error = 'The run did not settle on any of its attempts',
+               completed_at = ?, payload_json = ${SETTLED_PAYLOAD_SQL}
+         WHERE id = ? AND status = 'pending' AND attempts >= ? AND last_attempt_at <= ?`,
+      )
+      .run(opts.now, id, opts.maxAttempts, opts.claimedBefore).changes > 0
+  );
+}
+
+/**
  * One drain-side settle of a claimed run: mark the row completed or
  * failed AND fold the attempt's token usage into the day's spend totals,
  * in a single writer transaction (no crash window between the row state
@@ -1087,10 +1114,9 @@ export function finalizeCognitionRun(db: Db, input: FinalizeCognitionRunInput): 
     const foldedInFlight =
       input.claimedPayloadJson !== undefined &&
       db
-        .prepare<
-          [string],
-          { payload_json: string }
-        >("SELECT payload_json FROM cognition_runs WHERE id = ?")
+        .prepare<[string], { payload_json: string }>(
+          "SELECT payload_json FROM cognition_runs WHERE id = ?",
+        )
         .get(input.runId)?.payload_json !== input.claimedPayloadJson;
     if (input.outcome.kind === "completed") {
       if (foldedInFlight) resurrectFoldedRun(db, input.runId, { now: input.now, debounceMs });
@@ -1389,10 +1415,9 @@ export function listCognitionRunsByDedupePrefix(db: Db, prefix: string): Cogniti
 /** Pending rows still under the attempts cap — the drainer's backlog gauge. */
 export function countPendingCognitionRuns(db: Db, maxAttempts: number): number {
   const row = db
-    .prepare<
-      [number],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND attempts < ?")
+    .prepare<[number], { n: number }>(
+      "SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND attempts < ?",
+    )
     .get(maxAttempts);
   return row?.n ?? 0;
 }

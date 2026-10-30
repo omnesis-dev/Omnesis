@@ -115,10 +115,9 @@ export function commitPrivacyPolicy(
       );
     }
     const family = db
-      .prepare<
-        [string],
-        { id: string }
-      >("SELECT id FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+      .prepare<[string], { id: string }>(
+        "SELECT id FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+      )
       .get(familyId);
     if (!family) throw new Error("Privacy policy family is not available.");
     const current = currentPrivacyPolicyVersion(db, familyId);
@@ -238,9 +237,7 @@ export function commitPrivacyPolicy(
 }
 
 export type DeletePrivacyPolicyFamilyResult =
-  | { outcome: "deleted" }
-  | { outcome: "not-found" }
-  | { outcome: "in-use"; message: string };
+  { outcome: "deleted" } | { outcome: "not-found" } | { outcome: "in-use"; message: string };
 
 /** Retired access is history; unrevoked configurations, even expired ones, still use a policy. */
 export function privacyPolicyDeletionBlockedReason(

@@ -52,10 +52,7 @@ interface CogTemporalAnnotationVertex extends BaseVertex {
 }
 
 export type CognitiveVertex =
-  | CogDocumentVertex
-  | CogPersonVertex
-  | CogLoopVertex
-  | CogTemporalAnnotationVertex;
+  CogDocumentVertex | CogPersonVertex | CogLoopVertex | CogTemporalAnnotationVertex;
 
 /**
  * How two cognitive entities relate. All cognitive edges are agent-authored

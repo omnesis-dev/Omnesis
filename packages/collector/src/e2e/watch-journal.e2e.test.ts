@@ -367,10 +367,9 @@ function read(path: string): JournalRow[] {
   const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
     return db
-      .prepare<
-        [],
-        JournalRow
-      >("SELECT seq, kind, occurred_at, observed_at, payload FROM watch_events ORDER BY seq ASC")
+      .prepare<[], JournalRow>(
+        "SELECT seq, kind, occurred_at, observed_at, payload FROM watch_events ORDER BY seq ASC",
+      )
       .all();
   } finally {
     db.close();

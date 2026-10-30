@@ -116,7 +116,22 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val record = composerStore.read(composerAccount, sid)
         val next = record.copy(pending = record.pending + body)
         composerStore.write(composerAccount, sid, next)
-        _state.update { it.copy(composer = next) }
+        // A turn-starting send is a transcript bubble at once, keyed by its submission id so the
+        // `agent.user.message` event renames rather than repeats it. A follow-up while a turn
+        // runs stays a pending row until the controls snapshot lists it as queued.
+        val startsTurn = !_state.value.chat.busy || interrupt
+        _state.update {
+            it.copy(
+                composer = next,
+                chat = if (startsTurn) it.chat.copy(
+                    turns = it.chat.turns + AgentTurn.User(body.clientMessageId, cleaned),
+                    busy = true,
+                    deepResearch = deepResearch,
+                    lastTurnError = null,
+                ) else it.chat,
+                presentedSubmissionIds = if (startsTurn) it.presentedSubmissionIds + body.clientMessageId else it.presentedSubmissionIds,
+            )
+        }
         deliverSubmission(sid, body)
     }
 
@@ -185,6 +200,11 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 c.submit(sid, body)
                 val record = composerStore.read(account, sid)
                 composerStore.write(account, sid, record.copy(pending = record.pending.filterNot { it.clientMessageId == body.clientMessageId }))
+                // The snapshot that lists this message as queued replaces its pending row in the
+                // same update, so a follow-up never disappears before it reappears.
+                if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
+                    refreshControls(sid)
+                }
                 if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
                     val ownedError = submissionDeliveryError?.takeIf { it.first == body.clientMessageId }
                     _state.update { it.copy(
@@ -193,7 +213,6 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                             it.chat.copy(lastTurnError = null) else it.chat,
                     ) }
                     if (ownedError != null) submissionDeliveryError = null
-                    refreshControls(sid)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -201,7 +220,18 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
                     val message = "Message saved on this device. Retry to confirm delivery: ${classifyGatewayError(e)}"
                     submissionDeliveryError = body.clientMessageId to message
-                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = message)) }
+                    _state.update {
+                        // The pending row owns the retry; a transcript placeholder goes with the turn it claimed.
+                        val presented = body.clientMessageId in it.presentedSubmissionIds
+                        it.copy(
+                            chat = it.chat.copy(
+                                turns = if (presented) it.chat.turns.filterNot { turn -> turn is AgentTurn.User && turn.id == body.clientMessageId } else it.chat.turns,
+                                busy = if (presented && body.mode != "interrupt") false else it.chat.busy,
+                                lastTurnError = message,
+                            ),
+                            presentedSubmissionIds = it.presentedSubmissionIds - body.clientMessageId,
+                        )
+                    }
                 }
             } finally {
                 submissionsInFlight.remove(body.clientMessageId)
@@ -258,6 +288,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         /** SSE-confirmed receipts survive rollback of an uncertain Send now request. */
         val deliveredSubmissionIds: Set<String> = emptySet(),
         val submissionsSending: Set<String> = emptySet(),
+        /** Sends the transcript shows at once, keyed by submission id, so they are not also pending rows. */
+        val presentedSubmissionIds: Set<String> = emptySet(),
         val sessionId: String? = null,
         val model: String? = null,
         val backend: String? = null,
@@ -1840,6 +1872,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 chat = AgentReducer.reduce(it.chat, event),
                 deliveredSubmissionIds = if (event is AgentEvent.UserMessage)
                     it.deliveredSubmissionIds + event.submissionIds else it.deliveredSubmissionIds,
+                presentedSubmissionIds = if (event is AgentEvent.UserMessage)
+                    it.presentedSubmissionIds - event.submissionIds.toSet() else it.presentedSubmissionIds,
                 terminalFailure = terminalFailure,
                 // A live event can advance the suffix while an older page is
                 // in flight. Invalidate that page rather than letting it

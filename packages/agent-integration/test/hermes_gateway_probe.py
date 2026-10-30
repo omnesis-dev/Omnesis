@@ -31,7 +31,8 @@ class MessageType:
 
 
 class MessageEvent:
-    def __init__(self, **kwargs):
+    def __init__(self, allow_gateway_control=True, **kwargs):
+        self.allow_gateway_control = allow_gateway_control
         self.__dict__.update(kwargs)
 
 

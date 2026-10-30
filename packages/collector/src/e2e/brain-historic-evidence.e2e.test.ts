@@ -251,10 +251,9 @@ it("publishes useful old evidence without manufacturing a future timestamp", asy
   await waitForComplementaryEvidence(bench, project.title);
   const [id] = await bench.pushAndSettle([archived]);
   const stored = bench.sql
-    .prepare<
-      [string],
-      { source_created_at: string }
-    >("SELECT source_created_at FROM documents WHERE id=?")
+    .prepare<[string], { source_created_at: string }>(
+      "SELECT source_created_at FROM documents WHERE id=?",
+    )
     .get(id!)!;
   expect(stored.source_created_at).toBe("1999-04-03T10:00:00.000Z");
   const page = await bench.harness.gatewayJson<{ plainText: string; validity: string }>(

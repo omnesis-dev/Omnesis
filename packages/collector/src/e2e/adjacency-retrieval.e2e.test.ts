@@ -208,8 +208,7 @@ function findDoc(
   externalId: string,
 ): { id: string; title: string } | undefined {
   return db.prepare("SELECT id, title FROM documents WHERE external_id = ?").get(externalId) as
-    | { id: string; title: string }
-    | undefined;
+    { id: string; title: string } | undefined;
 }
 
 async function waitForLinkCondition(

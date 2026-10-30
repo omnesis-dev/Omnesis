@@ -189,10 +189,9 @@ export function assertSubjectTitle(
   ].slice(0, MAX_TITLE_SOURCES);
   if (!sources.length) return;
   const rows = db
-    .prepare<
-      string[],
-      { id: string; title: string | null }
-    >(`SELECT id,title FROM documents WHERE id IN (${sources.map(() => "?").join(",")})`)
+    .prepare<string[], { id: string; title: string | null }>(
+      `SELECT id,title FROM documents WHERE id IN (${sources.map(() => "?").join(",")})`,
+    )
     .all(...sources);
   const copied = rows.find(
     (row) => row.title && similarity(words, titleWords(row.title)) >= COPIED_TITLE_SIMILARITY,

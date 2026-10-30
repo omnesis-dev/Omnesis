@@ -1,0 +1,984 @@
+{
+  "release": "v0.6.0",
+  "revision": "7b56bd0ee1bad5ad52cfc17a530ae5c734ff1f4e",
+  "schema": 188,
+  "sha256": "3c198797274bf818da923e98fee19e131192a85bb3686b8dd8178ffaecd9ed3a",
+  "counts": {
+    "access_audit_events": 3,
+    "access_grant_capabilities": 2,
+    "access_grants": 1,
+    "access_level_capabilities": 2,
+    "access_levels": 1,
+    "access_principals": 1,
+    "agent_messages": 2,
+    "brief_citations": 1,
+    "brief_related_loops": 1,
+    "briefs": 1,
+    "cognition_engine_state": 2,
+    "cognition_notes": 1,
+    "cognition_runs": 2,
+    "cognition_sweep_tally": 1,
+    "conversation_read_state": 1,
+    "devices": 2,
+    "doc_annotation_evidence": 2,
+    "doc_annotations": 1,
+    "document_absence_scopes": 4,
+    "document_people": 1,
+    "documents": 8,
+    "link_reconcile_state": 1,
+    "link_stats": 1,
+    "merge_rules": 1,
+    "mutable_list_revisions": 4,
+    "note_entries": 4,
+    "oauth_access_tokens": 1,
+    "oauth_authorization_requests": 1,
+    "oauth_clients": 1,
+    "oauth_refresh_tokens": 1,
+    "open_loop_docs": 1,
+    "open_loop_ledger": 1,
+    "open_loop_people": 2,
+    "open_loops": 2,
+    "people": 1,
+    "person_alias_assertions": 2,
+    "person_aliases": 2,
+    "person_annotation_evidence": 1,
+    "person_annotations": 1,
+    "principal_credentials": 1,
+    "privacy_policy_families": 1,
+    "refresh_meta": 5,
+    "schema_migrations": 187,
+    "source_devices": 4,
+    "source_stats": 4,
+    "sources": 4,
+    "sync_state": 4,
+    "tokens": 1,
+    "voice_note_transcriptions": 1
+  },
+  "rows": {
+    "access_grant_capabilities": [
+      {
+        "grant_id": "876378ba-2483-4ac8-904f-eca247bfbab8",
+        "capability": "direct",
+        "source_mode": "allowlist",
+        "source_ids": "[\"gmail:fixture\"]",
+        "release_mode": null,
+        "policy_family_id": null
+      },
+      {
+        "grant_id": "876378ba-2483-4ac8-904f-eca247bfbab8",
+        "capability": "notes",
+        "source_mode": "all",
+        "source_ids": "[]",
+        "release_mode": null,
+        "policy_family_id": null
+      }
+    ],
+    "access_grants": [
+      {
+        "id": "876378ba-2483-4ac8-904f-eca247bfbab8",
+        "principal_id": "400dfa90-a044-495f-b375-83bb276856cd",
+        "name": "Fictional agent access",
+        "revision": 1,
+        "created_at": 1768467610010,
+        "updated_at": 1768467610010,
+        "expires_at": null,
+        "revoked_at": null,
+        "level_id": "5dd63eea-15b7-4fe1-a202-f9f261775c45"
+      }
+    ],
+    "access_level_capabilities": [
+      {
+        "level_id": "5dd63eea-15b7-4fe1-a202-f9f261775c45",
+        "capability": "direct",
+        "source_mode": "allowlist",
+        "source_ids": "[\"gmail:fixture\"]",
+        "release_mode": null,
+        "policy_family_id": null
+      },
+      {
+        "level_id": "5dd63eea-15b7-4fe1-a202-f9f261775c45",
+        "capability": "notes",
+        "source_mode": "all",
+        "source_ids": "[]",
+        "release_mode": null,
+        "policy_family_id": null
+      }
+    ],
+    "access_levels": [
+      {
+        "id": "5dd63eea-15b7-4fe1-a202-f9f261775c45",
+        "name": "Fictional read access",
+        "revision": 1,
+        "created_at": 1768467600000,
+        "updated_at": 1768467600000,
+        "revoked_at": null
+      }
+    ],
+    "access_principals": [
+      {
+        "id": "400dfa90-a044-495f-b375-83bb276856cd",
+        "name": "Fictional agent",
+        "kind": "interactive",
+        "created_at": 1768467610010,
+        "updated_at": 1768467610010,
+        "revoked_at": null
+      }
+    ],
+    "agent_messages": [
+      {
+        "id": "fixture-agent-message-0",
+        "harness": "hermes",
+        "channel": "local",
+        "chat_id": "",
+        "chat_name": null,
+        "chat_type": null,
+        "day": "2026-01-15",
+        "role": "user",
+        "text": "What is left on the marathon entry form?",
+        "occurred_at": "2026-01-15T09:00:00.000Z",
+        "provenance": "harness-pushed"
+      },
+      {
+        "id": "fixture-agent-message-1",
+        "harness": "hermes",
+        "channel": "local",
+        "chat_id": "",
+        "chat_name": null,
+        "chat_type": null,
+        "day": "2026-01-15",
+        "role": "assistant",
+        "text": "Only the emergency contact field.",
+        "occurred_at": "2026-01-15T09:00:01.000Z",
+        "provenance": "harness-pushed"
+      }
+    ],
+    "brief_citations": [
+      {
+        "brief_id": "fixture-brief",
+        "position": 0,
+        "doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c"
+      }
+    ],
+    "brief_related_loops": [
+      {
+        "brief_id": "fixture-brief",
+        "loop_id": "fixture-loop-entry-form"
+      }
+    ],
+    "briefs": [
+      {
+        "id": "fixture-brief",
+        "created_by_run": "fixture-run",
+        "kind": "loop",
+        "title": "The entry form is due Friday",
+        "description": "",
+        "body": "Only the emergency contact is missing.",
+        "confidence": 0.8,
+        "urgency": 0.7,
+        "relevant_until": null,
+        "next_show": null,
+        "event_at": null,
+        "user_feedback": null,
+        "state": "unread",
+        "read_at": null,
+        "created_at": 1768467600000,
+        "updated_at": 1768467600000,
+        "thread_conversation_id": null
+      }
+    ],
+    "cognition_notes": [
+      {
+        "id": 1,
+        "content": "Maya prefers morning reminders.",
+        "updated_at": 1768467600000
+      }
+    ],
+    "cognition_runs": [
+      {
+        "id": "fixture-run-brief-feedback",
+        "kind": "feedback",
+        "payload_json": "{\"briefId\":\"fixture-brief\"}",
+        "dedupe_key": null,
+        "status": "pending",
+        "attempts": 0,
+        "last_error": null,
+        "failure_code": null,
+        "next_attempt_at": 1768467600000,
+        "enqueued_at": 1768467600000,
+        "cycle_anchor_at": 1768467600000,
+        "last_attempt_at": null,
+        "completed_at": null,
+        "usage_json": null
+      },
+      {
+        "id": "fixture-run-daily",
+        "kind": "daily",
+        "payload_json": "{}",
+        "dedupe_key": null,
+        "status": "pending",
+        "attempts": 0,
+        "last_error": null,
+        "failure_code": null,
+        "next_attempt_at": 1768467600000,
+        "enqueued_at": 1768467600000,
+        "cycle_anchor_at": 1768467600000,
+        "last_attempt_at": null,
+        "completed_at": null,
+        "usage_json": null
+      }
+    ],
+    "cognition_sweep_tally": [
+      {
+        "sweep_id": "fixture-sweep",
+        "runs": 2,
+        "failed_runs": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "briefs_created": 3,
+        "briefs_held": 1,
+        "loops_created": 2,
+        "loops_touched": 0,
+        "annotations_created": 0,
+        "first_run_at": 1768467600000,
+        "last_run_at": 1768467600000
+      }
+    ],
+    "conversation_read_state": [
+      {
+        "conversation_id": "fixture-conversation",
+        "unread_since": 1768467600000
+      }
+    ],
+    "devices": [
+      {
+        "id": "33301e30-4fca-40d4-9270-952b266b1bbe",
+        "name": "Fictional fixture phone",
+        "kind": "ios",
+        "capabilities": "{}",
+        "paired_at": 1793115039059,
+        "last_seen_at": null,
+        "revoked_at": null,
+        "install_id": null,
+        "self_emails": "[]",
+        "self_phones": "[]",
+        "access_level_id": null,
+        "apns_device_token": null,
+        "apns_environment": null,
+        "apns_bundle_id": null,
+        "apns_token_updated_at": null,
+        "fcm_registration_token": null,
+        "fcm_token_updated_at": null,
+        "push_transport": null,
+        "relay_url": null,
+        "relay_credential": null,
+        "relay_consent_app_id": null,
+        "relay_consented_at": null,
+        "notification_delivery_health": null,
+        "notification_delivery_health_updated_at": null,
+        "version": null,
+        "version_seen_at": null,
+        "protocol_version": null,
+        "desired_version": null,
+        "update_state": null,
+        "update_detail": null,
+        "update_state_at": null
+      },
+      {
+        "id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "name": "Fictional fixture collector",
+        "kind": "collector",
+        "capabilities": "{}",
+        "paired_at": 1793115039058,
+        "last_seen_at": null,
+        "revoked_at": null,
+        "install_id": null,
+        "self_emails": "[]",
+        "self_phones": "[]",
+        "access_level_id": null,
+        "apns_device_token": null,
+        "apns_environment": null,
+        "apns_bundle_id": null,
+        "apns_token_updated_at": null,
+        "fcm_registration_token": null,
+        "fcm_token_updated_at": null,
+        "push_transport": null,
+        "relay_url": null,
+        "relay_credential": null,
+        "relay_consent_app_id": null,
+        "relay_consented_at": null,
+        "notification_delivery_health": null,
+        "notification_delivery_health_updated_at": null,
+        "version": null,
+        "version_seen_at": null,
+        "protocol_version": null,
+        "desired_version": null,
+        "update_state": null,
+        "update_detail": null,
+        "update_state_at": null
+      }
+    ],
+    "doc_annotation_evidence": [
+      {
+        "annotation_id": "fixture-doc-annotation",
+        "position": 0,
+        "evidence_doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "evidence_quote": "marathon entry form",
+        "broken_at": null
+      },
+      {
+        "annotation_id": "fixture-doc-annotation",
+        "position": 1,
+        "evidence_doc_id": "a432a5e5-aa87-49e1-bb9d-9f0224968994",
+        "evidence_quote": "marathon entry form",
+        "broken_at": null
+      }
+    ],
+    "doc_annotations": [
+      {
+        "id": "fixture-doc-annotation",
+        "doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "claim_type": "deadline",
+        "claim_text": "The entry form is due on Friday.",
+        "evidence_doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "evidence_quote": "marathon entry form",
+        "confidence": 0.9,
+        "claim_basis": "quoted",
+        "llm_derived": 1,
+        "created_by_run": "fixture-run",
+        "created_at": 1768467600000,
+        "updated_at": null,
+        "invalidated_at": null,
+        "verification_state": null,
+        "last_verified_at": null,
+        "superseded_by": null
+      }
+    ],
+    "document_people": [
+      {
+        "document_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "person_id": "fixture-person",
+        "role": "sender",
+        "source_id": null
+      }
+    ],
+    "documents": [
+      {
+        "id": "0eabc63e-20e4-4aa7-aabd-03f27a94e75f",
+        "provider_id": "example",
+        "source_id": "whatsapp-messages:fixture",
+        "external_id": "first",
+        "stream_id": "",
+        "title": "Fictional whatsapp-messages first",
+        "content": "Synthetic whatsapp-messages first sample about the marathon entry form.",
+        "content_hash": "fixture-whatsapp-messages-first",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.064Z",
+        "updated_at": "2026-10-27T15:30:39.064Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "256e036b-0ede-4647-8dec-8bb1350b5bc9",
+        "provider_id": "example",
+        "source_id": "whatsapp-messages:fixture",
+        "external_id": "second",
+        "stream_id": "",
+        "title": "Fictional whatsapp-messages second",
+        "content": "Synthetic whatsapp-messages second sample about the marathon entry form.",
+        "content_hash": "fixture-whatsapp-messages-second",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.064Z",
+        "updated_at": "2026-10-27T15:30:39.064Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "27fac843-0754-4680-aee5-7cbcf3dd5c13",
+        "provider_id": "example",
+        "source_id": "gmail:fixture",
+        "external_id": "second",
+        "stream_id": "",
+        "title": "Fictional gmail second",
+        "content": "Synthetic gmail second sample about the marathon entry form.",
+        "content_hash": "fixture-gmail-second",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.061Z",
+        "updated_at": "2026-10-27T15:30:39.061Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "2cd6ddf4-21b2-4a7c-83b9-4275ec06f938",
+        "provider_id": "example",
+        "source_id": "local-files:fixture",
+        "external_id": "first",
+        "stream_id": "",
+        "title": "Fictional local-files first",
+        "content": "Synthetic local-files first sample about the marathon entry form.",
+        "content_hash": "fixture-local-files-first",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.063Z",
+        "updated_at": "2026-10-27T15:30:39.063Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "39c854e2-a6fc-43f3-9851-915f9f1df191",
+        "provider_id": "example",
+        "source_id": "local-files:fixture",
+        "external_id": "second",
+        "stream_id": "",
+        "title": "Fictional local-files second",
+        "content": "Synthetic local-files second sample about the marathon entry form.",
+        "content_hash": "fixture-local-files-second",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.063Z",
+        "updated_at": "2026-10-27T15:30:39.063Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "a432a5e5-aa87-49e1-bb9d-9f0224968994",
+        "provider_id": "example",
+        "source_id": "google-calendar:fixture",
+        "external_id": "first",
+        "stream_id": "",
+        "title": "Fictional google-calendar first",
+        "content": "Synthetic google-calendar first sample about the marathon entry form.",
+        "content_hash": "fixture-google-calendar-first",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.062Z",
+        "updated_at": "2026-10-27T15:30:39.062Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "provider_id": "example",
+        "source_id": "gmail:fixture",
+        "external_id": "first",
+        "stream_id": "",
+        "title": "Fictional gmail first",
+        "content": "Synthetic gmail first sample about the marathon entry form.",
+        "content_hash": "fixture-gmail-first",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.061Z",
+        "updated_at": "2026-10-27T15:30:39.061Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      },
+      {
+        "id": "f9742fde-3ddc-411e-8a75-23fbe28a7f13",
+        "provider_id": "example",
+        "source_id": "google-calendar:fixture",
+        "external_id": "second",
+        "stream_id": "",
+        "title": "Fictional google-calendar second",
+        "content": "Synthetic google-calendar second sample about the marathon entry form.",
+        "content_hash": "fixture-google-calendar-second",
+        "extracted_content_hash": null,
+        "metadata": "{}",
+        "source_created_at": "2026-01-14T09:00:00.000Z",
+        "source_updated_at": "2026-01-14T09:00:00.000Z",
+        "ingested_at": "2026-10-27T15:30:39.062Z",
+        "updated_at": "2026-10-27T15:30:39.062Z",
+        "source_url": null,
+        "people_resolved_at": null,
+        "links_extracted_at": null,
+        "dates_extracted_at": null,
+        "dates_truncated": null,
+        "bootstrap_processed_at": null,
+        "bootstrap_failed_at": null,
+        "partition_key": ""
+      }
+    ],
+    "merge_rules": [
+      {
+        "id": "2aca9f6d-b3db-431c-b074-e7a2bd17e2b6",
+        "kind": "user",
+        "side_a_alias_type": "email",
+        "side_a_alias": "m.reeves@example.org",
+        "side_b_alias_type": "email",
+        "side_b_alias": "maya@example.org",
+        "winner_side": "b",
+        "reason": null,
+        "created_at": "2026-10-27T15:30:39.069Z",
+        "created_by": "fixture-operator",
+        "active": 1,
+        "deactivated_at": null,
+        "group_id": null
+      }
+    ],
+    "note_entries": [
+      {
+        "id": "fixture-note-located",
+        "day": "2026-01-15",
+        "captured_at": "2026-01-15T09:00:00.000Z",
+        "updated_at": "2026-01-15T09:00:00.000Z",
+        "text": "Pick up the race bib at the studio.",
+        "surface": "ios-app",
+        "device_id": "33301e30-4fca-40d4-9270-952b266b1bbe",
+        "latitude": 45.5,
+        "longitude": 4.25,
+        "place_name": "Riverside",
+        "captured_time_zone_id": "Europe/Paris",
+        "captured_utc_offset_seconds": 3600,
+        "received_at": "2026-01-15T09:00:01.000Z",
+        "capture_context": null,
+        "transcribed_at": null
+      },
+      {
+        "id": "fixture-note-typed",
+        "day": "2026-01-15",
+        "captured_at": "2026-01-15T09:00:00.000Z",
+        "updated_at": "2026-01-15T09:00:00.000Z",
+        "text": "Ask about the Q4 budget review.",
+        "surface": "portal",
+        "device_id": null,
+        "latitude": null,
+        "longitude": null,
+        "place_name": null,
+        "captured_time_zone_id": "Europe/Paris",
+        "captured_utc_offset_seconds": 3600,
+        "received_at": "2026-01-15T09:00:01.000Z",
+        "capture_context": null,
+        "transcribed_at": null
+      },
+      {
+        "id": "fixture-note-voice-done",
+        "day": "2026-01-15",
+        "captured_at": "2026-01-15T09:00:00.000Z",
+        "updated_at": "2026-01-15T09:02:00.000Z",
+        "text": "Send the marathon entry form before Friday.",
+        "surface": "ios-app",
+        "device_id": "33301e30-4fca-40d4-9270-952b266b1bbe",
+        "latitude": null,
+        "longitude": null,
+        "place_name": null,
+        "captured_time_zone_id": "Europe/Paris",
+        "captured_utc_offset_seconds": 3600,
+        "received_at": "2026-01-15T09:00:01.000Z",
+        "capture_context": null,
+        "transcribed_at": "2026-01-15T09:02:00.000Z"
+      },
+      {
+        "id": "fixture-note-voice-pending",
+        "day": "2026-01-15",
+        "captured_at": "2026-01-15T09:00:00.000Z",
+        "updated_at": "2026-01-15T09:00:00.000Z",
+        "text": "Voice note (transcribing)",
+        "surface": "ios-app",
+        "device_id": "33301e30-4fca-40d4-9270-952b266b1bbe",
+        "latitude": null,
+        "longitude": null,
+        "place_name": null,
+        "captured_time_zone_id": "Europe/Paris",
+        "captured_utc_offset_seconds": 3600,
+        "received_at": "2026-01-15T09:00:01.000Z",
+        "capture_context": null,
+        "transcribed_at": null
+      }
+    ],
+    "oauth_clients": [
+      {
+        "client_id": "omn_oc_3hCJB_O00PWcAdKsQWi0t-Qh",
+        "client_name": "Stellar MCP Client",
+        "redirect_uris": "[\"http://127.0.0.1:48123/callback\"]",
+        "grant_types": "[\"authorization_code\",\"refresh_token\"]",
+        "response_types": "[\"code\"]",
+        "token_endpoint_auth_method": "none",
+        "client_secret_hash": null,
+        "client_uri": "https://example.com/client",
+        "created_at": 1768467610000,
+        "jwks_uri": null,
+        "token_endpoint_auth_signing_alg": null
+      }
+    ],
+    "open_loop_docs": [
+      {
+        "loop_id": "fixture-loop-entry-form",
+        "doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c"
+      }
+    ],
+    "open_loop_ledger": [
+      {
+        "seq": 1,
+        "loop_id": "fixture-loop-entry-form",
+        "run_id": "fixture-run",
+        "at": 1768467605000,
+        "note": "Reminder sent."
+      }
+    ],
+    "open_loop_people": [
+      {
+        "loop_id": "fixture-loop-budget",
+        "person_id": "fixture-person",
+        "role": "involved"
+      },
+      {
+        "loop_id": "fixture-loop-entry-form",
+        "person_id": "fixture-person",
+        "role": "actor"
+      }
+    ],
+    "open_loops": [
+      {
+        "id": "fixture-loop-budget",
+        "created_by_run": "fixture-run",
+        "state": "done",
+        "confidence": 0.7,
+        "importance": 0.4,
+        "title": "Review the Q4 budget",
+        "description": "",
+        "deadline_json": null,
+        "actors_json": "[]",
+        "involved_json": "[\"fixture-person\"]",
+        "blocked_by_json": "[]",
+        "created_at": 1768467600000,
+        "last_update": 1768467600000,
+        "last_decay_check": null,
+        "decay_check_count": 0
+      },
+      {
+        "id": "fixture-loop-entry-form",
+        "created_by_run": "fixture-run",
+        "state": "open",
+        "confidence": 0.8,
+        "importance": 0.6,
+        "title": "Send the marathon entry form",
+        "description": "The form needs an emergency contact.",
+        "deadline_json": null,
+        "actors_json": "[\"fixture-person\"]",
+        "involved_json": "[]",
+        "blocked_by_json": "[]",
+        "created_at": 1768467600000,
+        "last_update": 1768467605000,
+        "last_decay_check": null,
+        "decay_check_count": 0
+      }
+    ],
+    "people": [
+      {
+        "id": "fixture-person",
+        "canonical_name": "Maya",
+        "merged_into": null,
+        "source": "contacts",
+        "is_self": 0,
+        "first_seen": "2026-01-15T09:00:00.000Z",
+        "last_seen": "2026-01-15T09:00:00.000Z",
+        "created_at": "2026-01-15T09:00:00.000Z",
+        "updated_at": "2026-01-15T09:00:00.000Z",
+        "doc_count": 0,
+        "alias_count": 0,
+        "inbound_count": 0,
+        "outbound_count": 0,
+        "inbound_score": 0,
+        "outbound_score": 0,
+        "interaction_score": 0,
+        "inbound_score_recent": 0,
+        "outbound_score_recent": 0,
+        "interaction_score_recent": 0,
+        "interaction_scores_at": null
+      }
+    ],
+    "person_alias_assertions": [
+      {
+        "alias_id": "405cdb9c-80c3-494e-8c8d-7b5ee6805497",
+        "source_id": "gmail:fixture",
+        "first_seen": "2026-01-15T09:00:00.000Z",
+        "last_seen": "2026-01-15T09:00:00.000Z"
+      },
+      {
+        "alias_id": "fccc8d0c-5ef5-4771-8eb6-dde9f2ea869d",
+        "source_id": "gmail:fixture",
+        "first_seen": "2026-01-15T09:00:00.000Z",
+        "last_seen": "2026-01-15T09:00:00.000Z"
+      }
+    ],
+    "person_aliases": [
+      {
+        "id": "405cdb9c-80c3-494e-8c8d-7b5ee6805497",
+        "person_id": "fixture-person",
+        "alias": "Maya",
+        "alias_type": "name",
+        "source_id": "gmail:fixture",
+        "created_at": "2026-01-15T09:00:00.000Z",
+        "occurrence_count": 1,
+        "is_primary": 1
+      },
+      {
+        "id": "fccc8d0c-5ef5-4771-8eb6-dde9f2ea869d",
+        "person_id": "fixture-person",
+        "alias": "maya@example.org",
+        "alias_type": "email",
+        "source_id": "gmail:fixture",
+        "created_at": "2026-01-15T09:00:00.000Z",
+        "occurrence_count": 1,
+        "is_primary": 1
+      }
+    ],
+    "person_annotation_evidence": [
+      {
+        "annotation_id": "fixture-person-annotation",
+        "position": 0,
+        "evidence_doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "evidence_quote": "marathon entry form",
+        "broken_at": null
+      }
+    ],
+    "person_annotations": [
+      {
+        "id": "fixture-person-annotation",
+        "person_id": "fixture-person",
+        "claim_type": "preference",
+        "claim_text": "Maya trains for the spring marathon.",
+        "evidence_doc_id": "f3da2f98-c2f0-4ec6-b1e2-e6ca5ebdef6c",
+        "evidence_quote": "marathon entry form",
+        "confidence": 0.75,
+        "claim_basis": "inferred",
+        "llm_derived": 0,
+        "created_by_run": "fixture-run",
+        "created_at": 1768467600000,
+        "updated_at": null,
+        "invalidated_at": null,
+        "verification_state": null,
+        "last_verified_at": null,
+        "superseded_by": null
+      }
+    ],
+    "principal_credentials": [
+      {
+        "id": "2ecdcb47-3306-4917-a517-932f6b4b4e97",
+        "grant_id": "876378ba-2483-4ac8-904f-eca247bfbab8",
+        "oauth_client_id": "omn_oc_3hCJB_O00PWcAdKsQWi0t-Qh",
+        "kind": "interactive",
+        "status": "active",
+        "label": "Fictional agent",
+        "client_secret_hash": null,
+        "execution_device_id": null,
+        "created_at": 1768467610010,
+        "last_used_at": null,
+        "expires_at": null,
+        "revoked_at": null,
+        "approved_audience": "https://gateway.example.org/mcp",
+        "approved_scope": "omnesis:access offline_access"
+      }
+    ],
+    "sources": [
+      {
+        "id": "gmail:fixture",
+        "type": "gmail",
+        "account_id": "fixture",
+        "account": null,
+        "device_id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "config": "{}",
+        "enabled": 1,
+        "multi_device_mode": "exclusive",
+        "replica_version_policy": null,
+        "created_at": 1793115039059,
+        "updated_at": 1793115039059
+      },
+      {
+        "id": "google-calendar:fixture",
+        "type": "google-calendar",
+        "account_id": "fixture",
+        "account": null,
+        "device_id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "config": "{}",
+        "enabled": 1,
+        "multi_device_mode": "exclusive",
+        "replica_version_policy": null,
+        "created_at": 1793115039061,
+        "updated_at": 1793115039061
+      },
+      {
+        "id": "local-files:fixture",
+        "type": "local-files",
+        "account_id": "fixture",
+        "account": null,
+        "device_id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "config": "{}",
+        "enabled": 1,
+        "multi_device_mode": "exclusive",
+        "replica_version_policy": null,
+        "created_at": 1793115039062,
+        "updated_at": 1793115039062
+      },
+      {
+        "id": "whatsapp-messages:fixture",
+        "type": "whatsapp-messages",
+        "account_id": "fixture",
+        "account": null,
+        "device_id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "config": "{}",
+        "enabled": 1,
+        "multi_device_mode": "exclusive",
+        "replica_version_policy": null,
+        "created_at": 1793115039063,
+        "updated_at": 1793115039063
+      }
+    ],
+    "sync_state": [
+      {
+        "source_id": "gmail:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"gmail\",\"page\":3}",
+        "last_synced_at": "2026-10-27T15:30:39.060Z",
+        "icon": "fixture",
+        "label": null,
+        "url_patterns": null,
+        "last_error": null,
+        "errored_at": null,
+        "last_error_remediation": null,
+        "bg_color": null,
+        "accent_color": null,
+        "content_retention": null,
+        "consent_expires_at": null,
+        "last_document_at": null,
+        "minimum_gateway_version": 188
+      },
+      {
+        "source_id": "google-calendar:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"google-calendar\",\"page\":3}",
+        "last_synced_at": "2026-10-27T15:30:39.062Z",
+        "icon": "fixture",
+        "label": null,
+        "url_patterns": null,
+        "last_error": null,
+        "errored_at": null,
+        "last_error_remediation": null,
+        "bg_color": null,
+        "accent_color": null,
+        "content_retention": null,
+        "consent_expires_at": null,
+        "last_document_at": null,
+        "minimum_gateway_version": 188
+      },
+      {
+        "source_id": "local-files:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"local-files\",\"page\":3}",
+        "last_synced_at": "2026-10-27T15:30:39.063Z",
+        "icon": "fixture",
+        "label": null,
+        "url_patterns": null,
+        "last_error": null,
+        "errored_at": null,
+        "last_error_remediation": null,
+        "bg_color": null,
+        "accent_color": null,
+        "content_retention": null,
+        "consent_expires_at": null,
+        "last_document_at": null,
+        "minimum_gateway_version": 188
+      },
+      {
+        "source_id": "whatsapp-messages:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"whatsapp-messages\",\"page\":3}",
+        "last_synced_at": "2026-10-27T15:30:39.063Z",
+        "icon": "fixture",
+        "label": null,
+        "url_patterns": null,
+        "last_error": null,
+        "errored_at": null,
+        "last_error_remediation": null,
+        "bg_color": null,
+        "accent_color": null,
+        "content_retention": null,
+        "consent_expires_at": null,
+        "last_document_at": null,
+        "minimum_gateway_version": 188
+      }
+    ],
+    "tokens": [
+      {
+        "id": "125f24f2-d58f-4d51-a9e5-5f542d8e852e",
+        "device_id": "52c74b48-3f65-444f-a9de-f4f20ecb529c",
+        "token_hash": "ca70f9acbb6ed260e94a229222a5af2723986e09e00944ad5daf7d21f7953804",
+        "scopes": "[\"read\"]",
+        "name": "Fixture collector token",
+        "created_at": 1793115039059,
+        "last_used_at": null,
+        "expires_at": null
+      }
+    ],
+    "voice_note_transcriptions": [
+      {
+        "note_id": "fixture-note-voice-pending",
+        "audio": "66697874757265",
+        "mime_type": "audio/mp4",
+        "language": "en",
+        "saved_text": "Voice note (transcribing)",
+        "placeholder": 1,
+        "attempts": 0,
+        "next_attempt_at": "2026-01-15T09:01:00.000Z",
+        "created_at": "2026-01-15T09:00:01.000Z"
+      }
+    ]
+  }
+}

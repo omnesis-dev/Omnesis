@@ -181,6 +181,7 @@ const EXPECTED_INVENTORY = [
   "/gateway/mdns/enabled [boolean]",
   "/gateway/mdns/hostname [string]",
   "/gateway/mdns/serviceName [string]",
+  "/gateway/memoryLimitMb [number]",
   "/gateway/minFreeDiskMb [number]",
   "/gateway/mobilePermissionReminders/initialDelay [duration]",
   "/gateway/mobilePermissionReminders/maxDelay [duration]",

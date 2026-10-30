@@ -87,10 +87,9 @@ function documentSubject(
   )
     return null;
   const document = db
-    .prepare<
-      [string],
-      { id: string; title: string; sourceId: string }
-    >("SELECT id,title,source_id AS sourceId FROM documents WHERE id=?")
+    .prepare<[string], { id: string; title: string; sourceId: string }>(
+      "SELECT id,title,source_id AS sourceId FROM documents WHERE id=?",
+    )
     .get(owner.subjectId);
   return document ? { kind: "source", ...document } : null;
 }
@@ -105,10 +104,9 @@ export function readKnowledgeSubjectRef(
   if (kind !== "person_annotation") return null;
   // Small isolated stores may not install either canonical owner registry.
   const tables = db
-    .prepare<
-      [],
-      { count: number }
-    >("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('person_annotations','people')")
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('person_annotations','people')",
+    )
     .get();
   if (tables?.count !== 2) return null;
   // Retirement affects the claim, not the identity of its subject. Historical
@@ -117,10 +115,9 @@ export function readKnowledgeSubjectRef(
   if (!owner) return null;
   const id = resolvePersonId(db, owner.subjectId);
   const person = db
-    .prepare<
-      [string],
-      { name: string }
-    >("SELECT canonical_name AS name FROM people WHERE id=? AND merged_into IS NULL")
+    .prepare<[string], { name: string }>(
+      "SELECT canonical_name AS name FROM people WHERE id=? AND merged_into IS NULL",
+    )
     .get(id);
   return person ? { kind: "person", id, name: person.name } : null;
 }

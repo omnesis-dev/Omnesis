@@ -94,10 +94,9 @@ describe("claiming an identifier", () => {
     aliasWriter(db, "gmail", "2026-04-01T00:00:00Z").claim("p1", "email", "alice@example.com");
     aliasWriter(db, "gmail", "2026-04-09T00:00:00Z").claim("p1", "email", "alice@example.com");
     const row = db
-      .prepare<
-        [],
-        { n: number; first_seen: string; last_seen: string }
-      >("SELECT COUNT(*) AS n, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen FROM person_alias_assertions")
+      .prepare<[], { n: number; first_seen: string; last_seen: string }>(
+        "SELECT COUNT(*) AS n, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen FROM person_alias_assertions",
+      )
       .get()!;
     expect(row.n).toBe(1);
     expect(row.first_seen).toBe("2026-04-01T00:00:00Z");

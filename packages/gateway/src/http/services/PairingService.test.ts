@@ -270,10 +270,9 @@ describe("PairingService", () => {
     expect(repaired.device.id).toBe(first.device.id);
     expect(
       db
-        .prepare<
-          [string],
-          { integration_device_id: string }
-        >("SELECT integration_device_id FROM subscriptions WHERE id = ?")
+        .prepare<[string], { integration_device_id: string }>(
+          "SELECT integration_device_id FROM subscriptions WHERE id = ?",
+        )
         .get("sub_fictional_repair")?.integration_device_id,
     ).toBe(first.device.id);
     for (const token of oldTokens) expect(lookupToken(db, token)).toBeNull();
@@ -528,10 +527,9 @@ describe("PairingService", () => {
       expect(disconnectDevice).toHaveBeenCalledWith(first.device.id);
       expect(
         db
-          .prepare<
-            [string],
-            { integration_device_id: string }
-          >("SELECT integration_device_id FROM subscriptions WHERE id = ?")
+          .prepare<[string], { integration_device_id: string }>(
+            "SELECT integration_device_id FROM subscriptions WHERE id = ?",
+          )
           .get("sub_fictional_reconnect")?.integration_device_id,
       ).toBe(first.device.id);
       expect(

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { loadTranscriberFromResolved } from "./loader.js";
 import { HttpTranscriber } from "./http-transcriber.js";
+import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 const http: ResolvedAssignment = {
@@ -40,6 +41,25 @@ describe("loadTranscriberFromResolved", () => {
     await expect(loadTranscriberFromResolved({ ...http, model: "" })).resolves.toBeNull();
   });
 
+  test("an http assignment the registry marked unavailable loads nothing", async () => {
+    // The registry's reason may be a down backend or a transcription probe
+    // that found the backend cannot transcribe (a chat-only server); either
+    // way a transcriber built for it would fail every voice note.
+    const fetchFn = vi.fn();
+    await expect(
+      loadTranscriberFromResolved(
+        {
+          ...http,
+          available: false,
+          reason:
+            'Backend "gpu" cannot transcribe with whisper-large-v3-turbo: no transcription endpoint',
+        },
+        { fetchFn: fetchFn as unknown as typeof fetch },
+      ),
+    ).resolves.toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   test("chat-agent backends offer no transcriber", async () => {
     const assignments: ResolvedAssignment[] = [
       {
@@ -68,5 +88,42 @@ describe("loadTranscriberFromResolved", () => {
     for (const assignment of assignments) {
       await expect(loadTranscriberFromResolved(assignment)).resolves.toBeNull();
     }
+  });
+});
+
+describe("loadTranscriberFromResolved protocols", () => {
+  test("a chat-audio protocol builds a chat transcriber with the window the resolution carries", async () => {
+    const seen: string[] = [];
+    const capability = await loadTranscriberFromResolved(
+      { ...http, transcription: { protocol: "chat-audio", maxChunkSeconds: 60 } },
+      {
+        decodeAudio: async () => new Float32Array(16_000 * 130),
+        fetchFn: (async (input: string | URL | Request) => {
+          seen.push(String(input));
+          return Response.json({ choices: [{ message: { content: "words" } }] });
+        }) as typeof fetch,
+      },
+    );
+    expect(capability).toBeInstanceOf(ChatAudioTranscriber);
+    await capability!.transcribe(new Uint8Array([1]), "audio/ogg");
+    // 130 s in one-minute chunks: three requests to the chat endpoint.
+    expect(seen).toEqual(Array(3).fill("http://127.0.0.1:8080/openai/v1/chat/completions"));
+  });
+
+  test("the transcription API protocol keeps the HTTP transcriber, with a shorter window when given one", async () => {
+    const seen: string[] = [];
+    const capability = await loadTranscriberFromResolved(
+      { ...http, transcription: { protocol: "audio", maxChunkSeconds: 60 } },
+      {
+        decodeAudio: async () => new Float32Array(16_000 * 130),
+        fetchFn: (async (input: string | URL | Request) => {
+          seen.push(String(input));
+          return Response.json({ text: "words" });
+        }) as typeof fetch,
+      },
+    );
+    expect(capability).toBeInstanceOf(HttpTranscriber);
+    await capability!.transcribe(new Uint8Array([1]), "audio/ogg");
+    expect(seen).toEqual(Array(3).fill("http://127.0.0.1:8080/openai/v1/audio/transcriptions"));
   });
 });

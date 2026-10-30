@@ -432,7 +432,7 @@ private struct SourceRowView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .monospacedDigit()
-                    + Text(" \(unitName(for: source))")
+                    + Text(" \(store.sourceUnitName(forSourceType: source.type) ?? unitName(for: source))")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)
             }

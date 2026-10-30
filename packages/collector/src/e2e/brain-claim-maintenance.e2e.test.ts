@@ -178,10 +178,9 @@ it("keeps an untouched assertion pending until its own explicit review", async (
   expect(partialOffer).toBeDefined();
   expect(partialOffer!.pending).not.toContain("date");
   const records = bench.sql
-    .prepare<
-      { nodeId: string },
-      { claim_id: string; status: string; input_fingerprint: string }
-    >("SELECT claim_id,status,input_fingerprint FROM knowledge_claim_outcomes WHERE node_id=@nodeId ORDER BY rowid")
+    .prepare<{ nodeId: string }, { claim_id: string; status: string; input_fingerprint: string }>(
+      "SELECT claim_id,status,input_fingerprint FROM knowledge_claim_outcomes WHERE node_id=@nodeId ORDER BY rowid",
+    )
     .all({ nodeId: pageId });
   const deferred = [...records]
     .reverse()

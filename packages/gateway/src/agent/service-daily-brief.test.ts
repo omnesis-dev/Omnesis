@@ -216,10 +216,16 @@ describe("Morning brief conversation", () => {
     const first = await service.appendMorningBrief(brief("2026-03-10"));
     await service.createSession("token:t1", { resumeFromId: first.conversationId });
     service.sendMessage("token:t1", first.conversationId, "Thanks");
+    // A reply that has reached the store is not yet a finished turn: the
+    // service still counts its persistence as in flight for a few ticks, and
+    // a brief that arrives in that gap is refused as "in the middle of a
+    // turn". Wait for the conversation to report idle, which clears only once
+    // the turn has settled and its write has been accounted for.
     await waitFor(
-      () => store.load(first.conversationId),
-      (record) => (record?.messages.length ?? 0) >= 3,
+      () => Promise.resolve(service.conversationControls(first.conversationId).busy),
+      (busy) => !busy,
     );
+    expect((await store.load(first.conversationId))?.messages).toHaveLength(3);
     await service.appendMorningBrief(brief("2026-03-11"));
     const record = await store.load(first.conversationId);
     expect(record!.messages.map((m) => m.role)).toEqual([

@@ -355,7 +355,7 @@ jobs:
       - name: Verify disposable T3 runner before tailnet changes
         if: matrix.mode == 'docker'
         run: node scripts/install-e2e/docker-tailnet-host.mjs guard linux "$RUNNER_TEMP/install-e2e" "$GITHUB_WORKSPACE"
-      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+      - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4.3.0
         with:
           oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
           audience: ${{ secrets.TS_AUDIENCE }}
@@ -459,7 +459,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/install-e2e"
           networksetup -getdnsservers Ethernet >"$RUNNER_TEMP/install-e2e/dns-servers"
           networksetup -getsearchdomains Ethernet >"$RUNNER_TEMP/install-e2e/dns-search-domains"
-      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+      - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4.3.0
         with:
           oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
           audience: ${{ secrets.TS_AUDIENCE }}

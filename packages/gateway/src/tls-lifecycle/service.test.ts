@@ -575,6 +575,18 @@ describe("publiclyTrustedNames", () => {
   });
 });
 
+describe("coveredHosts", () => {
+  test("keeps the hosts the served certificate covers, by name, wildcard or IP", () => {
+    const served = mint(3650, ["DNS:studio", "DNS:*.example.net", "IP:192.168.1.20"]);
+    writePair(configDir, served);
+    const { service } = build({ initial: served });
+    expect(
+      service.coveredHosts(["studio", "192.168.1.20", "10.0.0.9", "nas.example.net", "other"]),
+    ).toEqual(["studio", "192.168.1.20", "nas.example.net"]);
+    expect(service.coveredHosts([])).toEqual([]);
+  });
+});
+
 describe("nextRenewalAt", () => {
   const tier = () => ({
     certPath: join(configDir, "tls", "tailscale.crt"),

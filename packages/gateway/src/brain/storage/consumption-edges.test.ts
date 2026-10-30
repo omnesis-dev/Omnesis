@@ -109,10 +109,9 @@ describe("consumption edges", () => {
     // Same tuple again (different run id): ignored — first attribution wins.
     expect(recordConsumptionEdges(db, [edge({ runId: "run_2" })], NOW + 1)).toBe(0);
     const row = db
-      .prepare<
-        [],
-        { run_id: string; created_at: number }
-      >("SELECT run_id, created_at FROM cognition_consumption_edges")
+      .prepare<[], { run_id: string; created_at: number }>(
+        "SELECT run_id, created_at FROM cognition_consumption_edges",
+      )
       .get()!;
     expect(row).toEqual({ run_id: "run_1", created_at: NOW });
     // A different dependent is a new edge.
@@ -249,10 +248,9 @@ describe("consumption edges", () => {
     expect(getObservation(db, "obs_1")).toMatchObject({ state: "dropped", closeReason: "stale" });
 
     const runs = db
-      .prepare<
-        [],
-        { kind: string; payload_json: string; dedupe_key: string }
-      >("SELECT kind, payload_json, dedupe_key FROM cognition_runs ORDER BY dedupe_key")
+      .prepare<[], { kind: string; payload_json: string; dedupe_key: string }>(
+        "SELECT kind, payload_json, dedupe_key FROM cognition_runs ORDER BY dedupe_key",
+      )
       .all();
     for (const run of runs) {
       expect(parseCognitionProvenanceRecheckPayload(JSON.parse(run.payload_json))).not.toBeNull();
@@ -335,10 +333,9 @@ describe("consumption edges", () => {
     ).toBe(true);
     expect(getPersonAnnotation(db, "panno_1")).toBeNull();
     const folded = db
-      .prepare<
-        [],
-        { attempts: number; payload_json: string }
-      >("SELECT attempts, payload_json FROM cognition_runs")
+      .prepare<[], { attempts: number; payload_json: string }>(
+        "SELECT attempts, payload_json FROM cognition_runs",
+      )
       .get()!;
     expect(folded.attempts).toBe(0);
     expect(folded.payload_json).not.toBe(claimedPayloadJson);

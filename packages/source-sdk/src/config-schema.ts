@@ -230,13 +230,7 @@ export interface ListField<E extends ConfigField = ConfigField> extends FieldCom
 }
 
 export type ConfigField =
-  | StringField
-  | PathField
-  | NumberField
-  | BooleanField
-  | SelectField
-  | SecretField
-  | ListField;
+  StringField | PathField | NumberField | BooleanField | SelectField | SecretField | ListField;
 
 /** The parsed type a field yields. */
 type FieldValue<F> = F extends { kind: "string" }

@@ -58,10 +58,9 @@ function tableNames(db: Database.Database, names: readonly string[]): string[] {
 /** Rebuild `knowledge_nodes` with the v196 kind constraint, which names briefs. */
 function restoreBriefKindConstraint(db: Database.Database): void {
   const current = db
-    .prepare<
-      [],
-      { sql: string }
-    >("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'")
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'",
+    )
     .get()!;
   const dependents = db
     .prepare<[], { sql: string }>(
@@ -169,10 +168,9 @@ describe("migration 197 — briefs become observations", () => {
       });
       expect(
         db
-          .prepare<
-            [],
-            { n: number }
-          >("SELECT COUNT(*) n FROM knowledge_claims WHERE node_id = 'brief-node'")
+          .prepare<[], { n: number }>(
+            "SELECT COUNT(*) n FROM knowledge_claims WHERE node_id = 'brief-node'",
+          )
           .get()!.n,
       ).toBeGreaterThan(0);
     } finally {
@@ -240,10 +238,9 @@ describe("migration 197 — briefs become observations", () => {
     try {
       runMigrations(db);
       const sql = db
-        .prepare<
-          [],
-          { sql: string }
-        >("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'")
+        .prepare<[], { sql: string }>(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'",
+        )
         .get()!.sql;
       expect(sql).toContain("'observation'");
       expect(sql).not.toContain("'brief'");

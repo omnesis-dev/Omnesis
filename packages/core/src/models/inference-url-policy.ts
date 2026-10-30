@@ -39,8 +39,7 @@ export class InferenceUrlPolicyError extends Error {
     public readonly url: string,
     public readonly reason: string,
     public readonly code:
-      | "remote_inference_disabled"
-      | "inference_url_blocked" = "inference_url_blocked",
+      "remote_inference_disabled" | "inference_url_blocked" = "inference_url_blocked",
   ) {
     super(`Inference URL policy refused ${url}: ${reason}`);
     this.name = "InferenceUrlPolicyError";

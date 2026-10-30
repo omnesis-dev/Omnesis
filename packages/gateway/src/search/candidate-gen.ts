@@ -61,6 +61,8 @@ const SKIP_REASON_NO_EMBEDDER =
   "No embedder attached — the indexer worker is still loading its embedding model, or failed to start. Results fall back to BM25-only.";
 const SKIP_REASON_NO_INDEX =
   "HNSW index not available — the indexer is still building the initial index. Results fall back to BM25-only.";
+const SKIP_REASON_DEGRADED_PREFIX =
+  "Semantic search degraded — results are BM25-only until the gateway has the memory for the HNSW index: ";
 const SKIP_REASON_REINDEXING =
   "HNSW index is being rebuilt (embedder swap in progress). Results fall back to BM25-only.";
 
@@ -95,6 +97,12 @@ export interface CandidateGenRequest {
   embedderPresent: boolean;
   /** Query embedding at the current model's dim; null ⇒ vector is skipped. */
   queryVector: Float32Array | null;
+  /**
+   * Why the caller left `queryVector` null on purpose (semantic search
+   * degraded); reported as the vector stage's skip reason instead of the
+   * no-embedder one.
+   */
+  vectorUnavailableReason?: string;
   /** ms the caller spent in `embedder.embedQuery` — folded into the vector report. */
   embedMs: number;
   /**
@@ -274,6 +282,14 @@ function runVector(
   stageReports: StageReports,
   timing: CandidateGenResult["timing"],
 ): { candidates: SearchCandidate[]; degraded: boolean } {
+  if (req.queryVector === null && req.vectorUnavailableReason) {
+    stageReports.vector = {
+      status: "skipped",
+      reason: `${SKIP_REASON_DEGRADED_PREFIX}${req.vectorUnavailableReason}`,
+    };
+    log.debug("Vector: skipped (semantic search degraded)");
+    return { candidates: [], degraded: true };
+  }
   if (req.queryVector === null) {
     // The caller has no embedder attached (so it could not embed the query).
     const reason = SKIP_REASON_NO_EMBEDDER;

@@ -98,10 +98,9 @@ export function upsertSourceDocumentProfiles(
  */
 export function getSourceDocumentProfile(db: Db, sourceType: string): DocumentEventProfile | null {
   const row = db
-    .prepare<
-      [string],
-      { profile_json: string }
-    >("SELECT profile_json FROM source_document_profiles WHERE source_type = ?")
+    .prepare<[string], { profile_json: string }>(
+      "SELECT profile_json FROM source_document_profiles WHERE source_type = ?",
+    )
     .get(sourceType);
   if (!row) return null;
   return parseProfile(sourceType, row.profile_json);
@@ -110,10 +109,9 @@ export function getSourceDocumentProfile(db: Db, sourceType: string): DocumentEv
 /** Every published profile, ordered by source type for a stable projection. */
 export function listSourceDocumentProfiles(db: Db): SourceDocumentProfileEntry[] {
   const rows = db
-    .prepare<
-      [],
-      { source_type: string; profile_json: string }
-    >("SELECT source_type, profile_json FROM source_document_profiles ORDER BY source_type")
+    .prepare<[], { source_type: string; profile_json: string }>(
+      "SELECT source_type, profile_json FROM source_document_profiles ORDER BY source_type",
+    )
     .all();
 
   const entries: SourceDocumentProfileEntry[] = [];

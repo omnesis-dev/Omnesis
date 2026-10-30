@@ -135,6 +135,7 @@ import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
 import type { TaskProposeGate, TaskProposeVerdict } from "../tasks/task-propose.js";
 import type { InterestLookup } from "../interest/engine.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 import type { ObservationScoringInput, ObservationScoringResult } from "../observations/noting.js";
 import type { ConsumedAnnotationRef, RunConsumptionTracker } from "./consumption.js";
 import type { IdentityCandidate } from "../reconcile/identity-candidates.js";
@@ -308,6 +309,11 @@ export interface CognitionToolDeps {
    * record is saved unchecked.
    */
   checkRecord?: CheckRecord;
+  /**
+   * A background run's sources excluded from the Brain: an outcome judgment is
+   * never shown their documents. Absent (interactive memory) nothing is excluded.
+   */
+  sourceFence?: BrainSourceFence;
   /**
    * Apply a Brain change to one of the user's own tasks directly, under the
    * auto-apply policy, instead of proposing it (config `brain.tasks.autoApply`). Absent or
@@ -1152,6 +1158,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         ? { ownerId: id }
         : {}),
       now: clock(),
+      ...(deps.sourceFence ? { sourceFence: deps.sourceFence } : {}),
     });
     if (writeFence && prepared?.outcomeFence) {
       writeFence.actorRoles = prepared.outcomeFence.actorRoles;

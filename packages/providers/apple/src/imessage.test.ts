@@ -5,7 +5,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
 import { resolveAttachmentConfig } from "@omnesis/core";
-import { SourceId, ProviderId } from "@omnesis/types";
+import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { AppleProvider } from "./provider.js";
 import { AppleIMessageSource } from "./imessage.js";
 import type { AttachmentExtractFn } from "@omnesis/core";
@@ -100,6 +100,7 @@ function createTestDb(dbPath: string): Db {
       guid TEXT,
       filename TEXT,
       mime_type TEXT,
+      uti TEXT,
       transfer_name TEXT,
       total_bytes INTEGER DEFAULT 0
     );
@@ -198,18 +199,20 @@ function insertAttachment(
   opts: {
     filename?: string;
     mimeType?: string;
+    uti?: string;
     transferName?: string;
     totalBytes?: number;
     guid?: string;
   } = {},
 ) {
   db.prepare(
-    "INSERT INTO attachment (ROWID, guid, filename, mime_type, transfer_name, total_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO attachment (ROWID, guid, filename, mime_type, uti, transfer_name, total_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     attId,
     opts.guid ?? `att-${attId}`,
     opts.filename ?? null,
     opts.mimeType ?? null,
+    opts.uti ?? null,
     opts.transferName ?? null,
     opts.totalBytes ?? 0,
   );
@@ -251,6 +254,7 @@ describe("AppleIMessageSource", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     testDb.close();
     await provider.disconnect();
     rmSync(tmpDir, { recursive: true, force: true });
@@ -593,7 +597,10 @@ describe("AppleIMessageSource", () => {
 
   describe("inline audio transcription", () => {
     /** Write a fake audio clip on disk and insert a chat.db audio attachment pointing at it. */
-    function insertAudioMessage(audioPath: string): void {
+    function insertAudioMessage(
+      audioPath: string,
+      type: { mimeType?: string; uti?: string } = { mimeType: "audio/x-caf" },
+    ): void {
       writeFileSync(audioPath, Buffer.from("fake-audio-bytes"));
       insertMessage(testDb, 1, 1, {
         text: null,
@@ -603,11 +610,32 @@ describe("AppleIMessageSource", () => {
       });
       insertAttachment(testDb, 1, 1, {
         filename: audioPath,
-        mimeType: "audio/x-caf",
+        ...type,
         transferName: "Audio Message.caf",
         totalBytes: 16,
       });
     }
+
+    test("transcribes an audio message Messages stored with a UTI and no MIME type", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath, { uti: "com.apple.coreaudio-format" });
+
+      const transcribeAudio = vi.fn(async () => ({ text: "Back by six", durationSec: 7 }));
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+
+      const result = await src.sync(null);
+      expect(transcribeAudio).toHaveBeenCalledWith(
+        expect.any(Uint8Array),
+        "audio/x-caf",
+        expect.anything(),
+      );
+      expect(result.documents[0].content).toContain("[Audio, 0:07]: Back by six");
+    });
 
     test("transcribes a voice clip and renders it inline in the conversation", async () => {
       const audioPath = join(tmpDir, "clip.caf");
@@ -698,6 +726,198 @@ describe("AppleIMessageSource", () => {
       expect(transcribeAudio).toHaveBeenCalledTimes(1); // not called again
       expect(secondResult.documents[0].content).toContain("[Audio, 0:10]: cached words");
       second.dispose();
+    });
+
+    test("a clip no transcriber can run says so, is reported, and is retried once due", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn<() => Promise<{ text: string; durationSec: number } | null>>(
+        async () => null,
+      );
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(first.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — no transcriber available]",
+        );
+        expect(first.issues).toEqual([
+          expect.objectContaining({
+            code: "transcription-awaiting",
+            count: 1,
+            severity: "warning",
+            message: "1 voice clip waiting for a transcriber",
+            remediation: expect.objectContaining({
+              summary: "No transcriber is currently available",
+            }),
+          }),
+        ]);
+
+        // Nothing changed and the clip is not due: no attempt, no document.
+        const quiet = await src.sync(first.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(quiet.documents).toHaveLength(0);
+        expect(quiet.issues).toHaveLength(1);
+
+        // Once due, the day is re-rendered with no new message and the
+        // assigned transcriber settles the clip; the report clears.
+        transcribeAudio.mockResolvedValue({ text: "found it", durationSec: 4 });
+        vi.setSystemTime(new Date("2026-02-01T12:00:30Z"));
+        const retried = await src.sync(quiet.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+        expect(retried.documents).toHaveLength(1);
+        expect(retried.documents[0].content).toContain("[Audio, 0:04]: found it");
+        expect(retried.issues).toEqual([]);
+
+        const settled = await src.sync(retried.cursor);
+        expect(settled.documents).toHaveLength(0);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      } finally {
+        src.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    test("a transcriber outage completes the page and the clip waits for its retry", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn(async () => {
+        throw new SyncError("transient", "transcription backend unavailable");
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const result = await src.sync(null);
+        expect(result.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — awaiting transcription]",
+        );
+        expect(result.issues).toEqual([
+          expect.objectContaining({
+            count: 1,
+            severity: "info",
+            message: "1 voice clip awaiting transcription",
+          }),
+        ]);
+        // Under backoff, a re-render of the day does not try the clip again.
+        insertMessage(testDb, 2, 1, {
+          text: "later that day",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        const again = await src.sync(result.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(again.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — awaiting transcription]",
+        );
+      } finally {
+        src.dispose();
+      }
+    });
+
+    test("a due clip whose chat is gone, or that left its day, stops being reported", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      insertMessage(testDb, 2, 1, {
+        text: "later that day",
+        handleId: 1,
+        date: DATE_2024_03_08_11AM,
+      });
+      const transcribeAudio = vi.fn(async () => null);
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(first.issues).toHaveLength(1);
+
+        // The clip leaves the chat while its day stays: the re-rendered day
+        // has no clip left to retry, so the report clears.
+        testDb.prepare("DELETE FROM message_attachment_join WHERE message_id = 1").run();
+        testDb.prepare("DELETE FROM attachment").run();
+        testDb.prepare("DELETE FROM message WHERE ROWID = 1").run();
+        testDb.prepare("DELETE FROM chat_message_join WHERE message_id = 1").run();
+        const clipGone = await src.sync(first.cursor);
+        expect(clipGone.documents).toHaveLength(1);
+        expect(clipGone.documents[0].content).not.toContain("Audio");
+        expect(clipGone.issues).toEqual([]);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      } finally {
+        src.dispose();
+      }
+
+      // A fresh clip that fails, then the whole chat gone: once the clip is
+      // due, the day it named is no longer in the snapshot and is forgotten.
+      insertAudioMessage(join(tmpDir, "clip-2.caf"));
+      const again = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const failed = await again.sync(null);
+        expect(failed.issues).toHaveLength(1);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+        testDb.prepare("DELETE FROM message_attachment_join").run();
+        testDb.prepare("DELETE FROM attachment").run();
+        testDb.prepare("DELETE FROM message").run();
+        testDb.prepare("DELETE FROM chat_message_join").run();
+        vi.setSystemTime(new Date("2026-02-01T12:00:30Z"));
+        const chatGone = await again.sync(failed.cursor);
+        expect(chatGone.documents).toHaveLength(0);
+        expect(chatGone.issues).toEqual([]);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      } finally {
+        again.dispose();
+      }
+    });
+
+    test("a clip not downloaded on this device says so and is not scheduled", async () => {
+      const transcribeAudio = vi.fn(async () => ({ text: "never", durationSec: 1 }));
+      insertMessage(testDb, 1, 1, {
+        text: null,
+        handleId: 1,
+        date: DATE_2024_03_08_10AM,
+        hasAttachments: true,
+      });
+      insertAttachment(testDb, 1, 1, {
+        filename: join(tmpDir, "not-here.caf"),
+        mimeType: "audio/x-caf",
+        transferName: "Audio Message.caf",
+        totalBytes: 16,
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const result = await src.sync(null);
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(result.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — audio not downloaded on this device]",
+        );
+        expect(result.issues).toEqual([]);
+      } finally {
+        src.dispose();
+      }
     });
 
     test("audio is not emitted as an attachment child-doc (handled inline only)", async () => {

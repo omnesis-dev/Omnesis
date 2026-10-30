@@ -12,8 +12,12 @@ import {
   runSourceConformance,
   type SourceConformanceOptions,
 } from "@omnesis/source-sdk/testing";
+import {
+  resolveSourceState,
+  type SourceDefinition,
+  type SourceInstance,
+} from "@omnesis/source-sdk";
 import { allDefinitions } from "./source-descriptors.js";
-import type { SourceDefinition, SourceInstance } from "@omnesis/source-sdk";
 
 // Hand-authored contract fixtures, not captured release output. Keep nonempty
 // bookmarks so dropping a token/map during migration cannot pass as a fresh run.
@@ -89,6 +93,20 @@ const current: Record<string, unknown> = {
     affectedDates: ["2026-01-02"],
   },
   "chrome-bookmarks": { fileChecksum: "checksum", knownIds: ["bookmark-1"] },
+  discord: {
+    v: 1,
+    channels: { "100": { lastId: "500", lastDay: "2026-01-02", lastHash: "hash" } },
+    queue: [
+      {
+        id: "100",
+        guildId: "10",
+        guildName: "Server",
+        name: "channel",
+        kind: "text",
+      },
+    ],
+    cycle: { readable: 1, unreadable: 0 },
+  },
   "enable-banking-accounts": {
     phase: "incremental",
     accountIndex: 1,
@@ -167,7 +185,19 @@ const current: Record<string, unknown> = {
     pageCursor: "page-2",
     syncedUpTo: timestamp,
   },
+  "paperless-documents": {
+    phase: "snapshot",
+    watermark: timestamp,
+    sweepWatermark: timestamp,
+    pending: [7, 3],
+    lookups: { t1: "0a1b2c3d4e", c10: "5f6a7b8c9d" },
+    known: { "3": "", "7": "1e2d3c4b5a", "9": "" },
+    skipped: [5],
+    lastSnapshotAt: timestamp,
+    snapshot: { ids: { documents: ["3", "7", "9"] } },
+  },
   plaid: { phase: "transactions", transactionsCursor: "page-2", lastSnapshotDate: "2026-01-02" },
+  "telegram-messages": { phase: "incremental", committedSeq: 42, storeId: "store-1" },
   "whatsapp-messages": {
     phase: "incremental",
     lastTimestamp: 700,
@@ -185,6 +215,45 @@ const historical: Record<string, unknown> = {
   "screen-time": screenLegacy,
   github: githubCursor,
   "github-commits": githubCursor,
+};
+// Other cursors an install could hold besides the current fixture. Each must
+// resume as itself, whether stored bare or in the envelope the host writes.
+const installed: Record<string, Record<string, Record<string, unknown>>> = {
+  "paperless-documents": {
+    // Between sweeps: nothing pending, the watermark settled.
+    settled: {
+      phase: "incremental",
+      watermark: timestamp,
+      lookups: { t1: "0a1b2c3d4e" },
+      known: { "3": "" },
+      lastSnapshotAt: timestamp,
+    },
+    // Partway through the first full sweep, before any watermark exists.
+    bootstrap: {
+      phase: "full",
+      sweepWatermark: timestamp,
+      pending: [3],
+      lookups: { t1: "0a1b2c3d4e" },
+      known: { "1": "", "3": "" },
+      snapshot: { ids: { documents: ["1", "3"] } },
+    },
+    // Partway through a changes-only sweep that ran past one page.
+    midIncremental: {
+      phase: "incremental",
+      watermark: timestamp,
+      sweepWatermark: timestamp,
+      pending: [5],
+      lookups: { t1: "0a1b2c3d4e" },
+      known: { "3": "" },
+      lastSnapshotAt: timestamp,
+    },
+  },
+  "telegram-messages": {
+    // Mid-way through the history walk: the drain acknowledges during bootstrap.
+    bootstrap: { phase: "bootstrap", committedSeq: 17, storeId: "store-1" },
+    // No archive identity, which the decoder keeps as an older cursor.
+    "no-storeId": { phase: "incremental", committedSeq: 42 },
+  },
 };
 const expectations: Record<string, (state: Record<string, unknown>) => void> = {
   "granola-meetings": (state) =>
@@ -222,6 +291,9 @@ const incompatible: Record<string, unknown> = {
   "claude-code": { ...agentCursor, version: 999 },
   codex: { ...agentCursor, version: 999 },
   pi: { ...agentCursor, version: 999 },
+  // A sweep in progress without what it has listed would end by vouching for
+  // an empty archive.
+  "paperless-documents": { phase: "snapshot", watermark: timestamp, pending: [7, 3] },
 };
 
 function options(id: string, version?: number): SourceConformanceOptions {
@@ -282,6 +354,27 @@ describe("registered provider contract conformance", () => {
       }
     },
   );
+
+  it.each(
+    Object.entries(installed).flatMap(([id, states]) =>
+      Object.entries(states).flatMap(([label, state]) => [
+        { id, label, form: "bare", state },
+        { id, label, form: "enveloped", state },
+      ]),
+    ),
+  )("$id: an installed $label cursor resumes as itself ($form)", ({ id, form, state }) => {
+    const source = allDefinitions
+      .flatMap<Pick<SourceDefinition, "id" | "contract">>((definition) =>
+        "sources" in definition ? definition.sources : [definition],
+      )
+      .find((candidate) => candidate.id === id);
+    const spec = source?.contract?.state;
+    if (!spec) throw new Error(`${id} declares no state spec`);
+    const stored = form === "bare" ? state : { e: 1, v: spec.version, s: id, state };
+    const outcome = resolveSourceState(spec, stored, { sourceId: id });
+    expect(outcome.kind).toBe("resume");
+    expect(outcome.kind === "resume" ? outcome.state : undefined).toEqual(state);
+  });
 
   it("keeps fixtures in exact correspondence with stateful registered sources", () => {
     const sources = allDefinitions.flatMap<Pick<SourceDefinition, "id" | "contract">>(

@@ -34,6 +34,7 @@ import {
   addHttpBackend,
   removeHttpBackend,
   probeBackend,
+  verifyBackendModel,
   refreshAnthropicBackend,
   refreshCodexBackend,
   getCodexRuntimeUpdate,
@@ -408,7 +409,8 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
         ? html`<div class="cap-detail-hint">Switching the embedder rebuilds the vector index gracefully — search stays live on the current model and switches automatically when the new index is ready. A hard cutover (offered when switching) stops the old model immediately, leaving keyword-only search until the rebuild finishes.</div>`
         : null}
       ${role === "transcriber"
-        ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
+        ? html`<div class="cap-detail-hint">A transcriber is a local Whisper model, or an HTTP backend that serves the OpenAI audio transcription API (<code>/v1/audio/transcriptions</code>): whisper.cpp's <code>whisper-server</code>, speaches, vLLM, llama-server or Ollama with a speech model such as Qwen3-ASR, or OpenAI. A chat or embedding model cannot transcribe, whatever server lists it; Omnesis checks a backend before assigning it.</div>
+            <div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
             <${GatewayDictationSetting} />`
         : null}
       ${role === "background-agent" ? html`<${NoteAgentSetting} />` : null}
@@ -1004,6 +1006,26 @@ export function ModelsView({ section }) {
   };
 
   const assignHttp = async (backendKey, model) => {
+    // A transcriber is checked before it is assigned: the gateway asks the
+    // backend to transcribe one second of audio. A backend that answers it
+    // cannot (a chat-only server such as Ollama) is never written to the
+    // config, so the role cannot show a green check for a model that will not
+    // transcribe anything. A backend that gives no answer is assigned anyway
+    // and verified again by the gateway until it answers.
+    if (role === "transcriber") {
+      flashOk(`Checking that "${backendKey}" can transcribe with ${model}…`);
+      let verdict;
+      try {
+        verdict = await verifyBackendModel(backendKey, model, role, true);
+      } catch (e) {
+        flashErr(e?.message ?? String(e));
+        return;
+      }
+      if (verdict && !verdict.supported && !verdict.inconclusive) {
+        flashErr(`"${backendKey}" cannot transcribe with ${model}: ${verdict.detail}`);
+        return;
+      }
+    }
     // mode: "graceful" (default, zero-downtime) | "hard" (immediate cutover).
     const doAssign = async (mode = "graceful") => {
       try {

@@ -33,7 +33,7 @@ import { navigate } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
-import { KindIcon } from "../lib/device-kind-icon.js";
+import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { DoctorReportView } from "./doctor.js";
 import {
@@ -1054,6 +1054,36 @@ export function DeviceCard({
 }
 
 /**
+ * What the gateway says, on a browser code, about the certificate the
+ * extension will meet (`browserCertificate`, judged by the gateway's
+ * `tls-lifecycle/browser-trust.ts`; the CLI prints the same words). The
+ * extension can neither pin a certificate nor click through a warning, so a
+ * gateway Chrome does not trust is one it can never reach: that is a warning
+ * above the steps, not a footnote under them. A certificate the extension may
+ * not trust everywhere is a note; a trusted one, or an older gateway that
+ * sends no verdict, shows nothing here.
+ */
+export function BrowserCertificateNotice({ verdict }) {
+  if (!verdict || (!verdict.title && !verdict.message)) return null;
+  const blocked = verdict.status === "untrusted";
+  return html`
+    <div
+      class=${`devices-ext-cert ${blocked ? "is-blocked" : "is-note"}`}
+      role=${blocked ? "alert" : "note"}
+      data-status=${verdict.status}
+    >
+      ${verdict.title && html`<p class="devices-ext-cert-title">${verdict.title}</p>`}
+      ${verdict.message && html`<p>${withInlineCode(verdict.message)}</p>`}
+      ${verdict.remedy && html`<p><strong>Fix: </strong>${withInlineCode(verdict.remedy)}</p>`}
+      <p>
+        <a href=${verdict.docsUrl} target="_blank" rel="noreferrer noopener">Set up a certificate the extension can use</a>
+      </p>
+      ${blocked && html`<p class="devices-ext-cert-aside">The code above is still valid, for a browser that already trusts this certificate.</p>`}
+    </div>
+  `;
+}
+
+/**
  * Per-kind redeem instructions shown under a freshly minted pairing code.
  * Each device kind redeems differently, so the guidance is tailored rather
  * than a one-size-fits-all curl:
@@ -1082,6 +1112,7 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
   if (pairResult.kind === "browser") {
     return html`
       <div class="devices-pair-snippet">
+        <${BrowserCertificateNotice} verdict=${pairResult.browserCertificate} />
         <span class="devices-pair-label">In the Omnesis browser extension, open Options and enter the gateway URL below plus the pairing code shown above:</span>
         <ul class="devices-pair-ext-steps">
           <li>Gateway URL: <${CopyValue} text=${origin} title="Copy gateway URL" /></li>
@@ -1231,12 +1262,25 @@ function PairModal({
           </p>
         `}
         <form class="devices-pair-form" onSubmit=${onPair}>
-          ${!repairTarget && html`<div class="form-group">
-            <label for="pair-kind">Kind</label>
-            <select id="pair-kind" autoFocus value=${pairKind} onChange=${(e) => onKindChange(e.target.value)}>
-              ${deviceKinds().map((k) => html`<option key=${k} value=${k}>${KIND_LABELS[k]}</option>`)}
-            </select>
-          </div>`}
+          ${!repairTarget && html`<fieldset class="devices-kind-picker">
+            <legend>What would you like to pair?</legend>
+            <div class="devices-kind-grid">
+              ${deviceKinds().map((kind) => html`<label key=${kind} class="devices-kind-option">
+                <input
+                  type="radio"
+                  name="pair-kind"
+                  value=${kind}
+                  checked=${pairKind === kind}
+                  autoFocus=${pairKind === kind}
+                  onChange=${() => onKindChange(kind)}
+                />
+                <span class="devices-kind-tile">
+                  <${PairKindIcon} kind=${kind} />
+                  <span>${KIND_LABELS[kind]}</span>
+                </span>
+              </label>`)}
+            </div>
+          </fieldset>`}
           ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
             <label for="pair-name">Name</label>
             <input

@@ -43,9 +43,7 @@ export interface DecisionChoiceQuestion {
 }
 
 export type DecisionQuestion =
-  | DecisionNoulQuestion
-  | DecisionScoreQuestion
-  | DecisionChoiceQuestion;
+  DecisionNoulQuestion | DecisionScoreQuestion | DecisionChoiceQuestion;
 
 export interface DecisionNoulAnswer {
   readonly type: "noul";

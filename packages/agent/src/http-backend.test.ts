@@ -7,6 +7,7 @@ import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import { HttpChatBackend, convertHistoryToOpenAI, convertToolsToOpenAI } from "./http-backend.js";
+import { agentFailureScope } from "./http-error.js";
 import type { LlmRequestTiming, ToolHandle } from "./backend.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -1780,6 +1781,74 @@ describe("HttpChatBackend", () => {
     }
   });
 
+  const incomplete = (retryable: boolean, reason: string) => ({
+    code: "http_response_incomplete",
+    retryable,
+    provider: { code: reason },
+  });
+
+  it.each([
+    // An ordinary end, however the server spells it.
+    ["stop", "end_turn", undefined],
+    ["eos", "end_turn", undefined],
+    ["stop_sequence", "end_turn", undefined],
+    ["end_turn", "end_turn", undefined],
+    ["STOP", "end_turn", undefined],
+    [null, "end_turn", undefined],
+    // The context filled before the answer did.
+    ["model_length", "max_tokens", { code: "output_truncated", retryable: false }],
+    // Cut off: the partial answer must not be saved as a complete one. A
+    // filter judged this turn's own content; the others are the server's.
+    ["content_filter", "error", incomplete(false, "content_filter")],
+    ["abort", "error", incomplete(true, "abort")],
+    ["error", "error", incomplete(true, "error")],
+    ["insufficient_system_resource", "error", incomplete(true, "insufficient_system_resource")],
+    ["a_future_reason", "error", incomplete(true, "a_future_reason")],
+  ] as const)(
+    "a stream ending with finish_reason %s after partial content ends %s",
+    async (finishReason, stopReason, failure) => {
+      const chunks: Array<Record<string, unknown> | "[DONE]"> = [
+        { choices: [{ delta: { content: "partial" }, finish_reason: null }] },
+        {
+          choices: [{ delta: {}, finish_reason: finishReason }],
+          usage: { prompt_tokens: 100, completion_tokens: 2 },
+        },
+        "[DONE]",
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(chunks)));
+
+      const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+      const events: AgentEvent[] = [];
+      for await (const e of backend.runTurn(baseInput())) events.push(e);
+
+      const end = events.at(-1);
+      if (end?.type !== "agent.message.end") throw new Error("expected message end");
+      expect(end.payload.stopReason).toBe(stopReason);
+      if (failure) expect(end.payload.failure).toMatchObject(failure);
+      else expect(end.payload.failure).toBeUndefined();
+    },
+  );
+
+  it("never runs a tool call from a response the server cut off", async () => {
+    let invoked = 0;
+    const tool = fakeToolHandle("search", () => {
+      invoked += 1;
+      return { kind: "error", code: "x", message: "x" };
+    });
+    const chunks = toolUseSSE("call_cut", "search", { query: "q" });
+    chunks[2] = { choices: [{ delta: {}, finish_reason: "abort" }] };
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(chunks)));
+
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ tools: [tool] }))) events.push(e);
+
+    expect(invoked).toBe(0);
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected message end");
+    expect(end.payload.failure?.code).toBe("http_response_incomplete");
+  });
+
   it("sends Authorization header when apiKey is provided", async () => {
     const fetchSpy = vi.fn().mockResolvedValue(mockFetchResponse(sseBody(textOnlySSE(["ok"]))));
     globalThis.fetch = fetchSpy;
@@ -2129,6 +2198,326 @@ describe("HttpChatBackend — tool-call argument robustness", () => {
     if (result.kind !== "error") throw new Error("expected error result");
     expect(result.code).toBe("tool_args_unparseable");
     expect(result.message).toContain('{"query":"a');
+  });
+});
+
+describe("HttpChatBackend — streamed tool calls that share an index", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Two complete calls, each in its own delta, both at index 0 (as Ollama's OpenAI endpoint streams them). */
+  function sameIndexTwoCallsSSE(): Array<Record<string, unknown> | "[DONE]"> {
+    return [
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call_a",
+                  type: "function",
+                  function: { name: "search_documents", arguments: '{"query":"alpha"}' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call_b",
+                  type: "function",
+                  function: { name: "search_documents", arguments: '{"query":"beta"}' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [{ delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 30, completion_tokens: 15 },
+      },
+      "[DONE]",
+    ];
+  }
+
+  it("keeps two calls apart by id when the server reuses index 0 for both", async () => {
+    const invocations: unknown[] = [];
+    const tool = fakeToolHandle("search_documents", (args) => {
+      invocations.push(args);
+      return { kind: "search.results", query: "x", durationMs: 0, results: [] };
+    });
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(sameIndexTwoCallsSSE())))
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(textOnlySSE(["both done"]))));
+    globalThis.fetch = fetchSpy;
+
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ tools: [tool] }))) events.push(e);
+
+    const starts = events.filter((e) => e.type === "agent.tool.start");
+    expect(
+      starts.map((e) =>
+        e.type === "agent.tool.start" ? [e.payload.toolCallId, e.payload.args] : null,
+      ),
+    ).toEqual([
+      ["call_a", { query: "alpha" }],
+      ["call_b", { query: "beta" }],
+    ]);
+    expect(invocations).toEqual([{ query: "alpha" }, { query: "beta" }]);
+    const results = events.filter((e) => e.type === "agent.tool.result");
+    expect(
+      results.map((e) => (e.type === "agent.tool.result" ? e.payload.result.kind : null)),
+    ).toEqual(["search.results", "search.results"]);
+
+    // The follow-up request replays both calls and answers each by id.
+    const body = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string);
+    const assistant = body.messages.find((m: Record<string, unknown>) => m.role === "assistant");
+    expect(assistant.tool_calls.map((c: { id: string }) => c.id)).toEqual(["call_a", "call_b"]);
+    expect(
+      body.messages
+        .filter((m: Record<string, unknown>) => m.role === "tool")
+        .map((m: { tool_call_id: string }) => m.tool_call_id),
+    ).toEqual(["call_a", "call_b"]);
+  });
+
+  it("still appends argument fragments to the call at their index when no new id arrives", async () => {
+    const invocations: unknown[] = [];
+    const tool = fakeToolHandle("search_documents", (args) => {
+      invocations.push(args);
+      return { kind: "search.results", query: "x", durationMs: 0, results: [] };
+    });
+    const chunks: Array<Record<string, unknown> | "[DONE]"> = [
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: "call_a", function: { name: "search_documents", arguments: "" } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [
+          {
+            delta: { tool_calls: [{ index: 0, function: { arguments: '{"query":' } }] },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, id: "call_a", function: { arguments: '"alpha"}' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [{ delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 30, completion_tokens: 15 },
+      },
+      "[DONE]",
+    ];
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(chunks)))
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(textOnlySSE(["done"]))));
+
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ tools: [tool] }))) events.push(e);
+    expect(invocations).toEqual([{ query: "alpha" }]);
+    expect(events.filter((e) => e.type === "agent.tool.start")).toHaveLength(1);
+  });
+});
+
+describe("HttpChatBackend — a server that truncates the prompt", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** A system prompt about the size of the agent's own, without repeated runs. */
+  function longSystemPrompt(): string {
+    const words = ["ledger", "review", "quarterly", "budget", "marathon", "entry", "form", "notes"];
+    let out = "";
+    for (let i = 0; out.length < 64_000; i++) out += `${words[i % words.length]} `;
+    return out;
+  }
+
+  function answerWithUsage(promptTokens: number): Array<Record<string, unknown> | "[DONE]"> {
+    return [
+      { choices: [{ delta: { content: "I cannot see your inbox." }, finish_reason: null }] },
+      {
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: promptTokens, completion_tokens: 8 },
+      },
+      "[DONE]",
+    ];
+  }
+
+  it("fails the turn when the reported prompt tokens cannot cover the request", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(answerWithUsage(2_050))));
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ systemPrompt: longSystemPrompt() })))
+      events.push(e);
+
+    const error = events.find((e) => e.type === "agent.error");
+    if (error?.type !== "agent.error") throw new Error("expected agent.error");
+    expect(error.payload.code).toBe("prompt_truncated");
+    expect(error.payload.message).toContain("2050");
+    expect(error.payload.message).toContain("context length");
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected end");
+    expect(end.payload.stopReason).toBe("error");
+    expect(end.payload.failure?.code).toBe("prompt_truncated");
+    // The server's configuration cut it, not the request: once the operator
+    // raises the context length the same request succeeds, so a background
+    // queue waits for that instead of retiring the work.
+    expect(end.payload.failure?.retryable).toBe(true);
+    expect(agentFailureScope(end.payload.failure!)).toBe("provider");
+    expect(end.payload.usage.inputTokens).toBe(2_050);
+  });
+
+  it("does not act on tool calls the truncated prompt produced", async () => {
+    let invoked = false;
+    const tool = fakeToolHandle("search_documents", () => {
+      invoked = true;
+      return { kind: "search.results", query: "x", durationMs: 0, results: [] };
+    });
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      mockFetchResponse(
+        sseBody([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_1",
+                      function: { name: "search_documents", arguments: '{"query":"x"}' },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [{ delta: {}, finish_reason: "tool_calls" }],
+            usage: { prompt_tokens: 2_050, completion_tokens: 8 },
+          },
+          "[DONE]",
+        ]),
+      ),
+    );
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(
+      baseInput({ systemPrompt: longSystemPrompt(), tools: [tool] }),
+    ))
+      events.push(e);
+    expect(invoked).toBe(false);
+    expect(events.some((e) => e.type === "agent.tool.start")).toBe(false);
+    expect(
+      events.at(-1)?.type === "agent.message.end" && events.at(-1)?.payload.failure?.code,
+    ).toBe("prompt_truncated");
+  });
+
+  it("accepts a prompt count the request can explain", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(answerWithUsage(14_000))));
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ systemPrompt: longSystemPrompt() })))
+      events.push(e);
+    expect(events.some((e) => e.type === "agent.error")).toBe(false);
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected end");
+    expect(end.payload.stopReason).toBe("end_turn");
+  });
+
+  it("says nothing when the server reports no usage", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockFetchResponse(
+          sseBody([
+            { choices: [{ delta: { content: "ok" }, finish_reason: null }] },
+            { choices: [{ delta: {}, finish_reason: "stop" }] },
+            "[DONE]",
+          ]),
+        ),
+      );
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ systemPrompt: longSystemPrompt() })))
+      events.push(e);
+    expect(events.some((e) => e.type === "agent.error")).toBe(false);
+  });
+
+  it("accepts a server that meters the messages alone, however heavy the tool definitions", async () => {
+    // A proxy or scripted server may count usage over the messages it saw and
+    // never over the tools; the floor must not charge it for the tools.
+    const tools = Array.from({ length: 40 }, (_, i) => {
+      const tool = fakeToolHandle(`tool_${i}`, () => {
+        throw new Error("not invoked");
+      });
+      return { ...tool, description: longSystemPrompt().slice(0, 4_000) };
+    });
+    let messagesOnlyCount = 0;
+    globalThis.fetch = vi.fn().mockImplementationOnce((_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { messages: unknown[]; tools: unknown[] };
+      expect(body.tools).toHaveLength(40);
+      messagesOnlyCount = Math.ceil(JSON.stringify(body.messages).length / 4);
+      return Promise.resolve(mockFetchResponse(sseBody(answerWithUsage(messagesOnlyCount))));
+    });
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ systemPrompt: longSystemPrompt(), tools })))
+      events.push(e);
+    expect(messagesOnlyCount).toBeGreaterThan(0);
+    expect(events.some((e) => e.type === "agent.error")).toBe(false);
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected end");
+    expect(end.payload.stopReason).toBe("end_turn");
+  });
+
+  it("ignores a nominal count from a server that does not meter prompt tokens", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(answerWithUsage(128))));
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test" });
+    const events: AgentEvent[] = [];
+    for await (const e of backend.runTurn(baseInput({ systemPrompt: longSystemPrompt() })))
+      events.push(e);
+    expect(events.some((e) => e.type === "agent.error")).toBe(false);
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected end");
+    expect(end.payload.stopReason).toBe("end_turn");
+    expect(end.payload.usage.inputTokens).toBe(128);
   });
 });
 

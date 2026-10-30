@@ -128,10 +128,9 @@ interface PersonMeta {
 function loadPerson(db: Db, canonicalId: string): PersonMeta | null {
   return (
     (db
-      .prepare<
-        [string],
-        PersonMeta
-      >(`SELECT id, canonical_name FROM people WHERE id = ? AND merged_into IS NULL`)
+      .prepare<[string], PersonMeta>(
+        `SELECT id, canonical_name FROM people WHERE id = ? AND merged_into IS NULL`,
+      )
       .get(canonicalId) as PersonMeta | undefined) ?? null
   );
 }

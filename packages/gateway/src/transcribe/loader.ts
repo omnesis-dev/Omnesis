@@ -7,10 +7,13 @@
  *
  * Backends:
  *   - `local`  → in-process whisper.cpp (`smart-whisper`).
- *   - `http`   → an OpenAI-compatible transcription endpoint declared in
- *                `inference.backends`, such as a GPU whisper server. The
- *                inference URL policy keeps it on loopback unless the
- *                operator allows remote inference.
+ *   - `http`   → a backend declared in `inference.backends`, through its
+ *                OpenAI-compatible transcription endpoint (a GPU whisper
+ *                server, speaches, vLLM, llama-server, Ollama, a hosted API)
+ *                or, for a speech model served only through a chat API, a
+ *                chat completion carrying the audio. The inference URL policy
+ *                keeps it on loopback unless the operator allows remote
+ *                inference.
  *   - `replay` → the synthetic transcriber for tests.
  *
  * The chat-agent backends (Anthropic, Codex, Claude Code) offer no
@@ -21,6 +24,7 @@ import { createLogger, assertNever } from "@omnesis/core";
 import { WhisperTranscriber, whisperDepsAvailable } from "./whisper-transcriber.js";
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
 import { HttpTranscriber } from "./http-transcriber.js";
+import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
 import type { ResolvedAssignment, TranscribeCapability } from "@omnesis/core";
 import type { WhisperModuleLoader, WhisperWorkerSpawner } from "./whisper-transcriber.js";
 import type { AudioDecoder } from "./audio-decode.js";
@@ -79,15 +83,33 @@ export async function loadTranscriberFromResolved(
         );
         return null;
       }
-      return new HttpTranscriber({
-        url: resolved.url,
-        apiPathPrefix: resolved.apiPathPrefix,
-        model: resolved.model,
-        apiKey: deps.getBackendApiKey?.(resolved.backendKey),
-        allowRemoteInference: resolved.allowRemoteInference,
-        fetchFn: deps.fetchFn,
-        decodeAudio: deps.decodeAudio,
-      });
+      if (!resolved.available) {
+        // The registry has a reason: the backend is down, or its transcription
+        // probe found it cannot transcribe (a chat-only server such as Ollama).
+        // Building a transcriber for it would only turn every voice note into
+        // a failed request.
+        log.warn(
+          `Transcriber HTTP backend "${resolved.backendKey}" cannot run: ${resolved.reason ?? "backend unavailable"}. Assign a local Whisper model or a backend that serves the OpenAI audio transcription API (whisper-server, speaches, vLLM).`,
+        );
+        return null;
+      }
+      {
+        const options = {
+          url: resolved.url,
+          apiPathPrefix: resolved.apiPathPrefix,
+          model: resolved.model,
+          apiKey: deps.getBackendApiKey?.(resolved.backendKey),
+          allowRemoteInference: resolved.allowRemoteInference,
+          maxChunkSeconds: resolved.transcription?.maxChunkSeconds,
+          fetchFn: deps.fetchFn,
+          decodeAudio: deps.decodeAudio,
+        };
+        // The protocol the operator set, else the one the transcription probe
+        // found the backend answers on; the transcription API when neither.
+        return resolved.transcription?.protocol === "chat-audio"
+          ? new ChatAudioTranscriber(options)
+          : new HttpTranscriber(options);
+      }
     case "anthropic":
       log.warn(
         "Anthropic does not offer a transcription model — assign a local Whisper model or an HTTP transcription backend.",

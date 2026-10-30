@@ -110,7 +110,7 @@ export class Indexer {
     private db: Db,
     private source: DocumentSource,
     private chunker: Chunker,
-    private embedder: Embedder,
+    private embedder: Embedder | null,
     opts?: {
       /**
        * Static fallback cutoff. Used by tests and when no per-doc resolver
@@ -420,7 +420,14 @@ export class Indexer {
         const fullDocs = await this.source.getByIds(needFetchIds);
         for (const doc of fullDocs) {
           if (this.stopping) break;
-          doc.content = normalizeContent(doc.content);
+          // Structured offsets refer to the literal stored content. The chunker
+          // normalizes each extracted body before constructing its new fence.
+          if (
+            doc.metadata.documentType !== "conversation" ||
+            doc.metadata.extra?.conversationTurns === undefined
+          ) {
+            doc.content = normalizeContent(doc.content);
+          }
           const existing = indexedStates.get(doc.id);
           const embeddingChanged =
             !existing ||
@@ -459,7 +466,9 @@ export class Indexer {
 
       if (toEmbed.length > 0 && !this.stopping) {
         const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
-        const embedPromise = this.embedder.embed(allInputs).catch((): null => null);
+        const embedPromise = this.embedder
+          ? this.embedder.embed(allInputs).catch((): null => null)
+          : Promise.resolve(null);
         pendingEmbed = { embedPromise, toEmbed };
       }
 
@@ -702,7 +711,14 @@ export class Indexer {
         )
           continue;
 
-        doc.content = normalizeContent(doc.content);
+        // Structured offsets refer to the literal stored content. The chunker
+        // normalizes each extracted body before constructing its new fence.
+        if (
+          doc.metadata.documentType !== "conversation" ||
+          doc.metadata.extra?.conversationTurns === undefined
+        ) {
+          doc.content = normalizeContent(doc.content);
+        }
         const chunks = this.chunker.chunk(doc);
         // Zero-chunk docs still flow through for a terminal indexed marker.
         toEmbed.push({ doc, chunks });
@@ -715,7 +731,7 @@ export class Indexer {
         const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
         let allEmbeddings: Float32Array[] | null = null;
         try {
-          allEmbeddings = await this.embedder.embed(allInputs);
+          allEmbeddings = this.embedder ? await this.embedder.embed(allInputs) : null;
         } catch {
           // Batch failed — fall back to per-document embedding below.
         }
@@ -1000,6 +1016,18 @@ export class Indexer {
     doc: IndexableDocument,
     chunks: Chunk[],
   ): Promise<{ chunkRows: ChunkUpsertInput[]; truncated: number; dropped: number }> {
+    if (!this.embedder) {
+      return {
+        chunkRows: buildChunkRows(
+          doc,
+          chunks,
+          chunks.map(() => null),
+          true,
+        ),
+        truncated: 0,
+        dropped: 0,
+      };
+    }
     let truncated = 0;
     let dropped = 0;
     const embeddings = await embedChunksResilient(
@@ -1074,11 +1102,12 @@ function buildChunkRows(
   doc: IndexableDocument,
   chunks: Chunk[],
   embeddings: Array<Float32Array | null>,
+  lexicalOnly = false,
 ): ChunkUpsertInput[] {
   const rows: ChunkUpsertInput[] = [];
   for (let i = 0; i < chunks.length; i++) {
     const embedding = embeddings[i];
-    if (!embedding) continue;
+    if (!embedding && !lexicalOnly) continue;
     rows.push({
       id: chunkId(doc.id, chunks[i].index),
       documentId: doc.id,

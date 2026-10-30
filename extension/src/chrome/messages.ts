@@ -39,8 +39,7 @@ export interface CaptureEligibilityResponse {
 
 /** Acknowledgement returned once a confirmed capture is durably queued. */
 export type CaptureAck =
-  | { ok: true; accepted: boolean }
-  | { ok: false; reason: "queue-unavailable" };
+  { ok: true; accepted: boolean } | { ok: false; reason: "queue-unavailable" };
 
 /** Privacy-safe record written when a page cannot hand off to the worker. */
 export interface CaptureHandoffFailure {

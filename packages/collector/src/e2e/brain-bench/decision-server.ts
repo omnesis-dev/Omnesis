@@ -48,8 +48,7 @@ export type DecisionPolicyReply =
   | { readonly httpError: number; readonly message?: string };
 
 export type DecisionPolicy =
-  | ((request: DecisionServerRequest) => DecisionPolicyReply)
-  | { readonly cassetteDir: string };
+  ((request: DecisionServerRequest) => DecisionPolicyReply) | { readonly cassetteDir: string };
 
 export interface DecisionServerOptions {
   policy: DecisionPolicy;

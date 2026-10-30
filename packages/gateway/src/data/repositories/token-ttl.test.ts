@@ -36,10 +36,9 @@ describe("token TTL", () => {
     const dev = createDevice(db, { name: "d", kind: "cli" });
     const { id } = createToken(db, dev.id, [SCOPE_READ], "ttl", { ttlMs: 60_000 });
     const row = db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM tokens WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM tokens WHERE id = ?",
+      )
       .get(id);
     expect(row?.expires_at).toBeGreaterThan(Date.now());
   });
@@ -48,10 +47,9 @@ describe("token TTL", () => {
     const dev = createDevice(db, { name: "d", kind: "cli" });
     const { id, token } = createToken(db, dev.id, [SCOPE_READ], "perm");
     const row = db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM tokens WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM tokens WHERE id = ?",
+      )
       .get(id);
     expect(row?.expires_at).toBeNull();
     expect(lookupToken(db, token)).not.toBeNull();

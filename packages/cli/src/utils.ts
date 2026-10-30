@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createInterface } from "node:readline";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   dirname,
   basename as pathBasename,
@@ -144,13 +144,30 @@ export type { SerializedDescriptor } from "@omnesis/source-sdk";
  */
 const CLI_USER_AGENT = `omnesis/${readPackageVersion(import.meta.url)}`;
 
+/**
+ * Why a command that talks to the gateway as its administrator cannot run
+ * here. A machine paired only as a collector holds that collector's token and
+ * never the gateway's admin token, so starting a gateway is not the remedy
+ * there: the command belongs on the gateway's host, or in its portal.
+ */
+export function missingTokenMessage(
+  configDir: string = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+  gatewayUrl: string = GATEWAY_URL,
+): string {
+  if (existsSync(pathJoin(configDir, "collector-token"))) {
+    return (
+      `This machine is paired with the gateway at ${gatewayUrl} as a collector, and holds ` +
+      "that collector's token rather than the gateway's admin token. Run this command on " +
+      `the gateway host, or use the portal: ${gatewayUrl.replace(/\/+$/u, "")}/portal/`
+    );
+  }
+  return "No auth token found. Start the gateway first (auto-generates one) or set OMNESIS_TOKEN.";
+}
+
 export async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = resolveToken();
   if (!token) {
-    throw new CliError(
-      "No auth token found. Start the gateway first (auto-generates one) or set OMNESIS_TOKEN.",
-      EXIT_AUTH,
-    );
+    throw new CliError(missingTokenMessage(), EXIT_AUTH);
   }
   const url = path.startsWith("http") ? path : `${GATEWAY_REQUEST_URL}${path}`;
   return fetch(url, {

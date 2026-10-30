@@ -687,28 +687,50 @@ export class WhatsAppProvider implements Provider {
   }
 
   /**
-   * One-time full-history import from a local encrypted iOS backup.
-   * Decrypts + parses the backup's ChatStorage.sqlite and merges it into the
-   * durable store by stable id. Runs against the live store (single writer) —
-   * the dirty-day marking means the normal sync drain publishes the result.
-   * Planned: dispatch on a backup-variant value for #29 (Android crypt15)
-   * and #28 (Tier-2 targeted pull); both reuse the merge below.
+   * One-time full-history import from a local encrypted backup — an iOS
+   * Finder/iTunes backup or an Android crypt15 backup (#29). Decrypts +
+   * parses the backup's message DB and merges it into the durable store by
+   * stable id. Runs against the live store (single writer) — the dirty-day
+   * marking means the normal sync drain publishes the result.
+   * Planned: #28 (Tier-2 targeted pull), reusing the same merge.
    */
   async importHistory(
     values: Record<string, string>,
     callbacks?: ImportCallbacks,
   ): Promise<ImportSummary> {
+    const backupKind = values.backupKind?.trim() || "ios";
+    if (backupKind !== "ios" && backupKind !== "android") {
+      throw new Error(`Unknown backup kind: ${backupKind}`);
+    }
+    const { importWhatsAppHistory } = await import("./import/importer.js");
+    const ownDigits = this._accountId.replace(/\D/g, "");
+    const own = { jid: `${ownDigits}@s.whatsapp.net`, name: "You" };
+
+    if (backupKind === "android") {
+      const backupPath = values.androidBackupPath?.trim();
+      const passphrase = values.androidKeySecret ?? "";
+      if (!backupPath) throw new Error("The path to the msgstore.db.crypt15 file is required");
+      if (!passphrase) throw new Error("The backup key (or key file path) is required");
+      return importWhatsAppHistory({
+        backupKind: "android",
+        backupPath,
+        passphrase,
+        store: this.store,
+        own,
+        callbacks,
+      });
+    }
+
     const backupPath = values.backupPath?.trim();
     const passphrase = values.passphrase ?? "";
     if (!backupPath) throw new Error("A backup folder path is required");
     if (!passphrase) throw new Error("The backup password is required");
-    const { importWhatsAppHistory } = await import("./import/importer.js");
-    const ownDigits = this._accountId.replace(/\D/g, "");
     return importWhatsAppHistory({
+      backupKind: "ios",
       backupPath,
       passphrase,
       store: this.store,
-      own: { jid: `${ownDigits}@s.whatsapp.net`, name: "You" },
+      own,
       callbacks,
     });
   }

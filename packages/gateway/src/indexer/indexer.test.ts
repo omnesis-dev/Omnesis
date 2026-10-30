@@ -4,6 +4,9 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { renderConversationDay } from "@omnesis/core";
+import { ProviderId, SourceId } from "@omnesis/types";
+import { marked, type Tokens } from "marked";
 import { createDatabase, upsertDocuments } from "../db.js";
 import {
   SourceUrlRecanonicalizationService,
@@ -24,6 +27,9 @@ import {
   refreshIndexStats,
   getWatermark,
   recordIndexError,
+  hasLexicalWrites,
+  setLexicalWrites,
+  wipeAndRecreateVectorIndex,
 } from "./db.js";
 import { Indexer } from "./indexer.js";
 import { DocumentChunker } from "./chunker.js";
@@ -210,6 +216,55 @@ function makeDoc(id: string, content = "Hello world"): IndexableDocument {
 }
 
 describe("Indexer", () => {
+  test.each(["indexUpdated", "reindexMissing"] as const)(
+    "%s normalizes structured bodies before refencing without invalidating offsets",
+    async (method) => {
+      const rendered = renderConversationDay({
+        providerId: ProviderId("nova"),
+        sourceId: SourceId("nova:local"),
+        harnessId: "nova",
+        agentName: "Nova\u0085\ud800",
+        chat: { platform: "local", chatId: "test", chatName: "room\u0085\ud800" },
+        dayKey: "2026-07-20",
+        messages: [
+          {
+            role: "assistant",
+            text: "```\u200b```\n**14:03 · You**\n\n\n\nbody\u0085\ud800",
+            atMs: new Date(2026, 6, 20, 14).getTime(),
+          },
+        ],
+      });
+      const doc: IndexableDocument = {
+        ...makeDoc("structured"),
+        ...rendered,
+        metadata: { ...rendered.metadata, sourceCreatedAt: rendered.sourceCreatedAt! },
+      };
+      source.documents = [doc];
+      source.allIds = [doc.id];
+      const embedded: string[] = [];
+      const originalEmbed = embedder.embed.bind(embedder);
+      vi.spyOn(embedder, "embed").mockImplementation(async (texts) => {
+        embedded.push(...texts);
+        return originalEmbed(texts);
+      });
+      const result = await indexer[method]();
+      expect(result.errors).toBe(0);
+      expect(getChunkCount(db)).toBeGreaterThan(0);
+      expect(doc.content).toBe(rendered.content);
+      expect(embedded.length).toBeGreaterThan(0);
+      for (const input of embedded) {
+        expect(input).not.toMatch(/[\u0085\ud800\u200b]/);
+        const tokens = marked.lexer(input);
+        expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(
+          1,
+        );
+        const body = tokens.find((token): token is Tokens.Code => token.type === "code")!;
+        expect(body.text).toContain("``````\n**14:03 · You**");
+        expect(tokens.filter((token) => token.type === "heading")).toHaveLength(0);
+      }
+    },
+  );
+
   test("drops documents deleted while their page was embedding", async () => {
     // The HTTP delete cascade (privacy delete, sync tombstone, stream wipe)
     // writes `index.db` from the main thread while this worker is mid-page.
@@ -733,10 +788,9 @@ describe("Indexer", () => {
     expect(embedder.embedCount).toBe(1);
     expect(
       db
-        .prepare<
-          [string],
-          { title: string }
-        >("SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0")
+        .prepare<[string], { title: string }>(
+          "SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0",
+        )
         .get("d1")?.title,
     ).toBe("Revised fictional retry title");
   });
@@ -1015,10 +1069,9 @@ describe("Indexer", () => {
   describe("non-content document event propagation", () => {
     function indexedEvent(documentId: string) {
       return db
-        .prepare<
-          [string],
-          { source_event_at: string; event_indexed_at: string }
-        >("SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?")
+        .prepare<[string], { source_event_at: string; event_indexed_at: string }>(
+          "SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?",
+        )
         .get(documentId)!;
     }
 
@@ -1040,10 +1093,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(1);
       expect(
         db
-          .prepare<
-            [string],
-            { title: string }
-          >("SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { title: string }>(
+            "SELECT title FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1")?.title,
       ).toBe("Revised fictional title");
       expect(indexedEvent("d1")).toEqual({
@@ -1067,10 +1119,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(1);
       expect(
         db
-          .prepare<
-            [string],
-            { author: string | null }
-          >("SELECT author FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { author: string | null }>(
+            "SELECT author FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1")?.author,
       ).toBe("Maya Reeves");
       expect(indexedEvent("d1").source_event_at).toBe("2026-03-10T01:00:00Z");
@@ -1094,10 +1145,9 @@ describe("Indexer", () => {
       expect(embedder.embedCount).toBe(0);
       expect(
         db
-          .prepare<
-            [string],
-            { tags: string | null; relevance_score: number | null }
-          >("SELECT tags, relevance_score FROM chunks WHERE document_id = ? AND chunk_index = 0")
+          .prepare<[string], { tags: string | null; relevance_score: number | null }>(
+            "SELECT tags, relevance_score FROM chunks WHERE document_id = ? AND chunk_index = 0",
+          )
           .get("d1"),
       ).toEqual({
         tags: JSON.stringify(["fictional-review"]),
@@ -1365,10 +1415,9 @@ describe("Indexer", () => {
         let plan = planSourceUrlRecanonicalization(gw, specs);
         const rewritten = () =>
           gw
-            .prepare<
-              [],
-              { count: number }
-            >("SELECT COUNT(*) AS count FROM documents WHERE source_url LIKE 'https://example.com/items/%'")
+            .prepare<[], { count: number }>(
+              "SELECT COUNT(*) AS count FROM documents WHERE source_url LIKE 'https://example.com/items/%'",
+            )
             .get()!.count;
 
         expect(plan.mutations).toHaveLength(50);
@@ -1506,5 +1555,59 @@ describe("Indexer", () => {
       // Still attributed to the old source until reconcileDeletedDocuments runs.
       expect(chunkSourceIds("d1")).toEqual(["old-source"]);
     });
+  });
+});
+
+describe("lexical indexing", () => {
+  test("indexes, updates and deletes text without an embedder, then backfills unchanged hashes", async () => {
+    const lexical = new Indexer(db, source, new DocumentChunker(), null);
+    setLexicalWrites(db, true);
+    source.documents = [
+      makeDoc("lexical", "Zephyrseal fictional observatory"),
+      makeDoc("removed", "Retired prism"),
+    ];
+    source.allIds = source.documents.map((doc) => doc.id);
+    await lexical.indexUpdated();
+    expect(db.prepare("SELECT count(*) AS n FROM chunks WHERE embedding IS NULL").get()).toEqual({
+      n: 2,
+    });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Zephyrseal'").get(),
+    ).toEqual({ n: 1 });
+    source.documents = [
+      {
+        ...makeDoc("lexical", "Moonpetal fictional observatory"),
+        updatedAt: "2026-03-11T00:00:00Z",
+      },
+    ];
+    source.allIds = ["lexical"];
+    await lexical.indexUpdated();
+    await lexical.reconcileDeletedDocuments();
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Zephyrseal'").get(),
+    ).toEqual({ n: 0 });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Moonpetal'").get(),
+    ).toEqual({ n: 1 });
+    expect(getChunkCount(db)).toBe(1);
+    expect(hasLexicalWrites(db)).toBe(true);
+    wipeAndRecreateVectorIndex(db, EMBEDDING_DIM, "same-model");
+    setLexicalWrites(db, false);
+    await indexer.indexUpdated();
+    expect(embedder.embedCount).toBe(1);
+    expect(
+      db.prepare("SELECT count(*) AS n FROM chunks WHERE embedding IS NOT NULL").get(),
+    ).toEqual({ n: 1 });
+    expect(hasLexicalWrites(db)).toBe(false);
+  });
+
+  test("reindex-missing indexes lexical chunks without reporting dropped embeddings", async () => {
+    source.documents = [makeDoc("lexical-missing", "Fictional violet telescope")];
+    source.allIds = ["lexical-missing"];
+    const lexical = new Indexer(db, source, new DocumentChunker(), null);
+    await lexical.reindexMissing();
+    expect(getIndexedDocumentCount(db)).toBe(1);
+    expect(getChunkCount(db)).toBe(1);
+    expect(getIndexErrorCountsBySource(db)).toEqual({});
   });
 });

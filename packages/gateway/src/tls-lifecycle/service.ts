@@ -171,6 +171,17 @@ export class TlsLifecycleService {
   }
 
   /**
+   * Those of `hosts` the served certificate covers, by name, wildcard or IP:
+   * a client dialing one of them verifies it. Read against the certificate
+   * served now, so a renewal that drops a name drops it here at once.
+   */
+  coveredHosts(hosts: readonly string[]): string[] {
+    if (hosts.length === 0) return [];
+    const cert = new X509Certificate(this.served.cert);
+    return hosts.filter((host) => certificateCoversHost(cert, host));
+  }
+
+  /**
    * When the gateway will next replace the certificate it serves, for a
    * certificate it renews itself (a Tailscale or mkcert one). A client that
    * pinned this certificate's fingerprint stops connecting then. Null for the

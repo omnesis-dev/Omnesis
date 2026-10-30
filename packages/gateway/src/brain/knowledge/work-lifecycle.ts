@@ -25,6 +25,12 @@ export interface AbandonKnowledgeBatchInput {
    * batch never reached is not.
    */
   failure?: KnowledgeRetryPolicy;
+  /**
+   * Present when the batch's run died on its last attempt: the run is settled
+   * failed in the same transaction, and nothing is abandoned unless it still
+   * is that dead row (see `failExhaustedCognitionRun`).
+   */
+  deadRun?: { runId: string; maxAttempts: number; claimedBefore: number };
 }
 
 /** Above this many unfinished dependents, abandonment retries every seed whole. */
@@ -50,16 +56,14 @@ function currentWorkRevision(
 ): string | undefined {
   return subjectKind === "source"
     ? db
-        .prepare<
-          [string],
-          { revision: string }
-        >(`SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`)
+        .prepare<[string], { revision: string }>(
+          `SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`,
+        )
         .get(subjectId)?.revision
     : db
-        .prepare<
-          [string],
-          { revision: string }
-        >("SELECT CAST(revision AS TEXT) AS revision FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1")
+        .prepare<[string], { revision: string }>(
+          "SELECT CAST(revision AS TEXT) AS revision FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1",
+        )
         .get(subjectId)?.revision;
 }
 
@@ -100,10 +104,9 @@ export function abandonKnowledgeBatch(
 ): boolean {
   return db.transaction(() => {
     const batch = db
-      .prepare<
-        [string],
-        { status: string; tier: KnowledgeWork["tier"] }
-      >("SELECT status,tier FROM knowledge_batches WHERE id=?")
+      .prepare<[string], { status: string; tier: KnowledgeWork["tier"] }>(
+        "SELECT status,tier FROM knowledge_batches WHERE id=?",
+      )
       .get(input.batchId);
     if (!batch || ["completed", "abandoned"].includes(batch.status)) return false;
     db.prepare(
@@ -120,10 +123,9 @@ export function abandonKnowledgeBatch(
     ).run(now, input.batchId);
     // Bounded by the batch's own frontier, which the engine caps before offering.
     const frontier = db
-      .prepare<
-        [string],
-        AbandonedFrontierRow
-      >("SELECT node_id AS nodeId,status,depth,input_versions_json AS inputVersionsJson FROM knowledge_frontier WHERE batch_id=?")
+      .prepare<[string], AbandonedFrontierRow>(
+        "SELECT node_id AS nodeId,status,depth,input_versions_json AS inputVersionsJson FROM knowledge_frontier WHERE batch_id=?",
+      )
       .all(input.batchId);
     const byNode = new Map<string, AbandonedFrontierRow[]>();
     for (const item of frontier) {
@@ -135,10 +137,9 @@ export function abandonKnowledgeBatch(
     // itself (a deferred curation or placement keeps its own successor).
     const seedKeys = new Set(
       db
-        .prepare<
-          [string],
-          Pick<KnowledgeWork, "subjectKind" | "subjectId">
-        >("SELECT subject_kind AS subjectKind,subject_id AS subjectId FROM knowledge_work WHERE batch_id=?")
+        .prepare<[string], Pick<KnowledgeWork, "subjectKind" | "subjectId">>(
+          "SELECT subject_kind AS subjectKind,subject_id AS subjectId FROM knowledge_work WHERE batch_id=?",
+        )
         .all(input.batchId)
         .map(workKey),
     );
@@ -232,10 +233,9 @@ export function abandonKnowledgeBatch(
     // Expanded dependents are ordinary change obligations once their seed is done.
     for (const item of carried) {
       const node = db
-        .prepare<
-          [string],
-          { revision: number; kind: string }
-        >("SELECT revision,kind FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1")
+        .prepare<[string], { revision: number; kind: string }>(
+          "SELECT revision,kind FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1",
+        )
         .get(item.nodeId);
       if (!node) continue;
       const reason = node.kind === "root" ? "root" : "change";
@@ -385,10 +385,9 @@ export function recordKnowledgeDiscoveryTargets(
   db.transaction(() => {
     assertKnowledgeRunFence(db, input.runFence);
     const source = db
-      .prepare<
-        [string],
-        { content_hash: string }
-      >(`SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id WHERE d.id=? AND COALESCE(r.deleted,0)=0`)
+      .prepare<[string], { content_hash: string }>(
+        `SELECT ${knowledgeSourceRevisionSql()} AS content_hash FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id WHERE d.id=? AND COALESCE(r.deleted,0)=0`,
+      )
       .get(input.sourceId);
     if (
       !source ||
@@ -425,25 +424,22 @@ export function refreshKnowledgeWork(db: Database.Database, ids: string[], now: 
     let changed = 0;
     for (const id of new Set(ids)) {
       const work = db
-        .prepare<
-          [string],
-          { subject_id: string; subject_kind: string; input_revision: string }
-        >("SELECT subject_id,subject_kind,input_revision FROM knowledge_work WHERE id=? AND status='pending'")
+        .prepare<[string], { subject_id: string; subject_kind: string; input_revision: string }>(
+          "SELECT subject_id,subject_kind,input_revision FROM knowledge_work WHERE id=? AND status='pending'",
+        )
         .get(id);
       if (!work) continue;
       const current =
         work.subject_kind === "source"
           ? db
-              .prepare<
-                [string],
-                { revision: string }
-              >(`SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`)
+              .prepare<[string], { revision: string }>(
+                `SELECT ${knowledgeSourceRevisionSql()} AS revision FROM documents d WHERE id=?`,
+              )
               .get(work.subject_id)
           : db
-              .prepare<
-                [string],
-                { revision: string }
-              >("SELECT CAST(revision AS TEXT) AS revision FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1")
+              .prepare<[string], { revision: string }>(
+                "SELECT CAST(revision AS TEXT) AS revision FROM knowledge_nodes WHERE id=? AND COALESCE(json_extract(fields_json,'$.withdrawn'),0)!=1",
+              )
               .get(work.subject_id);
       if (!current) {
         changed += db

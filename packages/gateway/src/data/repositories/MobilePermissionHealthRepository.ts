@@ -207,7 +207,9 @@ export function addMobilePermissionEpisodeCauseColumns(db: Db): void {
     .prepare<
       [],
       { source_id: string; aggregate_state: MobilePermissionState; capabilities_json: string }
-    >("SELECT source_id, aggregate_state, capabilities_json FROM mobile_permission_health WHERE episode_id IS NOT NULL AND episode_reason IS NULL")
+    >(
+      "SELECT source_id, aggregate_state, capabilities_json FROM mobile_permission_health WHERE episode_id IS NOT NULL AND episode_reason IS NULL",
+    )
     .all();
   const update = db.prepare(
     "UPDATE mobile_permission_health SET episode_reason = ?, episode_driver_ids_json = ? WHERE source_id = ?",
@@ -351,17 +353,15 @@ export function replaceMobilePermissionHealth(
   return db
     .transaction(() => {
       const existing = db
-        .prepare<
-          [string, string],
-          StoredRow
-        >("SELECT * FROM mobile_permission_health WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], StoredRow>(
+          "SELECT * FROM mobile_permission_health WHERE source_id = ? AND device_id = ?",
+        )
         .get(input.sourceId, input.deviceId);
       const recoveredStale =
         db
-          .prepare<
-            [string],
-            { found: number }
-          >("SELECT 1 AS found FROM mobile_permission_health WHERE source_id = ? AND episode_reason = 'stale' LIMIT 1")
+          .prepare<[string], { found: number }>(
+            "SELECT 1 AS found FROM mobile_permission_health WHERE source_id = ? AND episode_reason = 'stale' LIMIT 1",
+          )
           .get(input.sourceId) !== undefined;
       if (existing && input.report.checkedAt <= existing.checked_at) {
         return {
@@ -458,10 +458,9 @@ export function replaceMobilePermissionHealth(
         keepPriorEpisode ? 1 : 0,
       );
       const stored = db
-        .prepare<
-          [string, string],
-          StoredRow
-        >("SELECT * FROM mobile_permission_health WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], StoredRow>(
+          "SELECT * FROM mobile_permission_health WHERE source_id = ? AND device_id = ?",
+        )
         .get(input.sourceId, input.deviceId)!;
       if (recoveredStale) {
         db.prepare(

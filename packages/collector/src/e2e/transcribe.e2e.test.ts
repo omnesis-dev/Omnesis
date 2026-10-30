@@ -123,15 +123,22 @@ describe("speech-to-text through an HTTP transcription backend (E2E)", () => {
     server.close();
   });
 
-  test("decodes the audio and returns the server's transcript", async () => {
+  test("verifies the backend at boot, then decodes the audio and returns the server's transcript", async () => {
     const result = await client.transcribe(wavOfSilence(2), "audio/wav");
     expect(result?.text).toBe("the recording, transcribed on the server");
     expect(result?.durationSec).toBeCloseTo(2, 1);
-    expect(received).toHaveLength(1);
-    expect(received[0]!.path).toBe("/v1/audio/transcriptions");
-    expect(received[0]!.model).toBe("whisper-test");
-    expect(received[0]!.file?.type).toBe("audio/wav");
-    expect(received[0]!.file?.size).toBe(44 + 2 * 16_000 * 2);
+    // The gateway asked the backend to transcribe one second of audio when
+    // it booted, to confirm the assignment can run; the recording followed.
+    expect(received).toHaveLength(2);
+    const [probe, recording] = received;
+    expect(probe!.path).toBe("/v1/audio/transcriptions");
+    expect(probe!.model).toBe("whisper-test");
+    expect(probe!.file?.name).toBe("probe.wav");
+    expect(probe!.file?.size).toBe(44 + 1 * 16_000 * 2);
+    expect(recording!.path).toBe("/v1/audio/transcriptions");
+    expect(recording!.model).toBe("whisper-test");
+    expect(recording!.file?.type).toBe("audio/wav");
+    expect(recording!.file?.size).toBe(44 + 2 * 16_000 * 2);
   });
 });
 

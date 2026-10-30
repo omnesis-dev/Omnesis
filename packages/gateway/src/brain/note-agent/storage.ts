@@ -7,9 +7,9 @@
  * Notes the owner's own clients capture after the note agent first ran are
  * queued as they appear; a note from an external agent or the browser
  * extension is never read, so a notes-only grant cannot change tasks or
- * memory through it. Earlier notes are not processed retroactively, and notes
- * captured while the owner has the note agent switched off are settled as
- * skipped, so switching it back on never acts on them. A row
+ * memory through it. Earlier notes are not processed retroactively, and a
+ * note captured while the owner has the note agent switched off is settled as
+ * skipped with its capture, so switching it back on never acts on it. A row
  * waits until its note has settled (no edits for a short while, its voice transcript in),
  * runs once, and keeps the receipt the user sees under the note. Deleting a
  * note deletes its row.
@@ -117,6 +117,18 @@ export function enqueueNewNotes(db: Db, now: number): number {
 }
 
 /**
+ * Settle a note as skipped as it is captured, in the capture's transaction:
+ * the owner has the note agent switched off, so it is never read, however
+ * soon the agent is switched back on and whether or not a scan saw it off.
+ */
+export function skipNoteAtCapture(db: Db, entryId: string, now: number): void {
+  db.prepare<[string, number, number, number]>(
+    `INSERT OR IGNORE INTO note_agent_runs (entry_id, state, run_after, created_at, updated_at)
+     VALUES (?, 'skipped', ?, ?, ?)`,
+  ).run(entryId, now, now, now);
+}
+
+/**
  * Settle the owner's notes received since the last scan as skipped, and
  * return how many: what is told while the note agent is switched off is
  * never read, even once it is switched back on. Before the note agent first
@@ -146,10 +158,9 @@ function scanNewNotes(db: Db, now: number, state: "pending" | "skipped"): number
       )
       .run(state, now, now, now, scanned);
     const latest = db
-      .prepare<
-        [string],
-        { latest: string | null }
-      >("SELECT MAX(received_at) AS latest FROM note_entries WHERE from_owner = 1 AND received_at >= ?")
+      .prepare<[string], { latest: string | null }>(
+        "SELECT MAX(received_at) AS latest FROM note_entries WHERE from_owner = 1 AND received_at >= ?",
+      )
       .get(scanned)?.latest;
     if (latest && latest > scanned)
       db.prepare<[string]>("UPDATE note_agent_meta SET value = ? WHERE key = 'scanned'").run(
@@ -229,10 +240,9 @@ export function finishNoteRun(
 export function getNoteRuns(db: Db, entryIds: readonly string[]): Map<string, NoteAgentRow> {
   if (entryIds.length === 0) return new Map();
   const rows = db
-    .prepare<
-      string[],
-      DbRow
-    >(`SELECT * FROM note_agent_runs WHERE entry_id IN (${entryIds.map(() => "?").join(", ")})`)
+    .prepare<string[], DbRow>(
+      `SELECT * FROM note_agent_runs WHERE entry_id IN (${entryIds.map(() => "?").join(", ")})`,
+    )
     .all(...entryIds);
   return new Map(rows.map((r) => [r.entry_id, toRow(r)]));
 }
@@ -241,10 +251,9 @@ export function getNoteRuns(db: Db, entryIds: readonly string[]): Map<string, No
 export function hasPendingNotes(db: Db): boolean {
   return (
     db
-      .prepare<
-        [],
-        { one: number }
-      >("SELECT 1 AS one FROM note_agent_runs WHERE state IN ('pending', 'running') LIMIT 1")
+      .prepare<[], { one: number }>(
+        "SELECT 1 AS one FROM note_agent_runs WHERE state IN ('pending', 'running') LIMIT 1",
+      )
       .get() !== undefined
   );
 }

@@ -17,7 +17,7 @@ under [`website/docs/`](website/docs/)).
 
 | Tool                        | Why                                 | Notes                                           |
 | --------------------------- | ----------------------------------- | ----------------------------------------------- |
-| **Node ≥ 24**               | runtime for gateway, collector, CLI | macOS users on Homebrew: `brew install node@24` |
+| **Node 24.16+ or 26.1+**    | runtime for gateway, collector, CLI | macOS users on Homebrew: `brew install node@24` |
 | **Xcode 16+**               | iOS app and SwiftLint/SwiftFormat   | macOS only; required only if you touch `ios/`   |
 | **XcodeGen**                | regenerates `ios/Omnesis.xcodeproj` | `brew install xcodegen`                         |
 | **SwiftFormat + SwiftLint** | iOS code style / lint               | `brew install swiftformat swiftlint`            |
@@ -245,6 +245,8 @@ under other terms — including proprietary or commercial licenses. This keeps
 future relicensing options open for the project (for example, offering a
 commercial license alongside the AGPL). The CLA-Assistant bot runs on your first
 pull request and asks you to sign by leaving a comment; it records your signature
-in [`signatures/cla.json`](signatures). A PR cannot be merged until the CLA is
-signed. If the assignment model is a blocker for you, open an issue — we'd rather
-find a path than lose the contribution.
+in [`signatures/cla.json` on the `cla-signatures` branch](https://github.com/omnesis-dev/Omnesis/blob/cla-signatures/signatures/cla.json).
+The required `cla-assistant` check blocks merging until all non-exempt contributors
+have signed. The repository owner and bot accounts are exempt. If the assignment
+model is a blocker for you, open an issue — we'd rather find a path than lose the
+contribution.

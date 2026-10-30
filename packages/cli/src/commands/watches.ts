@@ -12,7 +12,6 @@
  */
 
 import { defineCommand } from "citty";
-import { assertNever } from "@omnesis/core";
 import { c, CliError, EXIT_USER_ERROR, gatewayJson } from "../utils.js";
 import type {
   CreateSubscriptionRequest,
@@ -45,7 +44,8 @@ function parseExpiresAt(value: unknown, allowNone: boolean): number | null | und
 
 /**
  * What a firing does, in one line. Exhaustive so a new delivery kind must say
- * how it reads rather than silently rendering as a push.
+ * how it reads rather than silently rendering as a push; a kind added by a
+ * newer gateway reads as its name.
  */
 function reactionLine(reaction: SubscriptionSummary["reaction"]): string {
   switch (reaction.kind) {
@@ -59,8 +59,10 @@ function reactionLine(reaction: SubscriptionSummary["reaction"]): string {
         ? `notify this device's owner — ${text}`
         : "notify this device's owner";
     }
-    default:
-      return assertNever(reaction);
+    default: {
+      const _exhaustive: never = reaction;
+      return (reaction as { kind: string }).kind;
+    }
   }
 }
 

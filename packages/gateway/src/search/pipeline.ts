@@ -151,6 +151,8 @@ export class SearchPipeline {
 
   private indexDb: Db;
   private embedder?: Embedder;
+  /** Set while the indexer cannot hold the vector graph; the vector lane is skipped. */
+  private vectorUnavailableReason: string | null = null;
   private searchConfig?: SearchConfig;
   private gatewayDb?: Db;
   private embeddingModelId?: string;
@@ -264,12 +266,32 @@ export class SearchPipeline {
    * documented downtime window instead of embedding queries with a now-invalid
    * old-dimension model against a wiped/new index.
    */
-  setEmbedder(embedder: Embedder | undefined): void {
+  setEmbedder(embedder: undefined): void;
+  setEmbedder(embedder: Embedder, embeddingModelId: string): void;
+  setEmbedder(embedder: Embedder | undefined, embeddingModelId?: string): void {
     this.embedder = embedder;
+    this.embeddingModelId = embedder ? embeddingModelId : undefined;
     log.info(
-      embedder
-        ? "Search pipeline: embedder attached, vector search enabled"
-        : "Search pipeline: embedder cleared, vector search degraded to BM25-only",
+      !embedder
+        ? "Search pipeline: embedder cleared, vector search degraded to BM25-only"
+        : this.vectorUnavailableReason
+          ? "Search pipeline: embedder attached, vector search stays off (semantic search degraded)"
+          : "Search pipeline: embedder attached, vector search enabled",
+    );
+  }
+
+  /**
+   * Turn the vector lane off with a reason (the indexer released the HNSW graph
+   * for lack of memory), or back on with null. Queries are then not embedded,
+   * and the vector stage reports the reason as its skip.
+   */
+  setVectorSearchUnavailable(reason: string | null): void {
+    if (reason === this.vectorUnavailableReason) return;
+    this.vectorUnavailableReason = reason;
+    log.info(
+      reason
+        ? "Search pipeline: vector search off, keyword search only (semantic search degraded)"
+        : "Search pipeline: vector search available",
     );
   }
 
@@ -521,7 +543,7 @@ export class SearchPipeline {
     let laneVector: Float32Array | null = null;
     let embedMs = 0;
     const embedding = async () => {
-      if (mode !== "hybrid" || !this.embedder) return;
+      if (mode !== "hybrid" || !this.embedder || this.vectorUnavailableReason) return;
       // Embed on this thread, only when an embedder is attached; otherwise
       // `queryVector` stays null and the core records the vector-skip reason.
       // An embed throw propagates (the search fails rather than silently
@@ -578,8 +600,11 @@ export class SearchPipeline {
       mode,
       bm25Text: effectiveText,
       prefixLastToken: options?.prefixLastToken,
-      embedderPresent: !!this.embedder,
+      embedderPresent: !!this.embedder && !this.vectorUnavailableReason,
       queryVector,
+      ...(this.vectorUnavailableReason
+        ? { vectorUnavailableReason: this.vectorUnavailableReason }
+        : {}),
       embedMs,
       // The query-model / active-generation compare that closes the
       // same-dimension embedder-swap hole is wired through the core (see
@@ -1036,10 +1061,9 @@ export class SearchPipeline {
     const ids = results.map((r) => r.documentId);
     const placeholders = ids.map(() => "?").join(",");
     const extRows = this.gatewayDb
-      .prepare<
-        string[],
-        { id: string; external_id: string | null; stream_id: string }
-      >(`SELECT id, external_id, stream_id FROM documents WHERE id IN (${placeholders})`)
+      .prepare<string[], { id: string; external_id: string | null; stream_id: string }>(
+        `SELECT id, external_id, stream_id FROM documents WHERE id IN (${placeholders})`,
+      )
       .all(...ids);
     const externalById = new Map(
       extRows.map((r) => [r.id, { externalId: r.external_id, streamId: r.stream_id }]),

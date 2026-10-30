@@ -19,10 +19,9 @@ export interface KnowledgeContinuationProgress {
 /** Offering inputs and changing a batch revision are not completed work. */
 function settledFrontier(db: Database.Database, batchId: string): number {
   return db
-    .prepare<
-      [string],
-      { count: number }
-    >("SELECT COUNT(*) AS count FROM knowledge_frontier WHERE batch_id=? AND status IN ('changed','unchanged','skipped')")
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM knowledge_frontier WHERE batch_id=? AND status IN ('changed','unchanged','skipped')",
+    )
     .get(batchId)!.count;
 }
 
@@ -83,10 +82,9 @@ export function continueKnowledgeRun(
     const { settlement, progress } = input;
     if (db.prepare("SELECT 1 FROM cognition_runs WHERE id=?").get(input.successorId)) return false;
     const run = db
-      .prepare<
-        [string],
-        { payload_json: string; dedupe_key: string | null }
-      >("SELECT payload_json,dedupe_key FROM cognition_runs WHERE id=? AND kind='synthesis' AND status='pending'")
+      .prepare<[string], { payload_json: string; dedupe_key: string | null }>(
+        "SELECT payload_json,dedupe_key FROM cognition_runs WHERE id=? AND kind='synthesis' AND status='pending'",
+      )
       .get(settlement.runId);
     if (!run || run.payload_json !== settlement.claimedPayloadJson) return false;
     const payload = parseCognitionSynthesisRunPayload(JSON.parse(run.payload_json));

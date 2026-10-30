@@ -306,10 +306,9 @@ export class PrivacyPolicyStore {
       const version = currentPrivacyPolicyVersion(this.history!.db, familyId);
       if (!version) return null;
       const family = this.history.db
-        .prepare<
-          [string],
-          { name: string }
-        >("SELECT name FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .prepare<[string], { name: string }>(
+          "SELECT name FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+        )
         .get(familyId);
       return family ? this.document({ ...version, familyName: family.name }) : null;
     });
@@ -332,10 +331,9 @@ export class PrivacyPolicyStore {
       }
       if (
         this.history.db
-          .prepare<
-            [string],
-            { present: number }
-          >("SELECT 1 AS present FROM privacy_policy_families WHERE name_key = ?")
+          .prepare<[string], { present: number }>(
+            "SELECT 1 AS present FROM privacy_policy_families WHERE name_key = ?",
+          )
           .get(name.toLowerCase())
       ) {
         throw new PrivacyPolicyValidationError("A privacy policy with this name already exists.");
@@ -496,10 +494,9 @@ export class PrivacyPolicyStore {
     return this.serialized(async () => {
       if (!this.history) return null;
       const family = this.history.db
-        .prepare<
-          [string],
-          { name: string }
-        >("SELECT name FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .prepare<[string], { name: string }>(
+          "SELECT name FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+        )
         .get(familyId);
       const current = family ? currentPrivacyPolicyVersion(this.history.db, familyId) : null;
       if (!family || !current || current.revision !== expectedRevision) return null;

@@ -136,10 +136,7 @@ export function credentialEverAuthenticated(
  * the wrong call.
  */
 export type CollectorAuthVerdict =
-  | "authenticated"
-  | "needs-pairing"
-  | "never-authenticated"
-  | "unreachable";
+  "authenticated" | "needs-pairing" | "never-authenticated" | "unreachable";
 
 /**
  * Classify one probe result. `status` is the HTTP status the gateway

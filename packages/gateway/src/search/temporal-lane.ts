@@ -212,10 +212,9 @@ function windowRowids(
 /** The window's chunk count, read up to `cap`. */
 function countWindowChunks(db: Db, window: WindowRowids, cap: number): number {
   const row = db
-    .prepare<
-      (string | number)[],
-      { n: number }
-    >(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM (${window.sql}) LIMIT ?)`)
+    .prepare<(string | number)[], { n: number }>(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM (${window.sql}) LIMIT ?)`,
+    )
     .get(...window.params, cap);
   return row?.n ?? 0;
 }
@@ -233,10 +232,9 @@ function exactCosineInWindow(
   if (queryNorm === 0) return [];
   const scored: RankedChunk[] = [];
   const rows = db
-    .prepare<
-      (string | number)[],
-      { rowid: number; embedding: Buffer | null }
-    >(`SELECT rowid, embedding FROM chunks WHERE rowid IN (${window.sql}) AND embedding IS NOT NULL`)
+    .prepare<(string | number)[], { rowid: number; embedding: Buffer | null }>(
+      `SELECT rowid, embedding FROM chunks WHERE rowid IN (${window.sql}) AND embedding IS NOT NULL`,
+    )
     .iterate(...window.params);
   for (const row of rows) {
     const blob = row.embedding;
@@ -297,7 +295,9 @@ function lexicalQuery(
   if (words.trim() === "") return "";
   const filtered =
     options.commonTokenThreshold > 0
-      ? filterCommonTokens(db, words, options.commonTokenThreshold, options.ranker?.stats).filtered
+      ? filterCommonTokens(db, words, options.commonTokenThreshold, {
+          stats: options.ranker?.stats?.(db) ?? undefined,
+        }).filtered
       : words;
   return toFts5Query(filtered);
 }

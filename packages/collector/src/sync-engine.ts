@@ -1049,8 +1049,8 @@ export class SyncEngine {
       // `runOne` already handled this per-source: it flipped the source to
       // `error` / `needs-auth` and emitted status, so the failure is fully
       // accounted for. Swallow it here at the engine boundary so the
-      // dispatcher's fire-and-forget invocation can't escalate it into a
-      // process-killing unhandled rejection — a single slow or stuck source
+      // dispatcher's fire-and-forget invocation can't escalate it into an
+      // unhandled rejection — a single slow or stuck source
       // (e.g. a sync that hits the wall-clock timeout) must never take down
       // the whole collector.
       log.warn(`Sync for ${source.id} ended with error: ${toErrorMessage(err)}`);

@@ -281,6 +281,15 @@ export interface ImportField {
   help?: string;
   /** For `"select"`: the available options. */
   options?: Array<{ value: string; label: string }>;
+  /**
+   * Show this field only when an earlier field in the same `fields` array
+   * holds this value. Lets one `historyImport` form branch into clean
+   * per-variant field sets behind a leading `select` discriminator, without
+   * the client needing any source-specific knowledge of what the variants
+   * mean. Absent = always shown. A rendering client must apply this check
+   * before prompting for the field (see the CLI's `import-history` command).
+   */
+  when?: { field: string; equals: string };
 }
 
 /**

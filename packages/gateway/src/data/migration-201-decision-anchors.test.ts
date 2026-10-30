@@ -27,10 +27,9 @@ const LEGACY_DDL = `
 
 const notNull = (column: string) =>
   db
-    .prepare<
-      [string],
-      { notnull: number }
-    >("SELECT \"notnull\" FROM pragma_table_info('cognition_decisions') WHERE name=?")
+    .prepare<[string], { notnull: number }>(
+      "SELECT \"notnull\" FROM pragma_table_info('cognition_decisions') WHERE name=?",
+    )
     .get(column)!.notnull;
 
 beforeEach(() => {

@@ -53,12 +53,7 @@ export interface ServiceSpec {
 }
 
 export type ServiceState =
-  | "running"
-  | "starting"
-  | "stopped"
-  | "failed"
-  | "not-installed"
-  | "unknown";
+  "running" | "starting" | "stopped" | "failed" | "not-installed" | "unknown";
 
 export interface ServiceStatus {
   component: ServiceComponent;

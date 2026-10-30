@@ -29,6 +29,8 @@ function qr(
     listenPort?: number;
     advertisedLocalName?: string | null;
     certificateRenewsAt?: Date | null;
+    hostNames?: string[];
+    inContainer?: boolean;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
@@ -42,6 +44,8 @@ function qr(
     listenPort: extra.listenPort,
     advertisedLocalName: () => extra.advertisedLocalName ?? null,
     certificateRenewsAt: () => extra.certificateRenewsAt ?? null,
+    hostNames: extra.hostNames ? () => extra.hostNames! : undefined,
+    inContainer: extra.inContainer,
   });
 }
 
@@ -440,6 +444,121 @@ describe("PairingQrService", () => {
       const result = await plan("ios", [], { identities: IDENTITIES.slice(3) });
       expect(result.recommendedUrl).toBeNull();
       expect(result.addresses.every((a) => !a.usable)).toBe(true);
+    });
+
+    describe("a gateway in a container on a Docker bridge network", () => {
+      // What the gateway sees from inside the container: its own bridge
+      // address and container hostname, never the host's.
+      const CONTAINER: NetworkIdentity[] = [
+        { address: "172.20.0.5", label: "LAN (eth0)", kind: "lan", offLan: false },
+        { address: "gateway.local", label: "mDNS (.local)", kind: "mdns", offLan: false },
+      ];
+      // What the Docker installer hands it in OMNESIS_TLS_EXTRA_NAMES.
+      const HOST_NAMES = [
+        "studio",
+        "studio.local",
+        "192.168.1.20",
+        "100.101.102.103",
+        "2001:db8::40",
+      ];
+      const bridged = (overrides: Parameters<typeof qr>[3] = {}) => ({
+        identities: CONTAINER,
+        advertisedLocalName: "omnesis.local",
+        hostNames: HOST_NAMES,
+        inContainer: true,
+        listenPort: 7600,
+        ...overrides,
+      });
+
+      it("recommends the host's LAN address to an iPhone, never the container's", async () => {
+        const result = await plan("ios", [], bridged());
+        expect(result.recommendedUrl).toBe("https://192.168.1.20:7600");
+        expect(
+          result.addresses.filter((a) => a.usable).map((a) => [a.gatewayUrl, a.label]),
+        ).toEqual([
+          ["https://192.168.1.20:7600", "Local network"],
+          ["https://studio:7600", "Host name"],
+          ["https://172.20.0.5:7600", "Docker container address"],
+          ["https://omnesis.local:7600", "Docker container address"],
+        ]);
+        expect(result.addresses.find((a) => a.host === "172.20.0.5")).toMatchObject({
+          summary: expect.stringContaining("phones usually can't reach"),
+        });
+        // The existing iPhone rule still holds for a Tailscale IP the host names.
+        expect(result.addresses.filter((a) => !a.usable).map((a) => a.gatewayUrl)).toEqual([
+          "https://100.101.102.103:7600",
+        ]);
+        expect(result.awayFromHome).toEqual({ onTailnet: true, tailscaleName: null });
+      });
+
+      it("recommends the host's Tailscale IP to Android, as it would natively", async () => {
+        const result = await plan("android", [], bridged());
+        expect(result.addresses.map((a) => a.gatewayUrl)).toEqual([
+          "https://100.101.102.103:7600",
+          "https://192.168.1.20:7600",
+          "https://studio:7600",
+          "https://172.20.0.5:7600",
+          "https://omnesis.local:7600",
+        ]);
+        expect(result.addresses[0]).toMatchObject({ label: "Tailscale IP", reach: "tailnet" });
+        expect(result.awayFromHome).toBeNull();
+      });
+
+      it("never offers the host's own .local name or an IPv6 address it was given", async () => {
+        const hosts = (await plan("android", [], bridged())).addresses.map((a) => a.host);
+        expect(hosts).not.toContain("studio.local");
+        expect(hosts).not.toContain("2001:db8::40");
+      });
+
+      it("keeps a trusted name ahead of the host names", async () => {
+        const result = await plan(
+          "ios",
+          [],
+          bridged({
+            hostNames: [...HOST_NAMES, "studio.tail-example.ts.net"],
+            publiclyTrustedHosts: ["studio.tail-example.ts.net"],
+          }),
+        );
+        expect(result.recommendedUrl).toBe("https://studio.tail-example.ts.net:7600");
+        expect(result.addresses[0]).toMatchObject({ label: "Tailscale name", systemTrust: true });
+      });
+
+      it("treats addresses as the host's when it shares the host's network", async () => {
+        const result = await plan(
+          "ios",
+          [],
+          bridged({
+            identities: [
+              { address: "192.168.1.20", label: "LAN (eth0)", kind: "lan", offLan: false },
+            ],
+          }),
+        );
+        expect(result.addresses.map((a) => [a.gatewayUrl, a.label])).toEqual([
+          ["https://192.168.1.20:7600", "Local network"],
+          ["https://studio:7600", "Host name"],
+          ["https://omnesis.local:7600", "Local name"],
+          ["https://100.101.102.103:7600", "Tailscale IP"],
+        ]);
+      });
+
+      it("keeps the container's address when it was given no host names", async () => {
+        const result = await plan("ios", [], bridged({ hostNames: [] }));
+        expect(result.recommendedUrl).toBe("https://172.20.0.5:7600");
+        expect(result.addresses[0]).toMatchObject({ label: "Local network" });
+      });
+
+      it("offers host names outside a container without demoting what it discovers", async () => {
+        const result = await plan(
+          "ios",
+          [],
+          bridged({ inContainer: false, hostNames: ["192.168.1.20"] }),
+        );
+        expect(result.addresses.map((a) => [a.gatewayUrl, a.label])).toEqual([
+          ["https://192.168.1.20:7600", "Local network"],
+          ["https://172.20.0.5:7600", "Local network"],
+          ["https://omnesis.local:7600", "Local name"],
+        ]);
+      });
     });
 
     it("omits the port for a gateway reached on the default HTTPS port", async () => {

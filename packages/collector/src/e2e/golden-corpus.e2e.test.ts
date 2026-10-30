@@ -181,10 +181,9 @@ describe("Golden-corpus regression net (e2e-minimal)", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const pending = db
-        .prepare<
-          [],
-          { source_id: string; external_id: string }
-        >("SELECT source_id, external_id FROM document_absences ORDER BY source_id, external_id")
+        .prepare<[], { source_id: string; external_id: string }>(
+          "SELECT source_id, external_id FROM document_absences ORDER BY source_id, external_id",
+        )
         .all();
       expect(pending).toEqual([]);
     } finally {

@@ -18,10 +18,15 @@ import {
 import { tmpdir } from "node:os";
 import { once } from "node:events";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { acquireUpdateLock, adoptUpdateLock, UpdateLockBusyError } from "@omnesis/core";
+import {
+  acquireUpdateLock,
+  adoptUpdateLock,
+  PRELOAD_SOURCE,
+  UpdateLockBusyError,
+} from "@omnesis/core";
 import {
   prepareSourceRecoveryLauncher as prepareRealSourceRecoveryLauncher,
   sourceRecoveryLauncher,
@@ -46,6 +51,17 @@ function prepareSourceRecoveryLauncher(
     writeFileSync(join(rootDir, "node_modules/tsx/dist/loader.mjs"), fixtureLoader);
   }
   return prepareRealSourceRecoveryLauncher(rootDir, configDir, homeDir);
+}
+
+/** The installer functions render_source_wrapper calls for the trust preload. */
+function trustHelpers(installer: string): string {
+  return ["npm_trust_preload", "render_source_npm_trust"]
+    .map((name) => {
+      const start = installer.indexOf(`${name}() {`);
+      expect(start).toBeGreaterThan(0);
+      return installer.slice(start, installer.indexOf("\nEOF\n}\n", start) + 7);
+    })
+    .join("\n");
 }
 
 const scratch: string[] = [];
@@ -78,7 +94,7 @@ writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1
     const render = join(dir, "render.sh");
     writeFileSync(
       render,
-      `${installer.slice(quoteStart, installer.indexOf("\n}\n", quoteStart) + 3)}\n${installer.slice(start, installer.indexOf("\nEOF\n}", start) + 6)}\nCONFIG_DIR="$1"\nUPDATE_LOCK_HELPER="$2"\nrender_source_wrapper "$3"\n`,
+      `${installer.slice(quoteStart, installer.indexOf("\n}\n", quoteStart) + 3)}\n${trustHelpers(installer)}\n${installer.slice(start, installer.indexOf("\nEOF\n}", start) + 6)}\nCONFIG_DIR="$1"\nUPDATE_LOCK_HELPER="$2"\nrender_source_wrapper "$3"\n`,
     );
     const launcher = join(dir, "omnesis");
     writeFileSync(
@@ -136,6 +152,49 @@ writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1
       throw new AggregateError(failures, "Source launcher proof or cleanup failed");
   }, 20_000);
 
+  test("restores dependencies with npm and node-gyp under the trust preload, then removes it", () => {
+    const launcher = sourceRecoveryLauncher("/srv/omnesis", "/srv/config", "/srv/lock.cjs");
+    const install = launcher.slice(
+      launcher.indexOf("install_source_dependencies() {"),
+      launcher.indexOf("\n}\n", launcher.indexOf("install_source_dependencies() {")),
+    );
+    expect(install.match(/&& with_npm_trust npm ci \)/g)).toHaveLength(2);
+    expect(install).not.toMatch(/&& npm ci/);
+    expect(launcher).toContain('( cd "$1" && with_npm_trust node -e \'');
+    // The launcher's own with_npm_trust, under a temporary directory whose
+    // path holds a space (GNU mktemp follows TMPDIR), running a real node that
+    // reads the preload back through the URL it was given.
+    const bin = mkdtempSync(join(tmpdir(), "omnesis-npm-trust-"));
+    scratch.push(bin);
+    writeFileSync(
+      join(bin, "mktemp"),
+      `#!/bin/sh\nd='${bin}/with space #1/tmp'\nmkdir -p "$d" && printf '%s\\n' "$d"\n`,
+      { mode: 0o755 },
+    );
+    const readBack =
+      'const u = process.env.NODE_OPTIONS.split("--import=").pop(); ' +
+      'process.stdout.write(process.env.NODE_OPTIONS + "\\n" + require("fs").readFileSync(new URL(u), "utf8"));';
+    const start = launcher.indexOf("with_npm_trust() {");
+    // Past the preload it embeds, whose own blocks also close with "}".
+    const end = launcher.indexOf("\n}\n", launcher.indexOf("\nNPM_TRUST_EOF\n", start)) + 3;
+    const definition = launcher.slice(start, end);
+    const result = spawnSync(
+      "sh",
+      ["-c", `${definition}\nwith_npm_trust "${process.execPath}" -e '${readBack}'`],
+      {
+        encoding: "utf8",
+        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, NODE_OPTIONS: "--max-old-space-size=512" },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const [options = "", ...body] = result.stdout.split("\n");
+    expect(options).toMatch(
+      /^--max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
+    );
+    expect(body.join("\n")).toBe(PRELOAD_SOURCE);
+    expect(existsSync(fileURLToPath(options.replace(/^.*--import=/u, "")))).toBe(false);
+  });
+
   test("stays byte-identical to the toolchain-free installer's renderer", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
     scratch.push(dir);
@@ -149,7 +208,7 @@ writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1
     const probe = join(dir, "render-launcher.sh");
     writeFileSync(
       probe,
-      `${installer.slice(quoteStart, quoteEnd)}\n${installer.slice(rendererStart, rendererEnd)}\nCONFIG_DIR="$1"\nUPDATE_LOCK_HELPER="$2"\nrender_source_wrapper "$3"\n`,
+      `${installer.slice(quoteStart, quoteEnd)}\n${trustHelpers(installer)}\n${installer.slice(rendererStart, rendererEnd)}\nCONFIG_DIR="$1"\nUPDATE_LOCK_HELPER="$2"\nrender_source_wrapper "$3"\n`,
     );
     const rootDir = "/tmp/owner's source";
     const configDir = "/tmp/config dir";

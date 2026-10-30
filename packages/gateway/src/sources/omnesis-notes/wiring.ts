@@ -69,6 +69,11 @@ export interface OmnesisNotesBootDeps {
   deleteByIds: (providerId: string, sourceId: string, externalIds: string[]) => Promise<unknown>;
   /** Live opt-in gate for source-owned authored vocabulary evidence. */
   isTranscriptionVocabularyEnabled?: () => boolean;
+  /**
+   * The owner's note agent switch, read live at capture: an owner's note
+   * captured while it is off is never read. Omitted ⇒ captures are unstamped.
+   */
+  isNoteAgentEnabled?: () => boolean;
   /** Optional override of the debounce window. Tests pass 0. */
   debounceMs?: number;
   /** Optional scheduler override for unit tests with fake timers. */
@@ -214,6 +219,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       // Canonicalize to UTC ISO (the schema already guarantees the
       // input parses) so every stored instant is lexically sortable.
       const receivedAt = new Date().toISOString();
+      const fromOwner = input.fromOwner === true && !audit && !input.browserAuthority;
       const capturedAt = new Date(input.capturedAt ?? receivedAt).toISOString();
       const entry: NoteEntry = {
         ...(input.page ? { page: input.page } : {}),
@@ -235,7 +241,8 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
         latitude: input.latitude ?? null,
         longitude: input.longitude ?? null,
         placeName: input.placeName ?? null,
-        ...(input.fromOwner && !audit && !input.browserAuthority ? { fromOwner: true } : {}),
+        ...(fromOwner ? { fromOwner: true } : {}),
+        ...(fromOwner && deps.isNoteAgentEnabled?.() === false ? { noteAgentOff: true } : {}),
         ...(input.taskId ? { taskId: input.taskId } : {}),
       };
       // INSERT OR IGNORE under the hood: a false result means this id

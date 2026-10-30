@@ -54,6 +54,9 @@ export function toListedDocument(
       people: meta.people as PersonMention[] | undefined,
       tags: meta.tags as string[] | undefined,
       relevanceScore: meta.relevanceScore,
+      ...(meta.extra?.conversationTurns !== undefined
+        ? { extra: { conversationTurns: meta.extra.conversationTurns } }
+        : {}),
     },
     updatedAt: doc.updatedAt,
   };

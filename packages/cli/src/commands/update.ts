@@ -56,7 +56,7 @@ import { readFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
 import { resolveHarnessBinary } from "@omnesis/agent-integration";
@@ -67,8 +67,10 @@ import {
   compareProductVersions,
   assertNever,
   DEFAULT_CONFIG_DIR,
+  distrustingNodeOptions,
   ensureGatewayTrust,
   readPackageVersion,
+  saveNewerSettings,
   SOURCE_COMMIT_PATTERN,
   UPDATE_LOCK_ENV,
   UpdateLockBusyError,
@@ -125,7 +127,9 @@ import {
   detectInstallMethod,
   DOCKER_ENV_FILE,
   dockerApplyPlan,
+  dockerPsSpec,
   dockerRestartSpec,
+  runningImageTag,
   formatCommandSpec,
   harnessRefreshSpec,
   harnessRestartSpec,
@@ -310,9 +314,21 @@ export const spawnRunner: CommandRunner = (spec, mode, control) =>
           ...spec.args,
         ]
       : spec.args;
+    // npm reaches the registry with its own CA store; keep the distrusted
+    // roots out of it the way this process keeps them out of its own. `npm run`
+    // reaches no registry, so a build keeps exactly the NODE_OPTIONS it was
+    // given, as in the installer.
+    const env =
+      /^np[mx]$/u.test(basename(spec.command)) && spec.args[0] !== "run"
+        ? {
+            ...process.env,
+            ...spec.env,
+            NODE_OPTIONS: distrustingNodeOptions(spec.env?.NODE_OPTIONS),
+          }
+        : spec.env && { ...process.env, ...spec.env };
     const child = spawn(command, args, {
       cwd: spec.cwd,
-      ...(spec.env ? { env: { ...process.env, ...spec.env } } : {}),
+      ...(env ? { env } : {}),
       stdio: grouped
         ? mode === "capture"
           ? ["ignore", "pipe", "inherit", "pipe"]
@@ -462,6 +478,13 @@ export interface UpdateFlowDeps {
   /** Take an online pre-update backup through the gateway's API. */
   backup(note: string, purpose: "pre-update"): Promise<void>;
   /**
+   * Save this host's gateway config beside it for the newer release that
+   * restores it (`saveNewerSettings`), before a build that may be older takes
+   * it over and drops the settings it does not know. `releases` are those
+   * whose settings it may hold. Absent where no gateway config lives here.
+   */
+  saveNewerSettings?(releases: readonly string[]): void;
+  /**
    * Copy the closed stores of this host's gateway into a backup, for a
    * gateway role known not to be running. Absent where no local copy is
    * possible; the online backup is then the only one.
@@ -506,6 +529,13 @@ export interface UpdateFlowDeps {
    * asks this before trusting the tag on file.
    */
   servedVersion?(): Promise<string | null>;
+  /**
+   * The image tag a container install's collector is running, or null when
+   * that cannot be shown. A host with no gateway of its own answers with this
+   * instead of `servedVersion`: the gateway its collector dials is another
+   * machine's, on that machine's release.
+   */
+  runningImageTag?(): Promise<string | null>;
   /**
    * Point the installation at the version an apply plan names, before that
    * plan's commands run. A docker install resolves its images from a tag
@@ -591,9 +621,11 @@ async function attempt(
   console.log(
     `${c.yellow}! \`${formatCommandSpec(spec)}\` failed (exit ${first.code}); ${retry.why}.${c.reset}`,
   );
-  console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
-  const reset = await once(retry.reset);
-  if (reset.code !== 0 || control?.signal?.aborted) return first;
+  if (retry.reset) {
+    console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
+    const reset = await once(retry.reset);
+    if (reset.code !== 0 || control?.signal?.aborted) return first;
+  }
   await prepareHeaders();
   console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
   return once(spec);
@@ -666,9 +698,9 @@ class StoppedForBuild {
     this.held = true;
   }
 
-  async startAll(): Promise<void> {
+  async startAll(pick: (component: ServiceComponent) => boolean = () => true): Promise<void> {
     if (this.held || !this.deps.startService) return;
-    for (const component of this.components) {
+    for (const component of this.components.filter(pick)) {
       this.stopped.delete(component);
       try {
         await this.deps.startService(component);
@@ -707,6 +739,8 @@ function describeStep(step: UpdateStep, targetLabel: string): string {
         : "back up the gateway's databases through its API";
     case "pause-collector":
       return "stop the collector while the build runs, so the build has this machine's memory, and start it again after";
+    case "pause-gateway":
+      return "stop the gateway while the build runs, so the build has this machine's memory; it is down until its restart";
     case "apply":
       return `move this installation to ${targetLabel}`;
     case "service-definition":
@@ -768,6 +802,17 @@ async function rollBackAndFail(
     }
   }
 
+  // The build being restored may be older than the one whose gateway wrote
+  // the config last. Best effort: the rollback is the recovery and goes on.
+  try {
+    deps.saveNewerSettings?.([applyPlan.target, deps.currentVersion]);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.log(
+      `${c.yellow}! Could not save the gateway's settings for a later upgrade: ${detail}. ` +
+        `Settings ${applyPlan.previous} does not know are dropped when it next writes its config.${c.reset}`,
+    );
+  }
   await deps.select?.(applyPlan.previous);
   // The previous build runs under the unit it was installed with, so a unit
   // this run rewrote goes back before anything of that build starts again.
@@ -792,7 +837,7 @@ async function rollBackAndFail(
     }
   }
   const rollback = applyPlan.rollback.flatMap((spec) =>
-    memory.resetDependencies && isDependencyInstall(spec) && spec.retry
+    memory.resetDependencies && isDependencyInstall(spec) && spec.retry?.reset
       ? [spec.retry.reset, spec]
       : [spec],
   );
@@ -1084,6 +1129,11 @@ interface HostPlanPhase {
    * run, and its record written, by the process that offered the rest.
    */
   applied?: boolean;
+  /**
+   * The target is older than the installed build, or does not contain it, so
+   * its gateway may drop settings this one saved: they are saved first.
+   */
+  downgrade?: boolean;
 }
 
 /**
@@ -1110,7 +1160,9 @@ async function executeHostPlan(
   const applyState = applyPlan.apply.length > 0 || phase.applied ? applyPlan.applyState : undefined;
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
-  const pausedForBuild = steps.some((step) => step.kind === "pause-collector");
+  const pausedForBuild = steps.some(
+    (step) => step.kind === "pause-collector" || step.kind === "pause-gateway",
+  );
   let dependencyInstallIncomplete = false;
   const rollBack = (
     reason: string,
@@ -1192,6 +1244,14 @@ async function executeHostPlan(
           await daemons.stop("collector");
           break;
         }
+        case "pause-gateway": {
+          console.log(
+            "Stopping the gateway while the build runs, so the build has this machine's memory; " +
+              "it is down until it restarts on the new build.",
+          );
+          await daemons.stop("gateway");
+          break;
+        }
         case "backup": {
           // Past the apply, a backup that cannot be taken undoes the apply:
           // nothing has restarted yet, so the host returns to exactly what it
@@ -1264,6 +1324,18 @@ async function executeHostPlan(
             if (index === commitIndex) commit();
             break;
           }
+          if (phase.downgrade && applyPlan.apply.length > 0) {
+            try {
+              deps.saveNewerSettings?.([deps.currentVersion]);
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              throw new CliError(
+                `${c.red}Could not save the gateway's settings before moving to ${targetLabel}, ` +
+                  `which would drop the ones it does not know: ${detail}. Nothing was changed.${c.reset}`,
+                EXIT_FAILURE,
+              );
+            }
+          }
           // The record goes down before anything moves — before the tag a
           // container install pulls from is rewritten — so a process killed
           // from here on leaves proof that this apply began and did not end.
@@ -1314,15 +1386,15 @@ async function executeHostPlan(
               ? `${c.green}✔${c.reset} Already on ${targetLabel}.`
               : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
           );
-          // A collector no later step restarts comes back once the build is in place.
-          if (
-            !steps.some(
-              (later, at) =>
-                at > index && later.kind === "restart" && later.component === "collector",
-            )
-          ) {
-            await daemons.startAll();
-          }
+          // A daemon no later step restarts comes back once the build is in
+          // place; one that a later step restarts waits for that step.
+          await daemons.startAll(
+            (component) =>
+              !steps.some(
+                (later, at) =>
+                  at > index && later.kind === "restart" && later.component === component,
+              ),
+          );
           if (index === commitIndex) commit();
           if (phase.offer && deps.continueAfterApply && applyPlan.apply.length > 0) {
             release?.();
@@ -1334,7 +1406,22 @@ async function executeHostPlan(
               ...(deps.updateLock ? { lock: deps.updateLock } : {}),
               targetLabel,
             });
-            if (handed.finished) return;
+            if (handed.finished) {
+              // The installed build ran the restarts that bring these back;
+              // starting them again here would only report a start that did
+              // nothing, after the fact.
+              for (const component of daemons.components) {
+                if (
+                  steps.some(
+                    (later, at) =>
+                      at > index && later.kind === "restart" && later.component === component,
+                  )
+                ) {
+                  daemons.forget(component);
+                }
+              }
+              return;
+            }
             if (!committed) release = deps.interruptions.claim(onSignal);
             if (handed.signal) {
               if (committed) throw new CliError("", signalExitCode(handed.signal));
@@ -1818,7 +1905,10 @@ export async function updateNpmGlobal(
   }
 
   await deps.confirm(`Update ${CLI_PACKAGE} to ${target}?`);
-  await executeHostPlan(steps, applyPlan, target, target, deps, offer ? { offer } : {});
+  await executeHostPlan(steps, applyPlan, target, target, deps, {
+    ...(offer ? { offer } : {}),
+    downgrade: assessment.direction === "downgrade",
+  });
   return target;
 }
 
@@ -2059,7 +2149,7 @@ export async function updateSourceCheckout(
       backup: opts.backup !== false,
       restart: deps.restart,
       serviceDefinitions: deps.serviceDefinitions !== undefined,
-      pauseCollectorForBuild: deps.buildMemoryTight?.() === true,
+      pauseDaemonsForBuild: deps.buildMemoryTight?.() === true,
     });
     // A preview fetches nothing, so an edge target's manifest version is not
     // known here and its preview shows the order without a hand-over.
@@ -2250,7 +2340,7 @@ export async function updateSourceCheckout(
   const alreadyOnTarget = evidence.complete;
   const planned = planHostUpdate(deps.roles, {
     backup: opts.backup !== false && !alreadyOnTarget,
-    pauseCollectorForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
+    pauseDaemonsForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
     restart: deps.restart,
     serviceDefinitions: deps.serviceDefinitions !== undefined,
     ...(alreadyOnTarget ? { runningBuild: await runningBuilds(deps) } : {}),
@@ -2305,15 +2395,16 @@ export async function updateSourceCheckout(
     targetLabel,
     opts.edge || opts.targetCommit ? null : versionFromStableTag(target),
     deps,
-    offer ? { offer } : {},
+    {
+      ...(offer ? { offer } : {}),
+      // A target that does not contain the last completed build lacks some of it.
+      downgrade: assessment?.direction === "downgrade" || ancestry.code === 1,
+    },
   );
   return opts.edge || opts.targetCommit ? null : versionFromStableTag(target);
 }
 
 // ── Docker flow ─────────────────────────────────────────────────────────
-
-/** The image tag the release pipeline moves with the main branch. */
-const DOCKER_EDGE_TAG = "main";
 
 /**
  * Update a container install: record the image tag its compose project
@@ -2337,7 +2428,6 @@ export async function updateDocker(
   opts: {
     composeFile: string;
     projectDir: string;
-    edge: boolean;
     dryRun: boolean;
     force?: boolean;
     backup?: boolean;
@@ -2418,9 +2508,7 @@ export async function updateDocker(
   }
 
   let target: string;
-  if (opts.edge) {
-    target = DOCKER_EDGE_TAG;
-  } else if (opts.targetVersion) {
+  if (opts.targetVersion) {
     target = normalizeVersion(opts.targetVersion);
   } else {
     // Docker releases may be published without npm packages. Resolve the
@@ -2459,8 +2547,7 @@ export async function updateDocker(
   // version being moved from — not the CLI version of the updater image this
   // command happens to run as. Carried on the deps every step below reads, so
   // that the rollback's health wait demands the version it is restoring rather
-  // than the updater's own. An edge install's tag is a branch and not a
-  // version, so there is nothing to assess and the edge note stands instead.
+  // than the updater's own.
   // The tag on file is what the last apply meant to run; whether it finished
   // is the record's to say, or failing a record, the gateway's. The rollback
   // baseline is the tag known to have been served, which after an
@@ -2475,43 +2562,52 @@ export async function updateDocker(
       EXIT_FAILURE,
     );
   }
-  const servedVersion = opts.edge ? null : ((await deps.servedVersion?.()) ?? null);
-  const evidence = opts.edge
-    ? null
-    : assessDockerApplyEvidence(opts.projectDir, previous, target, rawState, servedVersion);
-  const baseline = evidence?.previousTag ?? previous;
+  // A host that only collects has no gateway to ask, so Docker's account of
+  // the tag its collector was created at stands in for it.
+  const collectorOnly = !roles.gateway.present;
+  const servedVersion = collectorOnly
+    ? ((await deps.runningImageTag?.()) ?? null)
+    : ((await deps.servedVersion?.()) ?? null);
+  const evidence = assessDockerApplyEvidence(
+    opts.projectDir,
+    previous,
+    target,
+    rawState,
+    servedVersion,
+  );
+  const baseline = evidence.previousTag;
   const flowDeps: UpdateFlowDeps = {
     ...deps,
     currentVersion: isResolvedVersion(baseline) ? normalizeVersion(baseline) : deps.currentVersion,
     roles,
     select,
   };
-  const assessment = opts.edge ? undefined : assessUpdate(flowDeps.currentVersion, target);
+  const assessment = assessUpdate(flowDeps.currentVersion, target);
 
-  if (evidence?.recovery === "unfinished") {
+  if (evidence.recovery === "unfinished") {
     console.log(
       `${c.yellow}! The previous container update did not finish: ${previous} is recorded but ` +
         `${baseline} is what these containers last served. Reapplying ${target}.${c.reset}`,
     );
-  } else if (evidence?.recovery === "unrecorded") {
+  } else if (evidence.recovery === "unrecorded") {
     console.log(
       `${c.yellow}! ${previous} is the recorded tag, but nothing proves the containers were ` +
         `recreated on it${
           servedVersion
-            ? ` — the gateway serves ${servedVersion}`
-            : " and the gateway is not answering"
+            ? ` — the ${collectorOnly ? "collector runs" : "gateway serves"} ${servedVersion}`
+            : collectorOnly
+              ? " and the collector container is not running it"
+              : " and the gateway is not answering"
         }. Reapplying ${target} instead of assuming it finished.${c.reset}`,
     );
-  } else if (evidence?.recovery === "mismatch") {
+  } else if (evidence.recovery === "mismatch") {
     console.log(
       `${c.yellow}! The update record does not match what these containers serve. Reapplying ` +
         `${target} instead of assuming it finished.${c.reset}`,
     );
   }
 
-  // The main tag moves with the branch, so an edge install is never "already
-  // there" — the same tag names a different image on the next pull.
-  if (evidence?.complete && !opts.force) {
+  if (evidence.complete && !opts.force) {
     if (evidence.attested) {
       // The gateway's own answer stood in for a record written before
       // completion tracking; leave the record so the next run need not ask.
@@ -2522,16 +2618,17 @@ export async function updateDocker(
       }
     }
     console.log(
-      `Already up to date (${normalizeVersion(previous)}): the gateway serves it. Pass --force ` +
-        `to pull and recreate the containers at that tag anyway.`,
+      `Already up to date (${normalizeVersion(previous)}): the ${
+        collectorOnly ? "collector runs" : "gateway serves"
+      } it. Pass --force to pull and recreate the containers at that tag anyway.`,
     );
     return target;
   }
 
   const applyPlan = dockerApplyPlan(opts.composeFile, opts.projectDir, target, baseline);
-  const arrow = assessment?.direction === "downgrade" ? "↓" : "→";
+  const arrow = assessment.direction === "downgrade" ? "↓" : "→";
   console.log(
-    `${assessment?.direction === "downgrade" ? "Downgrade" : "Update"} of the container images: ` +
+    `${assessment.direction === "downgrade" ? "Downgrade" : "Update"} of the container images: ` +
       `${c.bold}${baseline}${c.reset} ${arrow} ${c.bold}${target}${c.reset}`,
   );
   console.log(`Will run: ${c.cyan}${formatCommandSpec(applyPlan.apply[0]!)}${c.reset}`);
@@ -2539,35 +2636,23 @@ export async function updateDocker(
     backup: opts.backup !== false,
     restart: flowDeps.restart,
   });
-  // The main tag has no release number to tell whether its updater takes an
-  // offer, so an edge update finishes in this process.
-  const offer = opts.edge
-    ? undefined
-    : continuationOffer(
-        flowDeps,
-        {
-          method: "docker",
-          composeFile: opts.composeFile,
-          projectDir: opts.projectDir,
-          target,
-          previous: baseline,
-        },
-        target,
-        planned,
-      );
+  const offer = continuationOffer(
+    flowDeps,
+    {
+      method: "docker",
+      composeFile: opts.composeFile,
+      projectDir: opts.projectDir,
+      target,
+      previous: baseline,
+    },
+    target,
+    planned,
+  );
   const steps = orderForHandoff(planned, offer?.deferredBackup ?? null);
   printPlan(steps, target);
-  const notes = assessment?.notes ?? [
-    `The ${DOCKER_EDGE_TAG} tag moves with the branch and can contain unreleased changes. ` +
-      "Back up before running it: omnesis backup --note pre-upgrade",
-    // Both directions of the plan pull the same moving tag, so the rollback is
-    // not the way back an edge failure needs.
-    `Rolling this back re-pulls ${DOCKER_EDGE_TAG}, which by then is the build that just ` +
-      "failed — the backup taken before the update is the way back from it.",
-  ];
-  for (const note of notes) console.log(`${c.yellow}! ${note}${c.reset}`);
+  for (const note of assessment.notes) console.log(`${c.yellow}! ${note}${c.reset}`);
   if (opts.dryRun) {
-    if (assessment?.requiresForce && !opts.force) {
+    if (assessment.requiresForce && !opts.force) {
       console.log(
         `${c.dim}Downgrade — re-run without --dry-run and pass --force to proceed.${c.reset}`,
       );
@@ -2575,7 +2660,7 @@ export async function updateDocker(
     console.log(`${c.dim}Dry run — nothing executed.${c.reset}`);
     return null;
   }
-  if (assessment?.requiresForce && !opts.force) {
+  if (assessment.requiresForce && !opts.force) {
     throw new CliError(
       `${c.red}Refusing to downgrade ${assessment.current} → ${target} without --force. ` +
         `Re-run with --force if this is intentional.${c.reset}`,
@@ -2584,15 +2669,11 @@ export async function updateDocker(
   }
 
   await flowDeps.confirm(`Update the containers in ${opts.composeFile} to ${target}?`);
-  await executeHostPlan(
-    steps,
-    applyPlan,
-    target,
-    opts.edge ? null : target,
-    flowDeps,
-    offer ? { offer } : {},
-  );
-  return opts.edge ? null : target;
+  await executeHostPlan(steps, applyPlan, target, target, flowDeps, {
+    ...(offer ? { offer } : {}),
+    downgrade: assessment.direction === "downgrade",
+  });
+  return target;
 }
 
 // ── Effects ─────────────────────────────────────────────────────────────
@@ -3057,6 +3138,15 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     confirm: (message) => confirmInteractive(message, yes),
     approve: (message) => approveInteractive(message, yes),
     roles,
+    saveNewerSettings:
+      roles.gateway.present && !roles.gateway.hardened
+        ? (releases) => {
+            saveNewerSettings(join(configDir, "omnesis.json"), [
+              ...releases,
+              readPackageVersion(import.meta.url),
+            ]);
+          }
+        : undefined,
     backup: async (note, purpose) => {
       await ensureTrust();
       // index.db is derivable from omnesis.db and is the largest file in a
@@ -3145,6 +3235,17 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
         signal,
       );
     },
+    runningImageTag:
+      plan.kind === "docker"
+        ? async () => {
+            try {
+              const listed = await spawnRunner(dockerPsSpec(plan.composeFile), "capture");
+              return listed.code === 0 ? runningImageTag(listed.stdout, ["collector"]) : null;
+            } catch {
+              return null;
+            }
+          }
+        : undefined,
     servedVersion: async () => {
       try {
         await ensureTrust();
@@ -3333,8 +3434,7 @@ export const updateCommand = defineCommand({
     edge: {
       type: "boolean",
       default: false,
-      description:
-        "Update to the current main build instead of a stable release (source and docker installs)",
+      description: "Update a source checkout to the current main build instead of a stable release",
     },
     channel: {
       type: "string",
@@ -3591,7 +3691,6 @@ export const updateCommand = defineCommand({
               {
                 composeFile: plan.composeFile,
                 projectDir: plan.projectDir,
-                edge: plan.edge,
                 dryRun,
                 force,
                 backup,
@@ -3627,13 +3726,11 @@ export const updateCommand = defineCommand({
       await updateHost();
       return;
     }
-    if (plan.kind !== "npm-global" && plan.edge) {
+    if (plan.kind === "source" && plan.edge) {
       // The fan-out is only safe because the host's landed release can be
-      // compared against the version the gateway is serving. A branch build —
-      // a source checkout on origin/main, or a container install on the main
-      // image tag — has no release number, so there is nothing to compare and
-      // the ordering guarantee would be a formality. A container install on a
-      // release tag does have one, and fans out like any other host.
+      // compared against the version the gateway is serving. A source checkout
+      // on origin/main has no release number, so there is nothing to compare
+      // and the ordering guarantee would be a formality.
       throw new CliError(
         `${c.red}--fleet needs a release to compare against, which --edge does not have. ` +
           `Update this host with --edge, restart its gateway, then run --fleet.${c.reset}`,

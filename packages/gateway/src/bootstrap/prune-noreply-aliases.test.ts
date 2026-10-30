@@ -86,10 +86,9 @@ describe("pruneNoreplyAliases", () => {
     expect(nameSurvives).toBeDefined();
 
     const docRow = db
-      .prepare<
-        [],
-        { people_resolved_at: string | null }
-      >("SELECT people_resolved_at FROM documents WHERE id = 'doc-1'")
+      .prepare<[], { people_resolved_at: string | null }>(
+        "SELECT people_resolved_at FROM documents WHERE id = 'doc-1'",
+      )
       .get();
     expect(docRow?.people_resolved_at).toBeNull();
   });
@@ -109,10 +108,9 @@ describe("pruneNoreplyAliases", () => {
     expect(result.documentsToRebackfill).toBe(1);
 
     const docRow = db
-      .prepare<
-        [],
-        { people_resolved_at: string | null }
-      >("SELECT people_resolved_at FROM documents WHERE id = 'doc-on-canonical'")
+      .prepare<[], { people_resolved_at: string | null }>(
+        "SELECT people_resolved_at FROM documents WHERE id = 'doc-on-canonical'",
+      )
       .get();
     expect(docRow?.people_resolved_at).toBeNull();
 
@@ -140,10 +138,9 @@ describe("pruneNoreplyAliases", () => {
     expect(result.documentsToRebackfill).toBe(1);
 
     const docRow = db
-      .prepare<
-        [],
-        { people_resolved_at: string | null }
-      >("SELECT people_resolved_at FROM documents WHERE id = 'doc-via-sibling'")
+      .prepare<[], { people_resolved_at: string | null }>(
+        "SELECT people_resolved_at FROM documents WHERE id = 'doc-via-sibling'",
+      )
       .get();
     expect(docRow?.people_resolved_at).toBeNull();
   });

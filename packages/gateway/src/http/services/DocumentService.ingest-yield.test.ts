@@ -225,10 +225,9 @@ describe("multi-source ingest capture across the yield boundary", () => {
     expect(result.ingested).toBe(1);
     expect(events.map((event) => event.after.sourceId)).toEqual([ordinarySource]);
     const rows = db
-      .prepare<
-        [],
-        { source_id: string; title: string }
-      >("SELECT source_id, title FROM documents ORDER BY source_id")
+      .prepare<[], { source_id: string; title: string }>(
+        "SELECT source_id, title FROM documents ORDER BY source_id",
+      )
       .all();
     expect(rows).toEqual([
       { source_id: ordinarySource, title: "Recomputed aggregate" },
@@ -338,18 +337,16 @@ describe("multi-source ingest capture across the yield boundary", () => {
     expect(result).toMatchObject({ ingested: 1, tombstonedDeleted: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { external_id: string }
-        >("SELECT external_id FROM documents WHERE source_id = 'things:race' ORDER BY external_id")
+        .prepare<[], { external_id: string }>(
+          "SELECT external_id FROM documents WHERE source_id = 'things:race' ORDER BY external_id",
+        )
         .all(),
     ).toEqual([{ external_id: "next-task" }, { external_id: "restored-task" }]);
     expect(
       db
-        .prepare<
-          [string, string],
-          { cursor: string }
-        >("SELECT cursor FROM sync_state WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], { cursor: string }>(
+          "SELECT cursor FROM sync_state WHERE source_id = ? AND device_id = ?",
+        )
         .get(restored.sourceId, "replica-two"),
     ).toEqual({ cursor: JSON.stringify({ offset: 2 }) });
   });

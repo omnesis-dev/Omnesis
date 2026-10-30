@@ -354,6 +354,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "devices.replaceDeviceForRepair", priority: "user" },
   { name: "devices.updateDeviceCapabilities", priority: "user" },
   { name: "devices.setUpdateRequest", priority: "user" },
+  // A browser's reported version: informational, written only on a change.
+  { name: "devices.recordReportedVersion", priority: "background" },
   { name: "devices.doctorRunBegin", priority: "user" },
   { name: "devices.doctorRunStart", priority: "realtime" },
   { name: "devices.doctorRunRequeue", priority: "realtime" },
@@ -530,6 +532,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "subscriptions.outcomeRecord", priority: "user" },
   { name: "subscriptions.answerAuthorityUse", priority: "user" },
   { name: "subscriptions.answerEgressFinalize", priority: "user" },
+  { name: "subscriptions.completionEgressFinalize", priority: "user" },
   { name: "subscriptions.expire", priority: "background" },
   { name: "subscriptions.reconcilePolicy", priority: "background" },
   { name: "cognition.bootstrapMarkProcessed", priority: "background" },

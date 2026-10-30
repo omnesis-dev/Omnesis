@@ -65,8 +65,7 @@ function panel(options: FindPanelOptions = {}, initialView: Partial<FindPanelVie
     ...initialView,
   };
   let changed:
-    | ((changes: Record<string, { newValue?: unknown }>, area: string) => void)
-    | undefined;
+    ((changes: Record<string, { newValue?: unknown }>, area: string) => void) | undefined;
   const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
     const msg = message as {

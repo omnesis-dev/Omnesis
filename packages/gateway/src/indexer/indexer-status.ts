@@ -19,7 +19,7 @@ export type IndexerReadiness =
     }
   | { status: "ready" }
   | { status: "failed"; reason: string }
-  | { status: "disabled"; reason: string };
+  | { status: "disabled"; reason: string; keywordIndexingActive?: boolean };
 
 /**
  * Holds the user-facing embedder/indexer-worker {@link IndexerReadiness}

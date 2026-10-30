@@ -241,7 +241,8 @@ export type AnswerEgressEndpoint =
   | "/answer"
   | "/answer/tasks/:id"
   | "/mcp"
-  | "/subscriptions/firings/:id/answer";
+  | "/subscriptions/firings/:id/answer"
+  | "/subscriptions/answer-completions/:deliveryId";
 
 export interface RecordAnswerEgressInput {
   id: string;
@@ -317,10 +318,9 @@ export function rehydrateAnswerStoreError(error: unknown): AnswerStoreError | nu
 export function hasColumn(db: PrivacyDb, table: string, column: string): boolean {
   return Boolean(
     db
-      .prepare<
-        [string],
-        { found: number }
-      >(`SELECT 1 AS found FROM pragma_table_info('${table}') WHERE name = ?`)
+      .prepare<[string], { found: number }>(
+        `SELECT 1 AS found FROM pragma_table_info('${table}') WHERE name = ?`,
+      )
       .get(column),
   );
 }

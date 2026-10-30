@@ -1,0 +1,20 @@
+{
+  "name": "telegram-sync",
+  "description": "Single-source Telegram universe for the gateway-level wraps-real E2E. Its fake-corpus.json drives the synth twin, which runs the REAL Telegram provider, archive, history walk and normalizer over the in-memory SimulatedTelegram: a private chat over two days with a voice note and a text attachment, a supergroup with a reply, an archived basic group, Saved Messages, a forum with two topics, and a broadcast channel that stays out because channels are opt-in.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "workstation",
+      "name": "Studio-Northstar-workstation",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "telegram-messages",
+      "accountIds": ["5550100201"],
+      "device": "workstation"
+    }
+  ]
+}

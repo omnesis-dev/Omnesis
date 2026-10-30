@@ -710,10 +710,9 @@ describe("findAnnotationContradictionCandidates", () => {
     const rawIds = out[0]!.annotationIds.map(
       (id) =>
         db
-          .prepare<
-            [string],
-            { person_id: string }
-          >("SELECT person_id FROM person_annotations WHERE id = ?")
+          .prepare<[string], { person_id: string }>(
+            "SELECT person_id FROM person_annotations WHERE id = ?",
+          )
           .get(id)!.person_id,
     );
     expect(rawIds.sort()).toEqual(["per_canon", "per_merged"]);
@@ -796,10 +795,9 @@ describe("findAnnotationContradictionCandidates", () => {
       ids.map(
         (id) =>
           db
-            .prepare<
-              [string],
-              { claim_text: string }
-            >("SELECT claim_text FROM doc_annotations WHERE id = ?")
+            .prepare<[string], { claim_text: string }>(
+              "SELECT claim_text FROM doc_annotations WHERE id = ?",
+            )
             .get(id)!.claim_text,
       ),
     );

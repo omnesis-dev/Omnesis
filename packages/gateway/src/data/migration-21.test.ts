@@ -94,10 +94,9 @@ describe("migration 21 — collapse ghost portal devices", () => {
       db.prepare("SELECT id FROM devices WHERE name = 'portal-bbbbbbbb'").get(),
     ).toBeUndefined();
     const survivor = db
-      .prepare<
-        [],
-        { id: string; name: string }
-      >("SELECT id, name FROM devices WHERE kind = 'portal' AND name = 'portal'")
+      .prepare<[], { id: string; name: string }>(
+        "SELECT id, name FROM devices WHERE kind = 'portal' AND name = 'portal'",
+      )
       .get();
     expect(survivor?.id).toBe("d-a");
 

@@ -5,10 +5,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { SCOPE_SUBSCRIPTIONS_ANSWER } from "@omnesis/types";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SCOPE_SUBSCRIPTIONS_ANSWER, SCOPE_SUBSCRIPTIONS_RECEIVE } from "@omnesis/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
-import { createToken } from "../data/repositories/TokenRepository.js";
+import { createToken, cleanupExpiredTokens } from "../data/repositories/TokenRepository.js";
 import { runSchemaSetup } from "../data/schema.js";
 import {
   claimDueCognitionRuns,
@@ -16,6 +16,7 @@ import {
   finalizeCognitionRun,
 } from "../brain/storage/run-queue.js";
 import { beginAnswerTask, completeAnswerTask } from "../privacy/store.js";
+import { policyRevision } from "../privacy/policy-store.js";
 import {
   authorizeSubscriptionDeliveryCommit,
   addExistenceDisclosure,
@@ -41,6 +42,7 @@ import {
   listSubscriptionApprovals,
   validateSubscriptionFiringAnswerAuthority,
 } from "./store-queries.js";
+import { finalizeSubscriptionCompletionEgress } from "./store-completion-egress.js";
 import { SubscriptionStorageCorruptionError } from "./store-codecs.js";
 import type { SubscriptionCompiledPlan } from "./store-codecs.js";
 import type { CreateSubscriptionMutation, ReviseSubscriptionMutation } from "./store-types.js";
@@ -75,7 +77,10 @@ describe("subscription store", () => {
     deviceId = createDevice(db, { name: "Fictional integration", kind: "cli" }).id;
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    db.close();
+  });
 
   it("keeps semantic existence categories from two watches sharing a workflow", () => {
     const health = JSON.stringify([
@@ -141,10 +146,9 @@ describe("subscription store", () => {
     ).toBe("fired");
     expect(
       db
-        .prepare<
-          [],
-          { categories_json: string }
-        >("SELECT categories_json FROM subscription_workflow_disclosure")
+        .prepare<[], { categories_json: string }>(
+          "SELECT categories_json FROM subscription_workflow_disclosure",
+        )
         .get()?.categories_json,
     ).toBe(
       JSON.stringify([{ category: "health", detailLevel: "existence", subject: "user", count: 1 }]),
@@ -421,10 +425,9 @@ describe("subscription store", () => {
   function releaseFiringTask(taskId: string, firingId: string): void {
     const disclosureRevision =
       db
-        .prepare<
-          [string],
-          { revision: number }
-        >("SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?")
+        .prepare<[string], { revision: number }>(
+          "SELECT revision FROM answer_workflow_disclosure WHERE workflow_id = ?",
+        )
         .get("wf_northstar")?.revision ?? 0;
     const task = beginAnswerTask(db, {
       ownerId: `device:${deviceId}`,
@@ -454,6 +457,154 @@ describe("subscription store", () => {
       },
     });
   }
+
+  describe("committed Watch answer completion egress", () => {
+    let directory: string;
+    afterEach(() => {
+      if (directory) rmSync(directory, { recursive: true, force: true });
+    });
+    function fixture() {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(600);
+      createAndApprove();
+      db.prepare("UPDATE devices SET kind = 'agent' WHERE id = ?").run(deviceId);
+      const original = issueFiringAuthority("sf_completion", "doc_completion");
+      expect(
+        authorizeSubscriptionDeliveryCommit(db, {
+          deliveryId: original.delivery.id,
+          claimId: original.delivery.claimId,
+          policyRevision: "policy-a",
+          authorizedAt: 475,
+        }).outcome,
+      ).toBe("authorized");
+      releaseFiringTask("task_completion", "sf_completion");
+      db.prepare(
+        "UPDATE answer_tasks SET completion_device_id = ?, completion_native_conversation_id = 'native-owned' WHERE id = 'task_completion'",
+      ).run(deviceId);
+      db.prepare(
+        `INSERT INTO answer_completion_deliveries
+        (id, task_id, integration_device_id, native_conversation_id, status, claim_id, claim_expires_at, created_at, updated_at)
+        VALUES ('acd_owned', 'task_completion', ?, 'native-owned', 'commit_authorized', 'claim_owned', 1200, 550, 550)`,
+      ).run(deviceId);
+      directory = mkdtempSync(join(tmpdir(), "completion-policy-"));
+      const path = join(directory, "policy.md"),
+        policy = "A fictional completion policy.";
+      writeFileSync(path, policy);
+      const revision = policyRevision(policy);
+      db.prepare("UPDATE subscription_revisions SET policy_revision = ?").run(revision);
+      db.prepare("UPDATE subscription_grants SET policy_revision = ?").run(revision);
+      db.prepare("UPDATE answer_tasks SET policy_revision = ?").run(revision);
+      const current = createToken(
+        db,
+        deviceId as Parameters<typeof createToken>[1],
+        [SCOPE_SUBSCRIPTIONS_RECEIVE],
+        "current-completion",
+      );
+      const input = {
+        tokenId: current.id,
+        deviceId,
+        deliveryId: "acd_owned",
+        egressId: "egress_completion",
+        policyGuard: { path, expectedRevision: revision },
+      };
+      return { input, original, clock };
+    }
+    it("returns canonical released content after the asking token and its authority were expired and purged", () => {
+      const { input, original, clock } = fixture();
+      clock.mockReturnValue(2_000_000);
+      db.prepare("UPDATE subscriptions SET expires_at = 3000000").run();
+      db.prepare("UPDATE subscription_grants SET expires_at = 3000000").run();
+      db.prepare("UPDATE answer_workflows SET expires_at = 3000000").run();
+      db.prepare("UPDATE answer_completion_deliveries SET claim_expires_at = 2001000").run();
+      cleanupExpiredTokens(db);
+      expect(
+        db.prepare("SELECT id FROM tokens WHERE id = ?").get(original.token.id),
+      ).toBeUndefined();
+      expect(
+        db.prepare("SELECT id FROM subscription_firing_answer_authorities").all(),
+      ).toHaveLength(0);
+      const before = db.prepare("SELECT COUNT(*) AS count FROM answer_tasks").get();
+      const result = finalizeSubscriptionCompletionEgress(db, input);
+      expect(result.outcome).toBe("recorded");
+      if (result.outcome !== "recorded") throw new Error("Expected completion");
+      expect(JSON.parse(result.egress.responseJson)).toMatchObject({
+        taskId: "task_completion",
+        status: "released",
+        answer: "A wholly fictional Northstar record matched.",
+      });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM answer_tasks").get()).toEqual(before);
+      expect(
+        db.prepare("SELECT id FROM subscription_firing_answer_authorities").all(),
+      ).toHaveLength(0);
+    });
+    it.each([
+      "UPDATE answer_completion_deliveries SET status = 'claimed'",
+      "UPDATE answer_completion_deliveries SET claim_expires_at = 600",
+      "UPDATE answer_completion_deliveries SET claim_id = NULL",
+      "UPDATE answer_completion_deliveries SET claim_expires_at = NULL",
+      "UPDATE answer_tasks SET status = 'approval_required'",
+      "UPDATE answer_tasks SET subscription_firing_id = NULL",
+      "UPDATE answer_tasks SET completion_native_conversation_id = 'different'",
+      "UPDATE answer_tasks SET policy_revision = 'different'",
+      "UPDATE subscription_firings SET status = 'blocked'",
+      "UPDATE subscriptions SET status = 'revoked'",
+      "UPDATE subscriptions SET expires_at = 600",
+      "UPDATE subscription_grants SET revoked_at = 599",
+      "UPDATE subscription_grants SET expires_at = 600",
+      "UPDATE answer_workflows SET status = 'closed'",
+      "UPDATE answer_workflows SET expires_at = 600",
+      "UPDATE devices SET revoked_at = 599",
+      "UPDATE tokens SET expires_at = 600",
+      "UPDATE tokens SET scopes = '[]'",
+      "DELETE FROM tokens",
+      "UPDATE subscription_firings SET evidence_count = 2",
+      "UPDATE subscription_revisions SET policy_revision = 'different'",
+      "UPDATE subscription_grants SET policy_revision = 'different'",
+    ])("rejects changed authority before any disclosure: %s", (mutation) => {
+      const { input } = fixture();
+      db.exec(mutation);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      expect(db.prepare("SELECT id FROM answer_egress_events").all()).toHaveLength(0);
+    });
+    it("does not treat a completion identifier as a bearer or reuse a cached disclosure after revocation", () => {
+      const { input } = fixture();
+      expect(
+        finalizeSubscriptionCompletionEgress(db, { ...input, deviceId: "another-device" }),
+      ).toEqual({ outcome: "unavailable" });
+      expect(
+        finalizeSubscriptionCompletionEgress(db, { ...input, deliveryId: "another-delivery" }),
+      ).toEqual({ outcome: "unavailable" });
+      expect(finalizeSubscriptionCompletionEgress(db, input).outcome).toBe("recorded");
+      db.prepare("UPDATE subscription_grants SET revoked_at = 600").run();
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+    });
+    it("rejects independently valid but inconsistent workflow and device references", () => {
+      const { input } = fixture();
+      beginAnswerTask(db, {
+        ownerId: `device:${deviceId}`,
+        clientRequestId: "unrelated-request",
+        question: "Other fictional ask",
+        ids: { workflowId: "wf_other", conversationId: "conversation_other", taskId: "task_other" },
+        now: 600,
+        workflowExpiresAt: 10000,
+      });
+      db.prepare("UPDATE subscription_firings SET workflow_id = 'wf_other'").run();
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      db.prepare("UPDATE subscription_firings SET workflow_id = 'wf_northstar'").run();
+      const other = createDevice(db, { name: "Another fictional agent", kind: "agent" });
+      db.prepare("UPDATE subscriptions SET integration_device_id = ?").run(other.id);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      expect(db.prepare("SELECT id FROM answer_egress_events").all()).toHaveLength(0);
+    });
+
+    it("checks policy and clock at writer execution", () => {
+      const { input, clock } = fixture();
+      writeFileSync(input.policyGuard.path, "Changed while waiting for writer");
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      writeFileSync(input.policyGuard.path, "A fictional completion policy.");
+      clock.mockReturnValue(1200);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+    });
+  });
 
   it("creates an immutable pending revision and safely replays the same request", () => {
     const first = createSubscription(db, createInput());
@@ -703,10 +854,9 @@ describe("subscription store", () => {
       }),
     ).toMatchObject({ outcome: "fired" });
     const stored = db
-      .prepare<
-        [string],
-        { observation_json: string | null }
-      >("SELECT observation_json FROM subscription_firings WHERE id = ?")
+      .prepare<[string], { observation_json: string | null }>(
+        "SELECT observation_json FROM subscription_firings WHERE id = ?",
+      )
       .get("sfiring_documented");
     expect(stored?.observation_json).toBeNull();
   });
@@ -723,10 +873,9 @@ describe("subscription store", () => {
     // the writer that materializes expiry under the one-shot approval lock.
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_approvals WHERE id = 'sapp_northstar'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_approvals WHERE id = 'sapp_northstar'",
+        )
         .get()?.status,
     ).toBe("pending");
   });
@@ -787,10 +936,9 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM subscription_grants WHERE id = 'sgrant_must_not_exist'")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM subscription_grants WHERE id = 'sgrant_must_not_exist'",
+        )
         .get()!.count,
     ).toBe(0);
   });
@@ -1011,10 +1159,9 @@ describe("subscription store", () => {
     ).toMatchObject({ outcome: "settled", status: "delivered" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_operator_settle'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_operator_settle'",
+        )
         .get(),
     ).toEqual({ status: "delivered" });
   });
@@ -1053,18 +1200,16 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { revoked_at: number | null }
-        >("SELECT revoked_at FROM subscription_grants WHERE id = 'sgrant_northstar'")
+        .prepare<[], { revoked_at: number | null }>(
+          "SELECT revoked_at FROM subscription_grants WHERE id = 'sgrant_northstar'",
+        )
         .get()?.revoked_at,
     ).toBe(400);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_policy'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_policy'",
+        )
         .get(),
     ).toEqual({ status: "cancel_pending", last_error: "privacy policy changed" });
     expect(
@@ -1109,10 +1254,9 @@ describe("subscription store", () => {
       approval: { status: "pending" },
     });
     const approvalId = db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM subscription_approvals WHERE subscription_id = 'sub_northstar' AND revision = 2")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM subscription_approvals WHERE subscription_id = 'sub_northstar' AND revision = 2",
+      )
       .get()!.id;
     expect(
       resolveSubscriptionApproval(db, {
@@ -1147,18 +1291,16 @@ describe("subscription store", () => {
 
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_deleted_evidence'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_deleted_evidence'",
+        )
         .get(),
     ).toEqual({ status: "blocked" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_deleted_evidence'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE firing_id = 'sfiring_deleted_evidence'",
+        )
         .get(),
     ).toEqual({
       status: "cancel_pending",
@@ -1166,10 +1308,9 @@ describe("subscription store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { revoked_at: number | null }
-        >("SELECT revoked_at FROM subscription_firing_answer_authorities WHERE firing_id = 'sfiring_deleted_evidence'")
+        .prepare<[], { revoked_at: number | null }>(
+          "SELECT revoked_at FROM subscription_firing_answer_authorities WHERE firing_id = 'sfiring_deleted_evidence'",
+        )
         .get()?.revoked_at,
     ).not.toBeNull();
     expect(
@@ -1329,10 +1470,9 @@ describe("subscription store", () => {
     ).toEqual([]);
     expect(
       db
-        .prepare<
-          [],
-          { status: string; last_error: string }
-        >("SELECT status, last_error FROM subscription_deliveries WHERE id = 'sdel_sfiring_retry'")
+        .prepare<[], { status: string; last_error: string }>(
+          "SELECT status, last_error FROM subscription_deliveries WHERE id = 'sdel_sfiring_retry'",
+        )
         .get(),
     ).toEqual({
       status: "cancel_pending",
@@ -1359,10 +1499,9 @@ describe("subscription store", () => {
     ).toEqual({ outcome: "settled", status: "failed" });
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM subscription_firings WHERE id = 'sfiring_retry'")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM subscription_firings WHERE id = 'sfiring_retry'",
+        )
         .get()?.status,
     ).toBe("blocked");
   });
@@ -1409,10 +1548,9 @@ describe("subscription store", () => {
       expect(first.outcome).toBe("fired");
       expect(second.outcome).toBe("fired");
       const firings = db
-        .prepare<
-          [],
-          { id: string; index_event_key: string; evidence_count: number }
-        >("SELECT id, index_event_key, evidence_count FROM subscription_firings ORDER BY id")
+        .prepare<[], { id: string; index_event_key: string; evidence_count: number }>(
+          "SELECT id, index_event_key, evidence_count FROM subscription_firings ORDER BY id",
+        )
         .all();
       expect(firings.map((f) => f.id)).toEqual(["sfiring_cell_a", "sfiring_cell_b"]);
       // Each carries its own cell's evidence. Collapsing the two would hand

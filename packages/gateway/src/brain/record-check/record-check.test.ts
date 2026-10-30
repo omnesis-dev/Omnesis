@@ -25,6 +25,7 @@ import {
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
 import { listDecisionsForRun } from "../storage/decisions.js";
 import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.js";
+import { createBrainSourceFence } from "../source-exclusion.js";
 import { createOpenLoopMirror } from "../steward/mirror.js";
 import { buildCognitionOwnTools } from "../steward/tools.js";
 import { PERSON_PROFILE_UTILITY_GUIDANCE } from "./person-profile-utility.js";
@@ -151,10 +152,10 @@ describe("record check", () => {
     }
   });
 
-  function insertDoc(externalId: string, content: string): string {
+  function insertDoc(externalId: string, content: string, sourceId = "gmail-test"): string {
     const doc: DocumentInput = {
       providerId: ProviderId("google"),
-      sourceId: SourceId("gmail-test"),
+      sourceId: SourceId(sourceId),
       externalId,
       title: `Message ${externalId}`,
       content,
@@ -1234,10 +1235,9 @@ describe("record check", () => {
       await c.forRun(run("bootstrap", { docId: doc, datumAt: NOW }))!(record(doc));
       await c.idle();
       const row = db
-        .prepare<
-          [string],
-          { prompt_tokens: number; runs: number }
-        >(`SELECT prompt_tokens, runs FROM cognition_spend WHERE mechanism = ?`)
+        .prepare<[string], { prompt_tokens: number; runs: number }>(
+          `SELECT prompt_tokens, runs FROM cognition_spend WHERE mechanism = ?`,
+        )
         .get(RECORD_CHECK_SPEND_MECHANISM);
       expect(row).toEqual({ prompt_tokens: 120, runs: 0 });
       expect(getCognitionSpendDayTotal(db, cognitionSpendDay(NOW))?.runs ?? 0).toBe(0);
@@ -1259,6 +1259,7 @@ describe("record check", () => {
         | "validateAnnotationEvidence"
         | "personProfileBudget"
         | "getEntailmentVerifier"
+        | "sourceFence"
       > = {},
     ): ToolHandle[] {
       const writeGate = directWriteGate(db);
@@ -2115,6 +2116,50 @@ describe("record check", () => {
       );
       expect(resultType(snooze)).toBe("open_loop.updated");
       expect(decision.calls).toHaveLength(1);
+    });
+
+    test("an outcome judgment is never shown a linked document of an excluded source", async () => {
+      const mail = insertDoc("outcome-mail", "The archive access transfer was requested.");
+      const log = insertDoc(
+        "outcome-log",
+        "Session notes: the archive transfer finished early.",
+        "assistant-log:workstation",
+      );
+      const create = async (title: string, docs: string[]) => {
+        const created = await tool(tools(), "open_loop_create").invoke(
+          { title, confidence: 0.8, importance: 0.7, docs, annotationDependencies: [] },
+          CTX,
+        );
+        if (created.kind !== "structured") throw new Error(JSON.stringify(created));
+        return (created.data as { loop: { id: string } }).loop.id;
+      };
+      const mixed = await create("Transfer archive access", [mail, log]);
+      const unreadable = await create("Close the archive session", [log]);
+      const decision = new ScriptedDecision();
+      const list = tools({
+        checkRecord: check(decision, "enforce").check.forRun(bootstrapRun(mail))!,
+        sourceFence: createBrainSourceFence(db, () => ["assistant-log"]),
+      });
+      const done = (id: string) =>
+        tool(list, "open_loop_update").invoke(
+          { id, state: "done", annotationDependencies: [] },
+          CTX,
+        );
+
+      // Judged on the readable linked document only.
+      expect(resultType(await done(mixed))).toBe("open_loop.updated");
+      expect(decision.calls).toHaveLength(1);
+      expect(decision.calls[0]!.state).toMatchObject({
+        outcome_context: { sources: [{ id: mail }] },
+      });
+      // With no readable evidence left, nothing is judged: recorded as unavailable.
+      expect(resultType(await done(unreadable))).toBe("open_loop.updated");
+      expect(decision.calls).toHaveLength(1);
+      expect(JSON.stringify(decision.calls)).not.toContain("Session notes");
+      expect(listDecisionsForRun(db, "run_1").map((row) => row.verdict)).toEqual([
+        "pass",
+        "unavailable",
+      ]);
     });
 
     test("autonomous outcomes require source evidence before spending a judgment", async () => {

@@ -89,7 +89,7 @@ import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js"
 import { directIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
-import { generateSelfSigned, resolveTlsBundle } from "./tls.js";
+import { generateSelfSigned, resolveTlsBundle, tlsExtraHostNames } from "./tls.js";
 import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycle/addressing.js";
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
@@ -120,7 +120,7 @@ import { ModelsDevCatalog } from "./models/models-dev-catalog.js";
 import { EntailmentVerifierService } from "./inference/entailment-service.js";
 import { withSpendRecording } from "./inference/spend-recording-completer.js";
 import { loadCompletionFromResolved } from "./inference/completion-loader.js";
-import { TranscribeService } from "./transcribe/index.js";
+import { TranscribeService, verifyTranscriberAssignment } from "./transcribe/index.js";
 import { TranscriptionVocabularyService } from "./transcribe/vocabulary/service.js";
 import { resolveVocabularySettings } from "./transcribe/vocabulary/config.js";
 import {
@@ -134,21 +134,18 @@ import { reconcileConfig } from "./config-reconcile.js";
 import {
   createIndexDatabase,
   purgeUsearchSidecars,
-  getVectorWriteSeq,
   getUsearchSavedSeq,
-  setUsearchSavedSeq,
+  getUsearchSavedChangeSeq,
+  getUsearchBackfillCursor,
   getIndexEmbedModel,
   reconcileIndexForGatewaySchema,
   enqueueDocumentIndexPurge,
   scrubPendingSourceIndexPurges,
 } from "./indexer/db.js";
 import { listInterruptedOmnesisChatRetentionDocumentIds } from "./sources/omnesis-chat/wiring.js";
-import {
-  encryptSidecar,
-  restoreActiveSidecar,
-  purgeSidecarTemps,
-  tryUnlink as tryUnlinkSidecar,
-} from "./indexer/usearch-sidecar-crypto.js";
+import { describeMemoryBudget, resolveMemoryBudget } from "./memory-budget.js";
+import { encryptSidecar, tryUnlink as tryUnlinkSidecar } from "./indexer/usearch-sidecar-crypto.js";
+import { prepareEncryptedGraphForBoot } from "./indexer/usearch-sidecar-boot.js";
 import { IndexerStatusReporter } from "./indexer/indexer-status.js";
 import { IndexerLifecycle } from "./indexer/indexer-lifecycle.js";
 import {
@@ -191,6 +188,7 @@ import {
   DEFAULT_SEARCH_READ_CACHE_BYTES,
 } from "./search/search-config.js";
 import { AnalyticsDb } from "./analytics-db.js";
+import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analytics/connection-pool.js";
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
 import { DiskUsageMonitor, measureDiskUsage } from "./disk-usage.js";
@@ -389,7 +387,10 @@ if (scaffoldDotEnv(configDir)) {
 // editor or the portal reaches the next run with no restart.
 const operatorInstructions = new OperatorInstructionsStore(configDir);
 
-const configStore = new ConfigStore({ filePath: defaultConfigPath(configDir) });
+const configStore = new ConfigStore({
+  filePath: defaultConfigPath(configDir),
+  release: GATEWAY_VERSION,
+});
 try {
   await configStore.load();
 } catch (err) {
@@ -409,6 +410,10 @@ const config = configStore.get();
 // individual key in `gateway.*` / `indexer.*`. See src/mitigations.ts.
 const runtime = resolveRuntimeSettings(config);
 announceRuntimeSettings(runtime);
+// How much memory the gateway may use: the knob, else the cgroup limit, else
+// the host's memory. The indexer keeps the HNSW graph within it.
+const memoryBudget = resolveMemoryBudget({ limitMb: runtime.memoryLimitMb });
+log.info(`memory budget: ${describeMemoryBudget(memoryBudget)}`);
 
 const storageEncryption = await resolveGatewayStorageEncryptionKeys(configDir).catch((err) => {
   log.error(`Cannot start: ${err instanceof Error ? err.message : String(err)}`);
@@ -457,9 +462,12 @@ inferenceRegistry.loadConfig(config);
 // startIndexer() can await it before resolving assignments — this
 // ensures the registry has up-to-date backend status (including
 // discovered models) when the indexer boots.
-const initialProbe = inferenceRegistry.probeBackends().catch((err) => {
-  log.warn(`Backend probe failed: ${err instanceof Error ? err.message : String(err)}`);
-});
+const initialProbe = inferenceRegistry
+  .probeBackends()
+  .then(() => verifyTranscriberAssignment(inferenceRegistry))
+  .catch((err) => {
+    log.warn(`Backend probe failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
 const indexerStatus = new IndexerStatusReporter();
 
@@ -828,39 +836,12 @@ for (const documentId of listInterruptedOmnesisChatRetentionDocumentIds(db)) {
   }
 }
 if (storageEncryption.enabled) {
-  // Under encryption the plaintext sidecar is never durable — only the
-  // encrypted `.enc` is. Purge every plaintext working file + leftover crypto
-  // temp (the purge regex keeps `.enc`), then re-materialise the ACTIVE
-  // generation's plaintext graph from its `.enc` ONLY when a fingerprint proves
-  // it is consistent with index.db. On any mismatch/tamper we leave no
-  // plaintext file, so the indexer worker rebuilds the graph from
-  // chunks.embedding — never a re-embed, never an index wipe.
-  purgeUsearchSidecars(configDir);
-  purgeSidecarTemps(configDir);
-  const activeTarget = resolveActiveUsearchTarget(indexDb, configDir);
-  const restore = storageEncryption.indexDbKey
-    ? restoreActiveSidecar({
-        encPath: `${activeTarget.path}.enc`,
-        plaintextPath: activeTarget.path,
-        indexDbKey: storageEncryption.indexDbKey,
-        expectedSeq: getVectorWriteSeq(indexDb),
-        expectedModel: getIndexEmbedModel(indexDb),
-      })
-    : { restored: false, reason: "no index-db key" };
-  if (restore.restored) {
-    // The restored plaintext reflects the sidecar's seq (which equals the live
-    // `vector_write_seq` — that is why the restore was accepted). Record it as
-    // `usearch_saved_seq` so a subsequent shutdown can re-encrypt this graph
-    // even though the indexer worker skips its backfill (and thus its save +
-    // stamp) after a restore. Without this an idle gateway restarted right after
-    // a restore-boot would find `usearch_saved_seq` unset and skip the persist.
-    setUsearchSavedSeq(indexDb, restore.seq ?? getVectorWriteSeq(indexDb));
-    log.info(
-      `HNSW sidecar restored from encrypted persistence (write-seq ${restore.seq}) — skipping rebuild`,
-    );
-  } else {
-    log.info(`HNSW sidecar will rebuild from vectors: ${restore.reason}`);
-  }
+  const restore = prepareEncryptedGraphForBoot(indexDb, configDir, storageEncryption.indexDbKey);
+  log.info(
+    restore.restored
+      ? `HNSW sidecar restored from encrypted persistence (write-seq ${restore.seq}, ${restore.reason})`
+      : `HNSW sidecar will rebuild from vectors: ${restore.reason}`,
+  );
 }
 
 // Search pipeline (available immediately with BM25; embedder added later)
@@ -1037,10 +1018,9 @@ const getSourceDocCounts = (): readonly SourceDocCount[] => {
   let counts: SourceDocCount[];
   try {
     counts = db
-      .prepare<
-        [],
-        { sourceId: string; docCount: number }
-      >("SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0")
+      .prepare<[], { sourceId: string; docCount: number }>(
+        "SELECT source_id AS sourceId, doc_count AS docCount FROM source_stats WHERE doc_count > 0",
+      )
       .all();
   } catch {
     counts = [];
@@ -1164,7 +1144,8 @@ const analyticsDb = new AnalyticsDb(analyticsDbPath, {
   metrics,
   encryptionKeyHex: storageEncryption.analyticsDbKeyHex,
   maxInlineStreamRekeyRows: runtime.analyticsStreamRekeyMaxRows,
-  memoryLimitMiB: runtime.analyticsMemoryLimitMb,
+  memoryLimitMiB:
+    runtime.analyticsMemoryLimitMb ?? defaultAnalyticsMemoryLimitMiB(memoryBudget.bytes),
   threads: runtime.analyticsThreads,
   // DuckDB keeps failing every statement once it has invalidated the store;
   // only reopening the file recovers, so exit non-zero and let the service
@@ -1452,16 +1433,16 @@ setInterval(() => {
 const tokenUsageBuffer = createTokenUsageBuffer();
 const principalCredentialUsageBuffer = createPrincipalCredentialUsageBuffer();
 
-// The embedder lives behind the indexer worker proxy and isn't ready until
-// startIndexer() finishes. Returning null while it loads is the contract every
+// Only the search pipeline's attached query embedder is a semantic capability;
+// a lexical-only indexer worker has none. Returning null is the contract every
 // caller expects: a watch's recall arm scores nothing and is retried on the
 // next pass rather than nominating the whole corpus.
 const getSemanticEmbedder = (): { embedQuery(text: string): Promise<number[]> } | null => {
-  const proxy = indexerLifecycle.indexerProxy;
-  return proxy
+  const embedder = searchPipeline.queryEmbedder();
+  return embedder
     ? {
         embedQuery: async (text: string): Promise<number[]> => {
-          const vec = await proxy.embedQuery(text);
+          const vec = await embedder.embedQuery(text);
           return Array.from(vec as Float32Array | number[]);
         },
       }
@@ -1644,6 +1625,7 @@ const indexerLifecycle = new IndexerLifecycle({
   indexDbKeyHex: storageEncryption.indexDbKeyHex,
   indexDb,
   configDir,
+  memoryBudget,
   initialModelInfo: {
     name: embeddingModelName,
     path: embeddingModelPath,
@@ -1692,15 +1674,13 @@ const modelManager = new ModelManager({
       const activeEmbedId = liveEmbed.kind === "local" ? liveEmbed.catalogId : undefined;
       if (activeEmbedId && event.modelId === activeEmbedId) {
         indexerLifecycle.modelInfo.present = existsSync(indexerLifecycle.modelInfo.path);
-        const r = indexerStatus.getReadiness();
-        if (r.status === "disabled" && /model not found/i.test(r.reason ?? "")) {
-          log.info(`Active embed model ${event.modelId} just installed — bootstrapping indexer`);
-          indexerLifecycle.startIndexer().catch((err) => {
-            log.error(
-              `Indexer auto-bootstrap after install failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-        }
+        // Serialize promotion even when the lexical worker is still booting.
+        // Calling startIndexer directly could create a second index.db writer.
+        indexerLifecycle.resumeAfterModelInstall().catch((err) => {
+          log.error(
+            `Indexer auto-bootstrap after install failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
       }
     }
   },
@@ -1744,6 +1724,10 @@ if (tlsBundle.source === "auto-generated") {
 // and the lifecycle task is scheduled only then: an activation with nothing
 // listening is refused rather than recorded as served.
 let activeServer: HttpsServer | undefined;
+// A container has no `tailscale` or `mkcert`, and behind a Docker bridge sees
+// only its own network: the host's names reach it in OMNESIS_TLS_EXTRA_NAMES.
+const inContainer = existsSync("/.dockerenv");
+const tlsExtraHosts = tlsExtraHostNames(process.env.OMNESIS_TLS_EXTRA_NAMES);
 const addressedHosts = () =>
   partitionAddressedHosts({
     gatewayUrl: process.env.OMNESIS_GATEWAY_URL,
@@ -1773,8 +1757,8 @@ const tlsLifecycle = new TlsLifecycleService({
       configStore.get().gateway?.tls?.renewBeforeDays ??
       CONFIG_DEFAULTS.gateway.tls.renewBeforeDays,
   }),
-  // A container has no `tailscale` or `mkcert`; those tiers renew on the host.
-  inContainer: existsSync("/.dockerenv"),
+  // Those tiers renew on the host.
+  inContainer,
   onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
 });
 
@@ -1890,8 +1874,7 @@ const sweepService = new SweepService({
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let agentConversationsRuntime:
-  | import("./sources/agent-conversations/index.js").AgentConversationsRuntime
-  | undefined;
+  import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
 // Held for the delivery loop below (policy review and operator-watch
 // re-approval passes) and for the agent's watch port, which authors operator
 // watches through it.
@@ -2473,14 +2456,9 @@ const app = createServer(db, DB_PATH, {
   mcpResourceUrls: runtime.mcpResourceUrls,
   indexerModel: indexerLifecycle.modelInfo,
   indexerReadiness: () => indexerStatus.getReadiness(),
+  getSemanticSearch: () => indexerLifecycle.vectorIndex,
   indexerControl: {
-    reindexMissing: async () => {
-      const proxy = indexerLifecycle.indexerProxy;
-      if (!proxy) {
-        throw new Error("indexer worker not ready — check /index/stats for state");
-      }
-      return proxy.reindexMissing();
-    },
+    reindexMissing: async () => indexerLifecycle.indexerProxy?.reindexMissing() ?? null,
     rebuild: (mode) => indexerLifecycle.applyEmbedSwap(mode),
     // Route through the worker that owns index.db, including during startup
     // before it is ready for search/admin calls. Returns undefined only when no
@@ -2563,6 +2541,7 @@ const app = createServer(db, DB_PATH, {
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
   getNoteAgentStatus: () => noteAgent.status(),
+  isNoteAgentEnabled: () => noteAgent.enabled(),
   getDictationStatus: () =>
     dictationFeatureStatus({
       transcriberReadiness: () => transcribeService.readiness(),
@@ -2601,6 +2580,7 @@ const app = createServer(db, DB_PATH, {
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
   verifyModel: (key, model, role, vopts) => inferenceRegistry.verifyModel(key, model, role, vopts),
+  vetAssignment: (role, value) => inferenceRegistry.vetAssignment(role, value),
   transcribeService,
   transcriptionVocabularyService,
   ocrService,
@@ -2629,6 +2609,10 @@ const app = createServer(db, DB_PATH, {
   publiclyTrustedPairingHosts: () => tlsLifecycle.publiclyTrustedNames(),
   advertisedPairingHost: () => advertiser?.advertisedHost() ?? null,
   certificateRenewsAt: () => tlsLifecycle.nextRenewalAt(),
+  // Offered to phones only while the served certificate still covers them: a
+  // certificate kept from before a name was added does not.
+  pairingHostNames: () => tlsLifecycle.coveredHosts(tlsExtraHosts),
+  inContainer,
   systemTrustPairingOrigins: () => [
     ...(runtime.publicBaseUrl ? [runtime.publicBaseUrl] : []),
     ...runtime.pairingSystemTrustOrigins,
@@ -2906,6 +2890,26 @@ configOrchestrator.register(configStore);
 // always reflects the latest assignments and backends.
 configStore.onChange((_before, after) => {
   inferenceRegistry.loadConfig(after);
+});
+
+// Re-verify the transcriber when its assignment or any backend changes, so
+// the role's "configured, but unavailable" reason is current and the log says
+// at once that a new backend cannot transcribe. The registry's reload above
+// has already dropped the verdicts of every backend whose address changed.
+configStore.onChange((before, after) => {
+  const changed = (read: (c: OmnesisConfig) => unknown) =>
+    JSON.stringify(read(before)) !== JSON.stringify(read(after));
+  if (
+    changed((c) => c.inference?.assignments?.transcriber) ||
+    changed((c) => c.inference?.backends) ||
+    changed((c) => c.inference?.allowRemoteInference)
+  ) {
+    void verifyTranscriberAssignment(inferenceRegistry).catch((err) => {
+      log.warn(
+        `Transcriber verification failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
 });
 
 // Remember replaced model assignments for the picker's "Recently used"
@@ -3371,6 +3375,7 @@ const backendReprobeBundle = createBackendReprobeTask(
     reconcileAgent: async () => {
       await agentLifecycle.reactivateAgentIfAvailable();
     },
+    verifyTranscriber: () => verifyTranscriberAssignment(inferenceRegistry),
   },
   scheduler,
 );
@@ -3715,12 +3720,15 @@ const doShutdown = async (): Promise<void> => {
     const { path: activePath } = resolveActiveUsearchTarget(indexDb, configDir);
     const model = getIndexEmbedModel(indexDb);
     const savedSeq = getUsearchSavedSeq(indexDb);
+    const savedChangeSeq = getUsearchSavedChangeSeq(indexDb);
     if (key && model && savedSeq > 0 && existsSync(activePath)) {
       try {
         encryptSidecar(activePath, `${activePath}.enc`, key, {
           vectorWriteSeq: savedSeq,
           embedModel: model.name,
           embedDim: model.dim,
+          ...(savedChangeSeq !== null ? { changeSeq: savedChangeSeq } : {}),
+          backfillCursor: getUsearchBackfillCursor(indexDb),
         });
         log.info(`Encrypted HNSW sidecar persisted for restart-restore (saved-seq ${savedSeq})`);
       } catch (err) {

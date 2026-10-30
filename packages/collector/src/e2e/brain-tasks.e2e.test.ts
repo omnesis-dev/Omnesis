@@ -691,8 +691,8 @@ describe("brain bench: tasks", () => {
 
     // Without a reason the change was refused, and the delete was refused outright.
     const docId = await bench.docId(RECEIPT.externalId);
-    const [run] = await bench.obs.runsForSource(docId);
-    const steps = await bench.obs.executedTools(run!.id);
+    const run = await bench.obs.interpretationForSource(docId);
+    const steps = await bench.obs.executedTools(run.id);
     expect(
       steps
         .filter((s) => s.tool === "open_loop_update")

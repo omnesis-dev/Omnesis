@@ -1095,10 +1095,9 @@ describe("temporal annotation evidence + surgical invalidation", () => {
     const cause = (id: string): string | null =>
       (
         db
-          .prepare<
-            [string],
-            { c: string | null }
-          >("SELECT invalidation_cause AS c FROM temporal_annotations WHERE id = ?")
+          .prepare<[string], { c: string | null }>(
+            "SELECT invalidation_cause AS c FROM temporal_annotations WHERE id = ?",
+          )
           .get(id) as { c: string | null }
       ).c;
     seed("tix_churned", {

@@ -252,10 +252,9 @@ describe("snapshot absence", () => {
     expect(applySnapshotAbsencePlan(db, concurrent)).toEqual({ marked: 0, cleared: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { observations: number }
-        >("SELECT DISTINCT observations FROM document_absences")
+        .prepare<[], { observations: number }>(
+          "SELECT DISTINCT observations FROM document_absences",
+        )
         .all(),
     ).toEqual([{ observations: 2 }]);
   });
@@ -281,10 +280,9 @@ describe("snapshot absence", () => {
     expect(applySnapshotAbsencePlan(db, replay)).toEqual({ marked: 0, cleared: 0 });
     expect(
       db
-        .prepare<
-          [],
-          { observations: number }
-        >("SELECT DISTINCT observations FROM document_absences")
+        .prepare<[], { observations: number }>(
+          "SELECT DISTINCT observations FROM document_absences",
+        )
         .all(),
     ).toEqual([{ observations: 2 }]);
   });
@@ -429,10 +427,9 @@ describe("snapshot absence", () => {
     expect(reclaimStaleAbsences(db, [candidate])).toBe(0);
     expect(
       db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_absences WHERE document_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_absences WHERE document_id = ?",
+        )
         .get(candidate.documentId)!.n,
     ).toBe(1);
   });
@@ -565,10 +562,9 @@ describe("snapshot absence", () => {
     // The absences went with their documents through the foreign key.
     expect(countPendingAbsences(db)).toBe(0);
     const row = db
-      .prepare<
-        [],
-        { external_ids: string; document_count: number }
-      >("SELECT external_ids, document_count FROM snapshot_absence_deletions")
+      .prepare<[], { external_ids: string; document_count: number }>(
+        "SELECT external_ids, document_count FROM snapshot_absence_deletions",
+      )
       .get();
     expect((JSON.parse(row!.external_ids) as string[]).sort()).toEqual(["note-2", "note-3"]);
     expect(row!.document_count).toBe(2);
@@ -614,10 +610,9 @@ describe("snapshot absence", () => {
     // it rather than restarting the cycle.
     expect(
       db
-        .prepare<
-          [string],
-          { device_id: string; role: string }
-        >("SELECT device_id, role FROM replica_deletion_claims WHERE external_id = ?")
+        .prepare<[string], { device_id: string; role: string }>(
+          "SELECT device_id, role FROM replica_deletion_claims WHERE external_id = ?",
+        )
         .all("note-3"),
     ).toEqual([{ device_id: host.id, role: "deleted" }]);
     recordPresenceClaims(db, PROVIDER, SOURCE, "mac-b", ["note-3"], t0 + 1);
@@ -628,10 +623,9 @@ describe("snapshot absence", () => {
     const t0 = Date.now();
     const observer = (externalId: string) =>
       db
-        .prepare<
-          [string],
-          { observed_by: string }
-        >("SELECT observed_by FROM document_absences WHERE external_id = ?")
+        .prepare<[string], { observed_by: string }>(
+          "SELECT observed_by FROM document_absences WHERE external_id = ?",
+        )
         .get(externalId)?.observed_by;
     snapshot(db, ["note-1"], t0, POLICY, "mac-a");
     expect(observer("note-2")).toBe("mac-a");
@@ -644,10 +638,9 @@ describe("snapshot absence", () => {
     expect(observer("note-2")).toBe("mac-b");
     expect(
       db
-        .prepare<
-          [string],
-          { observations: number }
-        >("SELECT observations FROM document_absences WHERE external_id = ?")
+        .prepare<[string], { observations: number }>(
+          "SELECT observations FROM document_absences WHERE external_id = ?",
+        )
         .get("note-2")?.observations,
     ).toBe(3);
   });
@@ -658,10 +651,9 @@ describe("snapshot absence", () => {
     forgetAbsenceObserver(db, SOURCE, "mac-a");
     expect(
       db
-        .prepare<
-          [],
-          { observed_by: string; observations: number }[]
-        >("SELECT observed_by, observations FROM document_absences")
+        .prepare<[], { observed_by: string; observations: number }[]>(
+          "SELECT observed_by, observations FROM document_absences",
+        )
         .all(),
     ).toEqual([
       { observed_by: "", observations: 1 },
@@ -794,18 +786,16 @@ describe("snapshot absence", () => {
     deleteAllByStream(db, "gmail", "phone-a");
     expect(
       db
-        .prepare<
-          [],
-          { stream_id: string }
-        >("SELECT stream_id FROM document_absence_scopes ORDER BY stream_id")
+        .prepare<[], { stream_id: string }>(
+          "SELECT stream_id FROM document_absence_scopes ORDER BY stream_id",
+        )
         .all(),
     ).toEqual([{ stream_id: "phone-b" }, { stream_id: "phone-c" }]);
     expect(
       db
-        .prepare<
-          [],
-          { stream_id: string }
-        >("SELECT stream_id FROM document_absence_observations ORDER BY stream_id")
+        .prepare<[], { stream_id: string }>(
+          "SELECT stream_id FROM document_absence_observations ORDER BY stream_id",
+        )
         .all(),
     ).toEqual([{ stream_id: "phone-b" }, { stream_id: "phone-c" }]);
 

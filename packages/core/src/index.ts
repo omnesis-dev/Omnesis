@@ -9,6 +9,18 @@
 // subpaths land via `package.json#exports`. The multi-package split (real `@omnesis/protocol`,
 // `@omnesis/config`, …) is the next increment after consumers
 // migrate.
+
+// First, so every thread that loads the barrel drops the distrusted
+// roots before anything it imports can open a socket.
+import "./tls-distrust.js";
+export {
+  DISTRUSTED_ROOT_SHA256,
+  distrustingNodeOptions,
+  isDistrustedRoot,
+  PRELOAD_SOURCE,
+  publicRoots,
+} from "./tls-distrust.js";
+
 export {
   ProviderType,
   ProviderId,
@@ -171,6 +183,12 @@ export {
 } from "./mail-markup.js";
 
 export { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
+export {
+  newerSettingsPath,
+  restoreNewerSettings,
+  saveNewerSettings,
+  type NewerSettingsRestore,
+} from "./newer-settings.js";
 
 export {
   acquireGatewayLock,
@@ -640,6 +658,7 @@ export {
 } from "./network-discovery.js";
 
 export {
+  classifyPairingHost,
   isTailnetName,
   judgePairingAddress,
   pairingHost,
@@ -651,6 +670,7 @@ export {
   type PairingAddressPlan,
   type PairingAddressReach,
   type PairingAddressVerdict,
+  type PairingHostClass,
   type PairingPlatform,
 } from "./pairing-address.js";
 
@@ -810,7 +830,13 @@ export type {
   TranscriptionVocabulary,
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
-export { MAX_TRANSCRIPTION_MS } from "./transcription.js";
+export {
+  MAX_TRANSCRIPTION_MS,
+  TRANSCRIBER_UNAVAILABLE,
+  transcriptionPlaceholderNote,
+  transcriptionSyncIssues,
+} from "./transcription.js";
+export type { TranscriptionBacklog, TranscriptionPlaceholderState } from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 
@@ -1096,6 +1122,7 @@ export {
   parseDecisionCassette,
   PROVIDER_PRESETS,
   getPreset,
+  getPresetByUrl,
   PROVIDER_BRANDS,
   getProviderBrand,
   resolveModelDisplay,
@@ -1155,6 +1182,8 @@ export type {
   BackendType,
   HttpBackendConfig,
   AgentProtocol,
+  TranscriptionProtocol,
+  TranscriptionBackendOptions,
   AssignmentValue,
   ResolvedAssignment,
   ResolvedLocal,
@@ -1203,6 +1232,10 @@ export {
   platformLabel,
   conversationExternalId,
   renderConversationDay,
+  renderConversationTurn,
+  readConversationTurns,
+  type ConversationAuthor,
+  type ConversationTurn,
   type ConversationMessage,
   type ConversationChat,
   type ConversationDay,

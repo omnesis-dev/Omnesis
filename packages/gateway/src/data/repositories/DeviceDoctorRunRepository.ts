@@ -115,10 +115,9 @@ export function listDeviceDoctorRuns(db: Db): DeviceDoctorRun[] {
 
 export function getDeviceDoctorRun(db: Db, deviceId: DeviceId): DeviceDoctorRun | null {
   const row = db
-    .prepare<
-      [string],
-      StoredDeviceDoctorRun
-    >(`SELECT ${SELECT_COLUMNS} FROM device_doctor_runs WHERE device_id = ?`)
+    .prepare<[string], StoredDeviceDoctorRun>(
+      `SELECT ${SELECT_COLUMNS} FROM device_doctor_runs WHERE device_id = ?`,
+    )
     .get(deviceId);
   return row ? rowToDeviceDoctorRun(row) : null;
 }

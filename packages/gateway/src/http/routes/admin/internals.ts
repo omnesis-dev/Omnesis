@@ -128,6 +128,10 @@ export interface AdminRoutesDeps {
   advertisedPairingHost?: () => string | null;
   /** When the served certificate will next be replaced by the gateway, or null. */
   certificateRenewsAt?: () => Date | null;
+  /** Host names the gateway was given, not discovered, that the served certificate covers. */
+  pairingHostNames?: () => readonly string[];
+  /** Whether the gateway runs inside a container. */
+  inContainer?: boolean;
   resolveCollectorDeviceId: (requested?: string) => Promise<DeviceId | Response>;
   /**
    * Source-type-aware variant — filters online collectors to those

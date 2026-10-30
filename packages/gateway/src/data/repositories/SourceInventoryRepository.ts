@@ -52,10 +52,9 @@ export function recordSourceInventoryPage(
   now: number,
 ): void {
   const existing = db
-    .prepare<
-      [string],
-      { source_id: string; cursor_row: string; started_at: string }
-    >("SELECT source_id,cursor_row,started_at FROM source_inventories WHERE id=?")
+    .prepare<[string], { source_id: string; cursor_row: string; started_at: string }>(
+      "SELECT source_id,cursor_row,started_at FROM source_inventories WHERE id=?",
+    )
     .get(inventory.id);
   if (
     existing &&

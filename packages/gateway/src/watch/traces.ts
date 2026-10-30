@@ -424,10 +424,9 @@ export class WatchTraceStore {
    */
   judgeSpendOn(day: string): { total: number; byWatch: Record<string, number> } {
     const rows = this.db
-      .prepare<
-        [string],
-        { watch_id: string; calls: number }
-      >("SELECT watch_id, calls FROM watch_judge_spend WHERE day = ?")
+      .prepare<[string], { watch_id: string; calls: number }>(
+        "SELECT watch_id, calls FROM watch_judge_spend WHERE day = ?",
+      )
       .all(day);
     const byWatch: Record<string, number> = {};
     let total = 0;
@@ -665,10 +664,9 @@ export class WatchTraceStore {
   /** Every watch's class counts, for a surface that reports on all of them. */
   classCountsAll(): Map<string, Record<string, number>> {
     const rows = this.db
-      .prepare<
-        [],
-        { watch_id: string; transition: string; seen: number }
-      >(`SELECT watch_id, transition, seen FROM watch_trace_class_counts`)
+      .prepare<[], { watch_id: string; transition: string; seen: number }>(
+        `SELECT watch_id, transition, seen FROM watch_trace_class_counts`,
+      )
       .all();
     const out = new Map<string, Record<string, number>>();
     for (const row of rows) {
@@ -696,10 +694,9 @@ export class WatchTraceStore {
    */
   classCounts(watchId: string): Record<string, number> {
     const rows = this.db
-      .prepare<
-        [string],
-        { transition: string; seen: number }
-      >(`SELECT transition, seen FROM watch_trace_class_counts WHERE watch_id = ?`)
+      .prepare<[string], { transition: string; seen: number }>(
+        `SELECT transition, seen FROM watch_trace_class_counts WHERE watch_id = ?`,
+      )
       .all(watchId);
     return Object.fromEntries(rows.map((row) => [row.transition, row.seen]));
   }
@@ -765,10 +762,9 @@ export class WatchTraceStore {
   count(watchId: string): number {
     return (
       this.db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM watch_traces WHERE watch_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM watch_traces WHERE watch_id = ?",
+        )
         .get(watchId)?.n ?? 0
     );
   }

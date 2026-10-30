@@ -410,10 +410,9 @@ it("names a page for its subject and keeps a notification stream out of dated se
 
   // No revision ever grew the log; the current state carries the later batch.
   const revisions = bench.sql
-    .prepare<
-      [string],
-      { revision: number; title: string; markdown: string }
-    >("SELECT revision,title,markdown FROM knowledge_revisions WHERE node_id=? ORDER BY revision")
+    .prepare<[string], { revision: number; title: string; markdown: string }>(
+      "SELECT revision,title,markdown FROM knowledge_revisions WHERE node_id=? ORDER BY revision",
+    )
     .all(pageId);
   for (const revision of revisions) {
     expect(revision.title).toBe(SUBJECT_TITLE);

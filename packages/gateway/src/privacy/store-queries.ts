@@ -60,10 +60,9 @@ export function loadReleasedAnswerHistory(
   ownerId: string,
 ): ChatMessage[] {
   const conversation = db
-    .prepare<
-      [string],
-      { owner_id: string }
-    >("SELECT owner_id FROM answer_conversations WHERE id = ?")
+    .prepare<[string], { owner_id: string }>(
+      "SELECT owner_id FROM answer_conversations WHERE id = ?",
+    )
     .get(conversationId);
   if (!conversation) {
     throw new AnswerStoreError("conversation_not_found", "Answer conversation not found.");
@@ -117,10 +116,9 @@ export function listPrivacyApprovalPage(
     safeLimit + 1,
   ];
   const rows = db
-    .prepare<
-      unknown[],
-      ApprovalJoinedRow
-    >(`${approvalJoinSql(where)} ORDER BY a.created_at DESC, a.id DESC LIMIT ?`)
+    .prepare<unknown[], ApprovalJoinedRow>(
+      `${approvalJoinSql(where)} ORDER BY a.created_at DESC, a.id DESC LIMIT ?`,
+    )
     .all(...params);
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit);
@@ -134,10 +132,9 @@ export function listPrivacyApprovalPage(
   const last = approvals.at(-1);
   const totalCount =
     db
-      .prepare<
-        unknown[],
-        { count: number }
-      >(`SELECT COUNT(*) AS count FROM answer_approvals a WHERE ${statusWhere}`)
+      .prepare<unknown[], { count: number }>(
+        `SELECT COUNT(*) AS count FROM answer_approvals a WHERE ${statusWhere}`,
+      )
       .get(...statusParams)?.count ?? 0;
   return {
     approvals,
@@ -191,10 +188,9 @@ export function getPrivacyApproval(
   const review = parseReview(row.review_json, row.policy_revision);
   const release = row.release_id
     ? db
-        .prepare<
-          [string],
-          { answer: string; citations_json: string }
-        >("SELECT answer, citations_json FROM answer_releases WHERE task_id = ?")
+        .prepare<[string], { answer: string; citations_json: string }>(
+          "SELECT answer, citations_json FROM answer_releases WHERE task_id = ?",
+        )
         .get(row.id)
     : null;
   return {

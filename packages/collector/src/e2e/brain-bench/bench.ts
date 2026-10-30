@@ -651,10 +651,9 @@ export class BrainBench {
   private async debouncedRunCount(horizonMs = 15_000): Promise<number> {
     const { now } = await this.clock.now();
     const row = this.sql
-      .prepare<
-        [number],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND next_attempt_at <= ?")
+      .prepare<[number], { n: number }>(
+        "SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND next_attempt_at <= ?",
+      )
       .get(now + horizonMs);
     return row?.n ?? 0;
   }
@@ -760,8 +759,7 @@ export class BrainBench {
   /** The raw queue row, with unix-ms fields the rendered DTO turns into ISO. */
   runRow(id: string): Record<string, unknown> | undefined {
     return this.sql.prepare("SELECT * FROM cognition_runs WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   /**
@@ -772,10 +770,9 @@ export class BrainBench {
    */
   runPayload(id: string): unknown {
     const row = this.sql
-      .prepare<
-        [string],
-        { payload_json: string | null }
-      >("SELECT payload_json FROM cognition_runs WHERE id = ?")
+      .prepare<[string], { payload_json: string | null }>(
+        "SELECT payload_json FROM cognition_runs WHERE id = ?",
+      )
       .get(id);
     return row?.payload_json ? JSON.parse(row.payload_json) : null;
   }
@@ -800,8 +797,7 @@ export class BrainBench {
     get: (key: string): string | undefined =>
       (
         this.sql.prepare("SELECT value FROM cognition_engine_state WHERE key = ?").get(key) as
-          | { value: string }
-          | undefined
+          { value: string } | undefined
       )?.value,
     /** Clear a marker so a due-gated pass re-arms without waiting out its cadence. */
     clear: (key: string): void => {

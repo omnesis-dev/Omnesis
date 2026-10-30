@@ -271,17 +271,19 @@
           Tell Omnesis from the portal, the apps or the CLI are also read and acted on, each by one
           short agent turn of its own. Reading starts the first time such a model is assigned; notes
           captured while it is later unassigned are read once it is assigned again. Notes that
-          external agents add, and notes taken in the browser extension, are never acted on.
-          <strong>Act on Tell Omnesis notes</strong> in the model's details under
-          <strong>Settings → Models</strong> switches this off. See
+          external agents add through MCP, OpenClaw or Hermes are saved and searchable but never
+          acted on. <strong>Act on Tell Omnesis notes</strong> in the model's details under
+          <strong>Settings → Models</strong>, or <code>agent.noteAgent</code> set to
+          <code>false</code>, switches this off; notes captured while it is off are only saved, and
+          are not read when it is switched back on. See
           <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
         </p>
 
         <h2 id="sandboxed-by-design">Sandboxed by design</h2>
         <p>
           The agent reads your documents and writes only its own memory and your tasks. Its
-          retrieval tools (search, documents, trails, people, message counts, SQL) read and never
-          change anything:
+          retrieval tools (search, documents, trails, people, message counts, time, SQL) read and
+          never change anything:
         </p>
         <ul>
           <li>There is no shell and no filesystem access.</li>
@@ -327,6 +329,9 @@
           <strong>send now</strong> beneath the queued message on all three surfaces. In the portal,
           <strong>Interrupt and send</strong> stops the current answer and puts your correction
           ahead of queued follow-ups. Stopping a run does not undo actions it has already completed.
+          A queued message whose answer is stopped, interrupted or cut short by
+          <strong>Send now</strong> is already in the conversation, so it is not offered for retry;
+          only a message that fails to finish shows <strong>Retry</strong>.
         </p>
         <p>
           The portal, iOS, and Android keep unsent drafts on the device, separately for each
@@ -370,7 +375,9 @@
           failed turn and any partial answer, makes the conversation read-only, and asks you to
           start a new one. It stays read-only on every device, and changing the assigned model does
           not reopen it. When only a single answer reaches the model's output limit, Omnesis marks
-          that answer as truncated and you can ask a follow-up.
+          that answer as truncated and you can ask a follow-up. An answer the model server stops for
+          another reason, such as a content filter or an aborted generation, fails the turn rather
+          than being kept as a complete answer.
         </p>
 
         <h2 id="times-and-time-zones">Times and time zones</h2>
@@ -408,7 +415,13 @@
           </li>
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>: self-hosted (Ollama, llama-server,
-            vLLM) or a cloud provider preset.
+            vLLM) or a cloud provider preset. The agent's instructions and tools alone take well
+            over ten thousand tokens, so give the server a context window of at least 32k tokens.
+            Ollama trims a longer request to its window instead of refusing it; the agent detects
+            the trimmed count the server reports and fails the turn with
+            <code>prompt_truncated</code> rather than answer from a prompt the model never saw.
+            Start it with <code>OLLAMA_CONTEXT_LENGTH=32768</code>, or set <code>num_ctx</code> in a
+            Modelfile.
           </li>
           <li>
             <strong>Codex</strong>: the agent runs on your ChatGPT subscription through OpenAI's
@@ -446,7 +459,12 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis model assign agent anthropic/MODEL_ID</span>
             </p>
-            <p class="t-dim"># fully local: declare an OpenAI-compatible server, then assign</p>
+            <p class="t-dim"># fully local: run the server with room for the agent's requests,</p>
+            <p class="t-dim"># declare it, then assign</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">OLLAMA_CONTEXT_LENGTH=32768 ollama serve</span>
+            </p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis backend add ollama http://localhost:11434</span>
@@ -599,8 +617,7 @@
 
 - I work in engineering; assume technical vocabulary.
 - Dates as YYYY-MM-DD, distances in kilometres.
-- When you cite a message thread, name who sent it.</pre
-            >
+- When you cite a message thread, name who sent it.</pre>
           </div>
         </div>
         <p>

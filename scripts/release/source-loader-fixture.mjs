@@ -20,6 +20,15 @@ export function seedSourceLauncher(root) {
   );
 }
 
+// The preload the installer writes, which a test holds byte-identical to core's.
+const installer = readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+const preloadStart =
+  installer.indexOf("\n", installer.indexOf("npm_trust_preload() {\n  cat <<'EOF'")) + 1;
+const preloadSource = installer.slice(
+  installer.indexOf("\n", preloadStart) + 1,
+  installer.indexOf("EOF\n}\n", preloadStart),
+);
+
 const realLoader = pathToFileURL(
   realpathSync(new URL("../../node_modules/tsx/dist/loader.mjs", import.meta.url)),
 ).href;
@@ -30,6 +39,8 @@ cat > node_modules/@omnesis/core/package.json <<'OMNESIS_TEST_CORE'
 OMNESIS_TEST_CORE
 cat > node_modules/@omnesis/core/index.mjs <<'OMNESIS_TEST_CORE'
 export function atomicWriteFileSync() { throw new Error("pure renderer unexpectedly wrote a file"); }
+export function distrustingNodeOptions(current = process.env.NODE_OPTIONS) { return current ?? ""; }
+export const PRELOAD_SOURCE = ${JSON.stringify(preloadSource)};
 OMNESIS_TEST_CORE
 cat > node_modules/tsx/dist/loader.mjs <<'OMNESIS_TEST_LOADER'
 import { spawnSync } from "node:child_process";

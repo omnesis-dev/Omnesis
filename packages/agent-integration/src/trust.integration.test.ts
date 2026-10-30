@@ -11,10 +11,12 @@ import { execFileSync } from "node:child_process";
 import { X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   connect as tlsConnect,
   createServer,
+  getCACertificates,
   type DetailedPeerCertificate,
   type Server,
 } from "node:tls";
@@ -23,7 +25,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite
 import { PinnedGatewayHttpClient } from "./http.js";
 import { certificateCannotIssue } from "./certificate-authority.js";
 import { GatewayTlsError, type TlsTrust } from "./tls.js";
-import { anchoredByPin, GatewayTrust } from "./trust.js";
+import { anchoredByPin, GatewayTrust, publicRoots } from "./trust.js";
 
 const NAME = "gateway.example.test";
 
@@ -419,5 +421,34 @@ describe("a chain issued under the pin", () => {
       anchoredByPin(chain(signOnlyImpostor, signOnly), signOnly.certPem, signOnly.fingerprint),
     ).toBe(true);
     expect(anchoredByPin(chain(renewed, root), current.certPem, current.fingerprint)).toBe(false);
+  });
+});
+
+describe("the public roots system trust verifies against", () => {
+  test("are Node's bundled roots without the distrusted emSign roots", () => {
+    const emSign = /CN=emSign (ECC )?Root CA - (G3|C1|C3)$/mu;
+    const roots = publicRoots();
+    expect(roots.some((pem) => emSign.test(new X509Certificate(pem).subject))).toBe(false);
+    expect(roots).toEqual(
+      getCACertificates("bundled").filter((pem) => !emSign.test(new X509Certificate(pem).subject)),
+    );
+  });
+});
+
+describe("the public roots, where Node still bundles the emSign roots", () => {
+  // Node 24.22.1 and 26.12.1 bundle none of them, so the test above passes
+  // there whatever the filter does; core's fixture of the roots keeps this one
+  // meaningful on any Node.
+  const emSignRoots =
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../core/src/testdata/emsign-roots.pem"),
+      "utf8",
+    ).match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu) ?? [];
+
+  test("leave out exactly the emSign roots", () => {
+    expect(emSignRoots).toHaveLength(3);
+    const bundled = getCACertificates("bundled");
+    expect(publicRoots([...bundled, ...emSignRoots])).toEqual(publicRoots(bundled));
+    expect(publicRoots(emSignRoots)).toEqual([]);
   });
 });

@@ -13,6 +13,8 @@ import {
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
+import { splitPcm } from "./chunks.js";
+import { computeTranscriptionTimeoutMs } from "./deadline.js";
 
 /**
  * A scriptable in-memory worker that satisfies `WhisperWorkerProcess` without a
@@ -24,8 +26,7 @@ class FakeWorker implements WhisperWorkerProcess {
   readonly requests: WhisperRequestHeader[] = [];
   private messageHandler: ((msg: WhisperWorkerMessage) => void) | null = null;
   private exitHandler:
-    | ((info: { code: number | null; signal: string | null; error?: Error }) => void)
-    | null = null;
+    ((info: { code: number | null; signal: string | null; error?: Error }) => void) | null = null;
   private readonly decoder = new FrameDecoder((header) => {
     this.requests.push(header as WhisperRequestHeader);
     this.onRequest?.(header as WhisperRequestHeader);
@@ -288,7 +289,7 @@ describe("WhisperTranscriber duration-scaled timeout", () => {
         modelPath: "/m.bin",
         modelId: "whisper-tiny",
         spawnWorker: () => hung,
-        decodeAudio: async () => new Float32Array(16_000 * 200), // 200s → 690_000ms budget
+        decodeAudio: async () => new Float32Array(16_000 * 200), // 200s → the 1_800_000ms ceiling
         // no requestTimeoutMs override → duration-scaled
       });
       setTimeout(() => hung.emitReady(), 0);
@@ -304,9 +305,50 @@ describe("WhisperTranscriber duration-scaled timeout", () => {
       expect(settled).toBe("pending"); // would have been killed here before the fix
       expect(hung.killed).toBe(false);
 
-      await vi.advanceTimersByTimeAsync(600_000); // cross the 690_000ms scaled budget
+      await vi.advanceTimersByTimeAsync(1_700_000); // cross the 1_800_000ms ceiling
       expect(settled).toBe("rejected");
       expect(hung.killed).toBe(true);
+      await transcriber.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("WhisperTranscriber long recordings", () => {
+  test("transcribes in chunks, giving a hung later chunk up at its own deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const pcm = new Float32Array(16_000 * 700).fill(0.1);
+      const chunks = splitPcm(pcm);
+      const secondDeadline = computeTranscriptionTimeoutMs(chunks[1]!.length / 16_000);
+      const worker = new FakeWorker();
+      worker.onRequest = (req) => {
+        if (req.id === 1) worker.emit({ type: "result", id: req.id, text: "first part" });
+      };
+      const transcriber = new WhisperTranscriber({
+        modelPath: "/m.bin",
+        modelId: "whisper-tiny",
+        spawnWorker: () => worker,
+        decodeAudio: async () => pcm,
+      });
+      setTimeout(() => worker.emitReady(), 0);
+      const pending = transcriber.transcribe(new Uint8Array([1]), "audio/ogg");
+      let settled = "pending";
+      void pending.then(
+        () => (settled = "resolved"),
+        () => (settled = "rejected"),
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(worker.requests.map((req) => req.pcmBytes)).toEqual(
+        chunks.map((chunk) => chunk.byteLength),
+      );
+      await vi.advanceTimersByTimeAsync(secondDeadline - 1);
+      expect(settled).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe("rejected");
+      expect(worker.killed).toBe(true);
       await transcriber.dispose();
     } finally {
       vi.useRealTimers();

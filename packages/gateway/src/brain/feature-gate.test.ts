@@ -594,10 +594,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: true } });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM cognition_runs WHERE id = 'run_hot_assignment'")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM cognition_runs WHERE id = 'run_hot_assignment'",
+        )
         .get(),
     ).toEqual({ status: "pending", attempts: 0 });
 
@@ -607,10 +606,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       .poll(
         () =>
           db
-            .prepare<
-              [],
-              { status: string }
-            >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
+            .prepare<[], { status: string }>(
+              "SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'",
+            )
             .get()?.status,
       )
       .toBe("completed");
@@ -624,10 +622,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: true } });
     expect(
       db
-        .prepare<
-          [],
-          { status: string; attempts: number }
-        >("SELECT status, attempts FROM cognition_runs WHERE id = 'run_after_removal'")
+        .prepare<[], { status: string; attempts: number }>(
+          "SELECT status, attempts FROM cognition_runs WHERE id = 'run_after_removal'",
+        )
         .get(),
     ).toEqual({ status: "pending", attempts: 0 });
     expect(scheduled.filter((task) => task.name === "cognition.drain")).toHaveLength(1);
@@ -675,10 +672,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     const ctx = { signal: new AbortController().signal } as TaskContext;
     const verificationRunCount = () =>
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'verification'",
+        )
         .get()!.n;
 
     // reverification.enabled=true but annotations.enabled=false: the sweep's
@@ -842,6 +838,30 @@ describe("GET /status advertises the brain gate", () => {
     });
     // Apps that predate the Morning brief read `briefs`; it always reads off.
     expect((await statusBody(app)).briefs).toMatchObject({ visible: false, active: false });
+  });
+
+  it("never offers Briefs to a 0.6.0 app, whatever the gate's state", async () => {
+    // 0.6.0 apps open their Briefs screen from these three fields, and the
+    // `/briefs` routes that screen calls are gone.
+    const states = [
+      { name: "nothing wired", experimental: false, resolver: undefined },
+      { name: "model only", experimental: false, resolver: assignedResolver },
+      { name: "experimental without model", experimental: true, resolver: unassignedResolver },
+      { name: "experimental with model", experimental: true, resolver: assignedResolver },
+    ];
+    for (const { name, experimental, resolver } of states) {
+      if (experimental) process.env.OMNESIS_EXPERIMENTAL = "1";
+      else delete process.env.OMNESIS_EXPERIMENTAL;
+      const app = createServer(db, undefined, {
+        ...sourceRuntimeHooks(),
+        ...(resolver && { getBriefsStatus: () => briefsFeatureStatus(resolver, READY_DEPS) }),
+      });
+      expect((await statusBody(app)).briefs, name).toMatchObject({
+        enabled: false,
+        visible: false,
+        active: false,
+      });
+    }
   });
 });
 

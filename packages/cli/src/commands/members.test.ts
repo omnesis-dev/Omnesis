@@ -17,6 +17,7 @@ import {
   attentionPhrase,
   describeMemberState,
   membersCommand,
+  noticeLines,
   renderMembers,
   requireMemberDevice,
   statusByMember,
@@ -247,6 +248,32 @@ describe("describeMemberState", () => {
 
   test("a state the portal has no word for reads idle, as the portal shows it", () => {
     expect(describeMemberState({ ...base, state: "rate-limited" }, present)).toBe("idle");
+  });
+});
+
+describe("noticeLines", () => {
+  test("renders warnings and notes, and leaves what the row already states to the row", () => {
+    const lines = noticeLines([
+      { kind: "error", severity: "error", title: "boom" },
+      { kind: "needs-auth", severity: "error", title: "Sign in again" },
+      { kind: "replica-dispute", severity: "info", title: "Keeping 2 items" },
+      {
+        kind: "sync-issue",
+        severity: "warning",
+        title: "3 voice notes waiting for a transcriber",
+        detail: "No transcriber model is assigned",
+      },
+      { kind: "sync-issue", severity: "info", title: "2 voice notes awaiting transcription" },
+      { kind: "rate-limited", severity: "info", title: "Rate limited by the provider" },
+    ]);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("⚠");
+    expect(lines[0]).toContain("3 voice notes waiting for a transcriber");
+    expect(lines[0]).toContain("No transcriber model is assigned");
+    expect(lines[1]).toContain("ℹ");
+    expect(lines[1]).toContain("2 voice notes awaiting transcription");
+    expect(lines[2]).toContain("Rate limited by the provider");
+    expect(noticeLines(undefined)).toEqual([]);
   });
 });
 

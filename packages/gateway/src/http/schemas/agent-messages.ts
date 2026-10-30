@@ -25,6 +25,14 @@ const instant = z.union([
   z.number().int().nonnegative(),
 ]);
 
+const author = z
+  .object({
+    kind: z.enum(["owner", "agent", "participant", "unknown"]),
+    id: z.string().max(256).trim().min(1).optional(),
+    name: z.string().max(200).trim().min(1).optional(),
+  })
+  .strict();
+
 const pushedMessage = z
   .object({
     /**
@@ -40,10 +48,24 @@ const pushedMessage = z
     chatName: z.string().max(256).optional(),
     chatType: z.string().max(64).optional(),
     role: z.enum(["user", "assistant"]),
+    author: author.optional(),
     text: z.string().min(1).max(200_000),
     occurredAt: instant,
   })
-  .strict();
+  .strict()
+  .superRefine((message, ctx) => {
+    const kind = message.author?.kind;
+    if (
+      (message.role === "user" && kind === "agent") ||
+      (message.role === "assistant" && (kind === "owner" || kind === "participant"))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["author", "kind"],
+        message: "Author kind contradicts message role",
+      });
+    }
+  });
 export type PushedMessage = z.infer<typeof pushedMessage>;
 
 // POST /agent-messages

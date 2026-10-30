@@ -254,10 +254,9 @@ export class WorthGate {
   private readDoc(id: string): DocRow | null {
     return (
       this.deps.db
-        .prepare<
-          [string],
-          DocRow
-        >(`SELECT id, title, content, content_hash, metadata FROM documents WHERE id = ?`)
+        .prepare<[string], DocRow>(
+          `SELECT id, title, content, content_hash, metadata FROM documents WHERE id = ?`,
+        )
         .get(id) ?? null
     );
   }

@@ -54,6 +54,22 @@ enum RealtimeProtocol {
 
 /// Capability reads are read-only and use the same pinned gateway transport as chat.
 enum RealtimeCapability {
+    // Realtime voice builds only into the demo app, which sets `OMNESIS_REALTIME_VOICE`.
+    // Its live transport links WebRTC, whose BoringSSL is not Apple's encryption, so the
+    // production app leaves the whole feature out rather than ship that library.
+    #if OMNESIS_REALTIME_VOICE
+    static let includedInBuild = true
+    #else
+    static let includedInBuild = false
+    #endif
+
+    /// Whether to offer a voice call: never from a build without realtime voice, whatever
+    /// the gateway advertises, and otherwise to an experimental gateway that supports it.
+    static func offered(pairing: Pairing, experimental: Bool, session: URLSessionLike = OmnesisURLSession.shared) async -> Bool {
+        guard includedInBuild, experimental else { return false }
+        return await (try? available(pairing: pairing, session: session)) ?? false
+    }
+
     static func available(pairing: Pairing, session: URLSessionLike = OmnesisURLSession.shared) async throws -> Bool {
         try await connectionKind(pairing: pairing, session: session) != nil
     }

@@ -66,10 +66,9 @@ export function getWorkflowIdentity(
   workflowId: string,
 ): { name: string; purpose: string } {
   const row = db
-    .prepare<
-      [string],
-      { name: string; purpose: string }
-    >("SELECT name, purpose FROM answer_workflows WHERE id = ?")
+    .prepare<[string], { name: string; purpose: string }>(
+      "SELECT name, purpose FROM answer_workflows WHERE id = ?",
+    )
     .get(workflowId);
   if (!row) throw new AnswerStoreError("workflow_not_found", "Answer workflow not found.");
   return row;
@@ -78,10 +77,9 @@ export function getWorkflowIdentity(
 export function getConversation(db: PrivacyDb, id: string): ConversationAvailabilityRow | null {
   return (
     db
-      .prepare<
-        [string],
-        ConversationAvailabilityRow
-      >("SELECT owner_id, active_task_id FROM answer_conversations WHERE id = ?")
+      .prepare<[string], ConversationAvailabilityRow>(
+        "SELECT owner_id, active_task_id FROM answer_conversations WHERE id = ?",
+      )
       .get(id) ?? null
   );
 }
@@ -106,10 +104,9 @@ export function getTaskByClientRequest(
 ): TaskDbRow | null {
   return (
     db
-      .prepare<
-        [string, string],
-        TaskDbRow
-      >("SELECT * FROM answer_tasks WHERE owner_id = ? AND client_request_id = ?")
+      .prepare<[string, string], TaskDbRow>(
+        "SELECT * FROM answer_tasks WHERE owner_id = ? AND client_request_id = ?",
+      )
       .get(ownerId, requestId) ?? null
   );
 }
@@ -121,10 +118,9 @@ export function ensureWorkflowAvailable(
   now: number,
 ): void {
   const row = db
-    .prepare<
-      [string],
-      { owner_id: string; status: string; expires_at: number }
-    >("SELECT owner_id, status, expires_at FROM answer_workflows WHERE id = ?")
+    .prepare<[string], { owner_id: string; status: string; expires_at: number }>(
+      "SELECT owner_id, status, expires_at FROM answer_workflows WHERE id = ?",
+    )
     .get(workflowId);
   if (!row) throw new AnswerStoreError("workflow_not_found", "Answer workflow not found.");
   if (row.owner_id !== ownerId) {
@@ -255,10 +251,9 @@ export function assertPolicyRevision(
 ): void {
   if (!guard) return;
   const state = db
-    .prepare<
-      [string],
-      { revision: string; digest: string }
-    >("SELECT revision, digest FROM privacy_policy_state WHERE family_id = ?")
+    .prepare<[string], { revision: string; digest: string }>(
+      "SELECT revision, digest FROM privacy_policy_state WHERE family_id = ?",
+    )
     .get(DEFAULT_PRIVACY_POLICY_FAMILY_ID);
   // Standalone/test stores without a ledger retain the legacy file guard. A
   // production gateway bootstraps state before any reviewed release.
@@ -291,10 +286,9 @@ export function assertSubscriptionDisclosureRevision(
   try {
     revision =
       db
-        .prepare<
-          [string],
-          { revision: number }
-        >("SELECT revision FROM subscription_workflow_disclosure WHERE workflow_id = ?")
+        .prepare<[string], { revision: number }>(
+          "SELECT revision FROM subscription_workflow_disclosure WHERE workflow_id = ?",
+        )
         .get(workflowId)?.revision ?? 0;
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes("no such table")) throw error;
@@ -441,10 +435,9 @@ export function responseForTask(
     case "approval_required": {
       if (!task.approval_id) return null;
       const approval = db
-        .prepare<
-          [string],
-          { expires_at: number }
-        >("SELECT expires_at FROM answer_approvals WHERE id = ?")
+        .prepare<[string], { expires_at: number }>(
+          "SELECT expires_at FROM answer_approvals WHERE id = ?",
+        )
         .get(task.approval_id);
       if (!approval) return null;
       return {
@@ -539,10 +532,9 @@ function getRelease(
 ): { answer: string; citations_json: string } | null {
   return (
     db
-      .prepare<
-        [string],
-        { answer: string; citations_json: string }
-      >("SELECT answer, citations_json FROM answer_releases WHERE task_id = ?")
+      .prepare<[string], { answer: string; citations_json: string }>(
+        "SELECT answer, citations_json FROM answer_releases WHERE task_id = ?",
+      )
       .get(taskId) ?? null
   );
 }

@@ -334,7 +334,9 @@ describe("CodexAppServerBackend", () => {
       codexHome: join(dir, "home"),
       logPath: join(dir, "events.jsonl"),
       scenario,
-      turnIdleTimeoutMs: 180,
+      // Several times the fixture's 40 ms progress interval, so a stalled
+      // runner does not read as an idle turn, yet shorter than its ~1 s run.
+      turnIdleTimeoutMs: 600,
     });
     try {
       const events = await collect(backend.runTurn(baseInput()));

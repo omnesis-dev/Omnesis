@@ -68,10 +68,9 @@ export function subscriptionStatusForRequest(
   clientRequestId: string,
 ): string | null {
   const row = db
-    .prepare<
-      [string, string],
-      { status: string }
-    >(`SELECT status FROM subscriptions WHERE owner_id = ? AND client_request_id = ?`)
+    .prepare<[string, string], { status: string }>(
+      `SELECT status FROM subscriptions WHERE owner_id = ? AND client_request_id = ?`,
+    )
     .get(ownerId, clientRequestId);
   return row?.status ?? null;
 }

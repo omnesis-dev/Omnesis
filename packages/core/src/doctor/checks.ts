@@ -86,8 +86,13 @@ const HEAP_USED_WARN_FRACTION = 0.9;
 /** Maximum length of an external label embedded in a one-line doctor message. */
 const DOCTOR_DISPLAY_NAME_MAX_LENGTH = 256;
 
-/** Roles doctor checks. Optional/advanced roles are not surfaced. */
-const CHECKED_ROLES: CapabilityRole[] = ["embedder", "agent"];
+/**
+ * Roles doctor checks. The embedder is load-bearing; the agent and the
+ * transcriber each unlock a feature an operator would otherwise find silently
+ * missing — no answers, or voice notes that stay placeholders. Other roles
+ * are optional or advanced and are not surfaced.
+ */
+const CHECKED_ROLES: CapabilityRole[] = ["embedder", "agent", "transcriber"];
 
 function doctorDisplayName(value: string, fallback: string): string {
   const normalized = value
@@ -489,8 +494,9 @@ function checkModels(d: DoctorData, ck: Checks): void {
   for (const role of CHECKED_ROLES) {
     const a = assignments[role];
     const id = `models.${role}`;
-    // Embedder is load-bearing for indexing + search; its absence is a
-    // hard failure. Agent availability only affects an optional feature.
+    // Embedder is load-bearing for semantic search; its absence is a hard
+    // failure even though keyword indexing and search keep working without it.
+    // Each other checked role only gates an optional feature.
     const severity: "fail" | "warn" = role === "embedder" ? "fail" : "warn";
     const emit = (message: string, hint: string) =>
       severity === "fail"
@@ -501,8 +507,10 @@ function checkModels(d: DoctorData, ck: Checks): void {
       emit(
         `${role} is not configured`,
         role === "embedder"
-          ? "Search and indexing cannot run without an embedder. Install one with `omnesis models install <id>` and assign it with `omnesis models use embedder <id>`."
-          : `Assign ${article(role)} ${role} model with \`omnesis models use ${role} <id>\` to enable it.`,
+          ? "Keyword search and indexing work without an embedder, but semantic search needs one. Install one with `omnesis model install <id>` and assign it with `omnesis model assign embedder local/<id>`."
+          : role === "transcriber"
+            ? "Voice notes and audio clips stay as placeholders until a transcriber is assigned. Install one with `omnesis model install <id>` and assign it with `omnesis model assign transcriber local/<id>`."
+            : `Assign ${article(role)} ${role} model with \`omnesis model assign ${role} <backend>/<model>\` to enable it.`,
       );
       continue;
     }
@@ -1230,8 +1238,10 @@ function checkIndex(d: DoctorData, ck: Checks): void {
       ck.fail(
         "Index",
         "index.model",
-        "Index disabled — embedding model file is missing",
-        "Install the embedding model with `omnesis models install <id>` so indexing and search can run.",
+        idx.keywordIndexingActive
+          ? "Semantic search unavailable — embedding model file is missing; keyword indexing is active"
+          : "Index disabled — embedding model file is missing",
+        "Install the embedding model with `omnesis models install <id>` to enable semantic search.",
       );
     } else {
       ck.warn(
@@ -1245,6 +1255,16 @@ function checkIndex(d: DoctorData, ck: Checks): void {
   }
 
   ck.pass("Index", "index.enabled", "Indexing is enabled");
+
+  const semantic = idx.semanticSearch;
+  if (semantic?.state === "degraded") {
+    ck.warn(
+      "Index",
+      "index.semantic",
+      `Semantic search degraded — keyword search only: ${semantic.reason ?? "not enough memory for the HNSW index"}`,
+      "Give the gateway more memory — raise gateway.memoryLimitMb (or OMNESIS_MEMORY_LIMIT_MB), the container's memory limit, or free memory on the host — then restart the gateway.",
+    );
+  }
 
   const total = idx.totalGatewayDocs ?? 0;
   const indexed = idx.totalIndexed ?? 0;

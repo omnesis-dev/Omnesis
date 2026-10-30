@@ -308,10 +308,9 @@ describe("PersonService — fast-lane apply hook", () => {
       // whichever of them the eval elected canonical.
       const mergedInto = (id: string): string | null =>
         db
-          .prepare<
-            [string],
-            { merged_into: string | null }
-          >("SELECT merged_into FROM people WHERE id = ?")
+          .prepare<[string], { merged_into: string | null }>(
+            "SELECT merged_into FROM people WHERE id = ?",
+          )
           .get(id)?.merged_into ?? null;
       expect(mergedInto(a) === b || mergedInto(b) === a).toBe(true);
     } finally {

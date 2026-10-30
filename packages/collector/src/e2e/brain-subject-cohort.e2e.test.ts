@@ -268,10 +268,9 @@ describe("a matter without a page", () => {
     await waitForPublishedSubject(bench);
     expect(loops.studio).toHaveLength(2);
     const cohorts = bench.sql
-      .prepare<
-        [],
-        { subject: string | null; outcome: string }
-      >("SELECT subject_loop_id AS subject,outcome_json AS outcome FROM knowledge_organization_cohorts WHERE status='completed' ORDER BY created_at")
+      .prepare<[], { subject: string | null; outcome: string }>(
+        "SELECT subject_loop_id AS subject,outcome_json AS outcome FROM knowledge_organization_cohorts WHERE status='completed' ORDER BY created_at",
+      )
       .all();
     // The subject pass is chosen before a chronological one, and having reviewed
     // both documents jointly it leaves no first-pass chronological cohort to run.

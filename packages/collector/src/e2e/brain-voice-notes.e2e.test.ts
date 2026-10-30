@@ -107,10 +107,9 @@ function notesDocId(): Promise<string> {
     `the notes document for ${DAY}`,
     () =>
       bench.sql
-        .prepare<
-          [string],
-          { id: string }
-        >("SELECT id FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?")
+        .prepare<[string], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?",
+        )
         .get(DAY)?.id ?? null,
     30_000,
   );
@@ -122,10 +121,9 @@ function dayDocumentContains(text: string): Promise<true> {
     `the notes document to contain "${text}"`,
     () =>
       (bench.sql
-        .prepare<
-          [string],
-          { content: string }
-        >("SELECT content FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?")
+        .prepare<[string], { content: string }>(
+          "SELECT content FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?",
+        )
         .get(DAY)
         ?.content.includes(text) ?? false)
         ? true
@@ -211,10 +209,9 @@ describe("voice notes and the Brain's readiness hold (brain bench)", () => {
       "a source waiting on pending voice content",
       () =>
         bench.sql
-          .prepare<
-            [string],
-            { id: string; due_at: number }
-          >("SELECT id,due_at FROM knowledge_work WHERE subject_id=? AND status='pending' AND last_error='pending_content'")
+          .prepare<[string], { id: string; due_at: number }>(
+            "SELECT id,due_at FROM knowledge_work WHERE subject_id=? AND status='pending' AND last_error='pending_content'",
+          )
           .get(docId) ?? null,
       30_000,
     );

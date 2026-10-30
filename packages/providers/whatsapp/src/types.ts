@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import type { SyncCursor } from "@omnesis/source-sdk";
+import type { TranscriptionPlaceholderState } from "@omnesis/core";
 
 export interface WhatsAppSyncCursor extends SyncCursor {
   phase: "bootstrap" | "incremental";
@@ -164,6 +165,20 @@ export interface StoredMessage {
    * non-media and legacy rows.
    */
   mediaNextAttempt?: number;
+  /**
+   * What the last failed media attempt reported, kept while the row is
+   * `pending` so a note that found no transcriber can say so before its next
+   * attempt. `undefined` after a success, and for non-media and legacy rows.
+   */
+  mediaLastError?: string;
+  /**
+   * Why a voice note renders without its spoken text. The source works it out
+   * from the lifecycle fields above, after its own transcription pass, for the
+   * normalizer to put in the placeholder; it is never persisted. `undefined`
+   * for a transcribed note, for other message types, and when the source has
+   * no transcriber wired at all.
+   */
+  transcription?: TranscriptionPlaceholderState;
 }
 
 /** Chat metadata */
@@ -248,11 +263,7 @@ export interface SocketFactoryResult {
      */
     resyncAppState?: (
       collections: readonly (
-        | "critical_block"
-        | "critical_unblock_low"
-        | "regular_high"
-        | "regular_low"
-        | "regular"
+        "critical_block" | "critical_unblock_low" | "regular_high" | "regular_low" | "regular"
       )[],
       isInitialSync: boolean,
     ) => Promise<void>;

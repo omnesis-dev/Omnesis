@@ -155,12 +155,27 @@ it("keeps queued submissions ordered across canonical voice cancellation and clo
   expect(
     f.service.conversationControls(voice.sessionId).queuedMessages.map((item) => item.id),
   ).toEqual(["first", "second"]);
+  // The drained batch is saved as running before its turn starts and as
+  // completed once it ends; wait for the outcome itself, not the dequeue.
+  let outcomeSaved!: () => void;
+  const outcome = new Promise<void>((resolve) => {
+    outcomeSaved = resolve;
+  });
+  const originalSave = f.store.save.bind(f.store);
+  vi.spyOn(f.store, "save").mockImplementation(async (record) => {
+    await originalSave(record);
+    const submissions = record.controls?.submissions ?? [];
+    if (
+      submissions.length > 0 &&
+      submissions.every((item) => item.status !== "queued" && item.status !== "running")
+    )
+      outcomeSaved();
+  });
   await voice.close();
-  await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+  await outcome;
+  expect(f.inputs).toHaveLength(1);
   expect(f.inputs[0]!.userMessage).toBe("First queued text\n\nSecond queued text");
-  await vi.waitFor(() =>
-    expect(f.service.conversationControls(voice.sessionId).queuedMessages).toEqual([]),
-  );
+  expect(f.service.conversationControls(voice.sessionId).queuedMessages).toEqual([]);
   const stored = await f.store.load(voice.sessionId);
   expect(
     stored?.controls?.submissions.map((item) => ({ id: item.id, status: item.status })),

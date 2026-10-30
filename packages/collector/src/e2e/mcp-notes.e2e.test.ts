@@ -261,10 +261,9 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          Record<string, string | number | null>
-        >("SELECT * FROM note_entries WHERE id = ?")
+        .prepare<[string], Record<string, string | number | null>>(
+          "SELECT * FROM note_entries WHERE id = ?",
+        )
         .get(id);
     } finally {
       db.close();
@@ -275,10 +274,9 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          { count: number }
-        >("SELECT count(*) AS count FROM note_entries WHERE text = ?")
+        .prepare<[string], { count: number }>(
+          "SELECT count(*) AS count FROM note_entries WHERE text = ?",
+        )
         .get(text)!.count;
     } finally {
       db.close();
@@ -289,10 +287,9 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const rows = db
-        .prepare<
-          [],
-          { metadata: string }
-        >("SELECT metadata FROM documents WHERE source_id = 'omnesis-notes'")
+        .prepare<[], { metadata: string }>(
+          "SELECT metadata FROM documents WHERE source_id = 'omnesis-notes'",
+        )
         .all();
       return rows.flatMap((row) => {
         const metadata = JSON.parse(row.metadata) as { addressedEntries?: Array<{ id: string }> };

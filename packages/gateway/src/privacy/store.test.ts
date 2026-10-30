@@ -404,10 +404,9 @@ describe("answer privacy store", () => {
     expect(retry).toEqual({ ...first, duplicate: false, state: "running" });
     expect(
       db
-        .prepare<
-          [string],
-          { active_task_id: string | null }
-        >("SELECT active_task_id FROM answer_conversations WHERE id = ?")
+        .prepare<[string], { active_task_id: string | null }>(
+          "SELECT active_task_id FROM answer_conversations WHERE id = ?",
+        )
         .get(first.conversationId)?.active_task_id,
     ).toBe(first.taskId);
   });

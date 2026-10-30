@@ -223,10 +223,9 @@ export function listKnowledgeCandidates(
 ): { items: KnowledgeCandidate[]; nextCursor: string | null } {
   const limit = Math.max(1, Math.min(100, options.limit ?? 30));
   const rows = db
-    .prepare<
-      [string, string | null, string | null, number],
-      { id: string }
-    >("SELECT id FROM knowledge_candidates WHERE id>? AND (? IS NULL OR status=?) ORDER BY id LIMIT ?")
+    .prepare<[string, string | null, string | null, number], { id: string }>(
+      "SELECT id FROM knowledge_candidates WHERE id>? AND (? IS NULL OR status=?) ORDER BY id LIMIT ?",
+    )
     .all(options.afterId ?? "", options.status ?? null, options.status ?? null, limit);
   return {
     items: rows.flatMap(({ id }) => {

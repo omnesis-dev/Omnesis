@@ -80,10 +80,9 @@ describe("structured remediation on a source's status", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       const row = db
-        .prepare<
-          [string, string],
-          { last_error_remediation: string | null }
-        >("SELECT last_error_remediation FROM sync_state WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], { last_error_remediation: string | null }>(
+          "SELECT last_error_remediation FROM sync_state WHERE source_id = ? AND device_id = ?",
+        )
         .get(REPLICATED, deviceId);
       return row?.last_error_remediation != null;
     } finally {

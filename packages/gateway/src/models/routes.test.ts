@@ -241,6 +241,18 @@ describe("POST /admin/models/activate", () => {
     expect(unknown.status).toBe(400);
   });
 
+  test("assigns the Claude Code agent from a body carrying a field a newer client adds", async () => {
+    const cleared = await configStore.patch({ inference: { assignments: { agent: null } } });
+    if (!cleared.ok) throw new Error("test config should be valid");
+    const res = await app.request("/admin/inference/claude-code/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", fieldFromANewerClient: true }),
+    });
+    expect(res.status, await res.text()).toBe(200);
+    expect(configStore.get().inference?.assignments?.agent).toBe("claude-code/sonnet");
+  });
+
   test("shows a Claude Code assignment to the 0.6.0 CLI in the HTTP shape it renders", async () => {
     const patched = await configStore.patch({
       inference: { assignments: { agent: "claude-code/sonnet" } },
@@ -336,6 +348,32 @@ describe("POST /admin/models/activate", () => {
     expect(res.status).toBe(400);
     expect(configStore.get()).toEqual(before);
   });
+
+  test.each(["codex", "claude-code"])(
+    "the %s agent setup names what its body must include, and ignores the rest",
+    async (backend) => {
+      const setup = (body: unknown) =>
+        app.request(`/admin/inference/${backend}/agent`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+      const missing = await setup({ effort: "high" });
+      expect(missing.status).toBe(400);
+      expect(await missing.json()).toMatchObject({
+        error: "body must include model, a non-empty string",
+      });
+
+      const cleared = await configStore.patch({ inference: { assignments: { agent: null } } });
+      if (!cleared.ok) throw new Error("test config should be valid");
+      const extra = await setup({
+        model: backend === "codex" ? "gpt-5.6-luna" : "sonnet",
+        effort: "high",
+      });
+      expect(extra.status).toBe(200);
+    },
+  );
 
   test("reports lifecycle contention as a conflict", async () => {
     setupCodexAgentHook = async () => {

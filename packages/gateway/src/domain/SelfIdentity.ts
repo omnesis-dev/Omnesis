@@ -73,10 +73,9 @@ export function reconcileSelfIdentity(
   const name = input.name?.trim() || undefined;
 
   const existing = db
-    .prepare<
-      [],
-      { id: string; canonical_name: string }
-    >("SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string; canonical_name: string }>(
+      "SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
 
   const nowIso = new Date().toISOString();

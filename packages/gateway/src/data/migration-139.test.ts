@@ -86,10 +86,9 @@ describe("migration 139: persist source multi-device mode", () => {
     migration!.up(db);
 
     const modes = db
-      .prepare<
-        [],
-        { id: string; multi_device_mode: string }
-      >("SELECT id, multi_device_mode FROM sources ORDER BY id")
+      .prepare<[], { id: string; multi_device_mode: string }>(
+        "SELECT id, multi_device_mode FROM sources ORDER BY id",
+      )
       .all();
     expect(modes).toEqual([
       { id: "calendar", multi_device_mode: "handoff" },

@@ -26,12 +26,7 @@ const RUN_TIMEOUT_DETAIL =
   "The collector did not return its health report within 90 seconds. Retry the check.";
 
 export type DeviceDoctorViewState =
-  | "not-run"
-  | "pending"
-  | "running"
-  | "complete"
-  | "failed"
-  | "not-applicable";
+  "not-run" | "pending" | "running" | "complete" | "failed" | "not-applicable";
 
 export interface DeviceDoctorEntry {
   deviceId: DeviceId;

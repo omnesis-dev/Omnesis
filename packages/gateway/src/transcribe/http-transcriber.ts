@@ -10,7 +10,8 @@
  * The audio is decoded to 16 kHz mono PCM first and sent as a WAV file, the
  * one format every such server accepts, whatever container the source used.
  * A recording longer than ten minutes is sent as consecutive chunks that each
- * fit a 25 MB upload limit, and their transcripts are joined.
+ * fit a 25 MB upload limit, each under its own deadline (`chunks.ts`), and
+ * their transcripts are joined.
  *
  * The assignment names an HTTP backend declared in `inference.backends`. Every
  * request goes through the inference URL policy: a loopback backend works by
@@ -31,7 +32,7 @@ import {
   retryRateLimitedRequest,
 } from "@omnesis/core";
 import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
-import { computeTranscriptionTimeoutMs } from "./deadline.js";
+import { chunkSamples, transcribeInChunks, type ChunkTranscript } from "./chunks.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type {
   TranscribeCapability,
@@ -56,6 +57,12 @@ export interface HttpTranscriberOptions {
   fetchFn?: typeof fetch;
   /** Injectable audio decoder (tests). */
   decodeAudio?: AudioDecoder;
+  /**
+   * Longest stretch of audio per request, in seconds. Defaults to ten
+   * minutes, the upload limit; a speech model that takes about a minute at a
+   * time (Qwen3-ASR behind llama-server or Ollama) is given one.
+   */
+  maxChunkSeconds?: number;
 }
 
 interface TranscriptionResponse {
@@ -73,6 +80,7 @@ export class HttpTranscriber implements TranscribeCapability {
   private readonly allowRemoteInference: boolean;
   private readonly fetchFn: typeof fetch;
   private readonly decodeAudio: AudioDecoder;
+  private readonly maxChunkSamples: number;
 
   constructor(opts: HttpTranscriberOptions) {
     this.endpoint = `${opts.url.replace(/\/+$/, "")}${normalizeApiPathPrefix(opts.apiPathPrefix)}/audio/transcriptions`;
@@ -83,6 +91,7 @@ export class HttpTranscriber implements TranscribeCapability {
     this.allowRemoteInference = opts.allowRemoteInference === true;
     this.fetchFn = opts.fetchFn ?? fetchAllowingSlowResponse;
     this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
+    this.maxChunkSamples = chunkSamples(opts.maxChunkSeconds);
   }
 
   async transcribe(
@@ -107,18 +116,15 @@ export class HttpTranscriber implements TranscribeCapability {
       : undefined;
     if (prompt) fields.push(["prompt", prompt]);
 
-    const timeout = AbortSignal.timeout(
-      computeTranscriptionTimeoutMs(durationSec, opts?.minTimeoutMs),
+    const { text, language } = await transcribeInChunks(
+      pcm,
+      { maxChunkSamples: this.maxChunkSamples, minTimeoutMs: opts?.minTimeoutMs },
+      (chunk, ms) => {
+        const timeout = AbortSignal.timeout(ms);
+        const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+        return this.transcribeChunk(chunk, fields, signal);
+      },
     );
-    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-    const texts: string[] = [];
-    let language: string | undefined;
-    for (const chunk of splitPcm(pcm)) {
-      const part = await this.transcribeChunk(chunk, fields, signal);
-      if (part.text) texts.push(part.text);
-      language ??= part.language;
-    }
-    const text = texts.join(" ");
     log.debug(
       `Transcribed ${durationSec.toFixed(1)}s of audio via ${this.model} → ${text.length} chars`,
     );
@@ -129,7 +135,7 @@ export class HttpTranscriber implements TranscribeCapability {
     pcm: Float32Array,
     fields: ReadonlyArray<readonly [string, string]>,
     signal: AbortSignal,
-  ): Promise<{ text: string; language?: string }> {
+  ): Promise<ChunkTranscript> {
     const { body, contentType } = encodeMultipart(fields, {
       name: "file",
       filename: "audio.wav",
@@ -167,10 +173,9 @@ export class HttpTranscriber implements TranscribeCapability {
     if (typeof json.text !== "string") {
       throw new Error(`transcription backend ${this.model} returned no text`);
     }
-    return {
-      text: json.text.trim(),
-      ...(typeof json.language === "string" ? { language: json.language } : {}),
-    };
+    const parsed = parseTranscriptText(json.text);
+    const language = typeof json.language === "string" ? json.language : parsed.language;
+    return { text: parsed.text, ...(language ? { language } : {}) };
   }
 
   /** Personal vocabulary stays on the machine: only a loopback backend gets it. */
@@ -193,43 +198,60 @@ export class HttpTranscriber implements TranscribeCapability {
 }
 
 /**
- * Longest audio sent in one request. Ten minutes of 16 kHz 16-bit WAV is
- * 19.2 MB, under the 25 MB upload limit OpenAI and vLLM apply.
+ * Qwen3-ASR answers with its detected language ahead of the words, as
+ * `language English<asr_text>the words`, and a server that passes the model's
+ * output through (Ollama, llama-server) puts that whole string in `text`. Keep
+ * the words; the language is useful when the server reported none.
  */
-export const MAX_CHUNK_SAMPLES = 600 * PCM_SAMPLE_RATE;
-/** How far back from a chunk's limit to look for a quiet place to split. */
-const SPLIT_SEARCH_SAMPLES = 10 * PCM_SAMPLE_RATE;
-/** 20 ms frames: short enough to land in the gap between two words. */
-const SPLIT_FRAME_SAMPLES = 320;
+const QWEN3_ASR_PREFIX = /^\s*language\s+([A-Za-z-]+)\s*<asr_text>/;
 
-/**
- * Split PCM into chunks of at most `MAX_CHUNK_SAMPLES`, each ending at the
- * quietest 20 ms frame in its last ten seconds so a split rarely cuts a word.
- */
-export function splitPcm(pcm: Float32Array): Float32Array[] {
-  const chunks: Float32Array[] = [];
-  let start = 0;
-  while (pcm.length - start > MAX_CHUNK_SAMPLES) {
-    const limit = start + MAX_CHUNK_SAMPLES;
-    let split = limit;
-    let quietest = Infinity;
-    for (
-      let frame = limit - SPLIT_SEARCH_SAMPLES;
-      frame + SPLIT_FRAME_SAMPLES <= limit;
-      frame += SPLIT_FRAME_SAMPLES
-    ) {
-      let energy = 0;
-      for (let i = frame; i < frame + SPLIT_FRAME_SAMPLES; i += 1) energy += pcm[i]! * pcm[i]!;
-      if (energy < quietest) {
-        quietest = energy;
-        split = frame + SPLIT_FRAME_SAMPLES / 2;
-      }
-    }
-    chunks.push(pcm.subarray(start, split));
-    start = split;
-  }
-  chunks.push(pcm.subarray(start));
-  return chunks;
+/** The transcript's words, and a language the model wrote ahead of them. */
+export function parseTranscriptText(raw: string): { text: string; language?: string } {
+  const match = QWEN3_ASR_PREFIX.exec(raw);
+  if (!match) return { text: raw.trim() };
+  return {
+    text: raw.slice(match[0].length).trim(),
+    language: languageCodeFromName(match[1]!),
+  };
+}
+
+/** ISO-639-1 code for the language names Qwen3-ASR writes, or the name itself. */
+function languageCodeFromName(name: string): string {
+  const key = name.toLowerCase();
+  const code: Record<string, string> = {
+    english: "en",
+    chinese: "zh",
+    mandarin: "zh",
+    cantonese: "yue",
+    french: "fr",
+    german: "de",
+    spanish: "es",
+    italian: "it",
+    portuguese: "pt",
+    japanese: "ja",
+    korean: "ko",
+    russian: "ru",
+    arabic: "ar",
+    dutch: "nl",
+    polish: "pl",
+    turkish: "tr",
+    vietnamese: "vi",
+    thai: "th",
+    indonesian: "id",
+    hindi: "hi",
+    ukrainian: "uk",
+    swedish: "sv",
+    danish: "da",
+    norwegian: "no",
+    finnish: "fi",
+    czech: "cs",
+    greek: "el",
+    hebrew: "he",
+    hungarian: "hu",
+    romanian: "ro",
+    malay: "ms",
+  };
+  return code[key] ?? key;
 }
 
 /** 16-bit little-endian mono WAV for 16 kHz float PCM in [-1, 1]. */

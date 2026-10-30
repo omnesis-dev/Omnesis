@@ -95,10 +95,9 @@ function allRows(): number {
   return (
     (
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = 'v1'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = 'v1'",
+        )
         .get() as { n: number }
     ).n ?? 0
   );
@@ -207,10 +206,9 @@ describe("applyNearDupBatch", () => {
     };
     applyNearDupBatch(db, batch);
     const edge = db
-      .prepare<
-        [],
-        { n: number }
-      >(`SELECT COUNT(*) AS n FROM near_dup_edges WHERE doc_a='a' AND doc_b='b' AND algo_version='v1'`)
+      .prepare<[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM near_dup_edges WHERE doc_a='a' AND doc_b='b' AND algo_version='v1'`,
+      )
       .get();
     // The edge must persist after BOTH per-doc transactions run — the
     // second one (b's tx) deletes all edges touching b, then must
@@ -266,10 +264,9 @@ describe("applyNearDupBatch", () => {
 
     const edgeCount = (): number =>
       db
-        .prepare<
-          [string, string],
-          { n: number }
-        >(`SELECT COUNT(*) AS n FROM near_dup_edges WHERE doc_a = ? AND doc_b = ? AND algo_version = 'v1'`)
+        .prepare<[string, string], { n: number }>(
+          `SELECT COUNT(*) AS n FROM near_dup_edges WHERE doc_a = ? AND doc_b = ? AND algo_version = 'v1'`,
+        )
         .get(first, last)!.n;
 
     // Yield after the first chunk: `first` is applied, `last` is not.
@@ -1018,18 +1015,16 @@ describe("algoSweepStep — retiring a stale algo", () => {
       }
 
       const left = db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = ?",
+        )
         .get(staleAlgo);
       expect(left?.n, `${staleAlgo} rows survived the sweep`).toBe(0);
       // And it took nothing belonging to the active algo.
       const live = db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = 'v1'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM near_dup_df WHERE algo_version = 'v1'",
+        )
         .get();
       expect(live?.n).toBe(1);
     });
@@ -1061,10 +1056,9 @@ describe("near_dup_df generations", () => {
   function liveGeneration(): number {
     return (
       db
-        .prepare<
-          [],
-          { live_generation: number }
-        >("SELECT live_generation FROM near_dup_df_meta WHERE algo_version = 'v1'")
+        .prepare<[], { live_generation: number }>(
+          "SELECT live_generation FROM near_dup_df_meta WHERE algo_version = 'v1'",
+        )
         .get()?.live_generation ?? -1
     );
   }

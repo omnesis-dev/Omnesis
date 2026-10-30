@@ -645,10 +645,9 @@ function enrolAgent(
   );
   if (!exchanged.ok) throw new Error(`token exchange refused: ${exchanged.error}`);
   const row = db
-    .prepare<
-      [],
-      { id: string; grant_id: string }
-    >("SELECT id, grant_id FROM principal_credentials WHERE execution_device_id IS NOT NULL")
+    .prepare<[], { id: string; grant_id: string }>(
+      "SELECT id, grant_id FROM principal_credentials WHERE execution_device_id IS NOT NULL",
+    )
     .get();
   if (!row) throw new Error("no execution-bound credential was created");
   return {
@@ -685,10 +684,9 @@ function credentialCount(): number {
 
 function activeCredentialCount(): number {
   return db
-    .prepare<
-      [],
-      { count: number }
-    >("SELECT COUNT(*) AS count FROM principal_credentials c JOIN access_grants g ON g.id = c.grant_id WHERE c.status = 'active' AND c.revoked_at IS NULL AND g.revoked_at IS NULL")
+    .prepare<[], { count: number }>(
+      "SELECT COUNT(*) AS count FROM principal_credentials c JOIN access_grants g ON g.id = c.grant_id WHERE c.status = 'active' AND c.revoked_at IS NULL AND g.revoked_at IS NULL",
+    )
     .get()!.count;
 }
 

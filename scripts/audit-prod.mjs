@@ -34,6 +34,13 @@ const ALLOWLIST = {
     "runs on Linux/macOS only. The fix is @hono/node-server 2.x, which violates " +
     "@hono/node-ws@1.x's peer dependency (^1.19.11) and would break the gateway " +
     "WebSocket stack. Revisit when @hono/node-ws supports node-server 2.x.",
+  "GHSA-rmxm-3fg6-px4f":
+    "@hono/node-server serveStatic decodes the request path twice. Omnesis never " +
+    "calls serveStatic, and its own packages depend on 2.1.5, which has the fix. " +
+    "The 1.19.x copy is there only for @hono/node-ws@1.x's peer dependency " +
+    "(^1.19.11) and the MCP SDK's request adapter, neither of which serves " +
+    "static files, and 1.x has no patched release. Revisit when " +
+    "@hono/node-ws supports node-server 2.x.",
   "GHSA-r292-9mhp-454m":
     "node-tar's stack-overflow DoS needs a crafted archive with member " +
     "selection. Omnesis never imports the package — its own archive handling " +

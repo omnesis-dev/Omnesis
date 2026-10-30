@@ -116,10 +116,9 @@ const workFor = (docId: string): WorkRow[] =>
 const latestWork = (docId: string): WorkRow => workFor(docId).at(-1)!;
 const batchSize = (batchId: string): number =>
   bench.sql
-    .prepare<
-      [string],
-      { count: number }
-    >("SELECT COUNT(*) AS count FROM knowledge_work WHERE batch_id=?")
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM knowledge_work WHERE batch_id=?",
+    )
     .get(batchId)!.count;
 
 /** Walk the batch's run through its retry delays until the engine abandons it. */

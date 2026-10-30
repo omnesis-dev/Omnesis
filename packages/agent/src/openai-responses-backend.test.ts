@@ -1466,30 +1466,38 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it.each([
-    ["max_output_tokens", "max_tokens", "output_truncated"],
-    ["content_filter", "error", "http_response_incomplete"],
-  ] as const)("classifies incomplete reason %s", async (reason, stopReason, failureCode) => {
-    globalThis.fetch = vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        sseResponse([
-          {
-            type: "response.incomplete",
-            response: { id: "r", incomplete_details: { reason }, usage: {} },
-          },
-        ]),
-      ),
-    );
-    const backend = new OpenAIResponsesBackend({
-      baseUrl: "http://localhost:18083",
-      model: "o1-pro",
-      modelLimits: { maxOutputTokens: 4_096 },
-    });
-    const events = await collect(backend.runTurn(baseInput()));
-    const end = events.at(-1);
-    if (end?.type !== "agent.message.end") throw new Error("expected message end");
-    expect(end.payload.stopReason).toBe(stopReason);
-    expect(end.payload.failure?.code).toBe(failureCode);
-  });
+    ["max_output_tokens", "max_tokens", "output_truncated", false],
+    // A filter judged this turn's own content; retrying it later changes nothing.
+    ["content_filter", "error", "http_response_incomplete", false],
+    ["a_future_reason", "error", "http_response_incomplete", true],
+  ] as const)(
+    "classifies incomplete reason %s",
+    async (reason, stopReason, failureCode, retryable) => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          sseResponse([
+            {
+              type: "response.incomplete",
+              response: { id: "r", incomplete_details: { reason }, usage: {} },
+            },
+          ]),
+        ),
+      );
+      const backend = new OpenAIResponsesBackend({
+        baseUrl: "http://localhost:18083",
+        model: "o1-pro",
+        modelLimits: { maxOutputTokens: 4_096 },
+      });
+      const events = await collect(backend.runTurn(baseInput()));
+      const end = events.at(-1);
+      if (end?.type !== "agent.message.end") throw new Error("expected message end");
+      expect(end.payload.stopReason).toBe(stopReason);
+      expect(end.payload.failure).toMatchObject({ code: failureCode, retryable });
+      if (failureCode === "http_response_incomplete") {
+        expect(end.payload.failure?.provider).toEqual({ code: reason });
+      }
+    },
+  );
 
   it("emits canceled and never calls fetch when the signal is already aborted", async () => {
     const fetchMock = vi.fn();

@@ -174,10 +174,9 @@ describe("FsCognitionTranscriptStore", () => {
     ).toBeLessThanOrEqual(100);
     expect(
       index
-        .prepare<
-          [],
-          { value: string }
-        >("SELECT value FROM transcript_index_meta WHERE key = 'scan-complete'")
+        .prepare<[], { value: string }>(
+          "SELECT value FROM transcript_index_meta WHERE key = 'scan-complete'",
+        )
         .get(),
     ).toBeUndefined();
     index.close();
@@ -202,10 +201,9 @@ describe("FsCognitionTranscriptStore", () => {
     ).toBe(250);
     expect(
       completedIndex
-        .prepare<
-          [],
-          { value: string }
-        >("SELECT value FROM transcript_index_meta WHERE key = 'scan-complete'")
+        .prepare<[], { value: string }>(
+          "SELECT value FROM transcript_index_meta WHERE key = 'scan-complete'",
+        )
         .get()?.value,
     ).toBe("1");
     completedIndex.close();

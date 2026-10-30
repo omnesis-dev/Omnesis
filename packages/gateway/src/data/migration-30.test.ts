@@ -63,10 +63,9 @@ describe("migration 30 — existing-DB upgrade", () => {
 
     // Existing name rows are born primary (default 1) with a count of 1.
     const row = db
-      .prepare<
-        [],
-        { occurrence_count: number; is_primary: number }
-      >("SELECT occurrence_count, is_primary FROM person_aliases WHERE id = 'a1'")
+      .prepare<[], { occurrence_count: number; is_primary: number }>(
+        "SELECT occurrence_count, is_primary FROM person_aliases WHERE id = 'a1'",
+      )
       .get();
     expect(row).toEqual({ occurrence_count: 1, is_primary: 1 });
     // runMigrations always replays through to the latest version; assert

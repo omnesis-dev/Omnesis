@@ -21,7 +21,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 describe("release package selection", () => {
   test("publishes exactly the product packages and excludes synthetic providers", () => {
     const packages = listPublishablePackages();
-    expect(packages).toHaveLength(41);
+    expect(packages).toHaveLength(44);
     expect(packages.map(({ dir }) => dir)).not.toContainEqual(
       expect.stringMatching(/^packages\/providers-synth\//u),
     );
@@ -49,6 +49,9 @@ describe("release package runtime assets", () => {
         preinstall: "node native-runtime-preflight.mjs",
         postinstall: "node native-vector-compat.mjs --package-dir .",
       });
+      // npm's file filter decides whether the root install scripts ship; the
+      // thousands of compiled files only make the pack slow, so leave them out.
+      rmSync(join(staged, "dist"), { recursive: true, force: true });
       const pack = parsePackReport(
         execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: staged, encoding: "utf8" }),
       );

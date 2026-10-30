@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createLogger, type AgentEvent } from "@omnesis/core";
+import { createLogger, type AgentEvent, type AgentTerminalFailure } from "@omnesis/core";
 import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
 import { upsertDocuments } from "../data/repositories/DocumentRepository.js";
@@ -684,6 +684,106 @@ describe("steward run drainer", () => {
     now += 24 * 60 * 60_000;
     await drain.run(undefined, taskCtx);
     expect(calls).toBe(1);
+  });
+
+  /** A backend whose every turn ends with `failure`. */
+  const failingWith =
+    (failure: AgentTerminalFailure) =>
+    (input: TurnInput): AgentEvent[] => [
+      {
+        type: "agent.message.end",
+        payload: {
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          stopReason: "error",
+          failure,
+        },
+      },
+    ];
+
+  test.each([
+    [
+      "claude-code",
+      "claude_code_not_authenticated",
+      "The CLI is not signed in on the gateway host.",
+    ],
+    ["claude-code", "claude_code_binary_missing", "The CLI was not found on the gateway host."],
+    ["claude-code", "claude_code_unsupported_version", "The CLI 2.0.1 is too old."],
+    ["claude-code", "claude_code_invalid_model", "The CLI rejected the configured model."],
+    ["claude-code", "claude_code_managed_policy", "The CLI's managed policy runs hooks."],
+    [
+      "claude-code",
+      "claude_code_native_tool_unavailable",
+      "The CLI loaded a plugin Omnesis did not configure.",
+    ],
+    ["http", "prompt_truncated", "The model server truncated the prompt to its context window."],
+    [
+      "http",
+      "http_reasoning_options_invalid",
+      "The selected model does not advertise reasoningEffort.",
+    ],
+  ])(
+    "%s %s waits for the operator's fix instead of retiring the run",
+    async (backend, code, message) => {
+      // Each is the environment, not the payload: once the operator signs in,
+      // installs, reassigns or reconfigures, the same run succeeds. So it waits
+      // out the fault like a Codex sign-out or an HTTP 401 — attempt refunded,
+      // run claimable — and the breaker says why the Brain stopped.
+      const { writeGate, drain } = makeBundle({
+        maxAttempts: 1,
+        backend: failingWith({ code, message, retryable: true, backend, model: "example-model" }),
+      });
+      const ids = Array.from({ length: PROVIDER_BREAKER_THRESHOLD }, (_, i) => `run_env_${i}`);
+      for (const id of ids) {
+        await writeGate.enqueueCognitionRun(
+          { id, kind: "data", payload: { docId: `doc-${id}`, event: "created", datumAt: now } },
+          now,
+        );
+      }
+
+      for (const _ of ids) await drain.run(undefined, taskCtx);
+
+      for (const id of ids) {
+        expect(getCognitionRun(db, id), id).toMatchObject({
+          status: "pending",
+          attempts: 0,
+          failureCode: code,
+          lastError: message,
+        });
+      }
+      expect(Number(getCognitionEngineState(db, PROVIDER_BREAKER_OPEN_UNTIL_KEY))).toBeGreaterThan(
+        now,
+      );
+      expect(getCognitionEngineState(db, PROVIDER_BREAKER_ERROR_KEY)).toBe(message);
+    },
+  );
+
+  test("a response a content filter cut off settles after one attempt", async () => {
+    // The filter judged the run's own content: sending it again changes
+    // nothing, so it is retired rather than waited out.
+    const { writeGate, drain } = makeBundle({
+      maxAttempts: 5,
+      backend: failingWith({
+        code: "http_response_incomplete",
+        message: "The model response ended before it completed.",
+        retryable: false,
+        backend: "http",
+        model: "example-model",
+        provider: { code: "content_filter" },
+      }),
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_filtered", kind: "data", payload: { docId: "fictional-doc" } },
+      now,
+    );
+
+    await drain.run(undefined, taskCtx);
+
+    expect(getCognitionRun(db, "run_filtered")).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      failureCode: "http_response_incomplete",
+    });
   });
 
   test("output truncation is terminal for a machine workflow", async () => {

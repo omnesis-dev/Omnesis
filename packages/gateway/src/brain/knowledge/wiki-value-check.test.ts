@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDecisionPayloadTables } from "../decision-payload.js";
 import { resolveBrainSettings } from "../config.js";
+import { createBrainSourceFence } from "../source-exclusion.js";
 import { createKnowledgeTables, getKnowledgeNode } from "./storage.js";
 import { directKnowledgeGate } from "./writer.js";
 import { KnowledgeService } from "./service.js";
@@ -106,4 +107,21 @@ it("does not memoize fail-open/off/shadow decisions or send partial oversized dr
   await gate.assess({ ...proposal(), markdown: "x".repeat(24_001) });
   expect(vi.mocked(check).mock.calls[2]?.[0].wikiContext).toBeUndefined();
   expect(vi.mocked(check).mock.calls[2]?.[0].record.text).toHaveLength(24_000);
+});
+it("never shows the judge a reference of a source excluded from the Brain", async () => {
+  db.exec(
+    "ALTER TABLE documents ADD COLUMN source_id TEXT NOT NULL DEFAULT 'gmail:maya@example.com'; UPDATE documents SET source_id='codex:local' WHERE id='hours'",
+  );
+  const check = vi.fn<CheckRecord>(async () => ({ save: true as const }));
+  const gate = new WikiValueCheck(
+    service,
+    check,
+    createBrainSourceFence(db, () => ["codex"]),
+  );
+  await gate.assess(proposal());
+  expect(check.mock.calls[0]?.[0].wikiContext).toMatchObject({
+    references: [{ ref: "source:route", text: "Use the eastern path." }],
+    referencesOmitted: 1,
+  });
+  expect(JSON.stringify(check.mock.calls)).not.toContain("gate shuts");
 });

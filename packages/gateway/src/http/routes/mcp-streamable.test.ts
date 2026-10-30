@@ -817,13 +817,11 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
   });
 
   it("refuses excessive nested tool inputs within the HTTP byte limit before invocation", async () => {
-    const invoke = vi.fn(
-      async (): Promise<ToolResult> => ({
-        kind: "structured",
-        resultType: "test.result",
-        data: { ok: true },
-      }),
-    );
+    const invoke = vi.fn(async (): Promise<ToolResult> => ({
+      kind: "structured",
+      resultType: "test.result",
+      data: { ok: true },
+    }));
     const direct = service(undefined, [
       {
         name: "search_many",

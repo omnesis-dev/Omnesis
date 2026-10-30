@@ -106,6 +106,11 @@ export function parseTlsExtraNames(raw: string | undefined): string[] {
   return entries;
 }
 
+/** The hosts OMNESIS_TLS_EXTRA_NAMES validly names, without their SAN tags. */
+export function tlsExtraHostNames(raw: string | undefined): string[] {
+  return parseTlsExtraNames(raw).map((entry) => entry.replace(/^(?:DNS|IP):/u, ""));
+}
+
 /**
  * Resolve the TLS bundle for boot:
  *   1. If both env paths are set, load from disk (source=user-provided).

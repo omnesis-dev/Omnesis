@@ -83,10 +83,9 @@ export function physicalMergePeople(
   }
 
   const loser = db
-    .prepare<
-      [string],
-      { id: string; is_self: number; first_seen: string; last_seen: string }
-    >("SELECT id, is_self, first_seen, last_seen FROM people WHERE id = ?")
+    .prepare<[string], { id: string; is_self: number; first_seen: string; last_seen: string }>(
+      "SELECT id, is_self, first_seen, last_seen FROM people WHERE id = ?",
+    )
     .get(loserId);
   const winnerExists = db
     .prepare<[string], { id: string }>("SELECT id FROM people WHERE id = ?")
@@ -277,10 +276,9 @@ export function physicalMergePeople(
 function countAliases(db: Db, personId: string): number {
   return (
     db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?",
+      )
       .get(personId)?.n ?? 0
   );
 }
@@ -288,10 +286,9 @@ function countAliases(db: Db, personId: string): number {
 function countDocPeople(db: Db, personId: string): number {
   return (
     db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?",
+      )
       .get(personId)?.n ?? 0
   );
 }

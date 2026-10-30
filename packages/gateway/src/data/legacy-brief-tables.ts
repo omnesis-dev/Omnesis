@@ -107,10 +107,9 @@ export function legacyDeleteBriefsCitingDocs(db: Db, deletedDocIds: readonly str
     const batch = deletedDocIds.slice(i, i + ID_CHUNK);
     const placeholders = batch.map(() => "?").join(", ");
     for (const row of db
-      .prepare<
-        string[],
-        { brief_id: string }
-      >(`SELECT DISTINCT brief_id FROM brief_citations WHERE doc_id IN (${placeholders})`)
+      .prepare<string[], { brief_id: string }>(
+        `SELECT DISTINCT brief_id FROM brief_citations WHERE doc_id IN (${placeholders})`,
+      )
       .all(...batch))
       ids.add(row.brief_id);
   }

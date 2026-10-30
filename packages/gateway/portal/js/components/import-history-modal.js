@@ -15,6 +15,7 @@
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { startSourceHistoryImport, cancelSourceHistoryImport } from "../api.js";
+import { hasMissingRequired, importValues, visibleImportFields } from "./import-history-fields.js";
 
 function FieldInput({ field, value, onInput }) {
   if (field.type === "select") {
@@ -65,9 +66,7 @@ export function ImportHistoryModal({ sourceId, spec, onClose, onComplete }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, onClose]);
 
-  const missingRequired = (spec.fields || []).some(
-    (f) => f.required && !String(values[f.key] ?? "").trim(),
-  );
+  const missingRequired = hasMissingRequired(spec.fields, values);
 
   function setField(key, v) {
     setValues((prev) => ({ ...prev, [key]: v }));
@@ -80,10 +79,7 @@ export function ImportHistoryModal({ sourceId, spec, onClose, onComplete }) {
     doneRef.current = false;
     let flowId;
     try {
-      const trimmed = Object.fromEntries(
-        Object.entries(values).map(([k, v]) => [k, String(v ?? "").trim()]),
-      );
-      const res = await startSourceHistoryImport(sourceId, trimmed);
+      const res = await startSourceHistoryImport(sourceId, importValues(spec.fields, values));
       flowId = res.flowId;
       flowRef.current = flowId;
     } catch (e) {
@@ -175,7 +171,7 @@ export function ImportHistoryModal({ sourceId, spec, onClose, onComplete }) {
         ${phase === "form" &&
         html`
           <div class="import-form">
-            ${(spec.fields || []).map(
+            ${visibleImportFields(spec.fields, values).map(
               (f) => html`
                 <div class="form-group" key=${f.key}>
                   <label>${f.label}${f.required ? "" : html` <span class="dim">(optional)</span>`}</label>

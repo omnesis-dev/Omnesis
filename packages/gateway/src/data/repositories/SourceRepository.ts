@@ -266,10 +266,9 @@ export function getSource(db: Db, id: SourceId): SourceRecord | null {
 export function isSourceModeTransitionPending(db: Db, id: SourceId): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { found: number }
-      >("SELECT 1 AS found FROM source_mode_transitions WHERE source_id = ? LIMIT 1")
+      .prepare<[string], { found: number }>(
+        "SELECT 1 AS found FROM source_mode_transitions WHERE source_id = ? LIMIT 1",
+      )
       .get(id) !== undefined
   );
 }
@@ -501,10 +500,9 @@ export function getSourceMemberConfigOverride(
   deviceId: DeviceId,
 ): Record<string, unknown> | null {
   const row = db
-    .prepare<
-      [string, string],
-      { config_override: string }
-    >("SELECT config_override FROM source_devices WHERE source_id = ? AND device_id = ?")
+    .prepare<[string, string], { config_override: string }>(
+      "SELECT config_override FROM source_devices WHERE source_id = ? AND device_id = ?",
+    )
     .get(sourceId, deviceId);
   return row
     ? sourceDeviceConfigOverrideCodec.parseWithFallback(row.config_override, {
@@ -576,10 +574,9 @@ export function updateExistingSourceMemberConfigOverride(
 export function listAllSourceMembers(db: Db): Map<string, DeviceId[]> {
   const out = new Map<string, DeviceId[]>();
   for (const r of db
-    .prepare<
-      [],
-      { source_id: string; device_id: string }
-    >("SELECT source_id, device_id FROM source_devices ORDER BY added_at, rowid")
+    .prepare<[], { source_id: string; device_id: string }>(
+      "SELECT source_id, device_id FROM source_devices ORDER BY added_at, rowid",
+    )
     .all()) {
     const list = out.get(r.source_id) ?? [];
     list.push(DeviceId(r.device_id));
@@ -591,10 +588,9 @@ export function listAllSourceMembers(db: Db): Map<string, DeviceId[]> {
 export function isSourceMember(db: Db, sourceId: SourceId, deviceId: DeviceId): boolean {
   return (
     db
-      .prepare<
-        [string, string],
-        { found: number }
-      >("SELECT 1 AS found FROM source_devices WHERE source_id = ? AND device_id = ?")
+      .prepare<[string, string], { found: number }>(
+        "SELECT 1 AS found FROM source_devices WHERE source_id = ? AND device_id = ?",
+      )
       .get(sourceId, deviceId) !== undefined
   );
 }
@@ -923,10 +919,9 @@ export interface PendingSourceRemoval {
 export function isSourceCleanupPending(db: Db, id: SourceId): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { one: number }
-      >("SELECT 1 AS one FROM removed_sources WHERE id = ? AND cleanup_done_at IS NULL")
+      .prepare<[string], { one: number }>(
+        "SELECT 1 AS one FROM removed_sources WHERE id = ? AND cleanup_done_at IS NULL",
+      )
       .get(id) !== undefined
   );
 }
@@ -975,10 +970,9 @@ export function findRemovedSourceIds(db: Db, sourceIds: readonly string[]): Set<
     if (chunk.length === 0) continue;
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        unknown[],
-        { id: string }
-      >(`SELECT id FROM removed_sources WHERE id IN (${placeholders})`)
+      .prepare<unknown[], { id: string }>(
+        `SELECT id FROM removed_sources WHERE id IN (${placeholders})`,
+      )
       .all(...chunk);
     for (const row of rows) removed.add(row.id);
   }

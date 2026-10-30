@@ -10,10 +10,11 @@ export function purgeNextOrganizationCohort(
   kind: "source" | "node" = "source",
 ): boolean {
   const row = db
-    .prepare<
-      [string],
-      { cohort_id: string }
-    >(kind === "source" ? "SELECT cohort_id FROM knowledge_organization_members WHERE source_id=? LIMIT 1" : "SELECT cohort_id FROM knowledge_organization_targets WHERE node_id=? LIMIT 1")
+    .prepare<[string], { cohort_id: string }>(
+      kind === "source"
+        ? "SELECT cohort_id FROM knowledge_organization_members WHERE source_id=? LIMIT 1"
+        : "SELECT cohort_id FROM knowledge_organization_targets WHERE node_id=? LIMIT 1",
+    )
     .get(targetId);
   if (!row) return false;
   // The whole organization disposition loses its provenance when either a

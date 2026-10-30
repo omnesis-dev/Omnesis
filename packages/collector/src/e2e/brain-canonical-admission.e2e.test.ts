@@ -90,10 +90,9 @@ it("hands a newly discovered locked owner back to the planner without repeating 
     "discovery cooperatively hands off its source",
     () =>
       bench!.sql
-        .prepare<
-          [string],
-          { id: string; run_id: string }
-        >("SELECT b.id,b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE b.status='abandoned' AND w.subject_id=? LIMIT 1")
+        .prepare<[string], { id: string; run_id: string }>(
+          "SELECT b.id,b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE b.status='abandoned' AND w.subject_id=? LIMIT 1",
+        )
         .get(sourceId) ?? null,
     60_000,
   );

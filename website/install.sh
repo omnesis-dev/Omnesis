@@ -322,6 +322,7 @@ TLS_FINGERPRINT=""
 # the one the banner's join line prints.
 DOCKER_EXTRA_NAMES=""
 DOCKER_JOIN_HOST=""
+DOCKER_DEVICE_NAME=""
 # A checkout to build the images from, when this script came from one. Only a
 # fallback: the images are published per release and are normally pulled.
 DOCKER_BUILD_CONTEXT="${OMNESIS_DOCKER_BUILD_CONTEXT:-}"
@@ -550,6 +551,7 @@ UPDATE_LOCK_HELPER_TMP=""
 INSTALL_UPDATE_LOCK_ID=""
 INSTALL_UPDATE_HEARTBEAT_PID=""
 SOURCE_CHECKOUT_TMP=""
+NPM_TRUST_DIR=""
 
 cleanup_temp_files() {
   if [ -n "${NODESOURCE_TMP_DIR:-}" ] && [ -d "$NODESOURCE_TMP_DIR" ]; then
@@ -577,6 +579,11 @@ cleanup_temp_files() {
   if [ -n "${SOURCE_CHECKOUT_TMP:-}" ] && [ -d "$SOURCE_CHECKOUT_TMP" ]; then
     rm -rf "$SOURCE_CHECKOUT_TMP"
   fi
+  if [ -n "${NPM_TRUST_DIR:-}" ] && [ -d "$NPM_TRUST_DIR" ]; then
+    rm -rf "$NPM_TRUST_DIR"
+  fi
+  # run_nodesource_setup cleans up mid-run; the next npm makes a fresh one.
+  NPM_TRUST_DIR=""
   if [ -n "${INSTALL_UPDATE_HEARTBEAT_PID:-}" ]; then
     kill "$INSTALL_UPDATE_HEARTBEAT_PID" >/dev/null 2>&1 || true
     wait "$INSTALL_UPDATE_HEARTBEAT_PID" 2>/dev/null || true
@@ -781,6 +788,8 @@ ensure_node() {
   fi
   if node_install_compatible; then
     info "Node $(node --version) found"
+    # In this shell, so cleanup_temp_files removes it; see with_npm_trust.
+    : "${NPM_TRUST_DIR:=$(mktemp -d)}"
     return
   fi
 
@@ -824,6 +833,8 @@ ensure_node() {
 
   node_install_compatible || fail "Node install did not produce Node $NODE_INSTALL_RANGE on PATH. Select a supported Node binary and re-run."
   info "Node $(node --version) ready"
+  # After run_nodesource_setup, whose cleanup would remove it.
+  : "${NPM_TRUST_DIR:=$(mktemp -d)}"
 }
 
 verify_secure_nodesource_path() {
@@ -940,7 +951,7 @@ source_step_failed() {
 # its own `npm ci` (packages/cli/src/update/node-gyp-headers.ts); a test keeps
 # the copies identical.
 prepare_node_gyp_headers() {
-  ( cd "$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
+  ( cd "$1" && with_npm_trust node -e 'const fs = require("fs"), os = require("os"), path = require("path");
 const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
   Object.entries(process.env).find(([key]) => key.toLowerCase() === prefix + name)?.[1]).find(Boolean) || "";
 if (option("nodedir")) process.exit(0);
@@ -979,6 +990,50 @@ require_source_build_memory() {
   fail "Building Omnesis from source needs about 3.5 GB of memory, and this machine can use ${SOURCE_BUILD_MEMORY_MB} MB. Install on a machine with more memory, or, if this one has swap to spare, re-run with OMNESIS_BUILD_MEMORY_MB=4096 to build anyway."
 }
 
+
+# npm reaches the registry with Node's bundled CA store and checks no
+# revocation, so a root Mozilla has removed from NSS stays trusted by npm until
+# Node ships a newer store. Every npm the installer runs, the node-gyp header
+# fetch, and the npm ci of the source launcher it writes preload a filter that
+# drops those roots. It is PRELOAD_SOURCE in packages/core/src/tls-distrust.ts,
+# which a test holds this copy to. It filters the default store only, so a ca
+# or cafile the user configured for npm still wins.
+npm_trust_preload() {
+  cat <<'EOF'
+import { createHash } from "node:crypto";
+import tls from "node:tls";
+const distrusted = new Set([
+  "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b",
+  "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f",
+  "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3",
+]);
+const keep = (pem) => !distrusted.has(createHash("sha256").update(Buffer.from(pem.replace(/-----(?:BEGIN|END) CERTIFICATE-----|\s/gu, ""), "base64")).digest("hex"));
+if (typeof tls.setDefaultCACertificates === "function") {
+  const current = tls.getCACertificates("default");
+  if (!current.every(keep)) tls.setDefaultCACertificates(current.filter(keep));
+}
+EOF
+}
+
+# Run a command with the preload. ensure_node makes NPM_TRUST_DIR (private,
+# 0700) in the installer's own shell, so cleanup_temp_files removes it; this
+# covers a call before that.
+with_npm_trust() {
+  [ -n "${NPM_TRUST_DIR:-}" ] || NPM_TRUST_DIR="$(mktemp -d)" ||
+    fail "Could not create a private temporary directory for npm's certificate filter."
+  NPM_TRUST_PRELOAD="$NPM_TRUST_DIR/distrust-roots.mjs"
+  [ -f "$NPM_TRUST_PRELOAD" ] || npm_trust_preload >"$NPM_TRUST_PRELOAD"
+  # NODE_OPTIONS splits on spaces, so a TMPDIR holding one goes in encoded.
+  NPM_TRUST_URL="file://$(printf '%s' "$NPM_TRUST_PRELOAD" | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"
+  NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--import=$NPM_TRUST_URL" "$@"
+}
+
+# `npm run` reaches no registry, so a build keeps exactly the NODE_OPTIONS it
+# was given.
+npm() {
+  [ "${1:-}" != run ] || { command npm "$@"; return; }
+  with_npm_trust command npm "$@"
+}
 
 npm_flags() {
   # shellcheck disable=SC2086
@@ -1707,17 +1762,42 @@ try {
 # Render the stable source front door. Keeping the renderer separate lets a
 # package migration compare an existing launcher byte-for-byte before it
 # replaces anything at the same path.
+# The with_npm_trust the current source launcher carries.
+render_source_npm_trust() {
+  cat <<EOF
+# The installer's npm trust preload; see with_npm_trust in the installer.
+with_npm_trust() {
+  NPM_TRUST_DIR="\$(mktemp -d)" || return 1
+  cat >"\$NPM_TRUST_DIR/distrust-roots.mjs" <<'NPM_TRUST_EOF'
+$(npm_trust_preload)
+NPM_TRUST_EOF
+  NPM_TRUST_URL="file://\$(printf '%s' "\$NPM_TRUST_DIR/distrust-roots.mjs" | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"
+  NODE_OPTIONS="\${NODE_OPTIONS:+\$NODE_OPTIONS }--import=\$NPM_TRUST_URL" "\$@"
+  NPM_TRUST_STATUS=\$?
+  rm -rf "\$NPM_TRUST_DIR"
+  return "\$NPM_TRUST_STATUS"
+}
+EOF
+}
+
 render_source_wrapper() {
   SOURCE_ROOT="$1"
   SOURCE_DEPENDENCY_KIND=f
   SOURCE_DEPENDENCY_PATH=node_modules/tsx/dist/loader.mjs
   SOURCE_CLI_COMMAND='node --import "$SOURCE_LOADER_URL"'
+  # The legacy launcher stays byte-identical to the one v0.6.0 wrote, so only
+  # the current one runs its npm ci with the trust preload; see with_npm_trust.
+  NPM_TRUST_RUN='with_npm_trust '
+  NPM_TRUST_FUNCTION="$(render_source_npm_trust)
+"
   case "${2:-current}" in
     current) ;;
     legacy)
       SOURCE_DEPENDENCY_KIND=x
       SOURCE_DEPENDENCY_PATH=node_modules/.bin/tsx
       SOURCE_CLI_COMMAND='"$SOURCE_ROOT/node_modules/.bin/tsx"'
+      NPM_TRUST_RUN=""
+      NPM_TRUST_FUNCTION=""
       ;;
     *) return 1 ;;
   esac
@@ -1835,10 +1915,10 @@ try {
 update_unfinished() {
   [ "\$UPDATE_PHASE" = "applying" ] || [ "\$UPDATE_PHASE" = "rolling-back" ] || [ "\$UPDATE_PHASE" = "mismatch" ]
 }
-# The node-gyp header check the installer runs before each npm ci; see
+${NPM_TRUST_FUNCTION}# The node-gyp header check the installer runs before each npm ci; see
 # prepare_node_gyp_headers in the installer.
 prepare_node_gyp_headers() {
-  ( cd "\$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
+  ( cd "\$1" && ${NPM_TRUST_RUN}node -e 'const fs = require("fs"), os = require("os"), path = require("path");
 const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
   Object.entries(process.env).find(([key]) => key.toLowerCase() === prefix + name)?.[1]).find(Boolean) || "";
 if (option("nodedir")) process.exit(0);
@@ -1869,11 +1949,11 @@ if (!whole()) fs.rmSync(dir, { recursive: true, force: true });' "\$(npm config 
 # A failed install is retried once from an empty node_modules.
 install_source_dependencies() {
   prepare_node_gyp_headers "\$SOURCE_ROOT"
-  ( cd "\$SOURCE_ROOT" && npm ci ) && return 0
+  ( cd "\$SOURCE_ROOT" && ${NPM_TRUST_RUN}npm ci ) && return 0
   printf '%s\n' "Installing dependencies failed; installing them again from an empty node_modules..." >&2
   rm -rf "\$SOURCE_ROOT/node_modules" || return 1
   prepare_node_gyp_headers "\$SOURCE_ROOT"
-  ( cd "\$SOURCE_ROOT" && npm ci )
+  ( cd "\$SOURCE_ROOT" && ${NPM_TRUST_RUN}npm ci )
 }
 read_update_phase
 if update_unfinished; then
@@ -2495,7 +2575,7 @@ read_embedder_catalog() {
   # a prompt this pipeline has already discarded.
   CATALOG_JSON="$("$EXISTING_CLI" model catalog --role embed --json 2>/dev/null </dev/null || true)"
   [ -n "$CATALOG_JSON" ] || return 1
-  EMBEDDER_MENU="$(printf '%s' "$CATALOG_JSON" | node -e '
+  EMBEDDER_MENU="$(printf '%s' "$CATALOG_JSON" | json_node -e '
     let s = "";
     process.stdin.on("data", (d) => (s += d));
     process.stdin.on("end", () => {
@@ -2516,6 +2596,26 @@ read_embedder_catalog() {
     });' 2>/dev/null || true)"
   [ -n "$EMBEDDER_MENU" ] || return 1
   return 0
+}
+
+# Node for a JSON read. This host's own when it has one; a Docker host
+# deliberately has none, so there it is the Node in this install's CLI image at
+# DOCKER_NODE_TAG — the images this run pulled, or before the pull, the ones an
+# earlier run recorded. Never pulled here: a check made before the pull answers
+# "cannot read" rather than downloading an image to find out.
+DOCKER_NODE_TAG=""
+host_node_works() {
+  command -v node >/dev/null 2>&1 && node -e 'process.exit(0)' </dev/null >/dev/null 2>&1
+}
+
+json_node() {
+  if host_node_works; then
+    node "$@"
+    return
+  fi
+  [ "$DOCKER" = 1 ] && [ -n "$DOCKER_NODE_TAG" ] || return 1
+  docker run --rm -i --pull never --network none --entrypoint node \
+    "$IMAGE_REPO/$(docker_cli_image):$DOCKER_NODE_TAG" "$@"
 }
 
 # Refuse a run that has a model to choose and no way to ask. Named flags only:
@@ -3355,11 +3455,14 @@ write_passphrase_file() {
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
   # Node is the first choice and `/dev/urandom` the fallback, because the
   # Docker role deliberately leaves this host without a Node of its own.
-  if command -v node >/dev/null 2>&1; then
+  if host_node_works; then
     ( umask 077; node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' \
         > "$1" ) || fail "Could not generate a keyring passphrase file."
   else
-    ( umask 077; LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 \
+    # 32 bytes read once, then hex: nothing in the pipeline outlives its
+    # reader. `tr < /dev/urandom | head` left tr writing into a closed pipe,
+    # which printed "tr: write error: Broken pipe" on every run.
+    ( umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' \
         > "$1" ) || fail "Could not generate a keyring passphrase file."
   fi
   [ -s "$1" ] || fail "Generated an empty keyring passphrase file."
@@ -4713,13 +4816,63 @@ print_harness_banner() {
 #   - The OAuth callback ports stay published, or no provider can redirect a
 #     browser back to the collector that started the flow.
 
+# The oldest Compose the generated project and the repository's Compose files
+# work with: the standalone host-networking override resets the published
+# ports with `!reset`, which Compose reads from v2.24.0.
+DOCKER_COMPOSE_MIN="2.24.0"
+
+# How many times a failed image pull is tried, and the base of the growing pause
+# between tries (5s, then 10s by default).
+DOCKER_PULL_ATTEMPTS="${OMNESIS_DOCKER_PULL_ATTEMPTS:-3}"
+DOCKER_PULL_RETRY_SECONDS="${OMNESIS_DOCKER_PULL_RETRY_SECONDS:-5}"
+
+# Docker Desktop installed for one user, and OrbStack, leave the CLI off the
+# default PATH and add its directory from ~/.zprofile, which a terminal opened
+# before the install has not read. Prints the CLI found in one of those places.
+docker_cli_off_path() {
+  for DOCKER_CANDIDATE in "$HOME/.docker/bin/docker" \
+                          "${OMNESIS_TEST_HOST_ROOT:-}/Applications/Docker.app/Contents/Resources/bin/docker" \
+                          "$HOME/.orbstack/bin/docker"; do
+    if [ -x "$DOCKER_CANDIDATE" ]; then
+      printf '%s\n' "$DOCKER_CANDIDATE"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_docker() {
-  command -v docker >/dev/null 2>&1 || \
-    fail "--docker needs Docker, which is not installed. Install it from https://docs.docker.com/get-docker/ and re-run."
+  if ! command -v docker >/dev/null 2>&1; then
+    DOCKER_CLI_FOUND="$(docker_cli_off_path)" || \
+      fail "--docker needs Docker, which is not installed. Install it from https://docs.docker.com/get-docker/ and re-run."
+    DOCKER_CLI_DIR="${DOCKER_CLI_FOUND%/docker}"
+    PATH="$PATH:$DOCKER_CLI_DIR"
+    export PATH
+    warn "Docker is installed at $DOCKER_CLI_FOUND, but this terminal's PATH does not include $DOCKER_CLI_DIR yet; this install uses it from there. Open a new terminal before running omnesis commands, which run docker."
+  fi
   docker compose version >/dev/null 2>&1 || \
-    fail "--docker needs Docker Compose v2 (the 'docker compose' subcommand). Update Docker or install the compose plugin."
+    fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
+  docker_require_compose_version
   docker info >/dev/null 2>&1 || \
     fail "The Docker daemon is not reachable. Start Docker and re-run."
+}
+
+# Refuse a Compose older than DOCKER_COMPOSE_MIN before anything is written.
+# An older one fails later, and less clearly: on the project name, the update
+# profile or the health condition the collector waits on. A version string
+# this cannot read (a vendor build) is let through rather than refused.
+docker_require_compose_version() {
+  COMPOSE_VERSION="$(docker compose version --short 2>/dev/null | sed -n '1s/^[vV]//p')"
+  COMPOSE_CORE="$(printf '%s' "$COMPOSE_VERSION" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*$/\1 \2 \3/p')"
+  [ -n "$COMPOSE_CORE" ] || return 0
+  # shellcheck disable=SC2086
+  set -- $COMPOSE_CORE
+  COMPOSE_OLDER=0
+  if [ "$1" -lt 2 ]; then COMPOSE_OLDER=1
+  elif [ "$1" -eq 2 ] && [ "$2" -lt 24 ]; then COMPOSE_OLDER=1
+  fi
+  [ "$COMPOSE_OLDER" = 0 ] || \
+    fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later, and this host has v$COMPOSE_VERSION. Update Docker, or the compose plugin, and re-run; nothing was changed."
 }
 
 # The Unix socket this host's Docker client talks to, and the group that owns
@@ -4749,6 +4902,12 @@ docker_socket_facts() {
 # because an operator meets it here, where the message can still say what to do
 # about it.
 docker_validate_values() {
+  case "$DOCKER_PULL_ATTEMPTS" in
+    ''|*[!0-9]*|0*) fail "OMNESIS_DOCKER_PULL_ATTEMPTS must be a whole number of at least 1; this run has '$DOCKER_PULL_ATTEMPTS'." ;;
+  esac
+  case "$DOCKER_PULL_RETRY_SECONDS" in
+    ''|*[!0-9]*) fail "OMNESIS_DOCKER_PULL_RETRY_SECONDS must be a whole number of seconds; this run has '$DOCKER_PULL_RETRY_SECONDS'." ;;
+  esac
   case "$CONFIG_DIR" in
     /*) ;;
     *) fail "--docker needs an absolute config directory; this run has '$CONFIG_DIR'. Set OMNESIS_CONFIG_DIR to an absolute path and re-run." ;;
@@ -5245,6 +5404,15 @@ docker_compose_ca_env() {
 # those per account, and two accounts running gateways on one host would
 # already be fighting over the same ports. Anywhere else — a second instance, a
 # test rig — derives a name from the path, so the two never meet.
+# The image the host's `omnesis` runs in: the gateway's, the combined one, or
+# the collector's on a host that only collects.
+docker_cli_image() {
+  if [ "$COLLECTOR" = 1 ]; then printf 'omnesis-collector'
+  elif [ "$DOCKER_COMBINED" = 1 ]; then printf 'omnesis-combined'
+  else printf 'omnesis-gateway'
+  fi
+}
+
 docker_project_name() {
   if [ "$CONFIG_DIR" = "$HOME/.config/omnesis" ]; then
     printf 'omnesis'
@@ -5274,7 +5442,11 @@ docker_compose_gateway_service() {
       printf '          - %s\n' "$TLS_ALIAS"
     done
   fi
-  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  # The combined image starts under its own tini, which reaps the daemons'
+  # orphaned children; Docker's init in front of it would leave tini as a child
+  # that warns, on every start and every one-shot command, that it is not PID 1.
+  [ "$DOCKER_COMBINED" = 1 ] || printf '    init: true\n'
+  printf '    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
   printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
   if [ "$DOCKER_NETWORK" = host ]; then
     printf '    network_mode: host\n'
@@ -5330,11 +5502,28 @@ docker_compose_oauth_ports() {
   done
 }
 
+# The name the collector container answers to: this host's short name, cut to
+# a DNS label. It names the collector's device on the gateway — the name a
+# redeemed code falls back to, or `<name>-collector` when the collector pairs
+# itself. Without one, Docker names each container after its random id, so the
+# device got a meaningless name and a re-pair from a new container a new one.
+docker_collector_hostname() {
+  COLLECTOR_HOST="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  printf '%s' "$COLLECTOR_HOST" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' \
+    | sed 's/^-*//; s/-*$//' | cut -c1-63 | sed 's/-*$//'
+}
+
 docker_compose_collector_service() {
   printf '  collector:\n'
   printf '    image: "%s/omnesis-collector:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO"
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: collector-runtime\n' "$DOCKER_BUILD_CONTEXT"
+  fi
+  # Under host networking the container already answers to this host's own
+  # name, so there is nothing to set.
+  if [ "$DOCKER_NETWORK" != host ]; then
+    DOCKER_COLLECTOR_HOSTNAME="$(docker_collector_hostname)"
+    [ -z "$DOCKER_COLLECTOR_HOSTNAME" ] || printf '    hostname: %s\n' "$DOCKER_COLLECTOR_HOSTNAME"
   fi
   printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
   printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
@@ -5766,8 +5955,17 @@ if [ "${1:-}" = uninstall ]; then
     printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
   fi
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
+  # A collector is a device of a gateway elsewhere, which keeps it, and the
+  # sources it hosts, until it is removed there; the same note a native
+  # collector's uninstall leaves.
+  uninstall_follow_ups() {
+    [ "$SERVICE" = collector ] || return 0
+    printf '\n%s\n' "Afterwards"
+    printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke <device> --forget"
+  }
   if [ "$UNINSTALL_DRY_RUN" = 1 ]; then
-    printf '%s\n' "Dry run: nothing was changed."
+    uninstall_follow_ups
+    printf '\n%s\n' "Dry run: nothing was changed."
     exit 0
   fi
   if [ "$UNINSTALL_YES" != 1 ]; then
@@ -5825,6 +6023,7 @@ if [ "${1:-}" = uninstall ]; then
       rm -f "$UNINSTALL_PROFILE.omnesis-uninstall"
     done
   fi
+  uninstall_follow_ups
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     printf '%s\n' "Removed the Docker install and its data."
   else
@@ -5909,6 +6108,30 @@ WRAPPER_EOF
   esac
 }
 
+# Building the images needs about this much free where Docker keeps them: the
+# workspace install, its compiled closure and every image's layers land there
+# together, and a builder that runs out fails while exporting an image, with a
+# containerd mount error that does not say the disk is full. Measured: a 20 GB
+# Ubuntu host with about 15 GB free failed exporting the first image; one with
+# about 31 GB free built all three. OMNESIS_DOCKER_BUILD_DISK_GB states another
+# requirement, 0 to skip the check.
+DOCKER_BUILD_DISK_GB="${OMNESIS_DOCKER_BUILD_DISK_GB:-25}"
+
+# Refuse a --build whose Docker storage cannot hold it, before anything is
+# written. A daemon whose storage this shell cannot see (Docker Desktop's VM, a
+# remote context) is not checked.
+docker_require_build_disk() {
+  [ "$DOCKER_BUILD_FLAG" = 1 ] || return 0
+  case "$DOCKER_BUILD_DISK_GB" in ''|*[!0-9]*|0) return 0 ;; esac
+  BUILD_DISK_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [ -n "$BUILD_DISK_ROOT" ] && [ -d "$BUILD_DISK_ROOT" ] || return 0
+  BUILD_DISK_KB="$(df -Pk "$BUILD_DISK_ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  case "$BUILD_DISK_KB" in ''|*[!0-9]*) return 0 ;; esac
+  BUILD_DISK_FREE_GB=$((BUILD_DISK_KB / 1048576))
+  [ "$BUILD_DISK_FREE_GB" -lt "$DOCKER_BUILD_DISK_GB" ] || return 0
+  fail "Building the images needs about ${DOCKER_BUILD_DISK_GB} GB free where Docker stores them ($BUILD_DISK_ROOT), and it has ${BUILD_DISK_FREE_GB} GB. Free space (\`docker builder prune\` removes build cache) or grow the disk, then re-run. Nothing was built. OMNESIS_DOCKER_BUILD_DISK_GB=0 skips this check."
+}
+
 # Bring the images onto this host. Pulling is the normal path — they are built
 # and published per release, so nothing here compiles anything. A pull the
 # registry refuses stops the install and names `--build`, rather than silently
@@ -5922,8 +6145,33 @@ docker_fetch_images() {
   fi
   info "Pulling the $IMAGE_TAG images..."
   REGISTRY_DIAGNOSTIC="$REGISTRY_TMP_DIR/pull.err"
+  # A pull opens a hundred or so connections to the registry and its blob
+  # store, and Docker gives up on the whole image when one of them is refused.
+  # Layers that already landed stay, so another attempt only fetches the rest.
+  # A refusal on credentials or a missing tag is final at once.
+  REGISTRY_PULL_ATTEMPT=1
+  while :; do
+    docker_pull_images_once && return 0
+    docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    [ "$REGISTRY_PULL_ATTEMPT" -lt "$DOCKER_PULL_ATTEMPTS" ] || break
+    REGISTRY_PULL_WAIT=$((REGISTRY_PULL_ATTEMPT * DOCKER_PULL_RETRY_SECONDS))
+    warn "Pulling the images failed (attempt $REGISTRY_PULL_ATTEMPT of $DOCKER_PULL_ATTEMPTS); retrying in ${REGISTRY_PULL_WAIT}s with the layers already downloaded."
+    sleep "$REGISTRY_PULL_WAIT"
+    REGISTRY_PULL_ATTEMPT=$((REGISTRY_PULL_ATTEMPT + 1))
+  done
+  if [ -n "$DOCKER_BUILD_CONTEXT" ]; then
+    fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG after $DOCKER_PULL_ATTEMPTS attempts; the output above names the request that failed. Check this host's network connection to the registry and re-run, which keeps the layers already downloaded, or build the images from $DOCKER_BUILD_CONTEXT instead by re-running with --build."
+  fi
+  fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG after $DOCKER_PULL_ATTEMPTS attempts; the output above names the request that failed. Check this host's network connection to the registry and re-run, which keeps the layers already downloaded. A checkout of the repository can build the images itself: scripts/install.sh --docker --build."
+}
+
+# One `compose pull`, its errors shown as they happen and kept in
+# REGISTRY_DIAGNOSTIC for classification.
+docker_pull_images_once() {
   REGISTRY_PULL_PIPE="$REGISTRY_TMP_DIR/pull.pipe"
   REGISTRY_PULL_STATUS=0
+  rm -f "$REGISTRY_PULL_PIPE"
   if command -v mkfifo >/dev/null 2>&1 && command -v tee >/dev/null 2>&1 && mkfifo "$REGISTRY_PULL_PIPE" 2>/dev/null; then
     tee "$REGISTRY_DIAGNOSTIC" < "$REGISTRY_PULL_PIPE" >&2 &
     REGISTRY_TEE_PID=$!
@@ -5934,15 +6182,7 @@ docker_fetch_images() {
     docker compose -f "$COMPOSE_FILE" --profile update pull 2>"$REGISTRY_DIAGNOSTIC" || REGISTRY_PULL_STATUS=$?
     cat "$REGISTRY_DIAGNOSTIC" >&2
   fi
-  if [ "$REGISTRY_PULL_STATUS" = 0 ]; then
-    return 0
-  fi
-  docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
-  docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
-  if [ -n "$DOCKER_BUILD_CONTEXT" ]; then
-    fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG. Check the tag and your network connection, or build the images from $DOCKER_BUILD_CONTEXT instead by re-running with --build."
-  fi
-  fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG. Check the tag and your network connection. A checkout of the repository can build the images itself: scripts/install.sh --docker --build."
+  return "$REGISTRY_PULL_STATUS"
 }
 
 docker_up() {
@@ -5964,12 +6204,21 @@ docker_collector_pair() {
   fi
   set -- "$@" --save "$CONFIG_DIR/collector/collector-token"
   info "Pairing with $PAIR_GATEWAY_URL..."
-  PAIR_STATUS=0
+  # The output is shown as it comes and kept, for the name the gateway gave
+  # this device: the code may have named it, and otherwise it is the hostname.
+  # A pipe has no portable exit status of its own, so the CLI's goes in a file.
+  PAIR_OUTPUT="$REGISTRY_TMP_DIR/pair.out"
+  PAIR_STATUS_FILE="$REGISTRY_TMP_DIR/pair.status"
+  printf '1\n' > "$PAIR_STATUS_FILE"
   if is_promptable; then
-    "$OMNESIS_BIN" "$@" </dev/tty || PAIR_STATUS=$?
+    { PAIR_RC=0; "$OMNESIS_BIN" "$@" </dev/tty || PAIR_RC=$?; printf '%s\n' "$PAIR_RC" > "$PAIR_STATUS_FILE"; } | tee "$PAIR_OUTPUT"
   else
-    "$OMNESIS_BIN" "$@" </dev/null || PAIR_STATUS=$?
+    { PAIR_RC=0; "$OMNESIS_BIN" "$@" </dev/null || PAIR_RC=$?; printf '%s\n' "$PAIR_RC" > "$PAIR_STATUS_FILE"; } | tee "$PAIR_OUTPUT"
   fi
+  PAIR_STATUS="$(cat "$PAIR_STATUS_FILE")"
+  PAIR_ESC="$(printf '\033')"
+  DOCKER_DEVICE_NAME="$(tr -d '\r' < "$PAIR_OUTPUT" 2>/dev/null | sed "s/$PAIR_ESC\[[0-9;]*m//g" \
+    | sed -n 's/^Paired as \(.*\) (collector) id=.*$/\1/p' | head -n 1)"
   PAIR_OK=0; [ "$PAIR_STATUS" = 0 ] && PAIR_OK=1
   if [ "$PAIR_OK" = 0 ]; then
     RETRY_FLAGS="--docker --collector --gateway-url $PAIR_GATEWAY_URL"
@@ -6004,24 +6253,70 @@ docker_propagate_keyring() {
   docker_own_path "$COLLECTOR_ENV"
 }
 
-print_docker_banner() {
+# A host that only collects has no gateway and no admin token: its CLI holds a
+# collector token alone, so sources and status are run where the gateway is.
+print_docker_collector_banner() {
   echo ""
-  if [ "$COLLECTOR" = 1 ]; then
-    printf '\033[1m\033[0;32mCollector container is running.\033[0m\n'
-    echo ""
-    echo "  Gateway:  $PAIR_GATEWAY_URL"
-    echo "  Token:    $CONFIG_DIR/collector/collector-token"
-    print_collector_encryption_line
+  printf '\033[1m\033[0;32mCollector container is running.\033[0m\n'
+  echo ""
+  echo "  Gateway:  $PAIR_GATEWAY_URL"
+  [ -z "$DOCKER_DEVICE_NAME" ] || echo "  Device:   $DOCKER_DEVICE_NAME"
+  echo "  Token:    $CONFIG_DIR/collector/collector-token"
+  print_collector_encryption_line
+  echo ""
+  printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal at %s/portal/:\n' "$PAIR_GATEWAY_URL"
+  echo ""
+  if [ -n "$DOCKER_DEVICE_NAME" ]; then
+    echo "    omnesis sources add --device '$DOCKER_DEVICE_NAME'"
   else
-    printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
+    echo "    omnesis sources add --device <this collector>    # omnesis devices list names it"
+  fi
+  echo ""
+  echo "  This host holds a collector token, not the gateway's admin token, so source,"
+  echo "  device and status commands run on the gateway host."
+  echo ""
+  echo "  Compose file:  $COMPOSE_FILE  (image tag: $IMAGE_TAG)"
+  echo "  Stop:          docker compose -f $COMPOSE_FILE down"
+  echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
+  echo "  Update later:  omnesis update"
+  echo ""
+  printf '\033[1mWhat a container cannot do:\033[0m\n'
+  echo ""
+  echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
+  echo "    that do not exist in a Linux container. Run a native collector on the Mac"
+  echo "    and pair it with the same gateway:"
+  echo ""
+  if [ -n "$PAIR_FINGERPRINT" ]; then
+    echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+    echo "        --gateway-url $PAIR_GATEWAY_URL \\"
+    echo "        --trust-fingerprint $PAIR_FINGERPRINT"
+  else
+    echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+    echo "        --gateway-url $PAIR_GATEWAY_URL"
+  fi
+  if [ "$KEYRING_READY" = 1 ]; then
     echo ""
-    echo "  Portal:  https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
-    echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
-    if [ -n "$TLS_CERT_PATH" ]; then
-      echo "  Certificate: $TLS_CERT_PATH (sha256:$TLS_FINGERPRINT)"
-      echo "           Renew it in place with the tool that issued it; the gateway picks the"
-      echo "           renewal up within the hour, or at once with: omnesis tls reload"
-    fi
+    echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
+    echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
+  fi
+  print_path_hints
+  echo ""
+}
+
+print_docker_banner() {
+  if [ "$COLLECTOR" = 1 ]; then
+    print_docker_collector_banner
+    return 0
+  fi
+  echo ""
+  printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
+  echo ""
+  echo "  Portal:  https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
+  echo "           (login: run 'omnesis devices pair --kind portal' and paste the code)"
+  if [ -n "$TLS_CERT_PATH" ]; then
+    echo "  Certificate: $TLS_CERT_PATH (sha256:$TLS_FINGERPRINT)"
+    echo "           Renew it in place with the tool that issued it; the gateway picks the"
+    echo "           renewal up within the hour, or at once with: omnesis tls reload"
   fi
   echo ""
   printf '\033[1mThe CLI runs in the containers:\033[0m\n'
@@ -6033,11 +6328,9 @@ print_docker_banner() {
   fi
   echo "    omnesis status"
   echo ""
-  if [ "$COLLECTOR" != 1 ]; then
-    print_phone_lines
-    print_browser_lines
-    print_agent_certificate_lines
-  fi
+  print_phone_lines
+  print_browser_lines
+  print_agent_certificate_lines
   echo "  Compose file:  $COMPOSE_FILE  (image tag: $IMAGE_TAG)"
   echo "  Stop:          docker compose -f $COMPOSE_FILE down"
   echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
@@ -6108,16 +6401,56 @@ docker_prepare_topology_transition() {
   fi
 }
 
+# Whether choose_embedder will have a question to ask: a model is wanted, none
+# is named, and no assignment from elsewhere already answers it.
+embedder_question_pending() {
+  [ "$WANT_MODEL" = 1 ] && [ "$EMBEDDER_EXPLICIT" = 0 ] || return 1
+  resolve_existing_cli
+  read_embedder_catalog || return 0
+  PENDING_ASSIGNED="$(printf '%s\n' "$EMBEDDER_MENU" | sed -n '2p')"
+  [ -n "$PENDING_ASSIGNED" ] || return 0
+  printf '%s\n' "$EMBEDDER_MENU" | sed -n '3,$p' | cut -d'|' -f1 | grep -qxF -- "$PENDING_ASSIGNED"
+}
+
+# Without a terminal, a Docker run reaches its first question only once every
+# image is pulled. Each question has a flag, so all of them are checked here,
+# before anything is pulled or written, and every missing one is named in a
+# single refusal: one re-run then gets through.
+docker_require_unattended_answers() {
+  is_promptable && return 0
+  # A re-run can read the catalog from the images an earlier run pulled.
+  DOCKER_NODE_TAG="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
+  DOCKER_UNANSWERED=""
+  if embedder_question_pending; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --embedder <id>   the embedding model to install ($EMBEDDER_ID is the default), or --no-model for none"
+  fi
+  # A container has no OS keyring, so this question is always asked.
+  if [ "$WANT_KEYRING" = 1 ] && [ -z "$KEYRING_PASSPHRASE_FILE" ]; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --keyring-passphrase-file $CONFIG_DIR/keyring.pass   an owner-only passphrase file you created there, to encrypt at rest; or --no-keyring"
+  fi
+  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
+    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
+    --code <code>   a pairing code minted on the gateway host with: omnesis devices pair --kind collector"
+  fi
+  DOCKER_NODE_TAG=""
+  [ -n "$DOCKER_UNANSWERED" ] || return 0
+  fail "No terminal to ask what this install needs to know, so nothing was pulled or changed. Re-run with:$DOCKER_UNANSWERED"
+}
+
 docker_install() {
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_require_unattended_answers
   docker_runtime_identity
   docker_registry_prepare
   docker_warn_native_install
   docker_resolve_tag
   docker_resolve_build_context
+  docker_require_build_disk
   docker_preflight_images
   docker_validate_topology_transition
   docker_prepare_dirs
@@ -6135,7 +6468,9 @@ docker_install() {
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
   # The catalog answers from the image, so the question can be asked — and
-  # answered — before anything is started.
+  # answered — before anything is started. Its JSON is read with the Node in
+  # the image just pulled, since this host needs none of its own.
+  DOCKER_NODE_TAG="$IMAGE_TAG"
   choose_embedder final
   # Before the first boot, so a corpus that is going to be encrypted is born
   # that way rather than migrated into it.

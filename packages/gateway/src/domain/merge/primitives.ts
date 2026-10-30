@@ -38,10 +38,9 @@ export function mergePeople(db: Db, winnerId: string, loserId: string): void {
   // The loser's row keeps its own first_seen / last_seen unchanged
   // (never user-visible since searchPeople filters merged_into IS NULL).
   const loser = db
-    .prepare<
-      [string],
-      { first_seen: string; last_seen: string }
-    >("SELECT first_seen, last_seen FROM people WHERE id = ?")
+    .prepare<[string], { first_seen: string; last_seen: string }>(
+      "SELECT first_seen, last_seen FROM people WHERE id = ?",
+    )
     .get(loserId);
 
   const now = new Date().toISOString();

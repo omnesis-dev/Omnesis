@@ -14,6 +14,8 @@
  *   5. check the survivors' claims with the entailment verifier.
  * The survivors, ranked, become the day's item list. Every judgement fails
  * open: an unavailable decision or verifier never hides an observation.
+ * Neither judgement reads a document of a source excluded from the Brain: the
+ * salience gate is not shown it, and an observation citing one ships unchecked.
  */
 
 import { randomUUID } from "node:crypto";
@@ -43,6 +45,7 @@ import type {
 } from "../storage/types.js";
 import type { ObservationTransition } from "../storage/observations.js";
 import type { InterestLookup } from "../interest/engine.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -79,6 +82,8 @@ export interface ObservationRecheckDeps {
   thresholds: () => SalienceThresholds;
   /** The owner's past reactions, shown to the salience gate. Omitted, it judges without them. */
   interest?: InterestLookup;
+  /** Sources excluded from the Brain (`brain.excludedSources`). Omitted, nothing is excluded. */
+  sourceFence?: BrainSourceFence;
   clock: () => number;
   log: Logger;
 }
@@ -114,20 +119,18 @@ export function sinceNoted(db: Db, observation: ObservationRow): string[] {
   const lines: string[] = [];
   for (const loopId of observation.relatedLoopIds) {
     const loop = db
-      .prepare<
-        [string],
-        { title: string; state: string; last_update: number }
-      >("SELECT title, state, last_update FROM open_loops WHERE id = ?")
+      .prepare<[string], { title: string; state: string; last_update: number }>(
+        "SELECT title, state, last_update FROM open_loops WHERE id = ?",
+      )
       .get(loopId);
     if (!loop) {
       lines.push(`Related loop ${loopId} no longer exists.`);
       continue;
     }
     for (const entry of db
-      .prepare<
-        [string, number],
-        { at: number; note: string }
-      >("SELECT at, note FROM open_loop_ledger WHERE loop_id = ? AND at > ? ORDER BY seq DESC LIMIT 5")
+      .prepare<[string, number], { at: number; note: string }>(
+        "SELECT at, note FROM open_loop_ledger WHERE loop_id = ? AND at > ? ORDER BY seq DESC LIMIT 5",
+      )
       .all(loopId, observation.createdAt))
       lines.push(
         `${new Date(entry.at).toISOString()} loop "${loop.title}": ${entry.note.slice(0, 300)}`,
@@ -163,10 +166,9 @@ function claimQuoteGone(db: Db, observation: ObservationRow): boolean {
 
 function nodeStale(db: Db, observationId: string): boolean {
   const row = db
-    .prepare<
-      [string],
-      { validity: string }
-    >("SELECT validity FROM knowledge_nodes WHERE kind='observation' AND owner_id = ?")
+    .prepare<[string], { validity: string }>(
+      "SELECT validity FROM knowledge_nodes WHERE kind='observation' AND owner_id = ?",
+    )
     .get(observationId);
   return row?.validity === "stale";
 }
@@ -250,6 +252,7 @@ export async function recheckObservations(
 
   const decision = deps.getDecision();
   const thresholds = deps.thresholds();
+  const fence = deps.sourceFence?.snapshot();
   const candidates: ObservationRow[] = [];
   const held: string[] = [];
   for (const observation of listOpenObservations(deps.db)) {
@@ -270,6 +273,10 @@ export async function recheckObservations(
     // window opens. Shipping it now would close it before it matters.
     if (observation.windowStart !== null && cognitionSpendDay(observation.windowStart) > input.day)
       continue;
+    const excluded = fence?.excludedDocuments([
+      ...observation.citations,
+      ...observation.claims.map((claim) => claim.docId),
+    ]);
     let scores = observation.scores ?? observation.notedScores;
     if (decision) {
       const payloadCapture = salienceDecisionCapture(deps.db, observation);
@@ -285,7 +292,10 @@ export async function recheckObservations(
           notedAt: observation.createdAt,
           windowStart: observation.windowStart,
           relevantUntil: observation.relevantUntil,
-          sources: observationSources(deps.db, observation.citations),
+          sources: observationSources(
+            deps.db,
+            observation.citations.filter((id) => !excluded?.has(id)),
+          ),
           sinceNoted: sinceNoted(deps.db, observation),
           ownerInterest,
         },
@@ -328,7 +338,10 @@ export async function recheckObservations(
       continue;
     }
     if (scores) await deps.writes.recordObservationScores(observation.id, scores, now);
-    const verified = await verifyClaims(deps, observation, now, input.signal);
+    // Being unable to read its evidence is not a verdict on the observation.
+    const verified = excluded?.size
+      ? null
+      : await verifyClaims(deps, observation, now, input.signal);
     if (verified === "rejected") {
       await drop(observation, "unsupported", scores ?? undefined);
       continue;

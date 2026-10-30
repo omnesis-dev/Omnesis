@@ -492,10 +492,9 @@ describe("merge adjudication", () => {
     // No rule was minted for either non-merge verdict.
     expect(
       bench.sql
-        .prepare<
-          [string, string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ? OR side_b_alias = ?")
+        .prepare<[string, string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ? OR side_b_alias = ?",
+        )
         .get("bench-unsure-a@example.com", "bench-unsure-a@example.com")?.n,
     ).toBe(0);
   }, 120_000);
@@ -606,10 +605,9 @@ describe("merge adjudication", () => {
     expect(row?.rule_id).toBeNull();
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ?",
+        )
         .get("bench-reguard-a@example.com")?.n,
     ).toBe(0);
   }, 120_000);
@@ -637,10 +635,9 @@ describe("merge adjudication", () => {
     expect(row?.rule_id).toBeNull();
     expect(
       bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM merge_rules WHERE side_a_alias = ?",
+        )
         .get("bench-blob-a@example.com")?.n,
     ).toBe(0);
   }, 120_000);

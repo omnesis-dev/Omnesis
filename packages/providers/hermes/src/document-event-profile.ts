@@ -8,8 +8,9 @@ import type { DocumentEventProfile } from "@omnesis/source-sdk";
  *
  * One `conversation` document covers one chat on one calendar day: the day's
  * turns rendered as a running transcript. The agent's own replies are body
- * text, never people, so `participant` only ever resolves to the operator —
- * a person predicate over this source cannot name anyone else.
+ * text, never people. Only turns explicitly attributed to the owner contribute
+ * a resolved `participant`; unidentified users and other room members do not
+ * imply the owner. A person predicate cannot resolve those unknown speakers.
  *
  * Only fields the push path actually writes are declared. `extra.harness` and
  * `extra.provenance` are also populated but hold the same constant on every

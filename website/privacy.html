@@ -176,7 +176,7 @@
     <div class="wrap">
       <main id="main">
         <h1>Privacy Policy</h1>
-        <p class="updated">Last updated: September 2026</p>
+        <p class="updated">Last updated: October 2026</p>
         <p class="lede">
           Omnesis is built so your data stays under your control. This policy explains, in plain
           language, what we collect today (very little) and how the Omnesis app handles your data
@@ -190,8 +190,11 @@
             product updates. Optional blog comments and reactions are public and stored on GitHub.
           </li>
           <li>
-            The Omnesis app indexes your data on <strong>hardware you control</strong>. Whether
-            anything is sent to a third party is a deliberate choice you make.
+            The Omnesis app indexes your data on <strong>hardware you control</strong>. Your data
+            goes to a third party only when you choose it, for example by enabling a cloud model or
+            connecting an external agent. The gateway also downloads source logos from the
+            providers' websites; those requests carry none of your data (see
+            <a href="#source-icons">Source icons</a>).
           </li>
           <li>
             No account is required to use Omnesis, and it sends no usage telemetry by default.
@@ -228,10 +231,22 @@
           retention for the API you use, and verifying its terms before sending personal data.
           Omnesis does not verify or enforce a provider's retention policy.
         </p>
+        <p id="source-icons">
+          <strong>Source icons.</strong> To show each source's logo, the gateway downloads the icon
+          from the address its source declares, usually the provider's own website (the Gmail logo,
+          for example, comes from Google). It does this when a source reports its details and when
+          the portal lists the sources you can add, including ones you haven't connected. The
+          converted icons are cached, and a restarted gateway downloads them again. These requests
+          contain none of your indexed data, but each provider sees your gateway's IP address and a
+          request that identifies itself as an Omnesis gateway. There is no setting to turn these
+          downloads off.
+        </p>
         <p>
-          The Omnesis mobile apps have their own detailed privacy policy covering the device
-          permissions they use — see the
-          <a href="/mobile-privacy-policy">Omnesis mobile app privacy policy</a>.
+          The Omnesis mobile apps and browser extension have their own detailed privacy policies —
+          see the <a href="/mobile-privacy-policy">Omnesis mobile app privacy policy</a> for the
+          device permissions the apps use, and the
+          <a href="/browser-extension-privacy-policy">Omnesis browser extension privacy policy</a>
+          for the browser data the extension reads.
         </p>
 
         <h2>This website</h2>

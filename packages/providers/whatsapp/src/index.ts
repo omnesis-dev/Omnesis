@@ -100,22 +100,35 @@ export default defineSource<WhatsAppSyncCursor>({
     ],
   },
 
-  // One-time full-history import from a local encrypted iPhone backup.
+  // One-time full-history import from a local encrypted phone backup.
   // WhatsApp only streams a companion the recent (~90-day) window; the full
-  // archive lives on the phone and is recovered from a backup.
-  // Planned variants surface here as a leading `select` field: #29 (Android
-  // crypt15 backup), #28 (Tier-2 targeted pull via pymobiledevice3).
+  // archive lives on the phone and is recovered from a backup. Imports only
+  // the history actually present in the selected backup — not a universal
+  // lookback window. Planned sibling: #28 (Tier-2 targeted pull via
+  // pymobiledevice3), another option on the leading `select` below.
   historyImport: {
     label: "Import full history",
     description:
-      "Decrypt an encrypted iPhone backup and import your complete WhatsApp message history.",
+      "Decrypt an encrypted phone backup and import your complete WhatsApp message history.",
     fields: [
+      {
+        key: "backupKind",
+        label: "Backup source",
+        type: "select",
+        required: true,
+        options: [
+          { value: "ios", label: "iPhone (Finder/iTunes encrypted backup)" },
+          { value: "android", label: "Android (crypt15 local backup)" },
+        ],
+        help: "Which device the backup came from.",
+      },
       {
         key: "backupPath",
         label: "iPhone backup folder",
         type: "directory",
         required: true,
         help: "The folder containing Manifest.plist (an encrypted Finder/iTunes backup).",
+        when: { field: "backupKind", equals: "ios" },
       },
       {
         key: "passphrase",
@@ -123,6 +136,26 @@ export default defineSource<WhatsAppSyncCursor>({
         type: "secret",
         required: true,
         help: "The password set when the backup was encrypted.",
+        when: { field: "backupKind", equals: "ios" },
+      },
+      {
+        key: "androidBackupPath",
+        label: "Android backup file",
+        type: "file",
+        required: true,
+        help: "The exported msgstore.db.crypt15 file pulled from the device (not a folder).",
+        when: { field: "backupKind", equals: "android" },
+      },
+      {
+        key: "androidKeySecret",
+        label: "Backup key",
+        type: "secret",
+        required: true,
+        help:
+          "The 64-character encryption key WhatsApp showed when end-to-end backup " +
+          "encryption was turned on, or the path to the raw 32-byte key file extracted " +
+          "from the device.",
+        when: { field: "backupKind", equals: "android" },
       },
     ],
   },

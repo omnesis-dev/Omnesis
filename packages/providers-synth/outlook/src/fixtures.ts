@@ -40,12 +40,10 @@ export function mapEmail(
 ): DocumentInput {
   const people: PersonMention[] = [
     { ...personMention(e.from, "sender"), emails: [e.fromEmail] },
-    ...e.to.map(
-      (ref, i): PersonMention => ({
-        ...personMention(ref, "recipient"),
-        emails: [e.toEmails[i]],
-      }),
-    ),
+    ...e.to.map((ref, i): PersonMention => ({
+      ...personMention(ref, "recipient"),
+      emails: [e.toEmails[i]],
+    })),
   ];
   return {
     sourceId: ctx.sourceId,

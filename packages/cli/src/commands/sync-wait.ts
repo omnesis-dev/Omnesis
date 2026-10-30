@@ -178,7 +178,19 @@ export interface WaitDeps {
   now: () => number;
   /** Injected sleep — resolves after `ms` (real timer in prod, fake in tests). */
   sleep: (ms: number) => Promise<void>;
+  /**
+   * Whether a failed fetch is a passing connection fault (a refused or timed
+   * out connect) worth another poll. Absent, every failure ends the wait.
+   */
+  isTransient?: (err: unknown) => boolean;
 }
+
+/**
+ * How many polls in a row may fail on a connection fault before the wait gives
+ * up. A gateway busy indexing the sync it is waiting on can miss one connect;
+ * one that stays unreachable for this many polls is reported as down.
+ */
+export const MAX_CONSECUTIVE_FETCH_FAILURES = 5;
 
 export interface WaitOptions {
   sourceIds: readonly string[];
@@ -200,8 +212,16 @@ export async function waitForSyncCompletion(
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.
+  let failures = 0;
   for (;;) {
-    const observations = await deps.fetchStatus();
+    let observations: SyncStatusObservation[] = [];
+    try {
+      observations = await deps.fetchStatus();
+      failures = 0;
+    } catch (err) {
+      failures++;
+      if (!deps.isTransient?.(err) || failures >= MAX_CONSECUTIVE_FETCH_FAILURES) throw err;
+    }
     applyObservations(states, observations);
     if (allResolved(states)) return states;
     if (deps.now() >= deadline) {

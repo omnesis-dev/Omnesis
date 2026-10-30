@@ -4,6 +4,7 @@
 import { basename, extname } from "node:path";
 import Database from "better-sqlite3";
 import { APPLE_EPOCH_OFFSET, MESSAGE_TYPE_BY_CODE } from "./constants.js";
+import { columnsOf, pick } from "./sqlite-column-introspection.js";
 import type { StoredMessage } from "../types.js";
 
 /**
@@ -51,11 +52,6 @@ interface Row {
   lon: number | null;
 }
 
-function columnsOf(db: Database.Database, table: string): Set<string> {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  return new Set(rows.map((r) => r.name));
-}
-
 /**
  * Build the message-extraction query against the columns this DB actually has.
  * `m.<col>` is emitted when present, else `NULL`, so an older/newer ChatStorage
@@ -70,16 +66,6 @@ function buildQuery(db: Database.Database): string {
 
   const hasGroupMember = m.has("ZGROUPMEMBER") && gm.size > 0;
   const hasMedia = mi.size > 0;
-
-  // Emit `alias.col` when the join is present AND the column exists, else `NULL`.
-  // `joined` guards against referencing an alias that isn't in the FROM clause.
-  const pick = (
-    joined: boolean,
-    cols: Set<string>,
-    alias: string,
-    col: string,
-    out: string,
-  ): string => `${joined && cols.has(col) ? `${alias}.${col}` : "NULL"} AS ${out}`;
 
   return `
     SELECT

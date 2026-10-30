@@ -93,7 +93,7 @@ const answerResponseSchema = z.discriminatedUnion("status", [
 export type NativeAnswerResponse = z.infer<typeof answerResponseSchema>;
 
 /** Fail closed before any gateway Answer response reaches an external harness. */
-function parseNativeAnswerResponse(value: unknown): NativeAnswerResponse {
+export function parseNativeAnswerResponse(value: unknown): NativeAnswerResponse {
   return answerResponseSchema.parse(value);
 }
 

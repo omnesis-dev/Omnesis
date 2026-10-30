@@ -222,10 +222,9 @@ function seedOwners(): string {
   retireLoop(db, loop, "done", NOW);
   upsertDocuments(db, [buildOpenLoopDocumentInput(loop, [])]);
   const mirror = db
-    .prepare<
-      [string],
-      { id: string }
-    >("SELECT id FROM documents WHERE source_id='open-loops' AND external_id=?")
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM documents WHERE source_id='open-loops' AND external_id=?",
+    )
     .get(loop.id)!.id;
   recordConsumptionEdges(
     db,

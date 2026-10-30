@@ -180,10 +180,9 @@ describe("GitHub source (threads + commits, default universe)", () => {
     // No child document was minted for the comment: the only rows under this
     // thread's external-id prefix would be the thread itself.
     const descendants = db
-      .prepare<
-        [string],
-        { external_id: string }
-      >("SELECT external_id FROM documents WHERE external_id LIKE ? ESCAPE '\\'")
+      .prepare<[string], { external_id: string }>(
+        "SELECT external_id FROM documents WHERE external_id LIKE ? ESCAPE '\\'",
+      )
       .all(`${REPO}/issues/1/%`);
     expect(descendants, "no per-comment child documents").toEqual([]);
   });
@@ -334,10 +333,9 @@ describe("GitHub source (threads + commits, default universe)", () => {
 
   test("commits land one document per sha, carrying file paths but no diff", () => {
     const commits = db
-      .prepare<
-        [string],
-        DocRow
-      >("SELECT id, source_id, external_id, title, content, metadata, source_url FROM documents WHERE source_id = ?")
+      .prepare<[string], DocRow>(
+        "SELECT id, source_id, external_id, title, content, metadata, source_url FROM documents WHERE source_id = ?",
+      )
       .all(COMMITS_SOURCE);
     expect(commits.length).toBe(EXPECTED_COMMIT_COUNT);
 
@@ -378,10 +376,9 @@ function docByExternalId(
   externalId: string,
 ): DocRow | undefined {
   return db
-    .prepare<
-      [string],
-      DocRow
-    >("SELECT id, source_id, external_id, title, content, metadata, source_url FROM documents WHERE external_id = ?")
+    .prepare<[string], DocRow>(
+      "SELECT id, source_id, external_id, title, content, metadata, source_url FROM documents WHERE external_id = ?",
+    )
     .get(externalId);
 }
 

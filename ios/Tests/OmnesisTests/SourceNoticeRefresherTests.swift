@@ -83,16 +83,22 @@ final class SourceNoticeRefresherTests: XCTestCase {
         refresher.delay = .milliseconds(100)
         let reads = Counter()
         var applied = 0
+        let appliedOnce = expectation(description: "the coalesced read is applied")
         for _ in 0 ..< 5 {
             refresher.schedule(
                 read: {
                     reads.bump()
                     return []
                 },
-                apply: { _ in applied += 1 }
+                apply: { _ in
+                    applied += 1
+                    appliedOnce.fulfill()
+                }
             )
         }
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        await fulfillment(of: [appliedOnce], timeout: 10)
+        // A second read would follow one quiet delay after the first.
+        try? await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(reads.count, 1)
         XCTAssertEqual(applied, 1)
     }

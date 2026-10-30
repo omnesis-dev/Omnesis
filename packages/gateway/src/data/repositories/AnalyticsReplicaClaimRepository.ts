@@ -176,10 +176,9 @@ export function recordAnalyticsRestorerOmissions(
   return db.transaction(() => {
     if (a.observation) {
       const prior = db
-        .prepare<
-          [string, number],
-          { matured_keys: string }
-        >("SELECT matured_keys FROM pending_source_page_observations WHERE page_id = ? AND ordinal = ?")
+        .prepare<[string, number], { matured_keys: string }>(
+          "SELECT matured_keys FROM pending_source_page_observations WHERE page_id = ? AND ordinal = ?",
+        )
         .get(a.observation.pageId, a.observation.ordinal);
       if (prior) return pendingPageOmissionsCodec.parse(prior.matured_keys);
     }

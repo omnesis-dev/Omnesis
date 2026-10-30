@@ -17,10 +17,9 @@ export function knowledgeEvidenceAvailability(
   documentId: string,
 ): KnowledgeEvidenceAvailability {
   const row = db
-    .prepare<
-      [string],
-      { deleted: number }
-    >("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
+    .prepare<[string], { deleted: number }>(
+      "SELECT deleted FROM knowledge_source_revisions WHERE document_id=?",
+    )
     .get(documentId);
   if (row?.deleted) return "unavailable";
   const columns = db.prepare<[], { name: string }>("PRAGMA table_info(documents)").all();
@@ -29,10 +28,9 @@ export function knowledgeEvidenceAvailability(
     ? "json_extract(metadata,'$.documentType')"
     : "NULL";
   const document = db
-    .prepare<
-      [string],
-      { source_id: string; document_type: string | null }
-    >(`SELECT source_id,${typeColumn} AS document_type FROM documents WHERE id=?`)
+    .prepare<[string], { source_id: string; document_type: string | null }>(
+      `SELECT source_id,${typeColumn} AS document_type FROM documents WHERE id=?`,
+    )
     .get(documentId);
   if (!document) return "unavailable";
   if (

@@ -56,7 +56,7 @@ import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import { createCommandDispatch, type CommandDispatch } from "./ws-command-dispatch.js";
 import { createCliUpdater, registerSelfUpdateCommand } from "./self-update.js";
 import { handOverToServiceManager, startRelaunchGuard } from "./service-restart.js";
-import { isBaileysAuthEnoent } from "./baileys-enoent-filter.js";
+import { processFailureVerdict } from "./process-failure-policy.js";
 import { collectorDeviceName } from "./device-name.js";
 import { CollectorDoctor } from "./doctor.js";
 import { prepareCollectorStorageEncryption } from "./storage-encryption.js";
@@ -1065,27 +1065,23 @@ export async function main() {
   });
 }
 
-// Narrow safety net: keep the collector alive ONLY through the known
-// Baileys `useMultiFileAuthState` ENOENT race — every other error
-// escalates so the supervisor can restart the process. The predicate
-// + its rationale live in `baileys-enoent-filter.ts` so the truth
-// table is unit-testable on its own (collector is a daemon entry
-// point, not a class — testing the predicate against a fixture set
-// of Error shapes is cheaper than spinning up the whole process).
+// Errors nobody caught. An unhandled rejection is reported and the collector
+// keeps running; an uncaught exception exits so the supervisor restarts it. A
+// rejection is a lost error report from code that has already moved on, and
+// exiting on one turns a deterministic library rejection (pdf.js on a corrupt
+// file) into a crash loop that stops every source's sync. An exception unwound
+// a stack mid-update, so in-memory state can't be trusted. The full reasoning
+// and its truth table live in `process-failure-policy.ts`.
 
 process.on("unhandledRejection", (reason) => {
-  if (isBaileysAuthEnoent(reason)) {
+  if (processFailureVerdict("unhandledRejection", reason) === "suppress") {
     log.warn(`Suppressing benign Baileys auth-state ENOENT race: ${toErrorMessage(reason)}`);
     return;
   }
-  log.error(`Unhandled rejection: ${toErrorMessage(reason)}`);
-  // Rejections don't crash the runtime by default — surface as a fatal
-  // signal so the supervisor restarts us instead of leaving the
-  // collector in an undefined state.
-  process.exit(1);
+  log.error(`Unhandled rejection (continuing): ${toErrorMessage(reason)}`);
 });
 process.on("uncaughtException", (err) => {
-  if (isBaileysAuthEnoent(err)) {
+  if (processFailureVerdict("uncaughtException", err) === "suppress") {
     log.warn(`Suppressing benign Baileys auth-state ENOENT race: ${toErrorMessage(err)}`);
     return;
   }

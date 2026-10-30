@@ -38,7 +38,8 @@ import {
 compressCognitionCadences();
 
 const CAPTURE_ZONE = { capturedTimeZoneId: "UTC", capturedUtcOffsetSeconds: 0 } as const;
-const today = () => new Date().toISOString().slice(0, 10);
+/** The UTC day of `at`: the capture day the gateway reads from a note captured then. */
+const isoDay = (at: Date) => at.toISOString().slice(0, 10);
 
 /** The month after `day`'s, as `YYYY-MM`: what "next month" means on that capture day. */
 function monthAfter(day: string): string {
@@ -67,6 +68,7 @@ const SCHEDULED_CREATE_NOTE = "I have to service the boiler, but not this week â
 const STRIKE_NOTE = "I've decided I won't repaint the fence.";
 const RESCHEDULE_NOTE = "Push the quarterly report to Friday.";
 const COUNTED_NOTE = "Watered the window boxes.";
+const SWITCHED_OFF_NOTE = "Remind me to collect the dry cleaning.";
 
 const PLUMBER_TITLE = "Pay the plumber";
 const INSURANCE_TITLE = "Renew the car insurance";
@@ -95,23 +97,31 @@ async function receiptFor(
 
 describe("the note agent (stable install, background-agent puppet)", () => {
   let bench: BrainBench;
-  const capture = async (text: string): Promise<string> => {
+  // A note's capture day comes from its `capturedAt`, so a run that crosses
+  // midnight UTC compares against the day each note was captured on.
+  const captureDays = new Map<string, string>();
+  const capture = async (text: string, at = new Date()): Promise<string> => {
     const id = randomUUID();
     const res = await bench.harness.gatewayFetch("/notes", {
       method: "POST",
-      body: JSON.stringify({ id, text, capturedAt: new Date().toISOString(), ...CAPTURE_ZONE }),
+      body: JSON.stringify({ id, text, capturedAt: at.toISOString(), ...CAPTURE_ZONE }),
     });
     expect(res.status).toBe(201);
+    captureDays.set(id, isoDay(at));
     return id;
   };
+  const dayOf = (id: string) => captureDays.get(id)!;
   const tellNotes = (day: string) => bench.obs.tellNotes(day);
   const noteCalls = () => bench.puppetCalls.filter((c) => c.flavour === "note");
 
+  // The puppet resolves "next month" and "Friday" from the capture day, as the
+  // note agent's prompt tells the model to, once when the bench starts; the
+  // tests expect exactly those days, however long the suite runs.
+  let nextMonth: string;
+  let friday: string;
   beforeAll(async () => {
-    // The puppet resolves "next month" and "Friday" from the capture day, as
-    // the note agent's prompt tells the model to.
-    const nextMonth = monthAfter(today());
-    const friday = fridayAfter(today());
+    nextMonth = monthAfter(isoDay(new Date()));
+    friday = fridayAfter(isoDay(new Date()));
     bench = await BrainBench.start({
       experimental: false,
       syncSources: false,
@@ -263,7 +273,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
 
   test("a note asking for a task adds it, with the receipt under the note", async () => {
     const id = await capture(TASK_NOTE);
-    const agent = await receiptFor(tellNotes, id, today());
+    const agent = await receiptFor(tellNotes, id, dayOf(id));
     expect(agent.receipt).toMatchObject({
       text: "Added a task to book the piano tuner.",
       changes: [{ text: "Added: Book the piano tuner", taskId: expect.any(String) }],
@@ -281,7 +291,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     const turn = noteCalls().find((c) => c.prompt.includes(TASK_NOTE))!;
     expect(turn.kind).toBe("note");
     expect(turn.subject).toBe(TASK_NOTE);
-    expect(turn.detail).toBe(today());
+    expect(turn.detail).toBe(dayOf(id));
 
     // The history feed carries the same receipt.
     const history = await bench.harness.gatewayJson<{ entries: ListedNoteDto[] }>("/notes/history");
@@ -298,7 +308,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   test("a note reporting progress completes the user's task", async () => {
     const plumber = await bench.obs.createTask({ title: PLUMBER_TITLE });
     const id = await capture(DONE_NOTE);
-    const agent = await receiptFor(tellNotes, id, today());
+    const agent = await receiptFor(tellNotes, id, dayOf(id));
     expect(agent.receipt?.changes).toEqual([
       expect.objectContaining({ text: `Done: ${PLUMBER_TITLE}`, taskId: plumber.task!.id }),
     ]);
@@ -308,14 +318,14 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 
   test("a note putting a task off moves it to next month, out of the open views", async () => {
-    const day = today();
-    const nextMonth = monthAfter(day);
+    const at = new Date();
+    const day = isoDay(at);
     const insurance = await bench.obs.createTask({ title: INSURANCE_TITLE });
     const taskId = insurance.task!.id;
     expect(insurance.task).toMatchObject({ scheduledFor: null, state: "open" });
     const before = await bench.obs.taskCounts(day);
 
-    const id = await capture(MIGRATE_NOTE);
+    const id = await capture(MIGRATE_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt).toMatchObject({
       text: "Moved renewing the car insurance to next month.",
@@ -351,9 +361,9 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 
   test("a note putting off a task that does not exist adds it already scheduled", async () => {
-    const day = today();
-    const nextMonth = monthAfter(day);
-    const id = await capture(SCHEDULED_CREATE_NOTE);
+    const at = new Date();
+    const day = isoDay(at);
+    const id = await capture(SCHEDULED_CREATE_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt).toMatchObject({
       text: "Added servicing the boiler for next month.",
@@ -374,12 +384,13 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 
   test("a note giving a task up strikes it, with the reason, into the done history", async () => {
-    const day = today();
+    const at = new Date();
+    const day = isoDay(at);
     const fence = await bench.obs.createTask({ title: FENCE_TITLE });
     const taskId = fence.task!.id;
     const before = await bench.obs.taskCounts(day);
 
-    const id = await capture(STRIKE_NOTE);
+    const id = await capture(STRIKE_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt).toMatchObject({
       text: "Struck repainting the fence.",
@@ -409,13 +420,13 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 
   test("a note pushing a task to a weekday reschedules it to that day", async () => {
-    const day = today();
-    const friday = fridayAfter(day);
+    const at = new Date();
+    const day = isoDay(at);
     const report = await bench.obs.createTask({ title: REPORT_TITLE, scheduledFor: day });
     const taskId = report.task!.id;
     const before = await bench.obs.taskCounts(day);
 
-    const id = await capture(RESCHEDULE_NOTE);
+    const id = await capture(RESCHEDULE_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt).toMatchObject({
       text: "Moved the quarterly report to Friday.",
@@ -443,14 +454,15 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 
   test("a note completing today's task lowers today's open count", async () => {
-    const day = today();
+    const at = new Date();
+    const day = isoDay(at);
     const boxes = await bench.obs.createTask({ title: WINDOW_BOXES_TITLE, scheduledFor: day });
     const taskId = boxes.task!.id;
     const before = await bench.obs.taskCounts(day);
     expect(before.day).toBe(day);
     expect(before.counts.today).toBeGreaterThanOrEqual(1);
 
-    const id = await capture(COUNTED_NOTE);
+    const id = await capture(COUNTED_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt?.changes).toEqual([
       expect.objectContaining({ text: `Done: ${WINDOW_BOXES_TITLE}`, taskId }),
@@ -479,7 +491,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
       ),
     );
     const id = await capture(SUGGESTION_NOTE);
-    const agent = await receiptFor(tellNotes, id, today());
+    const agent = await receiptFor(tellNotes, id, dayOf(id));
     expect(agent.receipt).toMatchObject({ text: "Saved the note.", changes: [] });
     expect((await bench.obs.task(SUGGESTION_ID)).task).toMatchObject({
       state: "open",
@@ -499,6 +511,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
 
   test("a voice note is read in the gateway's transcript, not the phone's", async () => {
     const id = randomUUID();
+    const voiceAt = new Date();
     const form = new FormData();
     form.set(
       "note",
@@ -507,7 +520,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
         text: VOICE_DEVICE,
         language: "en-GB",
         surface: "ios-app",
-        capturedAt: new Date().toISOString(),
+        capturedAt: voiceAt.toISOString(),
         ...CAPTURE_ZONE,
       }),
     );
@@ -524,7 +537,7 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     });
     expect(res.status).toBe(202);
 
-    const agent = await receiptFor(tellNotes, id, today());
+    const agent = await receiptFor(tellNotes, id, isoDay(voiceAt));
     expect(agent.receipt?.changes.map((c) => c.text)).toEqual([
       "Added: Book a table at the harbour restaurant",
     ]);
@@ -554,9 +567,9 @@ describe("the note agent (stable install, background-agent puppet)", () => {
       );
     });
     const control = await capture(CONTROL_NOTE);
-    await receiptFor(tellNotes, control, today());
+    await receiptFor(tellNotes, control, dayOf(control));
     // The later note was claimed and read; the held one was passed over.
-    const held = (await tellNotes(today())).find((n) => n.id === parked);
+    const held = (await tellNotes(dayOf(parked))).find((n) => n.id === parked);
     expect(held?.agent?.state).toBe("pending");
     expect(noteCalls().some((c) => c.prompt.includes(PARKED_NOTE))).toBe(false);
 
@@ -564,9 +577,27 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     bench.withWriteHandle((db) => {
       db.prepare("DELETE FROM voice_note_transcriptions WHERE note_id = ?").run(parked);
     });
-    const agent = await receiptFor(tellNotes, parked, today());
+    const agent = await receiptFor(tellNotes, parked, dayOf(parked));
     expect(agent.receipt?.text).toBe("Added a task to call the optician.");
   }, 240_000);
+
+  test("a note told while the note agent is off is never read, even when switched straight back on", async () => {
+    const setNoteAgent = (on: boolean) =>
+      bench.harness.gatewayJson("/admin/config", {
+        method: "PATCH",
+        body: JSON.stringify({ agent: { noteAgent: on } }),
+      });
+    await setNoteAgent(false);
+    const unread = await capture(SWITCHED_OFF_NOTE);
+    await setNoteAgent(true);
+    // A note told once it is back on is read; the earlier one stays settled.
+    const control = await capture(CONTROL_NOTE);
+    await receiptFor(tellNotes, control, dayOf(control));
+    expect((await tellNotes(dayOf(unread))).find((n) => n.id === unread)?.agent?.state).toBe(
+      "skipped",
+    );
+    expect(noteCalls().some((c) => c.prompt.includes(SWITCHED_OFF_NOTE))).toBe(false);
+  }, 180_000);
 });
 
 describe("the note agent with no background-agent model", () => {
@@ -617,7 +648,9 @@ describe("the note agent with no background-agent model", () => {
       },
       90_000,
     );
-    const listed = await harness.gatewayJson<{ entries: ListedNoteDto[] }>(`/notes?day=${today()}`);
+    const listed = await harness.gatewayJson<{ entries: ListedNoteDto[] }>(
+      `/notes?day=${isoDay(new Date(capturedAt))}`,
+    );
     const note = listed.entries.find((n) => n.id === id);
     expect(note).toBeDefined();
     expect(note!.agent).toBeUndefined();

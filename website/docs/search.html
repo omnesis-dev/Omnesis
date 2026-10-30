@@ -263,9 +263,15 @@
         <p>
           The semantic lane needs an embedder assigned (see
           <a href="/docs/operating#models">Operating → Models</a>) and chunks that have already been
-          embedded. Until both hold, queries still return: keyword matching alone carries them, and
-          meaning-aware ranking joins in for each document as its vectors land. There is nothing to
-          switch on; the pipeline uses whatever signals exist at query time.
+          embedded. Documents are indexed for keyword search even without an embedding model. Until
+          both hold, keyword matching alone carries queries, and meaning-aware ranking joins in for
+          each document as its vectors land. There is nothing to switch on; the pipeline uses
+          whatever signals exist at query time. When embeddings become available after keyword-only
+          indexing, vectors are rebuilt for the retained corpus while keyword results remain
+          available. Search responses report the active embedding model as assignments change,
+          without requiring a gateway restart. The semantic lane also stays off while the vector
+          index does not fit in the gateway's memory budget; see
+          <a href="/docs/operating#memory">Semantic search is degraded</a>.
         </p>
         <p>
           A query made only of filters, with no free text (<code>from:maya type:email</code>), skips
@@ -286,8 +292,7 @@
 
 2. Lease renewal checklist  (6.1%)
    e5f6a7b8  apple-notes  note  05/02/26
-   Confirm the deposit terms, ask about bike storage, forward the signed copy...</pre
-            >
+   Confirm the deposit terms, ask about bike storage, forward the signed copy...</pre>
             <p class="t-dim">2 results in 41ms, bm25:8ms, vec:23ms</p>
             <p class="t-dim"># narrow with inline filters and a result cap</p>
             <p>
@@ -470,7 +475,9 @@
             <p class="t-dim">
               # the same neighbourhood as a graph: documents, people and the links between them
             </p>
-            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis graph a1b2c3d4</span></p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis graph walk a1b2c3d4</span>
+            </p>
             <p class="t-dim"># fuzzy people lookup by name, email, phone, or handle</p>
             <p>
               <span class="t-prompt">❯</span> <span class="t-cmd">omnesis people search maya</span>
@@ -495,10 +502,10 @@
           calendar event it paid for.
         </p>
         <p>
-          <code>graph</code> walks the same links but returns the neighbourhood as a graph rather
-          than a timeline: every document and person reachable from the seed, and the edge that
-          connects each pair. <code>--edges</code> and <code>--vertex-types</code> limit what the
-          walk follows, <code>--hops</code> bounds how far it goes (at most 15),
+          <code>graph walk</code> follows the same links but returns the neighbourhood as a graph
+          rather than a timeline: every document and person reachable from the seed, and the edge
+          that connects each pair. <code>--edges</code> and <code>--vertex-types</code> limit what
+          the walk follows, <code>--hops</code> bounds how far it goes (at most 15),
           <code>--bound-rows</code> adds the analytics rows bound to the documents it reaches, and
           <code>--json</code> prints the raw result.
         </p>
@@ -545,8 +552,7 @@ app_name  hours
 ───────────────
 Safari    31.4
 Mail      18.2
-Messages  12.9</pre
-            >
+Messages  12.9</pre>
             <p class="t-dim">3 rows (12ms)</p>
             <p class="t-dim"># monthly running volume this year</p>
             <p>
@@ -583,7 +589,7 @@ Messages  12.9</pre
           <code>omnesis --help</code>.
         </p>
         <p>
-          The graph walk behind <code>omnesis graph</code> is one endpoint,
+          The graph walk behind <code>omnesis graph walk</code> is one endpoint,
           <code>POST /graph/walk</code>, open to any token with the <code>read</code> scope. It
           starts from up to 50 documents, named by ID or unambiguous prefix, takes the same limits
           as the command's flags, and returns the <code>vertices</code> and <code>edges</code> it
@@ -595,8 +601,7 @@ Messages  12.9</pre
             <pre data-lang="sh">
 curl -s -X POST "$OMNESIS_GATEWAY_URL/graph/walk" \
   -H "Authorization: Bearer $OMNESIS_TOKEN" -H "Content-Type: application/json" \
-  -d '{"start": [{"kind": "document", "id": "a1b2c3d4"}], "maxHops": 2}'</pre
-            >
+  -d '{"start": [{"kind": "document", "id": "a1b2c3d4"}], "maxHops": 2}'</pre>
           </div>
         </div>
 

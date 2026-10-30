@@ -216,10 +216,9 @@ describe("production mobile source modes", () => {
     try {
       return (
         db
-          .prepare<
-            [string, string],
-            { content: string }
-          >("SELECT content FROM documents WHERE source_id = ? AND external_id = ?")
+          .prepare<[string, string], { content: string }>(
+            "SELECT content FROM documents WHERE source_id = ? AND external_id = ?",
+          )
           .get(sourceId, externalId)?.content ?? null
       );
     } finally {
@@ -231,10 +230,9 @@ describe("production mobile source modes", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          { rows: number; streams: number }
-        >("SELECT COUNT(*) AS rows, COUNT(DISTINCT stream_id) AS streams FROM documents WHERE source_id = ?")
+        .prepare<[string], { rows: number; streams: number }>(
+          "SELECT COUNT(*) AS rows, COUNT(DISTINCT stream_id) AS streams FROM documents WHERE source_id = ?",
+        )
         .get(sourceId)!;
     } finally {
       db.close();
@@ -274,7 +272,9 @@ describe("production mobile source modes", () => {
           .prepare<
             [string],
             { id: string; stream_id: string; external_id: string; content: string }
-          >("SELECT id, stream_id, external_id, content FROM documents WHERE source_id = ? ORDER BY stream_id, external_id")
+          >(
+            "SELECT id, stream_id, external_id, content FROM documents WHERE source_id = ? ORDER BY stream_id, external_id",
+          )
           .all(id);
       } finally {
         db.close();

@@ -107,10 +107,9 @@ export class LiveRecall implements RecallScorer {
 
   private chunkVectors(indexDb: Db, documentId: string): Float32Array[] {
     const rows = indexDb
-      .prepare<
-        [string],
-        ChunkVectorRow
-      >("SELECT embedding FROM chunks WHERE document_id = ? AND embedding IS NOT NULL")
+      .prepare<[string], ChunkVectorRow>(
+        "SELECT embedding FROM chunks WHERE document_id = ? AND embedding IS NOT NULL",
+      )
       .all(documentId);
     return rows.map((row) =>
       new Float32Array(

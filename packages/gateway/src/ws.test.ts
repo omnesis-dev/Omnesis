@@ -108,24 +108,95 @@ function waitForMessage<T = WsEnvelope>(ws: WebSocket, timeout = 3000): Promise<
   });
 }
 
+class WsMatchTimeoutError extends Error {
+  constructor() {
+    super("WS match timeout");
+  }
+}
+
 function waitFor<T = WsEnvelope>(
   ws: WebSocket,
   pred: (msg: T) => boolean,
   timeout = 3000,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("WS match timeout")), timeout);
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeEventListener("message", handler);
+      ws.removeEventListener("close", onClose);
+      ws.removeEventListener("error", onError);
+    };
+    const fail = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new WsMatchTimeoutError()), timeout);
     const handler = (ev: MessageEvent) => {
-      const parsed = JSON.parse(ev.data as string) as T;
-      if (pred(parsed)) {
-        clearTimeout(timer);
-        ws.removeEventListener("message", handler);
-        resolve(parsed);
+      try {
+        const parsed = JSON.parse(ev.data as string) as T;
+        if (pred(parsed)) {
+          cleanup();
+          resolve(parsed);
+        }
+      } catch (error) {
+        fail(error);
       }
     };
+    const onClose = () => fail(new Error("WS closed before match"));
+    const onError = () => fail(new Error("WS error before match"));
     ws.addEventListener("message", handler);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("error", onError);
   });
 }
+
+// These exercise the actual event handler and timer without a network race.
+describe("WS matching waiter lifecycle", () => {
+  test("a match and a timeout both release their message/socket listeners", async () => {
+    for (const matches of [true, false]) {
+      const target = new EventTarget();
+      const remove = vi.spyOn(target, "removeEventListener");
+      const result = waitFor<{ type: string }>(
+        target as unknown as WebSocket,
+        (message) => message.type === "expected",
+        1,
+      );
+      if (matches) {
+        target.dispatchEvent(new MessageEvent("message", { data: '{"type":"expected"}' }));
+        await expect(result).resolves.toEqual({ type: "expected" });
+      } else {
+        await expect(result).rejects.toBeInstanceOf(WsMatchTimeoutError);
+      }
+      for (const type of ["message", "close", "error"])
+        expect(remove).toHaveBeenCalledWith(type, expect.any(Function));
+    }
+  });
+
+  test("malformed messages and predicate errors reject instead of becoming absence", async () => {
+    const invalid = new EventTarget();
+    const malformed = waitFor(invalid as unknown as WebSocket, () => true);
+    const rejected = expect(malformed).rejects.toBeInstanceOf(SyntaxError);
+    invalid.dispatchEvent(new MessageEvent("message", { data: "not JSON" }));
+    await rejected;
+
+    const target = new EventTarget();
+    const failure = new Error("fictional predicate failure");
+    const result = waitFor(target as unknown as WebSocket, () => {
+      throw failure;
+    });
+    const predicateRejected = expect(result).rejects.toBe(failure);
+    target.dispatchEvent(new MessageEvent("message", { data: "{}" }));
+    await predicateRejected;
+  });
+
+  test("closing a socket rejects its waiter without waiting for the match deadline", async () => {
+    const target = new EventTarget();
+    const result = waitFor(target as unknown as WebSocket, () => false);
+    const rejected = expect(result).rejects.toThrow("WS closed before match");
+    target.dispatchEvent(new Event("close"));
+    await rejected;
+  });
+});
 
 async function connectAndHello(
   token: string,
@@ -380,10 +451,9 @@ describe("DeviceWsServer", () => {
       expect(
         JSON.parse(
           localDb
-            .prepare<
-              [string],
-              { capabilities: string }
-            >("SELECT capabilities FROM devices WHERE id = ?")
+            .prepare<[string], { capabilities: string }>(
+              "SELECT capabilities FROM devices WHERE id = ?",
+            )
             .get(agent.id)!.capabilities,
         ),
       ).toMatchObject({
@@ -505,32 +575,29 @@ describe("DeviceWsServer", () => {
     const adminWs = await connectAndHello(ADMIN_TOKEN);
     const collectorWs = await connectAndHello(COLLECTOR_TOKEN);
 
-    // admin should get the event; collector (write:*, no admin) should not.
-    const adminP = waitFor<WsEvent>(
-      adminWs,
-      (m) => m.kind === "event" && m.type === "device.status",
-    );
-
-    // Fire an admin-only event by triggering another device's hello, but we
-    // can also just broadcast directly for this test.
-    wsServer.broadcast(makeEvent("admin.only", { foo: 1 }), SCOPE_ADMIN);
-
-    const raced = await Promise.race([
-      waitFor<WsEvent>(adminWs, (m) => m.kind === "event" && m.type === "admin.only").then(
-        () => "admin-got",
-      ),
-      waitFor<WsEvent>(collectorWs, (m) => m.kind === "event" && m.type === "admin.only", 500)
-        .then(() => "collector-got")
-        .catch(() => "collector-timeout"),
-    ]);
-    expect(raced).toBe("admin-got");
-
-    adminWs.close();
-    collectorWs.close();
-    await Promise.all([waitForClose(adminWs), waitForClose(collectorWs)]);
-
-    // Use the admin.only promise we set up but didn't await so TS knows it was used.
-    void adminP;
+    try {
+      // Register both observations before sending. The negative observation
+      // must finish too: winning a race does not prove the collector stayed out.
+      const [adminEvent, collectorResult] = await Promise.all([
+        waitFor<WsEvent>(adminWs, (m) => m.kind === "event" && m.type === "admin.only"),
+        waitFor<WsEvent>(collectorWs, (m) => m.kind === "event" && m.type === "admin.only", 500)
+          .then(() => "collector-got")
+          .catch((error: unknown) => {
+            if (error instanceof WsMatchTimeoutError) return "collector-timeout";
+            throw error;
+          }),
+        Promise.resolve().then(() => {
+          wsServer.broadcast(makeEvent("admin.only", { foo: 1 }), SCOPE_ADMIN);
+        }),
+      ]);
+      expect(adminEvent.type).toBe("admin.only");
+      expect(adminEvent.payload).toEqual({ foo: 1 });
+      expect(collectorResult).toBe("collector-timeout");
+    } finally {
+      adminWs.close();
+      collectorWs.close();
+      await Promise.all([waitForClose(adminWs), waitForClose(collectorWs)]);
+    }
   });
 
   test("sendCommand round-trip via device echo", async () => {

@@ -119,10 +119,9 @@ describe("migration 60 - trusted external-answer audit storage", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'answer_audit_events'")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'answer_audit_events'",
+        )
         .get()?.name,
     ).toBe("answer_audit_events");
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

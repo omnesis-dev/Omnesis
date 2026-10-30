@@ -51,4 +51,51 @@ describe("BrainObs runs", () => {
     ]);
     expect((await obs.interpretationForSource("document")).id).toBe("interpretation");
   });
+  test.each([{ phases: [] }, { phases: ["organization"] }])(
+    "explicit non-interpretation phases %j do not select a standalone review",
+    async ({ phases }) => {
+      const obs = new BrainObs({} as SyntheticE2EHarness);
+      vi.spyOn(obs, "runs").mockResolvedValue({
+        items: [{ id: "review" }, { id: "interpretation" }],
+      } as Awaited<ReturnType<BrainObs["runs"]>>);
+      vi.spyOn(obs, "executedTools").mockImplementation(async (id) => [
+        {
+          tool: "knowledge_discovery_complete",
+          args: {
+            id: "source:document",
+            phases: id === "review" ? phases : ["interpretation"],
+          },
+          result: { kind: "structured", data: {} },
+        },
+      ]);
+      expect((await obs.runsForSource("document")).map((run) => run.id)).toEqual([
+        "review",
+        "interpretation",
+      ]);
+      expect((await obs.interpretationForSource("document")).id).toBe("interpretation");
+    },
+  );
+
+  test("explicit interpretation phases take precedence over cohort membership", async () => {
+    const obs = new BrainObs({} as SyntheticE2EHarness);
+    vi.spyOn(obs, "runs").mockResolvedValue({
+      items: [{ id: "joint-interpretation" }],
+    } as Awaited<ReturnType<BrainObs["runs"]>>);
+    vi.spyOn(obs, "executedTools").mockResolvedValue([
+      {
+        tool: "knowledge_next_frontier",
+        args: {},
+        result: {
+          kind: "structured",
+          data: { items: [], organization: { sourceIds: ["document"] } },
+        },
+      },
+      {
+        tool: "knowledge_discovery_complete",
+        args: { id: "source:document", phases: ["interpretation"] },
+        result: { kind: "structured", data: {} },
+      },
+    ]);
+    expect((await obs.interpretationForSource("document")).id).toBe("joint-interpretation");
+  });
 });

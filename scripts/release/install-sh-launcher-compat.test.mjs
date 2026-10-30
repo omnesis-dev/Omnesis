@@ -25,12 +25,16 @@ function definition(name) {
   const end =
     name === "render_source_wrapper"
       ? installer.indexOf("\nEOF\n}", start) + 6
-      : installer.indexOf("\n}\n", start) + 3;
+      : name === "npm_trust_preload" || name === "render_source_npm_trust"
+        ? installer.indexOf("\nEOF\n}\n", start) + 7
+        : installer.indexOf("\n}\n", start) + 3;
   expect(start).toBeGreaterThan(0);
   return installer.slice(start, end);
 }
 const functions = [
   "shell_single_quote",
+  "npm_trust_preload",
+  "render_source_npm_trust",
   "render_source_wrapper",
   "render_installed_source_wrapper",
   "write_source_wrapper",

@@ -122,10 +122,9 @@ describe("durable notification wake retry", () => {
     expect(send).toHaveBeenCalledTimes(DEFAULT_PUSH_WAKE_RETRY_POLICY.maxAttempts);
     expect(
       db
-        .prepare<
-          [],
-          { wake_state: string; wake_attempt_count: number }
-        >("SELECT wake_state, wake_attempt_count FROM notification_deliveries")
+        .prepare<[], { wake_state: string; wake_attempt_count: number }>(
+          "SELECT wake_state, wake_attempt_count FROM notification_deliveries",
+        )
         .get(),
     ).toEqual({
       wake_state: "exhausted",
@@ -251,10 +250,9 @@ describe("durable notification wake retry", () => {
     expect(send).toHaveBeenCalledOnce();
     expect(
       db
-        .prepare<
-          [],
-          { wake_state: string; wake_last_error: string }
-        >("SELECT wake_state, wake_last_error FROM notification_deliveries")
+        .prepare<[], { wake_state: string; wake_last_error: string }>(
+          "SELECT wake_state, wake_last_error FROM notification_deliveries",
+        )
         .get(),
     ).toEqual({ wake_state: "terminal", wake_last_error: "carrier rejected registration" });
   });
@@ -565,10 +563,9 @@ describe("durable notification wake retry", () => {
       }),
     ).toBe(true);
     const stored = db
-      .prepare<
-        [],
-        { wake_last_error: string }
-      >("SELECT wake_last_error FROM notification_deliveries")
+      .prepare<[], { wake_last_error: string }>(
+        "SELECT wake_last_error FROM notification_deliveries",
+      )
       .get()!.wake_last_error;
     expect(stored).toHaveLength(256);
     expect(stored).not.toContain("\n");
@@ -662,10 +659,9 @@ describe("durable notification wake retry", () => {
     }
     expect(
       db
-        .prepare<
-          [],
-          { wake_state: string; wake_attempt_count: number }
-        >("SELECT wake_state, wake_attempt_count FROM notification_deliveries")
+        .prepare<[], { wake_state: string; wake_attempt_count: number }>(
+          "SELECT wake_state, wake_attempt_count FROM notification_deliveries",
+        )
         .get(),
     ).toEqual({ wake_state: "exhausted", wake_attempt_count: 3 });
     expect(

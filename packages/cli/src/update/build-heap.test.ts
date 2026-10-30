@@ -110,6 +110,21 @@ describe("usableMemoryMb", () => {
   });
 });
 
+test("the Docker runtime build gets the policy's smallest heap", () => {
+  // A Docker build cannot read the host it runs on before it starts, so the
+  // runtime-build stage states the floor every machine gets.
+  const dockerfile = readFileSync(
+    fileURLToPath(new URL("../../../../Dockerfile", import.meta.url)),
+    "utf8",
+  );
+  const stage = dockerfile.split(/^FROM .+ AS runtime-build$/mu)[1]?.split(/^FROM /mu)[0] ?? "";
+  const stated = /^ARG NODE_OPTIONS=(.+)$/mu.exec(stage)?.[1];
+  expect(stated).toBe(buildNodeOptions(1, undefined));
+  expect(stage.indexOf("ARG NODE_OPTIONS=")).toBeLessThan(
+    stage.indexOf("stage-runtime.mjs --build"),
+  );
+});
+
 describe("the installer's shell copy of the policy", () => {
   const scratch: string[] = [];
   afterEach(() => {

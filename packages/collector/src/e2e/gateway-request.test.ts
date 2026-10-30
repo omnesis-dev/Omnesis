@@ -12,7 +12,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { gatewayJson, type GatewayRequestError } from "./gateway-request.js";
+import { gatewayJson, reindexMissing, type GatewayRequestError } from "./gateway-request.js";
 
 const endpoint = { gatewayUrl: "https://localhost:17999", apiKey: "test-key" };
 
@@ -120,5 +120,39 @@ describe("gatewayJson", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("reindexMissing", () => {
+  test("returns the pass's counts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(respond('{"ok":true,"indexed":3,"errors":0}'));
+
+    await expect(reindexMissing(endpoint)).resolves.toEqual({ ok: true, indexed: 3, errors: 0 });
+  });
+
+  test("returns null at once while the indexer worker is not ready", async () => {
+    // A polling probe asks again on its own schedule; waiting out Retry-After
+    // here would only stretch each poll.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      respond('{"error":"The indexer is starting","code":"INDEXER_NOT_READY"}', {
+        status: 503,
+        headers: { "Retry-After": "5" },
+      }),
+    );
+
+    await expect(reindexMissing(endpoint)).resolves.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("throws when the indexer is not running at all", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      respond('{"error":"indexer is not running: probe failed","code":"SERVICE_UNAVAILABLE"}', {
+        status: 503,
+      }),
+    );
+
+    await expect(reindexMissing(endpoint)).rejects.toThrow(
+      /gateway POST \/admin\/index\/reindex-missing → 503: .*probe failed/,
+    );
   });
 });

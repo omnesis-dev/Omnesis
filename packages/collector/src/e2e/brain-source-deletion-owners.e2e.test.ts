@@ -185,10 +185,9 @@ it("keeps the task and annotation built on a tombstoned email, and a review deci
   });
   expect(
     bench.sql
-      .prepare<
-        [string],
-        { state: string; accepted: number }
-      >("SELECT state, accepted FROM open_loops WHERE id = ?")
+      .prepare<[string], { state: string; accepted: number }>(
+        "SELECT state, accepted FROM open_loops WHERE id = ?",
+      )
       .get(loopId),
   ).toEqual({ state: "open", accepted: 1 });
   expect(bench.sql.prepare("SELECT 1 FROM open_loop_docs WHERE loop_id = ?").get(loopId)).toBe(
@@ -196,10 +195,9 @@ it("keeps the task and annotation built on a tombstoned email, and a review deci
   );
   expect(
     bench.sql
-      .prepare<
-        [string],
-        { note: string }
-      >("SELECT note FROM open_loop_ledger WHERE loop_id = ? AND run_id = 'source-deletion'")
+      .prepare<[string], { note: string }>(
+        "SELECT note FROM open_loop_ledger WHERE loop_id = ? AND run_id = 'source-deletion'",
+      )
       .all(loopId),
   ).toEqual([
     { note: `Source document ${invoiceId} was deleted. The loop is kept and queued for review.` },
@@ -208,10 +206,9 @@ it("keeps the task and annotation built on a tombstoned email, and a review deci
   // The annotation is still in memory, marked unverified, its evidence broken.
   expect(
     bench.sql
-      .prepare<
-        [string],
-        { invalidated_at: number | null; verification_state: string }
-      >("SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?")
+      .prepare<[string], { invalidated_at: number | null; verification_state: string }>(
+        "SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?",
+      )
       .get(annotationId),
   ).toEqual({ invalidated_at: null, verification_state: "unverified" });
 
@@ -222,10 +219,9 @@ it("keeps the task and annotation built on a tombstoned email, and a review deci
       .poll(
         () =>
           bench.sql
-            .prepare<
-              [string],
-              { validity: string }
-            >("SELECT validity FROM knowledge_nodes WHERE id = ?")
+            .prepare<[string], { validity: string }>(
+              "SELECT validity FROM knowledge_nodes WHERE id = ?",
+            )
             .get(id)?.validity,
         { timeout: 60_000 },
       )
@@ -264,10 +260,9 @@ it("keeps the task and annotation built on a tombstoned email, and a review deci
     .poll(
       () =>
         bench.sql
-          .prepare<
-            [string],
-            { validity: string }
-          >("SELECT validity FROM knowledge_nodes WHERE id = ?")
+          .prepare<[string], { validity: string }>(
+            "SELECT validity FROM knowledge_nodes WHERE id = ?",
+          )
           .get(loopId)?.validity,
       { timeout: 120_000 },
     )

@@ -62,10 +62,9 @@ describe("migration 26 — hash portal session secrets", () => {
     expect(version).toBe(LATEST_SCHEMA_VERSION);
 
     const row = db
-      .prepare<
-        [string],
-        { id: string; session_hash: string; last_active_at: number }
-      >("SELECT id, session_hash, last_active_at FROM sessions WHERE token_id = ?")
+      .prepare<[string], { id: string; session_hash: string; last_active_at: number }>(
+        "SELECT id, session_hash, last_active_at FROM sessions WHERE token_id = ?",
+      )
       .get(tokenId);
     expect(row?.id).toBeDefined();
     expect(row?.id).not.toBe(rawSessionId);
@@ -113,10 +112,9 @@ describe("migration 26 — hash portal session secrets", () => {
     expect(version).toBe(LATEST_SCHEMA_VERSION);
 
     const row = db
-      .prepare<
-        [string],
-        { id: string; session_hash: string; last_active_at: number }
-      >("SELECT id, session_hash, last_active_at FROM sessions WHERE token_id = ?")
+      .prepare<[string], { id: string; session_hash: string; last_active_at: number }>(
+        "SELECT id, session_hash, last_active_at FROM sessions WHERE token_id = ?",
+      )
       .get(tokenId);
     expect(row?.id).toBeDefined();
     expect(row?.id).not.toBe(rawSessionId);

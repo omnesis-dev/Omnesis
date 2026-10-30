@@ -22,10 +22,9 @@ type Db = Database.Database;
 
 export function relaxDecisionAnchors(db: Db): void {
   const document = db
-    .prepare<
-      [],
-      { notnull: number }
-    >("SELECT \"notnull\" FROM pragma_table_info('cognition_decisions') WHERE name='document_id'")
+    .prepare<[], { notnull: number }>(
+      "SELECT \"notnull\" FROM pragma_table_info('cognition_decisions') WHERE name='document_id'",
+    )
     .get();
   if (!document || document.notnull === 0) return;
   rebuildCognitionDecisionsTable(db);

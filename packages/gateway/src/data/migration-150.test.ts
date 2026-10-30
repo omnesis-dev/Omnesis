@@ -23,10 +23,9 @@ const MIGRATION_OBJECTS = new Set([
 
 function definitionsOf(db: Db): Record<string, string> {
   const rows = db
-    .prepare<
-      [],
-      { name: string; sql: string }
-    >("SELECT name, sql FROM sqlite_master WHERE tbl_name = 'replica_deletion_claims' AND sql IS NOT NULL ORDER BY name")
+    .prepare<[], { name: string; sql: string }>(
+      "SELECT name, sql FROM sqlite_master WHERE tbl_name = 'replica_deletion_claims' AND sql IS NOT NULL ORDER BY name",
+    )
     .all();
   return Object.fromEntries(
     rows

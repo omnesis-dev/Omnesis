@@ -80,9 +80,7 @@ export interface WsEvent<Type extends string = string, Payload = unknown> {
 
 /** Union of all envelope shapes. */
 export type WsEnvelope<Type extends string = string, Payload = unknown, Result = unknown> =
-  | WsCommand<Type, Payload>
-  | WsResponse<Result>
-  | WsEvent<Type, Payload>;
+  WsCommand<Type, Payload> | WsResponse<Result> | WsEvent<Type, Payload>;
 
 // ─── Type guards ────────────────────────────────────────────────────────────
 

@@ -195,8 +195,8 @@
               <td><strong>Direct</strong></td>
               <td>
                 Read-only retrieval tools that return raw records: search, document fetch and URL
-                lookup, people lookup, connection trails, and bounded SQL over the analytics
-                database.
+                lookup, people lookup, connection trails, a time query over dated records, and
+                bounded SQL over the analytics database.
               </td>
               <td>No</td>
             </tr>
@@ -564,8 +564,7 @@
     }
   ],
   …
-}</pre
-            >
+}</pre>
           </div>
         </div>
 
@@ -1047,7 +1046,8 @@
           <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
           <code>omnesis uninstall codex</code>
-          signs Codex out and removes the MCP entry, the plugin and its marketplace.
+          signs Codex out of the Omnesis server and removes the MCP entry, the plugin and its
+          marketplace.
         </p>
         <div class="callout">
           <strong>For Codex, the plugin is guidance, not a connection.</strong> It teaches Codex how
@@ -1118,6 +1118,38 @@
           gateway states which tools it offers, and <code>omnesis connect</code> installs only
           those.
         </p>
+        <p>
+          When you approve a held answer, the plugin resumes the agent's original session with the
+          released answer so the agent can reply and retain the context for follow-up questions.
+          This includes Hermes relay-backed chats and API-server sessions. Hermes internal
+          notifications and Omnesis-generated API wake messages are excluded from conversation
+          ingestion; the agent's replies remain part of the indexed conversation.
+        </p>
+        <p>
+          Indexed transcripts keep each turn's speaker separate from its message text. Message
+          bodies are displayed literally, so Markdown or HTML inside a reply cannot create another
+          turn heading. Search excerpts retain the speaker and time when a long message is split. A
+          user-role message is not proof that you wrote it: when the host supplies no verified
+          per-message author, it is labelled as an unknown participant rather than you. These
+          transcripts remain reports from the connected agent, not independent identity evidence.
+        </p>
+        <p>
+          An answer requested by a Watch can also wait for approval and resume after a restart.
+          Approval may arrive after the firing's short-lived asking credential expires: the plugin
+          retrieves only that completed answer using its current delivery connection. The Watch's
+          subscription, permission and privacy policy must still be valid; revoking them prevents
+          the answer from being returned. This does not renew permission to ask another question.
+        </p>
+        <p>
+          A pending OpenClaw answer saved without its originating session cannot resume
+          automatically. Ask the question again in that conversation to create a new request.
+        </p>
+        <p>
+          Resuming held answers requires Hermes 0.21.0 or newer, or stable OpenClaw 2026.10.5 or
+          newer. Older hosts lack the controls needed to safely admit an answer into its original
+          session. Update the host and restart its gateway if the integration reports this
+          requirement; the held completion remains available for retry.
+        </p>
         <h3 id="harness-tools">What the agent can use</h3>
         <p>
           The agent asks questions with <code>omnesis_answer</code>, whatever its connection's
@@ -1127,7 +1159,7 @@
           <code>omnesis_add_note</code> and the rest. It offers exactly the tools the gateway lists
           for the connection, with the gateway's descriptions, and forwards each call to the same
           tool on <code>/mcp</code>, so a source-restricted Direct permission gets its restricted
-          set. They are available in conversations, scheduled runs and watch runs alike.
+          set. They are available in conversations and scheduled runs alike.
           <code>omnesis_add_note</code> takes the same UUID <code>id</code> as any other client, and
           a retry reuses it.
         </p>
@@ -1138,6 +1170,14 @@
           <code>hermes gateway restart</code>. A tool the level no longer grants is refused by the
           gateway either way. Each plugin keeps the last list it read, so a restart while the
           gateway is unreachable keeps the tools it had.
+        </p>
+        <p>
+          Hermes can interpret file paths in replies as attachments and context references as
+          instructions to read files. The Omnesis integration removes these references from released
+          answers and their citations before returning them to Hermes, including answers delivered
+          after approval. Approval releases answer text, not local files. This protects literal
+          relays of the answer; it does not restrict the agent's own tools or paths reconstructed
+          from other conversation context.
         </p>
         <h3 id="harness-install">Install</h3>
         <p>
@@ -1269,6 +1309,12 @@
           choice.
         </p>
         <p>
+          If approval expires, the command prints a retry command. Run
+          <code>omnesis connect openclaw</code> or <code>omnesis connect hermes</code> again to
+          request a fresh approval using the saved pairing, without a new pairing code. For an
+          expired refresh, the retry command includes <code>--refresh --interactive</code>.
+        </p>
+        <p>
           The OpenClaw and Hermes plugins repair their own sign-in the same way, without a browser,
           when it lapses or a refresh stopped part-way. When the connection's approval was revoked,
           Omnesis tools in the agent answer with the refresh command instead.
@@ -1288,7 +1334,7 @@
           for example after reinstalling the harness over its existing Omnesis files, run the
           command from the Connect an agent card with a new pairing code. The machine proves it is
           the same installation with the credentials it already holds, so the gateway keeps the same
-          agent device: its watches, conversations, and access stay bound to it. The device gets new
+          agent device: its conversations and access stay bound to it. The device gets new
           credentials and its old ones stop working. The command offers those credentials only to
           the gateway that issued them, recognized by the certificate the machine pinned, or by its
           address when this run verified the certificate against <code>--trust-fingerprint</code>,

@@ -34,6 +34,8 @@ import {
 import {
   CHROME_WEB_STORE_URL,
   answerLevelNames,
+  browserCertificateLines,
+  type BrowserCertificateVerdict,
   deviceAccessLevelLine,
   deviceUpdateNoticeLine,
   devicesCommand,
@@ -519,6 +521,189 @@ describe("devices pair — the pairing request", () => {
       gatewayUrl: "https://gateway.example.com:7600",
       trustMode: "auto",
     });
+  });
+});
+
+describe("devices pair — a browser code against the gateway's certificate", () => {
+  const untrusted: BrowserCertificateVerdict = {
+    status: "untrusted",
+    certificate: "self-signed",
+    reason: "self-signed",
+    names: ["localhost"],
+    proxiedHosts: [],
+    title: "the Chrome extension cannot connect to this gateway",
+    message: "The gateway serves a self-signed certificate.",
+    remedy:
+      "Give the gateway a browser-trusted certificate: re-run the installer on the gateway host.",
+    docsUrl: "https://omnesis.dev/docs/setup#browser-extension",
+  };
+
+  async function runBrowserPair(
+    args: Record<string, string | boolean>,
+    browserCertificate?: BrowserCertificateVerdict,
+  ): Promise<string[]> {
+    const pending = {
+      pairingCode: "35168AE493",
+      kind: "browser",
+      scopes: ["write:web"],
+      expiresAt: Date.now() + 60_000,
+      ...(browserCertificate ? { browserCertificate } : {}),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(pending)));
+    vi.stubEnv("OMNESIS_TOKEN", `omn_${"a".repeat(32)}`);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+      lines.push(parts.join(" "));
+    });
+    try {
+      const sub = (await devicesCommand.subCommands!) as Record<
+        string,
+        { run: (ctx: unknown) => Promise<void> }
+      >;
+      await sub.pair.run({ args: { kind: "browser", ...args }, rawArgs: [], cmd: sub.pair });
+    } finally {
+      log.mockRestore();
+    }
+    return lines;
+  }
+
+  it("prints a framed warning with the gateway's reason, fix and docs, and still prints the code", async () => {
+    const out = (await runBrowserPair({}, untrusted)).join("\n");
+    expect(out).toContain("Pairing code:");
+    expect(out).toContain("35168AE493");
+    expect(out).toContain("WARNING: the Chrome extension cannot connect to this gateway.");
+    expect(out).toContain(untrusted.message);
+    expect(out).toContain(`Fix: ${untrusted.remedy}`);
+    expect(out).toContain("Docs: https://omnesis.dev/docs/setup#browser-extension");
+    // The warning comes after the Options-page steps, the last thing on screen.
+    expect(out.indexOf("WARNING")).toBeGreaterThan(out.indexOf("open Options"));
+  });
+
+  it("--json prints the gateway's record with the machine-readable verdict and nothing else", async () => {
+    const lines = await runBrowserPair({ json: true }, untrusted);
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!) as {
+      pairingCode: string;
+      browserCertificate: BrowserCertificateVerdict;
+    };
+    expect(parsed.pairingCode).toBe("35168AE493");
+    expect(parsed.browserCertificate.status).toBe("untrusted");
+    expect(parsed.browserCertificate.reason).toBe("self-signed");
+  });
+
+  it("--json from a gateway without the verdict carries no field to misread", async () => {
+    const lines = await runBrowserPair({ json: true });
+    expect(JSON.parse(lines[0]!)).not.toHaveProperty("browserCertificate");
+  });
+
+  it("a trusted certificate gets no warning, only the names it covers", async () => {
+    const out = (
+      await runBrowserPair(
+        {},
+        {
+          ...untrusted,
+          status: "trusted",
+          certificate: "tailscale",
+          reason: null,
+          names: ["studio.tail-example.ts.net"],
+          title: null,
+          message: null,
+          remedy: null,
+        },
+      )
+    ).join("\n");
+    expect(out).not.toContain("WARNING");
+    expect(out).not.toContain("Note:");
+    expect(out).toContain("by a name the certificate covers (studio.tail-example.ts.net)");
+  });
+});
+
+describe("browserCertificateLines — one rendering per verdict", () => {
+  const base: BrowserCertificateVerdict = {
+    status: "trusted",
+    certificate: "tailscale",
+    reason: null,
+    names: [],
+    proxiedHosts: [],
+    title: null,
+    message: null,
+    remedy: null,
+    docsUrl: "https://omnesis.dev/docs/setup#browser-extension",
+  };
+
+  it("an older gateway that sends no verdict keeps the generic requirement", () => {
+    const out = browserCertificateLines(undefined).join("\n");
+    expect(out).toContain("browser-trusted HTTPS gateway");
+    expect(out).toContain("https://omnesis.dev/docs/setup#browser-extension");
+    expect(out).not.toContain("WARNING");
+  });
+
+  it("an untrusted certificate is a warning, framed so it stands out", () => {
+    const lines = browserCertificateLines({
+      ...base,
+      status: "untrusted",
+      certificate: "self-signed",
+      reason: "self-signed",
+      title: "the Chrome extension cannot connect to this gateway",
+      message: "The gateway serves a self-signed certificate.",
+      remedy: "Run the installer again with Tailscale up.",
+    });
+    const rules = lines.filter((line) => line.includes("━━━━"));
+    expect(rules).toHaveLength(2);
+    expect(lines.join("\n")).toContain("WARNING");
+    expect(lines.join("\n")).toContain("Fix: Run the installer again with Tailscale up.");
+    expect(lines.join("\n")).toContain("still valid");
+  });
+
+  it.each(["local-ca", "unknown"] as const)(
+    "a %s certificate is a note, not a warning",
+    (status) => {
+      const out = browserCertificateLines({
+        ...base,
+        status,
+        title: "the Chrome extension connects only where the mkcert authority is installed",
+        message: "Chrome trusts it only where its authority is installed.",
+        remedy: "Install the authority's certificate on that machine first.",
+      }).join("\n");
+      expect(out).toContain(
+        "Chrome extension connects only where the mkcert authority is installed.",
+      );
+      expect(out).toContain("Chrome trusts it only where its authority is installed.");
+      expect(out).toContain("Install the authority's certificate on that machine first.");
+      expect(out).not.toContain("WARNING");
+    },
+  );
+
+  it("the warning reaches a repaired extension too", () => {
+    const out = repairInstructionLines(
+      "browser",
+      { name: "Maya's browser" },
+      "35168AE493",
+      "https://127.0.0.1:17650",
+      {
+        ...base,
+        status: "untrusted",
+        reason: "expired",
+        title: "the Chrome extension cannot connect to this gateway",
+        message: "Its certificate expired on 2026-10-01.",
+        remedy: "Renew it with `omnesis tls renew`.",
+      },
+    ).join("\n");
+    expect(out).toContain("WARNING");
+    expect(out).toContain("Its certificate expired on 2026-10-01.");
+  });
+
+  it("no other kind of code is ever told about the extension's certificate", () => {
+    const verdict: BrowserCertificateVerdict = {
+      ...base,
+      status: "untrusted",
+      title: "the Chrome extension cannot connect to this gateway",
+    };
+    for (const kind of ["portal", "cli", "agent", "collector", "integration"] as const) {
+      expect(
+        pairInstructionLines(kind, "35168AE493", "https://127.0.0.1:17650", verdict).join("\n"),
+      ).not.toContain("WARNING");
+    }
   });
 });
 

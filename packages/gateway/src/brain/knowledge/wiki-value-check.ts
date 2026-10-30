@@ -19,6 +19,7 @@ import { KnowledgeStorageError, type SaveKnowledgeNodeInput } from "./types.js";
 import type { WikiRecordContext } from "../record-check/wiki-context.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { KnowledgeService } from "./service.js";
+import type { BrainSourceFence } from "../source-exclusion.js";
 
 const MAX_DRAFT = 24_000;
 const MAX_REFERENCES = 128;
@@ -29,6 +30,8 @@ export class WikiValueCheck {
   constructor(
     private readonly service: KnowledgeService,
     private readonly check?: CheckRecord,
+    /** A background run's excluded sources, whose documents the judge is never shown. */
+    private readonly sourceFence?: BrainSourceFence,
   ) {}
 
   async assess(
@@ -74,6 +77,7 @@ export class WikiValueCheck {
         { sourceIds: [...new Set(sourceIds)], nodeIds: [...new Set(nodeIds)] },
         generation,
       );
+      const excluded = this.sourceFence?.excludedDocuments(sourceIds);
       const references: WikiRecordContext["references"] = [];
       const versions: Record<string, string | number> = {};
       if (refs.length <= MAX_REFERENCES) {
@@ -84,7 +88,7 @@ export class WikiValueCheck {
               const view = this.service.reference(ref.raw);
               dependencyVersions.check(ref.raw, view.revision);
               versions[ref.raw] = view.revision;
-              if (references.length < 16)
+              if (references.length < 16 && !(ref.kind === "source" && excluded?.has(ref.id)))
                 references.push({
                   ref: ref.raw,
                   text: view.text.slice(0, 1000),

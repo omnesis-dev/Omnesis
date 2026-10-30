@@ -164,10 +164,9 @@ describe("next generation brain progressive maintenance", () => {
           .poll(
             () =>
               bench.sql
-                .prepare<
-                  [],
-                  { count: number }
-                >("SELECT COUNT(*) AS count FROM knowledge_organization_cohorts WHERE status='completed'")
+                .prepare<[], { count: number }>(
+                  "SELECT COUNT(*) AS count FROM knowledge_organization_cohorts WHERE status='completed'",
+                )
                 .get()!.count,
             { timeout: 120_000 },
           )
@@ -180,10 +179,9 @@ describe("next generation brain progressive maintenance", () => {
         arrivalRevision = await claimRevision("demo-gathering", "guest-arrival");
         expect(arrivalRevision).toBeDefined();
         originalSupplyHash = bench.sql
-          .prepare<
-            [string],
-            { content_hash: string }
-          >("SELECT content_hash FROM documents WHERE id=?")
+          .prepare<[string], { content_hash: string }>(
+            "SELECT content_hash FROM documents WHERE id=?",
+          )
           .get(documentIds.get("party-supplies")!)!.content_hash;
         expect(
           (await batches()).filter((entry) => entry.status === "completed").length,
@@ -207,38 +205,49 @@ describe("next generation brain progressive maintenance", () => {
       } else if (step.id === "same-document-edit") {
         expect(
           bench.sql
-            .prepare<
-              [string],
-              { content_hash: string }
-            >("SELECT content_hash FROM documents WHERE id=?")
+            .prepare<[string], { content_hash: string }>(
+              "SELECT content_hash FROM documents WHERE id=?",
+            )
             .get(documentIds.get("party-supplies")!)!.content_hash,
         ).not.toBe(originalSupplyHash);
-        await expect
-          .poll(
-            async () => {
-              const status = await bench.harness.gatewayJson<Status>(
-                "/admin/brain/knowledge/status",
-              );
-              return status.work.some(
-                (entry) => entry.status === "pending" && entry.tier === "soon",
-              );
-            },
-            { timeout: 60_000 },
-          )
-          .toBe(true);
-        expect((await page("demo-gathering"))!.validity).toBe("stale");
-        // Restart while the edited input is still waiting for its maintenance tier.
-        // At the later 60-minute checkpoint a proactive whole-page review is due
-        // and may legitimately coalesce that input and repair the page early.
-        const beforeRestart = await page("demo-gathering");
+        const editedWork = () =>
+          bench.sql
+            .prepare<
+              [string, number],
+              { id: string; inputRevision: string; generation: number; tier: string; dueAt: number }
+            >(
+              `SELECT id,input_revision AS inputRevision,generation,tier,due_at AS dueAt
+               FROM knowledge_work
+               WHERE subject_kind='source' AND subject_id=? AND reason='change'
+                 AND input_changed_at=?`,
+            )
+            .get(documentIds.get("party-supplies")!, checkpoint.arrivalTime);
+        await expect.poll(editedWork, { timeout: 60_000 }).toMatchObject({ tier: "soon" });
+        const beforeRestart = editedWork()!;
+        const pageBeforeRestart = (await page("demo-gathering"))!;
+        // Overlapping due reviews may batch and repair this edit before its own
+        // deadline. Restart must preserve the exact input and its durable owner,
+        // whether maintenance is still pending, batched, or already completed.
         await bench.restartGateway();
-        expect((await page("demo-gathering"))?.revision).toBe(beforeRestart?.revision);
-        expect((await page("demo-gathering"))?.validity).toBe("stale");
         expect(
-          (await bench.harness.gatewayJson<Status>("/admin/brain/knowledge/status")).work.some(
-            (entry) => entry.status === "pending" && entry.tier === "soon",
-          ),
-        ).toBe(true);
+          bench.sql
+            .prepare(
+              `SELECT id,input_revision AS inputRevision,generation,tier,due_at AS dueAt
+               FROM knowledge_work WHERE id=?`,
+            )
+            .get(beforeRestart.id),
+        ).toEqual(beforeRestart);
+        expect((await page("demo-gathering"))?.revision).toBeGreaterThanOrEqual(
+          pageBeforeRestart.revision,
+        );
+        const persisted = bench.sql
+          .prepare<[string], { status: string; hasBatch: number }>(
+            `SELECT w.status,EXISTS(SELECT 1 FROM knowledge_batches b WHERE b.id=w.batch_id) AS hasBatch
+             FROM knowledge_work w WHERE w.id=?`,
+          )
+          .get(beforeRestart.id)!;
+        expect(["pending", "batched", "completed"]).toContain(persisted.status);
+        if (persisted.status !== "pending") expect(persisted.hasBatch).toBe(1);
       } else if (step.id === "access-context-arrives") {
         await waitForComplementaryEvidence(bench, scenario.documents["access-hours"]!.title);
       } else if (step.id === "one-hour-boundary") {

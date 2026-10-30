@@ -811,7 +811,86 @@ describe("SearchPipeline typed index previews", () => {
   });
 });
 
+describe("SearchPipeline with semantic search degraded", () => {
+  test("answers from keywords, does not embed the query, and says why the vector lane is off", async () => {
+    const { db } = createTestDb();
+    let calls = 0;
+    const vector = new Float32Array(EMBEDDING_DIM).fill(0.01);
+    const pipeline = new SearchPipeline({
+      indexDb: db,
+      embeddingModelId: "scripted-embedding",
+      embedder: {
+        async embed(texts) {
+          return texts.map(() => vector);
+        },
+        async embedQuery() {
+          calls++;
+          return vector;
+        },
+      },
+      usearchRead: {
+        search: () => [],
+        maybeRefresh: () => {},
+        reopen: () => {},
+        close: () => {},
+        size: () => 0,
+      } as unknown as import("../indexer/usearch-index.js").UsearchReadHandle,
+    });
+    try {
+      pipeline.setVectorSearchUnavailable("memory ran short while serving");
+      const degraded = await pipeline.search({ text: "budget", limit: 5 });
+      expect(degraded.results.length).toBeGreaterThan(0);
+      expect(degraded.stages?.bm25?.status).toBe("ran");
+      expect(degraded.stages?.vector).toMatchObject({ status: "skipped" });
+      expect(degraded.stages?.vector?.reason).toMatch(
+        /^Semantic search degraded .*memory ran short while serving$/,
+      );
+      expect(degraded.stages?.fusion).toMatchObject({ method: "bm25-only" });
+      expect(calls).toBe(0);
+
+      pipeline.setVectorSearchUnavailable(null);
+      const restored = await pipeline.search({ text: "budget", limit: 5 });
+      expect(restored.stages?.vector?.status).toBe("ran");
+      expect(calls).toBe(1);
+    } finally {
+      closeTempDb(db);
+    }
+  });
+});
+
 describe("SearchPipeline (embedder attached — stage reporting)", () => {
+  test("search model identity follows live attachment, replacement and disablement", async () => {
+    const { db } = createTestDb();
+    try {
+      const pipeline = new SearchPipeline({ indexDb: db, embeddingModelId: "(none)" });
+      const embedder = {
+        async embed(texts: string[]) {
+          return texts.map(() => new Float32Array(EMBEDDING_DIM));
+        },
+        async embedQuery() {
+          return new Float32Array(EMBEDDING_DIM);
+        },
+      };
+      expect((await pipeline.search({ text: "workshop" })).models?.embedding).toBeUndefined();
+      pipeline.setEmbedder(embedder, "scripted-local-embedding");
+      expect((await pipeline.search({ text: "workshop" })).models?.embedding).toBe(
+        "scripted-local-embedding",
+      );
+      pipeline.setEmbedder(embedder, "scripted-http-embedding");
+      expect((await pipeline.search({ text: "workshop" })).models?.embedding).toBe(
+        "scripted-http-embedding",
+      );
+      pipeline.setEmbedder(undefined);
+      expect((await pipeline.search({ text: "workshop" })).models?.embedding).toBeUndefined();
+      pipeline.setEmbedder(embedder, "scripted-reenabled-embedding");
+      expect((await pipeline.search({ text: "workshop" })).models?.embedding).toBe(
+        "scripted-reenabled-embedding",
+      );
+    } finally {
+      closeTempDb(db);
+    }
+  });
+
   test("queryEmbedder is the attached search embedder, and none once cleared", () => {
     const { db } = createTestDb();
     const pipeline = new SearchPipeline({ indexDb: db });
@@ -824,7 +903,7 @@ describe("SearchPipeline (embedder attached — stage reporting)", () => {
         return new Float32Array(EMBEDDING_DIM);
       },
     };
-    pipeline.setEmbedder(embedder);
+    pipeline.setEmbedder(embedder, "scripted-embedding");
     expect(pipeline.queryEmbedder()).toBe(embedder);
     pipeline.setEmbedder(undefined);
     expect(pipeline.queryEmbedder()).toBeUndefined();
@@ -845,14 +924,17 @@ describe("SearchPipeline (embedder attached — stage reporting)", () => {
     // Mock embedder: produces a deterministic vector so the cosine-similarity
     // search returns something. We don't care about accuracy here — only that
     // the vector stage runs and the fusion stage reports as RRF.
-    pipeline.setEmbedder({
-      async embed(texts: string[]) {
-        return texts.map(() => new Float32Array(EMBEDDING_DIM).fill(0.01));
+    pipeline.setEmbedder(
+      {
+        async embed(texts: string[]) {
+          return texts.map(() => new Float32Array(EMBEDDING_DIM).fill(0.01));
+        },
+        async embedQuery() {
+          return new Float32Array(EMBEDDING_DIM).fill(0.01);
+        },
       },
-      async embedQuery() {
-        return new Float32Array(EMBEDDING_DIM).fill(0.01);
-      },
-    });
+      "scripted-embedding",
+    );
 
     const response = await pipeline.search({ text: "budget" });
     expect(response.stages!.bm25?.status).toBe("ran");
@@ -1163,14 +1245,17 @@ describe("SearchPipeline debug block", () => {
 
   test("debug reports the vector model 'ready' once an embedder is attached", async () => {
     const pipeline = new SearchPipeline({ indexDb: db });
-    pipeline.setEmbedder({
-      async embed(texts: string[]) {
-        return texts.map(() => new Float32Array(EMBEDDING_DIM).fill(0.01));
+    pipeline.setEmbedder(
+      {
+        async embed(texts: string[]) {
+          return texts.map(() => new Float32Array(EMBEDDING_DIM).fill(0.01));
+        },
+        async embedQuery() {
+          return new Float32Array(EMBEDDING_DIM).fill(0.01);
+        },
       },
-      async embedQuery() {
-        return new Float32Array(EMBEDDING_DIM).fill(0.01);
-      },
-    });
+      "scripted-embedding",
+    );
     const response = await pipeline.search({
       text: "budget",
       verbose: true,

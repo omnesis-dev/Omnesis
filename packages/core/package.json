@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/core",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "src/index.ts",
@@ -31,7 +31,7 @@
     "bonjour-service": "^1.4.4",
     "libphonenumber-js": "^1.13.15",
     "turndown": "^7",
-    "undici": "^8.12.2",
+    "undici": "^8.12.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {

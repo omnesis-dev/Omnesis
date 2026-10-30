@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterAll, expect, it } from "vitest";
 import {
   BrainBench,
@@ -23,12 +25,15 @@ afterAll(async () => {
 }, 60_000);
 
 it("reconsiders a joint decision once actual index publication fills its late search gap", async () => {
-  embedder = await startFakeEmbedderServer();
+  embedder = await startFakeEmbedderServer({ initiallyUnavailable: true });
   bench = await BrainBench.start({
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    extraInference: { backends: { publication: { type: "http", url: embedder.url } } },
+    extraInference: {
+      backends: { publication: { type: "http", url: embedder.url } },
+      assignments: { embedder: `publication/${embedder.modelId}` },
+    },
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
@@ -89,13 +94,23 @@ it("reconsiders a joint decision once actual index publication fills its late se
   );
   await bench.drainUntilQuiet({ includeUpcoming: false });
   const initial = completed()[0]!;
+  expect(embedder.embeddingRequestCount()).toBeGreaterThan(0);
+  expect(embedder.embedCount()).toBe(0);
+  const unpublished = new Database(join(bench.harness.getConfigDir(), "index.db"), {
+    readonly: true,
+  });
+  try {
+    expect(unpublished.prepare("SELECT COUNT(*) AS n FROM chunks").get()).toEqual({ n: 0 });
+  } finally {
+    unpublished.close();
+  }
   expect(initial.retrieval_boundary).toEqual(expect.any(String));
   expect(initial.retrieval_reconsidered).toBe(0);
   expect(initial.retry_at - initial.created_at).toBeGreaterThan(24 * 60 * 60 * 1000);
 
-  // Configure the existing fake inference backend through the real operator
-  // config path. No index watermark or Brain scheduling row is forged.
-  bench.harness.setEmbedderAssignment(`publication/${embedder.modelId}`);
+  // The configured backend becomes available. The gateway's production HTTP
+  // retry resumes actual indexing; no watermark or Brain scheduling row is forged.
+  embedder.release();
   await waitFor(
     "publication-backed joint reconsideration",
     () => (completed().length >= 2 ? true : null),
@@ -118,6 +133,17 @@ it("reconsiders a joint decision once actual index publication fills its late se
       )
       .all(id);
   expect(members(after[1]!.id)).toEqual(members(initial.id));
+  await bench.harness.refreshSearchSnapshot();
+  const published = await bench.harness.gatewayJson<{ results: Array<{ title: string }> }>(
+    "/search",
+    {
+      method: "POST",
+      body: JSON.stringify({ text: "observatory visitor", limit: 10 }),
+    },
+  );
+  expect(published.results.map((result) => result.title)).toEqual(
+    expect.arrayContaining(["Observatory access", "Observatory equipment"]),
+  );
   // Repeated publication/reconciliation ticks must not manufacture another
   // paid cohort, and a reconsidered no-page decision need not create a wiki.
   await bench.harness.refreshSearchSnapshot();

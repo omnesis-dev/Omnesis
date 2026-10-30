@@ -5,7 +5,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, vi } from "vitest";
-import { buildMediaDownloadMessage, withTimeout, isEagerEligible } from "./provider.js";
+import {
+  buildMediaDownloadMessage,
+  withTimeout,
+  isEagerEligible,
+  WhatsAppProvider,
+} from "./provider.js";
 import whatsappDefinition from "./index.js";
 import type { StoredMessage } from "./types.js";
 
@@ -215,5 +220,44 @@ describe("WhatsApp account discovery", () => {
     } finally {
       rmSync(configDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("WhatsAppProvider.importHistory — backup-kind dispatch", () => {
+  function newProvider(): WhatsAppProvider {
+    const dir = mkdtempSync(join(tmpdir(), "whatsapp-import-dispatch-"));
+    return new WhatsAppProvider("+15550100001", dir);
+  }
+
+  test("defaults to the iOS path when backupKind is absent (regression guard)", async () => {
+    const provider = newProvider();
+    await expect(provider.importHistory({})).rejects.toThrow(/backup folder path is required/i);
+  });
+
+  test('validates the iOS fields when backupKind is "ios"', async () => {
+    const provider = newProvider();
+    await expect(provider.importHistory({ backupKind: "ios" })).rejects.toThrow(
+      /backup folder path is required/i,
+    );
+    await expect(
+      provider.importHistory({ backupKind: "ios", backupPath: "/some/dir" }),
+    ).rejects.toThrow(/backup password is required/i);
+  });
+
+  test('validates the Android fields when backupKind is "android"', async () => {
+    const provider = newProvider();
+    await expect(provider.importHistory({ backupKind: "android" })).rejects.toThrow(
+      /msgstore\.db\.crypt15 file is required/i,
+    );
+    await expect(
+      provider.importHistory({ backupKind: "android", androidBackupPath: "/some/file" }),
+    ).rejects.toThrow(/backup key .* is required/i);
+  });
+
+  test("rejects an unrecognized backup kind before reaching the importer", async () => {
+    const provider = newProvider();
+    await expect(provider.importHistory({ backupKind: "bogus" })).rejects.toThrow(
+      /unknown backup kind: bogus/i,
+    );
   });
 });

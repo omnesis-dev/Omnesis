@@ -186,6 +186,12 @@ discovery targets, become ordinary `change` work of their own. A selected page
 keeps its exemption from the impact gate until it next changes. (Past 64 such dependents, every seed is retried
 whole instead.) Everything else is queued again at its current input revision.
 
+A run that dies on every attempt — the process ends mid-run each time, so no
+attempt settles it — stays `pending` at the drainer's attempts cap, where it can
+never be claimed again. Once its last claim is an hour old and it is not
+executing in this process, the maintenance tick settles it as failed and
+abandons its batch as for any failed run, so its region is free again.
+
 Only a failed run charges a failure, and only to work it was offered or settled
 without finishing; work the batch never reached is requeued as it was. Charged
 work waits `retryBackoff`, doubling per further failure up to `retryBackoffCap`,
@@ -324,8 +330,15 @@ any source of it is installed. Every consumer reads the list live
   `excluded_source` when its arguments name an excluded document, as an id, a
   list entry, an object key or a `source:<id>` reference in text; arguments too
   large or deep to check are refused too. No new loop, annotation, temporal
-  annotation or page claim can rest on one. A `knowledge_save` may carry the
-  page's existing citations of an excluded document through unchanged.
+  annotation or page claim can rest on one. A `knowledge_save` or
+  `knowledge_edit` may carry a claim that already cites an excluded document
+  through unchanged — the same text, references and claim state as the
+  revision it names; the resulting page is compared claim by claim, so a new or
+  changed claim citing one is refused even when the call never names the
+  document, before the verifier could read it. The save never shows the
+  verifier a claim whose supporting references include an excluded document:
+  it keeps its verification only while its stored one still holds, and is
+  otherwise saved unverified, unexamined (`knowledge/service.ts`).
 - **Maintenance.** A run cannot re-check a claim that cites an excluded
   document, and that is not evidence against the claim. While none of the
   claim's own references changed, maintenance does not offer it for review: the
@@ -333,6 +346,14 @@ any source of it is installed. Every consumer reads the list live
   offering the page (`knowledge/unreadable-support.ts`), and the run keeps it
   unchanged when it saves the page. A claim whose own reference changed or was
   deleted is still offered, because a real change is the Brain's to judge.
+  The wiki value and factual-repair judgement a page save asks for is not shown
+  an excluded reference's text, only counted among omitted references. An
+  outcome judgement (a loop's creation, update or synthesis save) is judged on
+  its readable linked documents only; with none left it has no source context
+  and is recorded unavailable without a model call, as for missing evidence. The
+  morning recheck does not show the salience gate an excluded citation, and an
+  observation citing one ships with its claims unchecked rather than going to
+  the verifier.
 
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain
@@ -1187,12 +1208,20 @@ policy. Resuming revisits changed inputs and explicitly deferred work.
 
 ## When a provider fails
 
-A failure is judged by what it blames. A malformed or over-long payload is the
-request's fault, and its run retires after its retry budget. Anything else —
-no credit, a rejected key, a rate limit, an unreachable backend — is the
-environment's fault, and the run **keeps its place**: its attempt is refunded
-and it waits, because the same payload will succeed once the environment is
-repaired.
+A failure is judged by what it blames. A malformed or over-long payload, or one
+a content filter stopped, is the request's fault, and its run retires after its
+retry budget. Anything else — no credit, a rejected key, a rate limit, an
+unreachable backend, a signed-out, missing or outdated Claude Code, an unknown
+model, invalid reasoning controls, a server whose context length cut the prompt
+— is the environment's fault, and the run **keeps its place**: its attempt is
+refunded and it waits, because the same payload will succeed once the
+environment is repaired.
+
+Backends say which is which on their terminal failure: `retryable: false` is
+reserved for failures the same payload can never get past (it no longer fits,
+it ran out of output, a filter refused it). A fault only an operator can clear
+is still `retryable`, since the run succeeds unchanged after the repair; an
+interactive turn fails at once either way, with the message naming the fix.
 
 After three consecutive backend failures the drainer stops claiming altogether
 and backs off from one minute to fifteen. The Bootstrap panel shows a **Model

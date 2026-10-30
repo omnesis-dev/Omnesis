@@ -150,10 +150,9 @@ it("retains original mirror document IDs until index deletion acknowledges clean
       const removed: string[] = [];
       for (const id of ids) {
         const row = db
-          .prepare<
-            [string, string],
-            { id: string }
-          >("SELECT id FROM documents WHERE source_id=? AND external_id=?")
+          .prepare<[string, string], { id: string }>(
+            "SELECT id FROM documents WHERE source_id=? AND external_id=?",
+          )
           .get(source, id);
         if (row) {
           removed.push(row.id);

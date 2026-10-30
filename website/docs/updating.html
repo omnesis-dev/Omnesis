@@ -273,8 +273,7 @@
           Source updates check the target checkout's Node requirement before changing the checkout
           or stopping services. If the installed Node version is unsupported, upgrade Node, ensure
           <code>node</code> and <code>npm</code> select it on <code>PATH</code>, then rerun
-          <code>omnesis update</code>. Package installations retain their Node 24 runtime
-          requirement.
+          <code>omnesis update</code>. Package installations need only Node 24 or newer.
         </p>
         <p>
           <code>omnesis update</code> moves a machine to the newest stable release and restarts what
@@ -391,6 +390,16 @@
           Skip that backup with <code>--no-backup</code> only when you have taken one yourself.
         </p>
         <p>
+          An older release does not know the settings a newer one added, and drops them from
+          <code>omnesis.json</code> the next time it changes the configuration, for example when you
+          add a source or assign a model. So before a rollback or a move to an older release, the
+          update saves the configuration beside it as <code>omnesis.json.newer-settings</code>. When
+          a release that knows those settings next starts its gateway, it puts back each one the
+          configuration lacks, logs which, and removes the saved copy. A setting you changed on the
+          older release keeps your change. A setting the older release knew and you removed there is
+          also put back, because the gateway cannot tell it from one that release dropped.
+        </p>
+        <p>
           If the update was cut short by a power loss or a forced kill, run
           <code>omnesis update</code> again: it notices the unfinished run, says what it will do,
           and completes or repeats it.
@@ -398,14 +407,12 @@
         <p>
           On a machine with less than about 5 GB of memory in total (or a container limited to
           less), a source build (which needs at least 3 GB for itself and about 2 GB beside it)
-          stops this account's collector while it builds and starts it again afterwards; the gateway
-          keeps serving. If the system stops the gateway for memory instead, it stays down until the
-          build is in place, and the update's own restart brings it up on the new release, however
-          often its service manager had tried to start it meanwhile. If the build is still killed,
-          the update says the machine most likely ran out of memory and rolls back. Stop the
-          collector and gateway (<code>omnesis service stop collector</code>,
-          <code>omnesis service stop gateway</code>), add swap or free memory, and run
-          <code>omnesis update</code> again.
+          stops this account's collector and gateway while it builds. The gateway is down until the
+          build is in place, and the update's own restart brings it up on the new release; the
+          collector starts again afterwards. If the build is still killed, the update says the
+          machine most likely ran out of memory and rolls back. Stop the collector and gateway
+          (<code>omnesis service stop collector</code>, <code>omnesis service stop gateway</code>),
+          add swap or free memory, and run <code>omnesis update</code> again.
         </p>
         <p>
           On a source install, <code>npm ci</code> installs over the <code>node_modules</code> the
@@ -457,8 +464,8 @@
               <tr>
                 <td><code>--edge</code></td>
                 <td>
-                  Follows the <code>main</code> branch instead of stable releases (source and Docker
-                  installs).
+                  Follows the <code>main</code> branch instead of stable releases (source installs).
+                  A Docker install refuses it.
                 </td>
               </tr>
               <tr>
@@ -493,9 +500,10 @@
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
                   are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote. An OpenClaw or Hermes plugin that has followed a certificate renewal
-                  stops connecting when moved back to a release whose plugin pins the certificate;
-                  afterwards, run
+                  one wrote. Settings it does not know are saved for the next upgrade, as described
+                  under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes plugin
+                  that has followed a certificate renewal stops connecting when moved back to a
+                  release whose plugin pins the certificate; afterwards, run
                   <code
                     >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
                     sha256:&lt;served&gt;</code
@@ -562,7 +570,9 @@
           sidebar and in <code>omnesis doctor</code>; failures say nothing. The check never
           downloads or installs anything. What each release changes is in the
           <a href="https://github.com/omnesis-dev/Omnesis/releases">release notes</a> and the
-          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CHANGELOG.md">changelog</a>.
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/packages/cli/CHANGELOG.md"
+            >changelog</a
+          >.
         </p>
         <p>
           It does tell that Git host or registry the gateway's network address. Omnesis adds no
@@ -720,15 +730,51 @@
           recorded beside the Compose file and pulling the new images; the backup runs after the
           pull, while the gateway still serves the previous image. Rolling back is quick: the
           previous tag is written back, and its image is still on the machine.
-          <code>--target-version</code> pins a release tag, and <code>--edge</code> follows the
-          images built from the main branch.
+          <code>--target-version</code> pins a release tag. A Docker install follows releases only,
+          so it refuses <code>--edge</code> before anything changes.
+        </p>
+        <p>
+          To run an exact commit in Docker, a maintainer publishes its gateway, collector and
+          updater images with the repository's <code>docker-publish</code> workflow, which tags them
+          <code>sha-&lt;short-commit&gt;</code>; there is no combined image for a commit. Pin that
+          tag on a host that runs the gateway and collector as separate containers, then pull and
+          recreate them:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >sed -i.bak 's/^OMNESIS_IMAGE_TAG=.*/OMNESIS_IMAGE_TAG=sha-0123abc/'
+                ~/.config/omnesis/.env</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >docker compose -f ~/.config/omnesis/docker-compose.yml --profile update pull</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >docker compose -f ~/.config/omnesis/docker-compose.yml up -d --force-recreate</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Back up first, with <code>omnesis backup --note pre-upgrade</code>: a commit image can
+          carry migrations no release has.
         </p>
         <p>
           The update runs in a short-lived updater container that holds the Docker socket for that
           one run. The socket gives root-equivalent control of the host, which is why the
           long-running gateway and collector containers never hold it. If a run is interrupted, run
           <code>omnesis update</code> again; it checks what the gateway actually serves before
-          trusting the recorded tag.
+          trusting the recorded tag. A host that only collects has no gateway to ask, so there it
+          checks the tag Docker started the collector container from.
         </p>
 
         <p>
@@ -835,9 +881,11 @@
         <h2 id="compatibility">Version compatibility</h2>
         <p>
           Every Omnesis release and app build shares one product version, and each device reports
-          its own when it connects. The gateway compares it with its own version and with the oldest
-          build it still supports for that kind of device. <code>omnesis devices list</code>, the
-          portal's Devices page and <code>omnesis doctor</code> all show the same verdict:
+          its own when it connects; the browser extension, which holds no connection open, reports
+          it with its uploads and periodic checks. The gateway compares it with its own version and
+          with the oldest build it still supports for that kind of device.
+          <code>omnesis devices list</code>, the portal's Devices page and
+          <code>omnesis doctor</code> all show the same verdict:
         </p>
         <div class="table-wrap">
           <table>
@@ -891,7 +939,9 @@
           gateway's version before pairing and refuses only a gateway older than the oldest one its
           page capture works with; a newer extension on an older gateway keeps capturing pages and
           simply does not offer what that gateway lacks. Within a minor release, what the gateway
-          accepts only grows, which is why the gateway is always updated first.
+          accepts only grows, which is why the gateway is always updated first. A CLI that has not
+          been updated yet keeps working against it: a model backend, certificate source or other
+          value newer than the CLI is shown by its name instead of stopping the command.
         </p>
         <p>
           <code>GET /health</code> needs no token and returns the gateway's version and a

@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   NODE_GYP_HEADERS_SCRIPT,
   prepareNodeGypHeaders,
@@ -260,6 +260,37 @@ describe("prepareNodeGypHeaders", () => {
     });
     expect(calls[1]).toEqual(["node", "-e", NODE_GYP_HEADERS_SCRIPT, ""]);
   });
+
+  test.skipIf(process.platform === "win32")(
+    "runs npm and the header fetch with the preload that keeps distrusted roots out",
+    async () => {
+      // Stand-ins on PATH that record the NODE_OPTIONS node-gyp would inherit.
+      const bin = mkdtempSync(join(tmpdir(), "omnesis-node-gyp-trust-"));
+      scratch.push(bin);
+      const log = join(bin, "log");
+      for (const tool of ["npm", "node"]) {
+        writeFileSync(
+          join(bin, tool),
+          `#!/bin/sh\nprintf '%s %s\\n' ${tool} "$NODE_OPTIONS" >> '${log}'\n`,
+          { mode: 0o755 },
+        );
+      }
+      vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+      vi.stubEnv("NODE_OPTIONS", "--max-old-space-size=512");
+      try {
+        await prepareNodeGypHeaders(bin);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      const lines = readFileSync(log, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(line).toMatch(
+          /^(npm|node) --max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
+        );
+      }
+    },
+  );
 });
 
 describe("the installer's copies", () => {

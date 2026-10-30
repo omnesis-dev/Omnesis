@@ -21,11 +21,7 @@ type Db = Database.Database;
  */
 
 type RefreshJob =
-  | "link_graph"
-  | "interaction_scores"
-  | "merge_rules"
-  | "near_dup_df"
-  | "people_counts";
+  "link_graph" | "interaction_scores" | "merge_rules" | "near_dup_df" | "people_counts";
 
 function bumpDirtyState(db: Db, job: RefreshJob, withNeedsRefresh: boolean): void {
   // UPSERT — not just UPDATE — so the mark self-heals when the

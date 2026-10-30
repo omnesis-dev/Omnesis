@@ -119,10 +119,9 @@ export function issueSubscriptionFiringAnswerAuthority(
     );
     if (authorityExpiresAt <= input.createdAt) return { outcome: "expired" } as const;
     const token = db
-      .prepare<
-        [string, string],
-        { scopes: string; expires_at: number | null }
-      >("SELECT scopes, expires_at FROM tokens WHERE id = ? AND device_id = ?")
+      .prepare<[string, string], { scopes: string; expires_at: number | null }>(
+        "SELECT scopes, expires_at FROM tokens WHERE id = ? AND device_id = ?",
+      )
       .get(input.tokenId, row.integration_device_id);
     if (!token) return { outcome: "token_unavailable" } as const;
     let scopes: unknown;

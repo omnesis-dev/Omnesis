@@ -4,10 +4,18 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stripVTControlCharacters } from "node:util";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { CATALOG, CATALOG_ROLE_CAPABILITY, catalogForRole, MODEL_ROLES } from "@omnesis/core";
 import { omnesisConfigSchema } from "@omnesis/config";
-import { buildCatalogListing, modelReadyHint, readAssignedModelId } from "./model.js";
+
+vi.mock("../utils.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils.js")>();
+  return { ...actual, gatewayJson: vi.fn() };
+});
+
+import { gatewayJson } from "../utils.js";
+import { buildCatalogListing, modelCommand, modelReadyHint, readAssignedModelId } from "./model.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 describe("buildCatalogListing", () => {
@@ -164,5 +172,85 @@ describe("modelReadyHint", () => {
     const hint = modelReadyHint(apiEntry!, none);
     expect(hint).toContain(` ${apiEntry!.id}`);
     expect(hint).not.toContain(`local/${apiEntry!.id}`);
+  });
+});
+
+describe("an assignment kind this CLI does not know", () => {
+  // A newer gateway may resolve an assignment to a backend kind added after
+  // this CLI shipped. It reaches the CLI as JSON, so the CLI has to render it.
+  const future = {
+    role: "agent",
+    kind: "future",
+    model: "fictional-model",
+    available: true,
+  } as unknown as ResolvedAssignment;
+  const agentEntry = CATALOG.find((e) => e.roles.includes("agent"))!;
+  const embedEntry = CATALOG.find((e) => e.roles.includes("embed"))!;
+  const overview = {
+    catalog: [agentEntry, embedEntry],
+    installed: [],
+    inference: { assignments: { embedder: future, agent: future, transcriber: future } },
+    capabilities: [{ role: "agent", section: "core" }],
+    activeDownloads: [],
+  };
+  const systemInfo = {
+    platform: "linux",
+    arch: "arm64",
+    cpuModel: "Example CPU",
+    cpuCount: 8,
+    totalRamGb: 32,
+    freeRamGb: 16,
+    metalSupported: false,
+    cudaSupported: false,
+    modelsDir: "/srv/omnesis/models",
+    modelsDirFreeGb: 100,
+  };
+  let printed: string[];
+
+  function subCommand(name: string) {
+    const commands = modelCommand.subCommands as Record<
+      string,
+      { run: (context: { args: Record<string, unknown> }) => Promise<void> }
+    >;
+    return commands[name]!;
+  }
+
+  beforeEach(() => {
+    printed = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      printed.push(stripVTControlCharacters(String(line ?? "")));
+    });
+    (gatewayJson as Mock).mockImplementation((path: string) =>
+      Promise.resolve(path === "/admin/system-info" ? systemInfo : overview),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists every model, marking none as active", async () => {
+    await subCommand("list").run({ args: { available: true } });
+    const rows = printed.filter(
+      (line) => line.includes(agentEntry.id) || line.includes(embedEntry.id),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.join("\n")).not.toContain("★");
+  });
+
+  it("shows the role with the kind it reports", async () => {
+    await subCommand("status").run({ args: {} });
+    expect(printed.find((line) => line.trimStart().startsWith("agent"))).toMatch(
+      /agent\s+future: fictional-model/,
+    );
+  });
+
+  it("still offers to assign a model to the role", () => {
+    const hint = modelReadyHint(agentEntry, {
+      embedder: future,
+      agent: future,
+      transcriber: future,
+    });
+    expect(hint).toContain("omnesis model assign");
   });
 });

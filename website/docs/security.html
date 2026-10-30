@@ -446,8 +446,7 @@
 The dedicated gateway runs from a copy of Omnesis that root fetches and owns, so
 installing it takes one command as root:
 
-  curl -fsSL https://omnesis.dev/hardened-gateway.sh | sudo sh -s -- install --version X.Y.Z</pre
-            >
+  curl -fsSL https://omnesis.dev/hardened-gateway.sh | sudo sh -s -- install --version X.Y.Z</pre>
           </div>
         </div>
         <p>Run as root, that command:</p>
@@ -474,11 +473,13 @@ installing it takes one command as root:
           </li>
         </ol>
         <p>
-          It needs git and a Node 24 that only root can change, such as your distribution's under
+          It needs git and a Node that only root can change, such as your distribution's under
           <code>/usr</code>; a Node installed in a home directory (through nvm, for example) is
-          refused. <code>--no-keyring</code> installs without encryption at rest, and
-          <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies into
-          <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
+          refused. The release is built from source, so use a Node the
+          <a href="/docs/install#requirements">source install</a> supports: 24.16 or newer within
+          Node 24, or 26.1 or newer. <code>--no-keyring</code> installs without encryption at rest,
+          and <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies
+          into <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
         </p>
         <p>
           It is a new gateway, never your existing one moved: devices pair with it again and sources
@@ -632,8 +633,7 @@ Certificate  expiring
   valid until  2026-10-02T09:14:00.000Z (18 days remaining)
   names        studio.tail-example.ts.net
   renewal      automatic, 30 days before expiry
-  last attempt 2026-09-14T03:00:12.000Z failed: `tailscale cert` failed: HTTPS is not enabled for this tailnet</pre
-            >
+  last attempt 2026-09-14T03:00:12.000Z failed: `tailscale cert` failed: HTTPS is not enabled for this tailnet</pre>
           </div>
         </div>
         <p>
@@ -711,6 +711,20 @@ Certificate  expiring
           lose its connection when the gateway renews its certificate, with the date and how to make
           it verify by name instead or the update that lets it follow, and a device that has not
           connected since a renewal, with the command that brings it back.
+        </p>
+
+        <h3 id="public-roots">Public root certificates</h3>
+        <p>
+          The gateway, collector and CLI verify public names with the root certificates Node.js
+          bundles. Node.js checks no certificate revocation and reads no browser blocklist, so a
+          root that Mozilla removes stays trusted until Node.js ships a newer set. Omnesis does not
+          trust roots that Mozilla has removed but the installed Node.js still bundles; this needs
+          Node.js 24.5 or later. The npm runs and Node.js header downloads that the installer, the
+          <code>omnesis</code> launcher, <code>omnesis update</code> and the hardened gateway's
+          release build start do not trust them either, unless npm is configured with its own
+          <code>ca</code> or <code>cafile</code>. Keep Node.js current all the same. Tools outside
+          Omnesis, such as <code>curl</code> and <code>git</code>, use the operating system's store,
+          so keep the operating system's CA certificates current too.
         </p>
 
         <nav class="docs-pager" aria-label="Pages">

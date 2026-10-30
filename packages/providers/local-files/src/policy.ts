@@ -154,8 +154,7 @@ export const MIN_FILE_BYTES = 1;
 
 /** Outcome of classifying one directory entry. */
 export type EntryVerdict =
-  | { kind: "index"; mimeType: string; via: "text" | "extract" }
-  | { kind: "skip"; reason: string };
+  { kind: "index"; mimeType: string; via: "text" | "extract" } | { kind: "skip"; reason: string };
 
 function extensionOf(basename: string): string {
   const dot = basename.lastIndexOf(".");

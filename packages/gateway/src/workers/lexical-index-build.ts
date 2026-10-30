@@ -28,8 +28,7 @@ export interface LexicalIndexBuildInit {
 }
 
 export type LexicalIndexBuildToMain =
-  | { type: "done"; data: LexicalIndexData; ms: number }
-  | { type: "error"; error: string };
+  { type: "done"; data: LexicalIndexData; ms: number } | { type: "error"; error: string };
 
 export interface LexicalIndexBuildOptions extends LexicalIndexBuildInit {
   workerUrl: URL;

@@ -152,10 +152,9 @@ it("associates the actual coalesced work and distinguishes proposed policy sched
   };
   associateKnowledgeUrgency(db, input, actual);
   const row = db
-    .prepare<
-      [],
-      { work_id: string; scheduling_json: string }
-    >("SELECT work_id,scheduling_json FROM knowledge_decisions")
+    .prepare<[], { work_id: string; scheduling_json: string }>(
+      "SELECT work_id,scheduling_json FROM knowledge_decisions",
+    )
     .get()!;
   expect(row.work_id).toBe("existing");
   expect(JSON.parse(row.scheduling_json)).toMatchObject({

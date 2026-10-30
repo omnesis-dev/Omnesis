@@ -24,11 +24,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# A newer push to a pull request replaces its run: only the newest revision
+# can merge. Every push to `main` keeps its own run, keyed by commit, so a burst
+# of merges leaves no commit of `main` untested and a red verdict names the
+# merge that caused it.
 concurrency:
   group: >-
     full-validation-${{ github.event_name == 'pull_request'
     && format('pr-{0}', github.event.pull_request.number)
-    || format('{0}-{1}', github.event_name, github.ref) }}
+    || format('{0}-{1}-{2}', github.event_name, github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -38,12 +42,17 @@ jobs:
   # Which lanes this run executes (scripts/nx/ci-scope.mjs). A push to main or
   # a manual run executes every lane, so nothing reaches main's verdict
   # untested. A pull request runs the Node lanes the Nx affected plan selects
-  # for its merge commit — the same plan as `npm run checks:plan` — and the
-  # native, install, Docker, harness and security lanes whose paths it touches.
-  # A shared input (lockfile, manifests, root configs, workflows, packages/core,
-  # the check runners), an unsupported path, or a planner failure runs
-  # everything. The macOS lanes stay path-scoped rather than graph-scoped:
-  # GitHub gives the repository only a few macOS runners at a time.
+  # for its merge commit — the same plan as `npm run checks:plan` — the Android
+  # lane when that plan selects an Android bundle, and the native, install,
+  # Docker, harness and security lanes whose paths it touches. A shared input
+  # (lockfile, manifests, root configs, workflows, packages/core, the check
+  # runners), an unsupported path, or a planner failure runs every Linux lane.
+  # The macOS lanes (the macOS Node lane, the Swift linters, iOS, the Android
+  # screenshots, the Mac installer) run on a pull request only for the paths
+  # they cover, never for a shared input: GitHub gives the repository only a
+  # few macOS runners at a time, and main runs them on every push. The one
+  # exception is iOS, which also runs when the plan selects an iOS bundle for
+  # a gateway wire path the app decodes.
   scope:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -58,6 +67,7 @@ jobs:
       node_macos: ${{ steps.scope.outputs.node_macos }}
       knip: ${{ steps.scope.outputs.knip }}
       apple: ${{ steps.scope.outputs.apple }}
+      swift_lint: ${{ steps.scope.outputs.swift_lint }}
       android: ${{ steps.scope.outputs.android }}
       android_render: ${{ steps.scope.outputs.android_render }}
       docker_image: ${{ steps.scope.outputs.docker_image }}
@@ -116,7 +126,7 @@ jobs:
 
   swift:
     needs: scope
-    if: ${{ needs.scope.outputs.apple == 'true' }}
+    if: ${{ needs.scope.outputs.swift_lint == 'true' }}
     uses: ./.github/workflows/swiftlint.yml
     with:
       target_sha: ${{ github.sha }}
@@ -225,7 +235,7 @@ jobs:
             const pr = process.env.EVENT === "pull_request";
             const switches = {
               knip: "knip",
-              swift: "apple",
+              swift: "swift_lint",
               ios: "apple",
               android: "android",
               "docker-smoke": "docker_smoke",

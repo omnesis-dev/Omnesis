@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -16,13 +24,19 @@ const roots = [];
 const definition = (name) => {
   const at = installer.indexOf(`${name}() {`);
   if (at < 0) throw new Error(`Missing installer function ${name}`);
-  return installer.slice(at, installer.indexOf("\n}\n", at) + 3);
+  // The preload heredoc holds lines of its own that close with "}".
+  const end = name === "npm_trust_preload" ? "\nEOF\n}\n" : "\n}\n";
+  return installer.slice(at, installer.indexOf(end, at) + end.length);
 };
 const functions = [
   "node_install_compatible",
   "find_brew",
   "ensure_node",
   "prepare_node_for_install",
+  "cleanup_temp_files",
+  "npm_trust_preload",
+  "with_npm_trust",
+  "npm",
 ]
   .map(definition)
   .join("\n");
@@ -46,6 +60,7 @@ function run(
     command = "prepare_node_for_install",
     manager = "apt",
     forceColor,
+    nodesourceCleans = false,
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-source-node-"));
@@ -72,12 +87,30 @@ function run(
     `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$1" in --prefix) printf '%s\\n' '${prefix}' ;; upgrade|install) printf '%s' '${upgrade}' > '${kegFile}' ;; esac\n`,
   );
   if (manager === "apt") executable(join(bin, "apt-get"), "#!/bin/sh\nexit 99\n");
+  if (nodesourceCleans) {
+    for (const tool of ["cat", "mkdir", "rm", "sed"]) {
+      const path = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout;
+      symlinkSync(path.trim(), join(bin, tool));
+    }
+    // A mktemp whose directories hold a space, as GNU mktemp gives under such a
+    // TMPDIR: NODE_OPTIONS splits on spaces, so the preload URL must not.
+    executable(
+      join(bin, "mktemp"),
+      `#!/bin/sh\nn=$(cat '${dir}/mktemp-n' 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > '${dir}/mktemp-n'\nd='${dir}/tmp with space #'"$n"\nmkdir "$d" && printf '%s\\n' "$d"\n`,
+    );
+    // A stand-in npm that records whether the preload URL it is given is one
+    // NODE_OPTIONS keeps whole and names a file that exists.
+    executable(
+      join(bin, "npm"),
+      `#!/bin/sh\npreload=$(printf '%s' "\${NODE_OPTIONS##*--import=file://}" | sed 's/%20/ /g; s/%23/#/g; s/%3F/?/g; s/%25/%/g')\ncase "\${NODE_OPTIONS##*--import=}" in *" "*) preload=; esac\nif [ -f "$preload" ]; then echo "npm preload ok" >> '${calls}'; else echo "npm preload missing" >> '${calls}'; fi\n`,
+    );
+  }
   if (manager === "dnf")
     executable(
       join(bin, "dnf"),
       `#!/bin/sh\nprintf 'dnf %s\\n' "$*" >> '${calls}'\nprintf '%s' '${upgrade}' > '${currentFile}'\n`,
     );
-  const script = `${functions}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_nodesource_setup() { printf 'setup %s\\n' "$*" >> '${calls}'; }\napt_get() { printf 'apt %s\\n' "$*" >> '${calls}'; printf '%s' '${upgrade}' > '${currentFile}'; }\nrun_privileged() { "$@"; }\nresolve_method() { METHOD='${resolved}'; }\nMETHOD='${method}'\nPLATFORM='${platform}'\n${command}\n`;
+  const script = `${functions}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_nodesource_setup() { printf 'setup %s\\n' "$*" >> '${calls}';${nodesourceCleans ? " cleanup_temp_files;" : ""} }\napt_get() { printf 'apt %s\\n' "$*" >> '${calls}'; printf '%s' '${upgrade}' > '${currentFile}'; }\nrun_privileged() { "$@"; }\nresolve_method() { METHOD='${resolved}'; }\nMETHOD='${method}'\nPLATFORM='${platform}'\n${command}\n`;
   const result = spawnSync("/bin/sh", ["-eu", "-c", script], {
     encoding: "utf8",
     env: {
@@ -167,4 +200,21 @@ describe("installer source Node requirements", () => {
       );
     },
   );
+});
+
+describe("installer npm trust preload", () => {
+  test("an npm after a NodeSource install still gets the preload", () => {
+    // run_nodesource_setup ends with cleanup_temp_files, which removes the
+    // preload directory mid-run; the next npm must not reuse its dead path.
+    const result = run("22.0.0", {
+      platform: "linux",
+      upgrade: "24.22.1",
+      nodesourceCleans: true,
+      command: 'NPM_TRUST_DIR=""; ensure_node; npm view omnesis version; cleanup_temp_files',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toContain("setup https://deb.nodesource.com/setup_24.x");
+    expect(result.calls).toContain("npm preload ok");
+    expect(result.calls).not.toContain("npm preload missing");
+  });
 });

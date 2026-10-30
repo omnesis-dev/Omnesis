@@ -6,8 +6,10 @@
  * Splits documents into embeddable chunks based on document type.
  */
 
-import { deriveAuthor } from "@omnesis/core";
+import { deriveAuthor, readConversationTurns, renderConversationTurn } from "@omnesis/core";
+import { normalizeContent } from "./normalize.js";
 import { buildEmbeddingInput, buildEmbeddingPreamble } from "./embedding-input.js";
+import type { ConversationTurn } from "@omnesis/core";
 import type { Chunker, Chunk, IndexableDocument } from "./types.js";
 
 const DEFAULT_CHUNK_SIZE = 2048; // ~512 tokens in chars
@@ -31,6 +33,18 @@ export class DocumentChunker implements Chunker {
   chunk(doc: IndexableDocument): Chunk[] {
     const type = doc.metadata.documentType ?? "unknown";
     const preamble = this.buildPreamble(doc);
+
+    const turns =
+      type === "conversation"
+        ? readConversationTurns(doc.content, doc.metadata.extra?.conversationTurns)
+        : null;
+    if (turns) {
+      return this.splitStructuredConversation(turns).map((text, index) => ({
+        index,
+        text,
+        embeddingInput: buildEmbeddingInput(preamble, text),
+      }));
+    }
 
     // Short documents: single chunk
     if (doc.content.length <= this.chunkSize) {
@@ -64,6 +78,71 @@ export class DocumentChunker implements Chunker {
       text,
       embeddingInput: buildEmbeddingInput(preamble, text),
     }));
+  }
+
+  /** Every retrieval slice carries its own author and an unbreakable literal body. */
+  private splitStructuredConversation(turns: ConversationTurn[]): string[] {
+    const chunks: string[] = [];
+    let current = "";
+    const append = (block: string) => {
+      if (current && current.length + 2 + block.length > this.chunkSize) {
+        chunks.push(current);
+        current = "";
+      }
+      current = current ? `${current}\n\n${block}` : block;
+    };
+    for (const original of turns) {
+      const turn = {
+        ...original,
+        text: normalizeContent(original.text),
+        author: {
+          ...original.author,
+          ...(original.author.name === undefined
+            ? {}
+            : { name: normalizeContent(original.author.name) }),
+        },
+      };
+      let offset = 0;
+      do {
+        // Fence overhead depends on the slice itself, including adversarial runs
+        // of backticks. Binary search keeps the complete rendered block bounded.
+        const remaining = turn.text.length - offset;
+        let low = 0;
+        let high = Math.min(remaining, this.chunkSize);
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          const block = renderConversationTurn({
+            ...turn,
+            text: turn.text.slice(offset, offset + middle),
+          });
+          if (block.length <= this.chunkSize) low = middle;
+          else high = middle - 1;
+        }
+        // UTF-16 offsets are the stored contract, but text slices must not cut
+        // between the two code units of an astral character.
+        const splitsPair = (at: number) =>
+          at > 0 &&
+          at < turn.text.length &&
+          /[\uD800-\uDBFF]/.test(turn.text[at - 1]) &&
+          /[\uDC00-\uDFFF]/.test(turn.text[at]);
+        if (splitsPair(offset + low)) low--;
+        const block = renderConversationTurn({
+          ...turn,
+          text: turn.text.slice(offset, offset + low),
+        });
+        if (block.length > this.chunkSize || (remaining > 0 && low === 0)) {
+          throw new Error("Conversation author header exceeds chunk size");
+        }
+        append(block);
+        if (low === remaining) break;
+        // Bounded overlap prevents tiny slices from degenerating to one-character
+        // progress while preserving useful nearby text, always inside a new fence.
+        offset += low - Math.min(this.overlap, Math.floor(low / 4));
+        if (splitsPair(offset)) offset++;
+      } while (offset < turn.text.length);
+    }
+    if (current) chunks.push(current);
+    return chunks;
   }
 
   private buildPreamble(doc: IndexableDocument): string {

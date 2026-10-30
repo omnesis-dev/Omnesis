@@ -18,7 +18,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
-  assertNever,
   CATALOG,
   CATALOG_ROLE_CAPABILITY,
   catalogForRole,
@@ -85,7 +84,10 @@ async function getSystemInfo(): Promise<SystemInfo> {
   return gatewayJson<SystemInfo>("/admin/system-info");
 }
 
-/** Extract the active catalog id from a resolved assignment. */
+/**
+ * Extract the active catalog id from a resolved assignment. The assignment is
+ * the gateway's, so a kind added after this CLI shipped names no catalog entry.
+ */
 function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
   switch (resolved.kind) {
     case "local":
@@ -106,8 +108,10 @@ function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
       return undefined;
     case "typesafe":
       return undefined;
-    default:
-      return assertNever(resolved);
+    default: {
+      const _exhaustive: never = resolved;
+      return undefined;
+    }
   }
 }
 
@@ -652,8 +656,18 @@ const modelAssignCommand = defineCommand({
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
+      // The gateway's refusal carries the reason as `error` (an assignment it
+      // can already tell will not work, such as a transcriber on a backend
+      // with no transcription endpoint). Show that sentence, not the envelope.
+      let message = txt;
+      try {
+        const parsed = JSON.parse(txt) as { error?: unknown };
+        if (typeof parsed.error === "string") message = parsed.error;
+      } catch {
+        /* not JSON — show the raw body */
+      }
       throw new CliError(
-        `${c.red}Assign rejected: ${res.status} ${txt}${c.reset}`,
+        `${c.red}Assign rejected: ${res.status} ${message}${c.reset}`,
         pickGatewayExitCode(res.status),
       );
     }
@@ -755,6 +769,11 @@ const modelStatusCommand = defineCommand({
   },
 });
 
+/** An assignment of a kind added after this CLI shipped, as the gateway reported it. */
+function unknownAssignmentLabel(resolved: { kind: string; model?: unknown }): string {
+  return typeof resolved.model === "string" ? `${resolved.kind}: ${resolved.model}` : resolved.kind;
+}
+
 function printRoleLine(
   role: string,
   resolved: ResolvedAssignment,
@@ -776,7 +795,9 @@ function printRoleLine(
               ? `Claude Code: ${resolved.model}`
               : resolved.kind === "typesafe"
                 ? `TypeSafe: ${resolved.model}`
-                : "(none)";
+                : resolved.kind === "unresolved"
+                  ? "(none)"
+                  : unknownAssignmentLabel(resolved);
   const available =
     resolved.kind === "replay" ||
     (resolved.kind !== "disabled" && resolved.kind !== "unresolved" && resolved.available);

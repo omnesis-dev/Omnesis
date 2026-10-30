@@ -34,19 +34,17 @@ afterEach(() => {
 
 function selfRow(): { id: string; canonical_name: string } | undefined {
   return db
-    .prepare<
-      [],
-      { id: string; canonical_name: string }
-    >("SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL")
+    .prepare<[], { id: string; canonical_name: string }>(
+      "SELECT id, canonical_name FROM people WHERE is_self = TRUE AND merged_into IS NULL",
+    )
     .get();
 }
 
 function aliasesOf(id: string): Array<{ alias: string; alias_type: string }> {
   return db
-    .prepare<
-      [string],
-      { alias: string; alias_type: string }
-    >("SELECT alias, alias_type FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias")
+    .prepare<[string], { alias: string; alias_type: string }>(
+      "SELECT alias, alias_type FROM person_aliases WHERE person_id = ? ORDER BY alias_type, alias",
+    )
     .all(id);
 }
 

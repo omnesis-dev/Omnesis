@@ -42,10 +42,9 @@ interface PeopleRow {
 
 function peopleRows(d: Db): PeopleRow[] {
   return d
-    .prepare<
-      [],
-      PeopleRow
-    >("SELECT loop_id, person_id, role FROM open_loop_people ORDER BY loop_id, role, person_id")
+    .prepare<[], PeopleRow>(
+      "SELECT loop_id, person_id, role FROM open_loop_people ORDER BY loop_id, role, person_id",
+    )
     .all();
 }
 
@@ -71,10 +70,9 @@ describe("migration 36 — open_loop_people backfill", () => {
 
     // The pre-migration DB has no join table at all.
     const before = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name='open_loop_people'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='open_loop_people'",
+      )
       .get();
     expect(before).toBeUndefined();
 
@@ -87,17 +85,15 @@ describe("migration 36 — open_loop_people backfill", () => {
 
     // Table + person index both exist.
     const table = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name='open_loop_people'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='open_loop_people'",
+      )
       .get();
     expect(table?.name).toBe("open_loop_people");
     const index = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_open_loop_people_person'")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_open_loop_people_person'",
+      )
       .get();
     expect(index?.name).toBe("idx_open_loop_people_person");
 

@@ -70,6 +70,33 @@ describe("createBackendReprobeTask", () => {
     expect((out as { kind: "done"; value: { idle: boolean } }).value.idle).toBe(false);
   });
 
+  test("verifies a transcriber still owed a verdict, and stays active until it has one", async () => {
+    const stub = stubRegistry({ down: 0, probed: 0, recovered: 0 });
+    let awaiting = true;
+    (
+      stub.registry as { transcriberAwaitsVerification?: () => boolean }
+    ).transcriberAwaitsVerification = () => awaiting;
+    const verifyTranscriber = vi.fn(async () => {});
+    const bundle = createBackendReprobeTask(
+      { registry: stub.registry, log, verifyTranscriber },
+      makeScheduler(),
+    );
+    const first = await bundle.tasks[0].run(undefined, ctx);
+    expect(verifyTranscriber).toHaveBeenCalledTimes(1);
+    expect((first as { kind: "done"; value: { idle: boolean } }).value.idle).toBe(false);
+
+    // The backend answered: the verdict is cached and the tick idles again.
+    verifyTranscriber.mockImplementation(async () => {
+      awaiting = false;
+    });
+    const second = await bundle.tasks[0].run(undefined, ctx);
+    expect(verifyTranscriber).toHaveBeenCalledTimes(2);
+    expect((second as { kind: "done"; value: { idle: boolean } }).value.idle).toBe(true);
+    const third = await bundle.tasks[0].run(undefined, ctx);
+    expect(verifyTranscriber).toHaveBeenCalledTimes(2);
+    expect((third as { kind: "done"; value: { idle: boolean } }).value.idle).toBe(true);
+  });
+
   test("stays active after a partial recovery", async () => {
     const stub = stubRegistry({ down: 2, probed: 2, recovered: 1 });
     const bundle = createBackendReprobeTask({ registry: stub.registry, log }, makeScheduler());

@@ -158,7 +158,8 @@ describe("reasoning controls through scripted HTTP", () => {
       payload: { failure?: { retryable?: boolean } };
     }>;
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(events.at(-1)?.payload.failure?.retryable).toBe(false);
+    // The configuration is at fault, so the same turn succeeds once it changes.
+    expect(events.at(-1)?.payload.failure?.retryable).toBe(true);
   });
 
   it("replays DeepSeek reasoning_content unchanged after a tool call", async () => {
@@ -510,4 +511,32 @@ describe("reasoning controls through scripted HTTP", () => {
     expect(bodies).toHaveLength(2);
     expect(bodies.every((body) => body.reasoning?.effort === "high")).toBe(true);
   });
+
+  it.each([
+    ["chat completions", HttpChatBackend],
+    ["Responses", OpenAIResponsesBackend],
+  ] as const)(
+    "%s refuses unverified reasoning controls without a request, as a fault the operator fixes",
+    async (_protocol, Backend) => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock;
+      const backend = new Backend({
+        baseUrl: "http://localhost:18081",
+        model: "unlisted-example",
+        modelBehavior: { reasoningEffort: "high" },
+      });
+      const events = (await collect(backend.runTurn(input))) as Array<{
+        type: string;
+        payload: { failure?: { code: string; retryable: boolean } };
+      }>;
+      expect(fetchMock).not.toHaveBeenCalled();
+      // Every turn on this assignment fails the same way until the model's
+      // controls are changed, and then the same turn succeeds: retryable, so a
+      // background queue waits for the fix instead of retiring its work.
+      expect(events.at(-1)?.payload.failure).toMatchObject({
+        code: "http_reasoning_options_invalid",
+        retryable: true,
+      });
+    },
+  );
 });

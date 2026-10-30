@@ -290,35 +290,31 @@ describe("Brain Bench — the re-verification lane", () => {
   const engineState = (key: string): number =>
     Number(
       bench.sql
-        .prepare<
-          [string],
-          { value: string }
-        >("SELECT value FROM cognition_engine_state WHERE key = ?")
+        .prepare<[string], { value: string }>(
+          "SELECT value FROM cognition_engine_state WHERE key = ?",
+        )
         .get(key)?.value ?? "0",
     );
 
   const annotations = (): AnnotationProbeRow[] =>
     bench.sql
-      .prepare<
-        [],
-        AnnotationProbeRow
-      >(`SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations ORDER BY created_at ASC`)
+      .prepare<[], AnnotationProbeRow>(
+        `SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations ORDER BY created_at ASC`,
+      )
       .all();
 
   const annotationById = (id: string): AnnotationProbeRow | undefined =>
     bench.sql
-      .prepare<
-        [string],
-        AnnotationProbeRow
-      >(`SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations WHERE id = ?`)
+      .prepare<[string], AnnotationProbeRow>(
+        `SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations WHERE id = ?`,
+      )
       .get(id);
 
   const verificationRuns = (): RunProbeRow[] =>
     bench.sql
-      .prepare<
-        [],
-        RunProbeRow
-      >(`SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE kind = 'verification' ORDER BY enqueued_at ASC, id ASC`)
+      .prepare<[], RunProbeRow>(
+        `SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE kind = 'verification' ORDER BY enqueued_at ASC, id ASC`,
+      )
       .all();
 
   const runById = (id: string): RunProbeRow | undefined =>
@@ -836,10 +832,9 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
 
   const annotationById = (id: string): AnnotationProbeRow | undefined =>
     bench.sql
-      .prepare<
-        [string],
-        AnnotationProbeRow
-      >(`SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations WHERE id = ?`)
+      .prepare<[string], AnnotationProbeRow>(
+        `SELECT ${ANNOTATION_COLUMNS} FROM doc_annotations WHERE id = ?`,
+      )
       .get(id);
 
   const evidenceOf = (annotationId: string): EvidenceProbeRow[] =>
@@ -852,10 +847,9 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
 
   const runByDedupeKey = (key: string): RunProbeRow | undefined =>
     bench.sql
-      .prepare<
-        [string],
-        RunProbeRow
-      >(`SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE dedupe_key = ? ORDER BY enqueued_at DESC LIMIT 1`)
+      .prepare<[string], RunProbeRow>(
+        `SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE dedupe_key = ? ORDER BY enqueued_at DESC LIMIT 1`,
+      )
       .get(key);
 
   /** Push documents, wait for their source interpretations to complete, then drain. */

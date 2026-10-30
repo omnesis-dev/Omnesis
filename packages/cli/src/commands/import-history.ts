@@ -70,11 +70,14 @@ export const importHistoryCommand = defineCommand({
 
     const values: Record<string, string> = {};
     for (const field of spec.fields) {
+      if (field.when && values[field.when.field] !== field.when.equals) continue;
       const message = field.help ? `${field.label} — ${field.help}` : field.label;
       const answer =
         field.type === "secret"
           ? await prompts.password({ message })
-          : await prompts.text({ message, placeholder: field.help });
+          : field.type === "select"
+            ? await prompts.select({ message, options: field.options ?? [] })
+            : await prompts.text({ message, placeholder: field.help });
       if (prompts.isCancel(answer)) {
         prompts.cancel("Import cancelled.");
         process.exit(EXIT_CANCELLED);

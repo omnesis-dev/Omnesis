@@ -99,10 +99,9 @@ describe("TemporalQueryService", () => {
     );
     emailProjectionId = (
       db
-        .prepare<
-          [string],
-          { id: string }
-        >("SELECT id FROM document_temporal_projections WHERE document_id = ?")
+        .prepare<[string], { id: string }>(
+          "SELECT id FROM document_temporal_projections WHERE document_id = ?",
+        )
         .get(emailDocumentId) as { id: string }
     ).id;
     db.prepare(
@@ -148,10 +147,9 @@ describe("TemporalQueryService", () => {
     upsertDocuments(db, [calendarDocument]);
     calendarDocumentId = (
       db
-        .prepare<
-          [string, string],
-          { id: string }
-        >("SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+        .prepare<[string, string], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+        )
         .get(calendarDocument.sourceId, calendarDocument.externalId) as { id: string }
     ).id;
     db.prepare("INSERT INTO sync_state (source_id, last_synced_at) VALUES (?, ?)").run(

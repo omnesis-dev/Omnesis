@@ -553,10 +553,9 @@ export function fetchNearDupCandidates(
  */
 export function fetchNearDupDfData(db: Db, algoVersion: string): SharedArrayBuffer {
   const metaRow = db
-    .prepare<
-      [string],
-      { total_docs: number; live_generation: number }
-    >(`SELECT total_docs, live_generation FROM near_dup_df_meta WHERE algo_version = ?`)
+    .prepare<[string], { total_docs: number; live_generation: number }>(
+      `SELECT total_docs, live_generation FROM near_dup_df_meta WHERE algo_version = ?`,
+    )
     .get(algoVersion);
   const totalDocs = metaRow?.total_docs ?? 0;
   // One generation, the live one — a rebuild in flight is filling the next
@@ -564,10 +563,9 @@ export function fetchNearDupDfData(db: Db, algoVersion: string): SharedArrayBuff
   const generation = metaRow?.live_generation ?? 0;
   const entries: Array<[string, number]> = [];
   const rows = db
-    .prepare<
-      [string, number],
-      { shingle: string; df: number }
-    >(`SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`)
+    .prepare<[string, number], { shingle: string; df: number }>(
+      `SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`,
+    )
     .iterate(algoVersion, generation) as Iterable<{ shingle: string; df: number }>;
   for (const r of rows) entries.push([r.shingle, r.df]);
   return buildDfSab(entries, totalDocs);

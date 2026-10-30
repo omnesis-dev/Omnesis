@@ -178,17 +178,18 @@
                 <td>Source</td>
                 <td><em>(default)</em></td>
                 <td>
-                  Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux and Intel macOS
+                  Node 24.16 or newer within Node 24, or Node 26.1 or newer; git; about 3.5 GB of
+                  memory; a C/C++ toolchain on Linux and Intel macOS
                 </td>
                 <td>You want the default: a checkout of the release, built on the machine.</td>
               </tr>
               <tr>
                 <td>Docker</td>
                 <td><code>--docker</code></td>
-                <td>Docker with the Compose plugin</td>
+                <td>Docker with the Compose plugin, v2.24.0 or later</td>
                 <td>
-                  You want containers and no Node on the host. Release images are not published yet;
-                  see <a href="#docker">Docker</a>.
+                  You want containers and no Node on the host. See <a href="#docker">Docker</a>
+                  for image selection, storage and networking.
                 </td>
               </tr>
             </tbody>
@@ -212,8 +213,9 @@
           </li>
           <li><strong>Windows</strong> is not supported.</li>
           <li>
-            <strong>Node.js 24 or newer</strong>, which the installer installs if it is missing. A
-            Docker host does not need it.
+            <strong>Node.js 24.16 or newer within Node 24, or Node.js 26.1 or newer</strong>, for a
+            source install. Node 25 and Node 24.0 to 24.15 are not supported. When no supported Node
+            is on your PATH, the installer installs Node 24. A Docker host does not need Node.
           </li>
           <li><strong>git</strong>, for a source install only.</li>
           <li>
@@ -245,8 +247,7 @@
             <span class="guided-session-chevron" aria-hidden="true">&gt;</span>
             <div class="guided-prompt-content">
               <pre class="wrap">
-Help me install Omnesis across the devices I choose. Read https://omnesis.dev/install-prompt.md and follow it.</pre
-              >
+Help me install Omnesis across the devices I choose. Read https://omnesis.dev/install-prompt.md and follow it.</pre>
               <span class="guided-copy-slot"></span>
             </div>
           </div>
@@ -276,7 +277,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
         <ol>
           <li>Checks the platform: macOS or Linux, amd64 or arm64. Anything else is refused.</li>
-          <li>Installs Node 24 if needed: Homebrew on macOS, NodeSource on Linux.</li>
+          <li>
+            Installs Node 24 when no supported Node is on your PATH: Homebrew on macOS, NodeSource
+            on Linux.
+          </li>
           <li>
             For a Linux source install, installs make, C/C++ compilers and Python 3 if they are
             missing.
@@ -459,6 +463,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td>Allow an existing checkout to move to an older release.</td>
               </tr>
               <tr>
+                <td><code>--reconfigure</code></td>
+                <td>
+                  On a machine this installer already set up from source, run the full install again
+                  (certificate, keyring, model, pairing, services) instead of updating the install
+                  in place. See <a href="/docs/updating#update-flags">Updating</a>.
+                </td>
+              </tr>
+              <tr>
                 <td><code>--port &lt;port&gt;</code></td>
                 <td>
                   Gateway port. Default 7600. Moving an installed gateway to another port names
@@ -491,7 +503,19 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td><code>--build</code></td>
                 <td>
                   With <code>--docker</code>: build the images from the checkout this script came
-                  from instead of pulling published ones.
+                  from instead of pulling published ones. The build needs about 25 GB free where
+                  Docker stores images; the installer checks before writing anything.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--combined</code>, <code>--gateway-only</code>,
+                  <code>--docker-network host|bridge</code>
+                </td>
+                <td>
+                  With <code>--docker</code>: run the gateway and collector in one container, or the
+                  gateway alone, and choose the network mode. See
+                  <a href="#docker-topologies">Choose a topology</a>.
                 </td>
               </tr>
               <tr>
@@ -592,7 +616,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
 
         <h2 id="first-run">First run</h2>
         <p>
-          The installer may ask up to five questions. It reads the answers from your terminal, not
+          The installer may ask up to six questions. It reads the answers from your terminal, not
           from standard input, because under <code>curl … | sh</code> standard input is the script
           itself. Each has a flag, so an unattended install can answer in advance.
         </p>
@@ -789,9 +813,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         <h2 id="docker">Docker</h2>
         <p>
           The Docker install is the same installer with a flag. The gateway and the collector run as
-          containers from published images tagged by release. The host needs Docker with the Compose
-          plugin, <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The installer
-          uses release images only, so it refuses <code>--edge</code>;
+          containers from published images tagged by release:
+          <code>ghcr.io/omnesis-dev/omnesis-gateway</code> and <code>omnesis-collector</code>, or
+          <code>omnesis-combined</code> for both in one container, with
+          <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin at
+          v2.24.0 or later (<code>docker compose version</code> prints it; the installer refuses an
+          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The
+          installer uses release images only, so it refuses <code>--edge</code>;
           <code>--version X.Y.Z</code> selects an exact release. From a checkout,
           <code>sh scripts/install.sh --docker --build</code> builds the images locally.
         </p>
@@ -816,10 +844,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
         <p>
           <code>omnesis</code> on this host is a wrapper that runs the CLI inside the container: the
-          gateway's, or the collector's on a machine that only collects. The source, device, model,
-          TLS, query and update commands on this site work unchanged. The daemons are containers
-          rather than services, so manage them with <code>docker compose</code> instead of
-          <code>omnesis service</code>:
+          gateway's, or the collector's on a machine that only collects. On a gateway host, the
+          source, device, model, TLS, query and update commands on this site work unchanged. A
+          machine that only collects holds its collector's token, not the gateway's admin token, so
+          there its <code>omnesis</code> runs <code>update</code> and <code>uninstall</code>;
+          source, device and status commands run on the gateway host or in the portal. The daemons
+          are containers rather than services, so manage them with
+          <code>docker compose</code> instead of <code>omnesis service</code>:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -878,6 +909,43 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           installer prints the <code>docker login &lt;registry&gt;</code> command to run; it never
           runs that command or reads the token itself.
         </p>
+        <p>
+          Without a terminal, as in a provisioning script, the installer asks nothing, so every
+          answer goes on the command line: the embedding model and the keyring passphrase file (or
+          <code>--no-model</code> and <code>--no-keyring</code>). A container has no OS keyring, so
+          the passphrase file is the only way to encrypt at rest; it must sit in the config
+          directory, readable only by you. The installer checks for these flags before it pulls
+          anything, and names every missing one:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">mkdir -m 700 -p ~/.config/omnesis</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >(umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' &gt;
+                ~/.config/omnesis/keyring.pass)</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --embedder
+                nomic-embed-text-v1.5.Q8_0 --keyring-passphrase-file
+                ~/.config/omnesis/keyring.pass</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The installer prints no recovery code for a passphrase file you supply; create one once
+          the gateway runs, with <code>omnesis keyring export-recovery --backend passphrase</code>,
+          and store it away from the server.
+        </p>
         <p>A second machine that only collects can run its collector in a container too:</p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -908,9 +976,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
           Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
           on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
-          Bridge mode is the default and needs an explicit gateway URL on other devices. Publishing
-          UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use
-          an explicit URL there. Only run one gateway on each chosen port.
+          Bridge mode is the default and needs an explicit gateway URL on other devices; with its
+          own certificate, the gateway offers phones the host addresses the installer wrote into it.
+          Publishing UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside
+          a VM; use an explicit URL there. Only run one gateway on each chosen port.
         </p>
         <p>
           OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider
@@ -954,6 +1023,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>docker compose down</code>; adding <code>--volumes</code> destroys it. This
           standalone example is managed through Compose; use the installer for its host CLI wrapper
           and transactional <code>omnesis update</code> integration.
+        </p>
+        <p>
+          On Linux Docker Engine, add the included <code>compose.host.yaml</code> override for host
+          networking: <code>docker compose -f compose.yaml -f compose.host.yaml up -d</code>. Use
+          both <code>-f</code> flags on subsequent Compose commands, including <code>run</code> and
+          <code>down</code>. The override removes bridge port mappings, honors
+          <code>OMNESIS_PORT</code> for the gateway, and keeps OAuth callback listeners on host
+          loopback. It is not a Docker Desktop networking configuration.
         </p>
         <h3 id="docker-unraid">Unraid</h3>
         <p>
@@ -1364,15 +1441,18 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           Every step is independent and safe to repeat: a step that fails is reported with what is
           left and how to finish it, the others still run, and running the command again picks up
           where it stopped. It waits for nothing on the network and works with the gateway gone. If
-          the installed <code>omnesis</code> no longer starts, <code>npx omnesis uninstall</code>
-          finds the install from what is on disk and removes it the same way.
+          the installed <code>omnesis</code> no longer starts, run
+          <code>npm run cli -- uninstall</code> in a checkout of the repository (after
+          <code>npm ci</code>): it finds the install from what is on disk and removes it the same
+          way.
         </p>
         <p>
           <strong>Docker.</strong> On a Docker host, <code>omnesis uninstall</code> runs in the
           launcher on the host, not in a container: it takes the containers and images down (<code
             >docker compose … down --rmi all</code
           >), removes the compose file and the launcher, and with <code>--purge</code> the config
-          directory. An install is removed as a whole.
+          directory. An install is removed as a whole. On a machine that only collects, it ends by
+          reminding you to remove its device on the gateway host, as a native collector's does.
         </p>
         <p>
           <strong>What only you can do.</strong> The command says which of these apply when it

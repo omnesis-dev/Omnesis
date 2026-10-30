@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   FAKE_EMBEDDER_DIM,
   FAKE_EMBEDDER_MODEL_ID,
+  fakeEmbed,
   startFakeEmbedderServer,
   type FakeEmbedderServer,
 } from "./fake-embedder.js";
@@ -105,4 +106,57 @@ describe("fake embedder server", () => {
     const b = await embedOverHttp(server.url, "stable hash determinism check", server.modelId);
     expect(a.data[0].embedding).toEqual(b.data[0].embedding);
   });
+});
+
+it("a gated HTTP backend refuses real probes without embedding, then serves after release", async () => {
+  const backend = await startFakeEmbedderServer({ initiallyUnavailable: true, dim: 8 });
+  try {
+    const unavailableModels = await fetch(`${backend.url}/v1/models`);
+    expect(unavailableModels.status).toBe(503);
+    await unavailableModels.json();
+    const request = () =>
+      fetch(`${backend.url}/v1/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: backend.modelId, input: ["invented prism ledger"] }),
+      });
+    const unavailableVector = await request();
+    expect(unavailableVector.status).toBe(503);
+    await unavailableVector.json();
+    expect(backend.embeddingRequestCount()).toBe(1);
+    expect(backend.embedCount()).toBe(0);
+    backend.release();
+    backend.release();
+    const models = await fetch(`${backend.url}/v1/models`);
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({ data: [{ id: backend.modelId }] });
+    const vectors = await request();
+    expect(vectors.status).toBe(200);
+    expect(await vectors.json()).toMatchObject({
+      data: [{ embedding: fakeEmbed("invented prism ledger", 8) }],
+    });
+    expect(backend.embeddingRequestCount()).toBe(2);
+    expect(backend.embedCount()).toBe(1);
+  } finally {
+    await backend.close();
+  }
+});
+
+it("the ordinary fake backend remains immediately ready by default", async () => {
+  const backend = await startFakeEmbedderServer({ dim: 4 });
+  try {
+    const response = await fetch(`${backend.url}/v1/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "invented violet telescope" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: [{ embedding: fakeEmbed("invented violet telescope", 4) }],
+    });
+    expect(backend.embeddingRequestCount()).toBe(1);
+    expect(backend.embedCount()).toBe(1);
+  } finally {
+    await backend.close();
+  }
 });

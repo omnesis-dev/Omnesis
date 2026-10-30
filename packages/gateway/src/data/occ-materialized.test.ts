@@ -110,10 +110,9 @@ describe("advanceOccWatermark", () => {
       nowMs: 1_500_000_000_000,
     });
     const row = db
-      .prepare<
-        [],
-        { last_computed_version: number; last_computed_at: number }
-      >("SELECT last_computed_version, last_computed_at FROM refresh_meta WHERE job = ?")
+      .prepare<[], { last_computed_version: number; last_computed_at: number }>(
+        "SELECT last_computed_version, last_computed_at FROM refresh_meta WHERE job = ?",
+      )
       .get(JOB);
     expect(row).toEqual({
       last_computed_version: 9,
@@ -125,10 +124,9 @@ describe("advanceOccWatermark", () => {
     db.prepare("UPDATE refresh_meta SET dirty_version = 12 WHERE job = ?").run(JOB);
     advanceOccWatermark(db, { job: JOB, capturedVersion: 12 });
     const dirty = db
-      .prepare<
-        [],
-        { dirty_version: number }
-      >("SELECT dirty_version FROM refresh_meta WHERE job = ?")
+      .prepare<[], { dirty_version: number }>(
+        "SELECT dirty_version FROM refresh_meta WHERE job = ?",
+      )
       .get(JOB)?.dirty_version;
     expect(dirty).toBe(12);
   });
@@ -137,10 +135,9 @@ describe("advanceOccWatermark", () => {
     advanceOccWatermark(db, { job: JOB, capturedVersion: 9 });
     advanceOccWatermark(db, { job: JOB, capturedVersion: 4 });
     const version = db
-      .prepare<
-        [],
-        { last_computed_version: number }
-      >("SELECT last_computed_version FROM refresh_meta WHERE job = ?")
+      .prepare<[], { last_computed_version: number }>(
+        "SELECT last_computed_version FROM refresh_meta WHERE job = ?",
+      )
       .get(JOB)?.last_computed_version;
     expect(version).toBe(9);
   });
@@ -150,10 +147,9 @@ describe("advanceOccWatermark", () => {
     advanceOccWatermark(db, { job: JOB, capturedVersion: 1 });
     const after = Date.now();
     const ts = db
-      .prepare<
-        [],
-        { last_computed_at: number }
-      >("SELECT last_computed_at FROM refresh_meta WHERE job = ?")
+      .prepare<[], { last_computed_at: number }>(
+        "SELECT last_computed_at FROM refresh_meta WHERE job = ?",
+      )
       .get(JOB)?.last_computed_at;
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(after);
@@ -163,10 +159,9 @@ describe("advanceOccWatermark", () => {
     db.prepare("INSERT INTO refresh_meta (job, dirty_version) VALUES (?, 0)").run("merge_rules");
     advanceOccWatermark(db, { job: JOB, capturedVersion: 6, nowMs: 1_900_000_000_000 });
     const sibling = db
-      .prepare<
-        [],
-        { last_computed_version: number; last_computed_at: number | null }
-      >("SELECT last_computed_version, last_computed_at FROM refresh_meta WHERE job = ?")
+      .prepare<[], { last_computed_version: number; last_computed_at: number | null }>(
+        "SELECT last_computed_version, last_computed_at FROM refresh_meta WHERE job = ?",
+      )
       .get("merge_rules");
     expect(sibling).toEqual({ last_computed_version: -1, last_computed_at: null });
   });

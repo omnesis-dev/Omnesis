@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+## 0.7.0
+
+### Mixed-version compatibility with 0.6.0
+
+A 0.7.0 gateway keeps serving 0.6.0 iOS and Android apps, the 0.6.0 Chrome
+extension, 0.6.0 OpenClaw and Hermes plugins and MCP clients, and 0.7.0
+clients keep working against a 0.6.0 gateway. Features new in 0.7.0 appear only
+when both sides run it: against a 0.6.0 gateway the extension hides Find and
+Browser Notes, and the apps stop polling for conversation controls the gateway
+does not offer.
+
+- A 0.6.0 app shows the agent tools added in 0.7.0 as generic tool cards.
+- A 0.6.0 plugin trusts the gateway's exact certificate, so after the gateway
+  renews it the plugin must be reconnected with
+  `omnesis connect <harness> --refresh`. The portal's device list and
+  `omnesis doctor` now name it before the renewal, with the date it will lose
+  its connection, and on a Tailscale certificate the warning offers the fleet
+  update: a 0.7.0 plugin that reaches the gateway by its Tailscale name follows
+  renewals. A plugin that has followed a renewal cannot be downgraded to 0.6.0
+  without reconnecting.
+- With a `background-agent` model assigned, the note agent reads Tell Omnesis
+  notes captured on any app version, including on a gateway upgraded from 0.6.0
+  that already had such a model assigned. `agent.noteAgent` (Settings → Models
+  → Background agent) switches it off; notes captured while it is off are
+  never read.
+- A 0.6.0 configuration still boots: a `brain.workerConcurrency` above 32 runs
+  as 32, and an HTTP backend named `claude-code` keeps serving its
+  `claude-code/<model>` assignments.
+- A 0.6.0 CLI lists a role assigned to Claude Code as `HTTP: claude-code/<model>`.
+
+### Fixed: the agent on Ollama no longer loses tool calls or answers from a cut prompt
+
+Two defects showed up as "tool calls fail" with the agent assigned to a model on
+Ollama's OpenAI-compatible endpoint. Both apply to any OpenAI-compatible server
+that behaves the same way.
+
+Ollama streams every tool call of a response at `index: 0` and tells them apart
+only by `id` (its own tracker records this; a fix for some models shipped in
+April 2026, and other paths still do it). The HTTP agent backend accumulated
+streamed calls by index alone, so two parallel calls became one call whose
+arguments were the two JSON objects concatenated: that call was answered with
+`tool_args_unparseable`, the second was dropped, and the corrupted call was
+replayed to the model as history. A delta that names a different id than the call
+at its index now starts a new call.
+
+Ollama also trims a request longer than the model's context window instead of
+refusing it, from the front, which is where the instructions and the tool
+definitions sit; the response carries no error, only a `prompt_tokens` count far
+below what was sent. Its default window on hardware under 24 GiB of VRAM is 4k
+tokens, and the agent's instructions and tools alone take well over ten thousand,
+so the model answered from a prompt it never saw, with no tools. On a 4k window the
+server evaluated 2,050 of a 35,058-token request and the turn ended as an ordinary
+answer. The backend now compares the prompt count the server reports against a
+floor no tokenizer goes under for the request's text, and ends the turn with
+`prompt_truncated` naming both counts and the remedy: raise the server's context
+length, for Ollama with `OLLAMA_CONTEXT_LENGTH` or a Modelfile `num_ctx`. The
+`/docs/agent` page says so beside the Ollama example.
+
+## 0.6.0
+
 ### Source contract and upgrade safety
 
 Sources can declare versioned cursor migrations, required host capabilities,
@@ -52,34 +112,6 @@ profile paths and Screen Time database paths; invalid local overrides report
 validation failures instead of silently selecting another store.
 Authentication rejects unsupported questions and answers to nonpending or shown
 challenges, and preserves typed redirect variants across the subprocess boundary.
-
-### Mixed-version compatibility with 0.6.0
-
-A 0.7.0 gateway keeps serving 0.6.0 iOS and Android apps, the 0.6.0 Chrome
-extension, 0.6.0 OpenClaw and Hermes plugins and MCP clients, and 0.7.0
-clients keep working against a 0.6.0 gateway. Features new in 0.7.0 appear only
-when both sides run it: against a 0.6.0 gateway the extension hides Find and
-Browser Notes, and the apps stop polling for conversation controls the gateway
-does not offer.
-
-- A 0.6.0 app shows the agent tools added in 0.7.0 as generic tool cards.
-- A 0.6.0 plugin trusts the gateway's exact certificate, so after the gateway
-  renews it the plugin must be reconnected with
-  `omnesis connect <harness> --refresh`. The portal's device list and
-  `omnesis doctor` now name it before the renewal, with the date it will lose
-  its connection, and on a Tailscale certificate the warning offers the fleet
-  update: a 0.7.0 plugin that reaches the gateway by its Tailscale name follows
-  renewals. A plugin that has followed a renewal cannot be downgraded to 0.6.0
-  without reconnecting.
-- With a `background-agent` model assigned, the note agent reads Tell Omnesis
-  notes captured on any app version, including on a gateway upgraded from 0.6.0
-  that already had such a model assigned. `agent.noteAgent` (Settings → Models
-  → Background agent) switches it off; notes captured while it is off are
-  never read.
-- A 0.6.0 configuration still boots: a `brain.workerConcurrency` above 32 runs
-  as 32, and an HTTP backend named `claude-code` keeps serving its
-  `claude-code/<model>` assignments.
-- A 0.6.0 CLI lists a role assigned to Claude Code as `HTTP: claude-code/<model>`.
 
 ## 2026-08-20
 

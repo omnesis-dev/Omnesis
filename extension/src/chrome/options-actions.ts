@@ -38,8 +38,7 @@ export async function saveBrowserProfileLabel(
 ): Promise<void> {
   const profileLabel = validatedProfileLabel(rawProfileLabel);
   const ack = (await actions.send({ type: "set-profile-label", profileLabel })) as
-    | PairingStateAck
-    | undefined;
+    PairingStateAck | undefined;
   if (!ack?.ok) throw new Error(ack?.reason ?? "the extension could not save the profile name");
 }
 
@@ -53,8 +52,7 @@ export async function unpairBrowser(actions: PairingActions): Promise<string | n
 /** Relinquish a grant left after an abandoned or failed pairing attempt. */
 export async function revokeUnpairedCaptureAccess(actions: PairingActions): Promise<string | null> {
   const ack = (await actions.send({ type: "revoke-capture-access" })) as
-    | PairingStateAck
-    | undefined;
+    PairingStateAck | undefined;
   if (!ack?.ok) throw new Error(ack?.reason ?? "background worker unavailable");
   return ack.warning ?? null;
 }

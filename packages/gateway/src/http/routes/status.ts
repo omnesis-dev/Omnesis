@@ -11,6 +11,9 @@ import {
   experimentalVisible,
   experimentalEnabled,
   materializeConfigSecrets,
+  CAPABILITY_ROLES,
+  type AssignmentValue,
+  type CapabilityRole,
   type ConfigHealth,
   type ConfigSecretMaterialization,
 } from "@omnesis/core";
@@ -79,6 +82,17 @@ export interface StatusRoutesDeps {
   /** Corpus vocabulary is independent of whether the gateway transcribes audio. */
   getTranscriptionVocabularyEnabled?: () => boolean;
   /**
+   * Whether a capability assignment may be written, with the reason when it
+   * may not. Runs before a `PATCH /admin/config` that sets one, so an
+   * assignment the gateway can already tell will not work (a transcriber on a
+   * backend with no transcription endpoint) is refused with that reason
+   * instead of accepted and left to fail in a log line.
+   */
+  vetAssignment?: (
+    role: CapabilityRole,
+    value: AssignmentValue,
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  /**
    * The gateway's whole on-disk footprint, by store. When omitted, `/status`
    * reports `diskUsage: null` and clients fall back to `dbSizeBytes`.
    */
@@ -115,7 +129,30 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getNoteAgentStatus,
     getTranscriptionVocabularyEnabled,
     getDiskUsage,
+    vetAssignment,
   } = deps;
+
+  /**
+   * Refuse a config write whose capability assignments include one the
+   * gateway can tell will not work. Only assignments the body sets are vetted,
+   * each against the backends loaded now.
+   */
+  const vetAssignments = async (body: unknown): Promise<void> => {
+    if (!vetAssignment) return;
+    const assignments = (body as { inference?: { assignments?: unknown } } | null)?.inference
+      ?.assignments;
+    if (!assignments || typeof assignments !== "object") return;
+    for (const [role, value] of Object.entries(assignments as Record<string, unknown>)) {
+      if (!CAPABILITY_ROLES.includes(role as CapabilityRole)) continue;
+      if (value !== null && typeof value !== "string") continue;
+      const verdict = await vetAssignment(role as CapabilityRole, value);
+      if (!verdict.ok) {
+        throw new ValidationError(verdict.reason, [
+          { path: `/inference/assignments/${role}`, message: verdict.reason },
+        ]);
+      }
+    }
+  };
   // Health check + version. Public so liveness probes and clients can
   // reconcile versions without a token (the CLI's `--version` compares
   // itself against this). The `compat` subset lets a client check the wire
@@ -336,6 +373,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       } catch {
         throw new BadRequestError("Invalid JSON body");
       }
+      await vetAssignments(body);
       let materialized: ConfigSecretMaterialization | null = null;
       const res = await putConfigWithSecretCleanup(
         () =>
@@ -371,10 +409,9 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
 
     let sourceRows = seg("sourceStats", () =>
       db
-        .prepare<
-          [],
-          { source_id: string; count: number; totalUnits: number | null }
-        >("SELECT source_id, doc_count AS count, total_units AS totalUnits FROM source_stats")
+        .prepare<[], { source_id: string; count: number; totalUnits: number | null }>(
+          "SELECT source_id, doc_count AS count, total_units AS totalUnits FROM source_stats",
+        )
         .all(),
     );
     if (sourceRows.length === 0) {

@@ -668,9 +668,14 @@ describe("MessageStore (durable SQLite)", () => {
         // makes setting the database aside indistinguishable from deleting it.
         const quarantined = readdirSync(d).filter((f) => f.includes(".corrupt-"));
         expect(quarantined.some((f) => f.endsWith("-wal"))).toBe(true);
-        expect(readFileSync(join(d, quarantined.find((f) => f.endsWith("-wal"))!)).toString()).toBe(
-          "write-ahead pages",
-        );
+        expect(
+          readFileSync(
+            join(
+              d,
+              quarantined.find((f) => f.endsWith("-wal"))!,
+            ),
+          ).toString(),
+        ).toBe("write-ahead pages");
       } finally {
         fresh.close();
         rmSync(d, { recursive: true, force: true });

@@ -130,10 +130,9 @@ describe("a record that carries no start owns no projection", () => {
     });
 
     const projected = db
-      .prepare<
-        [],
-        { document_external_id: string }
-      >("SELECT document_external_id FROM document_temporal_projections")
+      .prepare<[], { document_external_id: string }>(
+        "SELECT document_external_id FROM document_temporal_projections",
+      )
       .all();
     expect(projected.map((row) => row.document_external_id)).toEqual(["dated"]);
   });
@@ -161,10 +160,9 @@ describe("a record that carries no start owns no projection", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { slot: string; start_canonical: string }
-        >("SELECT slot, start_canonical FROM document_temporal_projections")
+        .prepare<[], { slot: string; start_canonical: string }>(
+          "SELECT slot, start_canonical FROM document_temporal_projections",
+        )
         .all(),
     ).toEqual([{ slot: "due", start_canonical: "2026-08-04T10:00:00.000Z" }]);
   });

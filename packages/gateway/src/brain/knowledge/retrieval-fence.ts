@@ -43,10 +43,9 @@ export function isKnowledgeDocumentReadable(
     return false;
   if (!generated(source)) return true;
   const row = db
-    .prepare<
-      [string],
-      { source_id: string; external_id: string; metadata: string }
-    >("SELECT source_id,external_id,metadata FROM documents WHERE id=?")
+    .prepare<[string], { source_id: string; external_id: string; metadata: string }>(
+      "SELECT source_id,external_id,metadata FROM documents WHERE id=?",
+    )
     .get(documentId);
   // A missing document is also a stale index hit and must not expose old content.
   if (!row) return false;

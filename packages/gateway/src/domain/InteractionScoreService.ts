@@ -136,10 +136,9 @@ export function computeInteractionScores(
   // Locate self. No self → no scores to compute (every relationship is
   // measured AGAINST the user).
   const selfRow = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   if (!selfRow) {
     return { rows: [], dirtyVersion, computedAt: new Date(nowMs).toISOString() };
@@ -271,10 +270,9 @@ export function computeInteractionScores(
 
 export function fetchSelfPersonId(db: Db): string | null {
   const row = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   return row?.id ?? null;
 }

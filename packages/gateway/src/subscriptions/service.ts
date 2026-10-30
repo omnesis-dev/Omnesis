@@ -316,6 +316,30 @@ export class SubscriptionService {
     return { runs: result.runs };
   }
 
+  async finalizeCompletionEgress(caller: SubscriptionCaller, deliveryId: string) {
+    if (!caller.tokenId || !this.deps.policyStore.path) {
+      throw new SubscriptionServiceError(
+        "answer_authority_unavailable",
+        "This completion is unavailable.",
+      );
+    }
+    const policy = await this.deps.policyStore.get();
+    const result = await this.deps.writeGate.finalizeSubscriptionCompletionEgress({
+      tokenId: caller.tokenId,
+      deviceId: caller.deviceId,
+      deliveryId,
+      policyGuard: { path: this.deps.policyStore.path, expectedRevision: policy.revision },
+      egressId: `egress_${this.id()}`,
+    });
+    if (result.outcome !== "recorded") {
+      throw new SubscriptionServiceError(
+        "answer_authority_unavailable",
+        "This completion is unavailable.",
+      );
+    }
+    return result.egress;
+  }
+
   async finalizeFiringAnswerEgress(
     caller: SubscriptionCaller,
     input: { firingId: string; taskId: string; ownerId: string; includeCitations?: boolean },
@@ -1067,10 +1091,9 @@ export class SubscriptionService {
     const policyRevision =
       resolvedBy.kind === "operator" ? approval.policyRevision : policy.revision;
     const subscription = this.deps.db
-      .prepare<
-        [string],
-        { expires_at: number | null }
-      >("SELECT expires_at FROM subscriptions WHERE id = ?")
+      .prepare<[string], { expires_at: number | null }>(
+        "SELECT expires_at FROM subscriptions WHERE id = ?",
+      )
       .get(approval.subscriptionId);
     if (!subscription) {
       throw new SubscriptionServiceError("not_found", "Watch not found.");

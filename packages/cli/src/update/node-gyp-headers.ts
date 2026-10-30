@@ -29,10 +29,14 @@
  * identical. It is JavaScript run by the `node` on PATH — the one npm and its
  * node-gyp run under — because that is what decides which headers they need.
  * It holds no `$`, backtick, backslash or single quote, so the shell copies
- * embed it verbatim in single quotes.
+ * embed it verbatim in single quotes. It runs with the preload that keeps
+ * distrusted roots out of the CA store, which node-gyp inherits for its
+ * download.
  */
 
 import { spawn } from "node:child_process";
+
+import { distrustingNodeOptions } from "@omnesis/core";
 
 export const NODE_GYP_HEADERS_SCRIPT = `const fs = require("fs"), os = require("os"), path = require("path");
 const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
@@ -71,6 +75,7 @@ const runCommand: HeaderCommandRunner = (command, args, { cwd, capture }) =>
   new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
+      env: { ...process.env, NODE_OPTIONS: distrustingNodeOptions() },
       stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"],
     });
     let stdout = "";

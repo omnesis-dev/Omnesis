@@ -114,10 +114,9 @@ describe("migration-idempotency standing fixture", () => {
       );
       expect(
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('briefs', 'brief_citations', 'brief_related_loops', 'brief_claims')")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('briefs', 'brief_citations', 'brief_related_loops', 'brief_claims')",
+          )
           .all(),
       ).toEqual([]);
 
@@ -145,10 +144,9 @@ describe("migration-idempotency standing fixture", () => {
       ).toEqual(["notification_deliveries", "notifications"]);
 
       const loops = db
-        .prepare<
-          [],
-          { id: string; state: string; origin: string; accepted: number }
-        >("SELECT id, state, origin, accepted FROM open_loops ORDER BY id")
+        .prepare<[], { id: string; state: string; origin: string; accepted: number }>(
+          "SELECT id, state, origin, accepted FROM open_loops ORDER BY id",
+        )
         .all();
       expect(loops).toEqual([
         { id: SEED_DONE_LOOP_ID, state: "done", origin: "brain", accepted: 0 },
@@ -161,10 +159,9 @@ describe("migration-idempotency standing fixture", () => {
       expect(indexes).toContain("idx_open_loops_suggested");
       expect(
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'answer_completion_deliveries'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'answer_completion_deliveries'",
+          )
           .get()?.name,
       ).toBe("answer_completion_deliveries");
       expect(
@@ -210,10 +207,9 @@ describe("migration-idempotency standing fixture", () => {
 
       expect(
         db
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_watermarks'")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_watermarks'",
+          )
           .all(),
       ).toHaveLength(1);
 
@@ -245,10 +241,9 @@ describe("migration-idempotency standing fixture", () => {
     let firstMigrationCount: number;
     try {
       firstLoops = first
-        .prepare<
-          [],
-          Record<string, unknown>
-        >("SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id")
+        .prepare<[], Record<string, unknown>>(
+          "SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id",
+        )
         .all();
       firstMigrationCount = first
         .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")
@@ -267,10 +262,9 @@ describe("migration-idempotency standing fixture", () => {
       ).toBe(firstMigrationCount);
       expect(
         second
-          .prepare<
-            [],
-            Record<string, unknown>
-          >("SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id")
+          .prepare<[], Record<string, unknown>>(
+            "SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id",
+          )
           .all(),
       ).toEqual(firstLoops);
     } finally {

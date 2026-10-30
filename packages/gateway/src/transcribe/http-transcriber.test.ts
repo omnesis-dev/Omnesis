@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 import {
   HttpTranscriber,
-  MAX_CHUNK_SAMPLES,
   encodeMultipart,
   encodeWav,
-  splitPcm,
+  parseTranscriptText,
 } from "./http-transcriber.js";
-import type { TranscriptionVocabulary } from "@omnesis/core";
+import { MAX_CHUNK_SAMPLES, chunkSamples, splitPcm } from "./chunks.js";
+import { computeTranscriptionTimeoutMs } from "./deadline.js";
+import { PCM_SAMPLE_RATE } from "./audio-decode.js";
+import { TranscribeService } from "./transcribe-service.js";
+import type { ResolvedAssignment, TranscriptionVocabulary } from "@omnesis/core";
 
 interface Captured {
   url: string;
@@ -33,6 +36,43 @@ function backend(reply: () => Response = () => Response.json({ text: "hello ther
   return { requests, fetchFn };
 }
 
+/** Hands out each request deadline as a signal the test expires by hand. */
+function heldDeadlines() {
+  const deadlines: Array<{ ms: number; signal: AbortSignal; expire: () => void }> = [];
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const controller = new AbortController();
+    deadlines.push({
+      ms,
+      signal: controller.signal,
+      expire: () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+    });
+    return controller.signal;
+  });
+  onTestFinished(() => timeout.mockRestore());
+  return deadlines;
+}
+
+/** Answers the first `answered` requests, then takes each one and never answers. */
+function hangsAfter(answered: number) {
+  const signals: AbortSignal[] = [];
+  const fetchFn = ((_input: string | URL | Request, init?: RequestInit) => {
+    const signal = init!.signal!;
+    signals.push(signal);
+    if (signals.length <= answered) return Promise.resolve(Response.json({ text: "part" }));
+    return new Promise<Response>((_resolve, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason));
+    });
+  }) as typeof fetch;
+  return { signals, fetchFn };
+}
+
+/** 700 s of steady sound: a full first chunk and a 100 s second one. */
+const sevenHundredSeconds = async () => new Float32Array(16_000 * 700).fill(0.1);
+const chunkSeconds = splitPcm(new Float32Array(16_000 * 700).fill(0.1)).map(
+  (chunk) => chunk.length / 16_000,
+);
+
 const oneSecond = async () => new Float32Array(16_000).fill(0.25);
 const audio = new TextEncoder().encode("opus bytes");
 const vocabulary: TranscriptionVocabulary = {
@@ -40,6 +80,16 @@ const vocabulary: TranscriptionVocabulary = {
     { text: "Northstar", score: 0.9 },
     { text: "QX", score: 0.8 },
   ],
+};
+
+const httpAssignment: ResolvedAssignment = {
+  role: "transcriber",
+  kind: "http",
+  backendKey: "whisper-gpu",
+  model: "whisper-large-v3-turbo",
+  url: "http://127.0.0.1:8003",
+  allowRemoteInference: false,
+  available: true,
 };
 
 describe("HttpTranscriber", () => {
@@ -204,23 +254,116 @@ describe("HttpTranscriber", () => {
     caller.abort(new Error("caller left"));
     await expect(pending).rejects.toThrow("caller left");
   });
-});
 
-describe("splitPcm", () => {
-  test("keeps a recording within the limit whole", () => {
-    const pcm = new Float32Array(MAX_CHUNK_SAMPLES);
-    expect(splitPcm(pcm)).toHaveLength(1);
+  test("gives each chunk of a long recording its own deadline, sized from that chunk", async () => {
+    const deadlines = heldDeadlines();
+    const { fetchFn } = hangsAfter(Infinity);
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "m",
+      fetchFn,
+      decodeAudio: sevenHundredSeconds,
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toMatchObject({
+      text: "part part",
+    });
+    expect(chunkSeconds).toHaveLength(2);
+    expect(deadlines.map((d) => d.ms)).toEqual(
+      chunkSeconds.map((sec) => computeTranscriptionTimeoutMs(sec)),
+    );
+    expect(deadlines[1]!.ms).toBeLessThan(deadlines[0]!.ms);
   });
 
-  test("splits at the quietest moment near each limit, losing no samples", () => {
-    const pcm = new Float32Array(MAX_CHUNK_SAMPLES + 32_000).fill(0.5);
-    const silenceAt = MAX_CHUNK_SAMPLES - 5 * 16_000;
-    pcm.fill(0, silenceAt, silenceAt + 640);
-    const chunks = splitPcm(pcm);
-    expect(chunks).toHaveLength(2);
-    expect(chunks[0]!.length).toBeGreaterThanOrEqual(silenceAt);
-    expect(chunks[0]!.length).toBeLessThanOrEqual(silenceAt + 640);
-    expect(chunks[0]!.length + chunks[1]!.length).toBe(pcm.length);
+  test("a hung second chunk is given up at its own deadline", async () => {
+    const deadlines = heldDeadlines();
+    const { signals, fetchFn } = hangsAfter(1);
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "m",
+      fetchFn,
+      decodeAudio: sevenHundredSeconds,
+    });
+    const pending = transcriber.transcribe(audio, "audio/ogg");
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    expect(deadlines).toHaveLength(2);
+    expect(deadlines[1]!.ms).toBe(computeTranscriptionTimeoutMs(chunkSeconds[1]!));
+    deadlines[1]!.expire();
+    await expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  test("a caller that stops waiting during a later chunk stops the recording at once", async () => {
+    heldDeadlines();
+    const { signals, fetchFn } = hangsAfter(1);
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "m",
+      fetchFn,
+      decodeAudio: sevenHundredSeconds,
+    });
+    const caller = new AbortController();
+    const pending = transcriber.transcribe(audio, "audio/ogg", { signal: caller.signal });
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    caller.abort(new Error("caller left"));
+    await expect(pending).rejects.toThrow("caller left");
+    expect(signals).toHaveLength(2);
+  });
+
+  test("a hung backend's deadline frees the transcription queue for the next clip", async () => {
+    const deadlines = heldDeadlines();
+    const hung = hangsAfter(0);
+    let calls = 0;
+    const service = new TranscribeService({
+      resolveAssignment: () => httpAssignment,
+      deps: {
+        decodeAudio: oneSecond,
+        fetchFn: ((input: string | URL | Request, init?: RequestInit) =>
+          ++calls === 1
+            ? hung.fetchFn(input, init)
+            : Promise.resolve(Response.json({ text: "second clip" }))) as typeof fetch,
+      },
+    });
+    const first = service.transcribe(audio, "audio/ogg");
+    const second = service.transcribe(audio, "audio/ogg");
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 10_000 });
+    expect(deadlines).toHaveLength(1);
+    deadlines[0]!.expire();
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toMatchObject({ text: "second clip" });
+    expect(calls).toBe(2);
+  }, 20_000);
+});
+
+describe("splitPcm with a short window", () => {
+  test("splits a recording at the window, even one shorter than the quiet-moment search", () => {
+    const pcm = new Float32Array(PCM_SAMPLE_RATE * 12).fill(0.3);
+    const chunks = splitPcm(pcm, PCM_SAMPLE_RATE * 5);
+    expect(chunks).toHaveLength(3);
+    expect(chunks.reduce((n, c) => n + c.length, 0)).toBe(pcm.length);
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(chunk.length).toBeLessThanOrEqual(PCM_SAMPLE_RATE * 5);
+      expect(chunk.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("chunkSamples caps at the upload limit and defaults to it", () => {
+    expect(chunkSamples(undefined)).toBe(MAX_CHUNK_SAMPLES);
+    expect(chunkSamples(0)).toBe(MAX_CHUNK_SAMPLES);
+    expect(chunkSamples(60)).toBe(60 * PCM_SAMPLE_RATE);
+    expect(chunkSamples(5_000)).toBe(MAX_CHUNK_SAMPLES);
+  });
+
+  test("an HTTP transcriber with a window sends a recording in that many pieces", async () => {
+    const { requests, fetchFn } = backend();
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8011",
+      model: "qwen3-asr",
+      maxChunkSeconds: 60,
+      fetchFn,
+      decodeAudio: async () => new Float32Array(PCM_SAMPLE_RATE * 130).fill(0.2),
+    });
+    const result = await transcriber.transcribe(audio, "audio/ogg");
+    expect(requests).toHaveLength(3);
+    expect(result.text).toBe("hello there hello there hello there");
   });
 });
 
@@ -251,5 +394,65 @@ describe("encodeMultipart", () => {
     expect(form.get("model")).toBe("whisper-1");
     const file = form.get("file") as File;
     expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 13, 10, 45, 45, 255]);
+  });
+});
+
+describe("parseTranscriptText", () => {
+  test("keeps a plain transcript as it is", () => {
+    expect(parseTranscriptText("  hello there \n")).toEqual({ text: "hello there" });
+  });
+
+  test("drops the language Qwen3-ASR writes ahead of the words and keeps it as a code", () => {
+    // Ollama and llama-server pass the model's output through verbatim.
+    expect(
+      parseTranscriptText("language English<asr_text>And so, my fellow Americans, ask not."),
+    ).toEqual({ text: "And so, my fellow Americans, ask not.", language: "en" });
+    expect(parseTranscriptText("language German<asr_text>Hallo, wie geht's?")).toEqual({
+      text: "Hallo, wie geht's?",
+      language: "de",
+    });
+    expect(parseTranscriptText("language Klingon<asr_text>nuqneH")).toEqual({
+      text: "nuqneH",
+      language: "klingon",
+    });
+  });
+
+  test("leaves a transcript that merely starts with the word language alone", () => {
+    expect(parseTranscriptText("language is a virus")).toEqual({ text: "language is a virus" });
+  });
+});
+
+describe("HttpTranscriber with a server that passes Qwen3-ASR output through", () => {
+  test("returns the words and the detected language", async () => {
+    const { fetchFn } = backend(() =>
+      Response.json({ text: "language French<asr_text>Bonjour à tous." }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:11434",
+      model: "frozenlab/qwen3-asr:1.7b",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toEqual({
+      text: "Bonjour à tous.",
+      language: "fr",
+      durationSec: 1,
+    });
+  });
+
+  test("prefers the language the server reports over the one in the text", async () => {
+    const { fetchFn } = backend(() =>
+      Response.json({ text: "language English<asr_text>Hi.", language: "en-GB" }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8080",
+      model: "m",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toMatchObject({
+      text: "Hi.",
+      language: "en-GB",
+    });
   });
 });

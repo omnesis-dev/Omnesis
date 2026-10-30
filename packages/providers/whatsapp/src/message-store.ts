@@ -22,6 +22,7 @@ import {
   readStorageKeySync,
   storageEncryptionRequired,
   storageKeyHex,
+  TRANSCRIBER_UNAVAILABLE,
 } from "@omnesis/core";
 import type { LocalStoreProbeResult } from "@omnesis/source-sdk";
 import type {
@@ -366,6 +367,12 @@ interface LegacyPersistedState {
   historySyncComplete: boolean;
 }
 
+/** What `mediaHealthStats` reports: media by lifecycle state, voice notes apart. */
+export interface MediaHealthStats {
+  voiceNotes: { pending: number; transcriberUnavailable: number; unavailable: number };
+  attachments: { pending: number; unavailable: number };
+}
+
 interface MessageRow {
   chat_jid: string;
   id: string;
@@ -384,6 +391,7 @@ interface MessageRow {
   transcript: string | null;
   media_state: string | null;
   media_next_attempt: number | null;
+  media_last_error: string | null;
 }
 
 /**
@@ -1340,6 +1348,7 @@ export class MessageStore {
       transcript: r.transcript ?? undefined,
       mediaState: (r.media_state as StoredMessage["mediaState"]) ?? undefined,
       mediaNextAttempt: r.media_next_attempt ?? undefined,
+      mediaLastError: r.media_last_error ?? undefined,
     };
   }
 
@@ -1662,16 +1671,49 @@ export class MessageStore {
     return info.changes;
   }
 
-  /** Counts of media by lifecycle state — for the per-sync health summary log. */
-  mediaHealthStats(): { pending: number; unavailable: number } {
+  /**
+   * Counts of media still to process or gone for good, voice notes apart from
+   * attachments, for the source's sync report. Only media inside the retry
+   * scope's date range counts: media before the source's cutoff is never
+   * attempted, so it is never reported as waiting. A pending voice note whose
+   * last attempt found no transcriber is counted again under
+   * `transcriberUnavailable`, which is what turns the report into a warning
+   * with the fix attached. Rows from before the media lifecycle existed carry
+   * no state and are not counted; a resync enrolls them.
+   */
+  mediaHealthStats(): MediaHealthStats {
     const rows = this.db
       .prepare(
-        `SELECT media_state AS s, COUNT(*) AS n FROM messages
-         WHERE media_state IN ('pending', 'unavailable') GROUP BY media_state`,
+        `SELECT media_state AS s,
+                (type = 'audio' AND json_extract(CASE WHEN json_valid(media_json) THEN media_json ELSE '{}' END, '$.isVoiceNote') = 1) AS voice,
+                (media_last_error = @noTranscriberError) AS noTranscriber,
+                COUNT(*) AS n
+         FROM messages
+         WHERE media_state IN ('pending', 'unavailable') AND deleted = 0
+           AND (@minTimestamp IS NULL OR ts >= @minTimestamp)
+         GROUP BY s, voice, noTranscriber`,
       )
-      .all() as { s: string; n: number }[];
-    const by = new Map(rows.map((r) => [r.s, r.n]));
-    return { pending: by.get("pending") ?? 0, unavailable: by.get("unavailable") ?? 0 };
+      .all({
+        noTranscriberError: TRANSCRIBER_UNAVAILABLE,
+        minTimestamp: this.mediaRetryScope.minTimestamp,
+      }) as {
+      s: "pending" | "unavailable";
+      voice: 0 | 1;
+      noTranscriber: 0 | 1 | null;
+      n: number;
+    }[];
+    const stats: MediaHealthStats = {
+      voiceNotes: { pending: 0, transcriberUnavailable: 0, unavailable: 0 },
+      attachments: { pending: 0, unavailable: 0 },
+    };
+    for (const row of rows) {
+      const bucket = row.voice ? stats.voiceNotes : stats.attachments;
+      bucket[row.s] += row.n;
+      if (row.voice && row.s === "pending" && row.noTranscriber) {
+        stats.voiceNotes.transcriberUnavailable += row.n;
+      }
+    }
+    return stats;
   }
 
   // ──────────────────────────────── lookups ─────────────────────────────────

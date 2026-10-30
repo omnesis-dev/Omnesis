@@ -30,10 +30,9 @@ const QUERY = "lantern rehearsal";
 
 function knowledgeWork(bench: BrainBench, docId: string): number {
   return bench.sql
-    .prepare<
-      [string],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_kind='source' AND subject_id=?")
+    .prepare<[string], { n: number }>(
+      "SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_kind='source' AND subject_id=?",
+    )
     .get(docId)!.n;
 }
 

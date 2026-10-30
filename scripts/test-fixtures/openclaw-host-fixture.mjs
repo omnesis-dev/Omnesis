@@ -27,6 +27,7 @@ export function createFakeOpenClawHost(options) {
       tools.push({ factory, options: toolOptions });
     },
     runtime: {
+      version: "2026.10.5",
       agent: { session: { listSessionEntries: () => [] } },
       subagent: {
         run: async () => ({ runId: options.runId }),

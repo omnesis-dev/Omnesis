@@ -267,17 +267,35 @@
                 </td>
                 <td>
                   Messages as conversational documents, live as they arrive, plus an optional
-                  one-time full-history import from an iPhone backup. Media text is extracted, and
-                  voice notes are transcribed
-                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Message
-                  sync continues when media processing is disabled or unavailable. Pending media
-                  stays in the local archive for later retries, within the source's date range. The
-                  add flow shows a QR code; scan it under WhatsApp
-                  <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
-                  starts syncing without a restart. WhatsApp may unlink a device after roughly two
-                  weeks without activity; run
+                  one-time full-history import from an iPhone or Android backup — see
+                  <a href="#whatsapp-backup-import">WhatsApp full-history import</a>. Media text is
+                  extracted, and voice notes are transcribed
+                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Until a
+                  note is transcribed its placeholder says why (<code
+                    >[Voice note, 0:12 — awaiting transcription]</code
+                  >, <code>no transcriber available</code>, <code>no speech detected</code> or
+                  <code>audio unavailable</code>), and the source's notice on the Sources page
+                  counts the notes still waiting. Message sync continues when media processing is
+                  disabled or unavailable. Pending media stays in the local archive for later
+                  retries, within the source's date range. The add flow shows a QR code; scan it
+                  under WhatsApp <strong>Settings → Linked Devices → Link a Device</strong>, and the
+                  collector starts syncing without a restart. WhatsApp may unlink a device after
+                  roughly two weeks without activity; run
                   <code>omnesis sources reauth whatsapp:&lt;account&gt;</code> and scan a new QR
                   code to reconnect it.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Telegram Messages<br /><span class="pill">any collector</span>
+                  <span class="pill">QR sign-in</span> <span class="pill">experimental</span>
+                </td>
+                <td>
+                  <strong>Experimental</strong> — offered only when the gateway and collector run
+                  with <code>OMNESIS_EXPERIMENTAL=1</code>. Your chats as conversational documents,
+                  one per chat per day, through a Telegram API app you create yourself. Voice notes
+                  are transcribed when a transcriber model is assigned, and photo and document text
+                  is extracted. See <a href="#telegram">Telegram</a>.
                 </td>
               </tr>
               <tr>
@@ -289,12 +307,85 @@
                   Messages as conversational documents, with attachment text inline, and voice-clip
                   transcripts
                   <a href="/docs/operating#models">when a transcriber model is assigned</a>;
-                  participants feed the people graph.
+                  participants feed the people graph. A clip without a transcript says why in its
+                  placeholder and is retried on a schedule; the source's notice on the Sources page
+                  counts the clips still waiting. Decoding or transcription failures are retried
+                  without reporting a missing model; an unavailable transcriber notice can also mean
+                  the assigned backend is unreachable.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Discord<br /><span class="pill">any collector</span>
+                  <span class="pill">Bot token</span> <span class="pill">Experimental</span>
+                </td>
+                <td>
+                  Each channel's day as one conversation document, across the servers a bot of yours
+                  belongs to, threads and forum posts included; posters feed the people graph.
+                  Offered only when the Gateway runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#discord">Discord</a>.
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <h3 id="discord">Discord</h3>
+        <p>
+          Discord is <strong>experimental</strong>: it appears in the source picker only when the
+          Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change between
+          releases.
+        </p>
+        <p>
+          Discord hands message history to bots only — an ordinary account may not be automated, and
+          no OAuth2 scope reads messages. So you create an application in Discord's Developer
+          Portal, give it a bot, enable the <strong>Message Content Intent</strong> on its Bot page,
+          and paste the bot token. Omnesis then builds the invite link itself, asking for
+          <strong>View Channels</strong> and <strong>Read Message History</strong> and nothing else;
+          open it and add the bot to each server you want indexed. Until the bot is in a server, the
+          source reports that it is in none and shows the link.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources add discord</span>
+            </p>
+          </div>
+        </div>
+        <ul>
+          <li>
+            <strong>What the bot sees is what gets indexed.</strong> Only servers the bot was
+            invited to, and only channels it may view; deny it View Channel on a channel to keep
+            that channel out. Private threads and direct messages are never read. The
+            <code>guilds</code> setting narrows the indexed servers further by id.
+          </li>
+          <li>
+            <strong>One bot per server.</strong> Each Discord source indexes what its own bot sees.
+            Two sources whose bots share a server index that server twice; give each bot its own
+            servers, or name them in <code>guilds</code>.
+          </li>
+          <li>
+            <strong>Your own messages.</strong> The bot is not you, so set the
+            <code>selfUserId</code> setting to your Discord user id and your messages resolve to the
+            self person. Other posters are people keyed by their Discord id.
+          </li>
+          <li>
+            <strong>History and freshness.</strong> The first sync walks each channel from the
+            beginning, or from the data cutoff when one is set. Later syncs re-read each channel's
+            last indexed day, so an edit or a deletion there lands; an older day is never re-read,
+            and a channel that disappears keeps its documents.
+          </li>
+          <li>
+            <strong>Limits.</strong> An app visible to fewer than 10,000 users may turn the Message
+            Content Intent on without review; past that Discord requires an intent review, and
+            withdraws unreviewed access. Discord does not refuse a bot whose intent is off — it
+            blanks every message body instead — so a sync that sees a long run of empty messages
+            stops and names the intent rather than indexing nothing. The source honors Discord's
+            rate limits and pauses for as long as Discord asks.
+          </li>
+        </ul>
 
         <h3 id="maildir">Maildir</h3>
         <p>
@@ -385,6 +476,152 @@
             messages; add it on one.
           </li>
         </ul>
+
+        <h3 id="whatsapp-backup-import">WhatsApp full-history import</h3>
+        <p>
+          WhatsApp's linked-device sync only streams a companion a recent window of messages, not
+          the full history on the phone. To recover older messages, import them once from a local
+          phone backup. An import adds only the history actually present in the backup you provide —
+          it is not a guaranteed universal lookback window. Run it with
+          <code>omnesis sources import-history &lt;sourceId&gt;</code>; imported messages merge into
+          the source by stable id, so re-running an import is safe and adds nothing already present,
+          and a message already captured by live sync is never overwritten by a sparser imported
+          copy.
+        </p>
+        <ul>
+          <li>
+            <strong>iPhone.</strong> Needs the encrypted backup folder Finder (or iTunes on Windows)
+            writes — the folder containing <code>Manifest.plist</code> — and the password set when
+            backup encryption was turned on.
+          </li>
+          <li>
+            <strong>Android.</strong> Needs the exported <code>msgstore.db.crypt15</code> file
+            pulled from the device, and the 64-character encryption key WhatsApp showed once when
+            end-to-end backup encryption was turned on (or the raw key file extracted alongside it).
+            Only this single-file backup layout is supported; WhatsApp's chunked, incremental
+            Google-Drive backup format is not.
+          </li>
+          <li>
+            <strong>Limits.</strong> An imported attachment carries its filename, type, and size,
+            but never the original file — a backup does not retain a live download session, so
+            imported media is never downloadable the way a live-synced attachment is.
+          </li>
+          <li>
+            <strong>Recovery.</strong> A wrong password or key fails the import with a clear message
+            rather than a partial result. A backup in an unrecognized or unsupported format is
+            refused by name instead of crashing. Cancelling stops the import and deletes its
+            decrypted working files; messages already imported stay, and running the import again
+            adds the rest without duplicating them.
+          </li>
+        </ul>
+
+        <h3 id="telegram">Telegram</h3>
+        <div class="callout warn">
+          <strong>Experimental.</strong> The Telegram source is unstable and offered in
+          <strong>Add source</strong> only when the gateway and the collector run with
+          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+        </div>
+        <p>
+          Telegram Messages archives your own Telegram account — signed in as you, not as a bot —
+          into Omnesis. It reads your chats through the Telegram API with a developer app that you
+          create, and never sends a message or marks anything as read.
+        </p>
+        <p>
+          <strong>Your own API app.</strong> Omnesis ships no Telegram app credential; the add flow
+          asks for an <code>api_id</code> and <code>api_hash</code>, which stay on the collector's
+          host.
+        </p>
+        <ol>
+          <li>
+            Open <code>https://my.telegram.org/apps</code> and sign in with your phone number. The
+            login code arrives inside the Telegram app, not by SMS.
+          </li>
+          <li>
+            Create an app with a title that does not contain the word "Telegram", such as
+            <em>Omnesis archive</em>, a short name of 5 to 32 letters or digits, and the platform
+            <em>Desktop</em>.
+          </li>
+          <li>
+            Paste the <code>api_id</code> (digits) and <code>api_hash</code> (32 hexadecimal
+            characters) into the add flow.
+          </li>
+        </ol>
+        <p>
+          Telegram allows one app per phone number: if you already created one, reuse its
+          <code>api_id</code> and <code>api_hash</code>. If the form answers with a bare
+          <em>ERROR</em>, turn off any VPN, proxy or ad blocker, try another browser or network,
+          keep the title free of non-ASCII characters and of the word "Telegram", and try again
+          later — a newly registered number is often refused for a while.
+        </p>
+        <p>
+          <strong>Signing in.</strong> The add flow shows a QR code; scan it in Telegram under
+          <strong>Settings → Devices → Link Desktop Device</strong>. An account with a two-step
+          password is asked for it once; it is used to sign in and never stored. The session appears
+          in Telegram's device list as <em>Omnesis</em>. Ending it there stops the source, which
+          then asks to be signed in again; run
+          <code>omnesis sources reauth telegram:&lt;account&gt;</code> and scan a new code. One
+          collector hosts an account: the session cannot be shared between machines.
+        </p>
+        <p>
+          <strong>The session is your whole account.</strong> The stored session is a full
+          authorization of your Telegram account: anyone holding it can read your chats and act as
+          you. The collector stores it encrypted, protected by its keyring.
+        </p>
+        <ul>
+          <li>
+            <strong>What it archives.</strong> Private chats, Saved Messages, basic groups,
+            supergroups and forums, archived chats included: one document per chat per UTC day, with
+            each message's time, sender, replies, forwards and edits. A forum message carries its
+            topic's title, and the day lists its topics. Edits and deletions made in Telegram
+            follow, and a day whose messages are all deleted leaves the index.
+          </li>
+          <li>
+            <strong>Media.</strong> Voice notes are transcribed into the day
+            <a href="/docs/operating#models">when a transcriber model is assigned</a>; until then
+            the placeholder says why, as for WhatsApp. Photos and documents follow the shared
+            attachment settings and become attachment documents of their day, with images OCR'd when
+            an OCR model is assigned. Audio, video, round video messages, stickers and GIFs are
+            placeholders such as <code>[Video, 0:42]</code> and are never downloaded. Media is
+            downloaded a little at a time after its text is indexed, never in bulk.
+          </li>
+          <li>
+            <strong>Channels are opt-in.</strong> Broadcast channels are left out until you turn on
+            <em>Include broadcast channels</em> in the source's settings; turning it off again
+            removes every channel's days and files from the index. <em>Excluded chats</em> takes
+            chat IDs or <code>@usernames</code> to skip, and removes what was already archived from
+            them.
+          </li>
+          <li>
+            <strong>Never archived.</strong> Secret chats, which Telegram keeps only on the two
+            devices in them; view-once photos and videos; messages under an auto-delete timer; and
+            stories.
+          </li>
+          <li>
+            <strong>History.</strong> The whole history is read in the background, most recent chats
+            first, at a pace Telegram tolerates. The first read asks Telegram for a data export,
+            which it limits less tightly. Telegram may hold the export until you approve it in the
+            notification it sends to your other devices; until then history is read the slower way
+            and the source's notice on the Sources page says so. After approving, re-sync the source
+            to start the export at once. If Telegram asks Omnesis to slow down, the notice says when
+            history resumes; the source's advanced settings lower the requests per sync page and
+            raise the delay between them.
+          </li>
+          <li>
+            <strong>Its archive.</strong> Messages are kept in an archive in the collector's
+            configuration directory, encrypted with the collector's storage key, so a re-sync never
+            reads Telegram again. Removing the source deletes the archive and ends the source's
+            Telegram session: the collector logs that authorization out at Telegram, best effort, so
+            it leaves your device list.
+          </li>
+        </ul>
+        <p>
+          <strong>Telegram's terms.</strong> Using this source is subject to the
+          <a href="https://telegram.org/tos">Telegram Terms of Service</a> and the
+          <a href="https://core.telegram.org/api/terms">Telegram API Terms of Service</a>. It is
+          your responsibility to read them before connecting the source and to follow them while you
+          use it. Omnesis signs in as a third-party API client with the app you register; it paces
+          its requests and backs off when Telegram asks.
+        </p>
 
         <h2 id="notes-tasks-meetings">Notes, tasks &amp; meetings</h2>
         <div class="table-wrap">
@@ -707,6 +944,18 @@
                   See <a href="#local-files">Local Files</a>.
                 </td>
               </tr>
+              <tr>
+                <td>
+                  Paperless-ngx<br /><span class="pill">any collector</span>
+                  <span class="pill">API token</span> <span class="pill">Experimental</span>
+                </td>
+                <td>
+                  Archived documents from a self-hosted Paperless-ngx, with their OCR text, notes,
+                  correspondent, document type, tags and custom fields; custom field values are
+                  queryable in SQL. Offered only when the Gateway runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#paperless">Paperless-ngx</a>.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -747,6 +996,11 @@
             naming one as a folder is refused at setup with the reason.
           </li>
           <li>
+            <strong>Files it cannot read.</strong> A damaged PDF keeps the text of the pages that
+            can be read. A file with no readable text at all — encrypted, corrupt, or a scan with
+            OCR off — is set aside and tried again when it changes, or a day later.
+          </li>
+          <li>
             <strong>Ranked low.</strong> A working disk holds far more documents than any other
             source, so Local Files results rank below other sources'.
           </li>
@@ -755,6 +1009,77 @@
             only once a scan has read its folder from end to end. A folder that could not be read —
             an unmounted drive, a changed permission — is left alone until it can be, and the other
             folders are unaffected. Remove the source to purge everything at once.
+          </li>
+        </ul>
+
+        <h3 id="paperless">Paperless-ngx</h3>
+        <p>
+          Paperless-ngx is <strong>experimental</strong>: it appears in the source picker only when
+          the Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change
+          between releases.
+        </p>
+        <p>
+          Paperless-ngx indexes the documents a self-hosted
+          <a href="https://docs.paperless-ngx.com/">Paperless-ngx</a> instance has archived; it
+          needs Paperless-ngx 2.16 or later. It reads the text Paperless-ngx already extracted, so
+          Omnesis neither downloads the original files nor runs OCR on them. Adding the source asks
+          for two things: the address you open Paperless-ngx at, including any path it is served
+          under, and an API token from <strong>My Profile</strong> in Paperless-ngx. The collector
+          must be able to reach that address.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources add paperless</span>
+            </p>
+          </div>
+        </div>
+        <ul>
+          <li>
+            <strong>What the token sees is what gets indexed.</strong> A Paperless-ngx token carries
+            every permission of its user, including editing and deleting, even though Omnesis only
+            reads. A dedicated Paperless-ngx user with only the View permission on documents, tags,
+            correspondents, document types, custom fields and UI settings is enough; Paperless-ngx
+            names the user to Omnesis through the UI settings. On an instance several people share,
+            documents owned by another user are indexed if the token can see them, but are not
+            attributed to you. Each document becomes one document whose "Open in source" link opens
+            it in the Paperless-ngx web UI.
+          </li>
+          <li>
+            <strong>Tables.</strong> <code>paperless_documents</code> holds one row per document
+            with its correspondent, document type, tags and its own date — the date on the letter,
+            not the scan date. <code>paperless_custom_field_values</code> holds each custom field
+            value with typed columns, so monetary amounts can be summed and due dates compared.
+          </li>
+          <li>
+            <strong>Freshness.</strong> Each sync fetches the documents whose content, tags,
+            correspondent, custom fields or notes changed. A bulk edit of custom fields does not
+            mark the documents changed in Paperless-ngx, so it reaches Omnesis with the daily
+            listing. Renaming or deleting a tag, correspondent, document type or custom field does
+            not change the documents themselves either, so Omnesis re-reads every document once
+            after it; adding one re-reads nothing.
+          </li>
+          <li>
+            <strong>Deletion.</strong> Once a day the source lists every document id. A document
+            that later listings keep leaving out is removed from the index. A document in the
+            Paperless-ngx trash counts as deleted.
+          </li>
+          <li>
+            <strong>Certificates and proxies.</strong> Plain <code>http://</code> addresses on your
+            own network work. For an <code>https://</code> address with a certificate from your own
+            certificate authority, start the collector with
+            <code>NODE_EXTRA_CA_CERTS</code> pointing at that authority's certificate. A reverse
+            proxy that puts a single sign-on page in front of Paperless-ngx must let requests under
+            <code>/api/</code> through with the token.
+          </li>
+          <li>
+            <strong>Several instances.</strong> Each Paperless-ngx user on each instance is its own
+            source; adding a second one leaves the first untouched. Use the same address for an
+            instance everywhere: the same instance added under two addresses is indexed twice.
+            Re-authenticating a source accepts only a token for the same user at the same address;
+            to move a source to a new address, add the new address and remove the old source.
           </li>
         </ul>
 
@@ -1103,12 +1428,12 @@
                 <td>
                   Quick notes captured with <code>omnesis note</code>, the portal's
                   <strong>Tell Omnesis</strong> page, the mobile apps, Siri or Android voice
-                  assistants, Apple Watch, and the browser extension, indexed as one searchable
-                  document per day. Browser notes include the page URL and optional selected
-                  quotation, with a reference to the page when it is indexed. No agent model is
-                  needed. The Sources lists show it as a read-only row; to amend or delete a note,
-                  use <strong>Tell Omnesis</strong>, and the day's document rebuilds from what
-                  remains. There is nothing to sync, pause, or remove.
+                  assistants, Apple Watch, and agents connected through
+                  <a href="/docs/connect">MCP, OpenClaw or Hermes</a>, indexed as one searchable
+                  document per day. No agent model is needed. The Sources lists show it as a
+                  read-only row; to amend or delete a note, use <strong>Tell Omnesis</strong>, and
+                  the day's document rebuilds from what remains. There is nothing to sync, pause, or
+                  remove.
                 </td>
               </tr>
               <tr>

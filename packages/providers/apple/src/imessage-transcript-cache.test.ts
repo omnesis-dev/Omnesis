@@ -111,6 +111,53 @@ describe("IMessageTranscriptCache", () => {
     assertUnreadable(path);
   });
 
+  test("schedules failed clips on a backoff, keyed to their day, and settles them on a transcript", () => {
+    const cache = new IMessageTranscriptCache();
+    try {
+      const t0 = Date.parse("2026-02-01T12:00:00Z");
+      cache.recordFailure("clip-a", "+15550100100:2026-01-30", "transcriber-unavailable", t0);
+      cache.recordFailure("clip-b", "+15550100100:2026-01-30", "backend down", t0);
+      cache.recordFailure("clip-c", "+15550100200:2026-01-31", "transcriber-unavailable", t0);
+      expect(cache.pending("clip-a")).toEqual({
+        attempts: 1,
+        nextAttemptMs: t0 + 20_000,
+        lastError: "transcriber-unavailable",
+      });
+      expect(cache.backlog()).toEqual({ awaiting: 3, transcriberUnavailable: 2 });
+      expect(cache.dueDayKeys(t0 + 19_000)).toEqual([]);
+      expect(cache.dueDayKeys(t0 + 20_000)).toEqual([
+        "+15550100100:2026-01-30",
+        "+15550100200:2026-01-31",
+      ]);
+      expect(cache.dueDayKeys(t0 + 20_000, 1)).toEqual(["+15550100100:2026-01-30"]);
+
+      // A second failure climbs the ladder; the last step repeats.
+      cache.recordFailure("clip-a", "+15550100100:2026-01-30", "transcriber-unavailable", t0);
+      expect(cache.pending("clip-a")?.attempts).toBe(2);
+      expect(cache.pending("clip-a")?.nextAttemptMs).toBe(t0 + 60_000);
+      for (let i = 0; i < 10; i++) {
+        cache.recordFailure("clip-a", "+15550100100:2026-01-30", "transcriber-unavailable", t0);
+      }
+      expect(cache.pending("clip-a")?.nextAttemptMs).toBe(t0 + 43_200_000);
+
+      // A transcript settles the clip; the day stays due through its sibling.
+      cache.set("clip-a", 12, undefined, { transcript: "Invented voice note" });
+      expect(cache.pending("clip-a")).toBeUndefined();
+      expect(cache.backlog()).toEqual({ awaiting: 2, transcriberUnavailable: 1 });
+      expect(cache.dueDayKeys(t0 + 60_000)).toContain("+15550100100:2026-01-30");
+
+      // Retaining only the clips a pass saw drops a clip that left the chat.
+      cache.retainPendingForDay("+15550100100:2026-01-30", []);
+      expect(cache.pending("clip-b")).toBeUndefined();
+      cache.retainPendingForDay("+15550100200:2026-01-31", ["clip-c"]);
+      expect(cache.pending("clip-c")).toBeDefined();
+      cache.forgetDay("+15550100200:2026-01-31");
+      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0 });
+    } finally {
+      cache.close();
+    }
+  });
+
   test("migrates legacy plaintext and discards interrupted staging files and their journals", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "imessage-transcripts-"));
     const old = new IMessageTranscriptCache(tmpDir);

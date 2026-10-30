@@ -206,10 +206,9 @@ describe("runMigrations", () => {
     expect(v).toBe(LATEST_SCHEMA_VERSION + 1);
 
     const recorded = db
-      .prepare<
-        [],
-        { version: number; description: string }
-      >("SELECT version, description FROM schema_migrations ORDER BY version")
+      .prepare<[], { version: number; description: string }>(
+        "SELECT version, description FROM schema_migrations ORDER BY version",
+      )
       .all();
     expect(recorded).toEqual([
       { version: LATEST_SCHEMA_VERSION + 1, description: "test: add column foo" },
@@ -289,10 +288,9 @@ describe("runMigrations", () => {
     markLinkStatsDirty(db);
 
     const row = db
-      .prepare<
-        [],
-        { job: string; dirty_version: number; needs_refresh: number }
-      >("SELECT job, dirty_version, needs_refresh FROM refresh_meta WHERE job = 'link_graph'")
+      .prepare<[], { job: string; dirty_version: number; needs_refresh: number }>(
+        "SELECT job, dirty_version, needs_refresh FROM refresh_meta WHERE job = 'link_graph'",
+      )
       .get();
     expect(row).toEqual({ job: "link_graph", dirty_version: 1, needs_refresh: 1 });
   });
@@ -402,10 +400,9 @@ describe("runMigrations", () => {
 
     // Legacy meta tables are gone.
     const legacy = db
-      .prepare<
-        [],
-        { name: string }
-      >("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('interaction_scores_meta', 'merge_rules_meta')")
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('interaction_scores_meta', 'merge_rules_meta')",
+      )
       .all();
     expect(legacy).toEqual([]);
 
@@ -424,10 +421,9 @@ describe("runMigrations", () => {
     ]);
     // The data values survive the rebuild.
     const data = db
-      .prepare<
-        [],
-        { total_links: number; resolved_links: number }
-      >("SELECT total_links, resolved_links FROM link_stats WHERE id = 1")
+      .prepare<[], { total_links: number; resolved_links: number }>(
+        "SELECT total_links, resolved_links FROM link_stats WHERE id = 1",
+      )
       .get();
     expect(data).toEqual({ total_links: 42, resolved_links: 30 });
   });
@@ -563,10 +559,9 @@ describe("migration 158: the device version ledger", () => {
     expect(device.capabilities.version).toBeUndefined();
 
     const stored = db
-      .prepare<
-        [string],
-        { version: string | null; capabilities: string }
-      >("SELECT version, capabilities FROM devices WHERE id = ?")
+      .prepare<[string], { version: string | null; capabilities: string }>(
+        "SELECT version, capabilities FROM devices WHERE id = ?",
+      )
       .get(device.id);
     expect(stored?.version).toBe("1.2.3");
     expect(JSON.parse(stored!.capabilities).version).toBeUndefined();
@@ -736,19 +731,17 @@ describe("migration 131 — source membership", () => {
 
     // Membership backfilled from the owning device.
     const members = db
-      .prepare<
-        [],
-        { source_id: string; device_id: string }
-      >("SELECT source_id, device_id FROM source_devices")
+      .prepare<[], { source_id: string; device_id: string }>(
+        "SELECT source_id, device_id FROM source_devices",
+      )
       .all();
     expect(members).toEqual([{ source_id: "test-source:acct1", device_id: "dev-1" }]);
 
     // sync_state kept its data on the shared ('') row.
     const state = db
-      .prepare<
-        [],
-        { source_id: string; device_id: string; cursor: string; label: string }
-      >("SELECT source_id, device_id, cursor, label FROM sync_state")
+      .prepare<[], { source_id: string; device_id: string; cursor: string; label: string }>(
+        "SELECT source_id, device_id, cursor, label FROM sync_state",
+      )
       .all();
     expect(state).toEqual([
       {
@@ -771,10 +764,9 @@ describe("migration 131 — source membership", () => {
     expect(fkParents("document_temporal_projection_sources")).toEqual([]);
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_temporal_projection_sources")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_temporal_projection_sources",
+        )
         .get()!.n,
     ).toBe(1);
     expect(() =>
@@ -875,10 +867,9 @@ describe("migration 131 — source membership", () => {
     ).toBe(before);
     expect(
       db
-        .prepare<
-          [number],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM schema_migrations WHERE version = ?")
+        .prepare<[number], { n: number }>(
+          "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = ?",
+        )
         .get(boom.version)!.n,
     ).toBe(0);
   });
@@ -954,18 +945,16 @@ describe("migration 134 — one stream per document", () => {
     ]);
     expect(
       db
-        .prepare<
-          [],
-          { id: string; stream_id: string; bootstrap_failed_at: string | null }
-        >("SELECT id, stream_id, bootstrap_failed_at FROM documents WHERE external_id = 'm-1'")
+        .prepare<[], { id: string; stream_id: string; bootstrap_failed_at: string | null }>(
+          "SELECT id, stream_id, bootstrap_failed_at FROM documents WHERE external_id = 'm-1'",
+        )
         .all(),
     ).toEqual([{ id: "doc-1", stream_id: "", bootstrap_failed_at: "FAILED" }]);
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = 'doc-1'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = 'doc-1'",
+        )
         .get()?.n,
     ).toBe(1);
     expect(db.prepare("PRAGMA foreign_key_check(document_links)").all()).toEqual([]);
@@ -1074,10 +1063,9 @@ describe("migration 135 — one re-auth reminder per (principal, device)", () =>
     ).run();
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM reauth_reminders WHERE principal = 'fictional-provider:maya@example.com'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM reauth_reminders WHERE principal = 'fictional-provider:maya@example.com'",
+        )
         .get()?.n,
     ).toBe(2);
   });
@@ -1113,10 +1101,9 @@ describe("migration 135 — one re-auth reminder per (principal, device)", () =>
 
     const stateOf = (id: string) =>
       db
-        .prepare<
-          [string],
-          { state: string }
-        >("SELECT state FROM notification_deliveries WHERE notification_id = ?")
+        .prepare<[string], { state: string }>(
+          "SELECT state FROM notification_deliveries WHERE notification_id = ?",
+        )
         .get(id)?.state;
     expect(stateOf("n-reauth")).toBe("superseded");
     expect(stateOf("n-watch")).toBe("pending");
@@ -1132,10 +1119,9 @@ describe("migration 135 — one re-auth reminder per (principal, device)", () =>
     expect(() => m135.up(db)).not.toThrow();
     expect(
       db
-        .prepare<
-          [],
-          { notify_count: number }
-        >("SELECT notify_count FROM reauth_reminders WHERE principal = 'fictional-provider:maya@example.com' AND device_id = 'device-a'")
+        .prepare<[], { notify_count: number }>(
+          "SELECT notify_count FROM reauth_reminders WHERE principal = 'fictional-provider:maya@example.com' AND device_id = 'device-a'",
+        )
         .get()?.notify_count,
     ).toBe(2);
   });
@@ -1206,10 +1192,9 @@ describe("migration 145 — bounded unresolved URL cycles", () => {
     expect(() => migration.up(db)).not.toThrow();
     expect(
       db
-        .prepare<
-          [],
-          { cursor: number; max: number; cycles: number }
-        >("SELECT cursor, url_cycle_max_id AS max, cycle_count AS cycles FROM link_reconcile_state WHERE id = 1")
+        .prepare<[], { cursor: number; max: number; cycles: number }>(
+          "SELECT cursor, url_cycle_max_id AS max, cycle_count AS cycles FROM link_reconcile_state WHERE id = 1",
+        )
         .get(),
     ).toEqual({ cursor: 47, max: 47, cycles: 3 });
   });
@@ -1240,10 +1225,9 @@ describe("migration 133 — one write epoch per cursor row", () => {
     expect(pk).toEqual(["source_id", "device_id"]);
     expect(
       db
-        .prepare<
-          [],
-          { device_id: string; epoch: number }
-        >("SELECT device_id, epoch FROM source_wipe_epoch WHERE source_id = 'notes'")
+        .prepare<[], { device_id: string; epoch: number }>(
+          "SELECT device_id, epoch FROM source_wipe_epoch WHERE source_id = 'notes'",
+        )
         .all(),
     ).toEqual([{ device_id: "", epoch: 4 }]);
     // A member's own row coexists with the shared one.
@@ -1252,10 +1236,9 @@ describe("migration 133 — one write epoch per cursor row", () => {
     ).run();
     expect(
       db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM source_wipe_epoch WHERE source_id = 'notes'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM source_wipe_epoch WHERE source_id = 'notes'",
+        )
         .get()?.n,
     ).toBe(2);
   });
@@ -1270,10 +1253,9 @@ describe("migration 133 — one write epoch per cursor row", () => {
     expect(() => m133.up(db)).not.toThrow();
     expect(
       db
-        .prepare<
-          [],
-          { epoch: number }
-        >("SELECT epoch FROM source_wipe_epoch WHERE source_id = 'notes' AND device_id = 'device-a'")
+        .prepare<[], { epoch: number }>(
+          "SELECT epoch FROM source_wipe_epoch WHERE source_id = 'notes' AND device_id = 'device-a'",
+        )
         .get()?.epoch,
     ).toBe(3);
   });
@@ -1349,10 +1331,9 @@ describe("migration 132 — device install identity", () => {
     // The pre-existing row is untouched and adoptable by name (NULL identity).
     expect(
       db
-        .prepare<
-          [],
-          { install_id: string | null }
-        >("SELECT install_id FROM devices WHERE id = 'd1'")
+        .prepare<[], { install_id: string | null }>(
+          "SELECT install_id FROM devices WHERE id = 'd1'",
+        )
         .get()?.install_id,
     ).toBeNull();
   });

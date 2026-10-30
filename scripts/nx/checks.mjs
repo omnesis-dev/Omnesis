@@ -281,8 +281,11 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
   if (filesOverride) state.files = [...new Set(filesOverride)].sort();
   const selectedFiles = selectionFiles(state.mergeBase, state.files);
   const nxFiles = selectedFiles.filter((file) => !isTargetedTooling(file));
+  const unsupported = selectedFiles.filter((file) => !isKnown(file));
+  const broad = unsupported.length > 0 || selectedFiles.some(isGlobal);
+  // A broad plan runs the all-project tasks, so it needs no project graph.
   let projects = [];
-  if (nxFiles.length) {
+  if (!broad && nxFiles.length) {
     projects = jsonCommand(nx, [
       "show",
       "projects",
@@ -292,9 +295,6 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
     ]);
   }
   if (selectedFiles.some(isTargetedTooling)) projects.push("omnesis-workspace");
-  const unsupported = selectedFiles.filter((file) => !isKnown(file));
-  const broad = unsupported.length > 0 || selectedFiles.some(isGlobal);
-  if (broad) projects = workspaceProjects();
   const selectedBundles = new Set(
     broad ? [...allE2EBundles, ...allNativeBundles] : behavioralBundles(selectedFiles),
   );

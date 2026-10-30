@@ -20,12 +20,13 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
@@ -59,7 +60,7 @@ const PAIRING_CODE = "R4TN8W2QJ6";
 const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
-  info) exit 0 ;;
+  info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf 'unix:///var/run/docker.sock\\n'; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
@@ -69,11 +70,16 @@ case "$1" in
       missing) echo 'manifest unknown: manifest unknown' >&2; exit 1 ;;
       unsupported) echo 'docker: manifest inspect is not supported' >&2; exit 1 ;;
     esac ;;
-  compose) ;;
+  compose)
+    if [ "$2" = version ]; then
+      [ -z "\${OMNESIS_TEST_COMPOSE_VERSION:-}" ] || printf '%s\\n' "$OMNESIS_TEST_COMPOSE_VERSION"
+      exit 0
+    fi ;;
   run)
-    # The gateway image's runtime, stood in for by this host's node.
+    # The gateway image's runtime, stood in for by this host's node — the real
+    # one, when a test has hidden it from the installer.
     while [ "$#" -gt 0 ]; do
-      if [ "$1" = -e ]; then shift; exec node -e "$@"; fi
+      if [ "$1" = -e ]; then shift; exec "\${OMNESIS_TEST_REAL_NODE:-node}" -e "$@"; fi
       shift
     done
     exit 0 ;;
@@ -98,7 +104,7 @@ if [ "$SEEN" = 1 ]; then
     --version) echo "9.9.0" ;;
     model)
       if [ "$2" = catalog ]; then
-        printf '{"default":"fast-embed","assignedId":"","entries":[{"id":"fast-embed","name":"Fast embed","sizeBytes":140000000,"embedDim":768},{"id":"wide-embed","name":"Wide embed","sizeBytes":600000000,"embedDim":1024}]}\\n'
+        printf '{"default":"fast-embed","assignedId":"%s","entries":[{"id":"fast-embed","name":"Fast embed","sizeBytes":140000000,"embedDim":768},{"id":"wide-embed","name":"Wide embed","sizeBytes":600000000,"embedDim":1024}]}\\n' "\${OMNESIS_TEST_ASSIGNED_EMBEDDER:-}"
       fi
       ;;
     pair)
@@ -114,6 +120,8 @@ if [ "$SEEN" = 1 ]; then
         echo "Invalid or expired pairing code." >&2
         exit 1
       fi
+      # What the real command prints on success, bold name and all.
+      printf 'Paired as \\033[1m%s\\033[0m (collector) id=0f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a\\r\\n' "\${OMNESIS_TEST_PAIRED_NAME:-studio-northstar}"
       ;;
     *) : ;;
   esac
@@ -130,6 +138,11 @@ for ARG in "$@"; do
       fi
       exit 0 ;;
     pull)
+      if [ -n "\${OMNESIS_TEST_PULL_FAIL_TIMES:-}" ] && \\
+         [ "$(grep -c -- '--profile update pull' "$OMNESIS_TEST_DOCKER")" -le "$OMNESIS_TEST_PULL_FAIL_TIMES" ]; then
+        echo "\${OMNESIS_TEST_PULL_ERROR:-dial tcp 20.26.156.211:443: connect: connection refused}" >&2
+        exit 1
+      fi
       if [ -n "\${OMNESIS_TEST_PULL_FAIL:-}" ]; then
         [ -z "\${OMNESIS_TEST_PULL_ERROR:-}" ] || printf '%s\\n' "$OMNESIS_TEST_PULL_ERROR" >&2
         exit 1
@@ -256,7 +269,8 @@ function dockerLog(home) {
 }
 
 function withDockerEnv(home, extra) {
-  return { OMNESIS_TEST_DOCKER: dockerLog(home), ...extra };
+  // A failed pull is retried after a pause; no run here waits for it.
+  return { OMNESIS_TEST_DOCKER: dockerLog(home), OMNESIS_DOCKER_PULL_RETRY_SECONDS: "0", ...extra };
 }
 
 function readDockerCalls(home) {
@@ -1131,6 +1145,54 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.docker.some((call) => call.includes(" build"))).toBe(false);
   });
 
+  test("a pull a refused connection broke is tried again, keeping what it downloaded", () => {
+    const run = runInstaller("pull-transient", QUIET, { OMNESIS_TEST_PULL_FAIL_TIMES: "2" });
+    expect(run.status, run.output).toBe(0);
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(3);
+    expect(run.output).toContain("connection refused");
+    expect(run.output).toContain("attempt 1 of 3");
+    expect(run.output).toContain("attempt 2 of 3");
+    expect(run.docker.some((call) => call.includes("up -d"))).toBe(true);
+  });
+
+  test("a pull that keeps failing stops after its attempts and points at the network", () => {
+    const run = runInstaller("pull-down", QUIET, {
+      OMNESIS_TEST_PULL_FAIL_TIMES: "9",
+      OMNESIS_DOCKER_PULL_ATTEMPTS: "2",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(2);
+    expect(run.output).toContain("after 2 attempts");
+    expect(run.output).toContain("network connection to the registry");
+    expect(run.output).not.toContain("Check the tag");
+    expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
+  });
+
+  test("a pull refused on credentials or a missing tag is not tried again", () => {
+    for (const [name, error] of [
+      ["pull-auth-once", "unauthorized: authentication required"],
+      ["pull-missing-once", "manifest unknown: manifest unknown"],
+    ]) {
+      const run = runInstaller(name, QUIET, {
+        OMNESIS_TEST_MANIFEST_MODE: "unsupported",
+        OMNESIS_TEST_PULL_FAIL: "1",
+        OMNESIS_TEST_PULL_ERROR: error,
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(1);
+      expect(run.output).not.toContain("attempt 1 of");
+    }
+  });
+
+  test.each(["0", "two", "03"])("OMNESIS_DOCKER_PULL_ATTEMPTS=%s is refused", (attempts) => {
+    const run = runInstaller(`pull-attempts-${attempts}`, QUIET, {
+      OMNESIS_DOCKER_PULL_ATTEMPTS: attempts,
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("OMNESIS_DOCKER_PULL_ATTEMPTS must be a whole number");
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+  });
+
   test("a pull authentication failure is actionable when manifest inspection is unavailable", () => {
     const run = runInstaller("pull-auth", QUIET, {
       OMNESIS_TEST_MANIFEST_MODE: "unsupported",
@@ -1178,6 +1240,27 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(composeAt(run)).toContain("target: gateway-runtime");
     expect(composeAt(run)).toContain("target: collector-runtime");
     expect(composeAt(run)).toContain("target: updater");
+  });
+
+  test("--build is refused before any build when Docker's storage is short of space", () => {
+    // The requirement is stated rather than the disk faked: the real df reads
+    // this run's own directory, which can hold 1 GB and cannot hold a petabyte.
+    const short = runInstaller("build-disk-short", [...QUIET, "--build"], {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_BUILD_DISK_GB: "1000000",
+    });
+    expect(short.status).not.toBe(0);
+    expect(short.output).toContain(
+      `Building the images needs about 1000000 GB free where Docker stores them (${repoRoot})`,
+    );
+    expect(short.output).toContain("Nothing was built.");
+    expect(short.docker.some((call) => call.includes("--profile update build"))).toBe(false);
+    const roomy = runInstaller("build-disk-roomy", [...QUIET, "--build"], {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_BUILD_DISK_GB: "1",
+    });
+    expect(roomy.status).toBe(0);
+    expect(roomy.docker.some((call) => call.includes("--profile update build"))).toBe(true);
   });
 
   test("--dry-run --build names the checkout and performs no Docker work", () => {
@@ -1559,8 +1642,11 @@ describe("install.sh --docker --collector", () => {
       "9.9.0",
     ]);
     expect(run.status).not.toBe(0);
-    expect(run.output).toContain("No terminal to ask for the pairing code");
+    // Refused before the pull, with the flag that supplies one.
+    expect(run.output).toContain("No terminal to ask what this install needs to know");
+    expect(run.output).toContain("--code <code>");
     expect(run.calls.some((call) => call.startsWith("pair"))).toBe(false);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 
   test("refuses to browse a LAN the container cannot see", () => {
@@ -2109,5 +2195,295 @@ describe("the wrapper's uninstall, on the host", () => {
     const proc = runWrapper(run, ["uninstall", "--yes"]);
     expect(proc.status, proc.stderr).toBe(0);
     expect(existsSync(run.wrapper)).toBe(false);
+  });
+});
+
+/**
+ * A Docker host as it usually is: no Node of its own. The fake `node` fails,
+ * as a missing one would, and the fake `docker run` reaches the real one to
+ * stand in for the Node inside the image.
+ */
+function hideHostNode() {
+  writeExecutable(fixturePath("fake-bin", "node"), "#!/bin/sh\nexit 127\n");
+  return { OMNESIS_TEST_REAL_NODE: process.execPath };
+}
+
+describe("install.sh --docker: a compose plugin too old for the project", () => {
+  test("an older Compose is refused before anything is written", () => {
+    const run = runInstaller("compose-old", QUIET, { OMNESIS_TEST_COMPOSE_VERSION: "v2.23.3" });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("Compose v2.24.0 or later");
+    expect(run.output).toContain("this host has v2.23.3");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+  });
+
+  test.each(["2.24.0", "v2.29.7", "2.40.3-desktop.1", "dev-build"])(
+    "Compose %s is accepted",
+    (version) => {
+      const run = runInstaller(`compose-${version.replaceAll(/[^a-z0-9]+/g, "-")}`, QUIET, {
+        OMNESIS_TEST_COMPOSE_VERSION: version,
+      });
+      expect(run.status, run.output).toBe(0);
+    },
+  );
+});
+
+/**
+ * A PATH on which no `docker` resolves, real or fake: every other command the
+ * installer runs, linked into one directory from wherever this host keeps it.
+ */
+function pathWithoutDocker() {
+  const tools = fixturePath("tools-without-docker");
+  mkdirSync(tools, { recursive: true });
+  const dirs = [
+    fixturePath("fake-bin"),
+    dirname(process.execPath),
+    ...(process.env.PATH ?? "").split(delimiter),
+  ];
+  for (const dir of dirs) {
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (name === "docker" || existsSync(join(tools, name))) continue;
+      symlinkSync(join(dir, name), join(tools, name));
+    }
+  }
+  return tools;
+}
+
+describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
+  test("a CLI in ~/.docker/bin is used, and the operator told to open a new terminal", () => {
+    const home = prepareHome("docker-off-path");
+    const dockerDir = join(home, ".docker", "bin");
+    mkdirSync(dockerDir, { recursive: true });
+    copyFileSync(fixturePath("fake-bin", "docker"), join(dockerDir, "docker"));
+    const tools = pathWithoutDocker();
+    const run = runInstaller("docker-off-path", QUIET, { PATH: tools });
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(`Docker is installed at ${join(dockerDir, "docker")}`);
+    expect(run.output).toContain("Open a new terminal");
+    expect(run.docker.some((call) => call.includes("--profile update pull"))).toBe(true);
+  });
+
+  test("with no CLI there either, Docker is reported missing before anything is written", () => {
+    const run = runInstaller("docker-missing", QUIET, { PATH: pathWithoutDocker() });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("--docker needs Docker, which is not installed");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker).toEqual([]);
+  });
+});
+
+describe("install.sh --docker: without a terminal", () => {
+  test("every unanswered question is named before anything is pulled", () => {
+    const run = runInstaller("unattended-missing", ["--docker", "--version", "9.9.0"]);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("No terminal to ask what this install needs to know");
+    expect(run.output).toContain("--embedder <id>");
+    expect(run.output).toContain("--no-model");
+    expect(run.output).toContain(`--keyring-passphrase-file ${run.configDir}/keyring.pass`);
+    expect(run.output).toContain("--no-keyring");
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  });
+
+  test("a collector-only host is also asked for its pairing code up front", () => {
+    const run = runInstaller("unattended-collector", [
+      "--docker",
+      "--collector",
+      "--gateway-url",
+      GATEWAY_URL,
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("--code <code>");
+    expect(run.output).toContain("--no-keyring");
+    // A collector installs no model, so there is nothing to choose there.
+    expect(run.output).not.toContain("--embedder <id>");
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+  });
+
+  test("the flags answer every question, with no Node on the host", () => {
+    const home = prepareHome("unattended-answered");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    const passphrase = join(configDir, "keyring.pass");
+    writeFileSync(passphrase, "fictional-passphrase-for-a-test\n", { mode: 0o600 });
+    const run = runInstaller(
+      "unattended-answered",
+      [
+        "--docker",
+        "--embedder",
+        "wide-embed",
+        "--keyring-passphrase-file",
+        passphrase,
+        "--version",
+        "9.9.0",
+      ],
+      hideHostNode(),
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(callStartingWith(run.calls, "keyring init")).toBe("keyring init --backend passphrase");
+    expect(callStartingWith(run.calls, "model install")).toBe("model install wide-embed");
+  });
+
+  test("a re-run whose model is served from elsewhere has nothing to ask", () => {
+    expect(runInstaller("unattended-rerun", QUIET).status).toBe(0);
+    const run = runInstaller(
+      "unattended-rerun",
+      ["--docker", "--no-keyring", "--version", "9.9.0"],
+      {
+        OMNESIS_TEST_ASSIGNED_EMBEDDER: "local-http/embed-large",
+      },
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("local-http/embed-large is already assigned");
+    expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+describe("install.sh --docker: what the compose file names", () => {
+  function plantHostname() {
+    writeExecutable(
+      fixturePath("fake-bin", "hostname"),
+      '#!/bin/sh\nif [ "${1:-}" = -s ]; then echo Studio_Northstar; else echo Studio_Northstar.example.com; fi\n',
+    );
+  }
+
+  test("the collector container answers to this host's name, so its device keeps one", () => {
+    plantHostname();
+    const run = runInstaller("collector-hostname", QUIET);
+    expect(run.status).toBe(0);
+    const compose = parseYaml(composeAt(run));
+    expect(compose.services.collector.hostname).toBe("studio-northstar");
+    // The collector dials the gateway by the name its certificate covers.
+    expect(compose.services.gateway.hostname).toBe("gateway");
+  });
+
+  test("host networking shares the host's own name, so none is set", () => {
+    plantHostname();
+    const run = runInstaller("collector-hostname-host", [...QUIET, "--docker-network", "host"]);
+    expect(run.status).toBe(0);
+    expect(parseYaml(composeAt(run)).services.collector.hostname).toBeUndefined();
+  });
+
+  test("the combined container starts under its own tini, with no init in front of it", () => {
+    const run = runInstaller("combined-init", [...QUIET, "--combined"]);
+    expect(run.status).toBe(0);
+    expect(parseYaml(composeAt(run)).services.gateway.init).toBeUndefined();
+  });
+});
+
+describe("install.sh --docker --collector: the closing banner", () => {
+  test("sends source and status commands to the gateway host, and names the real gateway", () => {
+    const run = runInstaller("collector-banner", [
+      "--docker",
+      "--collector",
+      "--no-keyring",
+      "--gateway-url",
+      GATEWAY_URL,
+      "--trust-fingerprint",
+      `sha256:${GATEWAY_FP}`,
+      "--code",
+      PAIRING_CODE,
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Collector container is running.");
+    // The name the gateway gave the device when the code was redeemed.
+    expect(run.output).toContain("Device:   studio-northstar\n");
+    expect(run.output).toContain(`on the gateway host, or in the portal at ${GATEWAY_URL}/portal/`);
+    expect(run.output).toContain("omnesis sources add --device 'studio-northstar'");
+    expect(run.output).not.toContain("    omnesis status");
+    expect(run.output).not.toContain("omnesis sources add gmail");
+    // A collector on a Mac joins the same gateway, not this host, which runs none.
+    expect(run.output).toContain(`--gateway-url ${GATEWAY_URL}`);
+    expect(run.output).toContain(`--trust-fingerprint sha256:${GATEWAY_FP}`);
+    expect(run.output).not.toContain("<this-host>");
+    expect(run.output).not.toContain("pair it with this gateway");
+  });
+});
+
+describe.skipIf(!HAS_PTY)("install.sh --docker: questions on a host with no Node", () => {
+  test("the model question is a numbered choice read with the image's Node", () => {
+    const run = runInstallerOnTty(
+      "model-question-no-node",
+      ["--docker", "--no-keyring", "--version", "9.9.0"],
+      ["2"],
+      hideHostNode(),
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Which embedding model should power semantic search?");
+    expect(run.output).not.toContain("Could not read the model catalog");
+    expect(callStartingWith(run.calls, "model install")).toBe("model install wide-embed");
+    expect(
+      run.docker.some((call) =>
+        call.startsWith("docker run --rm -i --pull never --network none --entrypoint node"),
+      ),
+    ).toBe(true);
+  });
+
+  test("the generated passphrase is written without a broken pipe", () => {
+    const run = runInstallerOnTty(
+      "keyring-question-no-node",
+      ["--docker", "--no-model", "--version", "9.9.0"],
+      ["2"],
+      hideHostNode(),
+    );
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).not.toContain("Broken pipe");
+    expect(readFileSync(join(run.configDir, "keyring.pass"), "utf8")).toMatch(/^[0-9a-f]{64}$/u);
+  });
+});
+
+describe("the wrapper's uninstall on a host that only collects", () => {
+  function runWrapper(run, args) {
+    return spawnSync(run.wrapper, args, {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        OMNESIS_TEST_DOCKER: dockerLog(run.home),
+      },
+      input: "",
+      encoding: "utf8",
+    });
+  }
+  const COLLECTOR = [
+    "--docker",
+    "--collector",
+    "--no-keyring",
+    "--gateway-url",
+    GATEWAY_URL,
+    "--code",
+    PAIRING_CODE,
+    "--version",
+    "9.9.0",
+  ];
+  const REMINDER = "omnesis devices revoke <device> --forget";
+
+  test("leaves the same reminder a native collector's does, in the plan and after", () => {
+    const run = runInstaller("uninstall-collector", COLLECTOR);
+    expect(run.status, run.output).toBe(0);
+    const dry = runWrapper(run, ["uninstall", "--dry-run"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain("Afterwards");
+    expect(dry.stdout).toContain(REMINDER);
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(done.stdout).toContain(REMINDER);
+  });
+
+  test("a gateway host has no gateway elsewhere to clean up", () => {
+    const run = runInstaller("uninstall-gateway-no-reminder", QUIET);
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status).toBe(0);
+    expect(done.stdout).not.toContain(REMINDER);
   });
 });

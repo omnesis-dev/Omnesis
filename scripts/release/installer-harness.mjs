@@ -160,6 +160,9 @@ if [ "$1" = ci ]; then
       "\${GIT_HTTP_LOW_SPEED_LIMIT:-}" "\${GIT_HTTP_LOW_SPEED_TIME:-}" \
       "\${NPM_CONFIG_FETCH_RETRIES:-}" "\${NPM_CONFIG_FETCH_TIMEOUT:-}" >> "$OMNESIS_TEST_CALLS"
   fi
+  # The trust preload npm ci ran with, and whether the file was there to load.
+  preload="\${NODE_OPTIONS##*--import=file://}"
+  [ "$preload" != "\${NODE_OPTIONS:-}" ] && [ -f "$preload" ] && printf '%s\\n' "$preload" >> "$OMNESIS_TEST_CALLS.npm-ci-preload"
   count_file="$OMNESIS_TEST_CALLS.npm-ci-count"
   count=$(cat "$count_file" 2>/dev/null || echo 0)
   count=$((count + 1))

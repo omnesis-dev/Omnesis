@@ -109,13 +109,7 @@ export interface UnknownConnection {
 }
 
 export type ConnectionState =
-  | Connected
-  | NeverConnected
-  | Expired
-  | Revoked
-  | ScopeInsufficient
-  | Unlinked
-  | UnknownConnection;
+  Connected | NeverConnected | Expired | Revoked | ScopeInsufficient | Unlinked | UnknownConnection;
 
 /**
  * Read an offline credential assessment without mistaking a storage failure
@@ -138,12 +132,7 @@ export async function readConnectionState(
 
 /** What an operator would have to do about a state. */
 export type ConnectionRemedy =
-  | "none"
-  | "connect"
-  | "authenticate-again"
-  | "grant-more"
-  | "pair-again"
-  | "wait";
+  "none" | "connect" | "authenticate-again" | "grant-more" | "pair-again" | "wait";
 
 /**
  * The remedy a state calls for.

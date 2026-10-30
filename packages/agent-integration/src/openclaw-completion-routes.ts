@@ -30,6 +30,9 @@ export interface OpenClawCompletionRoute {
   taskId: string;
   channel: string;
   to: string;
+  /** Runtime-owned session identity; absent only on legacy chat routes. */
+  sessionKey?: string;
+  sessionId?: string;
   accountId?: string;
   threadId?: string | number;
 }
@@ -55,6 +58,12 @@ export class OpenClawCompletionRoutes {
       CREATE INDEX IF NOT EXISTS idx_openclaw_answer_completion_routes_task
         ON openclaw_answer_completion_routes(task_id);
     `);
+    const columns = this.db.prepare("PRAGMA table_info(openclaw_answer_completion_routes)").all();
+    for (const column of ["session_key", "session_id"]) {
+      if (!columns.some((entry) => entry.name === column)) {
+        this.db.exec(`ALTER TABLE openclaw_answer_completion_routes ADD COLUMN ${column} TEXT`);
+      }
+    }
   }
 
   put(route: OpenClawCompletionRoute): void {
@@ -70,14 +79,16 @@ export class OpenClawCompletionRoutes {
     this.db
       .prepare(
         `INSERT INTO openclaw_answer_completion_routes (
-          native_conversation_id, task_id, channel, destination, account_id, thread_id_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          native_conversation_id, task_id, channel, destination, account_id, thread_id_json, created_at, session_key, session_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(native_conversation_id) DO UPDATE SET
           task_id = excluded.task_id,
           channel = excluded.channel,
           destination = excluded.destination,
           account_id = excluded.account_id,
-          thread_id_json = excluded.thread_id_json`,
+          thread_id_json = excluded.thread_id_json,
+          session_key = excluded.session_key,
+          session_id = excluded.session_id`,
       )
       .run(
         route.nativeConversationId,
@@ -87,13 +98,15 @@ export class OpenClawCompletionRoutes {
         route.accountId ?? null,
         route.threadId === undefined ? null : JSON.stringify(route.threadId),
         Date.now(),
+        route.sessionKey ?? null,
+        route.sessionId ?? null,
       );
   }
 
   get(nativeConversationId: string): OpenClawCompletionRoute | null {
     const row = this.db
       .prepare(
-        `SELECT native_conversation_id, task_id, channel, destination, account_id, thread_id_json
+        `SELECT native_conversation_id, task_id, channel, destination, account_id, thread_id_json, session_key, session_id
          FROM openclaw_answer_completion_routes WHERE native_conversation_id = ?`,
       )
       .get(nativeConversationId) as
@@ -102,6 +115,8 @@ export class OpenClawCompletionRoutes {
           task_id: string;
           channel: string;
           destination: string;
+          session_key: string | null;
+          session_id: string | null;
           account_id: string | null;
           thread_id_json: string | null;
         }
@@ -121,6 +136,8 @@ export class OpenClawCompletionRoutes {
       taskId: row.task_id,
       channel: row.channel,
       to: row.destination,
+      ...(row.session_key ? { sessionKey: row.session_key } : {}),
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
       ...(row.account_id ? { accountId: row.account_id } : {}),
       ...(threadId !== undefined ? { threadId } : {}),
     };

@@ -321,17 +321,15 @@ export function findDeviceByInstallId(
   installId: string,
 ): DeviceRecord | null {
   const row = db
-    .prepare<
-      [string, string],
-      DeviceRow
-    >(`SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ?`)
+    .prepare<[string, string], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ?`,
+    )
     .get(kind, installId);
   return row ? rowToDevice(row) : null;
 }
 
 export type RenameDeviceResult =
-  | { ok: true; device: DeviceRecord }
-  | { ok: false; reason: "not-found" | "name-taken" };
+  { ok: true; device: DeviceRecord } | { ok: false; reason: "not-found" | "name-taken" };
 
 /**
  * Display rename. Names stay unique per gateway (the by-name adoption path
@@ -341,10 +339,9 @@ export type RenameDeviceResult =
 export function renameDevice(db: Db, id: DeviceId, name: string): RenameDeviceResult {
   return db.transaction((): RenameDeviceResult => {
     const taken = db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM devices WHERE name = ? AND id != ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM devices WHERE name = ? AND id != ?",
+      )
       .get(name, id);
     if (taken) return { ok: false, reason: "name-taken" };
     const changed = db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(name, id).changes;
@@ -388,10 +385,9 @@ export function replaceDeviceForRepair(
   const version = versionFrom(caps);
   const tx = db.transaction((): { installId: string | null; accessLevelId: string | null } => {
     const exists = db
-      .prepare<
-        [string],
-        { install_id: string | null; access_level_id: string | null }
-      >("SELECT install_id, access_level_id FROM devices WHERE id = ?")
+      .prepare<[string], { install_id: string | null; access_level_id: string | null }>(
+        "SELECT install_id, access_level_id FROM devices WHERE id = ?",
+      )
       .get(oldId);
     if (!exists) throw new Error(`Device not found: ${oldId}`);
     // Existing live sockets authenticated with these credentials may finish
@@ -548,6 +544,38 @@ export function updateDeviceCapabilities(
     );
     return extendUnanimousMemberConfigContracts(db, id);
   })();
+}
+
+/** True for an `unsupported` update result reported by a different release. */
+const UNSUPPORTED_VERSION_CHANGED = "update_state = 'unsupported' AND version IS NOT ?";
+
+/**
+ * Record the product version a browser extension reported on an ordinary HTTP
+ * request. The extension never opens a device socket, so without this its row
+ * would keep the version it paired with through every Chrome update.
+ *
+ * Only the version reading moves: the capabilities, the protocol column and
+ * `last_seen_at` belong to the pairing and the token beacon. An `unsupported`
+ * update result describes the build that gave it, so a different version
+ * clears it, as a hello does. The statement writes nothing when the row
+ * already reads this version, is not a live browser row, or is gone, and
+ * returns whether it wrote.
+ */
+export function recordReportedDeviceVersion(db: Db, id: DeviceId, version: string): boolean {
+  const at = now();
+  return (
+    db
+      .prepare(
+        `UPDATE devices
+          SET version = ?, version_seen_at = ?,
+              desired_version = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE desired_version END,
+              update_detail = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_detail END,
+              update_state_at = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_state_at END,
+              update_state = CASE WHEN ${UNSUPPORTED_VERSION_CHANGED} THEN NULL ELSE update_state END
+        WHERE id = ? AND kind = 'browser' AND revoked_at IS NULL AND version IS NOT ?`,
+      )
+      .run(version, at, version, version, version, version, id, version).changes > 0
+  );
 }
 
 /**
@@ -948,8 +976,7 @@ export function setRelayPushConsent(
 ): RelayPushConsentOutcome {
   return db.transaction((): RelayPushConsentOutcome => {
     const row = db.prepare(`SELECT capabilities FROM devices WHERE id = ?`).get(id) as
-      | { capabilities: string | null }
-      | undefined;
+      { capabilities: string | null } | undefined;
     if (!row) return "device-not-found";
     const caps = parseCapabilities(row.capabilities, id);
     if (caps.pushAppId !== undefined && caps.pushAppId !== consent.appId) {
@@ -1916,10 +1943,9 @@ function canonicalJson(value: unknown): string {
  */
 export function bootstrapSelfFromDevices(db: Db): string | null {
   const existing = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   if (existing) return null;
 

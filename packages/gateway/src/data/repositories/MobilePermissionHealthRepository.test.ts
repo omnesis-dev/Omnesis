@@ -67,10 +67,9 @@ describe("mobile permission health persistence", () => {
     expect(getMobilePermissionHealth(db, source.id, 61_000)?.health.reportStale).toBe(true);
     expect(
       db
-        .prepare<
-          [string],
-          { validity_anchored: number }
-        >("SELECT validity_anchored FROM mobile_permission_health WHERE source_id = ?")
+        .prepare<[string], { validity_anchored: number }>(
+          "SELECT validity_anchored FROM mobile_permission_health WHERE source_id = ?",
+        )
         .get(source.id),
     ).toEqual({ validity_anchored: 1 });
 
@@ -85,10 +84,9 @@ describe("mobile permission health persistence", () => {
     });
     expect(
       db
-        .prepare<
-          [string],
-          { validity_anchored: number }
-        >("SELECT validity_anchored FROM mobile_permission_health WHERE source_id = ?")
+        .prepare<[string], { validity_anchored: number }>(
+          "SELECT validity_anchored FROM mobile_permission_health WHERE source_id = ?",
+        )
         .get(source.id),
     ).toEqual({ validity_anchored: 1 });
   });
@@ -140,10 +138,9 @@ describe("mobile permission health persistence", () => {
     ).toBe(true);
 
     const rows = db
-      .prepare<
-        [string],
-        { device_id: string; checked_at: number }
-      >("SELECT device_id, checked_at FROM mobile_permission_health WHERE source_id = ? ORDER BY device_id")
+      .prepare<[string], { device_id: string; checked_at: number }>(
+        "SELECT device_id, checked_at FROM mobile_permission_health WHERE source_id = ? ORDER BY device_id",
+      )
       .all(source.id);
     expect(rows).toEqual(
       [

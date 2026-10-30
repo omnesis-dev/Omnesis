@@ -25,10 +25,9 @@ function enqueueCascade(
     "INSERT OR IGNORE INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES(?,?,?,?,?)",
   ).run(kind, target.kind, target.id, revision, now);
   const job = db
-    .prepare<
-      [string, string, string, string],
-      { id: number }
-    >("SELECT id FROM knowledge_cascade_jobs WHERE kind=? AND target_kind=? AND target_id=? AND revision=?")
+    .prepare<[string, string, string, string], { id: number }>(
+      "SELECT id FROM knowledge_cascade_jobs WHERE kind=? AND target_kind=? AND target_id=? AND revision=?",
+    )
     .get(kind, target.kind, target.id, revision)!;
   db.prepare(
     "INSERT OR IGNORE INTO knowledge_cascade_frontier(job_id,target_kind,target_id) VALUES(?,?,?)",
@@ -139,10 +138,9 @@ export function advanceKnowledgeCascade(
       // already hides deleted evidence while this durable source job is pending.
       if (hasCandidateSources && erasesRoot && item.target_kind === "source") {
         const candidate = db
-          .prepare<
-            [string],
-            { candidate_id: string }
-          >("SELECT candidate_id FROM knowledge_candidate_sources WHERE document_id=? ORDER BY candidate_id LIMIT 1")
+          .prepare<[string], { candidate_id: string }>(
+            "SELECT candidate_id FROM knowledge_candidate_sources WHERE document_id=? ORDER BY candidate_id LIMIT 1",
+          )
           .get(item.target_id);
         if (candidate) {
           db.prepare("DELETE FROM knowledge_candidates WHERE id=?").run(candidate.candidate_id);
@@ -184,10 +182,9 @@ export function advanceKnowledgeCascade(
           // Observations attached to a deleted loop are that loop's own owner
           // records; each one is erased as its own owner job.
           const observation = db
-            .prepare<
-              [string],
-              { observation_id: string }
-            >("SELECT observation_id FROM observation_related_loops WHERE loop_id=? ORDER BY observation_id LIMIT 1")
+            .prepare<[string], { observation_id: string }>(
+              "SELECT observation_id FROM observation_related_loops WHERE loop_id=? ORDER BY observation_id LIMIT 1",
+            )
             .get(item.target_id);
           if (observation) {
             db.prepare(
@@ -208,10 +205,9 @@ export function advanceKnowledgeCascade(
           }
         }
         const row = db
-          .prepare<
-            [string],
-            { kind: KnowledgeNodeKind; owner_id: string | null }
-          >("SELECT kind,owner_id FROM knowledge_nodes WHERE id=?")
+          .prepare<[string], { kind: KnowledgeNodeKind; owner_id: string | null }>(
+            "SELECT kind,owner_id FROM knowledge_nodes WHERE id=?",
+          )
           .get(item.target_id);
         if (
           !row &&
@@ -249,10 +245,9 @@ export function advanceKnowledgeCascade(
       } else if (item.target_kind === "node" && !isRoot) {
         // The seed is the changed input, not itself a dependent to invalidate.
         const row = db
-          .prepare<
-            [string],
-            { revision: number }
-          >("SELECT revision FROM knowledge_nodes WHERE id=?")
+          .prepare<[string], { revision: number }>(
+            "SELECT revision FROM knowledge_nodes WHERE id=?",
+          )
           .get(item.target_id);
         const affectedClaims = row
           ? db
@@ -371,10 +366,9 @@ export function recordKnowledgeSourceChange(
 ): { changed: boolean; affectedNodeIds: string[] } {
   return db.transaction(() => {
     const prior = db
-      .prepare<
-        [string],
-        { content_hash: string; deleted: number; source_context: string | null }
-      >("SELECT content_hash,deleted,source_context FROM knowledge_source_revisions WHERE document_id=?")
+      .prepare<[string], { content_hash: string; deleted: number; source_context: string | null }>(
+        "SELECT content_hash,deleted,source_context FROM knowledge_source_revisions WHERE document_id=?",
+      )
       .get(input.documentId);
     if (prior?.deleted) return { changed: false, affectedNodeIds: [] };
     if (input.deleted) {
@@ -383,10 +377,9 @@ export function recordKnowledgeSourceChange(
     }
     const sourceContext =
       db
-        .prepare<
-          [string],
-          { context: string }
-        >(`SELECT ${knowledgeSourceContextSql(db, "d")} AS context FROM documents d WHERE id=?`)
+        .prepare<[string], { context: string }>(
+          `SELECT ${knowledgeSourceContextSql(db, "d")} AS context FROM documents d WHERE id=?`,
+        )
         .get(input.documentId)?.context ?? null;
     if (prior?.content_hash === input.contentHash && prior.source_context === sourceContext)
       return { changed: false, affectedNodeIds: [] };

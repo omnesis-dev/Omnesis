@@ -10,8 +10,8 @@ One command drives a release: `npm run release -- <subcommand>` (§ [The
 release conductor](#the-release-conductor)). It owns everything from the
 changeset to the annotated tag and reads nothing outside the repository.
 Pushing that tag triggers `.github/workflows/release.yml`, which creates the
-GitHub Release and, once publication is armed, publishes the packages and the
-container images (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
+GitHub Release, publishes the container images and, once npm publication is
+armed, the packages (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
 
 A release is an annotated `vX.Y.Z` tag on `main`. Both distribution channels
 resolve from it: a source install checks out the tag and builds it, and a
@@ -27,11 +27,13 @@ refuses `--docker --edge`: container installs resolve released images, while an
 ad-hoc commit image is published manually and pinned by its immutable `sha-*`
 tag.
 
-To run an arbitrary commit in Docker, start from a normal Docker install. A
-maintainer with workflow publication permission dispatches
-`.github/workflows/docker.yml` on a branch or tag at that commit with "Also
-publish the built images to GHCR" enabled. Once the images exist, the host pins
-the resulting tag and recreates its services:
+To run an arbitrary commit in Docker, start from a normal Docker install that
+runs the gateway and collector as separate containers. A maintainer with
+workflow publication permission dispatches `.github/workflows/docker-publish.yml`
+with `target_sha` set to that commit's full SHA and `push` ("Publish the built
+images to GHCR") enabled. It publishes the gateway, collector and updater images
+(there is no combined image) tagged `sha-<short-sha>`. Once the images exist,
+the host pins the resulting tag and recreates its services:
 
 ```sh
 sed -i.bak 's/^OMNESIS_IMAGE_TAG=.*/OMNESIS_IMAGE_TAG=sha-0123abc/' ~/.config/omnesis/.env
@@ -254,6 +256,8 @@ npm run release -- version <x.y.z>  apply pending changesets and write x.y.z eve
 npm run release -- pr               open or refresh the release pull request
 npm run release -- tag [x.y.z]      preflight, then create the annotated tag
 npm run release -- status           current tag, npm dist-tags, image tags, store versions
+npm run release -- github-release [x.y.z] --run <id>
+                                    create the release page a release run could not
 ```
 
 Every subcommand takes `--dry-run` and every subcommand is re-runnable: each
@@ -315,6 +319,17 @@ slot for the mobile store versions. Each remote
 probe fails soft and says "unavailable" rather than erroring: an unpublished
 package and an unreachable registry are both answers.
 
+**`github-release --run <id>`** creates the GitHub Release page for a
+release workflow run whose `verify`, `packages`, `images` and
+`images-manifest` jobs succeeded but whose `github-release` job did not create
+the page. It refuses a run that is not a release run, a push run for another
+tag, artifacts built for another version, and an installer that does not match
+its checksum. It downloads that run's `release-artifacts` and composes the
+notes and checksum list with `scripts/release/github-release.mjs`, the code the
+workflow runs, from the changelog at the tagged commit. Then it creates the
+page with your own `gh` login on the remote tag's commit. A page that already
+exists is left alone.
+
 ### The boundary
 
 Everything operating on public code and public channels lives in this
@@ -342,7 +357,8 @@ Cutting the tag stays a human decision.
    plugin and extension manifests, the native project files, and the lockstep
    guard.
 5. `npm run build && npm run typecheck && npm test` — full validation.
-6. Commit, then `npm run release -- pr`.
+6. Commit, then `npm run release -- pr`. It pushes the branch, then opens the
+   pull request or, when one is open, refreshes its title and body.
 7. Merge the release commit to `main` and wait for its main-branch CI verdict.
 8. On that exact checkout, `npm run release -- tag` — preflight, then the
    annotated tag on the verified commit.
@@ -399,19 +415,32 @@ the packages that landed and nothing else advertises the version. Because the
 publisher orders the graph leaves-first, the `omnesis` entry package lands
 only after everything it depends on, and an install of that version fails to
 resolve until it does.
-To finish an interrupted publication, dispatch the release workflow again
-against the same tag (`gh workflow run release.yml -f tag=v<version>`): the
-publisher skips every package the registry already holds byte for byte,
-publishes the rest, and refuses to continue past a version whose registry
-artifact differs from the one this tree stages.
+To finish an interrupted publication, first rerun the failed jobs of the
+tag's own run (`gh run rerun <run-id> --failed`), which keeps the tag's
+workflow file. When the fix is in the workflow itself, dispatch it from `main`
+against the same tag (`gh workflow run release.yml --ref main -f tag=v<version>`):
+the run uses `main`'s workflow file and still builds the tagged commit. Either
+way the publisher skips every package the registry already holds byte for
+byte, publishes the rest, and refuses to continue past a version whose
+registry artifact differs from the one this tree stages. A dispatched run's
+`github-release` job has been refused by GitHub with HTTP 403 (`Resource not
+accessible by integration`) although its token held `contents: write`, while
+tag-push runs created the page. In that case, create the page from the run's
+own artifacts with `npm run release -- github-release <version> --run <run-id>`.
 
 **Images publish on a release by default.** The repository variable
 `OMNESIS_IMAGE_PUBLISH=0` disables image pushes for a rehearsal; both architectures
-are still built and tested. npm packages remain opt-in through
+are still built and tested, each on its own native runner. Each runner pushes
+the digest it booted, and `images-manifest` tags the pair. npm packages remain opt-in through
 `OMNESIS_RELEASE_PUBLISH=1`. The GitHub Release page is created after the image
-jobs succeed. Make each GHCR package public in its package settings before
-advertising anonymous Docker installation; repository visibility alone does not
-prove an image can be pulled anonymously.
+jobs succeed. Each `images-manifest` job ends by pulling its image without
+credentials, so the page waits until every image is public. GHCR creates a
+package as private the first time it is pushed, and repository visibility does
+not change that. Before the first image release, or after adding an image, an
+organization owner must allow public packages (organization Settings →
+Packages → Package creation → Public). Without that, the package's visibility
+setting is disabled. Then make each new `omnesis-*` package public under
+Package settings → Change visibility, and rerun the run's failed jobs.
 The package destination is a separate choice, not another arming switch. With
 `OMNESIS_RELEASE_REGISTRY` unset, the packages step uses npmjs,
 `secrets.NPM_TOKEN`, provenance, and the explicit public-publish override. Set
@@ -446,6 +475,13 @@ is not supported at all: `@duckdb/node-api` ships no musl package and does not
 build from source, so the gateway cannot run there however long you wait.
 `better-sqlite3` and `usearch` additionally compile from source on musl. Windows
 is unsupported.
+
+`@mtcute/node` (the experimental Telegram provider) declares `better-sqlite3@^12`.
+A root `overrides` entry resolves it to the workspace's 13, so the lockfile holds
+one `better-sqlite3` and no second native build; mtcute only calls
+`sqlite3(filename, opts)` and `.pragma()`, both unchanged in 13. The provider
+never uses mtcute's own SQLite storage either way. `npm ls` reports the
+overridden edge as `invalid`, as it does for the existing `simple-git` override.
 
 This is documented rather than solved. Publishing our own prebuilds for the
 modules that lack them is a separate piece of work; until then the honest

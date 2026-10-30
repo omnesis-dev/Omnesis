@@ -139,10 +139,9 @@ function source(id = "input", hash = "v1", content = "The workshop begins Friday
 }
 function batchFor(subjectId: string): { id: string; runId: string } {
   return db
-    .prepare<
-      [string],
-      { id: string; runId: string }
-    >(`SELECT b.id,b.run_id AS runId FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=? AND b.status IN ('pending','running') ORDER BY b.created_at DESC,b.id DESC LIMIT 1`)
+    .prepare<[string], { id: string; runId: string }>(
+      `SELECT b.id,b.run_id AS runId FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=? AND b.status IN ('pending','running') ORDER BY b.created_at DESC,b.id DESC LIMIT 1`,
+    )
     .get(subjectId)!;
 }
 async function wiki(id = "project", ref = "source:input", text = "The workshop begins Friday.") {
@@ -644,10 +643,9 @@ describe("knowledge coordinator", () => {
         now,
       );
     const counted = db
-      .prepare<
-        [],
-        { count: number }
-      >("SELECT SUM(count) AS count FROM knowledge_historical_admissions")
+      .prepare<[], { count: number }>(
+        "SELECT SUM(count) AS count FROM knowledge_historical_admissions",
+      )
       .get()!.count;
     await engine.tick();
     await engine.tick();
@@ -680,10 +678,9 @@ describe("knowledge coordinator", () => {
     for (let pass = 0; pass < 12; pass++) {
       await engine.tick();
       for (const row of db
-        .prepare<
-          [],
-          { subject_id: string }
-        >("SELECT subject_id FROM knowledge_work WHERE reason='discovery' AND status='batched'")
+        .prepare<[], { subject_id: string }>(
+          "SELECT subject_id FROM knowledge_work WHERE reason='discovery' AND status='batched'",
+        )
         .all()) {
         const batch = batchFor(row.subject_id);
         const offered = (await engine.next(batch.id, batch.runId)).items[0];
@@ -1712,10 +1709,9 @@ describe("knowledge coordinator", () => {
     expect(
       JSON.parse(
         db
-          .prepare<
-            [string],
-            { payload_json: string }
-          >("SELECT payload_json FROM cognition_runs WHERE id=?")
+          .prepare<[string], { payload_json: string }>(
+            "SELECT payload_json FROM cognition_runs WHERE id=?",
+          )
           .get(batch.runId)!.payload_json,
       ),
     ).toMatchObject({ schedulingClass: "initial-root" });
@@ -1727,10 +1723,9 @@ describe("knowledge coordinator", () => {
     expect(
       JSON.parse(
         db
-          .prepare<
-            [string],
-            { payload_json: string }
-          >("SELECT payload_json FROM cognition_runs WHERE id=?")
+          .prepare<[string], { payload_json: string }>(
+            "SELECT payload_json FROM cognition_runs WHERE id=?",
+          )
           .get(batch.runId)!.payload_json,
       ),
     ).toMatchObject({ schedulingClass: "initial-root" });
@@ -1832,10 +1827,9 @@ describe("knowledge coordinator", () => {
     await engine.tick();
     expect(batchFor("overview")).toBeUndefined();
     const scheduledRoot = db
-      .prepare<
-        [],
-        { due_at: number }
-      >("SELECT due_at FROM knowledge_work WHERE subject_id='overview' AND status='pending' AND reason='root'")
+      .prepare<[], { due_at: number }>(
+        "SELECT due_at FROM knowledge_work WHERE subject_id='overview' AND status='pending' AND reason='root'",
+      )
       .get()!;
     expect(scheduledRoot.due_at).toBe(now + settings.knowledge.routineDelayMs);
     now = scheduledRoot.due_at;
@@ -3416,10 +3410,9 @@ it.each([
     });
     await engine.tick();
     const row = db
-      .prepare<
-        [],
-        { id: string; workId: string }
-      >("SELECT id,work_id AS workId FROM knowledge_decisions WHERE purpose='urgency'")
+      .prepare<[], { id: string; workId: string }>(
+        "SELECT id,work_id AS workId FROM knowledge_decisions WHERE purpose='urgency'",
+      )
       .get()!;
     expect(row.workId).toBeTruthy();
     expect(readKnowledgeDecisionAudit(db, row.id)).toMatchObject({

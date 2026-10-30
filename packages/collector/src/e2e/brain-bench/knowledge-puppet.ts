@@ -19,6 +19,11 @@ const itemSchema = z
     inputFingerprint: z.string(),
     inputVersions: z.record(z.string(), z.union([z.string(), z.number()])),
     pendingClaimIds: z.array(z.string()).optional(),
+    completionRequirements: z
+      .object({
+        requiredPhases: z.array(z.enum(["interpretation", "organization"])),
+      })
+      .optional(),
     depth: z.number(),
     fetchRequired: z.object({ id: z.string(), kind: z.string() }).passthrough().optional(),
     source: z
@@ -184,7 +189,30 @@ export function knowledgePuppet(
     for (const offeredItem of frontier.items) {
       if (left.includes(offeredItem)) continue;
       let item = offeredItem;
+      // Publication can re-offer the SAME source generation solely for its
+      // outstanding organization phase. Replaying interpretation mutations
+      // would create fresh canonical owners for already-covered evidence.
+      // Original joint-cohort members were likewise already interpreted.
+      const cohortMember =
+        !!item.source && !!frontier.organization?.sourceIds.includes(item.source.id);
+      const skipSourceInterpretation =
+        !!item.source &&
+        (item.completionRequirements
+          ? !item.completionRequirements.requiredPhases.includes("interpretation")
+          : cohortMember);
       const since = steps.slice(after);
+      const sourceCompletion = (): NextTurn => ({
+        kind: "tool",
+        name: "knowledge_discovery_complete",
+        args: {
+          id: item.id,
+          inputFingerprint: item.inputFingerprint,
+          targets: skipSourceInterpretation ? [] : (policy.targets?.(item, since) ?? []),
+          ...(item.completionRequirements
+            ? { phases: item.completionRequirements.requiredPhases }
+            : {}),
+        },
+      });
       // The tool contract: a `source_read_required` refusal names the read to
       // perform before retrying. Read receipts are conservatively dropped on
       // any privacy erasure in the run, including the run's own loop delete.
@@ -295,15 +323,7 @@ export function knowledgePuppet(
               ],
             },
           };
-        return {
-          kind: "tool",
-          name: "knowledge_discovery_complete",
-          args: {
-            id: item.id,
-            inputFingerprint: item.inputFingerprint,
-            targets: policy.targets?.(item, since) ?? [],
-          },
-        };
+        return sourceCompletion();
       }
       if (item.fetchRequired?.kind === "source" && item.source) {
         const ref = `source:${item.source.id}`;
@@ -352,13 +372,8 @@ export function knowledgePuppet(
           return { kind: "final", text: "Root orientation unavailable; preserve pending work." };
         item = { ...item, orientation: orientation.data };
       }
-      // Only original cohort members were already interpreted. Canonical admission
-      // can hand fresh evidence to this run after its joint cohort was created.
-      const cohortMember =
-        !!item.source && !!frontier.organization?.sourceIds.includes(item.source.id);
-      // Completing a member still needs a full read of its current revision
-      // when the frontier offered only an excerpt.
-      const plan = cohortMember
+      // Skipping repeated interpretation never bypasses the current-source read.
+      const plan = skipSourceInterpretation
         ? {
             calls: item.source?.contentTruncated
               ? [call("fetch_many", { documents: [{ documentId: item.source.id }] })]
@@ -391,16 +406,7 @@ export function knowledgePuppet(
         }
         return next;
       }
-      if (item.source)
-        return {
-          kind: "tool",
-          name: "knowledge_discovery_complete",
-          args: {
-            id: item.id,
-            inputFingerprint: item.inputFingerprint,
-            targets: cohortMember ? [] : (policy.targets?.(item, since) ?? []),
-          },
-        };
+      if (item.source) return sourceCompletion();
       return {
         kind: "final",
         text: `Scripted synthesis plan did not save offered node ${item.id}; preserve unfinished maintenance.`,

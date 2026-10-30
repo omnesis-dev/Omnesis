@@ -99,10 +99,9 @@ export class SourcePermissionNotifier {
         .listDevices()
         .find((device) => device.id === reservation.deviceId);
       const stillMember = this.options.db
-        .prepare<
-          [string, string],
-          { found: number }
-        >("SELECT 1 AS found FROM source_devices WHERE source_id = ? AND device_id = ?")
+        .prepare<[string, string], { found: number }>(
+          "SELECT 1 AS found FROM source_devices WHERE source_id = ? AND device_id = ?",
+        )
         .get(sourceId, reservation.deviceId);
       if (!source || !source.enabled || !stillMember || affectedDevice?.revokedAt != null) {
         await this.options.writeGate.releaseMobilePermissionReminder(

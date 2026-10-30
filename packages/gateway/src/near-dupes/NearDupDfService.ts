@@ -336,10 +336,9 @@ const dfCaches = new WeakMap<object, CachedDf>();
 
 export function buildInMemoryDfFromTable(db: Db, algoVersion: string): InMemoryDf {
   const metaRow = db
-    .prepare<
-      [string],
-      { total_docs: number; built_at: number | null; live_generation: number }
-    >(`SELECT total_docs, built_at, live_generation FROM near_dup_df_meta WHERE algo_version = ?`)
+    .prepare<[string], { total_docs: number; built_at: number | null; live_generation: number }>(
+      `SELECT total_docs, built_at, live_generation FROM near_dup_df_meta WHERE algo_version = ?`,
+    )
     .get(algoVersion);
   const totalDocs = metaRow?.total_docs ?? 0;
   // Read one generation, named by the meta row. A rebuild in flight is
@@ -354,10 +353,9 @@ export function buildInMemoryDfFromTable(db: Db, algoVersion: string): InMemoryD
 
   const counts = new Map<string, number>();
   const rows = db
-    .prepare<
-      [string, number],
-      { shingle: string; df: number }
-    >(`SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`)
+    .prepare<[string, number], { shingle: string; df: number }>(
+      `SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`,
+    )
     .iterate(algoVersion, generation) as Iterable<{ shingle: string; df: number }>;
   for (const r of rows) counts.set(r.shingle, r.df);
   const df: InMemoryDf = {

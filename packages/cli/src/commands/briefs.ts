@@ -387,6 +387,11 @@ export function triggerLabel(t: RunTrigger): string {
       return `compile (${t.authoredBy}): ${oneLine(t.request)}`;
     case "unknown":
       return "-";
+    default: {
+      // A trigger added by a newer gateway.
+      const _exhaustive: never = t;
+      return (t as { type: string }).type;
+    }
   }
 }
 

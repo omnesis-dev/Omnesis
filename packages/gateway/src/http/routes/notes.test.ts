@@ -102,10 +102,9 @@ describe("/notes availability", () => {
       const lazyApp = createServer(lazyDb, lazyPath);
       const seededCount = (): number =>
         lazyDb
-          .prepare<
-            [],
-            { count: number }
-          >(`SELECT COUNT(*) AS count FROM sync_state WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`)
+          .prepare<[], { count: number }>(
+            `SELECT COUNT(*) AS count FROM sync_state WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`,
+          )
           .get()!.count;
 
       expect(seededCount()).toBe(0);
@@ -142,10 +141,9 @@ describe("POST /notes", () => {
     // The day document projects through DocumentService.ingest.
     await notesRuntime!.flushAll();
     const doc = db
-      .prepare<
-        [string],
-        { external_id: string; metadata: string }
-      >(`SELECT external_id, metadata FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+      .prepare<[string], { external_id: string; metadata: string }>(
+        `SELECT external_id, metadata FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+      )
       .get(entry.day);
     expect(doc).toBeTruthy();
     expect(JSON.parse(doc!.metadata)).toMatchObject({
@@ -252,10 +250,9 @@ describe("POST /notes", () => {
 
     await notesRuntime!.flushAll();
     const doc = db
-      .prepare<
-        [string],
-        { content: string }
-      >(`SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+      .prepare<[string], { content: string }>(
+        `SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+      )
       .get(entry.day);
     expect(doc?.content).toContain("· London");
   });
@@ -292,10 +289,9 @@ describe("POST /notes", () => {
 
     await notesRuntime!.flushAll();
     const doc = db
-      .prepare<
-        [string],
-        { content: string }
-      >(`SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+      .prepare<[string], { content: string }>(
+        `SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+      )
       .get(entry.day);
     // The heading is a single line — the injected newline can't open a
     // second `##` section.
@@ -431,10 +427,9 @@ describe("DELETE /notes/:id", () => {
     const docCount = (): number =>
       (
         db
-          .prepare<
-            [],
-            { n: number }
-          >(`SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`)
+          .prepare<[], { n: number }>(
+            `SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`,
+          )
           .get() as { n: number }
       ).n;
     expect(docCount()).toBe(1);
@@ -457,29 +452,26 @@ describe("DELETE /notes/:id", () => {
 
 function notesDocCount(): number {
   return db
-    .prepare<
-      [],
-      { n: number }
-    >(`SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`)
+    .prepare<[], { n: number }>(
+      `SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`,
+    )
     .get()!.n;
 }
 
 function notesDocContent(day: string): string | null {
   const row = db
-    .prepare<
-      [string],
-      { content: string }
-    >(`SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+    .prepare<[string], { content: string }>(
+      `SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+    )
     .get(day);
   return row?.content ?? null;
 }
 
 function notesDocId(day: string): string {
   const row = db
-    .prepare<
-      [string],
-      { id: string }
-    >(`SELECT id FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+    .prepare<[string], { id: string }>(
+      `SELECT id FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+    )
     .get(day);
   if (!row) throw new Error(`no projected notes doc for day ${day}`);
   return row.id;
@@ -487,10 +479,9 @@ function notesDocId(day: string): string {
 
 function notesTombstoneCount(): number {
   return db
-    .prepare<
-      [],
-      { n: number }
-    >(`SELECT COUNT(*) AS n FROM removed_documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`)
+    .prepare<[], { n: number }>(
+      `SELECT COUNT(*) AS n FROM removed_documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`,
+    )
     .get()!.n;
 }
 
@@ -862,10 +853,9 @@ describe("restart persistence", () => {
     const countDocs = (handle: Db): number =>
       (
         handle
-          .prepare<
-            [],
-            { n: number }
-          >(`SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`)
+          .prepare<[], { n: number }>(
+            `SELECT COUNT(*) AS n FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}'`,
+          )
           .get() as { n: number }
       ).n;
 
@@ -900,10 +890,9 @@ describe("restart persistence", () => {
     expect(countDocs(second.handle)).toBe(1);
     const content = (
       second.handle
-        .prepare<
-          [string],
-          { content: string }
-        >(`SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`)
+        .prepare<[string], { content: string }>(
+          `SELECT content FROM documents WHERE source_id = '${OMNESIS_NOTES_SOURCE_ID}' AND external_id = ?`,
+        )
         .get(kept.day) as { content: string }
     ).content;
     expect(content).toContain("stays");

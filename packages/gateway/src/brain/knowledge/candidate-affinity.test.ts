@@ -199,10 +199,9 @@ it("keeps retry bindings coordinated after abandonment without completing untouc
   start("first", ["a"]);
   abandonKnowledgeBatch(db, { batchId: "first", notBefore: 10 }, 4);
   const retry = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM knowledge_work WHERE subject_id='a' AND status='pending'")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM knowledge_work WHERE subject_id='a' AND status='pending'",
+    )
     .get()!;
   expect(candidateAffinity(db, [retry.id]).keys).toEqual(candidateAffinity(db, ["w-b"]).keys);
   expect(db.prepare("SELECT status FROM knowledge_work WHERE id='w-b'").get()).toEqual({

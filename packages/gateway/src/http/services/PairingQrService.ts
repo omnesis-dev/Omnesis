@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isIP } from "node:net";
 import {
   assertNever,
   buildPairingPayloadV2,
   buildPairingPayloadV3,
   buildPairingPayloadV4,
+  classifyPairingHost,
   isTailnetName,
   judgePairingAddress,
   pairingHost,
@@ -16,6 +18,7 @@ import {
   type PairingAddressOption,
   type PairingAddressContext,
   type PairingAddressPlan,
+  type PairingHostClass,
   type PairingPlatform,
 } from "@omnesis/core";
 import { BadRequestError } from "../errors.js";
@@ -56,6 +59,18 @@ export interface PairingQrServiceOptions {
    * pairings do not expire this way.
    */
   certificateRenewsAt?: () => Date | null;
+  /**
+   * Names the host is reached by that the gateway cannot discover for itself:
+   * the host names and addresses a Docker install hands its gateway in
+   * OMNESIS_TLS_EXTRA_NAMES. Only those the served certificate covers belong
+   * here, since a phone verifies the certificate against the name it dials.
+   */
+  hostNames?: () => readonly string[];
+  /**
+   * Whether the gateway runs inside a container. Behind a Docker bridge it
+   * discovers the container's own addresses, which phones cannot reach.
+   */
+  inContainer?: boolean;
 }
 
 const IDENTITY_LABELS: Record<NetworkIdentity["kind"], string> = {
@@ -64,6 +79,21 @@ const IDENTITY_LABELS: Record<NetworkIdentity["kind"], string> = {
   "tailscale-magicdns": "Tailscale name",
   tailscale: "Tailscale IP",
 };
+
+/** How a host name the gateway was given, but did not discover, is labeled. */
+const HOST_NAME_LABELS: Record<PairingHostClass, string> = {
+  loopback: "This computer",
+  "local-address": IDENTITY_LABELS.lan,
+  "local-name": "Host name",
+  "tailnet-address": IDENTITY_LABELS.tailscale,
+  "tailnet-name": IDENTITY_LABELS["tailscale-magicdns"],
+  "public-address": "Public address",
+  "public-name": "Public address",
+};
+
+const CONTAINER_ADDRESS_LABEL = "Docker container address";
+const CONTAINER_ADDRESS_SUMMARY =
+  "The container's address on Docker's own network, which phones usually can't reach.";
 
 /**
  * Chooses and encodes pairing QR payloads. Every address is judged for the
@@ -144,11 +174,16 @@ export class PairingQrService {
   /**
    * Every address the phone behind `pairingCode` can be given, judged for that
    * phone and ordered best first. Candidates are each allowlisted origin, the
-   * host's network identities at the listen port (its own `.local` name
-   * replaced by the one the gateway advertises), and the host the caller
-   * reached the gateway by, at the port it used. A loopback address is left
-   * out: no phone reaches it (a simulator on this host can still be given one
-   * explicitly).
+   * host names the gateway was given (`hostNames`), the host's network
+   * identities at the listen port (its own `.local` name replaced by the one
+   * the gateway advertises), and the host the caller reached the gateway by,
+   * at the port it used. A loopback address is left out: no phone reaches it
+   * (a simulator on this host can still be given one explicitly).
+   *
+   * A gateway in a container that discovers none of its host names is behind
+   * a Docker bridge: what it discovers, and the `.local` name it advertises
+   * there, belong to the container's own network. Those are listed after
+   * every other usable address, so they are never recommended over one.
    */
   async pairingAddresses(input: {
     pairingCode: string;
@@ -164,6 +199,14 @@ export class PairingQrService {
       return isTailnetName(host) ? IDENTITY_LABELS["tailscale-magicdns"] : otherwise;
     };
 
+    const hostNames = pairableHostNames(this.options.hostNames?.() ?? []);
+    const givenHosts = new Set(hostNames);
+    const bridged =
+      this.options.inContainer === true &&
+      hostNames.length > 0 &&
+      !identities.some((i) => i.kind === "lan" && givenHosts.has(normalizeHost(i.address)));
+    const containerUrls = new Set<string>();
+
     const candidates = new Map<string, string>();
     for (const origin of this.allowlistedOrigins()) {
       candidates.set(origin, labelFor(new URL(origin).hostname, "Public address"));
@@ -171,14 +214,22 @@ export class PairingQrService {
     const listenPort = this.options.listenPort
       ? String(this.options.listenPort)
       : input.requestPort;
+    for (const host of hostNames) {
+      const url = originAt(host, listenPort);
+      if (!candidates.has(url)) {
+        candidates.set(url, labelFor(host, HOST_NAME_LABELS[classifyPairingHost(host)]));
+      }
+    }
     for (const identity of identities) {
       if (identity.kind === "mdns") continue;
       const url = originAt(identity.address, listenPort);
+      if (bridged && identity.kind === "lan") containerUrls.add(url);
       if (!candidates.has(url)) candidates.set(url, IDENTITY_LABELS[identity.kind]);
     }
     const localName = this.options.advertisedLocalName?.() ?? null;
     if (localName) {
       const url = originAt(localName, listenPort);
+      if (bridged) containerUrls.add(url);
       if (!candidates.has(url)) candidates.set(url, IDENTITY_LABELS.mdns);
     }
     // The host's own `.local` name stays out even when the caller reached the
@@ -194,13 +245,19 @@ export class PairingQrService {
     const judged = [...candidates].flatMap(([gatewayUrl, label], index) => {
       const verdict = judgePairingAddress(gatewayUrl, context);
       if (verdict.usable && verdict.reach === "this-computer") return [];
+      const inContainerNetwork = verdict.usable && containerUrls.has(gatewayUrl);
       const option: PairingAddressOption = {
         gatewayUrl,
         host: pairingHost(new URL(gatewayUrl)),
         label,
         ...verdict,
+        ...(inContainerNetwork
+          ? { label: CONTAINER_ADDRESS_LABEL, summary: CONTAINER_ADDRESS_SUMMARY }
+          : {}),
       };
-      return [{ option, rank: pairingReachRank(verdict), index }];
+      // After every other usable address; refused ones still sort last.
+      const rank = pairingReachRank(verdict) + (inContainerNetwork ? CONTAINER_RANK_PENALTY : 0);
+      return [{ option, rank, index }];
     });
     judged.sort((a, b) => a.rank - b.rank || a.index - b.index);
     const addresses = judged.map((j) => j.option);
@@ -214,10 +271,15 @@ export class PairingQrService {
       awayFromHome: reachesBeyondHome
         ? null
         : {
-            onTailnet: identities.some(
-              (i) => i.kind === "tailscale" || i.kind === "tailscale-magicdns",
-            ),
-            tailscaleName: identities.find((i) => i.kind === "tailscale-magicdns")?.address ?? null,
+            onTailnet:
+              identities.some((i) => i.kind === "tailscale" || i.kind === "tailscale-magicdns") ||
+              hostNames.some(
+                (host) => isTailnetName(host) || classifyPairingHost(host) === "tailnet-address",
+              ),
+            tailscaleName:
+              identities.find((i) => i.kind === "tailscale-magicdns")?.address ??
+              hostNames.find(isTailnetName) ??
+              null,
           },
     };
   }
@@ -303,6 +365,22 @@ export class PairingQrService {
     }
     return pairingPlatformForKind(kind);
   }
+}
+
+/** Larger than any usable reach rank, so a container's own address sorts after all of them. */
+const CONTAINER_RANK_PENALTY = 10;
+
+/**
+ * The host names worth offering a phone, IPv4 addresses first, as discovery
+ * orders its own. The host's own `.local` name stays out, as it does when
+ * discovered: a phone may resolve it to a container bridge the host also
+ * announces. So do IPv6 addresses, which discovery does not offer either.
+ */
+function pairableHostNames(hosts: readonly string[]): string[] {
+  const names = [...new Set(hosts.map(normalizeHost))].filter(
+    (host) => host.length > 0 && !host.endsWith(".local") && isIP(host) !== 6,
+  );
+  return [...names.filter((host) => isIP(host) === 4), ...names.filter((host) => !isIP(host))];
 }
 
 /** A host as written in an identity, origin or URL, compared the way `pairingHost` does. */

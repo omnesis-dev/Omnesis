@@ -297,7 +297,31 @@ function buildMemberViews(
   });
 }
 
-/** The human-readable listing: the source's mode, then one line per member. */
+/**
+ * The gateway's notices for one device of a source, one line each, as the
+ * portal and the apps show them beside it. A failure the row's own state
+ * already names is left to the state; a dispute is already counted on the
+ * source's heading. The lines carry the rest: a warning such as a backlog
+ * waiting for a model, or a note that will clear on its own.
+ */
+export function noticeLines(notices: readonly SourceNotice[] | undefined): string[] {
+  const lines: string[] = [];
+  for (const notice of notices ?? []) {
+    if (
+      notice.kind === "error" ||
+      notice.kind === "needs-auth" ||
+      notice.kind === "replica-dispute"
+    ) {
+      continue;
+    }
+    const mark = notice.severity === "info" ? `${c.dim}ℹ${c.reset}` : `${c.yellow}⚠${c.reset}`;
+    const detail = notice.detail ? ` ${c.dim}— ${notice.detail}${c.reset}` : "";
+    lines.push(`${mark} ${notice.title}${detail}`);
+  }
+  return lines;
+}
+
+/** The human-readable listing: the source's mode, then one line per member, each with its notices. */
 export function renderMembers(
   source: Pick<
     AdminSourceEntry,
@@ -317,6 +341,7 @@ export function renderMembers(
     `${c.bold}${source.id}${c.reset} ${c.dim}(${sourceMode(source)})${c.reset}${lease}${disputed}`,
   );
   const views = buildMemberViews(source, devices, status);
+  const statuses = statusByMember(source, status);
   const nameW = Math.max(...views.map((v) => v.name.length));
   for (const [i, v] of views.entries()) {
     const dot = v.online ? `${c.green}●${c.reset}` : `${c.dim}○${c.reset}`;
@@ -326,6 +351,7 @@ export function renderMembers(
       `  ${dot} ${c.cyan}${v.name.padEnd(nameW)}${c.reset}  ${c.dim}${v.kind}, ${presence}${c.reset}  ` +
         `${v.phrase}${owner}`,
     );
+    for (const line of noticeLines(statuses.get(v.deviceId)?.notices)) lines.push(`      ${line}`);
   }
   return lines;
 }

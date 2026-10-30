@@ -172,10 +172,9 @@ test.each([1, 8])(
       await bench.drainUntilQuiet({ includeUpcoming: false });
       const admissions = () =>
         bench.sql
-          .prepare<
-            [string],
-            { count: number }
-          >("SELECT COUNT(DISTINCT generation) AS count FROM knowledge_candidate_decision_work WHERE candidate_id=?")
+          .prepare<[string], { count: number }>(
+            "SELECT COUNT(DISTINCT generation) AS count FROM knowledge_candidate_decision_work WHERE candidate_id=?",
+          )
           .get(candidateId)?.count;
       expect(
         bench.sql

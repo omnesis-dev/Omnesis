@@ -284,6 +284,15 @@
           newlines. Set <code>separator: "newline"</code> for values containing commas, such as
           <code>*.{tmp,bak}</code> glob patterns.
         </p>
+        <p>
+          A source that can bulk-import from a local artifact declares <code>historyImport</code>: a
+          label, description, and an array of <code>ImportField</code>s a client renders as a form.
+          A leading <code>select</code> field can discriminate between backup variants, and any
+          later field may declare <code>when: { field, equals }</code> to show only for one
+          variant's choice — this keeps one declarative form clean across variants instead of
+          growing a separate descriptor per variant. See the WhatsApp provider's iPhone/Android
+          backup-import fields for a worked example.
+        </p>
 
         <h3 id="accounts-and-discovery">Accounts and discovery</h3>
         <p>
@@ -380,8 +389,7 @@ export default defineSource({
       return syncPage(documents, { lastModified: newest });
     },
   }),
-});</pre
-            >
+});</pre>
           </div>
         </div>
         <p>
@@ -661,7 +669,7 @@ export default defineSource({
           supports <code>state-envelope</code>, <code>multi-table-batch</code>,
           <code>snapshot-sessions</code>, <code>tuple-deletes</code>, <code>scoped-host</code>, and
           <code>typed-config</code>. Scoped claims require <code>snapshot-sessions</code>. The type
-          also names <code>connection-identity</code>, which no host advertises yet: a source that
+          also names <code>connection-identity</code>, which no host advertises: a source that
           requires it is refused everywhere.
         </p>
         <p>
@@ -871,8 +879,7 @@ src/
 ├── icons.ts            the icon as a data URI
 ├── normalizer.ts       raw platform rows → DocumentInput
 ├── normalizer.test.ts
-└── fieldnotes.test.ts  bootstrap + incremental sync</pre
-            >
+└── fieldnotes.test.ts  bootstrap + incremental sync</pre>
           </div>
         </div>
         <p>

@@ -44,7 +44,13 @@ function healthyInference(): InferenceOverview {
         available: true,
       },
       "privacy-reviewer": { role: "privacy-reviewer", kind: "disabled" },
-      transcriber: { role: "transcriber", kind: "disabled" },
+      transcriber: {
+        role: "transcriber",
+        kind: "local",
+        catalogId: "whisper-small",
+        modelPath: "/models/ggml-small.bin",
+        available: true,
+      },
       ocr: { role: "ocr", kind: "disabled" },
       "background-agent": { role: "background-agent", kind: "disabled" },
       "watch-judge": { role: "watch-judge", kind: "disabled" },
@@ -921,7 +927,7 @@ describe("evaluateDoctor — device identity", () => {
 });
 
 describe("evaluateDoctor — missing embedder", () => {
-  test("unavailable embedder is a FAIL, agent unavailability is a WARN, and transcriber is ignored", () => {
+  test("unavailable embedder is a FAIL, agent and transcriber unavailability are WARNs", () => {
     const data = healthyData();
     const inf = data.models!.inference;
     inf.assignments.embedder = {
@@ -941,12 +947,28 @@ describe("evaluateDoctor — missing embedder", () => {
     expect(emb?.status).toBe("fail");
     expect(emb?.message).toContain("not available");
 
-    expect(findCheck(report.checks, "models.transcriber")).toBeUndefined();
+    const transcriber = findCheck(report.checks, "models.transcriber");
+    expect(transcriber?.status).toBe("warn");
+    expect(transcriber?.message).toBe("transcriber is not configured");
+    expect(transcriber?.hint).toContain("stay as placeholders until a transcriber is assigned");
+    expect(transcriber?.hint).toContain("omnesis model assign transcriber local/<id>");
     expect(findCheck(report.checks, "models.agent")?.status).toBe("warn");
 
     expect(report.ok).toBe(false);
     expect(report.summary.errors).toBe(1);
     expect(report.summary.warnings).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a disabled embedder fails with a hint that keyword search still works", () => {
+    const data = healthyData();
+    data.models!.inference.assignments.embedder = { role: "embedder", kind: "disabled" };
+
+    const emb = findCheck(evaluateDoctor(data).checks, "models.embedder");
+    expect(emb?.status).toBe("fail");
+    expect(emb?.message).toBe("embedder is not configured");
+    expect(emb?.hint).toContain("Keyword search and indexing work without an embedder");
+    expect(emb?.hint).toContain("semantic search needs one");
+    expect(emb?.hint).toContain("omnesis model assign embedder local/<id>");
   });
 });
 
@@ -1351,6 +1373,21 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     expect(report.ok).toBe(true);
   });
 
+  test("semantic search degraded for lack of memory warns with the fix", () => {
+    const data = healthyData();
+    data.indexStats!.semanticSearch = {
+      state: "degraded",
+      reason:
+        "memory ran short while serving: 120 MiB left of the 8.0 GiB (gateway.memoryLimitMb) budget; the HNSW graph was released from memory",
+    };
+    const report = evaluateDoctor(data);
+    const check = findCheck(report.checks, "index.semantic");
+    expect(check?.status).toBe("warn");
+    expect(check?.message).toContain("keyword search only: memory ran short while serving");
+    expect(check?.hint).toContain("gateway.memoryLimitMb");
+    expect(report.ok).toBe(true);
+  });
+
   test("missing index model file is a FAIL", () => {
     const data = healthyData();
     data.indexStats = { enabled: false, state: "model-missing", model: { present: false } };
@@ -1358,6 +1395,19 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     const m = findCheck(report.checks, "index.model");
     expect(m?.status).toBe("fail");
     expect(report.ok).toBe(false);
+  });
+
+  test("missing semantic model keeps its failure without claiming keyword indexing is disabled", () => {
+    const data = healthyData();
+    data.indexStats = {
+      enabled: false,
+      state: "model-missing",
+      keywordIndexingActive: true,
+      model: { present: false },
+    };
+    const check = findCheck(evaluateDoctor(data).checks, "index.model");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("keyword indexing is active");
   });
 
   test("low models-dir free space warns", () => {

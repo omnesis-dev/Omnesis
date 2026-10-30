@@ -111,10 +111,9 @@ interface RunRow {
 
 function runRows(bench: BrainBench, kind: string): RunRow[] {
   return bench.sql
-    .prepare<
-      [string],
-      RunRow
-    >("SELECT id, kind, status, dedupe_key FROM cognition_runs WHERE kind = ? ORDER BY enqueued_at ASC, id ASC")
+    .prepare<[string], RunRow>(
+      "SELECT id, kind, status, dedupe_key FROM cognition_runs WHERE kind = ? ORDER BY enqueued_at ASC, id ASC",
+    )
     .all(kind);
 }
 
@@ -1402,10 +1401,9 @@ describe("rhythm: source discovery and year-less extracted dates", () => {
         `the extraction pass to visit ${id}`,
         () =>
           bench.sql
-            .prepare<
-              [string],
-              { stamped: string | null }
-            >("SELECT dates_extracted_at AS stamped FROM documents WHERE id = ?")
+            .prepare<[string], { stamped: string | null }>(
+              "SELECT dates_extracted_at AS stamped FROM documents WHERE id = ?",
+            )
             .get(id)?.stamped
             ? true
             : null,
@@ -1422,10 +1420,9 @@ describe("rhythm: source discovery and year-less extracted dates", () => {
 
   test("a year-less planning document still gets its dates extracted", () => {
     const rows = bench.sql
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_extracted_dates WHERE document_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_extracted_dates WHERE document_id = ?",
+      )
       .get(yearlessDocId);
     expect(
       rows?.n ?? 0,
@@ -1441,10 +1438,9 @@ describe("rhythm: source discovery and year-less extracted dates", () => {
   test("the year-less twin receives the same revision coverage", async () => {
     expect((await bench.obs.interpretationForSource(yearlessDocId)).status).toBe("completed");
     const rows = bench.sql
-      .prepare<
-        [string],
-        { phase: string; status: string }
-      >("SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?")
+      .prepare<[string], { phase: string; status: string }>(
+        "SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?",
+      )
       .all(yearlessDocId);
     expect(rows).toEqual(
       expect.arrayContaining([

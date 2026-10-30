@@ -26,10 +26,9 @@ export function withdrawKnowledgeOwner(
     const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
     const subjectColumn = kind === "doc_annotation" ? "doc_id" : "person_id";
     const owner = db
-      .prepare<
-        [string],
-        { subjectId: string }
-      >(`SELECT ${subjectColumn} AS subjectId FROM ${table} WHERE id=?`)
+      .prepare<[string], { subjectId: string }>(
+        `SELECT ${subjectColumn} AS subjectId FROM ${table} WHERE id=?`,
+      )
       .get(id);
     if (!owner) return false;
     try {

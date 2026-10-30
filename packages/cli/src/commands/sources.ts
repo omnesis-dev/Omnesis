@@ -9,6 +9,7 @@ import {
   type AdminDeviceEntry,
   type AdminSourceEntry,
   type MemberSyncStatus,
+  noticeLines,
 } from "./members.js";
 
 type AdminSource = Omit<AdminSourceEntry, "members"> & {
@@ -113,18 +114,16 @@ export const sourcesListCommand = defineCommand({
             ? ` ${c.red}(${trouble})${c.reset}`
             : "";
         const source = { ...s, members: s.members ?? [s.deviceId] };
+        const status = statusBySourceId.get(source.id);
         if (sourceMode(source) !== "exclusive" || source.members.length > 1) {
-          const [heading, ...memberLines] = renderMembers(
-            source,
-            devices,
-            statusBySourceId.get(source.id),
-          );
+          const [heading, ...memberLines] = renderMembers(source, devices, status);
           console.log(`    ${dot} ${heading}${tag}`);
           for (const line of memberLines) console.log(`    ${line}`);
           continue;
         }
         const dev = deviceById.get(source.deviceId) ?? source.deviceId.slice(0, 8);
         console.log(`    ${dot} ${c.dim}${source.id}${c.reset} on ${c.cyan}${dev}${c.reset}${tag}`);
+        for (const line of noticeLines(status?.notices)) console.log(`      ${line}`);
       }
       console.log();
     }

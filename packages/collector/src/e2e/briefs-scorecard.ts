@@ -227,10 +227,9 @@ export function loopsWithMarker(
   marker: string,
 ): Array<{ id: string; state: string; title: string; created_by_run: string }> {
   return db
-    .prepare<
-      [string],
-      { id: string; state: string; title: string; created_by_run: string }
-    >("SELECT id, state, title, created_by_run FROM open_loops WHERE title LIKE ? ESCAPE '\\'")
+    .prepare<[string], { id: string; state: string; title: string; created_by_run: string }>(
+      "SELECT id, state, title, created_by_run FROM open_loops WHERE title LIKE ? ESCAPE '\\'",
+    )
     .all(`%${marker.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`);
 }
 
@@ -375,10 +374,9 @@ async function waitForCompletedRuns(
     () =>
       `${what} — rows at timeout: ${JSON.stringify(
         db
-          .prepare<
-            [string],
-            Record<string, unknown>
-          >("SELECT id, kind, status, attempts, last_error FROM cognition_runs WHERE dedupe_key = ?")
+          .prepare<[string], Record<string, unknown>>(
+            "SELECT id, kind, status, attempts, last_error FROM cognition_runs WHERE dedupe_key = ?",
+          )
           .all(`data:doc:${docId}`),
       )}`,
     () => {
@@ -419,10 +417,9 @@ async function settleScorecardMaintenance(harness: SyntheticE2EHarness, db: Data
       const now = Date.now();
       // Include this fixture's 1s tiers and 2s debounce, not future reminders.
       const dueRuns = db
-        .prepare<
-          [number],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status='pending' AND next_attempt_at<=?")
+        .prepare<[number], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE status='pending' AND next_attempt_at<=?",
+        )
         .get(now + 2000)!.n;
       const quiet =
         dueRuns === 0 &&
@@ -597,10 +594,9 @@ async function deliverArcSet(
     "steward run queue to settle",
     () => {
       const pending = db
-        .prepare<
-          [number],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND next_attempt_at <= ?")
+        .prepare<[number], { n: number }>(
+          "SELECT COUNT(*) AS n FROM cognition_runs WHERE status = 'pending' AND next_attempt_at <= ?",
+        )
         .get(Date.now());
       return (pending?.n ?? 0) === 0 ? true : null;
     },
@@ -624,10 +620,9 @@ async function deliverArcSet(
     // manufacture a canonical outcome merely because a model run occurred.
     const mutations =
       db
-        .prepare<
-          [string, string],
-          { n: number }
-        >("SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM observation_citations WHERE doc_id=?) AS n")
+        .prepare<[string, string], { n: number }>(
+          "SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM observation_citations WHERE doc_id=?) AS n",
+        )
         .get(docId, docId)?.n ?? 0;
     if (mutations)
       throw new Error(`instrument integrity: negative source ${externalId} created a loop`);
@@ -888,10 +883,9 @@ async function collectScorecardObservations(
     );
   const ledgerRunIdsByLoopId = new Map<string, string[]>();
   for (const row of db
-    .prepare<
-      [],
-      { loop_id: string; run_id: string }
-    >("SELECT loop_id, run_id FROM open_loop_ledger")
+    .prepare<[], { loop_id: string; run_id: string }>(
+      "SELECT loop_id, run_id FROM open_loop_ledger",
+    )
     .all()) {
     const ids = ledgerRunIdsByLoopId.get(row.loop_id) ?? [];
     ids.push(row.run_id);

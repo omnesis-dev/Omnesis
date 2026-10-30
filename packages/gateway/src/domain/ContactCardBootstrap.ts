@@ -215,10 +215,9 @@ export function upsertSeedFromContacts(
   const candidates = needsLiveCount
     ? selfCandidates.map((c) => {
         const live = db
-          .prepare<
-            [string],
-            { c: number }
-          >("SELECT COUNT(*) AS c FROM person_aliases WHERE person_id = ?")
+          .prepare<[string], { c: number }>(
+            "SELECT COUNT(*) AS c FROM person_aliases WHERE person_id = ?",
+          )
           .get(c.id);
         return { ...c, alias_count: live?.c ?? c.alias_count };
       })
@@ -423,10 +422,9 @@ export function seedFromContacts(db: Db): { seeded: number; selfDetected: boolea
 export function detectSelfFromSourceIds(db: Db, hooks: readonly SelfIdentitySource[]): number {
   if (hooks.length === 0) return 0;
   const selfRow = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   if (!selfRow) return 0;
   const byType = indexSelfIdentitySources(hooks);

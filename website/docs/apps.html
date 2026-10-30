@@ -329,8 +329,7 @@
               <span class="t-cmd">omnesis devices pair --kind ios</span>
             </p>
             <pre class="wrap t-dim">
-Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:activity-segments, write:photos, write:core-location-visits</pre
-            >
+Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:activity-segments, write:photos, write:core-location-visits</pre>
             <p>Scan this QR with the Omnesis app on your iPhone:</p>
             <p class="t-dim"># … QR code rendered in the terminal …</p>
             <p class="t-dim">
@@ -530,11 +529,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           move or strike it; nothing drops off on its own.
         </p>
         <p>
-          Tap a task's circle to complete it. On iPhone, touch and hold anywhere on the task for its
-          other actions, which fan out above and to the left of your finger. Keep holding, slide
+          Tap a task's circle to complete it. In the apps, touch and hold anywhere on the task for
+          its other actions, which fan out above and to the left of your finger. Keep holding, slide
           onto one and let go; letting go anywhere else changes nothing. Rest on
-          <strong>Other month</strong> to see the months. With VoiceOver, the same actions are in
-          the task's actions rotor.
+          <strong>Other month</strong> to see the months. With VoiceOver or TalkBack, the same
+          actions are in the task's accessibility actions.
         </p>
         <ul>
           <li>
@@ -548,13 +547,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <li><strong>Cancel task</strong>, for a task you no longer intend to do;</li>
           <li>
             <strong>Chat about this</strong>, to start a conversation with
-            <a href="/docs/agent#chat-about-a-task">the agent</a> about the task.
+            <a href="/docs/agent#chat-about-a-task">the agent</a> about the task, which needs an
+            agent model assigned.
           </li>
         </ul>
         <p>
           Tap the task itself for its details: edit its title, description, planned time and
-          deadline, and see its history, every change and where it was made. In the portal and on
-          Android, tapping the task opens these actions beneath it instead, with
+          deadline, and see its history, every change and where it was made. In the portal, clicking
+          the task opens these actions beneath it instead, with
           <strong>Next week</strong> (the coming Monday) as a further move, and
           <strong>Chat about this</strong> to the right of <strong>History</strong>.
         </p>
@@ -780,15 +780,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           With a model assigned to the <code>background-agent</code> role (under
           <strong>Settings → Models</strong>), Omnesis also reads each note you capture from your
           own clients: the portal, the apps and the CLI. Notes that external agents add through
-          <a href="/docs/connect">MCP, OpenClaw or Hermes</a>, and notes taken in the browser
-          extension, are saved and searchable but never acted on. A few seconds after a note stops
-          changing, one bounded agent turn acts on it: it adds the tasks the note asks for (“remind
-          me to renew the passport next month”), completes, moves, strikes or edits the task a note
-          reports progress on (“paid the plumber”), remembers facts you state about yourself or
-          people you know, and answers a question the note asks. A request that needs watching over
-          time, such as “tell me when the parcel ships”, is beyond one note; the reply says so
-          plainly. A voice note waits for the gateway's transcript, for up to 30 minutes, before it
-          is read.
+          <a href="/docs/connect">MCP, OpenClaw or Hermes</a> are saved and searchable but never
+          acted on. A few seconds after a note stops changing, one bounded agent turn acts on it: it
+          adds the tasks the note asks for (“remind me to renew the passport next month”),
+          completes, moves, strikes or edits the task a note reports progress on (“paid the
+          plumber”), remembers facts you state about yourself or people you know, and answers a
+          question the note asks. A request that needs watching over time, such as “tell me when the
+          parcel ships”, is beyond one note; the reply says so plainly. A voice note waits for the
+          gateway's transcript, for up to 30 minutes, before it is read.
         </p>
         <p>
           What the turn did appears under the note on the <strong>Tell Omnesis</strong> page as a
@@ -921,8 +920,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
             <pre>
 "inference": {
   "dictation": { "transcribeOnGateway": false }
-}</pre
-            >
+}</pre>
           </div>
         </div>
         <p>
@@ -932,14 +930,15 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         </p>
 
         <p>
-          When <code>inference.transcriptionVocabulary.enabled</code> is explicitly set to
-          <code>true</code>, personal vocabulary hints can improve both the gateway's transcriber
-          and the apps' on-device recognition, including voice questions to the agent and notes
-          captured with gateway dictation off. This setting is disabled by default. The apps fetch
-          hints in the background, keep them in memory for offline use for up to 24 hours, and
-          refresh them opportunistically after 30 minutes when returning to the foreground or
-          refreshing gateway status. Starting a recording never waits for hints. See
-          <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
+          Personal vocabulary hints can improve both the gateway's transcriber and the apps'
+          on-device recognition, including voice questions to the agent and notes captured with
+          gateway dictation off. They are on by default; setting
+          <code>inference.transcriptionVocabulary.enabled</code> to <code>false</code> turns them
+          off for the gateway and every paired app. The apps fetch hints in the background, keep
+          them in memory for offline use for up to 24 hours, and refresh them opportunistically
+          after 30 minutes when returning to the foreground or refreshing gateway status. Starting a
+          recording never waits for hints. See <a href="/docs/operating">Operating Omnesis</a> for
+          vocabulary behavior.
         </p>
         <p>
           iOS supplies hints only to on-device recognition. Android requires Android 13 or later and

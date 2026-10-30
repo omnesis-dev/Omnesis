@@ -115,10 +115,9 @@ function previouslyCohorted(db: Database.Database, id: string, revision: string)
 }
 function cadenceReady(db: Database.Database, now: number, intervalMs: number): boolean {
   const latest = db
-    .prepare<
-      [],
-      { created_at: number }
-    >("SELECT created_at FROM knowledge_organization_cohorts ORDER BY created_at DESC LIMIT 1")
+    .prepare<[], { created_at: number }>(
+      "SELECT created_at FROM knowledge_organization_cohorts ORDER BY created_at DESC LIMIT 1",
+    )
     .get();
   return !latest || latest.created_at + intervalMs <= now;
 }
@@ -285,10 +284,9 @@ function uncoveredSubjects(
   const since = now - SUBJECT_WINDOW_MS;
   if (tally)
     tally.important = db
-      .prepare<
-        [number, number],
-        { n: number }
-      >(`SELECT COUNT(*) AS n FROM open_loops l WHERE ${IMPORTANT_LOOP_SQL}`)
+      .prepare<[number, number], { n: number }>(
+        `SELECT COUNT(*) AS n FROM open_loops l WHERE ${IMPORTANT_LOOP_SQL}`,
+      )
       .get(SUBJECT_MIN_IMPORTANCE, since)!.n;
   const loops = db
     .prepare<[number, number], { id: string; importance: number; last_update: number }>(
@@ -695,10 +693,9 @@ export function getOrganizationCohort(
   if (!row) return null;
   const { subjectLoopId, ...cohort } = row;
   const members = db
-    .prepare<
-      [string],
-      { id: string; revision: string }
-    >("SELECT source_id AS id,content_hash AS revision FROM knowledge_organization_members WHERE cohort_id=? ORDER BY source_id")
+    .prepare<[string], { id: string; revision: string }>(
+      "SELECT source_id AS id,content_hash AS revision FROM knowledge_organization_members WHERE cohort_id=? ORDER BY source_id",
+    )
     .all(id);
   return {
     ...cohort,
@@ -708,8 +705,7 @@ export function getOrganizationCohort(
 }
 
 export type OrganizationCompletionResult =
-  | { accepted: true }
-  | { accepted: false; reason: "snapshot" | "target" | "grounding" | "budget" };
+  { accepted: true } | { accepted: false; reason: "snapshot" | "target" | "grounding" | "budget" };
 
 export function completeOrganizationCohortResult(
   db: Database.Database,
@@ -829,10 +825,9 @@ export function getOrganizationCohortForBatch(
   batchId: string,
 ): OrganizationCohort | null {
   const row = db
-    .prepare<
-      [string],
-      { id: string }
-    >("SELECT id FROM knowledge_organization_cohorts WHERE batch_id=?")
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM knowledge_organization_cohorts WHERE batch_id=?",
+    )
     .get(batchId);
   return row ? getOrganizationCohort(db, row.id) : null;
 }

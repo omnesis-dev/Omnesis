@@ -84,10 +84,9 @@ describe("mention judgements", () => {
 
   function verdictOf(id: string): string | undefined {
     return db
-      .prepare<
-        [string],
-        { verdict: string }
-      >("SELECT verdict FROM date_mention_judgements WHERE document_id = ?")
+      .prepare<[string], { verdict: string }>(
+        "SELECT verdict FROM date_mention_judgements WHERE document_id = ?",
+      )
       .get(id)?.verdict;
   }
 

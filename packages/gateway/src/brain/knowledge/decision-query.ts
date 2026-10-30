@@ -50,10 +50,9 @@ export function readDecisionSubjectRef(db: Database.Database, id: string | null)
     const documentId = id.slice(7);
     if (!areDecisionSourcesReadable(db, { documentId, subjectDocumentId: documentId })) return null;
     const document = db
-      .prepare<
-        [string],
-        { id: string; title: string; sourceId: string }
-      >("SELECT id,substr(title,1,500) AS title,source_id AS sourceId FROM documents WHERE id=?")
+      .prepare<[string], { id: string; title: string; sourceId: string }>(
+        "SELECT id,substr(title,1,500) AS title,source_id AS sourceId FROM documents WHERE id=?",
+      )
       .get(documentId);
     return document ? { ...document, kind: "source" as const } : null;
   }
@@ -113,10 +112,9 @@ function readRunDecisions(db: Database.Database, runId: string) {
   let legacyIncomplete = false;
   const result = () => ({ items: recorded.slice(0, 500), truncated, legacyIncomplete });
   const run = db
-    .prepare<
-      [string],
-      { started: number | null; finished: number | null }
-    >("SELECT last_attempt_at AS started,completed_at AS finished FROM cognition_runs WHERE id=?")
+    .prepare<[string], { started: number | null; finished: number | null }>(
+      "SELECT last_attempt_at AS started,completed_at AS finished FROM cognition_runs WHERE id=?",
+    )
     .get(runId);
   // An ongoing or retried legacy attempt cannot be bounded accurately here.
   if (run?.started == null || run.finished == null) {
@@ -281,10 +279,9 @@ function readRunDecisions(db: Database.Database, runId: string) {
   truncated ||= items.length > 500;
   // Older purposes/rubrics and ambiguous identity are intentionally not inferred.
   const unassociated = db
-    .prepare<
-      [number, number],
-      { id: string }
-    >("SELECT id FROM knowledge_decisions WHERE run_id IS NULL AND work_id IS NULL AND created_at BETWEEN ? AND ? LIMIT 501")
+    .prepare<[number, number], { id: string }>(
+      "SELECT id FROM knowledge_decisions WHERE run_id IS NULL AND work_id IS NULL AND created_at BETWEEN ? AND ? LIMIT 501",
+    )
     .all(run.started, run.finished);
   legacyIncomplete ||=
     unassociated.length > 500 || unassociated.some((row) => !matched.has(row.id));
@@ -400,10 +397,9 @@ export function listKnowledgeDecisionAuditPage(
     const knowledgeRows =
       !purpose || !LEGACY_PURPOSES.includes(purpose)
         ? db
-            .prepare<
-              Record<string, string | number>,
-              DecisionRow
-            >(`SELECT ${projection} FROM knowledge_decisions ${knowledge.where} ORDER BY created_at DESC,id LIMIT @limit`)
+            .prepare<Record<string, string | number>, DecisionRow>(
+              `SELECT ${projection} FROM knowledge_decisions ${knowledge.where} ORDER BY created_at DESC,id LIMIT @limit`,
+            )
             .all(knowledge.values)
         : [];
     const hasLegacy = !!db
@@ -412,10 +408,9 @@ export function listKnowledgeDecisionAuditPage(
     const legacyRows =
       hasLegacy && (!purpose || LEGACY_PURPOSES.includes(purpose))
         ? db
-            .prepare<
-              Record<string, string | number>,
-              LegacyAuditRow
-            >(`SELECT ${legacyProjection} FROM cognition_decisions ${legacy.where} ORDER BY created_at DESC,id LIMIT @limit`)
+            .prepare<Record<string, string | number>, LegacyAuditRow>(
+              `SELECT ${legacyProjection} FROM cognition_decisions ${legacy.where} ORDER BY created_at DESC,id LIMIT @limit`,
+            )
             .all(legacy.values)
         : [];
     const rows = [
@@ -470,10 +465,9 @@ export function listKnowledgeDecisionAuditPage(
 export function listKnowledgeDecisionsForBatch(db: Database.Database, batchId: string) {
   return db.transaction(() => {
     const rows = db
-      .prepare<
-        [string, string],
-        DecisionRow
-      >(`SELECT ${projection} FROM knowledge_decisions WHERE batch_id=? OR work_id IN (SELECT id FROM knowledge_work WHERE batch_id=?) ORDER BY created_at,id LIMIT 101`)
+      .prepare<[string, string], DecisionRow>(
+        `SELECT ${projection} FROM knowledge_decisions WHERE batch_id=? OR work_id IN (SELECT id FROM knowledge_work WHERE batch_id=?) ORDER BY created_at,id LIMIT 101`,
+      )
       .all(batchId, batchId);
     return {
       items: rows.slice(0, 100).map((row) => view(db, row, "recorded")),
@@ -500,10 +494,9 @@ export function listKnowledgeDecisionsForNode(db: Database.Database, nodeId: str
   return db.transaction(() => {
     if (!getKnowledgeNode(db, nodeId)) throw new NotFoundError("Knowledge node not found");
     const rows = db
-      .prepare<
-        [string],
-        DecisionRow
-      >(`SELECT ${projection} FROM knowledge_decisions WHERE node_id=? AND purpose IN ('review','urgency') ORDER BY created_at DESC,id LIMIT 51`)
+      .prepare<[string], DecisionRow>(
+        `SELECT ${projection} FROM knowledge_decisions WHERE node_id=? AND purpose IN ('review','urgency') ORDER BY created_at DESC,id LIMIT 51`,
+      )
       .all(nodeId);
     return {
       items: rows
@@ -517,10 +510,9 @@ export function listKnowledgeDecisionsForNode(db: Database.Database, nodeId: str
 /** Work association is an explicit recorded key; no same-node inference. */
 export function listKnowledgeDecisionsForWork(db: Database.Database, workId: string) {
   const rows = db
-    .prepare<
-      [string],
-      DecisionRow
-    >(`SELECT ${projection} FROM knowledge_decisions WHERE work_id=? ORDER BY created_at DESC,id LIMIT 21`)
+    .prepare<[string], DecisionRow>(
+      `SELECT ${projection} FROM knowledge_decisions WHERE work_id=? ORDER BY created_at DESC,id LIMIT 21`,
+    )
     .all(workId);
   return {
     items: rows.slice(0, 20).map((row) => view(db, row, "recorded")),

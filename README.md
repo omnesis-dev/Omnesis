@@ -23,7 +23,7 @@ Omnesis syncs your email, messages, notes, calendars, tasks, contacts, files, he
 
 Omnesis also connects what it indexes. A **people graph** resolves every email address, phone number and display name across your sources into one person, so searching for someone finds every conversation with them, on every platform. A **reference graph** links threads, attachments and cited documents, so search ranks well-referenced documents higher and the agent can follow an email to its attachment and on to the meeting notes that cite it.
 
-On top sits a built-in **agent**, in the web portal and the iOS and Android apps, that answers questions from your data with citations. It is sandboxed: every tool it holds only reads. Or bring **your own agent** — Claude, ChatGPT, Codex, [OpenClaw](https://openclaw.ai/), [Hermes](https://hermes-agent.nousresearch.com/) — over MCP. Each connection is approved by you and limited to the sources and permissions you choose, and answers can pass through a privacy reviewer before they leave.
+On top sits a built-in **agent**, in the web portal and the iOS and Android apps, that answers questions from your data with citations. It is sandboxed: it reads your data and writes only its own memory and your tasks, with no shell, file or internet access. Or bring **your own agent** — Claude, ChatGPT, Codex, [OpenClaw](https://openclaw.ai/), [Hermes](https://hermes-agent.nousresearch.com/) — over MCP. Each connection is approved by you and limited to the sources and permissions you choose, and answers can pass through a privacy reviewer before they leave.
 
 **Docs:** [omnesis.dev/docs](https://omnesis.dev/docs) · **Blog:** [omnesis.dev/blog](https://omnesis.dev/blog/) · **See it in action:** [omnesis.dev/#demos](https://omnesis.dev/#demos)
 
@@ -76,7 +76,7 @@ Omnesis runs on **macOS** and **Linux**. Windows is not supported. Install it on
 curl -fsSL https://omnesis.dev/install.sh | sh
 ```
 
-The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements and every flag. `omnesis uninstall` removes it again, all of it or the parts you name, and keeps your data unless you add `--purge`.
+The installer checks for Node 24.16 or newer within Node 24, or Node 26.1 or newer, and installs Node 24 if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements and every flag. `omnesis uninstall` removes it again, all of it or the parts you name, and keeps your data unless you add `--purge`.
 
 For Docker on a Linux server or NAS, add `--docker --combined` to run the gateway and collector in one container. `--docker --gateway-only` runs a gateway for collectors on other machines. See the [Docker and Unraid guide](https://omnesis.dev/docs/install#docker) for persistent storage, encryption, networking, and the included Compose configuration.
 

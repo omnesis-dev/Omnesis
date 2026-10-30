@@ -250,7 +250,7 @@ describe("runSecure — host role", () => {
     expect(restartService).toHaveBeenCalledWith("collector");
     expect(step("restart")).toBeUndefined();
     expect(step("collector-restart")).toMatchObject({ status: "done" });
-    for (const keyName of ["whatsapp-store", "imessage-transcripts"] as const) {
+    for (const keyName of ["whatsapp-store", "imessage-transcripts", "telegram-store"] as const) {
       await expect(inspectStorageKey(keyName, { configDir })).resolves.toMatchObject({
         present: true,
         valid: true,
@@ -272,7 +272,7 @@ describe("runSecure — host role", () => {
     const step = (id: string) => summary.steps.find((entry) => entry.id === id);
     expect(step("storage-keys")).toMatchObject({
       status: "planned",
-      detail: "mint wrapped keys for whatsapp-store, imessage-transcripts",
+      detail: "mint wrapped keys for whatsapp-store, imessage-transcripts, telegram-store",
     });
     expect(step("collector-restart")).toMatchObject({ status: "planned" });
     expect(step("restart")).toBeUndefined();

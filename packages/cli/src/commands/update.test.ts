@@ -136,6 +136,42 @@ describe("spawnRunner environment", () => {
   );
 });
 
+describe("spawnRunner trust for npm", () => {
+  // A stand-in npm that reports the NODE_OPTIONS every Node it starts would
+  // inherit; what the preload does in that Node is tls-distrust.test.ts's.
+  const runNpm = async (args: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-npm-trust-"));
+    try {
+      const npm = join(dir, "npm");
+      writeFileSync(npm, '#!/bin/sh\nprintf %s "$NODE_OPTIONS"\n', { mode: 0o755 });
+      const result = await spawnRunner(
+        { command: npm, args, env: { NODE_OPTIONS: "--max-old-space-size=512" } },
+        "capture",
+      );
+      expect(result.code).toBe(0);
+      return result.stdout;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  test.skipIf(process.platform === "win32")(
+    "npm gets the preload that keeps the distrusted roots out of its CA store",
+    async () => {
+      expect(await runNpm(["ci"])).toMatch(
+        /^--max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
+      );
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "npm run reaches no registry, so a build keeps exactly the NODE_OPTIONS it was given",
+    async () => {
+      expect(await runNpm(["run", "build"])).toBe("--max-old-space-size=512");
+    },
+  );
+});
+
 describe("spawnRunner outcome", () => {
   test.skipIf(process.platform === "win32")(
     "a process ended by a signal reports that signal",
@@ -335,8 +371,13 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "" },
     ]);
     const confirm = vi.fn(() => Promise.resolve());
-    await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner, { confirm }));
+    const saveNewerSettings = vi.fn();
+    await updateNpmGlobal(
+      { channel: "stable", dryRun: false },
+      makeDeps(runner, { confirm, saveNewerSettings }),
+    );
 
+    expect(saveNewerSettings).not.toHaveBeenCalled();
     expect(confirm).toHaveBeenCalledOnce();
     expect(runner.calls).toHaveLength(2);
     // The dist-tag resolves the target; the install pins it, so a tag that
@@ -473,13 +514,16 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "" },
     ]);
     const confirm = vi.fn(() => Promise.resolve());
+    const saveNewerSettings = vi.fn(() => expect(runner.calls).toHaveLength(1));
     await updateNpmGlobal(
       { channel: "stable", dryRun: false, force: true },
-      makeDeps(runner, { currentVersion: "0.2.0", confirm }),
+      makeDeps(runner, { currentVersion: "0.2.0", confirm, saveNewerSettings }),
     );
     expect(confirm).toHaveBeenCalledOnce();
     expect(runner.calls).toHaveLength(2);
     expect(runner.calls[1].spec.args).toEqual(["install", "-g", "omnesis@0.1.0"]);
+    // Saved for the next upgrade before the older release is installed.
+    expect(saveNewerSettings).toHaveBeenCalledExactlyOnceWith(["0.2.0"]);
   });
 
   test("dry-run downgrade warns about --force but does not throw", async () => {
@@ -1041,10 +1085,14 @@ describe("updateSourceCheckout", () => {
         clean,
         clean,
       ]);
+      const saveNewerSettings = vi.fn(() =>
+        expect(executed(runner)).not.toContain("git checkout --detach v0.3.0"),
+      );
       await updateSourceCheckout(
         { rootDir, edge: false, dryRun: false, [flag]: true },
-        makeDeps(runner),
+        makeDeps(runner, { saveNewerSettings }),
       );
+      expect(saveNewerSettings).toHaveBeenCalledExactlyOnceWith(["0.2.0"]);
       expect(executed(runner)).toContain("git checkout --detach v0.3.0");
       expect(output()).toContain("Moving back to v0.3.0");
       expect(output()).toContain("abcd123 Exercise an unmerged rollout");
@@ -1715,7 +1763,7 @@ describe("updateDocker", () => {
    * occurrence of one — the rollback runs the same `pull` as the apply, so
    * "the first pull" is the failure a revert test needs.
    */
-  function dockerRunner(events: string[], failAt?: { line: string; nth: number }) {
+  function dockerRunner(events: string[], failAt?: { line: string; nth: number | number[] }) {
     const calls: RecordedCall[] = [];
     const seen = new Map<string, number>();
     const run: CommandRunner = (spec, mode) => {
@@ -1724,7 +1772,8 @@ describe("updateDocker", () => {
       events.push(line);
       const nth = (seen.get(line) ?? 0) + 1;
       seen.set(line, nth);
-      const failed = failAt !== undefined && failAt.line === line && failAt.nth === nth;
+      const failed =
+        failAt !== undefined && failAt.line === line && [failAt.nth].flat().includes(nth);
       return Promise.resolve({ code: failed ? 1 : 0, stdout: "" });
     };
     return { run, calls };
@@ -1768,7 +1817,6 @@ describe("updateDocker", () => {
   const opts = (over: Partial<Parameters<typeof updateDocker>[0]> = {}) => ({
     composeFile,
     projectDir,
-    edge: false,
     dryRun: false,
     ...over,
   });
@@ -1802,11 +1850,32 @@ describe("updateDocker", () => {
     expect(latestDockerVersion).toHaveBeenCalledWith(composeFile);
   });
 
-  test("a failed pull records the previous tag again and brings the gateway back", async () => {
+  test("a pull a passing network fault broke is pulled once more, and the update lands", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events, {
       line: `docker compose -f ${composeFile} pull`,
       nth: 1,
+    });
+    const landed = await updateDocker(opts(), dockerDeps(events, runner));
+
+    expect(events).toEqual([
+      "backup",
+      "select 0.4.2",
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} up -d --no-deps gateway`,
+      "awaitHealth 0.4.2",
+      `docker compose -f ${composeFile} up -d --no-deps collector`,
+    ]);
+    expect(landed).toBe("0.4.2");
+    expect(output()).toContain("pulling again, keeping the layers already downloaded");
+  });
+
+  test("a failed pull records the previous tag again and brings the gateway back", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events, {
+      line: `docker compose -f ${composeFile} pull`,
+      nth: [1, 2],
     });
     await expect(updateDocker(opts(), dockerDeps(events, runner))).rejects.toMatchObject({
       exitCode: EXIT_FAILURE,
@@ -1815,6 +1884,8 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
+      `docker compose -f ${composeFile} pull`,
+      // Pulled twice: the second attempt rides out a refused connection.
       `docker compose -f ${composeFile} pull`,
       // The way back is the same pull at the tag that was recorded before.
       "select 0.4.1",
@@ -1868,16 +1939,6 @@ describe("updateDocker", () => {
     expect(events).toEqual([]);
   });
 
-  test("--edge moves to the main tag and demands no version of the gateway", async () => {
-    const events: string[] = [];
-    const runner = dockerRunner(events);
-    const landed = await updateDocker(opts({ edge: true }), dockerDeps(events, runner));
-    expect(events).toContain("select main");
-    expect(events).toContain("awaitHealth null");
-    // A branch build has no release number for the fleet fan-out to compare.
-    expect(landed).toBeNull();
-  });
-
   test("a dry run prints the plan and touches nothing", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events);
@@ -1887,6 +1948,67 @@ describe("updateDocker", () => {
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
     expect(output()).toContain("Dry run");
     expect(output()).toContain(`docker compose -f ${composeFile} pull`);
+  });
+
+  describe("saving the gateway's settings for a later upgrade", () => {
+    const saving = (events: string[]) =>
+      vi.fn((releases: readonly string[]) => {
+        events.push(`save settings ${releases.join(" ")}`);
+      });
+
+    test("a downgrade saves them before the tag moves", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ targetVersion: "0.4.0", force: true }),
+        dockerDeps(events, runner, { saveNewerSettings: saving(events) }),
+      );
+      expect(events.slice(0, 4)).toEqual([
+        "backup",
+        "save settings 0.4.1",
+        "select 0.4.0",
+        `docker compose -f ${composeFile} pull`,
+      ]);
+    });
+
+    test("an upgrade does not", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const saveNewerSettings = saving(events);
+      await updateDocker(opts(), dockerDeps(events, runner, { saveNewerSettings }));
+      expect(saveNewerSettings).not.toHaveBeenCalled();
+    });
+
+    test("an upgrade's rollback saves them, from either build, before the tag goes back", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events, {
+        line: `docker compose -f ${composeFile} up -d --no-deps gateway`,
+        nth: 1,
+      });
+      await expect(
+        updateDocker(opts(), dockerDeps(events, runner, { saveNewerSettings: saving(events) })),
+      ).rejects.toBeInstanceOf(CliError);
+      const saved = events.indexOf("save settings 0.4.2 0.4.1");
+      expect(saved).toBeGreaterThan(events.indexOf(`docker compose -f ${composeFile} pull`));
+      expect(events[saved + 1]).toBe("select 0.4.1");
+    });
+
+    test("a downgrade that cannot save them changes nothing", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await expect(
+        updateDocker(
+          opts({ targetVersion: "0.4.0", force: true }),
+          dockerDeps(events, runner, {
+            saveNewerSettings: () => {
+              throw new Error("EACCES: permission denied");
+            },
+          }),
+        ),
+      ).rejects.toThrow(/Could not save the gateway's settings .*EACCES.*Nothing was changed/);
+      expect(events).toEqual(["backup"]);
+      expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
+    });
   });
 
   test("a downgrade is refused without --force", async () => {
@@ -1990,7 +2112,10 @@ describe("updateDocker", () => {
       serializeUpdateApplyState(activeDockerApplyState(projectDir, "applying", "0.4.2", "0.4.1")),
     );
     const events: string[] = [];
-    const runner = dockerRunner(events, { line: `docker compose -f ${composeFile} pull`, nth: 1 });
+    const runner = dockerRunner(events, {
+      line: `docker compose -f ${composeFile} pull`,
+      nth: [1, 2],
+    });
     await expect(
       updateDocker(
         opts({ targetVersion: "0.4.2" }),
@@ -2258,14 +2383,59 @@ describe("updateDocker", () => {
     expect(events).toContain("awaitHealth 0.4.1");
   });
 
-  // Both directions of an edge plan pull the same moving tag, so the rollback
-  // re-fetches the build that just failed.
-  test("--edge says the rollback is not the way back", async () => {
-    const events: string[] = [];
-    const runner = dockerRunner(events);
-    await updateDocker(opts({ edge: true }), dockerDeps(events, runner));
-    expect(output()).toContain("the build that just failed");
-    expect(output()).toContain("backup");
+  // A host that only collects runs no gateway: the one its collector dials is
+  // another machine's, on that machine's release, so it says nothing about
+  // the images here. Docker's account of the collector's container does.
+  describe("a host that only collects", () => {
+    beforeEach(() => {
+      writeFileSync(
+        composeFile,
+        [
+          "services:",
+          "  collector:",
+          "    image: ghcr.io/omnesis-dev/omnesis-collector:${OMNESIS_IMAGE_TAG}",
+          "  updater:",
+          "    profiles: [update]",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    });
+
+    test("is up to date when its collector runs the recorded tag", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const servedVersion = vi.fn(() => Promise.resolve("0.3.9"));
+      const runningImageTag = vi.fn(() => Promise.resolve("0.4.1"));
+      const landed = await updateDocker(
+        opts({ dryRun: true }),
+        dockerDeps(events, runner, {
+          latestDockerVersion: () => Promise.resolve("0.4.1"),
+          servedVersion,
+          runningImageTag,
+        }),
+      );
+      expect(landed).toBe("0.4.1");
+      expect(output()).toContain("Already up to date (0.4.1): the collector runs it.");
+      expect(output()).not.toContain("move this installation");
+      expect(servedVersion).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+    });
+
+    test("reapplies the tag when the collector is not shown to run it", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ dryRun: true }),
+        dockerDeps(events, runner, {
+          latestDockerVersion: () => Promise.resolve("0.4.1"),
+          servedVersion: () => Promise.resolve("0.4.1"),
+          runningImageTag: () => Promise.resolve(null),
+        }),
+      );
+      expect(output()).toContain("the collector container is not running it");
+      expect(output()).toContain("Dry run");
+    });
   });
 
   describe("handing the rest to the updater the pull brought", () => {
@@ -2336,15 +2506,6 @@ describe("updateDocker", () => {
         `docker compose -f ${composeFile} up -d --no-deps collector`,
       ]);
       expect(output()).toContain("did not take over the rest of this update (it exited 1)");
-    });
-
-    test("the main tag has no release to hand over to, so everything runs here", async () => {
-      const events: string[] = [];
-      const runner = dockerRunner(events);
-      const continueAfterApply = vi.fn(taken);
-      await updateDocker(opts({ edge: true }), dockerDeps(events, runner, { continueAfterApply }));
-      expect(continueAfterApply).not.toHaveBeenCalled();
-      expect(events[0]).toBe("backup");
     });
 
     test("a release older than the hand-over runs everything here, in the old order", async () => {
@@ -2941,7 +3102,7 @@ describe("rolling back a failed update", () => {
       ]);
     });
 
-    test("the plan names the stopped collector, before the apply", async () => {
+    test("the plan names the stopped collector and gateway, before the apply", async () => {
       const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
       await updateSourceCheckout(
         { rootDir, edge: false, dryRun: true },
@@ -2951,14 +3112,15 @@ describe("rolling back a failed update", () => {
         }),
       );
       const plan = logged.slice(logged.indexOf("This host will:") + 1, -3);
-      expect(plan.slice(0, 3)).toEqual([
+      expect(plan.slice(0, 4)).toEqual([
         "  - back up the gateway's databases through its API",
         "  - stop the collector while the build runs, so the build has this machine's memory, and start it again after",
+        "  - stop the gateway while the build runs, so the build has this machine's memory; it is down until its restart",
         "  - move this installation to v0.3.0",
       ]);
     });
 
-    test("the collector is stopped for the build and its own restart brings it back; the gateway serves on", async () => {
+    test("both daemons are stopped for the build and their own restarts bring them back", async () => {
       const { events, runner, services } = recording([...preflight, clean, clean, clean]);
       await source(
         makeDeps(runner, {
@@ -2970,6 +3132,7 @@ describe("rolling back a failed update", () => {
       expect(events).toEqual([
         "git fetch --no-tags origin refs/tags/v0.3.0:refs/tags/v0.3.0",
         "stop collector",
+        "stop gateway",
         "git checkout --detach v0.3.0",
         "npm ci",
         "npm run build",
@@ -2978,6 +3141,38 @@ describe("rolling back a failed update", () => {
       ]);
       expect(services.startService).not.toHaveBeenCalled();
       expect(output()).toContain("Stopping the collector while the build runs");
+      expect(output()).toContain("Stopping the gateway while the build runs");
+    });
+
+    test("a gateway stopped for a build that fails is rebuilt stopped, then restarted on the previous one", async () => {
+      const { events, runner, services } = recording([
+        ...preflight,
+        clean,
+        clean,
+        killedBuild,
+        ...rollback,
+      ]);
+      await expect(
+        source(
+          makeDeps(runner, {
+            roles: hostRoles({ gateway: supervised, collector: supervised }),
+            buildMemoryTight: () => true,
+            ...services,
+          }),
+        ),
+      ).rejects.toMatchObject({ message: expect.stringContaining("Rolled back") });
+      expect(events.slice(1)).toEqual([
+        "stop collector",
+        "stop gateway",
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "npm run build",
+        `git checkout --detach ${previousRef}`,
+        "npm ci",
+        "npm run build",
+        "restart gateway",
+        "start collector",
+      ]);
     });
 
     test("a collector no step restarts is started again once the build is in place", async () => {
@@ -4618,6 +4813,41 @@ describe("handing the rest of an update to the build it installed", () => {
         sourceDeps(events, [...successfulUpdate, clean, clean, clean], { continueAfterApply }),
       );
       expect(events.slice(3)).toEqual(["npm run build", "copy", "restart collector"]);
+    });
+
+    test("daemons stopped for the build are left to the installed build that restarts them", async () => {
+      const events: string[] = [];
+      const continueAfterApply = vi.fn((_offer: ContinuationOffer) => {
+        events.push("hand over");
+        return Promise.resolve(taken);
+      });
+      const startService = vi.fn((component: ServiceComponent) => {
+        events.push(`start ${component}`);
+        return Promise.resolve();
+      });
+      await updateSourceCheckout(
+        { rootDir, edge: false, dryRun: false },
+        sourceDeps(events, [...successfulUpdate, clean, clean, clean], {
+          roles: hostRoles({ gateway: supervised, collector: supervised }),
+          buildMemoryTight: () => true,
+          continueAfterApply,
+          stopService: vi.fn((component: ServiceComponent) => {
+            events.push(`stop ${component}`);
+            return Promise.resolve();
+          }),
+          startService,
+        }),
+      );
+      expect(events.slice(1)).toEqual([
+        "stop collector",
+        "stop gateway",
+        "git checkout --detach v0.5.0",
+        "npm ci",
+        "npm run build",
+        "hand over",
+      ]);
+      expect(startService).not.toHaveBeenCalled();
+      expect(output()).not.toContain("Started the");
     });
 
     test("an edge build is handed over when its manifest declares a release that knows how", async () => {

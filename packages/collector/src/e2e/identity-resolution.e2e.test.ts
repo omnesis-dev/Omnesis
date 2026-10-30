@@ -395,10 +395,9 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
         mayaAliases: mayaId ? aliasSet(db, mayaId) : [],
         cardLinks: peopleForDocument(db, "conflict-card"),
         merged: db
-          .prepare<
-            [],
-            { id: string; merged_into: string | null }
-          >("SELECT id, merged_into FROM people WHERE merged_into IS NOT NULL")
+          .prepare<[], { id: string; merged_into: string | null }>(
+            "SELECT id, merged_into FROM people WHERE merged_into IS NOT NULL",
+          )
           .all(),
       };
     });
@@ -461,22 +460,19 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
 
     const state = withDb((db) => ({
       noreplyAliases: db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_aliases WHERE alias_type = 'email' AND alias LIKE '%noreply%'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM person_aliases WHERE alias_type = 'email' AND alias LIKE '%noreply%'",
+        )
         .get()!.n,
       noreplyHeadlines: db
-        .prepare<
-          [],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM people WHERE canonical_name LIKE '%noreply%'")
+        .prepare<[], { n: number }>(
+          "SELECT COUNT(*) AS n FROM people WHERE canonical_name LIKE '%noreply%'",
+        )
         .get()!.n,
       relayAuthors: db
-        .prepare<
-          [string, string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM people WHERE canonical_name IN (?, ?)")
+        .prepare<[string, string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM people WHERE canonical_name IN (?, ?)",
+        )
         .get("Marisol Feng", "Rowan Salter")!.n,
       linksA: peopleForDocument(db, "noreply-a"),
       linksB: peopleForDocument(db, "noreply-b"),
@@ -620,10 +616,9 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
         .get(ruleId)?.active,
       inesEquivalence: equivalenceFor(db, inesId!),
       equivalencesNamingInes: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_equivalences WHERE to_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM person_equivalences WHERE to_id = ?",
+        )
         .get(inesId!)!.n,
     }));
     expect(dormant.active).toBe(1);
@@ -713,19 +708,17 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
         bucketId,
         nameCount: bucketId
           ? db
-              .prepare<
-                [string],
-                { n: number }
-              >("SELECT COUNT(DISTINCT alias) AS n FROM person_aliases WHERE person_id = ? AND alias_type = 'name'")
+              .prepare<[string], { n: number }>(
+                "SELECT COUNT(DISTINCT alias) AS n FROM person_aliases WHERE person_id = ? AND alias_type = 'name'",
+              )
               .get(bucketId)!.n
           : 0,
         source: bucketId ? personRow(db, bucketId).source : null,
         blocklisted: blocklistRow(db, MAILBOX_EMAIL),
         links: db
-          .prepare<
-            [string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?")
+          .prepare<[string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?",
+          )
           .get(bucketId ?? "")!.n,
       };
     });
@@ -759,22 +752,19 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
     // non-identifying from the first message.
     const collapsed = withDb((db) => ({
       aliases: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_aliases WHERE alias = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM person_aliases WHERE alias = ?",
+        )
         .get(MAILBOX_EMAIL)!.n,
       bucketAliases: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM person_aliases WHERE person_id = ?",
+        )
         .get(bucketId)!.n,
       links: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM document_people WHERE person_id = ?",
+        )
         .get(bucketId)!.n,
       blocklisted: blocklistRow(db, MAILBOX_EMAIL),
     }));
@@ -812,16 +802,14 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
 
     const reformed = withDb((db) => ({
       mailboxAliases: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM person_aliases WHERE alias = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM person_aliases WHERE alias = ?",
+        )
         .get(MAILBOX_EMAIL)!.n,
       wren: db
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM people WHERE canonical_name = ?")
+        .prepare<[string], { n: number }>(
+          "SELECT COUNT(*) AS n FROM people WHERE canonical_name = ?",
+        )
         .get("Wren Castellanos")!.n,
       afterLinks: peopleForDocument(db, "mailbox-after"),
       averyId: personIdForAlias(db, "email", AVERY_EMAIL),
@@ -871,10 +859,9 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
     await waitForDb(
       (db) =>
         db
-          .prepare<
-            [],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM documents WHERE people_resolved_at IS NULL")
+          .prepare<[], { n: number }>(
+            "SELECT COUNT(*) AS n FROM documents WHERE people_resolved_at IS NULL",
+          )
           .get()!.n === 0,
       timeoutMs,
       "the people backfill to drain",
@@ -895,10 +882,9 @@ describe("Identity resolution and merge-class canonicality (e2e-minimal universe
   function assertResolved(externalIds: readonly string[]): void {
     const rows = withDb((db) =>
       db
-        .prepare<
-          [],
-          { external_id: string; people_resolved_at: string | null }
-        >("SELECT external_id, people_resolved_at FROM documents")
+        .prepare<[], { external_id: string; people_resolved_at: string | null }>(
+          "SELECT external_id, people_resolved_at FROM documents",
+        )
         .all(),
     );
     const resolved = new Set(
@@ -924,10 +910,9 @@ function personIdForAlias(
   alias: string,
 ): string | undefined {
   return db
-    .prepare<
-      [string, string],
-      { person_id: string }
-    >("SELECT person_id FROM person_aliases WHERE alias_type = ? AND alias = ? LIMIT 1")
+    .prepare<[string, string], { person_id: string }>(
+      "SELECT person_id FROM person_aliases WHERE alias_type = ? AND alias = ? LIMIT 1",
+    )
     .get(aliasType, alias)?.person_id;
 }
 
@@ -959,10 +944,9 @@ function personRow(
   personId: string,
 ): { first_seen: string; merged_into: string | null; source: string | null } {
   const row = db
-    .prepare<
-      [string],
-      { first_seen: string; merged_into: string | null; source: string | null }
-    >("SELECT first_seen, merged_into, source FROM people WHERE id = ?")
+    .prepare<[string], { first_seen: string; merged_into: string | null; source: string | null }>(
+      "SELECT first_seen, merged_into, source FROM people WHERE id = ?",
+    )
     .get(personId);
   if (!row) throw new Error(`no person row for ${personId}`);
   return row;
@@ -981,10 +965,9 @@ function equivalenceFor(
   fromId: string,
 ): { to_id: string; applied_at: string } | undefined {
   return db
-    .prepare<
-      [string],
-      { to_id: string; applied_at: string }
-    >("SELECT to_id, applied_at FROM person_equivalences WHERE from_id = ?")
+    .prepare<[string], { to_id: string; applied_at: string }>(
+      "SELECT to_id, applied_at FROM person_equivalences WHERE from_id = ?",
+    )
     .get(fromId);
 }
 
@@ -993,10 +976,9 @@ function refreshMeta(
   job: string,
 ): { dirty_version: number; last_computed_version: number } {
   const row = db
-    .prepare<
-      [string],
-      { dirty_version: number; last_computed_version: number }
-    >("SELECT dirty_version, last_computed_version FROM refresh_meta WHERE job = ?")
+    .prepare<[string], { dirty_version: number; last_computed_version: number }>(
+      "SELECT dirty_version, last_computed_version FROM refresh_meta WHERE job = ?",
+    )
     .get(job);
   if (!row) throw new Error(`no refresh_meta row for ${job}`);
   return row;
@@ -1007,9 +989,8 @@ function blocklistRow(
   email: string,
 ): { reason: string; name_count: number | null } | undefined {
   return db
-    .prepare<
-      [string],
-      { reason: string; name_count: number | null }
-    >("SELECT reason, name_count FROM non_identifying_emails WHERE email = ?")
+    .prepare<[string], { reason: string; name_count: number | null }>(
+      "SELECT reason, name_count FROM non_identifying_emails WHERE email = ?",
+    )
     .get(email);
 }

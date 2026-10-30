@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isFetchConnectionError } from "@omnesis/cli-shared";
 import { defineCommand } from "citty";
 import {
   c,
@@ -305,6 +306,7 @@ export const syncCommand = defineCommand({
           },
           now: () => Date.now(),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          isTransient: isFetchConnectionError,
         },
       ),
     );

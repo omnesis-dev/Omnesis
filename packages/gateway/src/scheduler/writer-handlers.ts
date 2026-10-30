@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
-import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
-
 import {
   type SyncIssue,
   type SyncIssueAssessment,
@@ -24,6 +21,9 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
+import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
+import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
 
 /**
  * Single source of truth for every writer op the worker can dispatch.
@@ -45,7 +45,6 @@ import {
  * The other three places fail to compile until they're updated.
  */
 
-import type Database from "better-sqlite3";
 import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "../data/list-revisions.js";
 type Db = Database.Database;
 
@@ -379,6 +378,7 @@ import {
   setRelayPushRegistration,
   withdrawRelayPushConsent,
   updateDeviceCapabilities,
+  recordReportedDeviceVersion,
   updateDeviceSelfInfo,
   touchDevice,
   createPairing,
@@ -634,6 +634,7 @@ import type {
   SettleSubscriptionDeliveryMutation,
   UseSubscriptionFiringAnswerAuthorityMutation,
   FinalizeSubscriptionFiringAnswerEgressMutation,
+  FinalizeSubscriptionCompletionEgressMutation,
 } from "../subscriptions/store-types.js";
 import type { MobilePermissionHealthReport } from "@omnesis/types/mobile-permission-health";
 
@@ -933,8 +934,7 @@ export const writerHandlers = {
   "people.bootstrapSelfFromConfig": (
     db: Db,
     configSelf:
-      | { name?: string; emails?: readonly string[]; phones?: readonly string[] }
-      | undefined,
+      { name?: string; emails?: readonly string[]; phones?: readonly string[] } | undefined,
   ): string | null => reconcileSelfFromConfig(db, configSelf),
   "people.mergePeople": (db: Db, winnerId: string, loserId: string): void => {
     mergePeople(db, winnerId, loserId);
@@ -1132,6 +1132,8 @@ export const writerHandlers = {
   ) => {
     return updateDeviceCapabilities(db, DeviceId(id), capabilities, protocolVersion);
   },
+  "devices.recordReportedVersion": (db: Db, id: string, version: string): boolean =>
+    recordReportedDeviceVersion(db, DeviceId(id), version),
   "devices.setUpdateRequest": (
     db: Db,
     id: string,
@@ -1742,6 +1744,10 @@ export const writerHandlers = {
     db: Db,
     input: UseSubscriptionFiringAnswerAuthorityMutation,
   ) => useSubscriptionFiringAnswerAuthority(db, input),
+  "subscriptions.completionEgressFinalize": (
+    db: Db,
+    input: FinalizeSubscriptionCompletionEgressMutation,
+  ) => finalizeSubscriptionCompletionEgress(db, input),
   "subscriptions.answerEgressFinalize": (
     db: Db,
     input: FinalizeSubscriptionFiringAnswerEgressMutation,
@@ -1967,6 +1973,7 @@ export const writerHandlers = {
  */
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type Database from "better-sqlite3";
 import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 import type {
   ProposedTaskChange,

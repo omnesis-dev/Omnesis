@@ -12,6 +12,11 @@ import {
   makeEncryptedBackup,
   type FixtureCorpus,
 } from "./testing/make-backup.js";
+import {
+  buildMsgstoreDb,
+  makeEncryptedAndroidBackup,
+  type AndroidFixtureCorpus,
+} from "./testing/make-android-backup.js";
 import type { StoredMessage } from "../types.js";
 
 const scratches = vi.hoisted(() => [] as string[]);
@@ -79,6 +84,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
 
     const phases: string[] = [];
     const first = await importWhatsAppHistory({
+      backupKind: "ios",
       backupPath: backup,
       passphrase: "pw",
       store,
@@ -99,6 +105,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
 
     // Re-running the same import double-counts nothing.
     const second = await importWhatsAppHistory({
+      backupKind: "ios",
       backupPath: backup,
       passphrase: "pw",
       store,
@@ -131,6 +138,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
     expect(store.totalMessages).toBe(1);
 
     const summary = await importWhatsAppHistory({
+      backupKind: "ios",
       backupPath: backup,
       passphrase: "pw",
       store,
@@ -168,7 +176,13 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
     };
     store.addMessages([live]);
 
-    await importWhatsAppHistory({ backupPath: backup, passphrase: "pw", store, own: OWN });
+    await importWhatsAppHistory({
+      backupKind: "ios",
+      backupPath: backup,
+      passphrase: "pw",
+      store,
+      own: OWN,
+    });
 
     // The surviving ID0002 must still be the rich live row (downloadable), not
     // the sparse backup blob — otherwise the attachment becomes unrecoverable.
@@ -189,6 +203,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
 
     let mergeEvents = 0;
     const summary = await importWhatsAppHistory({
+      backupKind: "ios",
       backupPath: backup,
       passphrase: "pw",
       store,
@@ -216,6 +231,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
     let observedPlaintext = false;
     await expect(
       importWhatsAppHistory({
+        backupKind: "ios",
         backupPath: backup,
         passphrase: "pw",
         store,
@@ -239,6 +255,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
     store = freshStore();
     await expect(
       importWhatsAppHistory({
+        backupKind: "ios",
         backupPath: "/nonexistent-fictional-backup",
         passphrase: "pw",
         store,
@@ -259,6 +276,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
     ac.abort();
     await expect(
       importWhatsAppHistory({
+        backupKind: "ios",
         backupPath: backup,
         passphrase: "pw",
         store,
@@ -267,5 +285,194 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
       }),
     ).rejects.toThrow(/cancelled/i);
     expect(store.totalMessages).toBe(0);
+  });
+});
+
+const ANDROID_CORPUS: AndroidFixtureCorpus = {
+  chats: [{ id: 1, jid: CHAT }],
+  messages: [
+    {
+      id: 1,
+      keyId: "AID0001",
+      chatId: 1,
+      fromMe: 0,
+      tsMs: 1_641_024_000_000,
+      type: 0,
+      text: "one",
+    },
+    {
+      id: 2,
+      keyId: "AID0002",
+      chatId: 1,
+      fromMe: 1,
+      tsMs: 1_641_110_400_000,
+      type: 0,
+      text: "two",
+    },
+    {
+      id: 3,
+      keyId: "AID0003",
+      chatId: 1,
+      fromMe: 0,
+      tsMs: 1_641_196_800_000,
+      type: 0,
+      text: "three",
+    },
+  ],
+};
+
+describe("importWhatsAppHistory — Android backup", () => {
+  const dirs: string[] = [];
+  let store: MessageStore | null = null;
+
+  afterEach(() => {
+    for (const path of scratches.splice(0)) expect(existsSync(path)).toBe(false);
+    store?.close();
+    store = null;
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function freshStore(): MessageStore {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-wa-android-store-"));
+    dirs.push(dir);
+    return new MessageStore(dir);
+  }
+
+  function androidBackup(): { filePath: string; keyHex: string } {
+    const built = makeEncryptedAndroidBackup({ msgstoreBytes: buildMsgstoreDb(ANDROID_CORPUS) });
+    dirs.push(join(built.filePath, ".."));
+    return built;
+  }
+
+  it("imports all messages, marks days dirty, and is idempotent on re-run", async () => {
+    const { filePath, keyHex } = androidBackup();
+    store = freshStore();
+
+    const phases: string[] = [];
+    const first = await importWhatsAppHistory({
+      backupKind: "android",
+      backupPath: filePath,
+      passphrase: keyHex,
+      store,
+      own: OWN,
+      callbacks: { onProgress: (p) => phases.push(p.phase) },
+    });
+
+    expect(first).toEqual({ imported: 3, merged: 0, skipped: 0 });
+    expect(store.totalMessages).toBe(3);
+    expect(phases).toContain("decrypt");
+    expect(phases).toContain("parse");
+    expect(phases).toContain("merge");
+
+    const second = await importWhatsAppHistory({
+      backupKind: "android",
+      backupPath: filePath,
+      passphrase: keyHex,
+      store,
+      own: OWN,
+    });
+    expect(second).toEqual({ imported: 0, merged: 3, skipped: 0 });
+    expect(store.totalMessages).toBe(3);
+  });
+
+  it("never clobbers a richer live row's media with the sparse backup blob", async () => {
+    const { filePath, keyHex } = androidBackup();
+    store = freshStore();
+
+    const live: StoredMessage = {
+      id: "AID0002",
+      chatJid: CHAT,
+      senderJid: OWN.jid,
+      senderName: OWN.name,
+      fromMe: true,
+      timestamp: Math.floor(1_641_110_400_000 / 1000),
+      type: "image",
+      text: "",
+      media: {
+        mimetype: "image/jpeg",
+        mediaKey: "k123",
+        url: "https://example.com/m",
+        directPath: "/d",
+      },
+    };
+    store.addMessages([live]);
+
+    await importWhatsAppHistory({
+      backupKind: "android",
+      backupPath: filePath,
+      passphrase: keyHex,
+      store,
+      own: OWN,
+    });
+
+    const all = [...store.drain().messagesByKey.values()].flat();
+    const survivor = all.find((m) => m.id === "AID0002");
+    expect(survivor?.media?.mediaKey).toBe("k123");
+    expect(survivor?.media?.url).toBe("https://example.com/m");
+    expect(survivor?.type).toBe("image");
+  });
+
+  it("merges across multiple worker batches with a correct tally", async () => {
+    const { filePath, keyHex } = androidBackup();
+    store = freshStore();
+
+    let mergeEvents = 0;
+    const summary = await importWhatsAppHistory({
+      backupKind: "android",
+      backupPath: filePath,
+      passphrase: keyHex,
+      store,
+      own: OWN,
+      batchSize: 2, // 3 messages → 2 batches
+      callbacks: {
+        onProgress: (p) => {
+          if (p.phase === "merge") mergeEvents++;
+        },
+      },
+    });
+    expect(summary).toEqual({ imported: 3, merged: 0, skipped: 0 });
+    expect(store.totalMessages).toBe(3);
+    expect(mergeEvents).toBeGreaterThan(1);
+  });
+
+  it("removes decrypted files after cancellation during parsing", async () => {
+    const { filePath, keyHex } = androidBackup();
+    store = freshStore();
+    const controller = new AbortController();
+    let observedPlaintext = false;
+    await expect(
+      importWhatsAppHistory({
+        backupKind: "android",
+        backupPath: filePath,
+        passphrase: keyHex,
+        store,
+        own: OWN,
+        callbacks: {
+          signal: controller.signal,
+          onProgress: (progress) => {
+            if (progress.phase !== "parse") return;
+            const path = join(scratches.at(-1)!, "msgstore.db");
+            observedPlaintext = existsSync(path);
+            expect(statSync(path).mode & 0o777).toBe(0o600);
+            controller.abort();
+          },
+        },
+      }),
+    ).rejects.toThrow(/cancelled/i);
+    expect(observedPlaintext).toBe(true);
+  });
+
+  it("removes scratch after a worker decrypt error", async () => {
+    store = freshStore();
+    await expect(
+      importWhatsAppHistory({
+        backupKind: "android",
+        backupPath: "/nonexistent-fictional-android-backup",
+        passphrase: "a".repeat(64),
+        store,
+        own: OWN,
+      }),
+    ).rejects.toThrow(/Backup file not found/);
+    expect(scratches.length).toBe(1);
   });
 });

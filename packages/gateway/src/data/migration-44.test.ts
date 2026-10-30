@@ -53,10 +53,9 @@ function insertDoc(d: Db, id: string, extractedAt: string | null): void {
 
 function stampedCount(d: Db): number {
   return d
-    .prepare<
-      [],
-      { n: number }
-    >("SELECT COUNT(*) AS n FROM documents WHERE dates_extracted_at IS NOT NULL")
+    .prepare<[], { n: number }>(
+      "SELECT COUNT(*) AS n FROM documents WHERE dates_extracted_at IS NOT NULL",
+    )
     .get()!.n;
 }
 

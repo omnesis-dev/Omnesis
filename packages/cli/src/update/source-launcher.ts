@@ -4,7 +4,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "@omnesis/core";
+import { atomicWriteFileSync, PRELOAD_SOURCE } from "@omnesis/core";
 import { NODE_GYP_HEADERS_SCRIPT } from "./node-gyp-headers.js";
 
 function shellQuote(value: string): string {
@@ -151,21 +151,32 @@ try {
 update_unfinished() {
   [ "$UPDATE_PHASE" = "applying" ] || [ "$UPDATE_PHASE" = "rolling-back" ] || [ "$UPDATE_PHASE" = "mismatch" ]
 }
+# The installer's npm trust preload; see with_npm_trust in the installer.
+with_npm_trust() {
+  NPM_TRUST_DIR="$(mktemp -d)" || return 1
+  cat >"$NPM_TRUST_DIR/distrust-roots.mjs" <<'NPM_TRUST_EOF'
+${PRELOAD_SOURCE}NPM_TRUST_EOF
+  NPM_TRUST_URL="file://$(printf '%s' "$NPM_TRUST_DIR/distrust-roots.mjs" | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"
+  NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--import=$NPM_TRUST_URL" "$@"
+  NPM_TRUST_STATUS=$?
+  rm -rf "$NPM_TRUST_DIR"
+  return "$NPM_TRUST_STATUS"
+}
 # The node-gyp header check the installer runs before each npm ci; see
 # prepare_node_gyp_headers in the installer.
 prepare_node_gyp_headers() {
-  ( cd "$1" && node -e '${NODE_GYP_HEADERS_SCRIPT}' "$(npm config get node-gyp 2>/dev/null)" ) || true
+  ( cd "$1" && with_npm_trust node -e '${NODE_GYP_HEADERS_SCRIPT}' "$(npm config get node-gyp 2>/dev/null)" ) || true
 }
 # npm installs over the node_modules a workspace checkout already has, and
 # an install over another build's tree can fail the same way on every run.
 # A failed install is retried once from an empty node_modules.
 install_source_dependencies() {
   prepare_node_gyp_headers "$SOURCE_ROOT"
-  ( cd "$SOURCE_ROOT" && npm ci ) && return 0
+  ( cd "$SOURCE_ROOT" && with_npm_trust npm ci ) && return 0
   printf '%s\\n' "Installing dependencies failed; installing them again from an empty node_modules..." >&2
   rm -rf "$SOURCE_ROOT/node_modules" || return 1
   prepare_node_gyp_headers "$SOURCE_ROOT"
-  ( cd "$SOURCE_ROOT" && npm ci )
+  ( cd "$SOURCE_ROOT" && with_npm_trust npm ci )
 }
 read_update_phase
 if update_unfinished; then

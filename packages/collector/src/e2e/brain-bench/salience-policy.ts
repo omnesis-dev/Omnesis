@@ -21,8 +21,7 @@ import type { DecisionPolicy, DecisionServerRequest } from "./decision-server.js
 
 /** The scores one observation receives, or a provider error for its call. */
 export type SalienceScript =
-  | { consequence: number; timing: number; alreadyKnown: number }
-  | { httpError: number };
+  { consequence: number; timing: number; alreadyKnown: number } | { httpError: number };
 
 /** True when the request is an observation-salience judgement. */
 export function isSalienceRequest(request: Pick<DecisionServerRequest, "questions">): boolean {

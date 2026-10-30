@@ -80,10 +80,9 @@ it("gates before backend startup, preserves uncertain and oversized inputs, and 
   });
   function hasBackendRunForSource(id: string): boolean {
     const runs = bench!.sql
-      .prepare<
-        [string],
-        { run_id: string }
-      >("SELECT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?")
+      .prepare<[string], { run_id: string }>(
+        "SELECT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?",
+      )
       .all(id);
     return runs.some((run) => bench!.puppetCalls.some((call) => call.runId === run.run_id));
   }
@@ -108,19 +107,17 @@ it("gates before backend startup, preserves uncertain and oversized inputs, and 
     )
     .toMatchObject({ status: "gated", reconsider_at: expect.any(Number) });
   const initialRuns = bench.sql
-    .prepare<
-      [string],
-      { run_id: string }
-    >("SELECT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?")
+    .prepare<[string], { run_id: string }>(
+      "SELECT b.run_id FROM knowledge_batches b JOIN knowledge_work w ON w.batch_id=b.id WHERE w.subject_id=?",
+    )
     .all(lowId!);
   expect(initialRuns.length).toBeGreaterThan(0);
   for (const run of initialRuns)
     expect(bench.puppetCalls.filter((call) => call.runId === run.run_id)).toEqual([]);
   const gatedAt = bench.sql
-    .prepare<
-      [string],
-      { reconsider_at: number }
-    >("SELECT reconsider_at FROM knowledge_discovery_coverage WHERE subject_id=? LIMIT 1")
+    .prepare<[string], { reconsider_at: number }>(
+      "SELECT reconsider_at FROM knowledge_discovery_coverage WHERE subject_id=? LIMIT 1",
+    )
     .get(lowId!)!.reconsider_at;
   expect(gatedAt).toBe(Date.parse("2027-01-11T13:00:00Z"));
 

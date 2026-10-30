@@ -13,25 +13,48 @@ import { boundedRequest } from "./bounded-request.js";
 import { boundedGatewayReason } from "./response-body.js";
 import type { FetchLike, FetchLikeResponse, QueueItem } from "./types.js";
 
+/**
+ * The query parameter that carries the extension's own product version to the
+ * gateway, which records it on this browser's device row when it changed.
+ * The extension never opens a device socket, so without it the row keeps the
+ * version it paired with through every update.
+ *
+ * A query parameter rather than a header: these requests are already
+ * non-simple (bearer + JSON), and a custom header could fail the preflight of
+ * a gateway whose CORS policy lists only its standard headers. A gateway that
+ * predates the parameter ignores it. It names the build, never the user.
+ */
+export const CLIENT_VERSION_PARAM = "clientVersion";
+
 /** Bounded HTTP transport and response classification for the push facade. */
 export class PushTransport {
   private readonly base: string;
+  private readonly query: string;
 
   constructor(
     gatewayUrl: string,
     private readonly token: string,
     private readonly fetch: FetchLike,
     private readonly timeoutMs: number,
+    clientVersion?: string,
   ) {
     const normalized = normalizeGatewayUrl(gatewayUrl);
     if (normalized !== gatewayUrl) {
       throw new Error("Gateway URL must be its canonical HTTPS origin.");
     }
     this.base = normalized;
+    this.query = clientVersion
+      ? `?${new URLSearchParams({ [CLIENT_VERSION_PARAM]: clientVersion }).toString()}`
+      : "";
+  }
+
+  /** The URL of a gateway route, carrying this build's version when known. */
+  private url(path: string): string {
+    return `${this.base}${path}${this.query}`;
   }
 
   probeEmptyDocuments(): Promise<FetchLikeResponse> {
-    return this.request(`${this.base}/documents`, {
+    return this.request(this.url("/documents"), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -61,7 +84,7 @@ export class PushTransport {
 
     let response: FetchLikeResponse;
     try {
-      response = await this.request(`${this.base}${path}`, {
+      response = await this.request(this.url(path), {
         method: "POST",
         headers: {
           "content-type": "application/json",

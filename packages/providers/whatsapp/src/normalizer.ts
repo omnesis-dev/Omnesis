@@ -11,6 +11,7 @@ import {
   parseSourceKey,
   formatLid,
   WHATSAPP_LID_PLATFORM,
+  transcriptionPlaceholderNote,
 } from "@omnesis/core";
 import type {
   DocumentInput,
@@ -370,16 +371,18 @@ function renderMessage(
         : "?";
       const label = msg.media?.isVoiceNote ? "Voice note" : "Audio";
       // A transcribed voice note renders its spoken text after the placeholder,
-      // so it becomes part of the indexed/searchable conversation content. An
-      // empty transcript (no speech detected) keeps just the placeholder.
+      // so it becomes part of the indexed/searchable conversation content.
       const transcript = msg.transcript?.trim();
       if (transcript) {
         return `${quoteLine}**${time}** ${sender}: [${label}, ${duration}]: ${transcript}`;
       }
-      // Terminal download failure (audio gone from the CDN/phone, no transcript)
-      // — say so explicitly instead of a bare placeholder that looks identical to
-      // a note still awaiting transcription.
-      const suffix = msg.mediaState === "unavailable" ? " — audio unavailable" : "";
+      // Otherwise the placeholder says why there is no spoken text: audio gone
+      // from the CDN/phone is a download fact the store knows; everything else
+      // (queued, no transcriber, no speech) the source's transcription pass
+      // worked out for this render. A bare placeholder means the source has no
+      // transcriber wired at all.
+      const state = msg.mediaState === "unavailable" ? "audio-unavailable" : msg.transcription;
+      const suffix = state ? ` — ${transcriptionPlaceholderNote(state)}` : "";
       return `${quoteLine}**${time}** ${sender}: [${label}, ${duration}${suffix}]`;
     }
 

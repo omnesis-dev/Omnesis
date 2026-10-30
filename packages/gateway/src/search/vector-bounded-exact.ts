@@ -96,10 +96,9 @@ export function boundedExactVectorCandidates(
         throw new Error("Exact vector snapshot belongs to a different embedding generation");
     }
     const headers = db
-      .prepare<
-        unknown[],
-        { rowid: number; bytes: number | null }
-      >(`SELECT c.rowid,length(c.embedding) AS bytes FROM chunks c WHERE ${scope} LIMIT ?`)
+      .prepare<unknown[], { rowid: number; bytes: number | null }>(
+        `SELECT c.rowid,length(c.embedding) AS bytes FROM chunks c WHERE ${scope} LIMIT ?`,
+      )
       .all(...scopeParams, bound + 1);
     if (headers.length > bound) return null;
     if (!headers.length) return [];

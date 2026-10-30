@@ -18,10 +18,9 @@ export function readRetrievalCoverage(
     .get();
   const corpusBoundary = hasDocumentClock
     ? (gatewayDb!
-        .prepare<
-          [],
-          { boundary: string | null }
-        >("SELECT MAX(updated_at) AS boundary FROM documents INDEXED BY idx_documents_updated_at")
+        .prepare<[], { boundary: string | null }>(
+          "SELECT MAX(updated_at) AS boundary FROM documents INDEXED BY idx_documents_updated_at",
+        )
         .get()?.boundary ?? null)
     : null;
   const hasWatermarks = indexDb

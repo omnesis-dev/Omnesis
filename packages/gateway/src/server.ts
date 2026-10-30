@@ -21,6 +21,10 @@ import {
 } from "@omnesis/types";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
+import {
+  CLIENT_VERSION_PARAM,
+  createReportedVersionRecorder,
+} from "./http/reported-client-version.js";
 import { getSource } from "./data/repositories/SourceRepository.js";
 import { getWipeEpoch, listCursorRows } from "./data/repositories/SyncStateRepository.js";
 import {
@@ -158,6 +162,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
 import type { AgentCertificateTrust } from "./tls-lifecycle/agent-trust.js";
@@ -340,6 +345,8 @@ export function createServer(
       present: boolean;
       modelsDir: string;
     };
+    /** Semantic-search state against the memory budget, on `/index/stats` and in the doctor. */
+    getSemanticSearch?: () => SemanticSearchStatus | null;
     /**
      * Indexer worker readiness. Used by the portal's search view.
      */
@@ -353,7 +360,8 @@ export function createServer(
      * Operator-facing trigger for the indexer's on-demand passes.
      */
     indexerControl?: {
-      reindexMissing: () => Promise<{ indexed: number; errors: number }>;
+      /** Resolves null when no indexer worker is ready to run the pass. */
+      reindexMissing: () => Promise<{ indexed: number; errors: number } | null>;
       rebuild?: (mode?: import("./indexer/indexer-lifecycle.js").EmbedSwapMode) => Promise<void>;
       wake?: () => void;
       /**
@@ -411,6 +419,8 @@ export function createServer(
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
     getNoteAgentStatus?: () => import("./brain/note-agent/runner.js").NoteAgentStatus;
+    /** The owner's note agent switch, read as each note is captured. */
+    isNoteAgentEnabled?: () => boolean;
     /** The cascades that follow a task change (loop mirror, scheduled checks, observations). */
     taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
@@ -444,6 +454,11 @@ export function createServer(
       role: import("@omnesis/core").CapabilityRole,
       opts?: { force?: boolean },
     ) => Promise<import("@omnesis/core").CapabilityVerdict>;
+    /** Whether an assignment may be written — `PATCH /admin/config` refuses one that may not. */
+    vetAssignment?: (
+      role: import("@omnesis/core").CapabilityRole,
+      value: import("@omnesis/core").AssignmentValue,
+    ) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** Built-in Codex backend status and device-login hooks, mounted with model routes. */
     getCodexStatus?: () => import("@omnesis/core").CodexBackendStatus;
     refreshCodexStatus?: () => Promise<import("@omnesis/core").CodexBackendStatus>;
@@ -576,6 +591,13 @@ export function createServer(
     advertisedPairingHost?: () => string | null;
     /** When the served certificate will next be replaced by the gateway, or null. */
     certificateRenewsAt?: () => Date | null;
+    /**
+     * Names the host is reached by that the gateway cannot discover for itself
+     * (OMNESIS_TLS_EXTRA_NAMES), as far as the served certificate covers them.
+     */
+    pairingHostNames?: () => readonly string[];
+    /** Whether the gateway runs inside a container. */
+    inContainer?: boolean;
     /**
      * Externally-reachable HTTPS base URL of this gateway (no trailing
      * slash). Forwarded to a collector's `auth.begin` so a source's
@@ -856,6 +878,12 @@ export function createServer(
 
   const tokenUsageBuffer = opts?.tokenUsageBuffer;
   const principalCredentialUsageBuffer = opts?.principalCredentialUsageBuffer;
+  // A browser reports its version on the requests it already makes; only a
+  // change from its row reaches the writer, as one background write.
+  const reportedVersions = createReportedVersionRecorder({
+    record: (id, version) =>
+      runWithPriority("background", () => w.recordReportedDeviceVersion(id, version)),
+  });
 
   app.use("*", async (c, next) => {
     const startMs = Date.now();
@@ -968,6 +996,7 @@ export function createServer(
           }
           auth = { authMethod: "bearer", deviceId: info.deviceId, tokenId: info.id, scopes };
           tokenUsageBuffer?.note(info.id, info.deviceId);
+          if (device) reportedVersions.note(device, c.req.query(CLIENT_VERSION_PARAM));
         }
       }
     }
@@ -1261,6 +1290,7 @@ export function createServer(
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
+    vetAssignment: opts?.vetAssignment,
   });
 
   // Model manager + system info routes (admin scope). Registered only
@@ -1396,6 +1426,7 @@ export function createServer(
       indexerModel: opts?.indexerModel,
       indexerReadiness: opts?.indexerReadiness,
       getIndexRate: opts?.indexerControl?.getIndexRate,
+      getSemanticSearch: opts?.getSemanticSearch,
     },
     getSystemInfo: opts?.getSystemInfo,
     getInferenceOverview: opts?.getInferenceOverview,
@@ -1469,6 +1500,8 @@ export function createServer(
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
     advertisedPairingHost: opts?.advertisedPairingHost,
     certificateRenewsAt: opts?.certificateRenewsAt,
+    pairingHostNames: opts?.pairingHostNames,
+    inContainer: opts?.inContainer,
     gatewayPort: opts?.port,
     searchSnapshot: opts?.searchSnapshot,
     doctorService,
@@ -1665,6 +1698,7 @@ export function createServer(
       readDb: db,
       isTranscriptionVocabularyEnabled: () =>
         opts?.transcriptionVocabularyService?.enabled() ?? false,
+      isNoteAgentEnabled: opts?.isNoteAgentEnabled,
       ingest: (docs) => documentService.ingest(docs),
       deleteByIds: (providerId, sourceId, externalIds) =>
         documentService.deleteByIds(providerId, sourceId, externalIds),
@@ -1834,6 +1868,7 @@ export function createServer(
     indexerModel: opts?.indexerModel,
     indexerControl: opts?.indexerControl,
     indexerReadiness: opts?.indexerReadiness,
+    getSemanticSearch: opts?.getSemanticSearch,
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.

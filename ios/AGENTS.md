@@ -223,6 +223,7 @@ When the user is away from the macOS build host, `devicectl install` doesn't wor
 | APS environment       | Debug `development`, Release `production`                     | Debug `development`, Release `production`      |
 | Apple Watch app       | `OmnesisWatch` + `OmnesisWatchWidgets`                        | `OmnesisDemoWatch` + `OmnesisDemoWatchWidgets` |
 | Extensions            | Control Center control, notification service                  | none                                           |
+| Realtime voice        | not included (no WebRTC)                                      | included (`OMNESIS_REALTIME_VOICE`, WebRTC)    |
 
 Both apps install side-by-side on the same device. Because the keychain access groups differ, each app keeps its own paired gateway URL + token — pair the production app to your live gateway, pair the demo app to whatever the synth/replay demo gateway is serving (`scripts/start-demo-gateway.sh`), and flip between them by tapping the home-screen icon. **No more re-pairing your live setup just to demo.** Each app embeds its own watch app, built from the `WatchApp` / `WatchWidgets` templates in `project.yml`, so the demo app's complications reach the demo app's gateway.
 

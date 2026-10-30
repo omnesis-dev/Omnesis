@@ -423,9 +423,7 @@ export function regenerateServiceDefinition(
 // ── On the host ────────────────────────────────────────────────────────
 
 export type ServiceDefinitionOutcome =
-  | { kind: "unchanged" }
-  | { kind: "replaced" }
-  | { kind: "refused"; reason: string };
+  { kind: "unchanged" } | { kind: "replaced" } | { kind: "refused"; reason: string };
 
 /** An update's hold on the service definitions of this account's daemons. */
 export interface ServiceDefinitionUpdater {

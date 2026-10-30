@@ -663,10 +663,9 @@ describe("access authorization store", () => {
     if (!exchanged.ok) throw new Error("tokens not issued");
     expect(
       db
-        .prepare<
-          [],
-          { expires_at: number }
-        >("SELECT expires_at FROM oauth_access_tokens ORDER BY created_at DESC LIMIT 1")
+        .prepare<[], { expires_at: number }>(
+          "SELECT expires_at FROM oauth_access_tokens ORDER BY created_at DESC LIMIT 1",
+        )
         .get(),
     ).toEqual({ expires_at: NOW + 30_000 });
   });
@@ -1037,10 +1036,9 @@ describe("access authorization store", () => {
     });
     expect(
       db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM oauth_authorization_requests ORDER BY status, id")
+        .prepare<[], { status: string }>(
+          "SELECT status FROM oauth_authorization_requests ORDER BY status, id",
+        )
         .all(),
     ).toEqual([{ status: "pending" }, { status: "pending" }]);
     expect(cleanupExpiredAccessStateBatch(db, "authorizationRequests", NOW + 10, 2)).toEqual({

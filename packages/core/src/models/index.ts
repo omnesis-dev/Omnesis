@@ -79,6 +79,8 @@ export type {
   ModelTokenLimits,
   HttpBackendConfig,
   AgentProtocol,
+  TranscriptionProtocol,
+  TranscriptionBackendOptions,
   AssignmentValue,
   ResolvedAssignment,
   ResolvedLocal,
@@ -160,7 +162,7 @@ export {
 } from "./decision-cassette.js";
 
 export type { ProviderPreset } from "./provider-presets.js";
-export { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
+export { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
 
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,

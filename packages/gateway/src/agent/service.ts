@@ -928,12 +928,10 @@ export class AgentService {
   private readonly onConversationDeleted: ((sessionId: string) => Promise<unknown>) | undefined;
   private readonly onConversationRetained: ((sessionId: string) => Promise<boolean>) | undefined;
   private readonly notifyAnswer:
-    | ((notification: AgentAnswerNotification) => void | Promise<void>)
-    | undefined;
+    ((notification: AgentAnswerNotification) => void | Promise<void>) | undefined;
   private readonly readState: ConversationReadStatePort | undefined;
   private readonly notifyConversation:
-    | ((notification: ConversationNotification) => void | Promise<void>)
-    | undefined;
+    ((notification: ConversationNotification) => void | Promise<void>) | undefined;
   private readonly conversationListSnapshots = new Map<string, ConversationListSnapshot>();
   /** Store writes that must settle before the same conversation can be deleted. */
   private readonly conversationPersistenceCounts = new Map<string, number>();

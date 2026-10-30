@@ -8,7 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 
-import { fingerprintFromCertPem, parseTlsExtraNames, resolveTlsBundle } from "./tls.js";
+import {
+  fingerprintFromCertPem,
+  parseTlsExtraNames,
+  resolveTlsBundle,
+  tlsExtraHostNames,
+} from "./tls.js";
 
 let configDir: string;
 
@@ -141,6 +146,13 @@ describe("OMNESIS_TLS_EXTRA_NAMES", () => {
     ]);
     expect(parseTlsExtraNames(undefined)).toEqual([]);
     expect(parseTlsExtraNames("")).toEqual([]);
+  });
+
+  test("names the same hosts without their SAN tags, for the addresses phones are offered", () => {
+    expect(tlsExtraHostNames("Studio-Northstar., 192.0.2.47, 2001:db8::7, 127.0.0.1, x y")).toEqual(
+      ["studio-northstar", "192.0.2.47", "2001:db8::7"],
+    );
+    expect(tlsExtraHostNames(undefined)).toEqual([]);
   });
 
   test("a newly minted certificate covers the valid names", () => {

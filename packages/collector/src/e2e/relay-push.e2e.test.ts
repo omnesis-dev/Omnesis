@@ -525,29 +525,26 @@ describe("real gateway and relay push flow", () => {
 
     async function broadcast(firstWake: boolean, secondWake: boolean): Promise<void> {
       const before = db
-        .prepare<
-          [],
-          { rowid: number }
-        >("SELECT COALESCE(MAX(rowid), 0) AS rowid FROM notifications")
+        .prepare<[], { rowid: number }>(
+          "SELECT COALESCE(MAX(rowid), 0) AS rowid FROM notifications",
+        )
         .get()!.rowid;
       const carrierBefore = directApns.received.length;
       // No device query: both durable copies must originate from this one broadcast.
       await harness.json("/admin/push/test", { method: "POST" });
       const notifications = db
-        .prepare<
-          [number],
-          { id: string }
-        >("SELECT id FROM notifications WHERE rowid > ? AND collapse_id = 'push-test'")
+        .prepare<[number], { id: string }>(
+          "SELECT id FROM notifications WHERE rowid > ? AND collapse_id = 'push-test'",
+        )
         .all(before);
       expect(notifications).toHaveLength(1);
       const notificationId = notifications[0]!.id;
       expect(notificationIds.has(notificationId)).toBe(false);
       notificationIds.add(notificationId);
       const copies = db
-        .prepare<
-          [string, string, string],
-          { device_id: string }
-        >("SELECT device_id FROM notification_deliveries WHERE notification_id = ? AND device_id IN (?, ?)")
+        .prepare<[string, string, string], { device_id: string }>(
+          "SELECT device_id FROM notification_deliveries WHERE notification_id = ? AND device_id IN (?, ?)",
+        )
         .all(notificationId, first.device.id, second.device.id);
       expect(copies.map((copy) => copy.device_id).sort()).toEqual(
         [first.device.id, second.device.id].sort(),
@@ -586,10 +583,9 @@ describe("real gateway and relay push flow", () => {
         });
         expect(
           db
-            .prepare<
-              [string],
-              { notification_id: string; device_id: string; state: string }
-            >("SELECT notification_id, device_id, state FROM notification_deliveries WHERE lease_token = ?")
+            .prepare<[string], { notification_id: string; device_id: string; state: string }>(
+              "SELECT notification_id, device_id, state FROM notification_deliveries WHERE lease_token = ?",
+            )
             .get(delivery.id),
         ).toEqual({
           notification_id: notificationId,

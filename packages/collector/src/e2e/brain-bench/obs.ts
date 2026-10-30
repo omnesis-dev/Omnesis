@@ -415,8 +415,8 @@ export interface PageOf<T> {
 }
 
 /**
- * True when `steps` complete discovery for the source outside an organization
- * cohort: the frontier that offered it did not list it as a cohort member.
+ * Explicit completion phases identify interpretation, including within a cohort.
+ * Older transcripts without phases fall back to the frontier's cohort membership.
  */
 function interpretedSource(steps: readonly ExecutedTool[], docId: string): boolean {
   let cohortMembers: readonly unknown[] = [];
@@ -428,7 +428,9 @@ function interpretedSource(steps: readonly ExecutedTool[], docId: string): boole
       step.tool === "knowledge_discovery_complete" &&
       step.args.id === `source:${docId}` &&
       step.result?.kind === "structured" &&
-      !cohortMembers.includes(docId)
+      (Array.isArray(step.args.phases)
+        ? step.args.phases.includes("interpretation")
+        : !cohortMembers.includes(docId))
     ) {
       return true;
     }
@@ -629,9 +631,8 @@ export class BrainObs {
 
   /**
    * Latest successful interpretation run, retaining its actual shared-batch
-   * identity. An organization cohort run also completes discovery for each
-   * member source it offers, but a member was interpreted by an earlier run,
-   * so the cohort run's completion of it is not its interpretation.
+   * identity. Explicit completion phases take precedence; legacy transcripts
+   * use cohort membership to distinguish organization from interpretation.
    */
   async interpretationForSource(docId: string): Promise<RunDto> {
     for (const run of await this.runsForSource(docId)) {

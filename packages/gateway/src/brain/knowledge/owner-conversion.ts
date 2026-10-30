@@ -27,10 +27,7 @@ export const LEGACY_OWNER_TABLES: ReadonlyArray<readonly [KnowledgeOwnerKind, st
  * converted node; `revision_conflict` is a race with a concurrent write.
  */
 export type LegacyConversionDeferralReason =
-  | LegacyOwnerUnconvertibleReason
-  | "reference_invalid"
-  | "claim_invalid"
-  | "revision_conflict";
+  LegacyOwnerUnconvertibleReason | "reference_invalid" | "claim_invalid" | "revision_conflict";
 
 export type LegacyConversionAttempt =
   | { outcome: "converted" }
@@ -112,10 +109,9 @@ export function attemptLegacyOwnerConversion(
     const reason = deferralReason(error);
     if (!reason) throw error;
     const previous = db
-      .prepare<
-        [string, string],
-        { attempts: number }
-      >("SELECT attempts FROM knowledge_conversion_deferrals WHERE kind=? AND owner_id=?")
+      .prepare<[string, string], { attempts: number }>(
+        "SELECT attempts FROM knowledge_conversion_deferrals WHERE kind=? AND owner_id=?",
+      )
       .get(kind, ownerId);
     const attempts = (previous?.attempts ?? 0) + 1;
     const retryAt = now + legacyConversionRetryDelay(reason, attempts);
@@ -148,10 +144,9 @@ export function readLegacyConversionStatus(db: Database.Database): Array<{
       !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table),
   ).map(([kind, table]) => {
     const converted = db
-      .prepare<
-        [string],
-        { count: number }
-      >("SELECT COUNT(*) AS count FROM knowledge_nodes WHERE kind=? AND owner_id=id")
+      .prepare<[string], { count: number }>(
+        "SELECT COUNT(*) AS count FROM knowledge_nodes WHERE kind=? AND owner_id=id",
+      )
       .get(kind)!.count;
     // Only owners the sweep would still visit: present, unconverted and not
     // deleted. A record left behind by another conversion path is ignored.

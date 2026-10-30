@@ -561,10 +561,9 @@ function without<T>(values: readonly T[], indices: Set<number> | undefined): rea
  */
 function providerBySourceType(db: Db): Map<string, string> {
   const rows = db
-    .prepare<
-      [],
-      { provider_id: string; source_id: string }
-    >("SELECT DISTINCT provider_id, source_id FROM documents")
+    .prepare<[], { provider_id: string; source_id: string }>(
+      "SELECT DISTINCT provider_id, source_id FROM documents",
+    )
     .all();
 
   const byType = new Map<string, string>();

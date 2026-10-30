@@ -163,11 +163,19 @@
 
         <h2 id="services">Services</h2>
         <p>
-          The <a href="/docs/install">installer</a> registers the gateway and collector as user
-          services: launchd LaunchAgents on macOS, systemd user units on Linux. Both start at login
-          and restart on failure. <code>omnesis service install</code> sets them up on a machine
-          where the installer did not. Name a component to install just one, for example
-          <code>omnesis service install collector</code> on a machine that only syncs.
+          For a Docker install, manage the containers with
+          <code>docker compose -f ~/.config/omnesis/docker-compose.yml</code> followed by
+          <code>ps</code>, <code>logs -f</code>, <code>stop</code>, <code>start</code> or
+          <code>restart</code>. Substitute your config directory if you chose another path.
+          <code>omnesis service</code> manages native OS services, not containers; see
+          <a href="/docs/install#docker">Docker installation</a> for its host CLI wrapper.
+        </p>
+        <p>
+          For a native install, the <a href="/docs/install">installer</a> registers the gateway and
+          collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
+          Both start at login and restart on failure. <code>omnesis service install</code> sets them
+          up on a machine where the installer did not. Name a component to install just one, for
+          example <code>omnesis service install collector</code> on a machine that only syncs.
         </p>
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
@@ -204,8 +212,7 @@
             <pre>
 COMPONENT    UNIT                                     STATE          PID
 gateway      omnesis-gateway.service                  running        41250
-collector    omnesis-collector.service                running        41283</pre
-            >
+collector    omnesis-collector.service                running        41283</pre>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis service restart gateway</span>
@@ -236,6 +243,12 @@ collector    omnesis-collector.service                running        41283</pre
           A collector killed outright, for example by the system when memory runs out, is started
           again within seconds on Linux and about ten seconds later on macOS. A collector that exits
           cleanly, such as one waiting to be re-paired, stays stopped until you start it.
+        </p>
+        <p>
+          An error thrown and not caught ends the collector so its service restarts it. An error an
+          asynchronous task reported to no one does not: the collector writes
+          <code>Unhandled rejection (continuing)</code> to its error log and keeps syncing. Include
+          that line when you report the problem.
         </p>
         <p>
           The generated services create files owner-only (<code>umask 077</code>). On Linux the
@@ -305,6 +318,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           recover. It survives gateway restarts and clears only when the affected collector confirms
           recovery.
         </p>
+        <p>
+          When the gateway does not have the memory to keep its semantic search index, the output
+          adds a <strong>Semantic Search Degraded</strong> block with the reason; see
+          <a href="#memory">Semantic search is degraded</a>.
+        </p>
 
         <h3 id="doctor">Doctor</h3>
         <p>
@@ -317,6 +335,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             >--no-security</code
           >
           skips them).
+        </p>
+        <p>
+          Keyword search and indexing work without an embedding model; semantic search needs one.
+          Doctor therefore fails <code>models.embedder</code> when the embedder is disabled, as
+          after <code>omnesis model assign embedder disabled</code>, or when its local model file is
+          missing, while documents are still indexed for keyword search. Its hint says how to
+          install or assign the model that restores semantic search.
         </p>
         <p>
           The same report is in the portal under <strong>Debug → System → Health</strong>. A
@@ -347,7 +372,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <h3 id="calendar">Reading the calendar</h3>
         <p>
-          <strong>Debug → Knowledge → Timeline</strong> combines structured dates supplied by
+          <strong>Debug → Cognition → Timeline</strong> combines structured dates supplied by
           sources (<strong>Source record</strong>), interpretations recorded by the agent (<strong
             >Agent interpretation</strong
           >), and date expressions found in document text (<strong>Date mention</strong>). Source
@@ -432,8 +457,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
     "params": { "resultLimit": 10 },
     "boosts": { "typeBoosts": { "note": 1.2 } }
   }
-}</pre
-            >
+}</pre>
           </div>
         </div>
         <p>
@@ -491,6 +515,16 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           large an analytics table may be when a source switches to per-device mode while the
           gateway runs; a larger table waits until you raise the limit and restart the gateway.
         </p>
+        <p>
+          <code>gateway.memoryLimitMb</code> (or the <code>OMNESIS_MEMORY_LIMIT_MB</code>
+          environment variable) is how much memory the gateway allows itself. Unset, it is the
+          container's memory limit when the gateway runs under one, otherwise the host's physical
+          memory; the gateway logs the figure and where it came from at start. Set it when other
+          services share the host's memory, such as other containers in the same virtual machine.
+          The analytics engine's default memory ceiling is a quarter of the budget, and semantic
+          search keeps its index in memory only while it fits (see
+          <a href="#memory">Semantic search is degraded</a>).
+        </p>
 
         <h2 id="models">Models</h2>
         <p>
@@ -529,7 +563,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   (see
                   <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
                   takes the same chat models as <code>agent</code> and is never assigned
-                  automatically. Without it, notes are saved and indexed but not acted on.
+                  automatically. Without it, or with <code>agent.noteAgent</code> set to
+                  <code>false</code>, notes are saved and indexed but not acted on.
                 </td>
               </tr>
               <tr>
@@ -542,7 +577,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               </tr>
               <tr>
                 <td><code>transcriber</code></td>
-                <td>Speech-to-text, so voice notes and audio become searchable.</td>
+                <td>
+                  Speech-to-text, so voice notes and audio become searchable. Without one, voice
+                  notes keep a placeholder that says no transcriber is available, the conversation
+                  sources that carry audio count the notes waiting in their notice on the Sources
+                  page, and <code>omnesis doctor</code> warns.
+                </td>
               </tr>
               <tr>
                 <td><code>ocr</code></td>
@@ -569,7 +609,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             </tbody>
           </table>
         </div>
-        <p>Each role can run its model in one of four places:</p>
+        <p>Each role can run its model in one of five places:</p>
         <ul>
           <li>
             <strong>Local GGUF models</strong>, downloaded with
@@ -578,8 +618,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </li>
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
-            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI
-            and OpenRouter.
+            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI,
+            Regolo AI and OpenRouter.
           </li>
           <li>
             <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
@@ -594,8 +634,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <code>omnesis codex login</code> or the portal's Codex backend settings, where you can
             copy the one-time login code with the copy button beside it.
             <code>omnesis codex status</code> shows the runtime and sign-in state. Codex serves the
-            <code>agent</code>, <code>privacy-reviewer</code> and image-capable
-            <code>ocr</code> roles from one login; it has no embedding or transcription models.
+            <code>agent</code>, <code>background-agent</code>, <code>privacy-reviewer</code> and
+            image-capable <code>ocr</code> roles from one login; it has no embedding or
+            transcription models.
           </li>
           <li>
             <strong>Claude Code</strong>, assigned as <code>claude-code/&lt;model&gt;</code>, which
@@ -608,8 +649,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             before it is listed), or with <code>omnesis claude-code refresh</code>.
             <code>omnesis claude-code status</code> shows the installation, sign-in state and the
             models the CLI offers. Claude Code serves the <code>agent</code>,
-            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
-            it has no embedding or transcription models. Sign-in and isolation are covered in
+            <code>background-agent</code>, <code>privacy-reviewer</code> and image-capable
+            <code>ocr</code> roles from one login; it has no embedding or transcription models.
+            Sign-in and isolation are covered in
             <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
           </li>
         </ul>
@@ -663,8 +705,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </div>
         </div>
         <p>
-          Personal vocabulary hints for transcription are disabled by default. To enable them, set
-          <code>inference.transcriptionVocabulary.enabled</code> to <code>true</code> in
+          Personal vocabulary hints for transcription are on by default. To turn them off, set
+          <code>inference.transcriptionVocabulary.enabled</code> to <code>false</code> in
           <code>omnesis.json</code>. The gateway learns a small vocabulary from indexed documents,
           prioritizing distinctive names and terms from the current conversation and its people
           across sources. Sent and received text both contribute. Recent source-verified words you
@@ -704,9 +746,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           corroboration, although copies stored as separate documents can still count. Configured
           and contact-curated names for the current people supply separate identity hints. Linking a
           person to a document does not itself count as an occurrence of their name. Vocabulary
-          builds in bounded background batches; transcription does not wait for a full build. When
-          an extraction update requires a rebuild, the gateway temporarily supplies no hints while
-          it clears the old dictionary, then repopulates it incrementally. Evidence and spelling
+          builds in bounded background batches; transcription does not wait for a full build, and
+          waits at most three seconds for its hints before transcribing without them. When an
+          extraction update requires a rebuild, the gateway temporarily supplies no hints while it
+          clears the old dictionary, then repopulates it incrementally. Evidence and spelling
           refreshes enroll bounded pages without clearing the available dictionary. The gateway's
           local Whisper model uses these hints, and so does an HTTP transcription backend on the
           gateway's own machine; a transcription backend on another machine never receives them.
@@ -740,14 +783,54 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </p>
         <p>
           To transcribe on an NVIDIA or other GPU, run an OpenAI-compatible transcription server on
-          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, or vLLM
-          serving a Whisper model. Add it as a backend and assign the <code>transcriber</code> role
-          to <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and
-          sends it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV
-          file. A server on another machine needs remote inference enabled. Whichever engine runs
-          it, one recording gets up to 30 minutes, which a long recording on a CPU can need, and the
-          gateway stops the work when the collector that asked stops waiting.
+          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, speaches,
+          vLLM serving a Whisper model, or llama.cpp's <code>llama-server</code> with Qwen3-ASR. Add
+          it as a backend and assign the <code>transcriber</code> role to
+          <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and sends
+          it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV file. A
+          server on another machine needs remote inference enabled. Whichever engine runs it, a
+          recording is sent in parts, ten minutes for Whisper and the transcription endpoint and a
+          minute for an audio language model, and each part gets its own time limit sized from its
+          length, up to 30 minutes. A long recording therefore gets more time the longer it is, up
+          to six hours in all: about two hours of audio from Whisper on a CPU, or about half an hour
+          from an audio language model on a CPU. A server that stops answering is given up within
+          one part's time, and the gateway stops the work when the collector that asked stops
+          waiting.
         </p>
+        <p>
+          A backend serves the <code>transcriber</code> role only if it implements that endpoint: a
+          chat or embedding server that merely lists a model with a speech-like name does not. When
+          the role is assigned to an HTTP backend, the gateway first asks it to transcribe one
+          second of audio. A backend that answers it cannot, because the endpoint is missing or the
+          model is unknown to it, is refused with its answer, in the portal and from
+          <code>omnesis model assign</code>; a backend that gives no answer, because it is still
+          loading its model, is assigned and asked again until it does. The Models page marks a
+          model the backend has refused, and <code>omnesis model status</code> prints the reason.
+        </p>
+        <p>
+          A speech model served only through a chat API, such as Qwen3-ASR behind Ollama or
+          llama-server, or an audio language model on vLLM, works too: when a backend has no
+          transcription endpoint the check sends the same audio as a chat completion, and a backend
+          that transcribes it is used that way, a minute of audio per request. The hosted
+          transcription APIs of OpenAI, Groq and Mistral serve the role with remote inference
+          enabled. To pin the protocol or the chunk length for a backend, set
+          <code>transcription</code> on it:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+"inference": {
+  "backends": {
+    "ollama": {
+      "type": "http",
+      "url": "http://127.0.0.1:11434",
+      "transcription": { "protocol": "chat-audio", "maxChunkSeconds": 45 }
+    }
+  }
+}</pre>
+          </div>
+        </div>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
@@ -945,8 +1028,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
       }
     }
   }
-}</pre
-            >
+}</pre>
           </div>
         </div>
         <p>
@@ -1094,6 +1176,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
+                <td>
+                  <code>omnesis status</code> shows <strong>Semantic Search Degraded</strong>, or
+                  the gateway keeps restarting while it builds its search index
+                </td>
+                <td>The gateway does not have the memory for the semantic search index</td>
+                <td><a href="#memory">Below</a></td>
+              </tr>
+              <tr>
                 <td>The gateway exits at start, naming a store</td>
                 <td>Another process holds the store, or the file is damaged</td>
                 <td><a href="#store-will-not-open">Below</a></td>
@@ -1195,6 +1285,35 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             </tbody>
           </table>
         </div>
+
+        <h3 id="memory">Semantic search is degraded</h3>
+        <p>
+          Semantic search keeps an index of every embedded passage in memory, so its size grows with
+          the corpus: about 1.4 times the size of the passages' vectors. The gateway loads or builds
+          it only when it fits in the gateway's memory budget with room left for everything else,
+          and saves and releases it if memory runs short later. Until it is back, search answers
+          from keywords alone: <code>omnesis status</code> shows
+          <strong>Semantic Search Degraded</strong> with the reason,
+          <code>omnesis doctor</code> warns under Index, and the gateway log has a
+          <code>semantic search degraded</code> line. Indexing goes on, and passages indexed
+          meanwhile join the semantic index when it returns.
+        </p>
+        <p>
+          The budget is <code>gateway.memoryLimitMb</code> when set, otherwise the container's
+          memory limit, otherwise the host's physical memory (see
+          <a href="#configuration">Configuration</a>). Give the gateway more memory: raise that
+          setting or the container's limit, or free memory on the host. Then restart the gateway. On
+          a host whose memory other services share, set <code>gateway.memoryLimitMb</code> to what
+          the gateway may really use, so it backs off before the system runs out. The in-memory copy
+          of the keyword index is not released when memory runs short; on a small host, set
+          <code>search.bm25.memoryIndex</code> to <code>false</code> to rank keywords from disk (see
+          <a href="/docs/search#searching">Search</a>).
+        </p>
+        <p>
+          The index is saved as it is built and as it changes, so a gateway that stops or is killed
+          while building or updating it continues from the last save on its next start rather than
+          building it again.
+        </p>
 
         <h3 id="store-will-not-open">A store will not open</h3>
         <p>

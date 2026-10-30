@@ -23,6 +23,7 @@ import { createLogger, assertNever } from "@omnesis/core";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
 import type {
+  CapabilityVerdict,
   ResolvedAssignment,
   TranscribeCapability,
   TranscriptionResult,
@@ -34,6 +35,31 @@ const log = createLogger("gateway:transcribe");
 
 /** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
+/** An unavailable capability is distinct from a failed recording or cancelled caller. */
+export type TranscriptionOutcome =
+  | { kind: "transcribed"; result: TranscriptionResult }
+  | { kind: "unavailable" }
+  | { kind: "failed" }
+  | { kind: "cancelled" };
+
+export interface TranscribeOptions {
+  language?: string;
+  minTimeoutMs?: number;
+  context?: TranscriptionContext;
+  allowVocabulary?: boolean;
+  /** Aborted when the caller stops waiting; queued work it covers is skipped. */
+  signal?: AbortSignal;
+}
+
+/**
+ * How long a transcription waits for its vocabulary hints. The lookup is a
+ * bounded indexed read at user priority on the io worker (a 200 ms latency
+ * budget), which may first wait for a running background read (up to 2 s).
+ * Past this, the clip is transcribed without hints rather than holding the
+ * queue behind a slow or stuck io worker.
+ */
+export const VOCABULARY_LOOKUP_TIMEOUT_MS = 3_000;
 
 /**
  * Stable signature for a resolved assignment, to detect config changes. The
@@ -68,6 +94,30 @@ function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): 
       return "unresolved";
     default:
       return assertNever(resolved);
+  }
+}
+
+/**
+ * Verify the assigned transcriber's HTTP backend by transcribing one second of
+ * audio, and say in one log line what the operator should do about a backend
+ * that cannot. Runs after the boot probe and after a config change touching
+ * the assignment or a backend; a local or unset assignment verifies nothing.
+ */
+export async function verifyTranscriberAssignment(registry: {
+  verifyAssignedTranscriber(): Promise<CapabilityVerdict | null>;
+}): Promise<void> {
+  const verdict = await registry.verifyAssignedTranscriber();
+  if (!verdict) return;
+  if (verdict.supported) {
+    log.info(`Transcriber backend verified for ${verdict.model}: ${verdict.detail}`);
+  } else if (verdict.inconclusive) {
+    log.warn(
+      `Could not confirm the transcriber backend for ${verdict.model} yet: ${verdict.detail}. Voice notes wait until it answers.`,
+    );
+  } else {
+    log.warn(
+      `The assigned transcriber cannot transcribe: ${verdict.detail}. Voice notes are not transcribed until the transcriber role is assigned a local Whisper model or a backend that serves the OpenAI audio transcription API (see docs/transcription.md).`,
+    );
   }
 }
 
@@ -212,29 +262,22 @@ export class TranscribeService {
     });
   }
 
-  /**
-   * Transcribe audio bytes. Returns null when no transcriber is configured or
-   * loadable, AND when the transcription itself fails — a worker crash
-   * (whisper.cpp segfault), a timeout, or a decode/inference error. The caller
-   * (the route) maps null to `{ available: false }`, which the collector treats
-   * as "no transcript yet" and leaves the note to retry on a later sync. A
-   * failed transcription must NEVER propagate as a throw: the worker runs in an
-   * isolated subprocess precisely so its crash can't take the gateway down, and
-   * surfacing it as a 5xx would defeat that — the supervisor already respawns
-   * the worker for the next call.
-   */
+  /** Best-effort transcription for callers that own their retry policy. */
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: {
-      language?: string;
-      minTimeoutMs?: number;
-      context?: TranscriptionContext;
-      allowVocabulary?: boolean;
-      /** Aborted when the caller stops waiting; queued work it covers is skipped. */
-      signal?: AbortSignal;
-    },
+    opts?: TranscribeOptions,
   ): Promise<TranscriptionResult | null> {
+    const outcome = await this.transcribeOutcome(audio, mimeType, opts);
+    return outcome.kind === "transcribed" ? outcome.result : null;
+  }
+
+  /** Preserve failure classification for source audio and its backlog notices. */
+  async transcribeOutcome(
+    audio: Uint8Array,
+    mimeType: string,
+    opts?: TranscribeOptions,
+  ): Promise<TranscriptionOutcome> {
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous
     // capability (kills its worker subprocess); doing that resolution inside the
@@ -246,10 +289,10 @@ export class TranscribeService {
       // still wants.
       if (opts?.signal?.aborted) {
         log.info("Skipped a queued transcription whose caller stopped waiting");
-        return null;
+        return { kind: "cancelled" };
       }
       const capability = await this.ensureCapability();
-      if (!capability) return null;
+      if (!capability) return { kind: "unavailable" };
       try {
         let vocabulary: TranscriptionVocabulary | undefined;
         if (
@@ -257,19 +300,20 @@ export class TranscribeService {
           capability.vocabularyRuntime &&
           this.vocabulary?.enabled()
         ) {
-          try {
-            vocabulary = await this.vocabulary.getDictionary(
-              opts?.context ?? {
-                purpose: "source-audio",
-                ...(opts?.language ? { languageHints: [opts.language] } : {}),
-              },
-            );
-          } catch {
-            // Vocabulary is optional; an unavailable read worker must not lose audio.
-            log.warn("Vocabulary lookup unavailable; transcribing without hints");
-          }
+          vocabulary = await this.lookupVocabulary(
+            this.vocabulary,
+            opts?.context ?? {
+              purpose: "source-audio",
+              ...(opts?.language ? { languageHints: [opts.language] } : {}),
+            },
+            opts?.signal,
+          );
         }
-        return await capability.transcribe(audio, mimeType, {
+        if (opts?.signal?.aborted) {
+          log.info("Skipped a transcription whose caller stopped waiting");
+          return { kind: "cancelled" };
+        }
+        const result = await capability.transcribe(audio, mimeType, {
           ...(opts?.language ? { language: opts.language } : {}),
           ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
           ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -280,17 +324,58 @@ export class TranscribeService {
               }
             : {}),
         });
+        return { kind: "transcribed", result };
       } catch (err) {
         if (opts?.signal?.aborted) {
           log.info("Stopped a transcription whose caller stopped waiting");
-          return null;
+          return { kind: "cancelled" };
         }
         log.warn(
           `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,
         );
-        return null;
+        return { kind: "failed" };
       }
     });
+  }
+
+  /**
+   * The vocabulary hints for one transcription, or none when the lookup fails,
+   * outlasts `VOCABULARY_LOOKUP_TIMEOUT_MS` or loses its caller. Hints are an
+   * enhancement, never a reason to hold the queue.
+   */
+  private async lookupVocabulary(
+    vocabulary: NonNullable<TranscribeService["vocabulary"]>,
+    context: TranscriptionContext,
+    signal: AbortSignal | undefined,
+  ): Promise<TranscriptionVocabulary | undefined> {
+    if (signal?.aborted) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      const lookup = vocabulary.getDictionary(context);
+      // An abandoned lookup settles unobserved: its result belonged to this call alone.
+      lookup.catch(() => {});
+      return await Promise.race([
+        lookup,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => {
+            log.warn(
+              `Vocabulary lookup took over ${VOCABULARY_LOOKUP_TIMEOUT_MS}ms; transcribing without hints`,
+            );
+            resolve(undefined);
+          }, VOCABULARY_LOOKUP_TIMEOUT_MS);
+          onAbort = () => resolve(undefined);
+          signal?.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+    } catch {
+      // An unavailable read worker must not lose audio.
+      log.warn("Vocabulary lookup unavailable; transcribing without hints");
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   /** Run `fn` after all previously-queued transcriptions complete. */

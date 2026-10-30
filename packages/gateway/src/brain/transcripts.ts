@@ -435,10 +435,9 @@ export class FsCognitionTranscriptStore {
     const db = new Sqlite(this.indexPath());
     const empty =
       db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM sqlite_master WHERE type IN ('table', 'index')")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type IN ('table', 'index')",
+        )
         .get()?.count === 0;
     if (empty) db.pragma("auto_vacuum = INCREMENTAL");
     db.pragma("journal_mode = WAL");
@@ -512,10 +511,9 @@ export class FsCognitionTranscriptStore {
     const db = this.openIndex();
     try {
       const pending = db
-        .prepare<
-          [],
-          { file_name: string }
-        >("SELECT file_name FROM transcript_refs WHERE state != 'committed'")
+        .prepare<[], { file_name: string }>(
+          "SELECT file_name FROM transcript_refs WHERE state != 'committed'",
+        )
         .all();
       const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
       const commit = db.prepare(
@@ -594,10 +592,9 @@ export class FsCognitionTranscriptStore {
     try {
       if (
         db
-          .prepare<
-            [string],
-            { value: string }
-          >("SELECT value FROM transcript_index_meta WHERE key = ?")
+          .prepare<[string], { value: string }>(
+            "SELECT value FROM transcript_index_meta WHERE key = ?",
+          )
           .get("scan-complete")?.value === "1"
       ) {
         return true;

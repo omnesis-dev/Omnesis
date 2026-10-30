@@ -5,7 +5,9 @@ import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry, createPrivateScratch } from "@omnesis/core";
 import { type ImportCallbacks, type ImportSummary } from "@omnesis/source-sdk";
 import type { MessageStore } from "../message-store.js";
-import type { ImportWorkerData, WorkerMessage } from "./import-worker.js";
+import type { BackupKind, ImportWorkerData, WorkerMessage } from "./import-worker.js";
+
+export type { BackupKind };
 
 const log = createLogger("whatsapp:import");
 
@@ -13,9 +15,11 @@ const log = createLogger("whatsapp:import");
 const MERGE_BATCH = 2_000;
 
 export interface ImportOptions {
-  /** Path to the encrypted iPhone backup folder (contains Manifest.plist). */
+  /** Which backup format to decrypt + parse. */
+  backupKind: BackupKind;
+  /** iOS: the encrypted backup folder (contains Manifest.plist). Android: the `msgstore.db.crypt15` file. */
   backupPath: string;
-  /** Backup password. */
+  /** iOS: the backup password. Android: the 64-hex backup key, or a path to a key file. */
   passphrase: string;
   /** The provider's durable store — the merge target (parent is the single writer). */
   store: MessageStore;
@@ -33,11 +37,12 @@ export interface ImportOptions {
  * stable id, so dirty-day marking + the normal sync drain publish the result.
  * Cancellation (`callbacks.signal`) terminates the worker.
  *
- * This is the iOS-backup variant. Planned siblings emit the same batches into
- * the same merge: #29 (Android crypt15 backup), #28 (Tier-2 targeted pull).
+ * Supports two backup kinds (see {@link BackupKind}): the iOS-backup variant
+ * and the Android crypt15 variant (#29) — both emit the same batch shape
+ * into the same merge below. Planned sibling: #28 (Tier-2 targeted pull).
  */
 export async function importWhatsAppHistory(opts: ImportOptions): Promise<ImportSummary> {
-  const { backupPath, passphrase, store, own, callbacks } = opts;
+  const { backupKind, backupPath, passphrase, store, own, callbacks } = opts;
   const onProgress = callbacks?.onProgress;
   const signal = callbacks?.signal;
   const batchSize = opts.batchSize ?? MERGE_BATCH;
@@ -46,6 +51,7 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
   const scratch = createPrivateScratch("wa-chatstorage");
   try {
     const workerData: ImportWorkerData = {
+      backupKind,
       backupPath,
       passphrase,
       own,

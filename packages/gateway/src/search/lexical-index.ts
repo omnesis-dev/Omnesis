@@ -103,10 +103,16 @@ export class LexicalIndex implements LexicalRanker {
 
   /**
    * Chunk and document-frequency counts from the arrays plus this ranker's
-   * delta, for the common-token filter. A term's count still includes chunks
-   * changed since the build; the rebuild threshold bounds that difference.
+   * delta, for the common-token filter, after catching up on the change log so
+   * they count the chunks {@link rank} scores; null when it would decline. A
+   * term's count still includes chunks changed since the build; the rebuild
+   * threshold bounds that difference.
    */
-  readonly stats: CorpusStats = {
+  stats(db: Db): CorpusStats | null {
+    return this.syncChanges(db) ? this.corpusStats : null;
+  }
+
+  private readonly corpusStats: CorpusStats = {
     chunkCount: () => this.data.docCount - this.live.maskedCount + this.live.delta.live,
     documentFrequency: (term) => {
       const t = this.findTerm(term);
@@ -132,7 +138,7 @@ export class LexicalIndex implements LexicalRanker {
     if (!trimmed || (trimmed.length > 1 && trimmed.startsWith('"') && trimmed.endsWith('"'))) {
       return null;
     }
-    const words = queryWords(trimmed);
+    const words = queryWords(trimmed, opts?.prefixLastToken);
     if (words.length === 0) return [];
     const tokens = fts5Tokenizer(db).words(words);
     const prefixWord = opts?.prefixLastToken ? words.length - 1 : -1;
@@ -461,7 +467,7 @@ function topK(
     if (s < heapScore[0] || (s === heapScore[0] && d > heapDoc[0])) continue;
     heapDoc[0] = d;
     heapScore[0] = s;
-    for (let j = 0; ; ) {
+    for (let j = 0; ;) {
       const l = 2 * j + 1;
       const r = l + 1;
       let m = j;

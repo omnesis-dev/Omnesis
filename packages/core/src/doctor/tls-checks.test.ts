@@ -196,6 +196,63 @@ describe("checkGatewayTls", () => {
     });
   });
 
+  test("a state, ownership and renewal mode newer than this version warn instead of throwing", () => {
+    // The CLI's doctor evaluates the snapshot a gateway sends, which may be newer.
+    const ck = sink();
+    checkGatewayTls(
+      {
+        ...snapshot({
+          served: served({ state: "future-state" as TlsLifecycleSnapshot["served"]["state"] }),
+          renewal: { ...snapshot().renewal, mode: "future-renewal" as "automatic" },
+        }),
+        ownership: "future-issuer" as TlsLifecycleSnapshot["ownership"],
+      },
+      [],
+      ck,
+    );
+    expect(ck.out).toEqual([
+      {
+        status: "warn",
+        section: "Gateway",
+        id: "gateway.tls",
+        message:
+          "The future-issuer certificate is future-state, which this version of Omnesis does not know",
+        hint: "Run `omnesis update` on this machine to read what the gateway reports.",
+      },
+    ]);
+
+    const remedies = sink();
+    checkGatewayTls(
+      {
+        ...snapshot({
+          served: served({ state: "expiring", daysRemaining: 3, uncoveredHosts: ["gateway.lan"] }),
+          renewal: {
+            ...snapshot().renewal,
+            mode: "future-renewal" as "automatic",
+            lastError: "issuer unreachable",
+          },
+        }),
+        ownership: "future-issuer" as TlsLifecycleSnapshot["ownership"],
+      },
+      [],
+      remedies,
+    );
+    expect(remedies.out.map(({ id, hint }) => ({ id, hint }))).toEqual([
+      {
+        id: "gateway.tls",
+        hint: "Run `omnesis update` on this machine to read what the gateway reports. The last attempt (unknown time) failed: issuer unreachable.",
+      },
+      {
+        id: "gateway.tls-names",
+        hint: "Run `omnesis update` on this machine to read what the gateway reports.",
+      },
+      {
+        id: "gateway.tls-renewal",
+        hint: "Run `omnesis update` on this machine to read what the gateway reports.",
+      },
+    ]);
+  });
+
   test("uncovered names and a replacement that could not be activated are warnings beside a valid certificate", () => {
     const ck = sink();
     checkGatewayTls(

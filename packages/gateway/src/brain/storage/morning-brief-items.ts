@@ -96,8 +96,7 @@ export interface SentMorningBrief {
 }
 
 export type MarkMorningBriefSentResult =
-  | { ok: true; shippedObservationIds: string[] }
-  | { ok: false; reason: "already_sent" };
+  { ok: true; shippedObservationIds: string[] } | { ok: false; reason: "already_sent" };
 
 /**
  * Record that `day`'s brief was sent as `messageId`, stamp its item list and
@@ -112,10 +111,9 @@ export function markMorningBriefSent(
   return db.transaction((): MarkMorningBriefSentResult => {
     if (morningBriefSent(db, input.day)) return { ok: false, reason: "already_sent" };
     const items = db
-      .prepare<
-        [string],
-        { observation_id: string }
-      >("SELECT observation_id FROM morning_brief_items WHERE day = ? ORDER BY rank")
+      .prepare<[string], { observation_id: string }>(
+        "SELECT observation_id FROM morning_brief_items WHERE day = ? ORDER BY rank",
+      )
       .all(input.day);
     db.prepare(
       `INSERT INTO morning_briefs (day, run_id, conversation_id, message_id, item_count, sent_at)

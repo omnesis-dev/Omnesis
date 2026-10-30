@@ -9,6 +9,8 @@ import {
   buildAttachmentDocument,
   formatAttachmentMarkers,
   deriveAttachmentStableId,
+  transcriptionSyncIssues,
+  TRANSCRIBER_UNAVAILABLE,
 } from "@omnesis/core";
 import { makeCursorValidator } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError, isTransientSyncError } from "@omnesis/types";
@@ -35,6 +37,7 @@ import type {
   DocumentInput,
   SourceId as SourceIdType,
   ProviderId as ProviderIdType,
+  SyncIssue,
 } from "@omnesis/types";
 import type { MessageStore } from "./message-store.js";
 import type {
@@ -402,13 +405,26 @@ export class WhatsAppMessagesSource {
       `Sync produced ${documents.length} docs (${phase}, coverage: ${coverage}, processed: ${messagesProcessed}, hasMore: ${hasMore})`,
     );
 
-    // Surface media that isn't downloading so a silent blank doesn't hide it.
+    // Media that isn't processing is reported, not hidden behind a blank: the
+    // voice-note backlog goes to the operator as sync issues on the page that
+    // ends the run (the host sums issues across a run's pages, so a count must
+    // be stated once), and the whole picture goes to the log.
+    let issues: SyncIssue[] | undefined;
     if (this.downloadMedia) {
-      const { pending, unavailable } = this.store.mediaHealthStats();
+      const media = this.store.mediaHealthStats();
+      const pending = media.voiceNotes.pending + media.attachments.pending;
+      const unavailable = media.voiceNotes.unavailable + media.attachments.unavailable;
       if (pending > 0 || unavailable > 0) {
         log.info(
           `Media health: ${pending} awaiting download/retry, ${unavailable} unavailable (gone from CDN/phone)`,
         );
+      }
+      if (!hasMore && this.transcribeAudio) {
+        issues = transcriptionSyncIssues({
+          awaiting: media.voiceNotes.pending,
+          transcriberUnavailable: media.voiceNotes.transcriberUnavailable,
+          unavailable: media.voiceNotes.unavailable,
+        });
       }
     }
 
@@ -421,6 +437,7 @@ export class WhatsAppMessagesSource {
     return {
       documents,
       deletedExternalIds,
+      ...(issues ? { issues } : {}),
       cursor: {
         phase,
         lastTimestamp: maxTimestamp,
@@ -645,11 +662,15 @@ export class WhatsAppMessagesSource {
 
     for (const msg of messages) {
       if (msg.type !== "audio" || !msg.media?.isVoiceNote) continue;
+      // Every voice note the pass does not transcribe renders with the reason
+      // from what the store already knows; an attempt below revises it.
+      msg.transcription = placeholderStateFor(msg);
       if (!this.shouldAttemptVoiceNote(msg, now)) continue;
       // Can't fetch without decryption descriptors (e.g. an imported message
       // that only carries metadata) — terminal for enrolled notes.
       if (!msg.media.mediaKey || (!msg.media.url && !msg.media.directPath)) {
         this.advanceMediaLifecycle(msg, { kind: "terminal", error: "no-decryption-keys" });
+        msg.transcription = "audio-unavailable";
         continue;
       }
 
@@ -661,6 +682,7 @@ export class WhatsAppMessagesSource {
           // Keep any existing transcript; back off (transient) or give up
           // (terminal) per the CDN/phone signal.
           this.advanceMediaLifecycle(msg, { kind: dl.kind, error: dl.error });
+          msg.transcription = dl.kind === "terminal" ? "audio-unavailable" : "awaiting";
           continue;
         }
         const result = await this.transcribeAudio(dl.data, msg.media.mimetype ?? "audio/ogg", {
@@ -688,18 +710,21 @@ export class WhatsAppMessagesSource {
         if (result === null) {
           this.advanceMediaLifecycle(msg, {
             kind: "process-failed",
-            error: "transcriber-unavailable",
+            error: TRANSCRIBER_UNAVAILABLE,
           });
+          msg.transcription = "transcriber-unavailable";
           continue;
         }
         const text = result.text.trim();
         msg.transcript = text;
         msg.mediaState = text === "" ? "empty" : "done";
+        msg.transcription = text === "" ? "no-speech" : undefined;
         this.advanceMediaLifecycle(msg, { kind: "transcribed", text });
       } catch (err) {
         // Durable media retries independently of the page cursor, so a
         // transient processor outage must not hold primary messages hostage.
         // Legacy rows lack that lifecycle and retain the old page retry.
+        msg.transcription = "awaiting";
         if (isTransientSyncError(err)) {
           if (msg.mediaState === undefined) throw err;
           this.advanceMediaLifecycle(msg, {
@@ -777,4 +802,17 @@ export class WhatsAppMessagesSource {
     if (isFailure && msg.mediaState === undefined) return;
     this.store.recordMediaOutcome(msg.chatJid, msg.id, outcome);
   }
+}
+
+/**
+ * Why a voice note has no spoken text to render, from what the store holds
+ * before this drain attempts it. A transcribed note has nothing to explain;
+ * a note that is gone is explained by the normalizer from its state; the
+ * rest is a transcript still to come, either because no attempt has succeeded
+ * yet or because the last attempt found no transcriber.
+ */
+function placeholderStateFor(msg: StoredMessage): StoredMessage["transcription"] {
+  if (msg.transcript !== undefined) return msg.transcript.trim() === "" ? "no-speech" : undefined;
+  if (msg.mediaState === "unavailable") return undefined;
+  return msg.mediaLastError === TRANSCRIBER_UNAVAILABLE ? "transcriber-unavailable" : "awaiting";
 }

@@ -191,11 +191,12 @@ export interface CommandSpec {
   env?: Record<string, string>;
   /**
    * A second attempt for a command whose failure can leave behind the state
-   * that makes it fail again: when the command exits non-zero on its own,
-   * `reset` runs and the command runs once more. `why` tells the operator
-   * reading the output why the second attempt differs from the first.
+   * that makes it fail again, or that a passing network fault can fail: when
+   * the command exits non-zero on its own, `reset` (when there is one) runs and
+   * the command runs once more. `why` tells the operator reading the output
+   * why the second attempt is worth making.
    */
-  retry?: { reset: CommandSpec; why: string };
+  retry?: { reset?: CommandSpec; why: string };
 }
 
 /** `npm view omnesis@<tag> version` — resolve the channel's target version. */
@@ -264,6 +265,62 @@ function envValue(raw: string): string {
 /** `docker compose -f <composeFile> <args…>` — every compose call goes through this. */
 export function dockerComposeSpec(composeFile: string, args: readonly string[]): CommandSpec {
   return { command: "docker", args: ["compose", "-f", composeFile, ...args] };
+}
+
+/** The listing `runningImageTag` reads: every container of the project, as JSON. */
+export function dockerPsSpec(composeFile: string): CommandSpec {
+  return dockerComposeSpec(composeFile, ["ps", "--all", "--format", "json"]);
+}
+
+/**
+ * The image tag every named service's container is running, read from
+ * `docker compose ps --all --format json` — or null when any of them is not
+ * running, runs something other than a tagged image, or disagrees with the
+ * others. Compose prints one JSON array in older releases and one object per
+ * line in newer ones; both are read.
+ *
+ * This is what a host with no gateway of its own has to show for the tag it
+ * runs. A container's image is named as it was created, so a container
+ * created at the recorded tag is the proof a gateway's `/health` would give;
+ * one whose tag was since moved to another image is listed by image id, which
+ * names no tag and proves nothing.
+ */
+export function runningImageTag(psOutput: string, services: readonly string[]): string | null {
+  const rows: unknown[] = [];
+  const text = psOutput.trim();
+  if (!text || services.length === 0) return null;
+  try {
+    if (text.startsWith("[")) {
+      const parsed: unknown = JSON.parse(text);
+      if (!Array.isArray(parsed)) return null;
+      rows.push(...(parsed as unknown[]));
+    } else {
+      for (const line of text.split("\n")) {
+        if (line.trim()) rows.push(JSON.parse(line));
+      }
+    }
+  } catch {
+    return null;
+  }
+  let tag: string | null = null;
+  for (const service of services) {
+    const row = rows.find(
+      (candidate): candidate is { Service: string; State?: unknown; Image?: unknown } =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { Service?: unknown }).Service === service,
+    );
+    if (!row || row.State !== "running" || typeof row.Image !== "string") return null;
+    // An image listed by id (`sha256:…`, or its bare hex) names no tag.
+    if (/^(?:sha256:)?[0-9a-f]{12,64}$/u.test(row.Image)) return null;
+    const name = row.Image.slice(row.Image.lastIndexOf("/") + 1);
+    const colon = name.lastIndexOf(":");
+    if (colon < 0 || name.includes("@")) return null;
+    const found = name.slice(colon + 1);
+    if (!IMAGE_TAG_PATTERN.test(found) || (tag !== null && tag !== found)) return null;
+    tag = found;
+  }
+  return tag;
 }
 
 /**
@@ -797,13 +854,24 @@ export type UpdatePlan =
   | { kind: "npm-global"; channel: UpdateChannel; registry?: string }
   | { kind: "source"; rootDir: string; edge: boolean }
   /**
-   * A container install. `edge` is allowed here and selects the `main` image
-   * tag, which the release pipeline moves with the branch — the container
-   * equivalent of a source checkout following `origin/main`.
+   * A container install. It follows released images only: there is no branch
+   * image to follow, so `--edge` is refused before anything is resolved.
    */
-  | { kind: "docker"; composeFile: string; projectDir: string; edge: boolean }
+  | { kind: "docker"; composeFile: string; projectDir: string }
   | { kind: "refuse"; message: string }
   | { kind: "manual" };
+
+/**
+ * Why a container install refuses `--edge`. No image follows the main branch
+ * as a published release does, so a branch tag would fail only once the pull
+ * reached the registry, mid-update. An image of an exact commit is published by
+ * hand and pinned by its immutable `sha-*` tag instead.
+ */
+export const DOCKER_EDGE_REFUSAL =
+  "--edge applies to a source checkout. This installation runs released container images, " +
+  "and no image follows the main branch. Use --target-version X.Y.Z to pin a release. To run " +
+  "an exact commit, publish its images with the docker-publish workflow and pin their " +
+  "sha-<commit> tag: https://omnesis.dev/docs/updating#docker-update";
 
 export function planUpdate(detection: InstallMethod, flags: UpdateFlags): UpdatePlan {
   const channel = parseChannel(flags.channel);
@@ -841,14 +909,16 @@ export function planUpdate(detection: InstallMethod, flags: UpdateFlags): Update
         kind: "refuse",
         message:
           `--channel ${channel} selects an npm dist-tag and applies to a package install. ` +
-          "This installation runs from container images — use --edge to follow the main tag.",
+          "This installation runs from container images — use --target-version X.Y.Z to pin a release.",
       };
+    }
+    if (flags.edge) {
+      return { kind: "refuse", message: DOCKER_EDGE_REFUSAL };
     }
     return {
       kind: "docker",
       composeFile: detection.composeFile,
       projectDir: detection.projectDir,
-      edge: flags.edge,
     };
   }
   if (flags.registry !== undefined) {
@@ -1259,6 +1329,11 @@ export type UpdateStep =
    * memory the build needs all of, and start it again after.
    */
   | { kind: "pause-collector" }
+  /**
+   * Stop this account's gateway for the same reason, once its backup is
+   * taken. Its restart step starts it again on the new build.
+   */
+  | { kind: "pause-gateway" }
   /** Move the installation to the target, rolling back if it fails. */
   | { kind: "apply" }
   /**
@@ -1326,10 +1401,12 @@ export interface HostPlanOptions {
   serviceDefinitions?: boolean;
   /**
    * True when the apply builds on a machine whose memory leaves the build no
-   * room beside a running collector. A supervised collector is stopped for the
-   * apply; a gateway is not, since it serves through the build.
+   * room beside a running daemon. The supervised collector and gateway are
+   * stopped for the apply: on such a machine a gateway left serving through
+   * the build gets the build killed beside it, and the rollback then stops it
+   * anyway, so the update could never finish there.
    */
-  pauseCollectorForBuild?: boolean;
+  pauseDaemonsForBuild?: boolean;
 }
 
 /**
@@ -1376,12 +1453,24 @@ export function planHostUpdate(roles: HostRoles, opts: HostPlanOptions): UpdateS
   }
   // Never on a run that restarts nothing: there this command is the collector's child.
   if (
-    opts.pauseCollectorForBuild &&
+    opts.pauseDaemonsForBuild &&
     restarting &&
     roles.collector.present &&
     roles.collector.supervised
   ) {
     steps.push({ kind: "pause-collector" });
+  }
+  // Only a gateway this run restarts onto the new build: that restart is what
+  // brings it back. A hardened gateway is root's, and is left alone.
+  if (
+    opts.pauseDaemonsForBuild &&
+    restarting &&
+    roles.gateway.present &&
+    roles.gateway.supervised &&
+    !roles.gateway.stopped &&
+    !roles.gateway.hardened
+  ) {
+    steps.push({ kind: "pause-gateway" });
   }
   steps.push({ kind: "apply" });
 
@@ -1547,9 +1636,15 @@ export function dockerApplyPlan(
   target: string,
   previous: string,
 ): ApplyPlan {
+  // A pull opens a hundred or so registry connections and fails the image
+  // when one is refused; the layers that landed stay, so a second pull is cheap.
+  const pull = (): CommandSpec => ({
+    ...dockerComposeSpec(composeFile, ["pull"]),
+    retry: { why: "pulling again, keeping the layers already downloaded" },
+  });
   return {
-    apply: [dockerComposeSpec(composeFile, ["pull"])],
-    rollback: [dockerComposeSpec(composeFile, ["pull"])],
+    apply: [pull()],
+    rollback: [pull()],
     target,
     previous,
     applyState: {

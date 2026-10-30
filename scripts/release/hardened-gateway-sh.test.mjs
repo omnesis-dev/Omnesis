@@ -26,6 +26,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -34,6 +35,11 @@ const IS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 // The script runs only on Linux, and these helpers use GNU tools (`mv -T`,
 // `stat -c`, `readlink -e`) and /proc, which macOS does not have.
 const LINUX = process.platform === "linux";
+
+const requireFromCli = createRequire(join(repoRoot, "packages", "cli", "package.json"));
+const { satisfies } = requireFromCli("semver");
+const sourceRange = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).engines.node;
+const satisfiesSourceRange = (version) => satisfies(version, sourceRange);
 
 let scratch;
 
@@ -62,6 +68,16 @@ function sourced(body) {
 test("website/hardened-gateway.sh mirrors scripts/hardened-gateway.sh exactly", () => {
   const mirror = readFileSync(join(repoRoot, "website", "hardened-gateway.sh"), "utf8");
   expect(mirror).toBe(readFileSync(script, "utf8"));
+});
+
+test("the release build runs npm ci with the root-certificate preload it writes beside build.sh", () => {
+  // The preload's body is held to core's by packages/core/src/tls-distrust.test.ts.
+  const text = readFileSync(script, "utf8");
+  expect(text).toContain(`cat > "$BUILD_DIR/distrust-roots.mjs" <<'EOF'`);
+  expect(text).toMatch(
+    /^NODE_OPTIONS="--import=file:\/\/\$BUILD_VIEW\/distrust-roots\.mjs" npm ci /m,
+  );
+  expect(text).not.toMatch(/^npm ci /m);
 });
 
 test("both scripts are executable in the tree", () => {
@@ -291,6 +307,36 @@ describe("hardened gateway install activation", () => {
 });
 
 describe("hardened-gateway.sh helpers", () => {
+  test("Node is held to the root package's source engines range", () => {
+    const versions = [
+      "24.15.9",
+      "24.16.0",
+      "24.22.1",
+      "25.0.0",
+      "25.9.0",
+      "26.0.0",
+      "26.1.0",
+      "27.0.0",
+      "24.16.0-rc.1",
+      "26.1.0-rc.1",
+      "24",
+      "unknown",
+      "",
+    ];
+    const res = sourced(`
+      for v in ${versions.map((v) => `'${v}'`).join(" ")}; do
+        if node_version_supported "$v"; then echo "ok:$v"; else echo "no:$v"; fi
+      done
+    `);
+    const range = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).engines.node;
+    expect(range).toBe(">=24.16.0 <25 || >=26.1.0");
+    expect(res.stdout.trim().split("\n")).toEqual(
+      versions.map((v) =>
+        /^\d+\.\d+\.\d+$/.test(v) && satisfiesSourceRange(v) ? `ok:${v}` : `no:${v}`,
+      ),
+    );
+  });
+
   test("refs are held to the characters refs use", () => {
     const res = sourced(`
       for ref in v0.4.9 main feat/root-copy 0123456789abcdef0123456789abcdef01234567 '' -x a..b 'a b' 'a;b' '$(id)'; do

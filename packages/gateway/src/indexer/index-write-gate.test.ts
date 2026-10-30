@@ -122,10 +122,9 @@ describe("directIndexWriteGate", () => {
     const gate = directIndexWriteGate(db);
     await gate.setIndexedDocument("doc-1", "hash-1", 1);
     const before = db
-      .prepare<
-        [],
-        { source_event_at: string; event_indexed_at: string }
-      >("SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = 'doc-1'")
+      .prepare<[], { source_event_at: string; event_indexed_at: string }>(
+        "SELECT source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = 'doc-1'",
+      )
       .get();
     await gate.wipeAndRecreateVectorIndex(EMBEDDING_DIM, "test-model");
     // Chunk text stays so BM25 keeps answering during the rebuild; only the
@@ -271,10 +270,9 @@ describe("withFreshIndexWriteGate", () => {
     ).toBe(0);
     expect(
       after
-        .prepare<
-          [],
-          { value: string }
-        >("SELECT value FROM index_meta WHERE key = 'embed_model_name'")
+        .prepare<[], { value: string }>(
+          "SELECT value FROM index_meta WHERE key = 'embed_model_name'",
+        )
         .get()?.value,
     ).toBe("swapped-model");
     after.close();

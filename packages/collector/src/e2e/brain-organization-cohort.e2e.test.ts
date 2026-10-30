@@ -191,10 +191,9 @@ it("jointly organizes already-considered disjoint sources into grounded wiki con
   );
   await bench.drainUntilQuiet();
   const cohort = bench.sql
-    .prepare<
-      [],
-      { batchId: string; outcome: string }
-    >("SELECT batch_id AS batchId,outcome_json AS outcome FROM knowledge_organization_cohorts WHERE status='completed'")
+    .prepare<[], { batchId: string; outcome: string }>(
+      "SELECT batch_id AS batchId,outcome_json AS outcome FROM knowledge_organization_cohorts WHERE status='completed'",
+    )
     .get()!;
   expect(JSON.parse(cohort.outcome)).toMatchObject({ outcome: "organized", targetIds: [wikiId] });
   const members = bench.sql.prepare("SELECT source_id FROM knowledge_organization_members").all();
@@ -206,10 +205,9 @@ it("jointly organizes already-considered disjoint sources into grounded wiki con
   expect(page.kind).toBe("wiki");
   expect(page.claims).toEqual([expect.objectContaining({ verification: "verified" })]);
   const run = bench.sql
-    .prepare<
-      [string],
-      { runId: string }
-    >("SELECT run_id AS runId FROM knowledge_batches WHERE id=?")
+    .prepare<[string], { runId: string }>(
+      "SELECT run_id AS runId FROM knowledge_batches WHERE id=?",
+    )
     .get(cohort.batchId)!;
   expect(run.runId).toBe(interruptedRun);
   const resumed = bench.sql
@@ -248,10 +246,9 @@ it("jointly organizes already-considered disjoint sources into grounded wiki con
   );
   await bench.drainUntilQuiet();
   const cohorts = bench.sql
-    .prepare<
-      [],
-      { createdAt: number; outcome: string }
-    >("SELECT created_at AS createdAt,outcome_json AS outcome FROM knowledge_organization_cohorts ORDER BY created_at")
+    .prepare<[], { createdAt: number; outcome: string }>(
+      "SELECT created_at AS createdAt,outcome_json AS outcome FROM knowledge_organization_cohorts ORDER BY created_at",
+    )
     .all();
   expect(cohorts).toHaveLength(2);
   expect(cohorts[1]!.createdAt - cohorts[0]!.createdAt).toBeLessThan(6 * 60 * 60 * 1000);

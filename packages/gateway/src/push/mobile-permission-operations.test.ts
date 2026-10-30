@@ -292,10 +292,9 @@ describe("atomic mobile permission lifecycle invalidation", () => {
     expect(getMobilePermissionHealth(db, source.id)).toBeNull();
     expect(
       db
-        .prepare<
-          [],
-          { count: number }
-        >("SELECT COUNT(*) AS count FROM notification_deliveries WHERE state IN ('pending','leased')")
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM notification_deliveries WHERE state IN ('pending','leased')",
+        )
         .get()!.count,
     ).toBe(0);
   });

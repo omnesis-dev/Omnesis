@@ -35,8 +35,7 @@ export interface SearchWarmInit {
 }
 
 export type SearchWarmToMain =
-  | { type: "done"; outcome: SearchCacheWarmOutcome }
-  | { type: "error"; error: string };
+  { type: "done"; outcome: SearchCacheWarmOutcome } | { type: "error"; error: string };
 
 export interface SearchCacheWarmOptions extends SearchWarmInit {
   workerUrl: URL;

@@ -724,8 +724,7 @@ describe("GET /admin/brain/runs", () => {
       items: Array<{ id: string; context: unknown }>;
     };
     const segment = items.find((run) => run.id === "run_segment") as
-      | { context: unknown; usage: Record<string, unknown> }
-      | undefined;
+      { context: unknown; usage: Record<string, unknown> } | undefined;
     expect(segment?.context).toEqual(expected);
     // Spend and occupancy are served separately.
     expect(segment?.usage).toEqual({ promptTokens: 400_000, completionTokens: 900 });

@@ -42,10 +42,9 @@ export interface SynthesisEnqueuePassResult {
 /** Noticing runs already enqueued for `day` (settled rows keep their key). */
 function noticingRunsForDay(db: Db, day: string): number {
   const row = db
-    .prepare<
-      [string],
-      { c: number }
-    >("SELECT COUNT(*) AS c FROM cognition_runs WHERE dedupe_key = ?")
+    .prepare<[string], { c: number }>(
+      "SELECT COUNT(*) AS c FROM cognition_runs WHERE dedupe_key = ?",
+    )
     .get(synthesisNoticingDedupeKey(day));
   return row?.c ?? 0;
 }

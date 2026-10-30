@@ -188,10 +188,9 @@ export function getPersonDocuments(
   //     which docs surfaced them. UNIONing here would show the
   //     canonical's docs too, defeating the purpose.
   const row = db
-    .prepare<
-      [string],
-      { merged_into: string | null }
-    >("SELECT merged_into FROM people WHERE id = ?")
+    .prepare<[string], { merged_into: string | null }>(
+      "SELECT merged_into FROM people WHERE id = ?",
+    )
     .get(personId);
   const isCanonical = row?.merged_into == null;
 
@@ -267,10 +266,9 @@ export function getPersonDocuments(
 
 export function getSelfPersonId(db: Db): string | null {
   const row = db
-    .prepare<
-      [],
-      { id: string }
-    >("SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1")
+    .prepare<[], { id: string }>(
+      "SELECT id FROM people WHERE is_self = TRUE AND merged_into IS NULL LIMIT 1",
+    )
     .get();
   return row?.id ?? null;
 }

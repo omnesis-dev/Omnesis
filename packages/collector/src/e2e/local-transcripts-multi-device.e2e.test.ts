@@ -159,10 +159,9 @@ describe("partitioned local transcript sources across real collectors", () => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
-        .prepare<
-          [string],
-          { external_id: string; stream_id: string; content: string }
-        >("SELECT external_id, stream_id, content FROM documents WHERE source_id = ? ORDER BY stream_id")
+        .prepare<[string], { external_id: string; stream_id: string; content: string }>(
+          "SELECT external_id, stream_id, content FROM documents WHERE source_id = ? ORDER BY stream_id",
+        )
         .all(sourceId);
     } finally {
       db.close();
@@ -411,10 +410,9 @@ describe("partitioned local transcript sources across real collectors", () => {
           for (const id of SOURCE_IDS) {
             expect(
               db
-                .prepare<
-                  [string],
-                  { stream_id: string }
-                >("SELECT DISTINCT stream_id FROM document_absences WHERE source_id = ?")
+                .prepare<[string], { stream_id: string }>(
+                  "SELECT DISTINCT stream_id FROM document_absences WHERE source_id = ?",
+                )
                 .all(id),
             ).toEqual([{ stream_id: member.deviceId }]);
           }

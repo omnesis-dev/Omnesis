@@ -51,10 +51,9 @@ const directed = addressedToAgent({
 
 function coverage(bench: BrainBench, id: string) {
   return bench.sql
-    .prepare<
-      [string],
-      { input_revision: string; phase: string; status: string }
-    >("SELECT input_revision,phase,status FROM knowledge_discovery_coverage WHERE subject_id=? ORDER BY input_revision,phase")
+    .prepare<[string], { input_revision: string; phase: string; status: string }>(
+      "SELECT input_revision,phase,status FROM knowledge_discovery_coverage WHERE subject_id=? ORDER BY input_revision,phase",
+    )
     .all(id);
 }
 function revision(bench: BrainBench, id: string): string {

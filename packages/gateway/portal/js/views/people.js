@@ -996,15 +996,19 @@ function MergePicker({ person, onClose, onMerged }) {
     }, 250);
   }
 
+  const selectionRequest = useRef(0);
+  useEffect(() => () => { selectionRequest.current++; }, []);
+
   async function handleSelect(p) {
+    const request = ++selectionRequest.current;
     setSelected(p);
     setSelectedDetail(null);
     setSelectedDetailError(null);
     try {
       const detail = await getPerson(p.id);
-      setSelectedDetail(detail);
+      if (request === selectionRequest.current) setSelectedDetail(detail);
     } catch (err) {
-      setSelectedDetailError(err.message);
+      if (request === selectionRequest.current) setSelectedDetailError(err.message);
     }
   }
 
@@ -1039,9 +1043,9 @@ function MergePicker({ person, onClose, onMerged }) {
 
   return html`
     <div class="meta-panel meta-panel--mb-lg merge-picker">
-      <div class="meta-panel-title merge-picker-head">
+      <div class="merge-picker-head">
         <span>Merge ${person.canonicalName} with...</span>
-        <button class="sql-run-btn merge-picker-cancel" onClick=${onClose}>Cancel</button>
+        <button class="btn-secondary merge-picker-cancel" onClick=${onClose}>Cancel</button>
       </div>
       <input
         class="search-input merge-picker-search"
@@ -1054,19 +1058,25 @@ function MergePicker({ person, onClose, onMerged }) {
       />
       ${searching && html`<div class="loading"><span class="spinner"></span> Searching...</div>`}
       ${results.length > 0 && html`
-        <div class="people-card-list merge-picker-results">
+        <div class="merge-picker-results">
           ${results.map((r) => html`
-            <div
-              class=${selected?.id === r.id ? "people-card merge-picker-card-selected" : "people-card"}
+            <button
+              type="button"
+              class="merge-picker-result"
+              aria-pressed=${selected?.id === r.id}
               key=${r.id}
               onClick=${() => handleSelect(r)}
             >
-              <span class="people-card-name">${r.canonicalName}</span>
-              <span class="people-card-meta">
-                ${r.documentCount} doc${r.documentCount !== 1 ? "s" : ""}
-                ${r.aliasCount} alias${r.aliasCount !== 1 ? "es" : ""}
+              ${renderAvatar(r.canonicalName, "sm")}
+              <span class="merge-picker-result-body">
+                <span class="merge-picker-result-name">${r.canonicalName}</span>
+                <span class="merge-picker-result-meta">
+                  ${renderSourceStripFromIds(r.sourceIds ?? [])}
+                  <span>${r.documentCount ?? 0} doc${r.documentCount !== 1 ? "s" : ""} · ${r.aliasCount ?? 0} alias${r.aliasCount !== 1 ? "es" : ""}</span>
+                </span>
               </span>
-            </div>
+              <span class="merge-picker-result-check" aria-hidden="true">${selected?.id === r.id ? "✓" : ""}</span>
+            </button>
           `)}
         </div>
       `}
@@ -1075,6 +1085,7 @@ function MergePicker({ person, onClose, onMerged }) {
           <div class="merge-picker-selected-label">
             Selected: <strong>${selected.canonicalName}</strong>
           </div>
+          ${selectedDetail && renderAliasChips(selectedDetail.aliases)}
 
           ${selectedDetailError && html`<div class="sql-error">${selectedDetailError}</div>`}
           ${!selectedDetail && !selectedDetailError && html`

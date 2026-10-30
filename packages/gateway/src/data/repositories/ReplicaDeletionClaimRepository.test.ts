@@ -32,10 +32,9 @@ const T0 = 1_700_000_000_000;
 
 function rows(db: Db) {
   return db
-    .prepare<
-      [],
-      { external_id: string; device_id: string; role: string; at: number }
-    >("SELECT external_id, device_id, role, at FROM replica_deletion_claims ORDER BY external_id, device_id")
+    .prepare<[], { external_id: string; device_id: string; role: string; at: number }>(
+      "SELECT external_id, device_id, role, at FROM replica_deletion_claims ORDER BY external_id, device_id",
+    )
     .all();
 }
 
@@ -301,7 +300,9 @@ describe("replica deletion claims", () => {
         .prepare<
           [string, string],
           { omissions: number; first_omitted_at: number | null; last_omitted_at: number | null }
-        >("SELECT omissions, first_omitted_at, last_omitted_at FROM replica_deletion_claims WHERE external_id = ? AND device_id = ?")
+        >(
+          "SELECT omissions, first_omitted_at, last_omitted_at FROM replica_deletion_claims WHERE external_id = ? AND device_id = ?",
+        )
         .get(id, device);
 
     beforeEach(() => {

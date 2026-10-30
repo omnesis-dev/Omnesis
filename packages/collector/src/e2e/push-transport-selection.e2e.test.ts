@@ -571,10 +571,9 @@ describe("push transport selection and carrier fan-out (fake APNs)", () => {
 
   function deviceRow(deviceId: string): DeviceRow {
     const row = readDb
-      .prepare<
-        [string],
-        DeviceRow
-      >(`SELECT apns_device_token, apns_environment, apns_bundle_id, apns_token_updated_at, push_transport FROM devices WHERE id = ?`)
+      .prepare<[string], DeviceRow>(
+        `SELECT apns_device_token, apns_environment, apns_bundle_id, apns_token_updated_at, push_transport FROM devices WHERE id = ?`,
+      )
       .get(deviceId);
     if (!row) throw new Error(`no device row for ${deviceId}`);
     return row;
@@ -582,19 +581,17 @@ describe("push transport selection and carrier fan-out (fake APNs)", () => {
 
   function deliveryFor(notificationId: string, deviceId: string): DeliveryRow | undefined {
     return readDb
-      .prepare<
-        [string, string],
-        DeliveryRow
-      >(`SELECT id, state, wake_state, wake_attempt_count, wake_next_attempt_at, wake_last_error, wake_last_transport, claimed_at FROM notification_deliveries WHERE notification_id = ? AND device_id = ?`)
+      .prepare<[string, string], DeliveryRow>(
+        `SELECT id, state, wake_state, wake_attempt_count, wake_next_attempt_at, wake_last_error, wake_last_transport, claimed_at FROM notification_deliveries WHERE notification_id = ? AND device_id = ?`,
+      )
       .get(notificationId, deviceId);
   }
 
   function deliveryById(deliveryId: string): DeliveryRow {
     const row = readDb
-      .prepare<
-        [string],
-        DeliveryRow
-      >(`SELECT id, state, wake_state, wake_attempt_count, wake_next_attempt_at, wake_last_error, wake_last_transport, claimed_at FROM notification_deliveries WHERE id = ?`)
+      .prepare<[string], DeliveryRow>(
+        `SELECT id, state, wake_state, wake_attempt_count, wake_next_attempt_at, wake_last_error, wake_last_transport, claimed_at FROM notification_deliveries WHERE id = ?`,
+      )
       .get(deliveryId);
     if (!row) throw new Error(`no delivery row ${deliveryId}`);
     return row;
@@ -640,10 +637,9 @@ describe("push transport selection and carrier fan-out (fake APNs)", () => {
 
   function newestPushTest(afterRowid: number): string | undefined {
     return readDb
-      .prepare<
-        [string, number],
-        { id: string }
-      >("SELECT id FROM notifications WHERE collapse_id = ? AND rowid > ? ORDER BY rowid DESC LIMIT 1")
+      .prepare<[string, number], { id: string }>(
+        "SELECT id FROM notifications WHERE collapse_id = ? AND rowid > ? ORDER BY rowid DESC LIMIT 1",
+      )
       .get(COLLAPSE_ID, afterRowid)?.id;
   }
 

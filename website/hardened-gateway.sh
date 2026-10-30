@@ -272,6 +272,19 @@ root_controlled() {
   done
 }
 
+# The release is built from source, so Node must satisfy the root package
+# engines, the same range install.sh enforces for a source install:
+# >=24.16.0 <25 || >=26.1.0. Prereleases do not satisfy it.
+node_version_supported() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+  nv_major="${1%%.*}"
+  nv_minor="${1#*.}"
+  nv_minor="${nv_minor%%.*}"
+  if [ "$nv_major" -eq 24 ]; then [ "$nv_minor" -ge 16 ]; return; fi
+  if [ "$nv_major" -eq 26 ]; then [ "$nv_minor" -ge 1 ]; return; fi
+  [ "$nv_major" -gt 26 ]
+}
+
 NODE_BIN=""
 NODE_DIR=""
 require_node() {
@@ -286,9 +299,9 @@ require_node() {
     root_controlled "$node_path" ||
       fail "Node at $NODE_BIN can be changed by an account other than root ($UNSAFE_PATH), so it could change what the gateway runs. Install Node 24 where only root can write, such as under /usr."
   done
-  node_major="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]' 2>/dev/null)" || node_major=0
-  [ "$node_major" -ge 24 ] 2>/dev/null ||
-    fail "Node at $NODE_BIN is version $node_major; the gateway needs Node 24 or newer."
+  node_version="$("$NODE_BIN" -p 'process.versions.node' 2>/dev/null)" || node_version=unknown
+  node_version_supported "$node_version" ||
+    fail "Node at $NODE_BIN is version $node_version; the gateway is built from source and needs Node 24.16 or newer within Node 24, or Node 26.1 or newer (>=24.16.0 <25 || >=26.1.0)."
   NODE_DIR="$(dirname "$NODE_BIN")"
 }
 
@@ -461,10 +474,28 @@ build_release() {
     cp -a "$OMNESIS_HARDENED_NPM_CACHE_SEED/." "$BUILD_CACHE/npm/"
     build_offline="--prefer-offline"
   fi
+  # npm reaches the registry with Node's bundled CA store, which can still hold
+  # roots Mozilla has removed. This preload drops them in npm's process; it is
+  # PRELOAD_SOURCE in packages/core/src/tls-distrust.ts, which a test holds
+  # this copy to.
+  cat > "$BUILD_DIR/distrust-roots.mjs" <<'EOF'
+import { createHash } from "node:crypto";
+import tls from "node:tls";
+const distrusted = new Set([
+  "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b",
+  "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f",
+  "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3",
+]);
+const keep = (pem) => !distrusted.has(createHash("sha256").update(Buffer.from(pem.replace(/-----(?:BEGIN|END) CERTIFICATE-----|\s/gu, ""), "base64")).digest("hex"));
+if (typeof tls.setDefaultCACertificates === "function") {
+  const current = tls.getCACertificates("default");
+  if (!current.every(keep)) tls.setDefaultCACertificates(current.filter(keep));
+}
+EOF
   cat > "$BUILD_DIR/build.sh" <<EOF
 set -eu
 cd "$BUILD_VIEW/src"
-npm ci --no-audit --no-fund $build_offline
+NODE_OPTIONS="--import=file://$BUILD_VIEW/distrust-roots.mjs" npm ci --no-audit --no-fund $build_offline
 heap="\$(node_modules/.bin/tsx --eval 'import("$BUILD_VIEW/src/packages/cli/src/update/build-heap.ts").then((m) => process.stdout.write(m.buildHeapEnv()?.NODE_OPTIONS ?? ""))' 2>/dev/null || true)"
 NODE_OPTIONS="\$heap" npm run build
 EOF

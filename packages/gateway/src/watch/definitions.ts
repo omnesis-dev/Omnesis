@@ -356,9 +356,9 @@ export class WatchDefinitionStore {
 
   setStatus(id: string, status: WatchStatus, note: string | null = null): void {
     this.db
-      .prepare<
-        [string, string | null, string]
-      >("UPDATE watch_defs SET status = ?, note = ? WHERE id = ?")
+      .prepare<[string, string | null, string]>(
+        "UPDATE watch_defs SET status = ?, note = ? WHERE id = ?",
+      )
       .run(status, note, id);
   }
 }

@@ -37,8 +37,7 @@ export const PAIRING_PROTOCOL_VERSION = 4 as const;
 export const PAIRING_PROTOCOL_MIN_VERSION = 1 as const;
 
 export type PairingTlsTrust =
-  | { readonly mode: "system" }
-  | { readonly mode: "pinned-leaf"; readonly fingerprint: string };
+  { readonly mode: "system" } | { readonly mode: "pinned-leaf"; readonly fingerprint: string };
 
 /**
  * V4 makes the TLS trust policy explicit. Public HTTPS gateways use normal
@@ -94,10 +93,7 @@ export interface PairingPayloadV1 {
 }
 
 export type PairingPayload =
-  | PairingPayloadV4
-  | PairingPayloadV3
-  | PairingPayloadV2
-  | PairingPayloadV1;
+  PairingPayloadV4 | PairingPayloadV3 | PairingPayloadV2 | PairingPayloadV1;
 
 export type PairingPayloadDecodeError =
   | { kind: "invalid-json" }

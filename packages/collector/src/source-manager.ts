@@ -15,6 +15,7 @@ import { isDrivenByHost } from "@omnesis/source-sdk";
 import {
   allDescriptors as defaultDescriptors,
   allDefinitions as defaultDefinitions,
+  experimentalDescriptorHidden,
 } from "./source-descriptors.js";
 import {
   anotherEnabledKeyAddresses,
@@ -91,15 +92,20 @@ export function collectKnownUrlPatterns(
  * browser-capture source can skip any visited host already owned by a
  * dedicated source, instead of double-ingesting it.
  *
+ * A source hidden as experimental claims no hosts: the browser would otherwise
+ * stop capturing a site that no addable source covers.
+ *
  * Entries are trimmed, lowercased, and de-duplicated. Exported so both the
  * production push (`SourceManager.pushOwnedWebDomains`) and the synthetic E2E
  * harness derive the set the same way.
  */
 export function collectOwnedWebDomains(
   definitions: readonly SourceOrProviderDefinition[],
+  synthMode = process.env.OMNESIS_SYNTHETIC === "1",
 ): string[] {
   const out = new Set<string>();
-  const collect = (domains: string[] | undefined): void => {
+  const collect = (domains: string[] | undefined, experimental: boolean | undefined): void => {
+    if (experimentalDescriptorHidden({ experimental }, synthMode)) return;
     for (const d of domains ?? []) {
       const host = d.trim().toLowerCase();
       if (host) out.add(host);
@@ -107,9 +113,11 @@ export function collectOwnedWebDomains(
   };
   for (const def of definitions) {
     if (def.type === "provider") {
-      for (const source of def.sources) collect(source.ownedWebDomains);
+      for (const source of def.sources) {
+        collect(source.ownedWebDomains, source.experimental ?? def.experimental);
+      }
     } else {
-      collect(def.ownedWebDomains);
+      collect(def.ownedWebDomains, def.experimental);
     }
   }
   return [...out].sort();

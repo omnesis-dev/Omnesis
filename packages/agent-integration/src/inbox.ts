@@ -66,7 +66,13 @@ type DeliveryStartClaim =
   | { kind: "accepted"; acceptance: DeliveryAcceptance };
 
 type AnswerCompletionStartClaim =
-  | { kind: "start"; delivery: AnswerCompletionDelivery }
+  | {
+      kind: "start";
+      delivery: AnswerCompletionDelivery;
+      priorState: "prepared" | "starting";
+      priorAttempts: number;
+      generation: number;
+    }
   | { kind: "accepted"; acceptance: DeliveryAcceptance };
 
 export type DeliveryStarter = (
@@ -93,7 +99,7 @@ interface BindingRow {
   updated_at: number;
 }
 
-type AnswerCompletionInboxRow = InboxRow & { start_attempts: number };
+type AnswerCompletionInboxRow = InboxRow & { start_attempts: number; start_generation: number };
 
 /**
  * How many times an answer may be posted at a harness that never confirmed.
@@ -122,6 +128,14 @@ export class WorkflowBindingConflictError extends Error {
   constructor(workflowHandle: string) {
     super(`native execution identity changed for workflow ${workflowHandle}`);
     this.name = "WorkflowBindingConflictError";
+  }
+}
+
+/** A trusted starter proves that no native admission was attempted. */
+export class AnswerCompletionNotStartedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "AnswerCompletionNotStartedError";
   }
 }
 
@@ -234,7 +248,8 @@ function openPrivateDatabase(path: string): Db {
       -- How many times posting this answer has been attempted. A run start
       -- parks forever on the first ambiguity; an answer is allowed a few more
       -- tries, and this is what bounds them.
-      start_attempts INTEGER NOT NULL DEFAULT 0
+      start_attempts INTEGER NOT NULL DEFAULT 0,
+      start_generation INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_integration_answer_completion_inbox_recover
       ON integration_answer_completion_inbox(state, updated_at);
@@ -305,6 +320,11 @@ function openPrivateDatabase(path: string): Db {
     if (!answerColumns.some((column) => column.name === "start_attempts")) {
       db.exec(
         "ALTER TABLE integration_answer_completion_inbox ADD COLUMN start_attempts INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!answerColumns.some((column) => column.name === "start_generation")) {
+      db.exec(
+        "ALTER TABLE integration_answer_completion_inbox ADD COLUMN start_generation INTEGER NOT NULL DEFAULT 0",
       );
     }
 
@@ -521,7 +541,7 @@ export class DurableIntegrationInbox {
     if (active) return { ...(await active), duplicate: true };
     const claim = this.claimAnswerCompletionForStart(deliveryId, now);
     if (claim.kind === "accepted") return claim.acceptance;
-    const work = this.startAnswerCompletionAndPersist(claim.delivery, starter);
+    const work = this.startAnswerCompletionAndPersist(claim, starter);
     this.completionInFlight.set(deliveryId, work);
     try {
       return await work;
@@ -988,9 +1008,10 @@ export class DurableIntegrationInbox {
   }
 
   private async startAnswerCompletionAndPersist(
-    delivery: AnswerCompletionDelivery,
+    claim: Extract<AnswerCompletionStartClaim, { kind: "start" }>,
     starter: AnswerCompletionStarter,
   ): Promise<DeliveryAcceptance> {
+    const { delivery } = claim;
     try {
       await starter(delivery);
       const acceptedAt = Date.now();
@@ -1011,6 +1032,27 @@ export class DurableIntegrationInbox {
       };
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+      if (error instanceof AnswerCompletionNotStartedError) {
+        // Refund only this proven pre-admission failure. A concurrent attempt,
+        // cancellation or acceptance wins; earlier ambiguous starts stay spent.
+        this.db
+          .prepare(
+            `UPDATE integration_answer_completion_inbox
+          SET state = ?, start_attempts = ?, last_error = ?, updated_at = ?
+          WHERE delivery_id = ? AND state = 'starting' AND start_generation = ?
+            AND NOT EXISTS (SELECT 1 FROM integration_answer_completion_cancellations WHERE delivery_id = ?)`,
+          )
+          .run(
+            claim.priorState,
+            claim.priorAttempts,
+            message,
+            Date.now(),
+            delivery.deliveryId,
+            claim.generation,
+            delivery.deliveryId,
+          );
+        throw error;
+      }
       this.db
         .prepare(
           `UPDATE integration_answer_completion_inbox
@@ -1040,16 +1082,23 @@ export class DurableIntegrationInbox {
     const changed = this.db
       .prepare(
         `UPDATE integration_answer_completion_inbox
-            SET state = 'starting', start_attempts = start_attempts + 1,
+            SET state = 'starting', start_attempts = start_attempts + 1, start_generation = start_generation + 1,
                 last_error = NULL, updated_at = ?
-          WHERE delivery_id = ? AND state = 'prepared'
+          WHERE delivery_id = ? AND state = 'prepared' AND start_generation = ?
             AND NOT EXISTS (
               SELECT 1 FROM integration_answer_completion_cancellations
                WHERE delivery_id = ?
             )`,
       )
-      .run(now, deliveryId, deliveryId);
-    if (changed.changes === 1) return { kind: "start", delivery };
+      .run(now, deliveryId, row.start_generation, deliveryId);
+    if (changed.changes === 1)
+      return {
+        kind: "start",
+        delivery,
+        priorState: "prepared",
+        priorAttempts: row.start_attempts,
+        generation: row.start_generation + 1,
+      };
     if (this.isAnswerCompletionCancelled(deliveryId)) throw new DeliveryCancelledError(deliveryId);
     const current = this.readAnswerCompletionRow(deliveryId);
     if (!current) throw new DeliveryNotPreparedError(deliveryId);
@@ -1065,9 +1114,9 @@ export class DurableIntegrationInbox {
    * Post an answer again at a harness that never said whether the last one
    * landed, while there is budget for it.
    *
-   * The compare-and-set on the attempt count is what keeps two overlapping
+   * The compare-and-set on the monotonic generation keeps two overlapping
    * plugin processes from spending the whole budget at once: both read the same
-   * count, only one write matches it, and the loser is told the delivery is
+   * generation, only one write matches it, and the loser is told the delivery is
    * ambiguous — which, for that caller, it is.
    */
   private retryAmbiguousAnswerCompletion(
@@ -1082,16 +1131,22 @@ export class DurableIntegrationInbox {
     const changed = this.db
       .prepare(
         `UPDATE integration_answer_completion_inbox
-            SET start_attempts = start_attempts + 1, updated_at = ?
-          WHERE delivery_id = ? AND state = 'starting' AND start_attempts = ?
+            SET start_attempts = start_attempts + 1, start_generation = start_generation + 1, updated_at = ?
+          WHERE delivery_id = ? AND state = 'starting' AND start_generation = ?
             AND NOT EXISTS (
               SELECT 1 FROM integration_answer_completion_cancellations
                WHERE delivery_id = ?
             )`,
       )
-      .run(now, row.delivery_id, row.start_attempts, row.delivery_id);
+      .run(now, row.delivery_id, row.start_generation, row.delivery_id);
     if (changed.changes !== 1) throw new AmbiguousDeliveryError(row.delivery_id);
-    return { kind: "start", delivery };
+    return {
+      kind: "start",
+      delivery,
+      priorState: "starting",
+      priorAttempts: row.start_attempts,
+      generation: row.start_generation + 1,
+    };
   }
 
   private readRow(deliveryId: string): InboxRow | undefined {

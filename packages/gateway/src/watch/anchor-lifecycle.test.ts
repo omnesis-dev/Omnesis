@@ -236,10 +236,9 @@ describe("anchor lifecycle A -> B -> A", () => {
     // firings of each stay attached to the instruction they were sent under.
     expect(new Set(ids).size).toBe(5);
     const live = h.db
-      .prepare<
-        [],
-        { n: number }
-      >(`SELECT COUNT(*) AS n FROM subscriptions WHERE status IN ('active', 'pending_approval')`)
+      .prepare<[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM subscriptions WHERE status IN ('active', 'pending_approval')`,
+      )
       .get();
     expect(live?.n).toBe(1);
     expect(readAnchors(h.db).get(WATCH_ID)?.subscriptionId).toBe(ids.at(-1));

@@ -86,6 +86,38 @@ export interface HttpBackendConfig {
   modelLimits?: Record<string, ModelTokenLimits>;
   /** Per-request agent generation timeout. */
   agentTimeoutMs?: number;
+  /** How the transcriber role talks to this backend, when the probe's own finding is not wanted. */
+  transcription?: TranscriptionBackendOptions;
+}
+
+/**
+ * How audio reaches a backend's speech model.
+ *
+ * - `audio`: `POST /audio/transcriptions`, the OpenAI transcription API that
+ *   whisper-server, speaches, vLLM, llama-server, Ollama 0.40 and the hosted
+ *   providers implement.
+ * - `chat-audio`: `POST /chat/completions` with an `input_audio` content
+ *   part, for an audio language model served through a chat API only (an
+ *   audio LLM on vLLM, Ollama's chat API, OpenAI's audio chat models).
+ */
+export type TranscriptionProtocol = "audio" | "chat-audio";
+
+export interface TranscriptionBackendOptions {
+  /**
+   * Pin the protocol. Unset, the transcription probe tries `audio` first
+   * and falls back to `chat-audio` when the backend has no transcription
+   * endpoint, and the resolved assignment carries what it found.
+   */
+  protocol?: TranscriptionProtocol;
+  /**
+   * Longest stretch of audio sent in one request, in seconds. Unset, the
+   * transcription API gets ten-minute chunks (the upload limit) and a chat
+   * audio model gets one-minute chunks: an audio language model such as
+   * Qwen3-ASR takes about a minute at a time, and a speech model answering
+   * through the transcription API in Qwen3-ASR's own format gets the same
+   * minute, since that is the model behind it.
+   */
+  maxChunkSeconds?: number;
 }
 
 /**
@@ -193,6 +225,12 @@ export interface ResolvedHttp extends ResolvedBase {
   agentTimeoutMs?: number;
   /** Configured agent wire protocol; `undefined` means auto-detect. See {@link AgentProtocol}. */
   protocol?: AgentProtocol;
+  /**
+   * How the transcriber reaches this backend's speech model: the operator's
+   * setting, else what the transcription probe found, else the transcription
+   * API with its default chunking. Set only for the transcriber role.
+   */
+  transcription?: { protocol: TranscriptionProtocol; maxChunkSeconds?: number };
   /**
    * Whether this config explicitly permits non-loopback HTTP inference. When
    * false, HTTP clients may only call loopback backends.
@@ -333,6 +371,14 @@ export interface BackendStatus {
    * since `/v1/models` never advertises purpose.
    */
   modelRoles?: Record<string, CapabilityRole[]>;
+  /**
+   * Behavioral verdicts the gateway has reached for this backend's models
+   * (see {@link CapabilityVerdict}): every `(model, role)` pair it has
+   * verified since boot or since the backend's config last changed. A picker
+   * reads them to mark a model the backend has already proved it cannot serve
+   * for a role, instead of letting the user find out after assigning it.
+   */
+  verdicts?: CapabilityVerdict[];
   /** Whether an API key is configured for this backend (value never exposed). */
   hasApiKey?: boolean;
   /** Where the effective API key came from, when the backend can report it. */
@@ -554,6 +600,21 @@ export interface CapabilityVerdict {
   supported: boolean;
   /** One-line human-readable explanation (endpoint hit, dim, or error). */
   detail: string;
+  /**
+   * The probe never got an answer (a timeout, a refused connection, a URL the
+   * policy blocks), so `supported: false` says nothing about what the backend
+   * can do. A conclusive refusal is one the backend itself gave, such as a 404
+   * for the endpoint or a 400 for the model; only those are grounds to refuse
+   * an assignment.
+   */
+  inconclusive?: boolean;
+  /**
+   * For a supported transcriber: the protocol the backend answered on and,
+   * when the answer showed the model takes short audio (Qwen3-ASR's format),
+   * the chunk length to send it. The resolved assignment carries this so the
+   * loader builds the right client without configuration.
+   */
+  transcription?: { protocol: TranscriptionProtocol; maxChunkSeconds?: number };
 }
 
 // ── Inference overview (API response snapshot) ────────────────────────

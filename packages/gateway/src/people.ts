@@ -267,10 +267,9 @@ export interface TransitiveCollapseRow {
  */
 export function computeTransitiveCollapse(db: Db): TransitiveCollapseRow[] {
   const rows = db
-    .prepare<
-      [],
-      { id: string; merged_into: string }
-    >("SELECT id, merged_into FROM people WHERE merged_into IS NOT NULL")
+    .prepare<[], { id: string; merged_into: string }>(
+      "SELECT id, merged_into FROM people WHERE merged_into IS NOT NULL",
+    )
     .all();
   const out: TransitiveCollapseRow[] = [];
   for (const row of rows) {

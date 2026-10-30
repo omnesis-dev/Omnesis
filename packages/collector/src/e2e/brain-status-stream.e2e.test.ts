@@ -224,10 +224,9 @@ const queuedLines = () =>
     .filter((line) => line.includes(`Wiki ${pageId} queued for review:`));
 const pageRow = () =>
   bench.sql
-    .prepare<
-      [string],
-      { revision: number; metadata_json: string }
-    >("SELECT revision,metadata_json FROM knowledge_nodes WHERE id=?")
+    .prepare<[string], { revision: number; metadata_json: string }>(
+      "SELECT revision,metadata_json FROM knowledge_nodes WHERE id=?",
+    )
     .get(pageId);
 
 it("queues one consolidation review for a log-shaped page and keeps a routine status stream off it", async () => {

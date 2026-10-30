@@ -203,6 +203,8 @@ function runScenario() {
     return;
   }
   if (scenario === "watchdog-progress") {
+    // About a second of progress at short intervals: longer than the test's
+    // idle timeout in total, while each gap leaves room for a loaded runner.
     let count = 0;
     const timer = setInterval(() => {
       notify("item/reasoning/textDelta", {
@@ -210,11 +212,11 @@ function runScenario() {
         turnId,
         delta: "Synthetic reasoning progress.",
       });
-      if (++count === 8) {
+      if (++count === 25) {
         clearInterval(timer);
         complete("completed");
       }
-    }, 50);
+    }, 40);
     return;
   }
   if (scenario === "watchdog-heartbeats") {

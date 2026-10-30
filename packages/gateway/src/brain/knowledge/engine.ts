@@ -78,6 +78,8 @@ export interface KnowledgeEngineDeps {
   contentPending?: (ids: readonly string[]) => Set<string>;
   activeDerivationStages?: () => readonly DerivationStage[];
   publishedRetrievalBoundary?: () => string | null;
+  /** Whether a run is executing in this process now; omitted, only claim age tells. */
+  isRunActive?: (runId: string) => boolean;
 }
 interface SourceInput {
   id: string;
@@ -287,10 +289,9 @@ export class KnowledgeEngine {
   }
   private initialRoot(): string | null {
     const root = this.deps.db
-      .prepare<
-        [],
-        { id: string }
-      >("SELECT id FROM knowledge_nodes WHERE kind='root' AND trim(plain_text)='' LIMIT 1")
+      .prepare<[], { id: string }>(
+        "SELECT id FROM knowledge_nodes WHERE kind='root' AND trim(plain_text)='' LIMIT 1",
+      )
       .get();
     return root && this.orientation().some((node) => node.plainText.trim()) ? root.id : null;
   }
@@ -301,10 +302,9 @@ export class KnowledgeEngine {
     }
   > {
     const ids = this.deps.db
-      .prepare<
-        [number],
-        { id: string }
-      >("SELECT id FROM knowledge_nodes WHERE kind!='root' ORDER BY COALESCE(json_extract(metadata_json,'$.importance'),0) DESC,updated_at DESC,id LIMIT ?")
+      .prepare<[number], { id: string }>(
+        "SELECT id FROM knowledge_nodes WHERE kind!='root' ORDER BY COALESCE(json_extract(metadata_json,'$.importance'),0) DESC,updated_at DESC,id LIMIT ?",
+      )
       .all(this.deps.getSettings().knowledge.maxFrontierNodes + 1);
     const limit = this.deps.getSettings().knowledge.maxFrontierNodes;
     return ids.slice(0, limit).flatMap(({ id }) => {
@@ -337,10 +337,9 @@ export class KnowledgeEngine {
   }
   private batch(batchId: string, runId: string): BatchRow {
     const batch = this.deps.db
-      .prepare<
-        [string],
-        BatchRow
-      >("SELECT id,run_id AS runId,status FROM knowledge_batches WHERE id=?")
+      .prepare<[string], BatchRow>(
+        "SELECT id,run_id AS runId,status FROM knowledge_batches WHERE id=?",
+      )
       .get(batchId);
     if (!batch || batch.runId !== runId)
       throw new KnowledgeStorageError(
@@ -543,10 +542,9 @@ export class KnowledgeEngine {
           );
         if (item.nodeId.startsWith("source:")) {
           const seed = this.deps.db
-            .prepare<
-              [string, string],
-              { inputChangedAt: number | null }
-            >("SELECT MIN(input_changed_at) AS inputChangedAt FROM knowledge_work WHERE subject_id=? AND input_revision=?")
+            .prepare<[string, string], { inputChangedAt: number | null }>(
+              "SELECT MIN(input_changed_at) AS inputChangedAt FROM knowledge_work WHERE subject_id=? AND input_revision=?",
+            )
             .get(item.nodeId.slice(7), String(item.inputVersions[item.nodeId]));
           if (
             !knowledgeSourceReadiness(
@@ -777,10 +775,9 @@ export class KnowledgeEngine {
     sourceRevision: string;
   }> {
     const rows = this.deps.db
-      .prepare<
-        [string],
-        { subject_id: string }
-      >("SELECT subject_id FROM knowledge_work WHERE batch_id=? AND subject_kind='source'")
+      .prepare<[string], { subject_id: string }>(
+        "SELECT subject_id FROM knowledge_work WHERE batch_id=? AND subject_kind='source'",
+      )
       .all(batchId);
     return rows.flatMap((row) => {
       const source = this.source(row.subject_id);

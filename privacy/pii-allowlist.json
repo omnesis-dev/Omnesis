@@ -39,7 +39,8 @@
       "paths": [
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
-        "packages/providers/whatsapp/src/import/decrypt-parse.test.ts"
+        "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
+        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -134,7 +135,8 @@
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
-        "packages/providers/whatsapp/src/import/importer.test.ts"
+        "packages/providers/whatsapp/src/import/importer.test.ts",
+        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -160,9 +162,11 @@
         "evals/universes/whatsapp-interrupted/sources/whatsapp-messages/fake-corpus.json",
         "packages/collector/src/e2e/whatsapp-interrupted.e2e.test.ts",
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
+        "packages/providers/whatsapp/src/import/android-backup-decrypt.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
-        "packages/providers/whatsapp/src/import/importer.test.ts"
+        "packages/providers/whatsapp/src/import/importer.test.ts",
+        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -171,7 +175,8 @@
       "paths": [
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
-        "packages/providers/whatsapp/src/import/decrypt-parse.test.ts"
+        "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
+        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -1762,7 +1767,7 @@
   "phones": [
     {
       "value": "099.246.1981",
-      "paths": ["website/media/discord.svg"],
+      "paths": ["website/media/discord.svg", "packages/providers/discord/src/icons.ts"],
       "reason": "Adjacent SVG path coordinates from the Simple Icons Discord mark, not a phone number."
     },
     {
@@ -2052,7 +2057,8 @@
       "value": "172.20.0.5",
       "paths": [
         "packages/core/src/pairing-address.test.ts",
-        "packages/gateway/portal/js/views/access/client-setup.test.ts"
+        "packages/gateway/portal/js/views/access/client-setup.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts"
       ],
       "reason": "invented private-address fixture for the RFC 1918 172.16/12 range"
     },
@@ -2088,7 +2094,10 @@
     },
     {
       "value": "10.0.0.9",
-      "paths": ["packages/gateway/src/mdns-advertiser.test.ts"],
+      "paths": [
+        "packages/gateway/src/mdns-advertiser.test.ts",
+        "packages/gateway/src/tls-lifecycle/service.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -2154,13 +2163,15 @@
       "value": "192.168.1.20",
       "paths": [
         "packages/cli/src/commands/phone-pairing.test.ts",
+        "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/collector/src/main.test.ts",
         "packages/core/src/mdns-discovery.test.ts",
         "packages/core/src/mdns-discovery.ts",
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/access.test.ts",
         "packages/gateway/portal/js/views/access/client-setup.test.ts",
-        "packages/gateway/src/http/services/PairingQrService.test.ts"
+        "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "packages/gateway/src/tls-lifecycle/service.test.ts"
       ],
       "reason": "invented private-LAN fixture"
     },
@@ -2214,6 +2225,16 @@
     }
   ],
   "names": [
+    {
+      "value": "Tue Jan",
+      "paths": ["packages/core/src/gateway-lock.test.ts"],
+      "reason": "Invented process-start timestamp in locale regression tests, not a person's name."
+    },
+    {
+      "value": "Mon Jan",
+      "paths": ["packages/core/src/gateway-lock.test.ts"],
+      "reason": "Invented process-start timestamp in locale regression tests, not a person's name."
+    },
     {
       "value": "Brookside Shared Courtyard",
       "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
@@ -2713,7 +2734,8 @@
         "evals/universes/sacha-bellamy/cast.json",
         "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
         "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
-        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json",
+        "packages/providers/discord/src/normalizer.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -2823,7 +2845,9 @@
       "value": "Maya Reeves",
       "paths": [
         "evals/universes/sacha-bellamy/sources/gmail/messages.json",
-        "evals/universes/sacha-bellamy/sources/google-drive/files.json"
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
+        "packages/providers/discord/src/normalizer.test.ts",
+        "packages/providers/discord/src/source.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3274,7 +3298,9 @@
       "value": "David Lin",
       "paths": [
         "packages/providers-synth/apple/src/fixtures.test.ts",
-        "packages/providers-synth/whatsapp/src/fixtures.test.ts"
+        "packages/providers-synth/whatsapp/src/fixtures.test.ts",
+        "packages/providers/discord/src/normalizer.test.ts",
+        "packages/providers/discord/src/source.test.ts"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
@@ -10062,7 +10088,8 @@
         "packages/source-sdk/src/record-citation.test.ts",
         "packages/watch/src/runtime/update-storm.test.ts",
         "packages/watch/universes/poc/events.json",
-        "packages/watch/universes/poc/watches/alice-declines-dinner.json"
+        "packages/watch/universes/poc/watches/alice-declines-dinner.json",
+        "packages/providers/discord/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10292,6 +10319,11 @@
         "packages/core/src/doctor/security.test.ts"
       ],
       "reason": "reviewed Linux keyring API name"
+    },
+    {
+      "value": "Semantic Search Degraded",
+      "paths": ["packages/cli/src/commands/status-render.test.ts"],
+      "reason": "index status header label"
     },
     {
       "value": "Section Header",
@@ -12193,6 +12225,198 @@
       "value": "Expected Failure",
       "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
       "reason": "Public xcresulttool TestResult enum value, not a person's name."
+    },
+    {
+      "value": "User-Agent Discord",
+      "paths": ["packages/providers/discord/src/client.test.ts"],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Read Message History",
+      "paths": [
+        "packages/providers/discord/src/client.test.ts",
+        "packages/providers/discord/src/source.test.ts"
+      ],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Northstar Labs",
+      "paths": [
+        "packages/providers/discord/src/document-event-profile.test.ts",
+        "packages/providers/discord/src/normalizer.test.ts",
+        "packages/providers/discord/src/source.test.ts",
+        "packages/providers/discord/src/sync-cycle.test.ts"
+      ],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Developer Portal",
+      "paths": ["packages/providers/discord/src/provider.test.ts"],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "View Channels",
+      "paths": ["packages/providers/discord/src/source.test.ts"],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Message Content",
+      "paths": ["packages/providers/discord/src/source.test.ts"],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Message Content Intent",
+      "paths": ["packages/providers/discord/src/source.test.ts"],
+      "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/provider.test.ts"
+      ],
+      "reason": "invented Telegram fixture user from the CLAUDE.md example set (packages/providers/telegram/src/testing/fixtures.ts)"
+    },
+    {
+      "value": "This Omnesis",
+      "paths": ["packages/providers/telegram/src/session-store.test.ts"],
+      "reason": "sentence start in a connection-state detail string, not a name"
+    },
+    {
+      "value": "Sarah Mendez",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/media.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "evals/universes/telegram-sync/cast.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Stellar Sound",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/takeout.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Riverside Estate",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/forum-topics.test.ts",
+        "packages/providers/telegram/src/history-walker.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts",
+        "packages/providers/telegram/src/takeout.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Studio Northstar",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/document-event-profile.test.ts",
+        "packages/providers/telegram/src/history-walker.test.ts",
+        "packages/providers/telegram/src/message-store.test.ts",
+        "packages/providers/telegram/src/messages.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Saved Messages",
+      "paths": [
+        "evals/universes/telegram-sync/sources/telegram-messages/fake-corpus.json",
+        "evals/universes/telegram-sync/universe.json",
+        "packages/collector/src/e2e/telegram-sync.e2e.test.ts",
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "Telegram's own name for the chat with oneself, not a person."
+    },
+    {
+      "value": "Example Street",
+      "paths": [
+        "packages/providers/telegram/src/client/mtcute/adapter.test.ts",
+        "packages/providers/telegram/src/normalizer.test.ts"
+      ],
+      "reason": "invented address placeholder from the CLAUDE.md example set."
+    },
+    {
+      "value": "Ping David Lin",
+      "paths": ["packages/providers/telegram/src/document-event-profile.test.ts"],
+      "reason": "invented Telegram fixture text naming a user from the CLAUDE.md example set."
+    },
+    {
+      "value": "Call Sarah Mendez",
+      "paths": ["packages/providers/telegram/src/normalizer.test.ts"],
+      "reason": "invented Telegram fixture text naming a user from the CLAUDE.md example set."
+    },
+    {
+      "value": "Stellar Sound Bot",
+      "paths": ["packages/providers/telegram/src/testing/fixtures.ts"],
+      "reason": "invented Telegram fixture name from the CLAUDE.md example set (people, venues and vendors), not corpus data."
+    },
+    {
+      "value": "Stellar Energy",
+      "paths": [
+        "packages/providers/paperless/src/documents.test.ts",
+        "packages/providers/paperless/src/normalizer.test.ts"
+      ],
+      "reason": "reviewed invented demo fixture"
+    },
+    {
+      "value": "Riverside Clinic",
+      "paths": ["packages/providers/paperless/src/document-event-profile.test.ts"],
+      "reason": "reviewed invented demo fixture"
+    },
+    {
+      "value": "Northstar Insurance",
+      "paths": ["packages/providers/paperless/src/documents.test.ts"],
+      "reason": "reviewed invented demo fixture"
+    },
+    {
+      "value": "Connect Paperless",
+      "paths": ["packages/providers/paperless/src/provider.test.ts"],
+      "reason": "the Paperless-ngx connect dialog's title, not a person"
+    },
+    {
+      "value": "No Paperless",
+      "paths": ["packages/providers/paperless/src/provider.test.ts"],
+      "reason": "the start of a Paperless-ngx error message, not a person"
     }
   ],
   "secretFixtures": [

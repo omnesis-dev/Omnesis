@@ -27,10 +27,9 @@ import type { Db } from "./types.js";
 /** Returns the number of invalid-TLD email aliases removed. */
 export function pruneInvalidEmailAliases(db: Db): number {
   const rows = db
-    .prepare<
-      [],
-      { id: string; alias: string }
-    >(`SELECT id, alias FROM person_aliases WHERE alias_type = 'email'`)
+    .prepare<[], { id: string; alias: string }>(
+      `SELECT id, alias FROM person_aliases WHERE alias_type = 'email'`,
+    )
     .all();
   const del = db.prepare(`DELETE FROM person_aliases WHERE id = ?`);
   let removed = 0;

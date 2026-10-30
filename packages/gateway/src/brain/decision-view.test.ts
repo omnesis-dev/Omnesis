@@ -75,6 +75,59 @@ describe("summarizeCognitionTranscript", () => {
     ]);
   });
 
+  test("a phase-empty source review settles without invented research or mutations", () => {
+    const decision = summarizeCognitionTranscript(
+      transcript({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch-fictional" },
+        events: [
+          toolStart("a", "knowledge_next_frontier", {}),
+          toolStart("b", "knowledge_temporal_context", {}),
+          toolStart("c", "knowledge_evidence", { ref: "source:doc_a" }),
+          toolStart("d", "knowledge_discovery_complete", {
+            id: "source:doc_a",
+            phases: [],
+            targets: [],
+          }),
+          toolResult("d", "structured"),
+        ],
+      }),
+    );
+    expect(decision.actions).toEqual([]);
+    expect(decision.researchToolCalls).toBe(0);
+    expect(decision.outcome).toBe("completed");
+  });
+
+  test("owner review counts its actual reads separately from saves and frontier plumbing", () => {
+    const decision = summarizeCognitionTranscript(
+      transcript({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch-fictional" },
+        events: [
+          toolStart("a", "knowledge_next_frontier", {}),
+          toolStart("b", "knowledge_reference", { ref: "source:doc_a" }),
+          toolResult("b", "structured"),
+          toolStart("c", "knowledge_fetch", { id: "owner_a", editing: true }),
+          toolResult("c", "structured"),
+          toolStart("d", "knowledge_save", {
+            node: { kind: "wiki", id: "owner_a", title: "Workshop" },
+          }),
+          toolResult("d", "structured"),
+          toolStart("e", "knowledge_discovery_complete", {
+            id: "source:doc_a",
+            phases: [],
+            targets: [],
+          }),
+          toolResult("e", "structured"),
+        ],
+      }),
+    );
+    expect(decision.researchToolCalls).toBe(2);
+    expect(decision.actions).toEqual([
+      { tool: "knowledge_save", detail: "save wiki Workshop", ok: true },
+    ]);
+  });
+
   test("splits tool calls into decision actions vs research, in order", () => {
     const decision = summarizeCognitionTranscript(
       transcript({

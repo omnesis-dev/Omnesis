@@ -35,15 +35,7 @@
  * end of the union.
  */
 export type JobCategory =
-  | "indexer"
-  | "graph"
-  | "people"
-  | "stats"
-  | "auth"
-  | "search"
-  | "infra"
-  | "watches"
-  | "briefs";
+  "indexer" | "graph" | "people" | "stats" | "auth" | "search" | "infra" | "watches" | "briefs";
 
 /**
  * High-level lifecycle state, derived per-observation. UI renders this

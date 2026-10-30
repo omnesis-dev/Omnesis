@@ -125,8 +125,7 @@ export function parseRunPrompt(prompt: string): RunPromptMeta {
 // ── the scripted decision ───────────────────────────────────────────────────
 
 export type NextTurn =
-  | { kind: "tool"; name: string; args: Record<string, unknown> }
-  | { kind: "final"; text: string };
+  { kind: "tool"; name: string; args: Record<string, unknown> } | { kind: "final"; text: string };
 
 interface SearchLoopHit {
   id: string;
@@ -747,8 +746,7 @@ export async function startScriptedLoopModelServer(
         );
         const source = (
           frontier?.items as
-            | Array<{ id: string; source?: { id: string; content: string } }>
-            | undefined
+            Array<{ id: string; source?: { id: string; content: string } }> | undefined
         )?.find((item) => item.source && !completed.has(item.id))?.source;
         calls.push({
           at: Date.now(),

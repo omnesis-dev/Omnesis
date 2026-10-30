@@ -51,8 +51,11 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
       armed: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
-      images_armed: ${{ vars.OMNESIS_IMAGE_PUBLISH != '0' }}
+      # Decided in a step: in an expression an unset variable is null, and
+      # null != '0' is false, which silently disabled image publication.
+      images_armed: ${{ steps.arming.outputs.images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,6 +83,7 @@ jobs:
             target_sha="$tag_sha"
           fi
           echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${target_sha:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: The tagged commit is on main
         env:
@@ -104,11 +108,21 @@ jobs:
         run: cmp scripts/install.sh website/install.sh
 
       - name: Report the arming state
+        id: arming
+        env:
+          IMAGE_PUBLISH: ${{ vars.OMNESIS_IMAGE_PUBLISH }}
         run: |
           if [ "$ARMED" = "true" ]; then
             echo "::notice::npm publication is ARMED."
           else
-            echo "::notice::npm publication is NOT armed; packages use a local registry rehearsal. Images publish unless OMNESIS_IMAGE_PUBLISH=0."
+            echo "::notice::npm publication is NOT armed; packages use a local registry rehearsal."
+          fi
+          if [ "$IMAGE_PUBLISH" = "0" ]; then
+            echo "::notice::Image publication is NOT armed (OMNESIS_IMAGE_PUBLISH=0)."
+            echo "images=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Image publication is ARMED."
+            echo "images=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ------------------------------------------------------------------
@@ -324,13 +338,17 @@ jobs:
   # images — version-tagged gateway and collector images. Built on every
   # run; pushed only when publication is armed.
   #
+  # Each architecture builds and boots on its own native runner: under QEMU
+  # the combined image's arm64 smoke outran its timeouts. A runner pushes
+  # only the digest it tested, and images-manifest tags the pair.
+  #
   # Sequenced after `packages` rather than run beside it: an armed run that
   # pushed images for a version whose packages failed to publish would leave
   # half a release in the world.
   # ------------------------------------------------------------------
   images:
     needs: [verify, packages]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -338,18 +356,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The published image suffix and the Dockerfile stage that builds it.
-        # The updater is its own image because the container that drives an
-        # upgrade cannot be one of the containers being replaced.
+        # The published image suffix. The updater is its own image because the
+        # container that drives an upgrade cannot be one of the containers
+        # being replaced.
+        image: [gateway, combined, collector, updater]
+        arch: [amd64, arm64]
         include:
-          - image: gateway
-            target: gateway-runtime
-          - image: combined
-            target: combined-runtime
-          - image: collector
-            target: collector-runtime
-          - image: updater
-            target: updater
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+      # The Dockerfile stage: <image>-runtime, except the updater's own stage.
+      IMAGE_TARGET: ${{ matrix.image == 'updater' && 'updater' || format('{0}-runtime', matrix.image) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -361,40 +381,37 @@ jobs:
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
         if: needs.verify.outputs.images_armed == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tags
+      - name: Compute image labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
-          flavor: latest=false
-          tags: |
-            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
-            type=sha
+          images: ${{ env.IMAGE_REPOSITORY }}
+          # The action reads the triggering event, and a dispatch runs on main.
+          # The image is built from the tag's commit, so name that instead.
+          labels: |
+            org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
 
-      # Boot both architectures before any tag for this image is published.
-      # Buildx retains the tested layers for the multi-platform export below.
-      - name: Test release images on both architectures
+      # Boot the image before any of it is published. Buildx retains the
+      # tested layers for the export below.
+      - name: Test the release image
         env:
-          IMAGE_TARGET: ${{ matrix.target }}
           IMAGE_ROLE: ${{ matrix.image }}
+          IMAGE_ARCH: ${{ matrix.arch }}
         run: |
-          for arch in amd64 arm64; do
-            docker buildx build --platform "linux/$arch" --load \
-              --target "$IMAGE_TARGET" --tag "omnesis-release-check:$arch" .
-            scripts/docker/image-smoke.sh "omnesis-release-check:$arch" "$IMAGE_ROLE"
-          done
+          docker buildx build --platform "linux/$IMAGE_ARCH" --load \
+            --target "$IMAGE_TARGET" --tag "omnesis-release-check:$IMAGE_ARCH" .
+          scripts/docker/image-smoke.sh "omnesis-release-check:$IMAGE_ARCH" "$IMAGE_ROLE"
 
       - name: Re-attest remote tag before image publication
         if: needs.verify.outputs.images_armed == 'true'
@@ -413,21 +430,115 @@ jobs:
           }
 
       - name: Build ${{ needs.verify.outputs.images_armed == 'true' && 'and push' || '(no push — not armed)' }}
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: ${{ matrix.target }}
-          platforms: linux/amd64,linux/arm64
-          push: ${{ needs.verify.outputs.images_armed == 'true' }}
+          target: ${{ env.IMAGE_TARGET }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE_REPOSITORY }},push-by-digest=true,name-canonical=true,push=${{ needs.verify.outputs.images_armed == 'true' }}
           provenance: mode=max
           sbom: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Verify anonymous release pull access
+      - name: Record the pushed digest
         if: needs.verify.outputs.images_armed == 'true'
         env:
-          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: needs.verify.outputs.images_armed == 'true'
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ------------------------------------------------------------------
+  # images-manifest — joins each image's tested amd64 and arm64 digests
+  # into one multi-platform manifest under the version tags.
+  # ------------------------------------------------------------------
+  images-manifest:
+    needs: [verify, images]
+    if: needs.verify.outputs.images_armed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [gateway, combined, collector, updater]
+    env:
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify fixed release revision
+        env:
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-${{ matrix.image }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ env.IMAGE_REPOSITORY }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
+            type=raw,value=sha-${{ needs.verify.outputs.short_sha }}
+
+      - name: Re-attest remote tag before image tagging
+        if: needs.verify.outputs.images_armed == 'true'
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')
+          fi
+          [ "$remote_sha" = "$TARGET_SHA" ] || {
+            echo "Remote tag $RELEASE_TAG no longer resolves to the verified commit."
+            exit 1
+          }
+
+      - name: Tag the multi-platform image
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          [ "$(ls | wc -l)" -eq 2 ] || { echo "Expected one amd64 and one arm64 digest."; ls; exit 1; }
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE_REPOSITORY@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE_REPOSITORY:${RELEASE_TAG#v}"
+
+      - name: Verify anonymous release pull access
         run: |
           anonymous_config=$(mktemp -d)
           trap 'rm -rf "$anonymous_config"' EXIT
@@ -436,14 +547,9 @@ jobs:
             exit 1
           fi
 
-  # ------------------------------------------------------------------
-  # github-release — the release notes are the changelog section the
-  # release commit generated, with the artifact checksums appended. The
-  # tarball checksums are listed only when the packages were published;
-  # otherwise the notes name only the attached installer.
-  # ------------------------------------------------------------------
   github-release:
-    needs: [verify, packages, images]
+    needs: [verify, packages, images, images-manifest]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.packages.result == 'success' && needs.images.result == 'success' && (needs.images-manifest.result == 'success' || needs.images-manifest.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -471,24 +577,9 @@ jobs:
       - name: Compose the release notes
         env:
           PACKAGES_PUBLISHED: ${{ needs.verify.outputs.armed }}
-        run: |
-          if [ "$PACKAGES_PUBLISHED" != "true" ]; then
-            grep ' artifacts/install.sh$' release/SHA256SUMS.txt > release/SHA256SUMS.attached.txt
-            mv release/SHA256SUMS.attached.txt release/SHA256SUMS.txt
-          fi
-          node --input-type=module -e '
-            import { readChangelogSection } from "./scripts/release/changelog.mjs";
-            import { readFileSync, writeFileSync } from "node:fs";
-            const version = process.env.RELEASE_TAG.replace(/^v/, "");
-            const section = readChangelogSection(process.cwd(), version)
-              ?? "_No changelog section for this version._";
-            const sums = readFileSync("release/SHA256SUMS.txt", "utf8").trim();
-            writeFileSync(
-              "release/NOTES.md",
-              `${section}\n\n## Checksums (SHA-256)\n\n\`\`\`\n${sums}\n\`\`\`\n`,
-            );
-          '
-          cat release/NOTES.md
+        # Shared with `npm run release -- github-release`, which finishes a run
+        # whose own release step could not create the page.
+        run: node scripts/release/github-release.mjs release
 
       - name: Create the GitHub Release
         env:

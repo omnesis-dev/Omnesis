@@ -38,9 +38,8 @@ export function listKnowledgeProjectionCleanup(
   limit = 100,
 ): Array<{ documentId: string; nodeId: string }> {
   return db
-    .prepare<
-      [number],
-      { documentId: string; nodeId: string }
-    >("SELECT document_id AS documentId,node_id AS nodeId FROM knowledge_projection_cleanup ORDER BY created_at,document_id LIMIT ?")
+    .prepare<[number], { documentId: string; nodeId: string }>(
+      "SELECT document_id AS documentId,node_id AS nodeId FROM knowledge_projection_cleanup ORDER BY created_at,document_id LIMIT ?",
+    )
     .all(Math.max(1, Math.min(100, limit)));
 }

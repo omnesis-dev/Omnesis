@@ -222,10 +222,9 @@ it("requires a complete profile read, blocks growth before verification and atom
   const personId = bench.withWriteHandle(
     (db) =>
       db
-        .prepare<
-          [],
-          { id: string }
-        >("SELECT id FROM people WHERE canonical_name='Maya Reeves' AND merged_into IS NULL")
+        .prepare<[], { id: string }>(
+          "SELECT id FROM people WHERE canonical_name='Maya Reeves' AND merged_into IS NULL",
+        )
         .get()!.id,
   );
   firstSource = (await bench.pushAndSettle([firstDoc]))[0]!;
@@ -296,10 +295,9 @@ it("requires a complete profile read, blocks growth before verification and atom
   expect(creates[2]!.result?.data?.supersededIds).toEqual([firstId, secondId]);
   const retired = bench.withWriteHandle((db) =>
     db
-      .prepare<
-        [string, string],
-        { invalidated_at: number; superseded_by: string }
-      >("SELECT invalidated_at,superseded_by FROM person_annotations WHERE id IN (?,?)")
+      .prepare<[string, string], { invalidated_at: number; superseded_by: string }>(
+        "SELECT invalidated_at,superseded_by FROM person_annotations WHERE id IN (?,?)",
+      )
       .all(firstId, secondId),
   );
   expect(retired).toHaveLength(2);
@@ -309,10 +307,9 @@ it("requires a complete profile read, blocks growth before verification and atom
     bench.withWriteHandle(
       (db) =>
         db
-          .prepare<
-            [string],
-            { n: number }
-          >("SELECT COUNT(*) AS n FROM person_annotation_evidence WHERE annotation_id=? AND broken_at IS NULL")
+          .prepare<[string], { n: number }>(
+            "SELECT COUNT(*) AS n FROM person_annotation_evidence WHERE annotation_id=? AND broken_at IS NULL",
+          )
           .get(active[0]!.id)?.n,
     ),
   ).toBe(2);
@@ -432,10 +429,9 @@ it.each(["irrelevant", "mixed"] as const)(
               result.message?.includes("Person review refused retention")
             ) {
               const pending = bench!.sql
-                .prepare<
-                  [string, string, string],
-                  { status: string }
-                >("SELECT f.status FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id WHERE f.node_id=? AND f.input_fingerprint=? AND b.run_id=?")
+                .prepare<[string, string, string], { status: string }>(
+                  "SELECT f.status FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id WHERE f.node_id=? AND f.input_fingerprint=? AND b.run_id=?",
+                )
                 .get(factId, String(last.args?.inputFingerprint), ctx.runId);
               statesAtRefusal.push(pending?.status ?? "missing");
               return { kind: "tool", name: "person_annotation_retract", args: { id: factId } };
@@ -482,10 +478,9 @@ it.each(["irrelevant", "mixed"] as const)(
     personId = bench.withWriteHandle(
       (db) =>
         db
-          .prepare<
-            [],
-            { id: string }
-          >("SELECT id FROM people WHERE canonical_name='Maya Reeves' AND merged_into IS NULL")
+          .prepare<[], { id: string }>(
+            "SELECT id FROM people WHERE canonical_name='Maya Reeves' AND merged_into IS NULL",
+          )
           .get()!.id,
     );
     const [sourceId] = await bench.pushAndSettle([
@@ -547,10 +542,9 @@ it.each(["irrelevant", "mixed"] as const)(
     );
     await bench.drainUntilQuiet();
     const run = bench.sql
-      .prepare<
-        [],
-        { run_id: string }
-      >("SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.id='person-editorial-review'")
+      .prepare<[], { run_id: string }>(
+        "SELECT b.run_id FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id WHERE w.id='person-editorial-review'",
+      )
       .get()!;
     const tools = await bench.obs.executedTools(run.run_id);
     const save = tools.find((step) => step.tool === "knowledge_save");

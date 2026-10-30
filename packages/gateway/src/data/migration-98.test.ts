@@ -58,10 +58,9 @@ describe("migration 98 — temporal-annotation evidence atoms and invalidation c
     ).toEqual(["annotation_id", "position", "document_id", "quote", "broken_at"]);
     expect(
       db
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_temporal_annotation_evidence_doc'")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_temporal_annotation_evidence_doc'",
+        )
         .get()?.name,
     ).toBe("idx_temporal_annotation_evidence_doc");
     expect(
@@ -74,18 +73,16 @@ describe("migration 98 — temporal-annotation evidence atoms and invalidation c
     // and no recorded cause).
     expect(
       db
-        .prepare<
-          [],
-          { id: string; sentence: string; invalidation_cause: string | null }
-        >("SELECT id, sentence, invalidation_cause FROM temporal_annotations WHERE id = 'ta_migration'")
+        .prepare<[], { id: string; sentence: string; invalidation_cause: string | null }>(
+          "SELECT id, sentence, invalidation_cause FROM temporal_annotations WHERE id = 'ta_migration'",
+        )
         .get(),
     ).toEqual({ id: "ta_migration", sentence: "A fictional race day", invalidation_cause: null });
     expect(
       db
-        .prepare<
-          [],
-          { document_id: string }
-        >("SELECT document_id FROM temporal_annotation_documents WHERE annotation_id = 'ta_migration'")
+        .prepare<[], { document_id: string }>(
+          "SELECT document_id FROM temporal_annotation_documents WHERE annotation_id = 'ta_migration'",
+        )
         .get(),
     ).toEqual({ document_id: "doc_fictional" });
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

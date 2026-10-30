@@ -95,10 +95,9 @@ function renderLoopLine(db: Db, loop: PrimeLoopRow, cfg: PrimeCfg, now: number):
   if (due !== null) attrs.push(`due ${due}`);
 
   const tail = db
-    .prepare<
-      [string],
-      { note: string }
-    >("SELECT note FROM open_loop_ledger WHERE loop_id = ? ORDER BY seq DESC LIMIT 1")
+    .prepare<[string], { note: string }>(
+      "SELECT note FROM open_loop_ledger WHERE loop_id = ? ORDER BY seq DESC LIMIT 1",
+    )
     .get(loop.id);
   const last =
     tail === undefined ? "no ledger notes yet" : truncate(tail.note, cfg.primeLedgerChars);

@@ -379,28 +379,25 @@ describe("computeCalibrationReport", () => {
   test("the report is measurement-only: computing it writes nothing", () => {
     seedDocAnnotation(db, "a-1", { confidence: 0.9, verificationState: "verified" });
     const before = db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
+      .prepare<[], { c: number }>(
+        "SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c",
+      )
       .get()!.c;
     const first = computeCalibrationReport(db, { now: NOW });
     const second = computeCalibrationReport(db, { now: NOW });
     const after = db
-      .prepare<
-        [],
-        { c: number }
-      >("SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
+      .prepare<[], { c: number }>(
+        "SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c",
+      )
       .get()!.c;
     expect(after).toBe(before);
     expect(second.families).toEqual(first.families);
     // The stated confidence is untouched.
     expect(
       db
-        .prepare<
-          [],
-          { confidence: number }
-        >("SELECT confidence FROM doc_annotations WHERE id = 'a-1'")
+        .prepare<[], { confidence: number }>(
+          "SELECT confidence FROM doc_annotations WHERE id = 'a-1'",
+        )
         .get()!.confidence,
     ).toBe(0.9);
   });

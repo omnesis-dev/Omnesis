@@ -123,10 +123,9 @@ function loadClaims(
     const chunk = externalIds.slice(i, i + CLAIM_IN_LIST_CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const rows = db
-      .prepare<
-        unknown[],
-        ClaimRow
-      >(`SELECT external_id, device_id, role FROM replica_deletion_claims WHERE namespace = ? AND source_id = ? AND external_id IN (${placeholders})`)
+      .prepare<unknown[], ClaimRow>(
+        `SELECT external_id, device_id, role FROM replica_deletion_claims WHERE namespace = ? AND source_id = ? AND external_id IN (${placeholders})`,
+      )
       .all(namespace, sourceId, ...chunk);
     for (const row of rows) {
       const list = byItem.get(row.external_id);
@@ -246,10 +245,9 @@ export function recordRestorerOmissions(
       ...chunk,
     );
     const rows = db
-      .prepare<
-        unknown[],
-        { external_id: string }
-      >(`SELECT external_id FROM replica_deletion_claims WHERE namespace = ? AND source_id = ? AND device_id = ? AND role = 'restored' AND omissions >= ? AND first_omitted_at <= ? AND external_id IN (${placeholders})`)
+      .prepare<unknown[], { external_id: string }>(
+        `SELECT external_id FROM replica_deletion_claims WHERE namespace = ? AND source_id = ? AND device_id = ? AND role = 'restored' AND omissions >= ? AND first_omitted_at <= ? AND external_id IN (${placeholders})`,
+      )
       .all(namespace, sourceId, deviceId, policy.minObservations, now - policy.minAgeMs, ...chunk);
     for (const row of rows) matured.push(row.external_id);
   }
@@ -532,10 +530,9 @@ export function countRestoredByMember(db: Db, sourceId: string): Map<string, num
   const out = new Map<string, number>();
   if (!hasAnyReplicaClaims(db)) return out;
   const rows = db
-    .prepare<
-      [string],
-      { device_id: string; n: number }
-    >("SELECT device_id, COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND role = 'restored' GROUP BY device_id")
+    .prepare<[string], { device_id: string; n: number }>(
+      "SELECT device_id, COUNT(*) AS n FROM replica_deletion_claims WHERE source_id = ? AND role = 'restored' GROUP BY device_id",
+    )
     .all(sourceId);
   for (const row of rows) out.set(row.device_id, row.n);
   return out;

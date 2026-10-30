@@ -66,10 +66,9 @@ function sharesPhoneRows(docId: string): Array<Record<string, unknown>> {
 function countLinks(docId: string): number {
   return (
     db
-      .prepare<
-        [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?")
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM document_links WHERE source_doc_id = ?",
+      )
       .get(docId)?.n ?? 0
   );
 }
@@ -77,10 +76,9 @@ function countLinks(docId: string): number {
 function isExtracted(docId: string): boolean {
   return (
     db
-      .prepare<
-        [string],
-        { t: string | null }
-      >("SELECT links_extracted_at AS t FROM documents WHERE id = ?")
+      .prepare<[string], { t: string | null }>(
+        "SELECT links_extracted_at AS t FROM documents WHERE id = ?",
+      )
       .get(docId)?.t !== null
   );
 }
@@ -360,10 +358,9 @@ describe("link extraction across the io → cpu → io → writer pipeline", () 
     runPipeline();
 
     const row = db
-      .prepare<
-        [string],
-        { target_doc_id: string | null }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { target_doc_id: string | null }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .get("src");
     expect(row?.target_doc_id).toBe("target");
   });
@@ -392,10 +389,9 @@ describe("link extraction across the io → cpu → io → writer pipeline", () 
     runPipeline();
 
     const rows = db
-      .prepare<
-        [string],
-        { target_doc_id: string | null }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'")
+      .prepare<[string], { target_doc_id: string | null }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'url'",
+      )
       .all("citer");
     expect(rows).toHaveLength(1);
     expect(rows[0].target_doc_id).toBe("page");
@@ -414,10 +410,9 @@ describe("link extraction across the io → cpu → io → writer pipeline", () 
     runPipeline();
 
     const row = db
-      .prepare<
-        [string],
-        { target_doc_id: string | null }
-      >("SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'")
+      .prepare<[string], { target_doc_id: string | null }>(
+        "SELECT target_doc_id FROM document_links WHERE source_doc_id = ? AND link_type = 'references'",
+      )
       .get("note-a");
     expect(row?.target_doc_id).toBe("note-b");
   });

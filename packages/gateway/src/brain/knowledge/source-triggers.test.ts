@@ -10,9 +10,11 @@ import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { createKnowledgeSourceTriggers } from "./source-triggers.js";
 import {
+  ackKnowledgeChanges,
   advanceKnowledgeCascade,
   getKnowledgeClaims,
   getKnowledgeNode,
+  listKnowledgeChanges,
   saveKnowledgeNode,
 } from "./storage.js";
 import { KNOWLEDGE_SOURCE_ID, KNOWLEDGE_DOCUMENT_TYPE } from "./source-meta.js";
@@ -68,6 +70,40 @@ describe("durable source intake", () => {
         .all()
         .map((row) => row.detail),
     ).toEqual([expect.stringContaining("knowledge_changes_entity")]);
+  });
+  it("a source rewritten after intake listed it is journaled above every listed entry", () => {
+    const db = setup();
+    const put = db.prepare(
+      "INSERT INTO documents(id,source_id,provider_id,content_hash,content) VALUES(?,'inbox','fictional','v1','content')",
+    );
+    put.run("evidence");
+    put.run("other");
+    const listed = listKnowledgeChanges(db);
+    expect(listed.map((change) => change.entityId)).toEqual(["evidence", "other"]);
+    const throughSeq = listed[listed.length - 1].seq;
+    // An edit that lands while intake awaits its judgement of the listed batch.
+    db.prepare("UPDATE documents SET content_hash='v2' WHERE id='evidence'").run();
+    ackKnowledgeChanges(db, throughSeq);
+    const pending = listKnowledgeChanges(db);
+    expect(pending).toEqual([
+      expect.objectContaining({ entityId: "evidence", revision: "v2:knowledge:1" }),
+    ]);
+    expect(pending[0].seq).toBeGreaterThan(throughSeq);
+  });
+  it("never reuses an acknowledged seq once the journal is empty", () => {
+    const db = setup();
+    db.prepare(
+      "INSERT INTO documents(id,source_id,provider_id,content_hash,content) VALUES('evidence','inbox','fictional','v1','content')",
+    ).run();
+    const [first] = listKnowledgeChanges(db);
+    ackKnowledgeChanges(db, first.seq);
+    expect(listKnowledgeChanges(db)).toEqual([]);
+    db.prepare("UPDATE documents SET content_hash='v2' WHERE id='evidence'").run();
+    const pending = listKnowledgeChanges(db);
+    expect(pending).toEqual([
+      expect.objectContaining({ entityId: "evidence", revision: "v2:knowledge:1" }),
+    ]);
+    expect(pending[0].seq).toBeGreaterThan(first.seq);
   });
   it("accepts a restored source version through UPSERT before maintenance drains", () => {
     const db = setup();

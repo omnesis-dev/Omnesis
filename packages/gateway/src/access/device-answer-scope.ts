@@ -46,10 +46,9 @@ export function resolveDeviceAnswerScope(
 
 function readDeviceAnswerScope(db: Db, deviceId: string, tokenId: string): DeviceAnswerScope {
   const row = db
-    .prepare<
-      [string],
-      { kind: string; access_level_id: string | null }
-    >("SELECT kind, access_level_id FROM devices WHERE id = ?")
+    .prepare<[string], { kind: string; access_level_id: string | null }>(
+      "SELECT kind, access_level_id FROM devices WHERE id = ?",
+    )
     .get(deviceId);
   if (row?.kind !== "integration") return { kind: "default" };
   const levelId = row.access_level_id;

@@ -21,6 +21,7 @@ import {
   EXIT_AUTH,
   EXIT_GATEWAY_DOWN,
   GATEWAY_REQUEST_URL,
+  missingTokenMessage,
 } from "../utils.js";
 import { renderStatus } from "./status-render.js";
 import type {
@@ -55,7 +56,8 @@ function parseDuration(s: string | undefined): number | undefined {
 
 async function fetchStatus(): Promise<StatusData> {
   const token = resolveToken();
-  if (!token) throw new Error("No auth token. Start the gateway first or set OMNESIS_TOKEN.");
+  // A CliError, so the command ends on the message alone, not a stack trace.
+  if (!token) throw new CliError(missingTokenMessage(), EXIT_AUTH);
 
   // Auth errors (401/403) should be loud — an empty status table with no
   // hint about why is a nightmare to diagnose (stale OMNESIS_TOKEN overrides
@@ -267,9 +269,7 @@ async function runOnce(): Promise<void> {
 
 async function runWatch(): Promise<void> {
   const token = resolveToken();
-  if (!token) {
-    throw new CliError("No auth token. Start the gateway first or set OMNESIS_TOKEN.", EXIT_AUTH);
-  }
+  if (!token) throw new CliError(missingTokenMessage(), EXIT_AUTH);
   const wsAuthProtocol = websocketAuthProtocol(token);
 
   // Fetch initial data + terminal-FX context in parallel. fx is reused

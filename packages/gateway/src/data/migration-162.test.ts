@@ -29,10 +29,9 @@ test("indexes the execution-device revocation lookup idempotently", () => {
   expect(indexes).toContain("idx_principal_credentials_execution_device");
 
   const plan = db
-    .prepare<
-      [string],
-      { detail: string }
-    >("EXPLAIN QUERY PLAN SELECT id FROM principal_credentials WHERE execution_device_id = ?")
+    .prepare<[string], { detail: string }>(
+      "EXPLAIN QUERY PLAN SELECT id FROM principal_credentials WHERE execution_device_id = ?",
+    )
     .all("fictional-device");
   expect(
     plan.some((row) => row.detail.includes("idx_principal_credentials_execution_device")),

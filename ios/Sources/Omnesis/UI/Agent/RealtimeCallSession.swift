@@ -412,7 +412,7 @@ extension RealtimeCallSession {
     private func startLive(
         pairing: Pairing, conversationID: String?, onReady: (@MainActor (String) async throws -> Void)?, generation epoch: UUID
     ) async {
-        #if canImport(WebRTC)
+        #if OMNESIS_REALTIME_VOICE
         isLive = true
         let session = LiveVoiceSession(
             api: LiveVoiceAPI(pairing: pairing),

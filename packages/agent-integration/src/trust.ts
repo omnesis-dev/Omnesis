@@ -47,6 +47,28 @@ import {
   type TlsTrustMode,
 } from "./tls.js";
 
+/**
+ * The roots `@omnesis/core`'s `DISTRUSTED_ROOT_SHA256` names — removed from
+ * NSS, still bundled by Node — restated because this package imports nothing
+ * of Omnesis at runtime. A test in `@omnesis/core`'s `tls-distrust.test.ts`
+ * holds the two to the same set.
+ */
+const DISTRUSTED_ROOT_SHA256: ReadonlySet<string> = new Set([
+  "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b", // emSign ECC Root CA - G3
+  "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f", // emSign Root CA - C1
+  "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3", // emSign ECC Root CA - C3
+]);
+
+/** Node's bundled public roots (or `bundled`) without the distrusted ones. */
+export function publicRoots(bundled = getCACertificates("bundled")): string[] {
+  return bundled.filter(
+    (pem) =>
+      !DISTRUSTED_ROOT_SHA256.has(
+        new X509Certificate(pem).fingerprint256.replaceAll(":", "").toLowerCase(),
+      ),
+  );
+}
+
 export interface GatewayTrustOptions {
   gatewayUrl: string;
   /** Required for an `https:` gateway; ignored for plaintext loopback. */
@@ -57,7 +79,7 @@ export interface GatewayTrustOptions {
    * them, since there is no `omnesis connect` to point at.
    */
   harness?: string;
-  /** The public roots system trust verifies against. Defaults to Node's bundled set. */
+  /** The public roots system trust verifies against. Defaults to `publicRoots()`. */
   systemRoots?: () => readonly string[];
   /**
    * Called once, after this process has moved from a pinned leaf to system
@@ -145,7 +167,7 @@ export class GatewayTrust {
     const url = validateGatewayUrl(options.gatewayUrl);
     this.hostname = url.hostname;
     this.https = url.protocol === "https:";
-    this.systemRoots = options.systemRoots ?? (() => getCACertificates("bundled"));
+    this.systemRoots = options.systemRoots ?? publicRoots;
     this.log = options.logger ?? silentIntegrationLogger;
   }
 

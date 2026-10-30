@@ -101,10 +101,9 @@ export function computeSourceStatsRow(db: Db, sourceId: string): SourceStatsAggr
   // value is 0 and the matching INSERT path in upsertSourceStatsRow
   // also writes 0 — consistent.
   const versionRow = db
-    .prepare<
-      [string],
-      { dirty_version: number }
-    >("SELECT dirty_version FROM source_stats WHERE source_id = ?")
+    .prepare<[string], { dirty_version: number }>(
+      "SELECT dirty_version FROM source_stats WHERE source_id = ?",
+    )
     .get(sourceId);
   const capturedVersion = versionRow?.dirty_version ?? 0;
 

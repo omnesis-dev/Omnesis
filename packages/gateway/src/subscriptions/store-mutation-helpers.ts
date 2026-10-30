@@ -18,10 +18,9 @@ export function matchesPrivacyPolicyRevision(
 ): boolean {
   if (!guard) return true;
   const state = db
-    .prepare<
-      [string],
-      { revision: string; digest: string }
-    >("SELECT revision, digest FROM privacy_policy_state WHERE family_id = ?")
+    .prepare<[string], { revision: string; digest: string }>(
+      "SELECT revision, digest FROM privacy_policy_state WHERE family_id = ?",
+    )
     .get(DEFAULT_PRIVACY_POLICY_FAMILY_ID);
   if (state === undefined) {
     try {

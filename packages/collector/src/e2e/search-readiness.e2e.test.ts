@@ -169,10 +169,9 @@ function readGatewayDb<T>(fn: (db: SqliteDatabase.Database) => T): T {
 function docIdOf(externalId: string): string {
   const row = readGatewayDb((db) =>
     db
-      .prepare<
-        [string, string],
-        { id: string }
-      >("SELECT id FROM documents WHERE source_id = ? AND external_id = ?")
+      .prepare<[string, string], { id: string }>(
+        "SELECT id FROM documents WHERE source_id = ? AND external_id = ?",
+      )
       .get(SOURCE, externalId),
   );
   if (!row) throw new Error(`no document ${externalId} stored for ${SOURCE}`);
@@ -194,10 +193,9 @@ function docUpdatedAt(documentId: string): string {
 function peopleResolvedAt(documentId: string): string | null {
   const row = readGatewayDb((db) =>
     db
-      .prepare<
-        [string],
-        { people_resolved_at: string | null }
-      >("SELECT people_resolved_at FROM documents WHERE id = ?")
+      .prepare<[string], { people_resolved_at: string | null }>(
+        "SELECT people_resolved_at FROM documents WHERE id = ?",
+      )
       .get(documentId),
   );
   if (!row) throw new Error(`no document row for ${documentId}`);
@@ -207,10 +205,9 @@ function peopleResolvedAt(documentId: string): string | null {
 function indexRow(documentId: string): IndexedRow | undefined {
   return readIndexDb((db) =>
     db
-      .prepare<
-        [string],
-        IndexedRow
-      >("SELECT content_hash, chunk_count, source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?")
+      .prepare<[string], IndexedRow>(
+        "SELECT content_hash, chunk_count, source_event_at, event_indexed_at FROM indexed_documents WHERE document_id = ?",
+      )
       .get(documentId),
   );
 }
@@ -218,10 +215,9 @@ function indexRow(documentId: string): IndexedRow | undefined {
 function chunkRows(documentId: string): ChunkRow[] {
   return readIndexDb((db) =>
     db
-      .prepare<
-        [string],
-        ChunkRow
-      >("SELECT chunk_index, tags, relevance_score, embedding FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+      .prepare<[string], ChunkRow>(
+        "SELECT chunk_index, tags, relevance_score, embedding FROM chunks WHERE document_id = ? ORDER BY chunk_index",
+      )
       .all(documentId),
   );
 }
