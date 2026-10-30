@@ -10,6 +10,7 @@
  * the daemons from being handed a keyring they cannot open.
  */
 
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -268,15 +269,25 @@ describe("secure under Docker: the launcher restarts the containers", () => {
 describe("secure under Docker: a gateway that is still starting", () => {
   test("is waited for, and backed up online, rather than copied under its feet", async () => {
     const configDir = gatewayHost();
-    const lock = await acquireGatewayLock(configDir);
+    // The lock names another live process, as a booting gateway's does: a
+    // record naming this test's own process reads as a stale one.
+    const gateway = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
+      stdio: "ignore",
+    });
+    const lock = await acquireGatewayLock(configDir, { pid: gateway.pid });
     try {
       let probes = 0;
       const d = deps(configDir, { gatewayHealthy: async () => ++probes > 2 });
-      const summary = await runSecure(d, { dryRun: false, skipBackup: false, startWaitMs: 30_000 });
+      const summary = await runSecure(d, {
+        dryRun: false,
+        skipBackup: false,
+        startWaitMs: 30_000,
+      });
       expect(d.onlineBackup).toHaveBeenCalledWith("pre-secure");
       expect(step(summary.steps, "backup")?.detail).toContain("online backup");
     } finally {
       lock.release();
+      gateway.kill();
     }
   });
 
