@@ -137,6 +137,23 @@ final class WatchCapturePipelineTests: XCTestCase {
         XCTAssertEqual(actual, ["gateway", "ask"])
     }
 
+    func testCompletedExpiredDuplicateDoesNotReportAFalseFailure() async throws {
+        let ref = UUID().uuidString
+        var item = try receive(.ask, ref: ref)
+        let oldTime = NoteCaptureTime(
+            capturedAt: Date().addingTimeInterval(-2 * WatchOutboxPolicy.retention),
+            timeZoneId: "UTC", utcOffsetSeconds: 0
+        )
+        item.state.metadata = WatchVoiceRecording(ref: ref, captureTime: oldTime, locale: "en_GB", route: .ask).metadata
+        try inbox.save(item)
+        try inbox.complete(ref)
+        let events = CaptureEvents()
+        await WatchCapturePipeline().handle(item, inbox: inbox, deps: dependencies(events, gateway: true))
+        let actual = await events.events
+        XCTAssertTrue(actual.isEmpty)
+        XCTAssertTrue(inbox.claimLeftovers().isEmpty)
+    }
+
     func testCapabilityRoundTripAndLegacyFallback() {
         let gate = WatchDictationGate(
             active: false,

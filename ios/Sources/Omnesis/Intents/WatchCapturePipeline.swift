@@ -35,12 +35,12 @@ actor WatchCapturePipeline {
         }
         active.insert(recording.ref)
         defer { active.remove(recording.ref) }
+        if inbox.wasCompleted(recording.ref) { inbox.discard(item)
+            return
+        }
         if Date().timeIntervalSince(recording.captureTime.capturedAt) > WatchOutboxPolicy.retention {
             await deps.notify(.expired)
             inbox.discard(item)
-            return
-        }
-        if inbox.wasCompleted(recording.ref) { inbox.discard(item)
             return
         }
         do {
