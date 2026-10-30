@@ -27,6 +27,7 @@ final class WatchComplicationCapture: NSObject, AVAudioRecorderDelegate {
 
     func start() async {
         guard state == .idle || state == .failed || isSent else { return }
+        WatchDictation.cancelPending()
         WatchVoiceCapture.shared.cancel()
         WatchVoiceCapture.shared.dismiss()
         discard()

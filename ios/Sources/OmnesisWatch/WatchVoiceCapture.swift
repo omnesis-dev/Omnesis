@@ -48,6 +48,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
 
     /// The recorder in use, if any.
     @ObservationIgnored private var recorder: AVAudioRecorder?
+    @ObservationIgnored private var startGeneration = 0
     /// What each recorder's recording is for, until its finish callback
     /// arrives. A cancelled recording has no entry, so its callback throws
     /// the file away; a late callback from an earlier recorder finds its own
@@ -72,7 +73,10 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     /// start. A second start while recording is absorbed.
     func start(limit: TimeInterval) async -> Bool {
         if isRecording { return true }
-        guard await AVAudioApplication.requestRecordPermission() else { return false }
+        startGeneration += 1
+        let current = startGeneration
+        let allowed = await AVAudioApplication.requestRecordPermission()
+        guard allowed, current == startGeneration else { return false }
         let ref = UUID().uuidString
         guard let file = try? WatchVoiceOutbox.shared.recordingURL(ref: ref) else { return false }
         let settings: [String: Any] = [
@@ -120,6 +124,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
 
     /// Stop and throw the recording away.
     func cancel() {
+        startGeneration += 1
         guard isRecording, let recorder else { return }
         pending.removeValue(forKey: ObjectIdentifier(recorder))
         recorder.stop()
