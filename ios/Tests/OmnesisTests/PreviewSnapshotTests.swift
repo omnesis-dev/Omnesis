@@ -5827,6 +5827,37 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Models view, agent model header, provider glyphs
 
+    func testModelHealthWarnings() {
+        let store = AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth)
+        snapshot(
+            NavigationStack {
+                ModelsView(previewOverview: ModelsPreviewData.overview(health: PreviewMocks.modelHealth))
+                    .environment(store)
+            },
+            name: "310-model-health-warnings"
+        )
+        snapshot(
+            NavigationStack {
+                ModelsView(previewOverview: ModelsPreviewData.overview(health: PreviewMocks.modelHealth))
+                    .environment(store)
+                    .environment(\.dynamicTypeSize, .accessibility3)
+            },
+            name: "310a-model-health-warnings-large-text",
+            size: CGSize(width: 320, height: 1000)
+        )
+        snapshot(
+            SettingsView(initialDestination: .root, previewData: true).environment(store),
+            name: "311-settings-model-health-warning"
+        )
+        snapshot(
+            MainMenuDrawer(isOpen: .constant(true), selection: .constant(.agent), onOpenSettings: {})
+                .frame(width: MenuReveal.menuWidth(forContainerWidth: 393))
+                .environment(store),
+            name: "312-menu-model-health-warning",
+            ignoresSafeArea: true
+        )
+    }
+
     func testModelsViewConfigured() {
         // Full capability list: enabled (embedder, agent,
         // privacy reviewer), unresolved (transcriber), and

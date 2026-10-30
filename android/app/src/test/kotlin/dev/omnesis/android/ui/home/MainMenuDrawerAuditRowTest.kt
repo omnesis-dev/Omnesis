@@ -5,6 +5,8 @@ package dev.omnesis.android.ui.home
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performClick
@@ -29,6 +31,29 @@ import org.robolectric.annotation.Config
 class MainMenuDrawerAuditRowTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun modelWarningOpensModelsAndDisappearsAfterRecovery() {
+        val unhealthy = mutableStateOf(true)
+        var openedModels = false
+        var openedSettings = false
+        compose.setContent {
+            OmnesisTheme(darkTheme = false) {
+                MainMenuDrawer(
+                    currentRoute = "agent", conversations = emptyList(), conversationsLoading = false,
+                    onNewConversation = {}, onNavigate = {}, onResumeConversation = {}, onDeleteConversation = {},
+                    onOpenSettings = { openedSettings = true }, modelsNeedAttention = unhealthy.value,
+                    onOpenModelWarnings = { openedModels = true },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Show model capability errors").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(true, openedModels); assertEquals(false, openedSettings) }
+        compose.runOnIdle { unhealthy.value = false }
+        compose.onNodeWithContentDescription("Show model capability errors").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.runOnIdle { assertEquals(true, openedSettings) }
+    }
 
     @Test
     fun privacyIsReachableOnAStockGatewayWhileWatchesIsNot() {

@@ -532,6 +532,17 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           Search and ingestion work with no role assigned: without an embedder, search ranks on
           keywords alone. A feature that needs a role says so when it is missing.
         </p>
+        <p>
+          Settings → Models also reports repeated failures for each capability's assigned model.
+          After three consecutive failed requests, an amber warning card identifies the capability,
+          the model, and the kind of failure, such as exhausted quota, rejected credentials, an
+          unreachable backend, or a timeout. The Settings navigation item and its Models entry show
+          a warning triangle that leads to these details, on the portal and mobile apps. A
+          successful request clears the warning automatically; choosing another model or changing
+          the backend configuration clears the old model's failure state. Warnings survive a gateway
+          restart and remain visible until there is evidence of recovery or the configuration
+          changes.
+        </p>
         <div class="table-wrap">
           <table>
             <thead>

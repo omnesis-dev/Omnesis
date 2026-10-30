@@ -30,6 +30,7 @@ import SwiftUI
 @available(iOS 17.0, *)
 struct ModelsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var overview: ModelsOverview?
     @State private var system: SystemInfo?
@@ -79,6 +80,9 @@ struct ModelsView: View {
             .background(Theme.bgPrimary.ignoresSafeArea())
             .refreshable { await load() }
             .task { await load() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await load() } }
+            }
             .onDisappear { pollTask?.cancel()
                 pollTask = nil
             }
@@ -243,7 +247,9 @@ struct ModelsView: View {
         loading = true
         loadError = nil
         let ticket: Int
-        switch await overviewRefreshGate.fetch({ try await client.modelOverview() }) {
+        let refreshed = await overviewRefreshGate.fetch { try await client.modelOverview() }
+        guard store.admin === client else { return }
+        switch refreshed {
         case .loaded(let fresh, let currentTicket):
             overview = fresh
             loadError = nil
@@ -258,31 +264,31 @@ struct ModelsView: View {
         // the warnings, it doesn't fail the screen.
         if system == nil {
             let freshSystem = try? await client.systemInfo()
-            guard overviewRefreshGate.isCurrent(ticket) else { return }
+            guard overviewRefreshGate.isCurrent(ticket), store.admin === client else { return }
             system = freshSystem
         }
         guard overviewRefreshGate.isCurrent(ticket) else { return }
         loading = false
-        scheduleDownloadPoll()
+        scheduleOverviewPoll()
     }
 
-    /// While any GGUF download is in flight, re-fetch the overview every second
-    /// so the progress bar advances and a completed/cancelled download flips the
-    /// row back. Mirrors the portal's `useVisiblePoll(refresh, 1000, …)`.
-    private func scheduleDownloadPoll() {
+    /// Refresh health while the screen is visible; downloads use a faster cadence.
+    private func scheduleOverviewPoll() {
         pollTask?.cancel()
         pollTask = nil
-        guard overview?.activeDownloads.isEmpty == false, let client = store.admin else { return }
+        guard let client = store.admin else { return }
         pollTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let seconds: UInt64 = overview?.activeDownloads.isEmpty == false ? 1 : 15
+                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
                 if Task.isCancelled { return }
+                guard scenePhase == .active else { continue }
                 guard !loading else { continue }
                 guard case .loaded(let fresh, _) = await overviewRefreshGate.fetch({
                     try await client.modelOverview()
                 }) else { continue }
+                guard store.admin === client else { return }
                 overview = fresh
-                if fresh.activeDownloads.isEmpty { return }
             }
         }
     }
@@ -333,6 +339,9 @@ struct ModelsContent: View {
             VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                 if let notice {
                     noticeBanner(notice)
+                }
+                ForEach(overview.inference.health?.warnings ?? []) { warning in
+                    healthWarningCard(warning)
                 }
                 NavigationLink {
                     BackendsView()
@@ -388,11 +397,46 @@ struct ModelsContent: View {
             + overview.capabilities.filter { $0.section == "cognition" }
     }
 
+    private func healthWarningCard(_ warning: ModelHealthWarning) -> some View {
+        let title = overview.capabilities.first { $0.role == warning.role }?.title ?? ModelManagement.roleLabel(warning.role)
+        let lastFailure = Date(timeIntervalSince1970: warning.lastFailedAt / 1000)
+            .formatted(date: .abbreviated, time: .shortened)
+        return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Label(
+                "\(title) repeatedly failed",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Theme.warning)
+            Text(warning.assignment)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+            Text(warning.message)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textPrimary)
+            Text(
+                "At least \(warning.consecutiveFailures) consecutive failures · Last failure \(lastFailure)"
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textSecondary)
+            Text("This warning clears after a successful request or a change to the model configuration.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warning.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.large).stroke(Theme.warning.opacity(0.4)))
+    }
+
     private func capabilityCard(_ cap: CapabilityMeta) -> some View {
         CapabilityCard(
             cap: cap,
             display: overview.assignmentDisplays[cap.role],
-            state: ModelManagement.state(overview.inference.assignments[cap.role]),
+            state: overview.inference.health?.warnings.contains { $0.role == cap.role } == true
+                ? .warn : ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
             behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
             onTap: cap.configurableOnDevice ? { pickerRole = cap } : nil,
@@ -1294,6 +1338,15 @@ enum ModelCapabilityIcon {
         previewSelectedBackend: nil,
         previewRecent: ModelsPreviewData.recentEntries()
     )
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Models — repeated failures") {
+    NavigationStack {
+        ModelsView(previewOverview: ModelsPreviewData.overview(health: PreviewMocks.modelHealth))
+            .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth))
+    }
     .preferredColorScheme(.dark)
 }
 

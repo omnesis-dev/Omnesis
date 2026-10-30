@@ -1061,6 +1061,28 @@ enum PreviewMocks {
 
     // MARK: - /status snapshot
 
+    static let modelHealth = ModelHealth(warnings: [
+        ModelHealthWarning(
+            role: "background-agent", assignment: "northstar/reasoning-model", consecutiveFailures: 5,
+            firstFailedAt: 1_783_591_200_000, lastFailedAt: 1_783_591_500_000,
+            category: "quota", message: "The inference provider has exhausted its quota. Check billing or usage limits."
+        ),
+        ModelHealthWarning(
+            role: "decision", assignment: "typesafe/decision-model", consecutiveFailures: 3,
+            firstFailedAt: 1_783_591_200_000, lastFailedAt: 1_783_591_500_000,
+            category: "unavailable", message: "The inference backend is unavailable. Check the service and connection."
+        ),
+    ])
+
+    static var statusSnapshotModelHealth: StatusSnapshot {
+        StatusSnapshot(
+            documents: statusSnapshot.documents,
+            dbSizeBytes: statusSnapshot.dbSizeBytes,
+            latestActivityBySource: statusSnapshot.latestActivityBySource,
+            modelHealth: modelHealth
+        )
+    }
+
     static let statusSnapshot = StatusSnapshot(
         documents: StatusSnapshot.Documents(
             total: 165_135,

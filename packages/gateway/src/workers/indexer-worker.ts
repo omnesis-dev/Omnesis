@@ -23,6 +23,7 @@ type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
 import { parseDuration } from "@omnesis/core";
+import { describeModelFailure } from "../inference/model-health-errors.js";
 import { LlamaCppEmbedder } from "../indexer/embedder.js";
 import { Indexer } from "../indexer/indexer.js";
 import { DocumentChunker } from "../indexer/chunker.js";
@@ -555,7 +556,38 @@ function flushDeferredDocumentDeletes(): void {
 }
 
 /** Construct the configured embedder (HTTP backend, or the local model). */
+let embeddingSequence = 0;
+
 async function buildEmbedder(init: IndexerInit): Promise<import("../indexer/types.js").Embedder> {
+  const embedder = await buildRawEmbedder(init);
+  const observe = async <T>(run: () => Promise<T>): Promise<T> => {
+    const id = ++embeddingSequence;
+    post({ type: "embeddingStarted", id });
+    try {
+      const value = await run();
+      post({ type: "embeddingSettled", id });
+      return value;
+    } catch (error) {
+      post({
+        type: "embeddingSettled",
+        id,
+        ...(state?.shuttingDown || (error instanceof Error && error.name === "AbortError")
+          ? { canceled: true }
+          : { failure: describeModelFailure(error) }),
+      });
+      throw error;
+    }
+  };
+  return {
+    embed: (texts) => observe(() => embedder.embed(texts)),
+    embedQuery: (text) => observe(() => embedder.embedQuery(text)),
+    dispose: () => embedder.dispose(),
+  };
+}
+
+async function buildRawEmbedder(
+  init: IndexerInit,
+): Promise<import("../indexer/types.js").Embedder> {
   if (init.httpEmbedderUrl) {
     return new (await import("../indexer/http-embedder.js")).HttpEmbedder({
       baseUrl: init.httpEmbedderUrl,

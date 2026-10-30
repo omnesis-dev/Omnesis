@@ -67,6 +67,7 @@ struct MainMenuDrawer: View {
             //     full relaunch.
             .onChange(of: isOpen) { _, nowOpen in
                 if nowOpen {
+                    Task { await store.refreshGatewayStats() }
                     Task { await store.refreshTasksTodayCount() }
                     Task { await store.refreshPrivacyPendingCount() }
                     Task { await store.agent.refreshConversations() }
@@ -78,6 +79,13 @@ struct MainMenuDrawer: View {
                     scheduleWarningDeadline()
                 } else {
                     warningDeadlineTask?.cancel()
+                }
+            }
+            .task(id: isOpen) {
+                guard isOpen else { return }
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                    await store.refreshGatewayStats()
                 }
             }
             .onChange(of: store.notes.pending) { _, _ in
@@ -150,9 +158,18 @@ struct MainMenuDrawer: View {
                     .frame(width: Theme.tapTarget, height: Theme.tapTarget)
                     .background(Circle().fill(Theme.bgSecondary))
                     .contentShape(Circle())
+                    .overlay(alignment: .topTrailing) {
+                        if store.statusSnapshot?.modelHealth?.needsAttention == true {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.warning)
+                                .accessibilityHidden(true)
+                        }
+                    }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
+            .accessibilityLabel(store.statusSnapshot?.modelHealth?.needsAttention == true
+                ? "Settings, models need attention" : "Settings")
 
             Spacer(minLength: 0)
 
@@ -530,5 +547,14 @@ private struct MenuBadge: View {
     }
     .preferredColorScheme(.dark)
 }
+
+@available(iOS 17.0, *)
+#Preview("Menu — Models warning") {
+    MainMenuDrawer(isOpen: .constant(true), selection: .constant(.agent), onOpenSettings: {})
+        .frame(width: MenuReveal.menuWidth(forContainerWidth: 393))
+        .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth))
+        .preferredColorScheme(.dark)
+}
+
 #endif
 #endif

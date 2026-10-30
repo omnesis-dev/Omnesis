@@ -57,6 +57,7 @@ import type { SemanticSearchStatus } from "@omnesis/source-sdk";
  *     drop a now-unwanted model) the instant the switch is confirmed.
  */
 export type EmbedSwapMode = "graceful" | "hard";
+type ModelCallFactory = ReturnType<InferenceRegistry["health"]["callFactory"]>;
 
 const HTTP_EMBEDDER_PROBE_BASE_BACKOFF_MS = 10_000;
 const HTTP_EMBEDDER_PROBE_MAX_BACKOFF_MS = 30_000;
@@ -376,18 +377,28 @@ export class IndexerLifecycle {
     apiKey: string | undefined,
     signal: AbortSignal,
     phase: "startup" | "model swap",
+    beginCall: ModelCallFactory,
   ): Promise<{ model: string; dim: number }> {
     const { probeHttpEmbedder } = await import("./http-embedder.js");
     return retry(
-      () =>
-        probeHttpEmbedder(
-          resolved.url,
-          resolved.model || undefined,
-          apiKey,
-          resolved.apiPathPrefix,
-          resolved.allowRemoteInference,
-          { signal, timeoutMs: this.deps.runtime.embedderTimeoutMs },
-        ),
+      async () => {
+        const call = beginCall();
+        try {
+          const result = await probeHttpEmbedder(
+            resolved.url,
+            resolved.model || undefined,
+            apiKey,
+            resolved.apiPathPrefix,
+            resolved.allowRemoteInference,
+            { signal, timeoutMs: this.deps.runtime.embedderTimeoutMs },
+          );
+          if (!signal.aborted) call.success();
+          return result;
+        } catch (error) {
+          if (!signal.aborted) call.failure(error);
+          throw error;
+        }
+      },
       {
         // A configured local inference service is a persistent dependency,
         // not a one-shot boot condition. Keep probing transient failures
@@ -494,6 +505,7 @@ export class IndexerLifecycle {
     if (signal.aborted) return;
     this.deps.inferenceRegistry.loadConfig(this.deps.configStore.get());
     const embedResolved = this.deps.inferenceRegistry.resolve("embedder");
+    const beginModelCall = this.deps.inferenceRegistry.health.callFactory("embedder");
 
     let lexicalReason: string | undefined;
     if (embedResolved.kind === "disabled") lexicalReason = "Embedder assignment disabled";
@@ -518,6 +530,7 @@ export class IndexerLifecycle {
           httpEmbedderApiKey,
           signal,
           "startup",
+          beginModelCall,
         );
         if (signal.aborted) return;
         this.log.info(
@@ -613,6 +626,7 @@ export class IndexerLifecycle {
           embedDim,
           activeVersion,
           building.version,
+          beginModelCall,
         );
         return;
       }
@@ -655,6 +669,7 @@ export class IndexerLifecycle {
 
     const proxy = new IndexerWorkerProxy({
       lexicalOnly,
+      beginModelCall,
       modelPath,
       modelName,
       embedDim,
@@ -796,7 +811,15 @@ export class IndexerLifecycle {
         // is the one that's bounded so it can't starve these at the server.
         maxConcurrentRequests: Infinity,
       });
-      this.deps.searchPipeline.setEmbedder(searchEmbedder, embedId);
+      this.deps.searchPipeline.setEmbedder(
+        this.deps.inferenceRegistry.health.observe(
+          embedResolved,
+          searchEmbedder,
+          ["embed", "embedQuery"],
+          beginModelCall,
+        ),
+        embedId,
+      );
       this._queryEmbedderIsWorker = false;
       this.log.info(`search embedder: direct HTTP client (bypasses indexer worker)`);
     } else {
@@ -935,6 +958,7 @@ export class IndexerLifecycle {
     newDim: number,
     activeVersion: number,
     resumeVersion: number,
+    beginModelCall: ModelCallFactory,
   ): Promise<void> {
     const abort = new AbortController();
     this.buildAbort = abort;
@@ -945,7 +969,7 @@ export class IndexerLifecycle {
       newDim,
       activeVersion,
       abort.signal,
-      { resumeVersion },
+      { resumeVersion, beginModelCall },
     ).finally(() => {
       if (this.buildAbort === abort) this.buildAbort = null;
       if (this.embedSwapInFlight === run) this.embedSwapInFlight = null;
@@ -977,6 +1001,7 @@ export class IndexerLifecycle {
     // Re-resolve the embedder from the registry with the live config.
     this.deps.inferenceRegistry.loadConfig(this.deps.configStore.get());
     const resolved = this.deps.inferenceRegistry.resolve("embedder");
+    const beginModelCall = this.deps.inferenceRegistry.health.callFactory("embedder");
 
     if (
       resolved.kind === "disabled" ||
@@ -1006,6 +1031,7 @@ export class IndexerLifecycle {
           swapApiKey,
           signal,
           "model swap",
+          beginModelCall,
         );
       } catch (err) {
         if (signal.aborted) return;
@@ -1080,6 +1106,7 @@ export class IndexerLifecycle {
         newDim,
         activeVersion,
         signal,
+        { beginModelCall },
       );
       return;
     }
@@ -1221,8 +1248,9 @@ export class IndexerLifecycle {
     newDim: number,
     activeVersion: number,
     signal: AbortSignal,
-    opts: { resumeVersion?: number } = {},
+    opts: { resumeVersion?: number; beginModelCall: ModelCallFactory },
   ): Promise<void> {
+    const beginModelCall = opts.beginModelCall;
     const db = this.deps.indexDb;
     // Whether the NEW (target) model runs in-process (local GGUF). A local
     // target builds via the off-main-thread build worker (mechanism 1) and
@@ -1279,7 +1307,13 @@ export class IndexerLifecycle {
     // target → off-main-thread build worker hosting the new GGUF (mechanism 1),
     // so the (CPU/GPU-bound) re-embed never blocks the event loop and live search
     // stays responsive on the active generation throughout the build.
-    const buildEmbedder = await this.createBuildEmbedder(resolved, httpProbe, newDim, encoding);
+    const buildEmbedder = await this.createBuildEmbedder(
+      resolved,
+      httpProbe,
+      newDim,
+      encoding,
+      beginModelCall,
+    );
 
     const builder = new GenerationBuilder(
       db,
@@ -1380,7 +1414,17 @@ export class IndexerLifecycle {
       embedModel: modelLabel,
       embedDim: newDim,
     });
-    this.deps.searchPipeline.setEmbedder(searchEmbedder, embedId);
+    this.deps.searchPipeline.setEmbedder(
+      resolved.kind === "local"
+        ? searchEmbedder
+        : this.deps.inferenceRegistry.health.observe(
+            resolved,
+            searchEmbedder,
+            ["embed", "embedQuery"],
+            beginModelCall,
+          ),
+      embedId,
+    );
     this.log.info(
       `Atomic flip complete: generation ${newVersion} now serving vector search; generation ${activeVersion} retired.`,
     );
@@ -1432,6 +1476,22 @@ export class IndexerLifecycle {
    * oblivious to which one it drives.
    */
   private async createBuildEmbedder(
+    resolved: Extract<ResolvedAssignment, { kind: "http" | "local" }>,
+    httpProbe: { model: string; dim: number } | undefined,
+    newDim: number,
+    encoding: EmbedderEncoding,
+    beginModelCall: ModelCallFactory,
+  ): Promise<Embedder> {
+    const embedder = await this.createRawBuildEmbedder(resolved, httpProbe, newDim, encoding);
+    return this.deps.inferenceRegistry.health.observe(
+      resolved,
+      embedder,
+      ["embed", "embedQuery"],
+      beginModelCall,
+    );
+  }
+
+  private async createRawBuildEmbedder(
     resolved: Extract<ResolvedAssignment, { kind: "http" | "local" }>,
     httpProbe: { model: string; dim: number } | undefined,
     newDim: number,

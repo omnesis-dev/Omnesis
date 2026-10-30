@@ -67,11 +67,13 @@ enum ModelsPreviewData {
         ),
     ]
 
-    static func overview() -> ModelsOverview {
+    static func overview(health: ModelHealth? = nil) -> ModelsOverview {
         ModelsOverview(
             assignmentDisplays: assignmentDisplays(),
             capabilities: capabilities,
-            inference: inference(),
+            inference: InferenceOverview(
+                backends: inference().backends, assignments: inference().assignments, health: health
+            ),
             catalog: catalog(),
             installed: [ManifestEntry(id: "nomic-embed-text-v1.5.Q8_0")],
             activeDownloads: activeDownloads(),

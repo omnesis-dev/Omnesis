@@ -446,6 +446,9 @@ const anthropicCatalogService = new AnthropicCatalogService({
 });
 anthropicCatalogService.start();
 const inferenceRegistry = new InferenceRegistry({
+  modelHealthPath: join(configDir, "model-health.json"),
+  getExternalCredential: (backend) =>
+    backend === "typesafe" ? resolveTypeSafeApiKey(configDir) : resolveAnthropicApiKey(configDir),
   modelsDir: MODELS_DIR,
   configDir,
   manifest: () => loadManifest(manifestPath).manifest,
@@ -1295,6 +1298,7 @@ await subscriptionsPolicyStore.get();
 // queries; unset, both gates are absent. Re-resolved per use, so assigning Jev or pasting
 // a key from the portal takes effect without a restart.
 const decisionService = new DecisionService({
+  health: inferenceRegistry.health,
   resolveAssignment: () => inferenceRegistry.resolve("decision"),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
@@ -1772,7 +1776,10 @@ const transcriptionVocabularyService = new TranscriptionVocabularyService({
 });
 const transcribeService = new TranscribeService({
   resolveAssignment: () => inferenceRegistry.resolve("transcriber"),
-  deps: { getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key) },
+  deps: {
+    health: inferenceRegistry.health,
+    getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
+  },
   vocabulary: {
     enabled: () => transcriptionVocabularyService.enabled(),
     getDictionary: (context) => transcriptionVocabularyService.getDictionary(context),
@@ -1790,6 +1797,7 @@ transcribeService.readiness();
 const ocrService = new OcrService({
   resolveAssignment: () => inferenceRegistry.resolve("ocr"),
   deps: {
+    health: inferenceRegistry.health,
     codexRuntimeService,
     claudeCodeService,
     getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
@@ -1807,6 +1815,7 @@ const ocrService = new OcrService({
 const entailmentService = new EntailmentVerifierService({
   resolveAssignment: () => inferenceRegistry.resolve("entailment-verifier"),
   deps: {
+    health: inferenceRegistry.health,
     configDir,
     codexRuntimeService,
     claudeCodeService,
@@ -2036,6 +2045,7 @@ if (watchV2 && watchStores?.ok) {
     getEmbedder: () => getSemanticEmbedder(),
     getCompleter: () => {
       const provider = loadCompletionFromResolved(inferenceRegistry.resolve("watch-judge"), {
+        health: inferenceRegistry.health,
         configDir,
         codexRuntimeService,
         claudeCodeService,
@@ -2158,6 +2168,7 @@ if (watchV2 && watchStores?.ok) {
       ),
       backend: () =>
         loadCompletionFromResolved(inferenceRegistry.resolve("background-agent"), {
+          health: inferenceRegistry.health,
           configDir,
           codexRuntimeService,
           claudeCodeService,
@@ -2538,6 +2549,7 @@ const app = createServer(db, DB_PATH, {
   refreshClaudeCodeStatus: () => claudeCodeService.refresh(),
   setupClaudeCodeAgent: (model) => claudeCodeService.setupAgent(configStore, model),
   getConfigHealth: () => inferenceRegistry.configHealth(),
+  getModelHealth: () => inferenceRegistry.modelHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
   getNoteAgentStatus: () => noteAgent.status(),
@@ -2962,6 +2974,7 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 mountDeviceWsRoute(app, wsServer, upgradeWebSocket);
 const realtimeService = new RealtimeService({
+  beginModelCall: () => inferenceRegistry.health.beginCall("speech-to-speech"),
   getConfig: () => configStore.get(),
   getApiKey: (backend) => inferenceRegistry.getBackendApiKey(backend),
   getAgent: () => agentLifecycle.routeDeps.agentService,
@@ -3117,6 +3130,7 @@ const backfillBundle = createBackfillTasks(
     // reassignment lands without a restart. The task owns what this returns.
     getCompletionProvider: () => {
       const provider = loadCompletionFromResolved(inferenceRegistry.resolve("background-agent"), {
+        health: inferenceRegistry.health,
         configDir,
         codexRuntimeService,
         claudeCodeService,
@@ -3800,6 +3814,7 @@ const doShutdown = async (): Promise<void> => {
   } catch (err) {
     log.error(`db.close threw: ${err instanceof Error ? err.message : String(err)}`);
   }
+  await inferenceRegistry.health.flush();
   // Last: every store is closed, so a replacement gateway may take the dir.
   gatewayLock.release();
 };

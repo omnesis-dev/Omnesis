@@ -34,6 +34,7 @@ import { useVisiblePoll } from "./lib/use-visible-poll.js";
 import { canDeleteConversation, deleteSidebarConversation } from "./lib/sidebar-conversations.js";
 import { releaseUpdateFromStatus } from "./lib/release-update.js";
 import { FleetHostUpdate } from "./components/fleet-host-update.js";
+import { WarningTriangle } from "./components/model-health.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
@@ -293,6 +294,7 @@ function App() {
   // check, on malformed data, or when this install is current.
   const [releaseUpdate, setReleaseUpdate] = useState(null);
   const statusRequestGeneration = useRef(0);
+  const [modelHealth, setModelHealth] = useState({ warnings: [] });
 
   // Half the window the gateway believes a viewing mark for, so a refresh
   // always lands well inside it. Derived rather than hardcoded: the two
@@ -364,6 +366,7 @@ function App() {
     try {
       const status = await getStatus();
       if (generation !== statusRequestGeneration.current) return;
+      setModelHealth(status?.modelHealth ?? { warnings: [] });
       setExperimental(status?.experimental === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
@@ -641,14 +644,16 @@ function App() {
             // to a brand-new empty session).
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
             const pending = pendingDecisions[item.view] ?? 0;
+            const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
+            const href = modelWarning ? "/portal/settings/models" : item.href;
             return html`
               <a
                 key=${item.view}
                 class=${isActive ? "sidebar-item active" : "sidebar-item"}
-                href=${item.href}
+                href=${href}
                 onClick=${(e) => {
                   e.preventDefault();
-                  navigate(item.href);
+                  navigate(href);
                   if (item.isNewConvo) {
                     window.dispatchEvent(new CustomEvent("omnesis:new-conversation"));
                   }
@@ -658,6 +663,7 @@ function App() {
                 <span class="sidebar-label"
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
+                ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
                 ${pending > 0
                   ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
                       ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
@@ -784,6 +790,8 @@ function App() {
           ? html`<${SettingsView}
               tab=${route.tab}
               modelsSection=${route.modelsSection}
+              modelHealth=${modelHealth}
+              onModelsRefresh=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}
               accessLevelId=${route.accessLevelId}
               accessNewLevel=${route.accessNewLevel}

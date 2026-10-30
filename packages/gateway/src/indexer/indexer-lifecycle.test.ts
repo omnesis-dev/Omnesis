@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync, readdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi, beforeEach } from "vitest";
+import { InferenceHealth } from "../inference/model-health.js";
 import { IndexerLifecycle, type IndexerLifecycleDeps } from "./indexer-lifecycle.js";
 import { IndexerStatusReporter } from "./indexer-status.js";
 import {
@@ -226,6 +227,11 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
       : { kind: "disabled" },
   );
   const inferenceRegistry = {
+    health: new InferenceHealth(() => ({
+      identity: "test",
+      fingerprint: "test",
+      assignment: "example/model",
+    })),
     loadConfig: vi.fn(),
     resolve,
     getBackendApiKey: vi.fn(() => undefined),
@@ -338,6 +344,42 @@ describe("IndexerLifecycle", () => {
     expect(registerAll).toHaveBeenCalledOnce();
     expect(proxyInstances[0].wake).toHaveBeenCalledOnce();
     expect(statusReporter.getReadiness().status).toBe("ready");
+  });
+
+  test("worker health remains bound to the assignment resolved before an asynchronous probe", async () => {
+    const { deps } = makeDeps();
+    let identity = "old";
+    const health = new InferenceHealth(() => ({
+      identity,
+      fingerprint: identity,
+      assignment: "example/model",
+    }));
+    Object.assign(deps.inferenceRegistry, { health });
+    let release!: () => void;
+    let probing!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      probing = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    probeHttpEmbedder.mockImplementationOnce(async () => {
+      probing();
+      await gate;
+      return { model: "mock-embed", dim: 64 };
+    });
+    const lifecycle = new IndexerLifecycle(deps);
+    const starting = lifecycle.startIndexer();
+    await probeStarted;
+    identity = "new";
+    release();
+    await starting;
+    const beginCall = proxyInstances[0].opts.beginModelCall as () => {
+      failure(error: unknown): void;
+    };
+    for (let i = 0; i < 3; i++) beginCall().failure(new Error("quota exhausted"));
+    expect(health.snapshot().warnings).toEqual([]);
+    await lifecycle.shutdownIndexer();
   });
 
   test("retries a transient HTTP embedder boot race without spawning duplicate workers", async () => {

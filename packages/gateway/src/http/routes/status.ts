@@ -15,6 +15,7 @@ import {
   type AssignmentValue,
   type CapabilityRole,
   type ConfigHealth,
+  type ModelHealth,
   type ConfigSecretMaterialization,
 } from "@omnesis/core";
 import { applyMergePatch, describeConfigSchema, type OmnesisConfig } from "@omnesis/config";
@@ -62,6 +63,7 @@ export interface StatusRoutesDeps {
    * registry), `/status` reports a healthy `configHealth`.
    */
   getConfigHealth?: () => ConfigHealth;
+  getModelHealth?: () => ModelHealth;
   /** Last successful install-aware release check, or null before one succeeds. */
   getReleaseCheck?: () => ReleaseCheckSnapshot | null;
   /**
@@ -522,6 +524,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       diskUsage: getDiskUsage?.() ?? null,
       uptime: Math.floor(process.uptime()),
       configHealth,
+      modelHealth: deps.getModelHealth?.() ?? { warnings: [] },
       release: getReleaseCheck?.() ?? null,
       testInstance: readTestInstance(),
       // Presentation only: suppress setup and release cards during demonstrations.

@@ -404,6 +404,7 @@ export function createServer(
      * silently disabled by a bad assignment becomes a named, queryable signal.
      */
     getConfigHealth?: () => import("@omnesis/core").ConfigHealth;
+    getModelHealth?: () => import("@omnesis/core").ModelHealth;
     /** Last successful install-aware release check, or null before one succeeds. */
     getReleaseCheck?: () => import("@omnesis/core/release-check").ReleaseCheckSnapshot | null;
     /**
@@ -1282,6 +1283,7 @@ export function createServer(
     statusCache,
     deviceService,
     getConfigHealth: opts?.getConfigHealth,
+    getModelHealth: opts?.getModelHealth,
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,

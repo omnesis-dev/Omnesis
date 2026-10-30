@@ -51,10 +51,11 @@ vi.mock("./lib/theme.js", async (importOriginal) => ({
 vi.mock("./lib/lazy.js", () => ({
   lazy: (load: () => unknown) => {
     return load.toString().includes("/views/settings.js")
-      ? ({ theme, onThemeToggle, onLogout }: {
+      ? ({ theme, onThemeToggle, onLogout, onModelsRefresh }: {
         theme?: string;
         onThemeToggle?: () => void;
         onLogout?: () => void;
+        onModelsRefresh?: () => void;
       }) => h("div", { class: "settings-actions" },
         h(
           "button",
@@ -66,6 +67,7 @@ vi.mock("./lib/lazy.js", () => ({
           { type: "button", class: "settings-logout-btn", onClick: onLogout },
           "Logout",
         ),
+        h("button", { class: "models-refresh-stub", onClick: onModelsRefresh }, "Refresh models"),
       )
       : () => null;
   },
@@ -187,6 +189,36 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     await vi.waitFor(() => expect(host.querySelector(".app-layout")).not.toBeNull());
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }
+
+  test("flags Settings and routes directly to Models until runtime health recovers", async () => {
+    getStatus.mockResolvedValue({
+      experimental: false, developer: false,
+      modelHealth: { warnings: [{ role: "agent", message: "Provider quota exceeded." }] },
+    } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).not.toBeNull());
+    const settings = itemNamed("Settings");
+    expect(settings?.querySelector('[aria-label="Models need attention"]')).not.toBeNull();
+    expect(settings?.getAttribute("href")).toBe("/portal/settings/models");
+    expect(settings?.textContent).not.toContain("quota");
+    // The visibility poll refreshes immediately when the operator returns.
+    getStatus.mockResolvedValue({ experimental: false, developer: false } as never);
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).toBeNull());
+    expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
+  });
+
+  test("refreshes authoritative status after Models reads instead of accepting an old overview", async () => {
+    getStatus.mockResolvedValue({
+      experimental: false, developer: false,
+      modelHealth: { warnings: [{ role: "agent" }] },
+    } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).not.toBeNull());
+    getStatus.mockResolvedValue({ experimental: false, developer: false } as never);
+    await act(async () => { (host.querySelector(".models-refresh-stub") as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).toBeNull());
+  });
 
   test("nothing waiting, nothing badged", async () => {
     listPrivacyApprovals.mockResolvedValue({ totalCount: 0 });

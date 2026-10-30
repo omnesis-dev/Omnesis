@@ -327,7 +327,10 @@ struct HomeView: View {
             MainMenuDrawer(
                 isOpen: $menuOpen,
                 selection: $selection,
-                onOpenSettings: { settingsDestination = .root }
+                onOpenSettings: {
+                    settingsDestination = store.statusSnapshot?.modelHealth?.needsAttention == true
+                        ? .models(initialRole: nil) : .root
+                }
             )
         } content: {
             ZStack {
