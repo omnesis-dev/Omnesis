@@ -5827,7 +5827,34 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Models view, agent model header, provider glyphs
 
-    func testModelHealthWarnings() {
+    private func assertModelAdminClientObservation() throws {
+        let coordinator = AdminCoordinator()
+        let available = expectation(description: "Models observes the first admin client")
+        let initial = withObservationTracking {
+            coordinator.admin.map(ObjectIdentifier.init)
+        } onChange: { available.fulfill() }
+        XCTAssertNil(initial)
+        let client = try AdminClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test-token")
+        coordinator.injectAdminClientForTesting(client)
+        wait(for: [available], timeout: 1)
+        XCTAssertEqual(coordinator.admin.map(ObjectIdentifier.init), ObjectIdentifier(client))
+
+        let replaced = expectation(description: "Models restarts its lifetime for a replacement admin client")
+        withObservationTracking { _ = coordinator.admin } onChange: { replaced.fulfill() }
+        let replacement = AdminClient(baseURL: client.baseURL, token: "replacement-token")
+        coordinator.injectAdminClientForTesting(replacement)
+        wait(for: [replaced], timeout: 1)
+        XCTAssertEqual(coordinator.admin.map(ObjectIdentifier.init), ObjectIdentifier(replacement))
+
+        let removed = expectation(description: "Pairing loss cancels the Models lifetime")
+        withObservationTracking { _ = coordinator.admin } onChange: { removed.fulfill() }
+        coordinator.stopAdmin()
+        wait(for: [removed], timeout: 1)
+        XCTAssertNil(coordinator.admin)
+    }
+
+    func testModelHealthWarnings() throws {
+        try assertModelAdminClientObservation()
         let store = AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth)
         snapshot(
             NavigationStack {

@@ -60,6 +60,60 @@ final class ModelOverviewRefreshGateTests: XCTestCase {
         }
     }
 
+    func testDisappearingDuringInitialLoadCannotStartPollingAfterLateResponse() async {
+        let started = expectation(description: "initial models request started")
+        var release: CheckedContinuation<ModelsOverview, Never>?
+        var sleeps = 0
+        var refreshes = 0
+        let gate = ModelOverviewRefreshGate()
+        let lifetime = Task {
+            await gate.refreshWhileVisible(
+                load: {
+                    let outcome = await gate.fetch {
+                        started.fulfill()
+                        return await withCheckedContinuation { release = $0 }
+                    }
+                    guard case .stale = outcome else {
+                        XCTFail("the canceled screen must ignore the late response")
+                        return
+                    }
+                },
+                interval: { .seconds(15) },
+                refresh: { refreshes += 1 },
+                sleep: { _ in sleeps += 1 }
+            )
+        }
+        await fulfillment(of: [started], timeout: 2)
+        lifetime.cancel()
+        release?.resume(returning: overview(effort: "high"))
+        await lifetime.value
+        XCTAssertEqual(sleeps, 0)
+        XCTAssertEqual(refreshes, 0)
+    }
+
+    func testDisappearingDuringDelayDoesNotIssueAnotherRequest() async {
+        let sleeping = expectation(description: "visible models screen waiting to refresh")
+        var release: CheckedContinuation<Void, Never>?
+        var refreshes = 0
+        let gate = ModelOverviewRefreshGate()
+        let lifetime = Task {
+            await gate.refreshWhileVisible(
+                load: {},
+                interval: { .seconds(15) },
+                refresh: { refreshes += 1 },
+                sleep: { _ in
+                    sleeping.fulfill()
+                    await withCheckedContinuation { release = $0 }
+                }
+            )
+        }
+        await fulfillment(of: [sleeping], timeout: 2)
+        lifetime.cancel()
+        release?.resume()
+        await lifetime.value
+        XCTAssertEqual(refreshes, 0)
+    }
+
     private func overview(effort: String) -> ModelsOverview {
         ModelsOverview(
             assignmentDisplays: [:],

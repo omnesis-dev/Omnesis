@@ -4,6 +4,11 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
+private struct ModelsPollingLifetime: Hashable {
+    let active: Bool
+    let client: ObjectIdentifier?
+}
+
 /// Model-management page — mirrors the portal's Settings → Models tab
 /// (`packages/gateway/portal/js/views/models.js`). One card per capability
 /// (Embedder, Agent, Privacy reviewer, Transcriber, OCR),
@@ -36,7 +41,6 @@ struct ModelsView: View {
     @State private var system: SystemInfo?
     @State private var loading = true
     @State private var loadError: Error?
-    @State private var pollTask: Task<Void, Never>?
     @State private var overviewRefreshGate = ModelOverviewRefreshGate()
 
     /// Preview-only flag: when true, `.task` never reaches the gateway, so a
@@ -79,12 +83,13 @@ struct ModelsView: View {
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .refreshable { await load() }
-            .task { await load() }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await load() } }
-            }
-            .onDisappear { pollTask?.cancel()
-                pollTask = nil
+            .task(id: ModelsPollingLifetime(active: scenePhase == .active, client: store.admin.map(ObjectIdentifier.init))) {
+                guard !isPreview, scenePhase == .active, store.admin != nil else { return }
+                await overviewRefreshGate.refreshWhileVisible(
+                    load: { await load() },
+                    interval: { overview?.activeDownloads.isEmpty == false ? .seconds(1) : .seconds(15) },
+                    refresh: { await refreshOverview() }
+                )
             }
     }
 
@@ -239,7 +244,7 @@ struct ModelsView: View {
 
     private func load() async {
         // Previews never reach the gateway — the seeded state is the snapshot.
-        if isPreview { return }
+        if isPreview || Task.isCancelled { return }
         guard let client = store.admin else {
             loading = false
             return
@@ -248,7 +253,7 @@ struct ModelsView: View {
         loadError = nil
         let ticket: Int
         let refreshed = await overviewRefreshGate.fetch { try await client.modelOverview() }
-        guard store.admin === client else { return }
+        guard !Task.isCancelled, store.admin === client else { return }
         switch refreshed {
         case .loaded(let fresh, let currentTicket):
             overview = fresh
@@ -264,33 +269,21 @@ struct ModelsView: View {
         // the warnings, it doesn't fail the screen.
         if system == nil {
             let freshSystem = try? await client.systemInfo()
-            guard overviewRefreshGate.isCurrent(ticket), store.admin === client else { return }
+            guard !Task.isCancelled, overviewRefreshGate.isCurrent(ticket), store.admin === client else { return }
             system = freshSystem
         }
-        guard overviewRefreshGate.isCurrent(ticket) else { return }
+        guard !Task.isCancelled, overviewRefreshGate.isCurrent(ticket) else { return }
         loading = false
-        scheduleOverviewPoll()
     }
 
-    /// Refresh health while the screen is visible; downloads use a faster cadence.
-    private func scheduleOverviewPoll() {
-        pollTask?.cancel()
-        pollTask = nil
-        guard let client = store.admin else { return }
-        pollTask = Task {
-            while !Task.isCancelled {
-                let seconds: UInt64 = overview?.activeDownloads.isEmpty == false ? 1 : 15
-                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-                if Task.isCancelled { return }
-                guard scenePhase == .active else { continue }
-                guard !loading else { continue }
-                guard case .loaded(let fresh, _) = await overviewRefreshGate.fetch({
-                    try await client.modelOverview()
-                }) else { continue }
-                guard store.admin === client else { return }
-                overview = fresh
-            }
-        }
+    /// Refresh one visible-screen snapshot using the currently paired gateway.
+    private func refreshOverview() async {
+        guard !Task.isCancelled, !loading, let client = store.admin else { return }
+        guard case .loaded(let fresh, _) = await overviewRefreshGate.fetch({
+            try await client.modelOverview()
+        }) else { return }
+        guard !Task.isCancelled, store.admin === client else { return }
+        overview = fresh
     }
 }
 
