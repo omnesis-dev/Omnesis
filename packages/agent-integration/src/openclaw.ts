@@ -30,7 +30,11 @@ import {
   type OperationalIntegrationCredentials,
 } from "./credentials.js";
 import { readGatewayCapabilities } from "./gateway-capabilities.js";
-import { DurableIntegrationInbox, type WorkflowBinding } from "./inbox.js";
+import {
+  AnswerCompletionNotStartedError,
+  DurableIntegrationInbox,
+  type WorkflowBinding,
+} from "./inbox.js";
 import {
   DurableTranscriptIngestor,
   type AgentConversationMessage,
@@ -54,7 +58,12 @@ import {
   PinnedGatewayHttpClient,
 } from "./http.js";
 import { formatAnswerCitations } from "./answer-citations.js";
-import { NativeAnswerMcpClient, integrationOAuthFetch } from "./native-answer-mcp.js";
+import {
+  NativeAnswerMcpClient,
+  integrationOAuthFetch,
+  parseNativeAnswerResponse,
+  type NativeAnswerResponse,
+} from "./native-answer-mcp.js";
 import {
   FORWARDED_TOOL_NAMES,
   FORWARDED_TOOL_TIMEOUT_MS,
@@ -1708,8 +1717,7 @@ class OpenClawIntegrationService {
    */
   async completeAnswerDelivery(delivery: AnswerCompletionDelivery): Promise<void> {
     const routes = this.completionRoutes;
-    const mcp = this.answerMcp;
-    if (!routes || !mcp) throw new Error("integration service is not running");
+    if (!routes) throw new Error("integration service is not running");
     const route = routes.get(delivery.nativeConversationId);
     if (!route || (route.taskId !== "pending" && route.taskId !== delivery.taskId)) {
       throw new Error("no matching OpenClaw conversation route for answer completion");
@@ -1720,11 +1728,32 @@ class OpenClawIntegrationService {
     if (route.taskId === "pending") {
       routes.put({ ...route, taskId: delivery.taskId });
     }
-    // The delivery is an operational wake carrying only task identity. Reading
-    // the released answer still uses this installation's OAuth principal and
-    // therefore resolves through its current grant and revocation state.
-    const response = await mcp.getTask(delivery.taskId);
     if (isSessionRoute(route)) {
+      // A Watch task belongs to its firing, not the installation's OAuth
+      // principal. The current delivery credential can retrieve only this
+      // committed completion; the gateway revalidates its live subscription
+      // authority without reviving the original short-lived firing token.
+      const credentials = this.credentials;
+      if (!credentials) throw new Error("integration service is not running");
+      const http = new PinnedGatewayHttpClient(
+        credentials.gatewayUrl,
+        credentials.deliveryToken,
+        this.requireTrust(),
+      );
+      let response: NativeAnswerResponse;
+      try {
+        response = parseNativeAnswerResponse(
+          await http.requestJson(
+            "GET",
+            `/subscriptions/answer-completions/${encodeURIComponent(delivery.deliveryId)}`,
+          ),
+        );
+        if (response.taskId !== delivery.taskId || response.status === "approval_required") {
+          throw new Error("completion response does not match the terminal Answer task");
+        }
+      } catch (error) {
+        throw new AnswerCompletionNotStartedError(error);
+      }
       // No conversation to reply into — the ask came from a background wake.
       // Keyed on the delivery, and prefixed: the wake's own run is started
       // under the bare delivery id, so an unprefixed key here could dedupe a
@@ -1743,6 +1772,15 @@ class OpenClawIntegrationService {
       const waiting = this.inbox?.resumeDeferredOutcome(delivery.nativeConversationId) ?? null;
       this.watchRunOutcome(resumed.runId, route.to, waiting?.deliveryId ?? null);
     } else {
+      // Ordinary chat answers remain scoped to the current OAuth principal.
+      const mcp = this.answerMcp;
+      if (!mcp) throw new Error("integration OAuth state is not available");
+      let response: NativeAnswerResponse;
+      try {
+        response = await mcp.getTask(delivery.taskId);
+      } catch (error) {
+        throw new AnswerCompletionNotStartedError(error);
+      }
       // The runtime owns both transcript persistence and normal reply delivery.
       // Never guess a session from channel addressing: multiple sessions can
       // share the same recipient, especially with threads and account scopes.

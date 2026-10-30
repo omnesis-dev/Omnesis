@@ -532,6 +532,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "subscriptions.outcomeRecord", priority: "user" },
   { name: "subscriptions.answerAuthorityUse", priority: "user" },
   { name: "subscriptions.answerEgressFinalize", priority: "user" },
+  { name: "subscriptions.completionEgressFinalize", priority: "user" },
   { name: "subscriptions.expire", priority: "background" },
   { name: "subscriptions.reconcilePolicy", priority: "background" },
   { name: "cognition.bootstrapMarkProcessed", priority: "background" },

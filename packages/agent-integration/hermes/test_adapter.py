@@ -642,6 +642,22 @@ class DurableStateTests(unittest.TestCase):
         self.state.close()
         self.temp.cleanup()
 
+    def test_legacy_origins_gain_nullable_home_without_losing_bindings(self):
+        self.state.close()
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE integration_answer_origins")
+            connection.execute("CREATE TABLE integration_answer_origins(request_id TEXT PRIMARY KEY, native_conversation_id TEXT UNIQUE, native_session_id TEXT, task_id TEXT UNIQUE, created_at INTEGER)")
+            connection.execute("INSERT INTO integration_answer_origins VALUES ('request-old', 'origin-old', 'session-old', 'task-old', 0)")
+        self.state = adapter_module.DurableState(self.path)
+        self.assertEqual(self.state.answer_origin_for_completion("origin-old", "task-old"), "session-old")
+        row = self.state.connection.execute("SELECT native_home FROM integration_answer_origins").fetchone()
+        self.assertIsNone(row[0])
+        first = self.state.prepare_answer_origin("request-one", "shared-session", "/fictional/profile-one")
+        second = self.state.prepare_answer_origin("request-two", "shared-session", "/fictional/profile-two")
+        self.assertNotEqual(first, second)
+        with self.assertRaises(adapter_module.DeliveryConflictError):
+            self.state.prepare_answer_origin("request-one", "shared-session", "/fictional/profile-two")
+
     def test_persist_before_accept_and_replay(self):
         wake = delivery()
         digest = adapter_module._payload_hash(wake)
@@ -3091,6 +3107,20 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(refused["error"]["code"], "retryable_start_failure")
         self.assertEqual(requests, [])
         secrets.get_secret.return_value = "fictional-api-key"
+        with patch.object(adapter_module, "_native_hermes_home", return_value=Path(self.temp.name) / "replacement"):
+            refused = await dispatch_frame(self.instance, "moved-profile", "answer-completion.commit", control)
+            self.assertEqual(refused["error"]["code"], "retryable_start_failure")
+            self.assertEqual(requests, [])
+        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+            connection.execute("UPDATE sessions SET profile_name = 'replacement-profile'")
+        # Even a valid API credential cannot authorize another profile's row.
+        with self.assertRaisesRegex(RuntimeError, "session changed"):
+            await self.instance._post_profile_api_completion(
+                api, "fictional-profile", "session-human", "Fictional outcome", Path(self.temp.name)
+            )
+        self.assertEqual(requests, [])
+        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+            connection.execute("UPDATE sessions SET profile_name = 'fictional-profile'")
         for status in (401, 404, 302):
             response.status = status
             refused = await dispatch_frame(self.instance, "commit", "answer-completion.commit", control)
@@ -3113,7 +3143,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         api._resolve_request_profile.return_value = None
         scope_calls = api._profile_scope.call_count
         await self.instance._post_profile_api_completion(
-            api, "fictional-profile", "session-human", "Fictional completed outcome."
+            api, "fictional-profile", "session-human", "Fictional completed outcome.", Path(self.temp.name)
         )
         self.assertEqual(api._profile_scope.call_count, scope_calls)
         self.assertEqual(requests[-1][1]["headers"]["Authorization"], f"Bearer {api._api_key}")
@@ -3129,7 +3159,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(adapter_module, "MessageEvent", LegacyMessageEvent):
             with self.assertRaisesRegex(adapter_module.HostCompatibilityError, "Update Hermes"):
-                await self.instance._resume_api_session("session-human", None, released_answer())
+                await self.instance._resume_api_session("session-human", None, released_answer(), Path(self.temp.name))
             with self.assertLogs(adapter_module.logger, level="WARNING") as logs:
                 rejected = await dispatch_frame(self.instance, "old-event", "answer-completion.commit", control)
             self.assertIn("Update Hermes", " ".join(logs.output))
@@ -3184,6 +3214,50 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["result"]["status"], "accepted")
         source_adapter.handle_message.assert_awaited_once()
 
+    async def test_profile_answer_origin_survives_restart_without_root_session_fallback(self):
+        self._completion_chat()
+        profile_home = Path(self.temp.name) / "profiles" / "fictional-profile"
+        profile_home.mkdir(parents=True)
+        with sqlite3.connect(profile_home / "state.db") as connection:
+            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, chat_type TEXT, thread_id TEXT, profile_name TEXT)")
+            connection.execute("INSERT INTO sessions VALUES ('session-human', 'api_server', NULL, NULL, NULL, 'fictional-profile')")
+        host = types.ModuleType("hermes_constants")
+        host.get_hermes_home = lambda: profile_home
+        self.instance._await_mcp_answer = Mock(return_value={"status": "approval_required", "taskId": "task_profile"})
+        with patch.dict(sys.modules, {"hermes_constants": host}):
+            result = json.loads(self.instance.answer({"question": "Fictional profile question?"}, "session-human"))
+        self.assertEqual(result["taskId"], "task_profile")
+        row = self.instance._state.connection.execute(
+            "SELECT native_conversation_id, native_home FROM integration_answer_origins WHERE task_id = 'task_profile'"
+        ).fetchone()
+        self.assertEqual(row[1], str(profile_home))
+        self.instance._state.close()
+        self.instance._state = adapter_module.DurableState(Path(self.temp.name) / "omnesis" / "integration.sqlite")
+        route = self.instance._completion_route("session-human", row[0])
+        self.assertEqual(route, ("api_server", "", None, None, "fictional-profile"))
+        # The same raw ID exists in root; deleting the scoped DB must not find it.
+        (profile_home / "state.db").unlink()
+        self.assertIsNone(self.instance._completion_route("session-human", row[0]))
+
+    async def test_completion_rejects_unknown_or_conflicting_origin_before_retrieval(self):
+        wake, _source, _entry, source_adapter, _module = self._completion_chat()
+        self.instance._request_json = Mock(side_effect=AssertionError("unexpected retrieval"))
+        await dispatch_frame(self.instance, "prepare", "answer-completion.prepare", wake)
+        control = {"protocolVersion": 4, "deliveryId": wake["deliveryId"]}
+        for missing in (False, True):
+            with self.subTest(missing=missing), self.instance._state.connection:
+                if missing:
+                    self.instance._state.connection.execute("DELETE FROM integration_answer_origins")
+                else:
+                    self.instance._state.connection.execute(
+                        "UPDATE integration_answer_origins SET task_id = 'task_other'"
+                    )
+            result = await dispatch_frame(self.instance, "commit", "answer-completion.commit", control)
+            self.assertEqual(result["error"]["code"], "invalid_payload")
+        self.instance._mcp_call_tool.assert_not_called()
+        self.instance._request_json.assert_not_called()
+        source_adapter.handle_message.assert_not_called()
+
     async def test_held_watch_answer_resumes_through_prepare_and_commit(self):
         wake = await self._woken_v4_session()
         self._authorize_session()
@@ -3200,7 +3274,16 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(posted[-1][2]["status"], "deferred")
         handle = self._held_answer_handle(wake["firingId"], "What changed?")
         completion = answer_completion_delivery(handle)
-        self.instance._mcp_call_tool = Mock(return_value=released_answer())
+        self.instance._request_json = Mock(return_value=released_answer())
+        self.instance._mcp_call_tool = Mock(side_effect=AssertionError("Watch used OAuth"))
+        self.instance._principal_access_token = Mock(side_effect=AssertionError("Watch used OAuth"))
+        # Firing answer credentials may be gone by the time approval arrives.
+        with self.instance._state.connection:
+            self.instance._state.connection.execute("DELETE FROM integration_authorities")
+        self.instance._state.close()
+        self.instance._state = adapter_module.DurableState(
+            Path(self.temp.name) / "omnesis" / "integration.sqlite"
+        )
         self.instance.gateway_runner = types.SimpleNamespace(_running=True, _draining=True)
         prepared = await dispatch_frame(
             self.instance, "prepare", "answer-completion.prepare", completion
@@ -3217,6 +3300,32 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(incompatible["error"]["code"], "retryable_start_failure")
             self.assertEqual(self.instance._state.deferred_outcome_delivery(
                 "omnesis-wf_fictional_1", handle), deferred)
+        # Retrieval failures never consume the deferred outcome or fall back.
+        for status in (401, 404, 409):
+            self.instance._request_json.side_effect = RuntimeError(f"HTTP {status}")
+            failed = await dispatch_frame(self.instance, "denied", "answer-completion.commit", control)
+            self.assertEqual(failed["error"]["code"], "retryable_start_failure")
+            self.assertEqual(self.instance._state.deferred_outcome_delivery(
+                "omnesis-wf_fictional_1", handle), deferred)
+            row = self.instance._state.connection.execute(
+                "SELECT state FROM integration_answer_completion_inbox WHERE delivery_id = ?",
+                (completion["deliveryId"],),
+            ).fetchone()
+            self.assertEqual(row[0], "prepared")
+        self.instance._request_json.side_effect = None
+        for invalid_answer in (
+            released_answer(task_id="task_other"),
+            {"workflowId": "wf_fictional", "conversationId": "conv_fictional",
+             "taskId": "task_fictional", "status": "approval_required",
+             "approvalId": "approval_fictional", "approvalExpiresAt": "2026-12-01T00:00:00Z"},
+        ):
+            self.instance._request_json.return_value = invalid_answer
+            failed = await dispatch_frame(self.instance, "invalid-answer", "answer-completion.commit", control)
+            self.assertIn("error", failed)
+            self.assertEqual(self.instance._state.deferred_outcome_delivery(
+                "omnesis-wf_fictional_1", handle), deferred)
+        self.instance._request_json.return_value = released_answer()
+        self.instance._request_json.reset_mock()
         before = len(self.instance.events)
         committed = await dispatch_frame(self.instance, "commit", "answer-completion.commit", control)
         self.assertEqual(committed["result"]["status"], "accepted")
@@ -3232,6 +3341,12 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         duplicate = await dispatch_frame(self.instance, "again", "answer-completion.commit", control)
         self.assertTrue(duplicate["result"]["duplicate"])
         self.assertEqual(len(self.instance.events), before + 1)
+        self.instance._request_json.assert_called_once_with(
+            "GET", "/subscriptions/answer-completions/" + completion["deliveryId"],
+            "omn_delivery_example",
+        )
+        self.instance._principal_access_token.assert_not_called()
+        self.instance._mcp_call_tool.assert_not_called()
 
     async def test_a_withheld_answer_reaches_the_agent_as_a_decision(self):
         args = await self._authorized_answer_session()

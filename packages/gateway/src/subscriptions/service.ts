@@ -316,6 +316,30 @@ export class SubscriptionService {
     return { runs: result.runs };
   }
 
+  async finalizeCompletionEgress(caller: SubscriptionCaller, deliveryId: string) {
+    if (!caller.tokenId || !this.deps.policyStore.path) {
+      throw new SubscriptionServiceError(
+        "answer_authority_unavailable",
+        "This completion is unavailable.",
+      );
+    }
+    const policy = await this.deps.policyStore.get();
+    const result = await this.deps.writeGate.finalizeSubscriptionCompletionEgress({
+      tokenId: caller.tokenId,
+      deviceId: caller.deviceId,
+      deliveryId,
+      policyGuard: { path: this.deps.policyStore.path, expectedRevision: policy.revision },
+      egressId: `egress_${this.id()}`,
+    });
+    if (result.outcome !== "recorded") {
+      throw new SubscriptionServiceError(
+        "answer_authority_unavailable",
+        "This completion is unavailable.",
+      );
+    }
+    return result.egress;
+  }
+
   async finalizeFiringAnswerEgress(
     caller: SubscriptionCaller,
     input: { firingId: string; taskId: string; ownerId: string; includeCitations?: boolean },

@@ -44,6 +44,7 @@ import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
   type SubscriptionDelivery,
+  type AnswerCompletionDelivery,
 } from "./protocol.js";
 
 const tempDirs: string[] = [];
@@ -218,15 +219,10 @@ describe("answer completion transport during a rolling upgrade", () => {
     }
     routes.close();
     const delivery: AnswerCompletionDelivery = {
-      protocolVersion: 3,
+      protocolVersion: AGENT_INTEGRATION_PROTOCOL_VERSION,
       deliveryId: "acdl_completion",
       taskId: "task_completion",
       nativeConversationId: "native_completion",
-      answer: {
-        token: "omn_fictional_completion",
-        expiresAt: 1_900_000_000_000,
-        endpoint: "/mcp",
-      },
     };
     return { fake, service, delivery, stateDir, run: () => completionStarter!(delivery) };
   }
@@ -261,13 +257,153 @@ describe("answer completion transport during a rolling upgrade", () => {
         answer: "Fictional approved answer.",
       });
     });
-    const { fake, service, run } = await setupCompletion();
+    const { fake, service, run } = await setupCompletion(true);
     await run();
     expect(tokens).toEqual(["omn_fictional_agent"]);
     expect(registeredNames).toEqual(["OpenClaw", "OpenClaw"]);
     expect(fake.runtime.subagent.run).toHaveBeenCalledTimes(1);
     await service.stop();
   });
+  test("retrieves a persisted Watch completion without its expired firing bearer", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+    const requests: Array<{ method: string; path: string; token: string }> = [];
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockImplementation(
+      async function (method, path) {
+        if (path === "/health") return { status: "ok" };
+        requests.push({ method, path, token: (this as unknown as { token: string }).token });
+        return {
+          workflowId: "wf_fictional",
+          conversationId: "conv_fictional",
+          taskId: "task_completion",
+          status: "released",
+          releaseId: "release_fictional",
+          answer: "Fictional approved Watch answer.",
+        };
+      },
+    );
+    const { fake, service, delivery, stateDir, run } = await setupCompletion();
+    // Only the persisted route survives this service restart. No original
+    // firing token or its expiry is needed to retrieve an approved completion.
+    await service.stop();
+    await service.start({ stateDir, logger: { warn: vi.fn() } });
+    await run();
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        path: `/subscriptions/answer-completions/${delivery.deliveryId}`,
+        token: "omn_fictional_delivery",
+      },
+    ]);
+    expect(oauth).not.toHaveBeenCalled();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledWith({
+      sessionKey: "agent:main:fictional-completion",
+      message: expect.stringContaining("Fictional approved Watch answer."),
+      deliver: false,
+      idempotencyKey: `answer-completion:${delivery.deliveryId}`,
+    });
+    await service.stop();
+  });
+
+  test("resumes a denied Watch completion without inventing a released answer", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockResolvedValue({
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      taskId: "task_completion",
+      status: "denied",
+      reason: "user_denied",
+    });
+    const { fake, service, run } = await setupCompletion();
+    await run();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(fake.runtime.subagent.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliver: false,
+        message: expect.stringContaining("no answer was released"),
+      }),
+    );
+    await service.stop();
+  });
+
+  test("retries repeated Watch fetch failures without exhausting native admission", async () => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    const http = vi
+      .spyOn(PinnedGatewayHttpClient.prototype, "requestJson")
+      .mockRejectedValue(new IntegrationHttpError(503, "completion unavailable"));
+    const { fake, service, delivery, stateDir, run } = await setupCompletion();
+    const inbox = new DurableIntegrationInbox(join(stateDir, "omnesis", "integration.sqlite"));
+    inbox.prepareAnswerCompletion(delivery);
+    try {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(inbox.commitAnswerCompletion(delivery.deliveryId, run)).rejects.toThrow(
+          "completion unavailable",
+        );
+        expect(inbox.getAnswerCompletionState(delivery.deliveryId)).toBe("prepared");
+      }
+      expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+      http.mockResolvedValue({
+        workflowId: "wf_fictional",
+        conversationId: "conv_fictional",
+        taskId: delivery.taskId,
+        status: "released",
+        releaseId: "release_fictional",
+        answer: "Recovered fictional answer.",
+      });
+      await expect(inbox.commitAnswerCompletion(delivery.deliveryId, run)).resolves.toMatchObject({
+        status: "accepted",
+      });
+      expect(fake.runtime.subagent.run).toHaveBeenCalledOnce();
+    } finally {
+      inbox.close();
+      await service.stop();
+    }
+  });
+
+  test.each([401, 403, 404, 409, 503])(
+    "does not fall back to OAuth or resume a Watch on completion HTTP %s",
+    async (status) => {
+      vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+      const oauth = vi.spyOn(NativeAnswerMcpClient.prototype, "getTask");
+      vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockRejectedValue(
+        new IntegrationHttpError(status, "completion unavailable"),
+      );
+      const { fake, service, run } = await setupCompletion();
+      await expect(run()).rejects.toThrow("completion unavailable");
+      expect(oauth).not.toHaveBeenCalled();
+      expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+      await service.stop();
+    },
+  );
+
+  test.each([
+    {
+      status: "released",
+      taskId: "task_other",
+      releaseId: "release_fictional",
+      answer: "Other task.",
+    },
+    {
+      status: "approval_required",
+      taskId: "task_completion",
+      approvalId: "approval_fictional",
+      approvalExpiresAt: 1_900_000_000_000,
+    },
+    { status: "released", taskId: "task_completion", releaseId: "release_fictional" },
+  ])("refuses a mismatched or nonterminal Watch response %#", async (response) => {
+    vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockResolvedValue({
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      ...response,
+    });
+    const { fake, service, run } = await setupCompletion();
+    await expect(run()).rejects.toThrow();
+    expect(fake.runtime.subagent.run).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
   test("resumes the captured chat session after restart and retries without direct posting", async () => {
     vi.spyOn(SerializedIntegrationAuthProvider.prototype, "renew").mockResolvedValue();
     vi.spyOn(NativeAnswerMcpClient.prototype, "getTask").mockResolvedValue({

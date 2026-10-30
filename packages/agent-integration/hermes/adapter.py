@@ -1076,6 +1076,16 @@ def _hermes_home() -> Path:
     return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
 
 
+def _native_hermes_home() -> Path:
+    # Native tools run inside the host's context-local profile scope. Keep
+    # installation credentials and the delivery ledger on _hermes_home().
+    try:
+        from hermes_constants import get_hermes_home
+    except ImportError:
+        return _hermes_home()
+    return Path(get_hermes_home()).resolve()
+
+
 def _credentials_path(config: Optional[PlatformConfig] = None) -> Path:
     del config
     return _hermes_home() / "omnesis" / "integration.json"
@@ -2322,6 +2332,7 @@ class DurableState:
               request_id TEXT PRIMARY KEY,
               native_conversation_id TEXT NOT NULL UNIQUE,
               native_session_id TEXT NOT NULL,
+              native_home TEXT,
               task_id TEXT UNIQUE,
               created_at INTEGER NOT NULL
             );
@@ -2378,6 +2389,11 @@ class DurableState:
         # database predating a column never gains it that way. Adding it here
         # keeps the schema self-upgrading; a row written before it existed
         # carries NULL, which the resume lookup accounts for.
+        origin_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(integration_answer_origins)")
+        }
+        if "native_home" not in origin_columns:
+            self.connection.execute("ALTER TABLE integration_answer_origins ADD COLUMN native_home TEXT")
         outcome_columns = {
             row[1]
             for row in self.connection.execute(
@@ -2902,15 +2918,17 @@ class DurableState:
         finally:
             connection.close()
 
-    def prepare_answer_origin(self, request_id: str, native_session_id: str) -> str:
+    def prepare_answer_origin(
+        self, request_id: str, native_session_id: str, native_home: Optional[str] = None
+    ) -> str:
         """Persist the trusted Hermes origin before starting an answer task."""
         now = int(time.time() * 1000)
         with self.connection:
             row = self.connection.execute(
-                "SELECT native_conversation_id, native_session_id FROM integration_answer_origins WHERE request_id = ?",
+                "SELECT native_conversation_id, native_session_id, native_home FROM integration_answer_origins WHERE request_id = ?",
                 (request_id,),
             ).fetchone()
-            if row is not None and row[1] != native_session_id:
+            if row is not None and (row[1] != native_session_id or row[2] != native_home):
                 raise DeliveryConflictError("answer request origin conflict")
             if row is not None:
                 return row[0]
@@ -2918,10 +2936,10 @@ class DurableState:
             self.connection.execute(
                 """
                 INSERT OR IGNORE INTO integration_answer_origins(
-                  request_id, native_conversation_id, native_session_id, created_at
-                ) VALUES (?, ?, ?, ?)
+                  request_id, native_conversation_id, native_session_id, native_home, created_at
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (request_id, native_conversation_id, native_session_id, now),
+                (request_id, native_conversation_id, native_session_id, native_home, now),
             )
             return native_conversation_id
 
@@ -3255,7 +3273,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         self._run_threads: Dict[str, Dict[str, Any]] = {}
         # A conversational repeat after the local wait budget is the same ask,
         # not a new turn. It remains here only while that ask is known pending.
-        self._pending_answer_requests: Dict[tuple[str, str], str] = {}
+        self._pending_answer_requests: Dict[tuple[str, str, str], str] = {}
         # The firings each synthetic session still owes an account for, in the
         # order they woke it. A session is named after the workflow, so every
         # firing of one watch lands in the same session, and more than one can
@@ -4092,20 +4110,43 @@ class OmnesisAdapter(BasePlatformAdapter):
             assert delivery is not None
             self._state.begin_answer_completion(delivery_id)
             try:
-                # The delivery is an operational wake. Corpus retrieval still
-                # authenticates as the installation's OAuth principal so the
-                # current grant and revocation state remain authoritative.
-                principal_token = self._principal_access_token()
-                if principal_token is None:
-                    raise McpProtocolError(
-                        "Omnesis corpus authorization needs repair. "
-                        "Run `omnesis connect hermes --refresh` on this machine."
-                    )
-                answer = self._mcp_call_tool(
-                    principal_token,
-                    "get_answer_status",
-                    {"taskId": delivery["taskId"]},
+                native_session_id = self._state.answer_origin_for_completion(
+                    delivery["nativeConversationId"], delivery["taskId"]
                 )
+                if native_session_id is None:
+                    raise ValueError("completion is not bound to a Hermes conversation")
+                route = self._completion_route(native_session_id, delivery["nativeConversationId"])
+                if route is None:
+                    raise RuntimeError("completion Hermes conversation is unavailable")
+                if route[0] == "omnesis":
+                    # Watch tasks belong to their firing, not the installation's
+                    # OAuth principal. The gateway checks this exact claimed
+                    # completion and current Watch authority before release;
+                    # the original short-lived firing token is not renewed.
+                    assert self._credentials is not None
+                    answer = _validate_answer_response(self._request_json(
+                        "GET",
+                        "/subscriptions/answer-completions/"
+                        + urllib.parse.quote(delivery["deliveryId"], safe=""),
+                        self._credentials.delivery_token,
+                    ))
+                    if (answer["taskId"] != delivery["taskId"]
+                            or answer["status"] not in {"released", "released_with_reductions", "denied"}):
+                        raise McpProtocolError("Omnesis completion task does not match its delivery")
+                else:
+                    # Ordinary conversation tasks retain their OAuth owner and
+                    # its current grant/revocation checks.
+                    principal_token = self._principal_access_token()
+                    if principal_token is None:
+                        raise McpProtocolError(
+                            "Omnesis corpus authorization needs repair. "
+                            "Run `omnesis connect hermes --refresh` on this machine."
+                        )
+                    answer = self._mcp_call_tool(
+                        principal_token,
+                        "get_answer_status",
+                        {"taskId": delivery["taskId"]},
+                    )
                 await self._send_answer_completion(
                     delivery["nativeConversationId"], delivery["taskId"], answer
                 )
@@ -4129,12 +4170,17 @@ class OmnesisAdapter(BasePlatformAdapter):
         )
         if native_session_id is None:
             raise ValueError("completion is not bound to a Hermes conversation")
-        route = self._completion_route(native_session_id)
+        route = self._completion_route(native_session_id, native_conversation_id)
         if route is None:
             raise RuntimeError("completion Hermes conversation is unavailable")
         source, chat_id, _chat_type, _thread_id, profile = route
         if source == "api_server":
-            await self._resume_api_session(native_session_id, profile, answer)
+            origin = self._state.connection.execute(
+                "SELECT native_home FROM integration_answer_origins WHERE native_conversation_id = ?",
+                (native_conversation_id,),
+            ).fetchone()
+            native_home = Path(origin[0]) if origin[0] is not None else _hermes_home()
+            await self._resume_api_session(native_session_id, profile, answer, native_home)
             return
         if source == "omnesis":
             runner = getattr(self, "gateway_runner", None)
@@ -4282,7 +4328,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         await adapter.handle_message(event)
 
     async def _resume_api_session(
-        self, native_session_id: str, profile: Optional[str], answer: Dict[str, Any]
+        self, native_session_id: str, profile: Optional[str], answer: Dict[str, Any], native_home: Path
     ) -> None:
         self._require_safe_completion_events()
         from gateway.wake import adapter_supports_push, deliver_wake
@@ -4309,13 +4355,13 @@ class OmnesisAdapter(BasePlatformAdapter):
         assert self._state is not None
         self._state.remember_api_completion(native_session_id, text)
         if profile not in (None, "", "default"):
-            await self._post_profile_api_completion(adapter, profile, native_session_id, text)
+            await self._post_profile_api_completion(adapter, profile, native_session_id, text, native_home)
         else:
             await deliver_wake(adapter, text=text, session_id=native_session_id)
 
     @staticmethod
     async def _post_profile_api_completion(
-        adapter: Any, profile: str, native_session_id: str, text: str
+        adapter: Any, profile: str, native_session_id: str, text: str, native_home: Path
     ) -> None:
         import aiohttp
         from gateway.wake import WAKE_TURN_TIMEOUT_SECONDS
@@ -4326,13 +4372,32 @@ class OmnesisAdapter(BasePlatformAdapter):
         if not callable(resolve_profile):
             raise RuntimeError("Hermes API profile routing is unavailable")
         selected = resolve_profile(SimpleNamespace(match_info={"profile": profile}))
+        def require_origin() -> None:
+            current_home = _native_hermes_home()
+            if current_home.resolve() != native_home.resolve():
+                raise RuntimeError("Hermes completion profile home changed")
+            state_db = current_home / "state.db"
+            if not state_db.is_file():
+                raise RuntimeError("Hermes completion profile session is unavailable")
+            connection = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=5)
+            try:
+                row = connection.execute(
+                    "SELECT source, profile_name FROM sessions WHERE id = ?", (native_session_id,)
+                ).fetchone()
+            finally:
+                connection.close()
+            if row != ("api_server", profile):
+                raise RuntimeError("Hermes completion profile session changed")
+
         if selected is None:
+            require_origin()
             key = getattr(adapter, "_api_key", None)
         elif selected == profile:
             from agent.secret_scope import get_secret
             from hermes_cli.auth import has_usable_secret
 
             with adapter._profile_scope(profile):
+                require_origin()
                 key = get_secret("API_SERVER_KEY", "")
             if not has_usable_secret(key, min_length=16):
                 raise RuntimeError("Hermes API profile credentials are unavailable")
@@ -4416,11 +4481,18 @@ class OmnesisAdapter(BasePlatformAdapter):
         )
         await self.handle_message(event)
 
-    @staticmethod
     def _completion_route(
-        native_session_id: str,
+        self, native_session_id: str, native_conversation_id: str,
     ) -> Optional[tuple[str, str, Optional[str], Optional[str], Optional[str]]]:
-        state_db = _hermes_home() / "state.db"
+        assert self._state is not None
+        origin = self._state.connection.execute(
+            "SELECT native_home FROM integration_answer_origins WHERE native_conversation_id = ?",
+            (native_conversation_id,),
+        ).fetchone()
+        if origin is None:
+            return None
+        native_home = Path(origin[0]) if origin[0] is not None else _hermes_home()
+        state_db = native_home / "state.db"
         if not state_db.exists():
             return None
         connection = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=5)
@@ -4449,6 +4521,9 @@ class OmnesisAdapter(BasePlatformAdapter):
         chat_type = row[2] if len(row) > 2 and isinstance(row[2], str) else None
         thread_id = row[3] if len(row) > 3 and isinstance(row[3], str) else None
         profile = row[4] if len(row) > 4 and isinstance(row[4], str) else None
+        if native_home.resolve() != _hermes_home().resolve() and profile in (None, "", "default"):
+            # A scoped database must never silently route into the root profile.
+            return None
         return source, chat_id, chat_type, thread_id, profile
 
     @staticmethod
@@ -4699,7 +4774,8 @@ class OmnesisAdapter(BasePlatformAdapter):
         # question as two different asks rather than one served from a cache.
         scheduled = identity[0] == "cron"
         carried = self._thread_for_ask(session_id, question) if scheduled else None
-        pending_key = (session_id, question)
+        native_home = str(_native_hermes_home())
+        pending_key = (native_home, session_id, question)
         request_id = self._pending_answer_requests.get(pending_key)
         if request_id is None:
             request_id = _ordinary_answer_request_id(
@@ -4717,7 +4793,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         answer_state = DurableState(self._state.path)
         try:
             native_conversation_id = answer_state.prepare_answer_origin(
-                request_id, session_id
+                request_id, session_id, native_home
             )
             common = {
                 "question": question,
@@ -5499,7 +5575,7 @@ class OmnesisAdapter(BasePlatformAdapter):
     ) -> Optional[tuple[str, str]]:
         if not isinstance(session_id, str) or not session_id:
             return None
-        state_db = _hermes_home() / "state.db"
+        state_db = _native_hermes_home() / "state.db"
         if not state_db.exists():
             return None
         try:

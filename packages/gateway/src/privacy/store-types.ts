@@ -238,7 +238,11 @@ export interface AppendAnswerAuditEventInput {
 }
 
 export type AnswerEgressEndpoint =
-  "/answer" | "/answer/tasks/:id" | "/mcp" | "/subscriptions/firings/:id/answer";
+  | "/answer"
+  | "/answer/tasks/:id"
+  | "/mcp"
+  | "/subscriptions/firings/:id/answer"
+  | "/subscriptions/answer-completions/:deliveryId";
 
 export interface RecordAnswerEgressInput {
   id: string;

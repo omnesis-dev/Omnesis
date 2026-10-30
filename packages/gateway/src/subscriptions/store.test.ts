@@ -5,10 +5,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { SCOPE_SUBSCRIPTIONS_ANSWER } from "@omnesis/types";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SCOPE_SUBSCRIPTIONS_ANSWER, SCOPE_SUBSCRIPTIONS_RECEIVE } from "@omnesis/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
-import { createToken } from "../data/repositories/TokenRepository.js";
+import { createToken, cleanupExpiredTokens } from "../data/repositories/TokenRepository.js";
 import { runSchemaSetup } from "../data/schema.js";
 import {
   claimDueCognitionRuns,
@@ -16,6 +16,7 @@ import {
   finalizeCognitionRun,
 } from "../brain/storage/run-queue.js";
 import { beginAnswerTask, completeAnswerTask } from "../privacy/store.js";
+import { policyRevision } from "../privacy/policy-store.js";
 import {
   authorizeSubscriptionDeliveryCommit,
   addExistenceDisclosure,
@@ -41,6 +42,7 @@ import {
   listSubscriptionApprovals,
   validateSubscriptionFiringAnswerAuthority,
 } from "./store-queries.js";
+import { finalizeSubscriptionCompletionEgress } from "./store-completion-egress.js";
 import { SubscriptionStorageCorruptionError } from "./store-codecs.js";
 import type { SubscriptionCompiledPlan } from "./store-codecs.js";
 import type { CreateSubscriptionMutation, ReviseSubscriptionMutation } from "./store-types.js";
@@ -75,7 +77,10 @@ describe("subscription store", () => {
     deviceId = createDevice(db, { name: "Fictional integration", kind: "cli" }).id;
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    db.close();
+  });
 
   it("keeps semantic existence categories from two watches sharing a workflow", () => {
     const health = JSON.stringify([
@@ -452,6 +457,154 @@ describe("subscription store", () => {
       },
     });
   }
+
+  describe("committed Watch answer completion egress", () => {
+    let directory: string;
+    afterEach(() => {
+      if (directory) rmSync(directory, { recursive: true, force: true });
+    });
+    function fixture() {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(600);
+      createAndApprove();
+      db.prepare("UPDATE devices SET kind = 'agent' WHERE id = ?").run(deviceId);
+      const original = issueFiringAuthority("sf_completion", "doc_completion");
+      expect(
+        authorizeSubscriptionDeliveryCommit(db, {
+          deliveryId: original.delivery.id,
+          claimId: original.delivery.claimId,
+          policyRevision: "policy-a",
+          authorizedAt: 475,
+        }).outcome,
+      ).toBe("authorized");
+      releaseFiringTask("task_completion", "sf_completion");
+      db.prepare(
+        "UPDATE answer_tasks SET completion_device_id = ?, completion_native_conversation_id = 'native-owned' WHERE id = 'task_completion'",
+      ).run(deviceId);
+      db.prepare(
+        `INSERT INTO answer_completion_deliveries
+        (id, task_id, integration_device_id, native_conversation_id, status, claim_id, claim_expires_at, created_at, updated_at)
+        VALUES ('acd_owned', 'task_completion', ?, 'native-owned', 'commit_authorized', 'claim_owned', 1200, 550, 550)`,
+      ).run(deviceId);
+      directory = mkdtempSync(join(tmpdir(), "completion-policy-"));
+      const path = join(directory, "policy.md"),
+        policy = "A fictional completion policy.";
+      writeFileSync(path, policy);
+      const revision = policyRevision(policy);
+      db.prepare("UPDATE subscription_revisions SET policy_revision = ?").run(revision);
+      db.prepare("UPDATE subscription_grants SET policy_revision = ?").run(revision);
+      db.prepare("UPDATE answer_tasks SET policy_revision = ?").run(revision);
+      const current = createToken(
+        db,
+        deviceId as Parameters<typeof createToken>[1],
+        [SCOPE_SUBSCRIPTIONS_RECEIVE],
+        "current-completion",
+      );
+      const input = {
+        tokenId: current.id,
+        deviceId,
+        deliveryId: "acd_owned",
+        egressId: "egress_completion",
+        policyGuard: { path, expectedRevision: revision },
+      };
+      return { input, original, clock };
+    }
+    it("returns canonical released content after the asking token and its authority were expired and purged", () => {
+      const { input, original, clock } = fixture();
+      clock.mockReturnValue(2_000_000);
+      db.prepare("UPDATE subscriptions SET expires_at = 3000000").run();
+      db.prepare("UPDATE subscription_grants SET expires_at = 3000000").run();
+      db.prepare("UPDATE answer_workflows SET expires_at = 3000000").run();
+      db.prepare("UPDATE answer_completion_deliveries SET claim_expires_at = 2001000").run();
+      cleanupExpiredTokens(db);
+      expect(
+        db.prepare("SELECT id FROM tokens WHERE id = ?").get(original.token.id),
+      ).toBeUndefined();
+      expect(
+        db.prepare("SELECT id FROM subscription_firing_answer_authorities").all(),
+      ).toHaveLength(0);
+      const before = db.prepare("SELECT COUNT(*) AS count FROM answer_tasks").get();
+      const result = finalizeSubscriptionCompletionEgress(db, input);
+      expect(result.outcome).toBe("recorded");
+      if (result.outcome !== "recorded") throw new Error("Expected completion");
+      expect(JSON.parse(result.egress.responseJson)).toMatchObject({
+        taskId: "task_completion",
+        status: "released",
+        answer: "A wholly fictional Northstar record matched.",
+      });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM answer_tasks").get()).toEqual(before);
+      expect(
+        db.prepare("SELECT id FROM subscription_firing_answer_authorities").all(),
+      ).toHaveLength(0);
+    });
+    it.each([
+      "UPDATE answer_completion_deliveries SET status = 'claimed'",
+      "UPDATE answer_completion_deliveries SET claim_expires_at = 600",
+      "UPDATE answer_completion_deliveries SET claim_id = NULL",
+      "UPDATE answer_completion_deliveries SET claim_expires_at = NULL",
+      "UPDATE answer_tasks SET status = 'approval_required'",
+      "UPDATE answer_tasks SET subscription_firing_id = NULL",
+      "UPDATE answer_tasks SET completion_native_conversation_id = 'different'",
+      "UPDATE answer_tasks SET policy_revision = 'different'",
+      "UPDATE subscription_firings SET status = 'blocked'",
+      "UPDATE subscriptions SET status = 'revoked'",
+      "UPDATE subscriptions SET expires_at = 600",
+      "UPDATE subscription_grants SET revoked_at = 599",
+      "UPDATE subscription_grants SET expires_at = 600",
+      "UPDATE answer_workflows SET status = 'closed'",
+      "UPDATE answer_workflows SET expires_at = 600",
+      "UPDATE devices SET revoked_at = 599",
+      "UPDATE tokens SET expires_at = 600",
+      "UPDATE tokens SET scopes = '[]'",
+      "DELETE FROM tokens",
+      "UPDATE subscription_firings SET evidence_count = 2",
+      "UPDATE subscription_revisions SET policy_revision = 'different'",
+      "UPDATE subscription_grants SET policy_revision = 'different'",
+    ])("rejects changed authority before any disclosure: %s", (mutation) => {
+      const { input } = fixture();
+      db.exec(mutation);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      expect(db.prepare("SELECT id FROM answer_egress_events").all()).toHaveLength(0);
+    });
+    it("does not treat a completion identifier as a bearer or reuse a cached disclosure after revocation", () => {
+      const { input } = fixture();
+      expect(
+        finalizeSubscriptionCompletionEgress(db, { ...input, deviceId: "another-device" }),
+      ).toEqual({ outcome: "unavailable" });
+      expect(
+        finalizeSubscriptionCompletionEgress(db, { ...input, deliveryId: "another-delivery" }),
+      ).toEqual({ outcome: "unavailable" });
+      expect(finalizeSubscriptionCompletionEgress(db, input).outcome).toBe("recorded");
+      db.prepare("UPDATE subscription_grants SET revoked_at = 600").run();
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+    });
+    it("rejects independently valid but inconsistent workflow and device references", () => {
+      const { input } = fixture();
+      beginAnswerTask(db, {
+        ownerId: `device:${deviceId}`,
+        clientRequestId: "unrelated-request",
+        question: "Other fictional ask",
+        ids: { workflowId: "wf_other", conversationId: "conversation_other", taskId: "task_other" },
+        now: 600,
+        workflowExpiresAt: 10000,
+      });
+      db.prepare("UPDATE subscription_firings SET workflow_id = 'wf_other'").run();
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      db.prepare("UPDATE subscription_firings SET workflow_id = 'wf_northstar'").run();
+      const other = createDevice(db, { name: "Another fictional agent", kind: "agent" });
+      db.prepare("UPDATE subscriptions SET integration_device_id = ?").run(other.id);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      expect(db.prepare("SELECT id FROM answer_egress_events").all()).toHaveLength(0);
+    });
+
+    it("checks policy and clock at writer execution", () => {
+      const { input, clock } = fixture();
+      writeFileSync(input.policyGuard.path, "Changed while waiting for writer");
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+      writeFileSync(input.policyGuard.path, "A fictional completion policy.");
+      clock.mockReturnValue(1200);
+      expect(finalizeSubscriptionCompletionEgress(db, input)).toEqual({ outcome: "unavailable" });
+    });
+  });
 
   it("creates an immutable pending revision and safely replays the same request", () => {
     const first = createSubscription(db, createInput());

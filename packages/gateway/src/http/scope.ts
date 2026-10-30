@@ -37,6 +37,7 @@ import {
   SCOPE_PUSH_CLAIM,
   SCOPE_SUBSCRIPTIONS_MANAGE,
   SCOPE_SUBSCRIPTIONS_ANSWER,
+  SCOPE_SUBSCRIPTIONS_RECEIVE,
   SCOPE_SUBSCRIPTIONS_OUTCOME,
   SCOPE_WRITE_ALL,
   trySourceId,
@@ -65,6 +66,7 @@ export type AuthPolicy =
   | "write-any"
   | "subscriptions-manage"
   | "subscriptions-answer"
+  | "subscriptions-receive"
   | "subscriptions-outcome"
   | "push-claim"
   | "device-self"
@@ -288,6 +290,18 @@ function subscriptionsManage(): GuardMW {
   }, "subscriptions-manage");
 }
 
+/** Operational receipt of a completion; the handler binds its exact committed delivery. */
+function subscriptionsReceive(): GuardMW {
+  return tag(async (c, next) => {
+    const auth = getAuth(c);
+    if (!auth) return unauth(c);
+    if (!scopeSatisfies(auth.scopes, SCOPE_SUBSCRIPTIONS_RECEIVE)) {
+      return forbidden(c, "subscriptions:receive scope required");
+    }
+    await next();
+  }, "subscriptions-receive");
+}
+
 /** One firing's short-lived, privacy-reviewed Answer authority. */
 function subscriptionsAnswer(): GuardMW {
   return tag(async (c, next) => {
@@ -382,6 +396,7 @@ export const scope = {
   answer,
   subscriptionsManage,
   subscriptionsAnswer,
+  subscriptionsReceive,
   subscriptionsOutcome,
   pushClaim,
   deviceSelf,

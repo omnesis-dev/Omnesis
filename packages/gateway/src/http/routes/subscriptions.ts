@@ -425,6 +425,28 @@ export function mountSubscriptionRoutes(app: RouteApp, deps: SubscriptionRoutesD
     },
   );
 
+  app.get(
+    "/subscriptions/answer-completions/:deliveryId",
+    requireFeature,
+    noStore,
+    scope.subscriptionsReceive(),
+    async (c) => {
+      try {
+        const result = await requireService().finalizeCompletionEgress(
+          caller(c.get("auth")),
+          c.req.param("deliveryId"),
+        );
+        return exactJsonResponse(result.responseJson);
+      } catch (err) {
+        try {
+          return mapError(err);
+        } catch (mapped) {
+          throw mapAnswerError(mapped);
+        }
+      }
+    },
+  );
+
   app.post(
     "/subscriptions/firings/:id/answer",
     requireFeature,

@@ -497,6 +497,16 @@ export interface UseSubscriptionFiringAnswerAuthorityMutation {
   consume?: boolean;
 }
 
+export interface FinalizeSubscriptionCompletionEgressMutation {
+  tokenId: string;
+  deviceId: string;
+  deliveryId: string;
+  policyGuard: PrivacyPolicyRevisionGuard;
+  egressId: string;
+}
+export type FinalizeSubscriptionCompletionEgressResult =
+  { outcome: "recorded"; egress: RecordedAnswerEgress } | { outcome: "unavailable" };
+
 export interface FinalizeSubscriptionFiringAnswerEgressMutation {
   tokenId: string;
   firingId: string;

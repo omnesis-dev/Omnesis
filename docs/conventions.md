@@ -977,8 +977,17 @@ or levels by OAuth client id or name. Only an explicit replace-connection select
 credential on an existing grant, and activating that credential revokes the
 grant's other credentials. Operational device tokens do
 not grant MCP reads. A paired OpenClaw or Hermes device may receive an
-identifier-only completion wake, but retrieving the result still requires the
-integration's OAuth principal credential and current Access Grant.
+identifier-only completion wake. Retrieving an ordinary chat answer still
+requires the integration's OAuth principal credential and current Access Grant.
+A Watch firing answer instead belongs to the approved subscription. During an
+active completion commit, `GET /subscriptions/answer-completions/:deliveryId`
+uses the installation's current `subscriptions:receive` credential to retrieve
+only that delivery's exact terminal task. The writer revalidates the device,
+credential, commit lease, task/firing binding, subscription revision, grant,
+workflow, evidence and privacy policy before recording egress. This does not
+renew the firing's short-lived asking token or authorize another question;
+approval can outlast that token while the subscription's actual authority must
+still be active. Neither transport falls back to the other's credentials.
 
 Do not add a stdio bridge, static bearer-token profile, separate capability
 endpoint, or client-side copy of the tool inventory. Supported clients connect

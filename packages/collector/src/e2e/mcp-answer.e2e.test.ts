@@ -11,6 +11,15 @@ import { promisify } from "node:util";
 
 import { writeIntegrationCredentials } from "@omnesis/agent-integration";
 import { registerOpenClawIntegration } from "@omnesis/agent-integration/openclaw";
+import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
+import { cleanupExpiredTokens } from "@omnesis/gateway/src/data/repositories/TokenRepository.js";
+import { WatchDefinitionStore } from "@omnesis/gateway/src/watch/definitions.js";
+import { openEncryptedSqlite } from "@omnesis/gateway/src/sqlite-encryption.js";
+import {
+  createSubscription,
+  fireSubscription,
+  resolveSubscriptionApproval,
+} from "@omnesis/gateway/src/subscriptions/store-mutations.js";
 import { makeCommand, websocketAuthProtocol } from "@omnesis/core";
 import Database from "better-sqlite3";
 import WebSocket from "ws";
@@ -755,6 +764,341 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
       await closeAuthorized(enrolled.authorization);
     }
   }, 120_000);
+
+  test("resumes a held Watch answer after restart and expiration of its original firing credential", async () => {
+    const enrolled = await pairedIntegrationAuthorization("openclaw", "Watch approval restart");
+    const stateDir = integrationHome("openclaw", enrolled);
+    const suffix = randomUUID();
+    const subscriptionId = `sub_${suffix}`;
+    const firingId = `sfiring_${suffix}`;
+    const runs: Array<{
+      sessionKey: string;
+      message: string;
+      deliver: boolean;
+      idempotencyKey: string;
+    }> = [];
+    const startPlugin = async () => {
+      const host = createFakeOpenClawHost({ runId: "fictional-watch-run" });
+      registerOpenClawIntegration({
+        ...host.api,
+        runtime: {
+          ...host.api.runtime,
+          subagent: {
+            ...host.api.runtime.subagent,
+            // Only the external host is substituted. The production plugin,
+            // firing HTTP authority and completion WebSocket remain real.
+            run: async (input: (typeof runs)[number]) => {
+              runs.push(input);
+              return { runId: `fictional-watch-run-${runs.length}` };
+            },
+            waitForRun: undefined,
+          },
+        },
+      } as never);
+      const service = host.services.find((candidate) => candidate.id === "omnesis-integration");
+      const registered = host.tools.find(
+        (tool) => tool.options.name === "omnesis_subscription_answer",
+      );
+      if (!service || !registered) throw new Error("The watch tool did not register.");
+      await service.start({ stateDir, logger: host.logger });
+      return { service, registered };
+    };
+    let running: Awaited<ReturnType<typeof startPlugin>> | undefined;
+    try {
+      // Seed only the synthetic condition's approved firing while the isolated
+      // gateway is stopped. Delivery and answering then use the real gateway.
+      await harness.restartGateway({
+        gatewayMode: "experimental",
+        whileStopped: () => {
+          const db = new Database(harness.getDbPath());
+          db.pragma("foreign_keys = ON");
+          try {
+            const now = Date.now();
+            const watchDb = openEncryptedSqlite(join(harness.getConfigDir(), "watch.db"));
+            try {
+              new WatchDefinitionStore(watchDb).put({
+                id: `wat_${suffix}`,
+                name: "fictional-membership-notice",
+                status: "active",
+                addedAt: new Date(now).toISOString(),
+                fromSeq: Number.MAX_SAFE_INTEGER,
+                note: null,
+                compileRunId: null,
+                requestKey: null,
+                referenceDigest: null,
+                // The test records one firing explicitly; do not replay earlier
+                // corpus events into additional wakes during gateway restarts.
+                dsl: {
+                  watch: {
+                    name: "fictional-membership-notice",
+                    nl_query: "When a fictional membership notice arrives",
+                    firing_policy: "stays_active",
+                    nodes: [
+                      {
+                        id: "mail",
+                        type: "source.document_event",
+                        filter: { source: "gmail", event: ["created"], documentType: "email" },
+                        output_map: { doc_id: "$e.docId" },
+                      },
+                    ],
+                    sink: { input: "mail", output_map: {} },
+                    delivery: {
+                      kind: "agent-wake",
+                      integration: "openclaw",
+                      instruction: "Retrieve the membership reference.",
+                    },
+                  },
+                },
+              });
+            } finally {
+              watchDb.close();
+            }
+            const policy = db
+              .prepare<[string], { revision: string }>(
+                "SELECT revision FROM privacy_policy_state WHERE family_id = ?",
+              )
+              .get(DEFAULT_PRIVACY_POLICY_FAMILY_ID);
+            if (!policy) throw new Error("Default privacy policy was not initialized.");
+            const sourceId = harness.getSourceIds().find((id) => id.startsWith("gmail:"));
+            if (!sourceId) throw new Error("The synthetic mail source was not initialized.");
+            const documentId = `doc_${suffix}`;
+            db.prepare(
+              `INSERT INTO documents
+              (id, provider_id, source_id, external_id, title, content, content_hash,
+               source_created_at, source_updated_at, ingested_at, updated_at)
+              VALUES (?, 'gmail', ?, ?, 'Fictional membership notice',
+                      'The Northstar Club member reference is NS-4827-ALPHA.', ?, ?, ?, ?, ?)`,
+            ).run(
+              documentId,
+              sourceId,
+              suffix,
+              suffix,
+              ...Array(4).fill(new Date(now).toISOString()),
+            );
+            expect(
+              createSubscription(db, {
+                id: subscriptionId,
+                approvalId: `sapp_${suffix}`,
+                workflowId: `wf_${suffix}`,
+                integrationDeviceId: enrolled.paired.device.id,
+                ownerId: `device:${enrolled.paired.device.id}`,
+                clientRequestId: `request_${suffix}`,
+                requestFingerprint: `fingerprint_${suffix}`,
+                condition: {
+                  kind: "natural-language",
+                  description: "when a fictional membership notice arrives",
+                },
+                reaction: {
+                  kind: "agent-workflow",
+                  instruction: "Retrieve the membership reference.",
+                },
+                interpretation: {
+                  summary: "A fictional membership notice arrived",
+                  pushDetail: "existence",
+                },
+                compiledPlan: {
+                  version: 5,
+                  predicate: {
+                    kind: "watch-v2",
+                    watchId: `wat_${suffix}`,
+                    watchName: "fictional-membership-notice",
+                    evidence: "documents",
+                    authoredBy: "integration",
+                  },
+                },
+                compilerVersion: "synthetic-e2e",
+                privacyCategories: ["documents"],
+                policyRevision: policy.revision,
+                createdAt: now,
+                expiresAt: now + 86_400_000,
+                approvalExpiresAt: now + 3_600_000,
+                createWorkflow: true,
+                workflowName: "Fictional membership Watch",
+                workflowPurpose: "Read the fictional membership notice.",
+                workflowExpiresAt: now + 86_400_000,
+              }).outcome,
+            ).toBe("created");
+            expect(
+              resolveSubscriptionApproval(db, {
+                approvalId: `sapp_${suffix}`,
+                decision: "approve",
+                resolvedBy: { kind: "device", deviceId: enrolled.paired.device.id, tokenId: null },
+                policyRevision: policy.revision,
+                grantId: `sgrant_${suffix}`,
+                grantExpiresAt: now + 86_400_000,
+                resolvedAt: now,
+              }).outcome,
+            ).toBe("resolved");
+            expect(
+              fireSubscription(db, {
+                firingId,
+                subscriptionId,
+                revision: 1,
+                indexEventKey: `event_${suffix}`,
+                evidenceDocumentIds: [documentId],
+                policyRevision: policy.revision,
+                firedAt: now,
+              }).outcome,
+            ).toBe("fired");
+          } finally {
+            db.close();
+          }
+        },
+      });
+      running = await startPlugin();
+      await expect.poll(() => runs.length, { timeout: 30_000 }).toBe(1);
+      const sessionKey = runs[0]!.sessionKey;
+      const tool = running.registered.factory({ sessionKey });
+      if (!tool) throw new Error("The watch answer tool was unavailable.");
+      const held = await tool.execute(
+        "fictional-held-watch-call",
+        {
+          firingId,
+          question: "What is the Northstar Club member reference?",
+          timeoutMs: 60_000,
+        },
+        new AbortController().signal,
+      );
+      expect(held.details).toMatchObject({ ok: true, response: { status: "approval_required" } });
+      expect(JSON.stringify(held)).not.toContain("NS-4827-ALPHA");
+      const { approvalId, taskId } = held.details.response as {
+        approvalId: string;
+        taskId: string;
+      };
+      // This is the ownership distinction that an ordinary-chat-only test misses.
+      const wrongOwner = await enrolled.authorization.client.callTool({
+        name: "get_answer_status",
+        arguments: { taskId },
+      });
+      expect(wrongOwner.isError).toBe(true);
+      await running.service.stop();
+      running = undefined;
+      await harness.restartGateway(() => {
+        const db = new Database(harness.getDbPath());
+        db.pragma("foreign_keys = ON");
+        try {
+          const expired = db
+            .prepare(
+              `UPDATE tokens SET expires_at = 0
+            WHERE id IN (SELECT token_id FROM subscription_firing_answer_authorities WHERE firing_id = ?)`,
+            )
+            .run(firingId);
+          expect(expired.changes).toBeGreaterThan(0);
+          cleanupExpiredTokens(db);
+          expect(
+            db
+              .prepare(
+                "SELECT COUNT(*) AS count FROM subscription_firing_answer_authorities WHERE firing_id = ?",
+              )
+              .get(firingId),
+          ).toEqual({ count: 0 });
+        } finally {
+          db.close();
+        }
+      });
+      running = await startPlugin();
+      const grantDb = new Database(harness.getDbPath(), { readonly: true });
+      try {
+        expect(
+          grantDb
+            .prepare("SELECT revoked_at FROM subscription_grants WHERE subscription_id = ?")
+            .get(subscriptionId),
+        ).toEqual({ revoked_at: null });
+      } finally {
+        grantDb.close();
+      }
+      await harness.gatewayJson(
+        `/admin/privacy/approvals/${encodeURIComponent(approvalId)}/approve`,
+        { method: "POST" },
+      );
+      const completionSnapshot = () => {
+        const db = new Database(harness.getDbPath(), { readonly: true });
+        try {
+          return {
+            runs: runs.length,
+            completion: db
+              .prepare(
+                `SELECT c.status, c.last_error, t.policy_revision,
+              r.policy_revision AS subscription_policy, d.status AS firing_delivery_status,
+              f.status AS firing_status
+              FROM answer_completion_deliveries c JOIN answer_tasks t ON t.id = c.task_id
+              JOIN subscription_firings f ON f.id = t.subscription_firing_id
+              JOIN subscription_revisions r ON r.subscription_id = f.subscription_id AND r.revision = f.revision
+              JOIN subscription_deliveries d ON d.firing_id = f.id WHERE t.id = ?`,
+              )
+              .get(taskId),
+          };
+        } finally {
+          db.close();
+        }
+      };
+      try {
+        await expect
+          .poll(completionSnapshot, { timeout: 30_000 })
+          .toMatchObject({ runs: 2, completion: { status: "delivered", last_error: null } });
+      } catch (error) {
+        const inbox = new Database(join(stateDir, "omnesis", "integration.sqlite"), {
+          readonly: true,
+        });
+        try {
+          const localCompletion = inbox
+            .prepare(
+              "SELECT state, last_error, start_attempts FROM integration_answer_completion_inbox",
+            )
+            .all();
+          const gatewayErrors = readFileSync(harness.getGatewayLogPath(), "utf8")
+            .split("\n")
+            .filter((line) => line.includes("answer-completions") || line.includes("Error:"));
+          throw new Error(
+            `Watch completion diagnostics: ${JSON.stringify({ ...completionSnapshot(), localCompletion, gatewayErrors })}`,
+            { cause: error },
+          );
+        } finally {
+          inbox.close();
+        }
+      }
+      expect(runs[1]).toMatchObject({
+        sessionKey,
+        deliver: false,
+        idempotencyKey: expect.stringMatching(/^answer-completion:/),
+      });
+      expect(runs[1]!.message).toContain("NS-4827-ALPHA");
+      await expect
+        .poll(
+          () => {
+            const db = new Database(harness.getDbPath(), { readonly: true });
+            try {
+              return db
+                .prepare("SELECT status FROM answer_completion_deliveries WHERE task_id = ?")
+                .get(taskId);
+            } finally {
+              db.close();
+            }
+          },
+          { timeout: 10_000 },
+        )
+        .toEqual({ status: "delivered" });
+      const db = new Database(harness.getDbPath(), { readonly: true });
+      try {
+        expect(
+          db
+            .prepare("SELECT endpoint FROM answer_egress_events WHERE task_id = ? AND endpoint = ?")
+            .all(taskId, "/subscriptions/answer-completions/:deliveryId"),
+        ).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      await running?.service.stop();
+      await fetch(`${harness.gatewayUrl}/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${enrolled.paired.credentials.management.token}` },
+      }).catch(() => undefined);
+      await harness.restartGateway({ gatewayMode: "stable" });
+      rmSync(stateDir, { recursive: true, force: true });
+      await closeAuthorized(enrolled.authorization);
+    }
+  }, 180_000);
 
   test("runs the production OpenClaw and Hermes plugins through OAuth-protected /mcp", async () => {
     const openClaw = await pairedIntegrationAuthorization("openclaw");

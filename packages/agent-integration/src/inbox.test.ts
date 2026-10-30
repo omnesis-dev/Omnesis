@@ -8,7 +8,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { AmbiguousDeliveryError, DeliveryConflictError, DurableIntegrationInbox } from "./inbox.js";
+import {
+  AnswerCompletionNotStartedError,
+  AmbiguousDeliveryError,
+  DeliveryConflictError,
+  DurableIntegrationInbox,
+} from "./inbox.js";
 import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
@@ -505,6 +510,189 @@ describe("DurableIntegrationInbox", () => {
     ).resolves.toMatchObject({ status: "accepted", duplicate: true });
     expect(starts).toBe(1);
     reopened.close();
+  });
+
+  test("pre-admission failures do not spend the native ambiguity budget", async () => {
+    const path = tempDb();
+    const inbox = new DurableIntegrationInbox(path);
+    const wake = answerCompletion();
+    inbox.prepareAnswerCompletion(wake);
+    const inspect = new DatabaseSync(path);
+    try {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(
+          inbox.commitAnswerCompletion(wake.deliveryId, () => {
+            throw new AnswerCompletionNotStartedError(new Error("gateway unavailable"));
+          }),
+        ).rejects.toThrow("gateway unavailable");
+        expect(
+          inspect
+            .prepare("SELECT state, start_attempts FROM integration_answer_completion_inbox")
+            .get(),
+        ).toMatchObject({ state: "prepared", start_attempts: 0 });
+      }
+      let nativeStarts = 0;
+      await inbox.commitAnswerCompletion(wake.deliveryId, () => {
+        nativeStarts += 1;
+      });
+      expect(nativeStarts).toBe(1);
+      expect(
+        inspect
+          .prepare("SELECT state, start_attempts FROM integration_answer_completion_inbox")
+          .get(),
+      ).toMatchObject({ state: "accepted", start_attempts: 1 });
+    } finally {
+      inspect.close();
+      inbox.close();
+    }
+  });
+
+  test("a pre-admission failure preserves earlier ambiguous starts", async () => {
+    const path = tempDb();
+    const inbox = new DurableIntegrationInbox(path);
+    const wake = answerCompletion();
+    inbox.prepareAnswerCompletion(wake);
+    await expect(
+      inbox.commitAnswerCompletion(wake.deliveryId, () => {
+        throw new Error("native acknowledgement lost");
+      }),
+    ).rejects.toThrow("native acknowledgement lost");
+    const inspect = new DatabaseSync(path);
+    try {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(
+          inbox.commitAnswerCompletion(wake.deliveryId, () => {
+            throw new AnswerCompletionNotStartedError(new Error("fetch refused"));
+          }),
+        ).rejects.toThrow("fetch refused");
+        expect(
+          inspect
+            .prepare("SELECT state, start_attempts FROM integration_answer_completion_inbox")
+            .get(),
+        ).toMatchObject({ state: "starting", start_attempts: 1 });
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await expect(
+          inbox.commitAnswerCompletion(wake.deliveryId, () => {
+            throw new Error("native acknowledgement lost");
+          }),
+        ).rejects.toThrow("native acknowledgement lost");
+      }
+      await expect(inbox.commitAnswerCompletion(wake.deliveryId, () => {})).rejects.toBeInstanceOf(
+        AmbiguousDeliveryError,
+      );
+    } finally {
+      inspect.close();
+      inbox.close();
+    }
+  });
+
+  test("a late pre-admission failure cannot refund a concurrent accepted attempt", async () => {
+    const path = tempDb();
+    const first = new DurableIntegrationInbox(path);
+    const second = new DurableIntegrationInbox(path);
+    const wake = answerCompletion();
+    first.prepareAnswerCompletion(wake);
+    let refuse!: (error: Error) => void;
+    const pending = first.commitAnswerCompletion(
+      wake.deliveryId,
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const rejected = expect(pending).rejects.toThrow("fetch refused");
+    await second.commitAnswerCompletion(wake.deliveryId, () => {});
+    refuse(new AnswerCompletionNotStartedError(new Error("fetch refused")));
+    await rejected;
+    const inspect = new DatabaseSync(path);
+    try {
+      expect(
+        inspect
+          .prepare("SELECT state, start_attempts FROM integration_answer_completion_inbox")
+          .get(),
+      ).toMatchObject({ state: "accepted", start_attempts: 2 });
+    } finally {
+      inspect.close();
+      first.close();
+      second.close();
+    }
+  });
+
+  test("adds a claim generation without renewing a legacy ambiguity budget", async () => {
+    const path = tempDb();
+    const wake = answerCompletion();
+    const initial = new DurableIntegrationInbox(path);
+    initial.prepareAnswerCompletion(wake);
+    initial.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("ALTER TABLE integration_answer_completion_inbox DROP COLUMN start_generation");
+    legacy.exec(
+      "UPDATE integration_answer_completion_inbox SET state = 'starting', start_attempts = 2",
+    );
+    legacy.close();
+    const reopened = new DurableIntegrationInbox(path);
+    try {
+      await expect(
+        reopened.commitAnswerCompletion(wake.deliveryId, () => {
+          throw new AnswerCompletionNotStartedError(new Error("fetch failed"));
+        }),
+      ).rejects.toThrow("fetch failed");
+      const inspect = new DatabaseSync(path);
+      try {
+        expect(
+          inspect
+            .prepare(
+              "SELECT state, start_attempts, start_generation FROM integration_answer_completion_inbox",
+            )
+            .get(),
+        ).toMatchObject({ state: "starting", start_attempts: 2, start_generation: 1 });
+      } finally {
+        inspect.close();
+      }
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("a reused attempt count cannot let an older refund cross a later claim", async () => {
+    const path = tempDb();
+    const first = new DurableIntegrationInbox(path);
+    const second = new DurableIntegrationInbox(path);
+    const wake = answerCompletion();
+    first.prepareAnswerCompletion(wake);
+    let refuse!: (error: Error) => void;
+    const pending = first.commitAnswerCompletion(
+      wake.deliveryId,
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const rejected = expect(pending).rejects.toThrow("old fetch failed");
+    await expect(
+      second.commitAnswerCompletion(wake.deliveryId, () => {
+        throw new AnswerCompletionNotStartedError(new Error("new fetch failed"));
+      }),
+    ).rejects.toThrow("new fetch failed");
+    // The second claim refunded its budget: the count is again one, but the
+    // generation must fence the first claim's now-stale refund.
+    refuse(new AnswerCompletionNotStartedError(new Error("old fetch failed")));
+    await rejected;
+    const inspect = new DatabaseSync(path);
+    try {
+      expect(
+        inspect
+          .prepare(
+            "SELECT state, start_attempts, start_generation FROM integration_answer_completion_inbox",
+          )
+          .get(),
+      ).toMatchObject({ state: "starting", start_attempts: 1, start_generation: 2 });
+    } finally {
+      inspect.close();
+      first.close();
+      second.close();
+    }
   });
 
   test("posts an answer again at a harness that never said whether it landed", async () => {

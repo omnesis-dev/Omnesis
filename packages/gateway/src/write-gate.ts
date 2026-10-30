@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { finalizeSubscriptionCompletionEgress } from "./subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "./realtime/live-voice-usage.js";
 import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "./brain/storage/morning-brief-items.js";
@@ -435,7 +436,9 @@ import type {
   UseSubscriptionFiringAnswerAuthorityMutation,
   ValidateSubscriptionFiringAnswerAuthorityResult,
   FinalizeSubscriptionFiringAnswerEgressMutation,
+  FinalizeSubscriptionCompletionEgressMutation,
   FinalizeSubscriptionFiringAnswerEgressMutationResult,
+  FinalizeSubscriptionCompletionEgressResult,
 } from "./subscriptions/store-types.js";
 import {
   zeroPeopleCountsForLosers,
@@ -1931,6 +1934,9 @@ export interface WriteGate extends KnowledgeWriteGate {
   useSubscriptionFiringAnswerAuthority(
     input: UseSubscriptionFiringAnswerAuthorityMutation,
   ): Promise<ValidateSubscriptionFiringAnswerAuthorityResult>;
+  finalizeSubscriptionCompletionEgress(
+    input: FinalizeSubscriptionCompletionEgressMutation,
+  ): Promise<FinalizeSubscriptionCompletionEgressResult>;
   finalizeSubscriptionFiringAnswerEgress(
     input: FinalizeSubscriptionFiringAnswerEgressMutation,
   ): Promise<FinalizeSubscriptionFiringAnswerEgressMutationResult>;
@@ -2774,6 +2780,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     recordSubscriptionFiringOutcome: (input) => call("subscriptions.outcomeRecord", [input]),
     useSubscriptionFiringAnswerAuthority: (input) =>
       call("subscriptions.answerAuthorityUse", [input]),
+    finalizeSubscriptionCompletionEgress: (input) =>
+      call("subscriptions.completionEgressFinalize", [input]),
     finalizeSubscriptionFiringAnswerEgress: (input) =>
       call("subscriptions.answerEgressFinalize", [input]),
     expireSubscriptions: (now) => call("subscriptions.expire", [now]),
@@ -3471,6 +3479,8 @@ export function directWriteGate(db: Db): WriteGate {
     recordSubscriptionFiringOutcome: async (input) => recordSubscriptionFiringOutcome(db, input),
     useSubscriptionFiringAnswerAuthority: async (input) =>
       useSubscriptionFiringAnswerAuthority(db, input),
+    finalizeSubscriptionCompletionEgress: async (input) =>
+      finalizeSubscriptionCompletionEgress(db, input),
     finalizeSubscriptionFiringAnswerEgress: async (input) =>
       finalizeSubscriptionFiringAnswerEgress(db, input),
     expireSubscriptions: async (now) => expireSubscriptions(db, now),

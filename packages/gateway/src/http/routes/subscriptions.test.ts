@@ -11,6 +11,7 @@ import {
   SCOPE_ADMIN,
   SCOPE_ANSWER,
   SCOPE_SUBSCRIPTIONS_ANSWER,
+  SCOPE_SUBSCRIPTIONS_RECEIVE,
   SCOPE_SUBSCRIPTIONS_OUTCOME,
   SCOPE_SUBSCRIPTIONS_MANAGE,
   type DeviceId,
@@ -205,6 +206,7 @@ describe("subscription routes", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     db.close();
     rmSync(dir, { recursive: true, force: true });
     if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
@@ -1202,6 +1204,40 @@ describe("subscription routes", () => {
       answer,
     };
   }
+
+  it("serves only a committed Watch completion through the current receiving credential", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    const { app: askingApp, endpoint } = await committedFiringAnswerApp("completion_route");
+    const answerResponse = await askingApp.request(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: "Fictional question" }),
+    });
+    expect(answerResponse.status).toBe(200);
+    const expected = await answerResponse.text();
+    const { taskId } = JSON.parse(expected) as { taskId: string };
+    const policy = await new PrivacyPolicyStore(dir).get();
+    db.prepare(
+      "UPDATE answer_tasks SET completion_device_id = ?, completion_native_conversation_id = 'native-owned', policy_revision = ? WHERE id = ?",
+    ).run(deviceId, policy.revision, taskId);
+    db.prepare(
+      `INSERT INTO answer_completion_deliveries
+      (id, task_id, integration_device_id, native_conversation_id, status, claim_id, claim_expires_at, created_at, updated_at)
+      VALUES ('acd_route', ?, ?, 'native-owned', 'commit_authorized', 'claim-route', 2000, 1000, 1000)`,
+    ).run(taskId, deviceId);
+    const token = createToken(db, deviceId, [SCOPE_SUBSCRIPTIONS_RECEIVE], "completion-reader");
+    const path = "/subscriptions/answer-completions/acd_route";
+    expect(
+      (await buildApp([SCOPE_SUBSCRIPTIONS_ANSWER], { tokenId: token.id }).request(path)).status,
+    ).toBe(403);
+    const app = buildApp([SCOPE_SUBSCRIPTIONS_RECEIVE], { tokenId: token.id });
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(await response.text()).toBe(expected);
+    db.prepare("DELETE FROM tokens WHERE id = ?").run(token.id);
+    expect((await app.request(path)).status).toBe(403);
+  });
 
   it("records what a woken run reports, and refuses a token bound to no firing", async () => {
     const { app: answerApp } = await committedFiringAnswerApp("outcome_route");

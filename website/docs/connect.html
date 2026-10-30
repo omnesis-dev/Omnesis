@@ -1126,6 +1126,13 @@
           ingestion; the agent's replies remain part of the indexed conversation.
         </p>
         <p>
+          An answer requested by a Watch can also wait for approval and resume after a restart.
+          Approval may arrive after the firing's short-lived asking credential expires: the plugin
+          retrieves only that completed answer using its current delivery connection. The Watch's
+          subscription, permission and privacy policy must still be valid; revoking them prevents
+          the answer from being returned. This does not renew permission to ask another question.
+        </p>
+        <p>
           A pending OpenClaw answer saved without its originating session cannot resume
           automatically. Ask the question again in that conversation to create a new request.
         </p>
