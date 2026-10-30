@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import { createDatabase, upsertDocuments, listDocuments } from "../db.js";
 import { toListedDocument } from "../data/document-mappers.js";
 import { DocumentChunker } from "./chunker.js";
@@ -123,9 +123,11 @@ test("persisted conversation boundaries survive direct and HTTP projections into
     for (const chunk of chunks) {
       const tokens = marked.lexer(chunk.text);
       expect(
-        tokens.filter((token) => token.type === "paragraph").map((token) => token.text),
+        tokens
+          .filter((token): token is Tokens.Paragraph => token.type === "paragraph")
+          .map((token) => token.text),
       ).toEqual(["**14:00 · Agent (Nova)**"]);
-      expect(tokens.filter((token) => token.type === "code")).toHaveLength(1);
+      expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(1);
     }
   }
 });

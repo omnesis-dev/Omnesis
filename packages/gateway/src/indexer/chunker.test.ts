@@ -2,11 +2,19 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { marked } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { DocumentChunker } from "./chunker.js";
 import type { IndexableDocument } from "./types.js";
+
+function isParagraph(token: Token): token is Tokens.Paragraph {
+  return token.type === "paragraph";
+}
+
+function isCode(token: Token): token is Tokens.Code {
+  return token.type === "code";
+}
 
 function makeDoc(overrides: Partial<IndexableDocument> = {}): IndexableDocument {
   return {
@@ -216,10 +224,12 @@ describe("structured conversation retrieval boundaries", () => {
     for (const chunk of chunks) {
       expect(chunk.text.length).toBeLessThanOrEqual(200);
       const tokens = marked.lexer(chunk.text);
-      const headings = tokens.filter((token) => token.type === "paragraph");
+      const headings = tokens.filter(
+        (token): token is Tokens.Paragraph => token.type === "paragraph",
+      );
       expect(headings).toHaveLength(1);
       expect(headings[0].text).toBe("**14:00 · Agent (Nova)**");
-      expect(tokens.filter((token) => token.type === "code")).toHaveLength(1);
+      expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(1);
       expect(tokens.some((token) => token.type === "html" || token.type === "heading")).toBe(false);
       expect(chunk.embeddingInput).toContain(chunk.text);
     }
@@ -259,8 +269,8 @@ describe("structured conversation retrieval boundaries", () => {
     for (const chunk of chunks) {
       let heading = "";
       for (const token of marked.lexer(chunk.text)) {
-        if (token.type === "paragraph") heading = token.text;
-        if (token.type === "code") {
+        if (isParagraph(token)) heading = token.text;
+        if (isCode(token)) {
           bodies.push(token.text);
           if (token.text === "owner-only") expect(heading).toBe("**14:01 · You**");
           else if (token.text === "agent-only") expect(heading).toBe("**14:03 · Agent (Nova)**");
@@ -279,7 +289,7 @@ describe("structured conversation retrieval boundaries", () => {
     const bodies = chunks.flatMap((chunk) =>
       marked
         .lexer(chunk.text)
-        .filter((token) => token.type === "code")
+        .filter((token): token is Tokens.Code => token.type === "code")
         .map((token) => token.text),
     );
     for (const text of bodies) {

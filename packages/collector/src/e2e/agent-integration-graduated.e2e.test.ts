@@ -32,7 +32,7 @@ import { promisify } from "node:util";
 
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 
 import {
   spawnConnect,
@@ -251,7 +251,7 @@ describe("managed agent integration on a gateway without Watches", () => {
         { timeout: 30_000, interval: 250 },
       );
       const tokens = marked.lexer(document!.content);
-      const bodies = tokens.filter((token) => token.type === "code");
+      const bodies = tokens.filter((token): token is Tokens.Code => token.type === "code");
       expect(bodies).toHaveLength(3);
       expect(bodies[2].text).toBe(messages[2].text);
       expect(tokens.filter((token) => token.type === "html")).toHaveLength(0);

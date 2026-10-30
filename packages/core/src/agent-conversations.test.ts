@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import { ProviderId, SourceId } from "@omnesis/types";
 import {
   conversationExternalId,
@@ -181,10 +181,12 @@ describe("renderConversationDay", () => {
       opts(slackChat, [{ role: "assistant", text, atMs: twoTurns[0].atMs }]),
     );
     const tokens = marked.lexer(doc.content);
-    const blocks = tokens.filter((token) => token.type === "code");
+    const blocks = tokens.filter((token): token is Tokens.Code => token.type === "code");
     expect(blocks).toHaveLength(1);
     expect(blocks[0].text).toBe(text);
-    expect(tokens.filter((token) => token.type === "paragraph")).toHaveLength(1);
+    expect(
+      tokens.filter((token): token is Tokens.Paragraph => token.type === "paragraph"),
+    ).toHaveLength(1);
     expect(tokens.filter((token) => token.type === "heading")).toHaveLength(1);
     expect(tokens.some((token) => token.type === "html")).toBe(false);
     expect(
@@ -221,8 +223,10 @@ describe("renderConversationDay", () => {
     expect(doc.title).not.toMatch(/[\r\n\u2028\u2029]/);
     const tokens = marked.lexer(doc.content);
     expect(tokens.filter((token) => token.type === "heading")).toHaveLength(1);
-    expect(tokens.filter((token) => token.type === "paragraph")).toHaveLength(1);
-    expect(tokens.filter((token) => token.type === "code")).toHaveLength(1);
+    expect(
+      tokens.filter((token): token is Tokens.Paragraph => token.type === "paragraph"),
+    ).toHaveLength(1);
+    expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(1);
     expect(marked.parse(doc.content)).not.toContain("<b>");
     expect(doc.metadata.people).toEqual([]);
   });

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import { createDatabase, upsertDocuments } from "../db.js";
 import {
   SourceUrlRecanonicalizationService,
@@ -255,8 +255,10 @@ describe("Indexer", () => {
       for (const input of embedded) {
         expect(input).not.toMatch(/[\u0085\ud800\u200b]/);
         const tokens = marked.lexer(input);
-        expect(tokens.filter((token) => token.type === "code")).toHaveLength(1);
-        const body = tokens.find((token) => token.type === "code")!;
+        expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(
+          1,
+        );
+        const body = tokens.find((token): token is Tokens.Code => token.type === "code")!;
         expect(body.text).toContain("``````\n**14:03 · You**");
         expect(tokens.filter((token) => token.type === "heading")).toHaveLength(0);
       }
