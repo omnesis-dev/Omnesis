@@ -67,6 +67,7 @@ import {
   atomicWriteFileSync,
   createRecoveryEnvelope,
   createSecretStore,
+  ensureGatewayTrust,
   ensureInstallRootKey,
   ensurePrivateDirSync,
   ensureStorageKey,
@@ -84,7 +85,15 @@ import {
   type SecretStoreStatus,
   type StorageKeyHost,
 } from "@omnesis/core";
-import { c, CliError, EXIT_FAILURE, EXIT_USER_ERROR, gatewayFetch, isJSON } from "../utils.js";
+import {
+  c,
+  CliError,
+  EXIT_FAILURE,
+  EXIT_USER_ERROR,
+  GATEWAY_REQUEST_URL,
+  gatewayFetch,
+  isJSON,
+} from "../utils.js";
 import { collectSecretFileCandidates } from "./keyring.js";
 import { restore } from "./restore.js";
 import {
@@ -814,12 +823,21 @@ function defaultDeps(
   configDir: string,
   docker: DockerSecureContext | null,
 ): SecureDeps {
+  // `secure` is exempt from the CLI's eager TLS preflight, because it has to
+  // run while the gateway is down. A gateway on a self-signed certificate (a
+  // Docker gateway's default) then fails every probe until the saved
+  // certificate is applied, so the probe applies it first — once it works.
+  let trusted = false;
   return {
     configDir,
     backend,
     docker,
     async gatewayHealthy() {
       try {
+        if (!trusted) {
+          await ensureGatewayTrust({ gatewayUrl: GATEWAY_REQUEST_URL, configDir });
+          trusted = true;
+        }
         const res = await gatewayFetch("/health", { signal: AbortSignal.timeout(3000) });
         return res.ok;
       } catch {
