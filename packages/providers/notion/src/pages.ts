@@ -12,7 +12,7 @@ import {
   accumulateSnapshotIds,
   truncateIsoToMinute,
 } from "./snapshot-state.js";
-import { isInaccessibleNotionError, type NotionClient } from "./client.js";
+import { isNotionObjectNotFound, type NotionClient } from "./client.js";
 import type { SyncResult } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints.js";
@@ -166,16 +166,18 @@ export class NotionPagesSource {
         continue;
       }
 
-      // A page search just listed can be gone, or unshared, by the time its
-      // blocks are read. Skip it rather than fail the run; it is still counted
-      // present above, so a snapshot never deletes a page on the strength of
-      // one unreadable fetch, and the watermark below stays short of it, so
-      // the next run reads it again.
+      // A page search just listed can be gone by the time its blocks are read.
+      // Skip it rather than fail the run. It is still counted present above, so
+      // a snapshot never deletes a page on the strength of one failed fetch, and
+      // its stored copy stays as it was until a later run reads it: the next run
+      // when it was the newest page, otherwise its next edit or the next
+      // snapshot rewalk. A restricted page is a missing capability rather than a
+      // vanished page, so it still fails the run as a permission error.
       let content: { markdown: string; linkedPageIds: string[] };
       try {
         content = await this.client.getPageContent(page.id);
       } catch (err) {
-        if (!isInaccessibleNotionError(err)) throw err;
+        if (!isNotionObjectNotFound(err)) throw err;
         skippedUnreadable++;
         log.warn(`Page ${page.id} is not readable; skipped this run`);
         continue;

@@ -486,6 +486,23 @@ describe("NotionPagesSource — a page Notion will not return", () => {
     expect((result.cursor as NotionPagesCursor).lastEditedTime).toBe("2026-04-01T00:00:00.000Z");
   });
 
+  test("a restricted page still fails the run as a permission error", async () => {
+    const restricted = () =>
+      new APIResponseError({
+        code: APIErrorCode.RestrictedResource,
+        status: 403,
+        message: "Insufficient permissions for this endpoint.",
+        headers: new Headers(),
+        rawBodyText: "",
+        additional_data: undefined,
+        request_id: undefined,
+      });
+    const { client } = clientFailing([makeFullPage("a")], "a", restricted);
+    const source = new NotionPagesSource(client, sourceId, providerId);
+
+    await expect(source.sync(null)).rejects.toMatchObject({ kind: "permission" });
+  });
+
   test("any other failure reading a page still fails the run", async () => {
     const pages = [makeFullPage("a")];
     const unauthorized = () =>

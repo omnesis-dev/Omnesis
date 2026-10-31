@@ -243,6 +243,16 @@ describe("date properties next to a property named like their derived columns", 
     });
   }
 
+  test("moves a date property off a taken base, as before", () => {
+    const columns = mapDatabaseToSchema(
+      dbWith({ "Created time": dateProp, Date: textProp, "Date?": { ...dateProp, id: "dt2" } }),
+    ).columns;
+    expect(columns.find((c) => c.sourceColumnId === "notion:dt:start")?.name).toBe(
+      "created_time_2_start",
+    );
+    expect(columns.find((c) => c.sourceColumnId === "notion:dt2:start")?.name).toBe("date_2_start");
+  });
+
   test("leaves the names of a database without a collision unchanged", () => {
     const names = mapDatabaseToSchema(dbWith({ Date: dateProp, Notes: textProp })).columns.map(
       (c) => c.name,

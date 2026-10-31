@@ -61,13 +61,13 @@ export function sanitizeColumnName(
   // for the current sync to round-trip.
   //
   // A property stored in derived columns (a `date` becomes `<col>_start` and
-  // `<col>_end`) never occupies `<col>` itself, so it is those derived names
-  // that must be free: otherwise a "Date Start" text property followed by a
-  // "Date" date property both claim `date_start`.
+  // `<col>_end`) needs those derived names free as well, or a "date start" text
+  // property followed by a "Date" date property both claim `date_start`. The
+  // base must stay free too, exactly as before, so a database without such a
+  // collision keeps every column name it already has.
   const taken = (candidate: string): boolean =>
-    derivedSuffixes.length === 0
-      ? existingNames.has(candidate)
-      : derivedSuffixes.some((s) => existingNames.has(`${candidate}_${s}`));
+    existingNames.has(candidate) ||
+    derivedSuffixes.some((s) => existingNames.has(`${candidate}_${s}`));
   let final = col;
   let suffix = 2;
   while (taken(final)) {

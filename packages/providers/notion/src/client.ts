@@ -83,16 +83,21 @@ export function isTransientNotionError(err: unknown): boolean {
 /**
  * True if Notion refused to return the object to this integration: it no longer
  * exists, or it lives somewhere the integration was never shared (a synced
- * block's original, an inline database in an unshared page). Search is also
- * eventually consistent with retrieve and query, so an id it just returned can
- * 404 a moment later. None of these clear on a retry, and none says anything
- * about the rest of the workspace.
+ * block's original, an inline database in an unshared page), or search, which
+ * is eventually consistent with retrieve and query, listed it a moment before
+ * it became readable. A retry within the request does not change the answer,
+ * and none of these says anything about the rest of the workspace.
  */
 export function isInaccessibleNotionError(err: unknown): boolean {
   return (
     APIResponseError.isAPIResponseError(err) &&
     (err.code === APIErrorCode.ObjectNotFound || err.code === APIErrorCode.RestrictedResource)
   );
+}
+
+/** True if Notion answered that the object does not exist (or is not shared). */
+export function isNotionObjectNotFound(err: unknown): boolean {
+  return APIResponseError.isAPIResponseError(err) && err.code === APIErrorCode.ObjectNotFound;
 }
 
 export interface WithRetryOptions {
