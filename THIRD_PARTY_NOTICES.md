@@ -313,6 +313,12 @@ Simple Icons releases its icon files under CC0-1.0
 (<https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md>); the mark
 itself remains Discord Inc.'s, see `TRADEMARKS.md`.
 
+The Immich source bundles the path data of Immich's logo, `design/immich-logo.svg`
+from the Immich repository (<https://github.com/immich-app/immich>), unmodified
+(`packages/providers/immich/src/icons.ts`). The Immich repository is licensed under
+AGPL-3.0, the license Omnesis is distributed under; the mark itself remains the
+Immich team's (FUTO), see `TRADEMARKS.md`.
+
 ---
 
 ## 4. Browser-extension libraries

@@ -351,6 +351,7 @@ export function findOrCreatePerson(
   // is currently the canonical self person; if no self exists yet (fresh
   // DB, contacts not synced), the mention is silently dropped — we don't
   // create a placeholder, which would pollute the people graph.
+  // Known gap: #621 — nothing re-resolves the dropped mention once self exists.
   if (mention.isSelf === true) {
     const selfRow = db
       .prepare<[], { id: string }>(

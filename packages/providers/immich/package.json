@@ -1,0 +1,19 @@
+{
+  "name": "@omnesis/provider-immich",
+  "version": "0.7.2",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/simulated-immich.ts"
+  },
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

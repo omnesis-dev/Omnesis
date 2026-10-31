@@ -15,6 +15,7 @@ import {
 import coinbase from "@omnesis/provider-coinbase";
 import github from "@omnesis/provider-github";
 import granola from "@omnesis/provider-granola";
+import immich from "@omnesis/provider-immich";
 import lunchflow from "@omnesis/provider-lunchflow";
 import notion from "@omnesis/provider-notion";
 import strava from "@omnesis/provider-strava";
@@ -30,6 +31,11 @@ const fixtures = [
   },
   { definition: github, file: "credentials.json", fields: { token: "fictional-token" } },
   { definition: granola, file: "credentials.json", fields: { api_key: "fictional-key" } },
+  {
+    definition: immich,
+    file: "credentials.json",
+    fields: { base_url: "http://immich.example.com:2283", api_key: "fictional-key" },
+  },
   { definition: lunchflow, file: "credentials.json", fields: { api_key: "fictional-key" } },
   { definition: notion, file: "tokens.json", fields: { access_token: "fictional-token" } },
   {
