@@ -601,17 +601,32 @@ export function runInstaller(name, args, extraEnv = {}, { umask, sourceDir = tru
   return resultOf(home, proc);
 }
 
-/** Run the installer on a pseudo-terminal, feeding `answers` to its prompts. */
-export function runInstallerOnTty(name, args, answers, extraEnv = {}, { umask } = {}) {
+/**
+ * Run the installer on a pseudo-terminal, feeding `answers` to its prompts.
+ * With `stdoutFile`, its standard output goes to that file instead, as when an
+ * operator on a terminal captures the run into a log; what it writes to the
+ * terminal itself is still the result's output. With `pipedStdin`, its
+ * standard input is an empty pipe, as under `curl … | sh`: the prompts still
+ * read the terminal.
+ */
+export function runInstallerOnTty(
+  name,
+  args,
+  answers,
+  extraEnv = {},
+  { umask, stdoutFile, pipedStdin = false } = {},
+) {
   const home = prepareHome(name, { umask });
   const env = installerEnv(home, extraEnv);
   // script(1) runs the command through $SHELL, which the installer also reads
   // to pick the profile it edits. The fixture's shell need not exist on the
   // host, so script itself runs under /bin/sh and the installer is handed the
   // fixture's shell by name.
-  const command = ["env", `SHELL=${env.SHELL}`, "sh", ...shellArgv(name, args, umask)]
-    .map((word) => `'${word.replaceAll("'", `'\\''`)}'`)
-    .join(" ");
+  const quote = (word) => `'${word.replaceAll("'", `'\\''`)}'`;
+  const command =
+    (pipedStdin ? ": | " : "") +
+    ["env", `SHELL=${env.SHELL}`, "sh", ...shellArgv(name, args, umask)].map(quote).join(" ") +
+    (stdoutFile ? ` >${quote(stdoutFile)}` : "");
   const proc = spawnSync("script", ["-qec", command, "/dev/null"], {
     env: { ...env, SHELL: "/bin/sh" },
     encoding: "utf8",

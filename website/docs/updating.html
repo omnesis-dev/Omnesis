@@ -777,6 +777,17 @@
           checks the tag Docker started the collector container from.
         </p>
         <p>
+          The updater runs as your account and joins the group that owns the Docker socket as a
+          container sees it. Where the daemon runs in a virtual machine, as on a Mac, or rootless,
+          that group differs from the one the socket has on the host, so the installer asks a
+          container which group it is. Before changing anything, the update checks that its
+          container can reach the daemon. When it cannot, it stops, says nothing was changed, and
+          writes the socket's group into the Compose file's updater; run
+          <code>omnesis update</code> again. When it cannot correct the Compose file, it prints the
+          installer line to run once, with the options the install was made with, before
+          <code>omnesis update</code>.
+        </p>
+        <p>
           The <code>omnesis</code> command on the machine is the one part of a Docker install that
           no image carries, so once the containers run the new release, the update also replaces
           that command with the new release's, through a one-shot container that mounts only its

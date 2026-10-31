@@ -60,6 +60,7 @@ import {
   runUpdateContinuation,
   continueOffer,
 } from "./update.js";
+import type { DockerSocketAccess } from "../update/docker-socket.js";
 import type { Supervisor } from "../service/supervisor.js";
 import type {
   CommandRunner,
@@ -1958,6 +1959,123 @@ describe("updateDocker", () => {
       "awaitHealth 0.4.1",
     ]);
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
+  });
+
+  // The pull back failing as the pull forward did means this host cannot pull
+  // at all; nothing moved, so the account says that rather than "built
+  // inconsistently", and restarts nothing.
+  test("a pull that fails both ways says nothing changed", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events, {
+      line: `docker compose -f ${composeFile} pull`,
+      nth: [1, 2, 3, 4],
+    });
+    const applyState = fakeApplyState();
+    const failure = await updateDocker(
+      opts(),
+      dockerDeps(events, runner, { applyState: applyState.store }),
+    ).catch((err: unknown) => err as CliError);
+
+    expect(failure).toBeInstanceOf(CliError);
+    expect((failure as CliError).exitCode).toBe(EXIT_FAILURE);
+    const message = (failure as CliError).message;
+    expect(message).toContain(`\`docker compose -f ${composeFile} pull\` failed (exit 1).`);
+    expect(message).toContain(
+      "Nothing was changed: no container was recreated, and 0.4.1 is the recorded image tag " +
+        "again, so this install still runs 0.4.1.",
+    );
+    expect(message).toContain("permission denied on the Docker socket");
+    expect(message).not.toContain("built inconsistently");
+    expect(events).toEqual([
+      "backup",
+      "select 0.4.2",
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} pull`,
+      "select 0.4.1",
+      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} pull`,
+    ]);
+    expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
+    // The record says what is true: the previous tag, complete.
+    expect(applyState.writes.at(-1)).toMatchObject({ phase: "complete", tag: "0.4.1" });
+  });
+
+  describe("a Docker socket the update container cannot open", () => {
+    const UPDATER = [
+      "services:",
+      "  gateway:",
+      "    image: ghcr.io/omnesis-dev/omnesis-gateway:${OMNESIS_IMAGE_TAG}",
+      "  collector:",
+      "    image: ghcr.io/omnesis-dev/omnesis-collector:${OMNESIS_IMAGE_TAG}",
+      "  updater:",
+      "    profiles: [update]",
+      '    user: "501:20"',
+      "    group_add:",
+      '      - "20"',
+      "    volumes:",
+      "      - /Users/maya/.docker/run/docker.sock:/var/run/docker.sock",
+      "",
+    ].join("\n");
+    const denied = (over: Partial<Extract<DockerSocketAccess, { kind: "denied" }>> = {}) =>
+      vi.fn(() =>
+        Promise.resolve<DockerSocketAccess>({
+          kind: "denied",
+          socketGid: 0,
+          groups: [20, 501],
+          inContainer: true,
+          ...over,
+        }),
+      );
+
+    test("is refused before anything changes, and the updater given the socket's group", async () => {
+      writeFileSync(composeFile, UPDATER, "utf8");
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const confirm = vi.fn(() => Promise.resolve());
+      await expect(
+        updateDocker(opts(), dockerDeps(events, runner, { dockerSocket: denied(), confirm })),
+      ).rejects.toMatchObject({
+        exitCode: EXIT_FAILURE,
+        message: expect.stringContaining("Nothing was changed: this install still runs 0.4.1."),
+      });
+      expect(events).toEqual([]);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
+      expect(readFileSync(composeFile, "utf8")).toBe(
+        UPDATER.replace('    group_add:\n      - "20"', '    group_add:\n      - "0"'),
+      );
+      expect(output()).not.toContain("Rolling back");
+    });
+
+    test("names the installer when the group cannot be fixed from here", async () => {
+      writeFileSync(composeFile, UPDATER, "utf8");
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const failure = await updateDocker(
+        opts(),
+        dockerDeps(events, runner, { dockerSocket: denied({ inContainer: false }) }),
+      ).catch((err: unknown) => err as CliError);
+      expect((failure as CliError).message).toContain(
+        "curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker",
+      );
+      expect(readFileSync(composeFile, "utf8")).toBe(UPDATER);
+      expect(events).toEqual([]);
+    });
+
+    test("a dry run and a reachable socket go on as before", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const dockerSocket = denied();
+      expect(
+        await updateDocker(opts({ dryRun: true }), dockerDeps(events, runner, { dockerSocket })),
+      ).toBeNull();
+      expect(readFileSync(composeFile, "utf8")).toBe(COMPOSE);
+      const reachable = vi.fn(() => Promise.resolve<DockerSocketAccess>({ kind: "ok" }));
+      expect(
+        await updateDocker(opts(), dockerDeps(events, runner, { dockerSocket: reachable })),
+      ).toBe("0.4.2");
+      expect(reachable).toHaveBeenCalledOnce();
+    });
   });
 
   test("a gateway that never comes back is rolled back to the tag it was on", async () => {

@@ -203,7 +203,31 @@ omnesis_env+=(
 
 step "install.sh --docker"
 "${omnesis_env[@]}" sh "$REPO/scripts/install.sh" \
-  --docker --no-model --no-keyring --version "$TAG_A" --port "$GATEWAY_PORT"
+  --docker --no-model --no-keyring --version "$TAG_A" --port "$GATEWAY_PORT" 2>&1 | tee "$WORK/install.out"
+
+# Compose's own pull progress, written anywhere but a terminal, is a line per
+# layer per state change; the installer prints one line per image instead. The
+# one-shot containers the CLI and the socket probe run in are created quietly.
+# (`up -d` still says which daemon containers it starts.)
+NOISE='Pulling fs layer|Extracting|Download complete|Container [^ ]+-run-[0-9a-f]+ +Creat'
+if grep -Eq "$NOISE" "$WORK/install.out"; then
+  die "the install printed Compose's progress: $(grep -E "$NOISE" "$WORK/install.out" | head -n 5)"
+fi
+ok "the pull printed one line per image, and the one-shot containers nothing"
+
+# The group the update container joins is the one the socket has inside a
+# container, asked of the updater image itself.
+socket_gid() {
+  docker compose -f "$COMPOSE_FILE" --progress quiet --profile update run --rm --no-deps -T \
+    --entrypoint stat updater -c %g /var/run/docker.sock | tr -d '\r'
+}
+updater_group() {
+  awk '/^  updater:/ { u = 1; next } /^  [a-z]/ { u = 0 } u && /^      - "[0-9]+"$/ { gsub(/[ "-]/, ""); print; exit }' "$COMPOSE_FILE"
+}
+SOCKET_GID="$(socket_gid)"
+[[ "$SOCKET_GID" =~ ^[0-9]+$ ]] || die "the updater image could not stat the socket: '$SOCKET_GID'"
+[[ "$(updater_group)" == "$SOCKET_GID" ]] || die "the updater joins group '$(updater_group)', not the socket's $SOCKET_GID"
+ok "the updater joins the socket's group ($SOCKET_GID) as containers see it"
 
 [[ -f "$COMPOSE_FILE" ]] || die "no compose file at $COMPOSE_FILE"
 [[ "$(cat "$CONFIG_DIR/install-method")" == docker ]] || die "the install method was not recorded"
@@ -271,6 +295,40 @@ ok "the unfinished update was detected and reapplied without --force"
 wait_served "$TAG_A" 60 || die "the gateway did not return to $TAG_A"
 ok "returned to $TAG_A"
 
+# ── an update container that cannot open the socket ─────────────────────────
+
+# What an install made by an earlier release meets on a daemon in a VM: the
+# updater joins the host's group for the socket, which is not the one the
+# socket has inside a container. Reproduced here with an account and a group
+# that do not own it; the update has to change nothing, say so, and give the
+# updater the socket's group.
+step "an update whose container cannot open the Docker socket"
+ORIGINAL_UPDATER_USER="$(awk '/^  updater:/ { u = 1; next } /^  [a-z]/ { u = 0 } u && /^    user: / { print; exit }' "$COMPOSE_FILE")"
+node - "$COMPOSE_FILE" "$(id -u)" <<'NODE'
+const fs = require('node:fs');
+const [path, uid] = process.argv.slice(2);
+const text = fs.readFileSync(path, 'utf8');
+const split = text.indexOf('  updater:\n');
+if (split < 0) throw new Error('Missing updater service');
+const service = text.slice(split)
+  .replace(/^    user: .*$/m, `    user: "${uid}:4243"`)
+  .replace(/^(    group_add:\n)      - "\d+"$/m, '$1      - "4242"');
+fs.writeFileSync(path, text.slice(0, split) + service);
+NODE
+[[ "$(updater_group)" == 4242 ]] || die "the fixture did not take the updater's group away"
+if "${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --no-backup \
+     > "$WORK/denied.out" 2>&1; then
+  cat "$WORK/denied.out" >&2; die "an update that cannot reach the daemon reported success"
+fi
+cat "$WORK/denied.out"
+grep -q "Nothing was changed: this install still runs $TAG_A" "$WORK/denied.out" || die "the refusal did not say nothing changed"
+grep -q "now joins group $SOCKET_GID" "$WORK/denied.out" || die "the refusal did not correct the updater's group"
+grep -q "Rolling back" "$WORK/denied.out" && die "a refusal before any change rolled back"
+grep -q "OMNESIS_IMAGE_TAG=$TAG_A" "$CONFIG_DIR/.env" || die "the refused update moved the recorded tag"
+[[ "$(served_version)" == "$TAG_A" ]] || die "the refused update changed what the gateway serves"
+[[ "$(updater_group)" == "$SOCKET_GID" ]] || die "the updater's group is '$(updater_group)', not $SOCKET_GID"
+ok "refused before any change, and the updater given group $SOCKET_GID"
+
 # ── the update ──────────────────────────────────────────────────────────────
 
 # The backup runs for real here: it is taken through the gateway's API from
@@ -295,7 +353,15 @@ ls "$CONFIG_DIR"/backups/* >/dev/null 2>&1 || die "the pre-update backup was not
 ok "the pre-update backup was taken through the gateway API"
 grep -q "OMNESIS_IMAGE_TAG=$TAG_B" "$CONFIG_DIR/.env" || die "the recorded tag did not move to $TAG_B"
 wait_served "$TAG_B" 60 || die "the gateway did not come back on $TAG_B"
-ok "the gateway serves $TAG_B and the recorded tag moved with it"
+ok "the gateway serves $TAG_B and the recorded tag moved with it, through the corrected group"
+# The account the installer gave the updater, for the rest of this lane.
+UPDATER_USER="$ORIGINAL_UPDATER_USER" node - "$COMPOSE_FILE" <<'NODE'
+const fs = require('node:fs');
+const [path] = process.argv.slice(2);
+const text = fs.readFileSync(path, 'utf8');
+const split = text.indexOf('  updater:\n');
+fs.writeFileSync(path, text.slice(0, split) + text.slice(split).replace(/^    user: .*$/m, process.env.UPDATER_USER));
+NODE
 
 step "omnesis update to $TAG_C, which never serves"
 if "${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_C" --no-backup \

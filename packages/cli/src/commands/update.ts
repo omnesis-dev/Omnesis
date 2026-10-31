@@ -52,7 +52,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
@@ -83,6 +83,11 @@ import {
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
 import { dockerReleaseImages, newestCommonDockerTag } from "../update/docker-registry.js";
+import {
+  explainDeniedSocket,
+  probeDockerSocket,
+  type DockerSocketAccess,
+} from "../update/docker-socket.js";
 import { assertSourceTargetNode } from "../update/source-node.js";
 import { approveInteractive } from "../approve.js";
 import { restartHarness } from "../harness-restart.js";
@@ -553,6 +558,11 @@ export interface UpdateFlowDeps {
   /** Highest stable release shared by every image in this Compose project. */
   latestDockerVersion?(composeFile: string): Promise<string>;
   /**
+   * Whether this container install's update can reach the Docker daemon
+   * through the socket it is handed — asked before anything changes.
+   */
+  dockerSocket?(): Promise<DockerSocketAccess>;
+  /**
    * How to run the installed CLI for the harness refresh, read when the
    * refresh runs so it is the build the update installed. By path: the
    * launcher the installer puts in `~/.local/bin` is not on the PATH of an
@@ -732,6 +742,8 @@ interface RollbackMemory {
   killed?: boolean;
   /** The plan stopped the collector because the build is short of memory. */
   pausedForBuild?: boolean;
+  /** The apply that failed changed nothing running (see `applyChangesNothingRunning`). */
+  nothingChanged?: boolean;
 }
 
 // ── The per-host plan ───────────────────────────────────────────────────
@@ -852,6 +864,29 @@ async function rollBackAndFail(
     // The transaction signal is already aborted; rollback is the recovery
     // work that must still run after the interrupted process tree is gone.
     const result = await attempt(deps, spec, {});
+    if (result.code !== 0 && memory.nothingChanged) {
+      // The way back failed the way forward did, so the cause is this host,
+      // not the release — and there is nothing to undo: no container moved,
+      // and the tag on file is the one they run again.
+      if (applyPlan.applyState) {
+        try {
+          deps.applyState.write(applyPlan.applyState.rolledBack);
+        } catch {
+          // The next update verifies what is served before trusting the tag.
+        }
+      }
+      throw new CliError(
+        `${c.red}${reason}\nNothing was changed: no container was recreated, and ` +
+          `${applyPlan.previous} is the recorded image tag again, so this install still runs ` +
+          `${applyPlan.previous}. The same \`${formatCommandSpec(spec)}\` failed for ` +
+          `${applyPlan.previous} too, so the cause is on this host rather than in the new ` +
+          `release: Docker's error above names it. If it is a permission denied on the Docker ` +
+          `socket, re-run the installer once with the options you installed with ` +
+          `(curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker …), then run ` +
+          `\`omnesis update\`.${c.reset}`,
+        EXIT_FAILURE,
+      );
+    }
     if (result.code !== 0) {
       daemons?.hold();
       const left = daemons?.components ?? [];
@@ -1175,12 +1210,14 @@ async function executeHostPlan(
     booted = false,
     exitCode: number = EXIT_FAILURE,
     killed = false,
+    nothingChanged = false,
   ): Promise<never> =>
     rollBackAndFail(applyPlan, deps, reason, booted, exitCode, {
       daemons,
       killed,
       pausedForBuild,
       resetDependencies: dependencyInstallIncomplete,
+      nothingChanged,
     });
 
   // The transaction: from the first thing that moves the host to the point
@@ -1374,6 +1411,7 @@ async function executeHostPlan(
                 false,
                 EXIT_FAILURE,
                 killedBuildStep(spec, result),
+                applyPlan.applyChangesNothingRunning === true,
               );
             }
           }
@@ -2677,6 +2715,20 @@ export async function updateDocker(
     );
   }
 
+  // A daemon the update cannot reach fails the pull, and then the pull back,
+  // with nothing changed either time; found here, it is said that way.
+  const socket = await deps.dockerSocket?.();
+  if (socket?.kind === "denied") {
+    throw new CliError(
+      `${c.red}${explainDeniedSocket(
+        socket,
+        { composeFile: opts.composeFile, composeText, previous: baseline },
+        (text) => writeFileSync(opts.composeFile, text),
+      )}${c.reset}`,
+      EXIT_FAILURE,
+    );
+  }
+
   await flowDeps.confirm(`Update the containers in ${opts.composeFile} to ${target}?`);
   await executeHostPlan(steps, applyPlan, target, target, flowDeps, {
     ...(offer ? { offer } : {}),
@@ -3266,6 +3318,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
         : undefined,
     select: plan.kind === "docker" ? (tag) => selectImageTag(plan.projectDir, tag) : undefined,
     latestDockerVersion,
+    dockerSocket: plan.kind === "docker" ? () => probeDockerSocket() : undefined,
     awaitHealth: async (expectVersion, signal) => {
       await ensureTrust();
       await awaitGatewayHealth(

@@ -1554,6 +1554,12 @@ export interface ApplyPlan {
   readonly target: string;
   /** What the rollback restores, for the operator to read. */
   readonly previous: string;
+  /**
+   * The apply only records the target and fetches it: until a later step
+   * restarts something, the host still runs `previous`. A failed apply has
+   * then changed nothing a rollback must undo.
+   */
+  readonly applyChangesNothingRunning?: true;
   /** Durable transaction states for an installer-managed checkout or container project. */
   readonly applyState?: {
     readonly applying: UpdateApplyState;
@@ -1647,6 +1653,8 @@ export function dockerApplyPlan(
     rollback: [pull()],
     target,
     previous,
+    // A pull fetches images; no container moves to them before its restart.
+    applyChangesNothingRunning: true,
     applyState: {
       applying: activeDockerApplyState(projectDir, "applying", target, previous),
       complete: completedDockerApplyState(projectDir, target),

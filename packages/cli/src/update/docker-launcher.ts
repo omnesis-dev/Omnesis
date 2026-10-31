@@ -78,6 +78,9 @@ function launcherContainer(composeFile: string, launcher: string, tail: string[]
       "compose",
       "-f",
       composeFile,
+      // Without it Compose reports creating the container on every call.
+      "--progress",
+      "quiet",
       "--profile",
       "update",
       "run",
