@@ -106,7 +106,7 @@ function budgeted(
   tools: readonly ToolHandle[],
   budget: number,
   onExhausted: () => void,
-  onMutation: () => void,
+  onMutation: (outcome: "applied" | "uncertain") => void,
 ): ToolHandle[] {
   let used = 0;
   return tools.map((tool) => ({
@@ -121,13 +121,23 @@ function budgeted(
           message: "This note has used its tool budget. Write the receipt now.",
         };
       }
-      const result = await tool.invoke(args, ctx);
+      const consequential = tool.mutates === true && !REPLAYABLE_BOOKKEEPING_TOOLS.has(tool.name);
+      let result: ToolResult;
+      try {
+        result = await tool.invoke(args, ctx);
+      } catch (err) {
+        // A write can commit before its follow-up work throws. Do not replay it.
+        if (consequential) onMutation("uncertain");
+        throw err;
+      }
       if (
-        tool.mutates === true &&
-        !REPLAYABLE_BOOKKEEPING_TOOLS.has(tool.name) &&
-        result.kind !== "error"
+        consequential &&
+        (result.kind !== "error" ||
+          // An unarmed watch is already stored and held; replay can duplicate it.
+          ((tool.name === "watch_create" || tool.name === "watch_update") &&
+            result.code === "unarmed"))
       )
-        onMutation();
+        onMutation("applied");
       return result;
     },
   }));
@@ -262,6 +272,7 @@ export class NoteAgent {
     const runId = `note:${entry.id}`;
     let exhausted = false;
     let appliedMutation = false;
+    let uncertainMutation = false;
     let session: AgentSession | null = null;
     const taskTools = buildTaskTools({
       db: this.deps.db,
@@ -289,8 +300,9 @@ export class NoteAgent {
           setTimeout(() => session?.cancel(), 30_000).unref?.();
         }
       },
-      () => {
-        appliedMutation = true;
+      (outcome) => {
+        if (outcome === "applied") appliedMutation = true;
+        else uncertainMutation = true;
       },
     );
     session = new AgentSession({
@@ -311,6 +323,11 @@ export class NoteAgent {
       switch (event.type) {
         case "agent.text.delta":
           text += event.payload.delta;
+          break;
+        case "agent.tool.start":
+          // Text preceding a tool call is progress commentary, not the receipt.
+          text = "";
+          finalText = "";
           break;
         case "agent.tool.result": {
           const result = event.payload.result;
@@ -354,11 +371,12 @@ export class NoteAgent {
       const terminal = await completion;
       const turn = classifyAgentTurn(terminal);
       if (turn.status === "failed") {
-        if (!appliedMutation && !exhausted) throw new Error(turn.failure.message);
-        partial = appliedMutation;
+        if (!appliedMutation && !uncertainMutation && !exhausted)
+          throw new Error(turn.failure.message);
+        partial = appliedMutation || uncertainMutation;
       }
     } catch (err) {
-      if (!appliedMutation) throw err;
+      if (!appliedMutation && !uncertainMutation) throw err;
       partial = true;
     } finally {
       unsubscribe();
@@ -380,9 +398,11 @@ export class NoteAgent {
         await this.deps.recordUsage(usage, backend.model).catch(() => undefined);
     }
     const fallback = changes.length > 0 ? changes.map((change) => change.text).join(" ") : "Saved.";
-    const receipt = partial
-      ? "An action was applied before processing stopped. Review the result before asking again."
-      : finalText || fallback;
+    const receipt = uncertainMutation
+      ? "An action may have been applied. Review the result before asking again."
+      : partial
+        ? "An action was applied before processing stopped. Review the result before asking again."
+        : finalText || fallback;
     return { text: receipt.slice(0, 1000), changes };
   }
 }

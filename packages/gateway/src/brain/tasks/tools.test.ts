@@ -192,6 +192,46 @@ describe("task tools", () => {
     expect(getOpenLoop(db, "loop_t1")?.scheduledFor).toBe("2026-03-10");
   });
 
+  test.each([
+    { action: "migrate", to: "2026-03-13", deadline: { type: "by", date: "2026-03-20" } },
+    { action: "complete", docs: ["not-a-document"] },
+    { action: "accept", title: "A different task" },
+    { action: "edit", reason: "ignored reason" },
+    { action: "delete", note: "ignored note" },
+  ])("rejects fields an action would ignore before any write: %j", async (args) => {
+    const { call } = tools();
+    const created = data(await call("task_create", { title: "Inspect the greenhouse labels" }));
+    const before = getOpenLoop(db, created.task.id);
+    const history = listOpenLoopLedger(db, created.task.id);
+    expect(await call("task_update", { id: created.task.id, ...args })).toMatchObject({
+      kind: "error",
+      code: "invalid_args",
+      message: expect.stringContaining("Nothing was changed"),
+    });
+    expect(getOpenLoop(db, created.task.id)).toEqual(before);
+    expect(listOpenLoopLedger(db, created.task.id)).toEqual(history);
+  });
+
+  test("migration and deadline edits return and list the actual saved deadline", async () => {
+    const { call } = tools();
+    const created = data(await call("task_create", { title: "Inspect the greenhouse labels" }));
+    await call("task_update", { id: created.task.id, action: "migrate", to: "2026-03-13" });
+    const edited = data(
+      await call("task_update", {
+        id: created.task.id,
+        action: "edit",
+        deadline: { type: "by", date: "2026-03-20" },
+      }),
+    );
+    expect(edited.task).toMatchObject({
+      scheduledFor: "2026-03-13",
+      deadline: { type: "by", date: "2026-03-20" },
+    });
+    expect(data(await call("task_list", { query: "greenhouse labels" })).tasks).toEqual([
+      expect.objectContaining({ deadline: { type: "by", date: "2026-03-20" } }),
+    ]);
+  });
+
   test("a conversation can only undo its own changes", async () => {
     const { call } = tools();
     const mine = data(await call("task_create", { title: "Book the vet" }));

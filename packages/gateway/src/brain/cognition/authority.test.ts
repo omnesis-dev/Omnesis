@@ -81,8 +81,8 @@ describe("per-workflow authority", () => {
 
   it("declares an authority for every workflow, and grants the unknown one nothing", () => {
     // Three workflows write nothing, and for each an empty authority IS the
-    // declaration rather than an omission: watch compilation is a tool-less
-    // closed-grammar exchange recorded inline, and the two precision batches
+    // declaration rather than an omission: watch compilation is recorded inline
+    // outside the steward's mutation surface, and the two precision batches
     // are work nothing produces any more — their ids survive only because
     // spend and attribution rows are keyed on them.
     const WRITES_NOTHING = ["subscription-compile", "subscription-precision", "watch-precision"];

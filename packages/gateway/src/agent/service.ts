@@ -3533,6 +3533,7 @@ export class AgentService {
       ],
       systemPrompt: finalPrompt,
       timeZone: parentZone,
+      caller: parent?.session.caller,
     });
     let terminal: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     const pendingEvents: AgentEvent[] = [];

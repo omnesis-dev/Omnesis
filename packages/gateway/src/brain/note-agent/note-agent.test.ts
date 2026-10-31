@@ -326,6 +326,66 @@ describe("note agent turn", () => {
     ]);
   });
 
+  test.each([true, false])(
+    "the receipt excludes commentary before and between tool calls (final text=%s)",
+    async (hasFinalText) => {
+      const id = queueNote("Add a task to prepare the greenhouse seed trays.");
+      const receipt = "Added preparing the greenhouse seed trays to your tasks.";
+      const scripted = toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "greenhouse seed trays" } },
+          { tool: "task_create", args: { title: "Prepare the greenhouse seed trays" } },
+        ],
+        hasFinalText ? receipt : "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          const ids = { sessionId: input.sessionId, messageId: input.messageId };
+          for await (const event of scripted.runTurn(input)) {
+            if (event.type === "agent.text.delta") {
+              if (hasFinalText) {
+                yield {
+                  type: "agent.text.delta",
+                  payload: { ...ids, delta: receipt.slice(0, 17) },
+                };
+                yield { type: "agent.text.delta", payload: { ...ids, delta: receipt.slice(17) } };
+              }
+              continue;
+            }
+            yield event;
+            if (event.type === "agent.message.start")
+              yield {
+                type: "agent.text.delta",
+                payload: { ...ids, delta: "I'll check whether this task already exists." },
+              };
+            if (event.type === "agent.tool.result" && event.payload.tool === "task_list")
+              yield {
+                type: "agent.text.delta",
+                payload: { ...ids, delta: "No matching task exists; I'll add it now." },
+              };
+          }
+        },
+      };
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      const run = getNoteRuns(db, [id]).get(id)!;
+      expect(run).toMatchObject({
+        state: "done",
+        receipt: {
+          text: hasFinalText ? receipt : "Added: Prepare the greenhouse seed trays",
+          changes: [
+            { text: "Added: Prepare the greenhouse seed trays", undoSeq: expect.any(Number) },
+          ],
+        },
+      });
+      expect(listOpenLoops(db, {})).toEqual([
+        expect.objectContaining({ title: "Prepare the greenhouse seed trays", origin: "note" }),
+      ]);
+    },
+  );
+
   test("the turn is offered memory and read tools beside the task tools", async () => {
     const remembered: unknown[] = [];
     const disposed: string[] = [];
@@ -487,6 +547,190 @@ describe("note agent turn", () => {
       expect(calls).toBe(applied ? 1 : 2);
       expect(watches).toEqual(applied ? ["watch_greenhouse"] : []);
       expect(getNoteRuns(db, [id]).get(id)?.attempts).toBe(applied ? 1 : 2);
+    },
+  );
+
+  test.each(["watch_create", "watch_update"])(
+    "%s reporting an installed but unarmed watch is not replayed after a model failure",
+    async (toolName) => {
+      const id = queueNote("Notify me when the greenhouse seed trays are delivered.");
+      let now = T0 + 60_000;
+      let committedWrites = 0;
+      const watch: ToolHandle = {
+        name: toolName,
+        description: "Save the requested watch, then try to arm it.",
+        mutates: true,
+        schema: z.object({ request: z.string(), watchId: z.string().optional() }),
+        async invoke() {
+          committedWrites += 1;
+          return {
+            kind: "error",
+            code: "unarmed",
+            message: "The watch was written and installed, but could not be armed and is held.",
+          };
+        },
+      };
+      const scripted = toolCallingBackend(
+        () => [
+          {
+            tool: toolName,
+            args: { request: "Seed trays delivered", watchId: "watch_greenhouse" },
+          },
+        ],
+        "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          for await (const event of scripted.runTurn(input))
+            if (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+              yield event;
+          throw new Error("scripted outage after the watch was stored");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools) => ({ tools: [...taskTools, watch], dispose: async () => {} }),
+      });
+      expect(await runner.drain()).toBe(1);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        error: null,
+        receipt: {
+          text: "An action was applied before processing stopped. Review the result before asking again.",
+          changes: [],
+        },
+      });
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(0);
+      expect(committedWrites).toBe(1);
+    },
+  );
+
+  test.each([true, false])(
+    "a throwing task write is not replayed when it may have committed (committed=%s)",
+    async (committed) => {
+      const id = queueNote("Add a task to label the greenhouse seed trays.");
+      let now = T0 + 60_000;
+      let writes = 0;
+      const service = new TaskService(db, directWriteGate(db), () => now);
+      const { runner } = agent(
+        toolCallingBackend(
+          () => [{ tool: "task_create", args: { title: "Label the greenhouse seed trays" } }],
+          "",
+        ),
+        {
+          clock: () => now,
+          tasks: {
+            async apply(command) {
+              writes += 1;
+              if (committed) await service.apply(command);
+              throw new Error(committed ? "mirror failed after commit" : "writer unavailable");
+            },
+          },
+        },
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        receipt: {
+          text: "An action may have been applied. Review the result before asking again.",
+          changes: [],
+        },
+      });
+      expect(listOpenLoops(db, {})).toHaveLength(committed ? 1 : 0);
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(0);
+      expect(writes).toBe(1);
+      expect(listOpenLoops(db, {})).toHaveLength(committed ? 1 : 0);
+    },
+  );
+
+  test("an uncertain write is disclosed even when the backend recovers and finishes", async () => {
+    const id = queueNote("Update the greenhouse supplies watch.");
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "call_watch", tool: "watch_update", args: {} },
+        };
+        try {
+          await input.tools.find((tool) => tool.name === "watch_update")!.invoke({}, ids);
+        } catch {
+          // A backend may handle a tool exception and still complete its response.
+        }
+        yield { type: "agent.text.delta", payload: { ...ids, delta: "Nothing was changed." } };
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const { runner } = agent(backend, {
+      buildTools: (_, taskTools) => ({
+        tools: [
+          ...taskTools,
+          {
+            name: "watch_update",
+            description: "Update the requested watch.",
+            mutates: true,
+            schema: z.object({}),
+            async invoke() {
+              throw new Error("unknown write outcome");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    await runner.drain();
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: {
+        text: "An action may have been applied. Review the result before asking again.",
+        changes: [],
+      },
+    });
+  });
+
+  test.each(["conversation_memory_evidence", "cite_record"])(
+    "throwing replayable bookkeeping %s keeps the note retryable",
+    async (name) => {
+      const id = queueNote("Remember the greenhouse seed delivery date.");
+      let now = T0 + 60_000;
+      let calls = 0;
+      const { runner } = agent(
+        toolCallingBackend(() => [{ tool: name, args: {} }], ""),
+        {
+          clock: () => now,
+          buildTools: (_, taskTools) => ({
+            tools: [
+              ...taskTools,
+              {
+                name,
+                description: "Prepare replayable evidence or citation bookkeeping.",
+                mutates: true,
+                schema: z.object({}),
+                async invoke() {
+                  calls += 1;
+                  throw new Error("bookkeeping unavailable");
+                },
+              },
+            ],
+            dispose: async () => {},
+          }),
+        },
+      );
+      await runner.drain();
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 1 });
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(2);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 2 });
     },
   );
 

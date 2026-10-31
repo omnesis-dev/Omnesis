@@ -79,6 +79,7 @@ function compact(item: TaskItem, documents: ReadonlyMap<string, TaskDocument>) {
     id: loop.id,
     title: loop.title,
     ...(loop.description ? { description: loop.description } : {}),
+    ...(loop.deadline ? { deadline: loop.deadline } : {}),
     state: loop.state,
     yours: isOwnedTask(loop),
     documents: loop.docs.flatMap((id) => {
@@ -115,6 +116,7 @@ function receipt(result: TaskCommandResult): ToolResult {
             title: result.loop.title,
             state: result.loop.state,
             scheduledFor: result.loop.scheduledFor,
+            deadline: result.loop.deadline,
           }
         : null,
     },
@@ -241,6 +243,18 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
     "reopen",
     "delete",
   ] as const;
+  const actionFields: Record<(typeof actions)[number], readonly string[]> = {
+    complete: ["note"],
+    migrate: ["to"],
+    strike: ["reason"],
+    edit: ["title", "description", "scheduledFor", "deadline", "docs"],
+    accept: ["scheduledFor"],
+    ignore: ["reason"],
+    confirm: [],
+    keep: [],
+    reopen: [],
+    delete: [],
+  };
   const updateSchema = z
     .object({
       id: z.string().min(1),
@@ -249,7 +263,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
         .describe(
           "complete (done; optional note on how), migrate (move to `to`), strike (not worth doing; optional reason), edit (change title, description, scheduledFor, deadline or linked docs), " +
             "accept / ignore (a Brain suggestion; ignore only takes it out of the user's tasks, the Brain keeps tracking it), " +
-            "confirm / keep (accept or refuse the Brain's proposed change), reopen, delete (only for a task that should never have existed).",
+            "confirm / keep (accept or refuse the Brain's proposed change), reopen, delete (permanently removes the task and its history; cannot be undone; only for a task that should never have existed).",
         ),
       note: z.string().max(500).optional(),
       reason: z.string().max(500).optional(),
@@ -264,7 +278,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
   const taskUpdate: ToolHandle = {
     name: "task_update",
     description:
-      "Change one of the user's tasks because they said so. The change applies at once; tell the user what changed in one short line, which they can undo.",
+      "Change one of the user's tasks because they said so. Use only the fields defined for the selected action; deadline and docs belong to edit. Use strike for an undoable cancellation. Delete is permanent: never recreate a deleted task as an undo; explain that deletion cannot be undone. The change applies at once; tell the user what changed in one short line, which they can undo.",
     schema: updateSchema,
     mutates: true,
     summarize: (args) => {
@@ -276,6 +290,13 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       const parsed = updateSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
       const { id, action, note, reason, to } = parsed.data;
+      const unused = Object.keys(parsed.data).filter(
+        (key) => key !== "id" && key !== "action" && !actionFields[action].includes(key),
+      );
+      if (unused.length > 0)
+        return invalid(
+          `${action} does not accept ${unused.join(", ")}. Use edit for title, description, scheduledFor, deadline or docs; issue separate actions for other changes. Nothing was changed.`,
+        );
       const base = { ...deps.origin, id };
       switch (action) {
         case "complete":
