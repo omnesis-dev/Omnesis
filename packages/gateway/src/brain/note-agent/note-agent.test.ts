@@ -37,10 +37,13 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
+  vi.stubEnv("OMNESIS_SYNTHETIC", "0");
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
     if (existsSync(path + suffix)) unlinkSync(path + suffix);
@@ -239,7 +242,7 @@ function toolCallingBackend(
         const result = await handle.invoke(call.args, { ...ids, toolCallId } as never);
         yield {
           type: "agent.tool.result",
-          payload: { ...ids, toolCallId, result, durationMs: 1 },
+          payload: { ...ids, toolCallId, tool: call.tool, result, durationMs: 1 },
         } as AgentEvent;
       }
       yield { type: "agent.text.delta", payload: { ...ids, delta: receipt } };
@@ -325,6 +328,7 @@ describe("note agent turn", () => {
 
   test("the turn is offered memory and read tools beside the task tools", async () => {
     const remembered: unknown[] = [];
+    const disposed: string[] = [];
     const stub = (name: string, mutates: boolean) => ({
       name,
       description: name,
@@ -344,11 +348,20 @@ describe("note agent turn", () => {
         seen,
       ),
       {
-        buildMemoryTools: (runId) => {
+        buildTools: (runId, taskTools, evidenceTools) => {
           expect(runId).toMatch(/^note:/);
-          return [stub("annotate_person", true) as unknown as ToolHandle];
+          return {
+            tools: [
+              ...taskTools,
+              stub("annotate_person", true) as unknown as ToolHandle,
+              stub("search_many", false) as unknown as ToolHandle,
+              ...evidenceTools,
+            ],
+            dispose: async (sessionId) => {
+              disposed.push(sessionId);
+            },
+          };
         },
-        readTools: () => [stub("search_many", false) as unknown as ToolHandle],
       },
     );
     await runner.drain();
@@ -359,9 +372,123 @@ describe("note agent turn", () => {
       "task_undo",
       "annotate_person",
       "search_many",
+      "conversation_memory_evidence",
     ]);
     expect(remembered).toEqual([{ text: "vegetarian" }]);
+    expect(seen[0]!.caller).toEqual({ kind: "operator" });
+    expect(seen[0]!.timeZone).toBe("Europe/London");
+    expect(disposed).toEqual([seen[0]!.sessionId]);
+    const evidence = seen[0]!.tools.find((tool) => tool.name === "conversation_memory_evidence")!;
+    expect(await evidence.invoke({}, {} as never)).toMatchObject({
+      kind: "structured",
+      data: { documentId: "doc_notes_2026-03-10", userMessages: ["I'm vegetarian now"] },
+    });
   });
+
+  test("a failed turn settles its isolated tool runtime", async () => {
+    const id = queueNote("Look up the garden plan");
+    let disposed = false;
+    const { runner } = agent(
+      {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          yield {
+            type: "agent.message.start",
+            payload: { sessionId: input.sessionId, messageId: input.messageId, role: "assistant" },
+          };
+          throw new Error("scripted outage");
+        },
+      },
+      {
+        buildTools: (_, taskTools) => ({
+          tools: taskTools,
+          dispose: async () => {
+            disposed = true;
+          },
+        }),
+      },
+    );
+    await runner.drain();
+    expect(disposed).toBe(true);
+    expect(getNoteRuns(db, [id]).get(id)?.state).toBe("pending");
+  });
+
+  test.each([true, false])(
+    "a watch call followed by a model outage retries only if the watch failed (applied=%s)",
+    async (applied) => {
+      const id = queueNote("Tell me when greenhouse supplies are ready.");
+      let now = T0 + 60_000;
+      let calls = 0;
+      const watches: string[] = [];
+      const watch: ToolHandle = {
+        name: "watch_create",
+        description: "Set up the requested watch.",
+        mutates: true,
+        schema: z.object({ request: z.string() }),
+        async invoke() {
+          calls += 1;
+          if (!applied)
+            return { kind: "error", code: "unavailable", message: "Watch compiler unavailable." };
+          watches.push("watch_greenhouse");
+          return {
+            kind: "watch.upserted",
+            watchId: "watch_greenhouse",
+            name: "Greenhouse supplies",
+            action: "created",
+            enabled: true,
+            summary: "Notify when greenhouse supplies are ready.",
+            interpretation: "Notify when greenhouse supplies are ready.",
+          };
+        },
+      };
+      const scripted = toolCallingBackend(
+        () => [{ tool: "watch_create", args: { request: "Greenhouse supplies are ready." } }],
+        "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          for await (const event of scripted.runTurn(input)) {
+            if (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+              yield event;
+          }
+          throw new Error("scripted outage after the watch call");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools) => ({
+          tools: [...taskTools, watch],
+          dispose: async () => {},
+        }),
+      });
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(1);
+      const run = getNoteRuns(db, [id]).get(id)!;
+      if (applied) {
+        expect(run).toMatchObject({
+          state: "done",
+          attempts: 1,
+          error: null,
+          receipt: {
+            text: "An action was applied before processing stopped. Review the result before asking again.",
+            changes: [],
+          },
+        });
+      } else {
+        expect(run).toMatchObject({ state: "pending", attempts: 1, receipt: null });
+        expect(run.error).toContain("scripted outage");
+      }
+
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(applied ? 0 : 1);
+      expect(calls).toBe(applied ? 1 : 2);
+      expect(watches).toEqual(applied ? ["watch_greenhouse"] : []);
+      expect(getNoteRuns(db, [id]).get(id)?.attempts).toBe(applied ? 1 : 2);
+    },
+  );
 
   test("completes an existing task the note reports done", async () => {
     const created = applyTaskCommand(
@@ -445,7 +572,81 @@ describe("note agent turn", () => {
     expect(getOpenLoop(db, "loop_accepted")?.description).toBe("The rear brake squeaks too.");
   });
 
-  test("never touches a Brain suggestion", async () => {
+  test("accepts and ignores only the suggestions the owner names, with undoable receipts", async () => {
+    for (const [id, title] of [
+      ["loop_accept", "Reserve the planetarium workshop"],
+      ["loop_ignore", "Renew the seed library membership"],
+      ["loop_untouched", "Check the pottery kiln booking"],
+    ] as const)
+      createOpenLoop(
+        db,
+        { id, title, createdByRun: "run_suggestions", confidence: 0.8, importance: 0.5 },
+        T0,
+      );
+    const untouched = getOpenLoop(db, "loop_untouched");
+    const id = queueNote(
+      "Accept the planetarium workshop suggestion for tomorrow and ignore the seed library membership suggestion; I handled that elsewhere.",
+    );
+    const { runner } = agent(
+      toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { view: "suggested" } },
+          {
+            tool: "task_update",
+            args: { id: "loop_accept", action: "accept", scheduledFor: "2026-03-11" },
+          },
+          {
+            tool: "task_update",
+            args: { id: "loop_ignore", action: "ignore", reason: "Handled elsewhere." },
+          },
+        ],
+        "Added the planetarium workshop for tomorrow and ignored the seed library suggestion.",
+      ),
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(getOpenLoop(db, "loop_accept")).toMatchObject({
+      state: "open",
+      accepted: true,
+      ignored: false,
+      scheduledFor: "2026-03-11",
+    });
+    expect(getOpenLoop(db, "loop_ignore")).toMatchObject({
+      state: "open",
+      accepted: false,
+      ignored: true,
+    });
+    expect(getOpenLoop(db, "loop_untouched")).toEqual(untouched);
+    const receipt = getNoteRuns(db, [id]).get(id)!.receipt!;
+    expect(receipt.changes).toEqual([
+      {
+        text: "Added to your tasks: Reserve the planetarium workshop",
+        taskId: "loop_accept",
+        undoSeq: expect.any(Number),
+      },
+      {
+        text: "Ignored: Renew the seed library membership",
+        taskId: "loop_ignore",
+        undoSeq: expect.any(Number),
+      },
+    ]);
+    for (const change of receipt.changes)
+      expect(
+        applyTaskCommand(
+          db,
+          { kind: "undo", surface: "tasks", runId: "user:tasks", seq: change.undoSeq! },
+          T0 + 120_000,
+        ).ok,
+      ).toBe(true);
+    expect(getOpenLoop(db, "loop_accept")).toMatchObject({
+      accepted: false,
+      ignored: false,
+      scheduledFor: null,
+    });
+    expect(getOpenLoop(db, "loop_ignore")).toMatchObject({ accepted: false, ignored: false });
+    expect(getOpenLoop(db, "loop_untouched")).toEqual(untouched);
+  });
+
+  test("a note can report that a suggested task is already done", async () => {
     createOpenLoop(
       db,
       {
@@ -457,16 +658,55 @@ describe("note agent turn", () => {
       },
       T0,
     );
-    const id = queueNote("Jamie is sorted");
+    const id = queueNote("I have already replied to Jamie Lopez.");
     const { runner } = agent(
       toolCallingBackend(
-        () => [{ tool: "task_update", args: { id: "loop_brain", action: "complete" } }],
-        "Nothing to change.",
+        () => [
+          { tool: "task_list", args: { query: "Jamie Lopez" } },
+          { tool: "task_update", args: { id: "loop_brain", action: "complete" } },
+        ],
+        "Marked replying to Jamie as already done.",
       ),
     );
     await runner.drain();
-    expect(getOpenLoop(db, "loop_brain")?.state).toBe("open");
-    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([]);
+    expect(getOpenLoop(db, "loop_brain")).toMatchObject({ state: "done", accepted: true });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([
+      expect.objectContaining({
+        taskId: "loop_brain",
+        text: "Done: Reply to Jamie Lopez",
+        undoSeq: expect.any(Number),
+      }),
+    ]);
+  });
+
+  test("deletes the duplicate task the owner explicitly asks to remove", async () => {
+    applyTaskCommand(
+      db,
+      {
+        kind: "create",
+        id: "loop_duplicate",
+        title: "Duplicate greenhouse booking",
+        origin: "user",
+        surface: "tasks",
+        runId: "user:tasks",
+      },
+      T0,
+    );
+    const id = queueNote("Delete the duplicate greenhouse booking task; it should not exist.");
+    const { runner } = agent(
+      toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "duplicate greenhouse" } },
+          { tool: "task_update", args: { id: "loop_duplicate", action: "delete" } },
+        ],
+        "Deleted the duplicate greenhouse booking task.",
+      ),
+    );
+    await runner.drain();
+    expect(getOpenLoop(db, "loop_duplicate")).toBeNull();
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([
+      { text: "Deleted: Duplicate greenhouse booking", taskId: null, undoSeq: null },
+    ]);
   });
 
   test("a note with no request changes nothing", async () => {
@@ -761,4 +1001,105 @@ test("unset, it is on whenever a model can run", async () => {
     modelAssigned: false,
     active: false,
   });
+});
+
+describe("note agent retry after replayable bookkeeping", () => {
+  test.each(["conversation_memory_evidence", "cite_record"])(
+    "a successful %s call before an outage leaves the requested task retryable",
+    async (name) => {
+      const id = queueNote("Add a task to prepare the greenhouse seed trays.");
+      let now = T0 + 60_000;
+      let turns = 0;
+      let calls = 0;
+      const scripted = toolCallingBackend(
+        () => [
+          { tool: name, args: {} },
+          ...(turns > 1
+            ? [{ tool: "task_create", args: { title: "Prepare the greenhouse seed trays" } }]
+            : []),
+        ],
+        "Added preparing the greenhouse seed trays.",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          turns += 1;
+          for await (const event of scripted.runTurn(input)) {
+            if (
+              turns > 1 ||
+              (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+            )
+              yield event;
+          }
+          if (turns === 1) throw new Error("scripted outage after bookkeeping");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools, evidenceTools) => {
+          const bookkeeping: ToolHandle =
+            name === "conversation_memory_evidence"
+              ? evidenceTools.find((tool) => tool.name === name)!
+              : {
+                  name,
+                  description: "Record an idempotent citation for this turn.",
+                  mutates: true,
+                  schema: z.object({}).strict(),
+                  invoke: async () => ({
+                    kind: "structured",
+                    resultType: "citation.recorded",
+                    data: {},
+                  }),
+                };
+          return {
+            tools: [
+              ...taskTools,
+              {
+                ...bookkeeping,
+                async invoke(args, context) {
+                  calls += 1;
+                  const result = await bookkeeping.invoke(args, context);
+                  expect(result.kind).not.toBe("error");
+                  return result;
+                },
+              },
+            ],
+            dispose: async () => {},
+          };
+        },
+      });
+
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(1);
+      expect(listOpenLoops(db, {})).toEqual([]);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "pending",
+        attempts: 1,
+        receipt: null,
+        error: expect.stringContaining("scripted outage after bookkeeping"),
+      });
+
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(1);
+      expect(turns).toBe(2);
+      expect(calls).toBe(2);
+      expect(listOpenLoops(db, {})).toEqual([
+        expect.objectContaining({ title: "Prepare the greenhouse seed trays", origin: "note" }),
+      ]);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 2,
+        error: null,
+        receipt: {
+          changes: [
+            expect.objectContaining({
+              text: "Added: Prepare the greenhouse seed trays",
+              undoSeq: expect.any(Number),
+            }),
+          ],
+        },
+      });
+    },
+  );
 });

@@ -28,7 +28,6 @@ import {
 } from "@omnesis/core";
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
-import { selectSubagentTools } from "@omnesis/agent";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -2690,11 +2689,17 @@ const noteAgent = new NoteAgent({
   writeGate,
   resolveBackend: resolveBackgroundAgentBackend,
   getSetting: () => configStore.get().agent?.noteAgent,
-  buildMemoryTools: (runId) => interactiveMemoryProfile.buildOwnTools(runId),
-  readTools: () => {
-    const service = agentLifecycle.routeDeps.agentService;
-    return service ? selectSubagentTools(service.listTools()) : [];
-  },
+  buildTools: (runId, taskTools, evidenceTools) =>
+    agentLifecycle.buildNoteTools(
+      () => {
+        const backend = resolveBackgroundAgentBackend();
+        if (!backend) throw new Error("No background-agent model is runnable.");
+        return backend;
+      },
+      runId,
+      taskTools,
+      evidenceTools,
+    ),
   dayDocumentId: (day) => notesDayDocumentId(db, day),
   recordUsage: (usage, modelId) =>
     writeGate.recordCognitionSpend(

@@ -298,6 +298,14 @@ describe("Brain cassettes (the note agent on a stable install)", () => {
   }, 60_000);
 
   test("the note cassette adds the task the note asks for, and its receipt lands", async () => {
+    const documentId = seedHistory(bench, {
+      id: "bench-cassette-insurance",
+      sourceId: bench.harness.getSourceIds()[0]!,
+      title: "Bicycle insurance renewal details",
+      content:
+        "The bicycle insurance policy can be renewed using the policy reference in this document.",
+      at: Date.now(),
+    });
     const id = randomUUID();
     const capturedAt = new Date().toISOString();
     const res = await bench.harness.gatewayFetch("/notes", {
@@ -325,6 +333,9 @@ describe("Brain cassettes (the note agent on a stable install)", () => {
     });
     const task = await bench.obs.task(agent.receipt!.changes[0]!.taskId!);
     expect(task.task).toMatchObject({ origin: "note", scheduledFor: "someday", state: "open" });
+    expect(task.task.documents).toEqual([
+      expect.objectContaining({ id: documentId, title: "Bicycle insurance renewal details" }),
+    ]);
     expect(task.history[0]).toMatchObject({ kind: "created", surface: "note" });
   }, 180_000);
 });
