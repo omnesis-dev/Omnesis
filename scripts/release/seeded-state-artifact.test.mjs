@@ -17,6 +17,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
 import { createDatabase } from "../../packages/gateway/src/db.js";
+import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
 import {
@@ -114,6 +115,41 @@ function installOptions(paths, overrides = {}) {
 }
 
 describe("seeded-state artifacts", () => {
+  it("installs a current-runtime database at its advertised schema compatibility boundary", () => {
+    const paths = fixture();
+    const sourcePath = join(paths.root, "current-runtime.db");
+    const source = createDatabase(sourcePath);
+    const schemaVersion = source.pragma("user_version", { simple: true });
+    source.close();
+    // The container entrypoint imports this dependency-free module from dist.
+    // A migration appended without bumping it must fail before Docker boot.
+    expect(schemaVersion).toBe(LATEST_SCHEMA_VERSION);
+    createSeededStateArtifact(
+      {
+        ...spec(paths),
+        schemaVersion,
+        databases: [{ source: sourcePath, target: "omnesis.db", tables: ["documents"] }],
+        expected: { rowCounts: { "omnesis.db": { documents: 0 } } },
+      },
+      paths.artifact,
+    );
+    expect(
+      installSeededStateArtifact(
+        paths.artifact,
+        paths.state,
+        installOptions(paths, { maxSchemaVersion: LATEST_SCHEMA_VERSION }),
+      ).installed,
+    ).toBe(true);
+    expect(existsSync(join(paths.state, "omnesis.db"))).toBe(true);
+    const installed = createDatabase(join(paths.state, "omnesis.db"));
+    try {
+      expect(installed.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
+      expect(installed.prepare("SELECT COUNT(*) AS n FROM documents").get()).toEqual({ n: 0 });
+    } finally {
+      installed.close();
+    }
+  });
+
   it("preserves transcription vocabulary and its contribution ledger together", () => {
     const paths = fixture();
     const source = new Database(paths.sourcePath);
