@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, unlinkSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { HttpChatBackend } from "@omnesis/agent";
@@ -21,6 +21,10 @@ import { insertPendingVoiceNote } from "../../voice-notes/storage.js";
 import { createOpenLoop, getOpenLoop, listOpenLoops } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
 import { TaskService } from "../tasks/service.js";
+import { createInteractiveMemoryProfile } from "../interactive-memory.js";
+import { resolveBrainSettings } from "../config.js";
+import { resolveSelfMemory } from "../self-memory.js";
+import { listLivePersonAnnotationsForPerson } from "../storage/person-annotations.js";
 import {
   NOTE_AGENT_MAX_ATTEMPTS,
   NOTE_RUN_STALE_MS,
@@ -298,6 +302,110 @@ function queueNote(text: string, id = `n_${randomUUID()}`) {
 }
 
 describe("note agent turn", () => {
+  test("self-memory from a note and its edit is visible to a fresh owner profile with Brain off", async () => {
+    const original = "Remember that my fictional greenhouse test label is violet.";
+    const corrected = "Remember that my fictional greenhouse test label is amber.";
+    const id = queueNote(original);
+    const docId = "doc_note_memory";
+    db.prepare(
+      `INSERT INTO people (id,canonical_name,source,is_self,first_seen,last_seen,created_at,updated_at)
+       VALUES ('self','Fictional owner','test',1,?,?,?,?)`,
+    ).run(T0, T0, T0, T0);
+    db.prepare(
+      `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,
+        source_created_at,source_updated_at,ingested_at,updated_at)
+       VALUES (?,'test','test','note-memory','Owner note',?,?,?,?,?,?)`,
+    ).run(docId, original, createHash("sha256").update(original).digest("hex"), T0, T0, T0, T0);
+    let now = T0 + 60_000;
+    const memory = createInteractiveMemoryProfile({
+      db,
+      writeGate: directWriteGate(db),
+      getSettings: () => resolveBrainSettings({ annotations: { enabled: false } }),
+      getEntailmentVerifier: () => Promise.resolve(null),
+      clock: () => now,
+      log,
+    });
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend((input) => {
+      seen.push(input);
+      const quote = input.userMessage.includes("amber") ? corrected : original;
+      return [
+        { tool: "annotation_search", args: { personId: "self" } },
+        {
+          tool: "annotate_person",
+          args: {
+            personId: "self",
+            claimType: "test-preference",
+            claimText:
+              quote === corrected
+                ? "The user's test label is amber."
+                : "The user's test label is violet.",
+            evidenceDocId: docId,
+            evidenceQuote: quote,
+            claimBasis: "quoted",
+            confidence: 0.8,
+          },
+        },
+      ];
+    }, "Remembered your test label.");
+    const { runner } = agent(backend, {
+      clock: () => now,
+      dayDocumentId: () => docId,
+      buildTools: (runId, tasks, evidence) => ({
+        tools: [...tasks, ...evidence, ...memory.buildOwnTools(runId)],
+        dispose: async () => undefined,
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(resolveSelfMemory(db, true).selfMemory).toContain("violet");
+    expect(seen[0]?.systemPrompt).toContain('self person ID is "self"');
+    expect(seen[0]?.systemPrompt).toContain(
+      "Use annotate_person for a durable fact about one person",
+    );
+    expect(seen[0]?.systemPrompt).toContain(
+      "Use annotate_durable for context about one specific document",
+    );
+    now += 60_000;
+    updateNoteEntryText(db, id, corrected, new Date(now).toISOString(), {
+      owner: true,
+      enabled: true,
+    });
+    db.prepare("UPDATE documents SET content=?,content_hash=? WHERE id=?").run(
+      corrected,
+      createHash("sha256").update(corrected).digest("hex"),
+      docId,
+    );
+    // The production document-update cascade uses this same writer boundary,
+    // independently of autonomous annotation generation being switched off.
+    await directWriteGate(db).invalidatePersonAnnotationsForDoc(docId, now);
+    expect(listLivePersonAnnotationsForPerson(db, "self")).toEqual([]);
+    now += 60_000;
+    expect(await runner.drain()).toBe(1);
+    expect(await runner.drain()).toBe(0);
+    const current = resolveSelfMemory(db, true);
+    expect(current.selfMemory).toContain("amber");
+    expect(current.selfMemory).not.toContain("violet");
+    expect(listLivePersonAnnotationsForPerson(db, "self")).toHaveLength(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM doc_annotations").get()).toEqual({ n: 0 });
+    expect(seen[1]?.systemPrompt).toContain('self person ID is "self"');
+  });
+
+  test("a note with no established self identity receives an explicit self-memory refusal boundary", async () => {
+    const id = queueNote("Remember that I prefer violet workshop labels.");
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend((input) => {
+      seen.push(input);
+      return [];
+    }, "Saved the note. Your self identity needs to be set up before I can save this to your profile.");
+    const { runner } = agent(backend);
+    expect(await runner.drain()).toBe(1);
+    expect(seen[0]?.systemPrompt).toContain("self identity has not been established");
+    expect(seen[0]?.systemPrompt).toContain("Do not invent a person ID");
+    expect(resolveSelfMemory(db, true).selfPersonId).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM person_annotations").get()).toEqual({ n: 0 });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toContain("before I can save");
+  });
+
   test("adds the task the note asks for and records the receipt", async () => {
     const id = queueNote("Remind me to renew the bike insurance tomorrow");
     const seen: TurnInput[] = [];
@@ -331,7 +439,7 @@ describe("note agent turn", () => {
     expect(usage).toEqual([{ model: "scripted-model", input: 40 }]);
 
     // The turn saw the note, the notes document to cite, and the note prompt.
-    expect(seen[0]!.systemPrompt).toBe(NOTE_AGENT_SYSTEM_PROMPT);
+    expect(seen[0]!.systemPrompt.startsWith(NOTE_AGENT_SYSTEM_PROMPT)).toBe(true);
     expect(seen[0]!.userMessage).toContain("Remind me to renew the bike insurance tomorrow");
     expect(seen[0]!.userMessage).toContain("doc_notes_2026-03-10");
     expect(seen[0]!.tools.map((tool) => tool.name)).toEqual([

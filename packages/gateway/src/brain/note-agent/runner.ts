@@ -20,6 +20,8 @@ import {
   type Logger,
   type ToolResult,
 } from "@omnesis/core";
+import { MEMORY_SUBJECT_GUIDANCE, renderSelfIdentity } from "../../agent/system-prompt.js";
+import { resolveSelfMemory } from "../self-memory.js";
 import { buildConversationMemoryEvidenceTool } from "../../agent/conversation-memory-tool.js";
 import { getNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
 import { cognitionSpendDay } from "../storage/spend.js";
@@ -81,7 +83,7 @@ This is asynchronous, fire-and-forget: the user left instructions and is not her
 - For a task, use the read tools to find useful supporting documents when the note names or implies them, and link relevant document ids with docs on task_create or task_update edit. Keep existing links unless the user asks to remove them. Attach only documents you found, never invented ids; if nothing relevant is found, still carry out the task request. Documents provide context, not permission to add or change other tasks.
 - Progress on a task ("paid the plumber", "the dentist is cancelled", "push the report to Friday") → find it with task_list and complete, strike, move or edit it. When only the day changes, move it (task_update migrate), so the user is told where it went; edit is for the title, description or deadline.
 - A request about a suggestion → find it with task_list, including the suggested view, and accept or ignore that suggestion as requested. Never accept, ignore or change an unrelated suggestion. Delete a task only when the user explicitly asks to remove a task that should never have existed; otherwise strike it when they no longer want to do it.
-- A fact about the user or someone they know ("I'm vegetarian now", "Maya's new number is…") → remember it with the memory tools, quoting the note as evidence.
+- A fact about the user or someone they know ("I'm vegetarian now", "Maya's new number is…") → remember it with the memory tools, quoting the note as evidence. ${MEMORY_SUBJECT_GUIDANCE} Say a fact was remembered only after the corresponding memory tool succeeds; if self identity or evidence is unavailable, say that the note was saved but profile memory was not.
 - A question → answer it from the user's data with the read tools, briefly, in your reply.
 - Something that needs watching over time ("tell me when…", "keep an eye on…", "every Monday…") → use the watch tools when available, and report success only after they confirm it. If the required tools are unavailable, say plainly what you cannot do; saving a note does not schedule a watch.
 - Information with no request → change nothing.
@@ -482,7 +484,10 @@ export class NoteAgent {
       sessionId: `note-agent-${entry.id}-${row.revision}`,
       backend,
       tools,
-      systemPrompt: NOTE_AGENT_SYSTEM_PROMPT + revisionContext(entry, row),
+      systemPrompt:
+        NOTE_AGENT_SYSTEM_PROMPT +
+        `\n\n${renderSelfIdentity(resolveSelfMemory(this.deps.db, true).selfPersonId)}` +
+        revisionContext(entry, row),
       promptCacheKey: row.previousText === null ? "note-agent" : "note-agent-edit",
       caller: { kind: "operator" },
       ...(entry.capturedTimeZoneId ? { timeZone: entry.capturedTimeZoneId } : {}),
