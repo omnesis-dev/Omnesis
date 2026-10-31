@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, hostname } from "node:os";
+import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { describe, test, expect } from "vitest";
 import {
+  containerFolderOutcome,
   experimentalLabelSuffix,
   extraPositionalArg,
   memberConfigForDescriptor,
   pathValueForCollector,
+  waitForDeviceOnline,
 } from "./add.js";
+import type { DockerFolders } from "../docker-folders.js";
 
 describe("extraPositionalArg", () => {
   test("skips citty's duplicate named positional", () => {
@@ -20,15 +24,150 @@ describe("extraPositionalArg", () => {
 
 describe("pathValueForCollector", () => {
   test("leaves a remote collector's filesystem syntax for that collector to resolve", () => {
-    expect(pathValueForCollector("  ~/sessions  ", "remote.example", { join, resolve })).toBe(
-      "~/sessions",
-    );
+    expect(pathValueForCollector("  ~/sessions  ", "remote.example")).toBe("~/sessions");
   });
 
   test("retains local path normalization when the collector shares this host", () => {
-    expect(pathValueForCollector("~/sessions", hostname(), { join, resolve })).toBe(
-      join(process.env.HOME ?? "", "/sessions"),
+    expect(pathValueForCollector("~/sessions", hostname(), { HOME: "/home/fixture" })).toBe(
+      join(homedir(), "/sessions"),
     );
+  });
+
+  test("in a Docker install's container, ~ and a relative path are the host's", () => {
+    // The CLI runs in a container whose own home is nobody's; the launcher
+    // passes in where the operator is on the machine that runs Docker.
+    const env = { OMNESIS_HOST_HOME: "/Users/maya", OMNESIS_HOST_CWD: "/Users/maya/Documents" };
+    expect(pathValueForCollector("~/Documents/field-notes", hostname(), env)).toBe(
+      "/Users/maya/Documents/field-notes",
+    );
+    expect(pathValueForCollector("field-notes", hostname(), env)).toBe(
+      "/Users/maya/Documents/field-notes",
+    );
+    expect(pathValueForCollector("/Volumes/Archive", hostname(), env)).toBe("/Volumes/Archive");
+    // A remote collector still resolves its own.
+    expect(pathValueForCollector("~/notes", "remote.example", env)).toBe("~/notes");
+  });
+});
+
+describe("containerFolderOutcome: a host folder the collector's container cannot see", () => {
+  const folders = (over: Partial<DockerFolders> = {}): DockerFolders => ({
+    projectDir: "/Users/maya/.config/omnesis",
+    shared: ["/Users/maya/shared-vaults"],
+    canRequest: true,
+    ...over,
+  });
+  const resume = ["sources", "add", "obsidian-notes", "/Users/maya/Notes", "--device", "dev-1"];
+  const error = "Vault path does not exist: /Users/maya/Notes";
+
+  test("asks the launcher to offer the share, with the command that resumes the add", () => {
+    const requests: Array<{ path: string; resume: readonly string[] }> = [];
+    const outcome = containerFolderOutcome({
+      value: "/Users/maya/Notes",
+      error,
+      collectorIsLocal: true,
+      folders: folders(),
+      resume,
+      writeRequest: (_f, path, words) => {
+        requests.push({ path, resume: words });
+        return true;
+      },
+    });
+    expect(outcome.kind).toBe("requested");
+    expect(requests).toEqual([{ path: "/Users/maya/Notes", resume }]);
+  });
+
+  test("without a launcher that can offer it, names the exact command", () => {
+    const outcome = containerFolderOutcome({
+      value: "/Users/maya/Jamie's Notes",
+      error,
+      collectorIsLocal: true,
+      folders: folders({ canRequest: false }),
+      resume,
+      writeRequest: () => {
+        throw new Error("must not be written");
+      },
+    });
+    expect(outcome.kind).toBe("explain");
+    const text = stripVTControlCharacters(outcome.kind === "explain" ? outcome.message : "");
+    expect(text).toContain(error);
+    expect(text).toContain("runs in a Docker container");
+    expect(text).toContain(`omnesis folders share '/Users/maya/Jamie'\\''s Notes'`);
+  });
+
+  test("does not repeat the command when the collector's error already names it", () => {
+    const named = `${error}. ... share it with the collector there: omnesis folders share '/Users/maya/Notes'`;
+    const outcome = containerFolderOutcome({
+      value: "/Users/maya/Notes",
+      error: named,
+      collectorIsLocal: true,
+      folders: folders({ canRequest: false }),
+      resume,
+    });
+    expect(outcome.kind === "explain" && stripVTControlCharacters(outcome.message)).toBe(named);
+  });
+
+  test.each([
+    ["a remote collector's path", { collectorIsLocal: false }],
+    ["an install that is not Docker", { folders: null }],
+    ["a folder already shared", { value: "/Users/maya/shared-vaults/Research" }],
+    ["a path inside the config directory", { value: "/Users/maya/.config/omnesis/import" }],
+    ["a path the collector resolves itself", { value: "~/Notes" }],
+  ])("leaves %s to the collector's own error", (_label, over) => {
+    const outcome = containerFolderOutcome({
+      value: "/Users/maya/Notes",
+      error,
+      collectorIsLocal: true,
+      folders: folders(),
+      resume,
+      writeRequest: () => {
+        throw new Error("must not be written");
+      },
+      ...over,
+    });
+    expect(outcome).toEqual({ kind: "none" });
+  });
+});
+
+describe("waitForDeviceOnline", () => {
+  function clock() {
+    let now = 0;
+    return {
+      now: () => now,
+      sleep: (ms: number) => {
+        now += ms;
+        return Promise.resolve();
+      },
+    };
+  }
+
+  test("waits through a restarting gateway until the collector is back", async () => {
+    const answers: Array<() => unknown[]> = [
+      () => {
+        throw new Error("connect ECONNREFUSED");
+      },
+      () => [{ id: "dev-1", name: "studio-northstar", kind: "collector", online: false }],
+      () => [{ id: "dev-1", name: "studio-northstar", kind: "collector", online: true }],
+    ];
+    let calls = 0;
+    const online = await waitForDeviceOnline("dev-1", 60_000, {
+      ...clock(),
+      listDevices: () => Promise.resolve().then(() => answers[calls++]!() as never),
+    });
+    expect(online).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  test("gives up at the deadline and lets the add report what is wrong", async () => {
+    let calls = 0;
+    const online = await waitForDeviceOnline("studio-northstar", 10_000, {
+      ...clock(),
+      listDevices: () => {
+        calls += 1;
+        return Promise.resolve([]);
+      },
+    });
+    expect(online).toBe(false);
+    expect(calls).toBe(6);
   });
 });
 

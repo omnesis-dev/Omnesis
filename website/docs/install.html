@@ -987,7 +987,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           the gateway. Every topology accepts additional native collectors: on a Mac, run the
           installer with <code>--collector --gateway-url https://&lt;server&gt;:7600</code>
           and redeem a fresh collector pairing code from the gateway. macOS sources need a native
-          Mac collector; mounting Mac files into a Linux container does not supply macOS APIs.
+          Mac collector; mounting Mac files into a Linux container does not supply macOS APIs. On
+          the machine that runs Docker itself, the native collector installs
+          <a href="#docker-native-collector">beside the Docker install</a>.
         </p>
         <p>
           On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
@@ -1088,6 +1090,132 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           configuration below. External MCP clients use the same gateway HTTPS endpoint as native
           installs. A self-signed certificate needs explicit client trust; clients that require
           publicly trusted HTTPS need a Tailscale or domain certificate and a reachable route.
+        </p>
+
+        <h3 id="docker-native-collector">A native collector beside a Docker install</h3>
+        <p>
+          The usual Mac setup runs the gateway in Docker and a native collector for the Apple
+          sources on the same Mac. Run the <code>--collector</code> line the Docker install printed
+          on that machine. The installer finds the Docker install and puts the collector beside it,
+          sharing nothing with it:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Docker install</th>
+                <th>Native collector beside it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Command</td>
+                <td><code>omnesis</code></td>
+                <td><code>omnesis-collector</code></td>
+              </tr>
+              <tr>
+                <td>Config directory</td>
+                <td><code>~/.config/omnesis</code></td>
+                <td><code>~/.config/omnesis-collector</code></td>
+              </tr>
+              <tr>
+                <td>Code</td>
+                <td>the images</td>
+                <td>a source checkout at <code>~/omnesis-collector</code></td>
+              </tr>
+              <tr>
+                <td>Daemons</td>
+                <td>containers</td>
+                <td>a collector service (LaunchAgent or systemd user unit)</td>
+              </tr>
+              <tr>
+                <td>Device</td>
+                <td>the container's collector</td>
+                <td>a device of its own, with its own token</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          When the gateway is the one on this machine, the collector dials it at
+          <code>https://localhost:&lt;port&gt;</code> unless <code>--gateway-url</code> names
+          another address, and on a terminal the installer mints the pairing code with
+          <code>omnesis</code> itself. Without a terminal, run
+          <code>omnesis devices pair --kind collector</code> on the same machine and pass the code
+          with <code>--code</code>.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector</span
+              >
+            </p>
+            <p class="t-dim"># sources, devices and status: the Docker gateway, as before</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add apple-notes --device '&lt;this collector&gt;'</span
+              >
+            </p>
+            <p class="t-dim"># the native collector itself</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis-collector service status</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis-collector update</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis-collector uninstall</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Sources, devices and status stay on <code>omnesis</code>, which holds the gateway's admin
+          token; <code>omnesis-collector</code> manages the collector's own service, update and
+          removal. Each uninstall removes only its own install. The reverse order is refused: a
+          Docker install does not take over the <code>omnesis</code> command and config directory of
+          a native install whose service is still registered. Remove that one first (<code
+            >omnesis uninstall</code
+          >), install Docker, then the native collector beside it. The collector beside a Docker
+          install is installed from source; <code>--method package</code> is not available for it.
+        </p>
+
+        <h3 id="docker-folders">Host folders</h3>
+        <p>
+          A container sees the install's config directory and nothing else of the machine. A source
+          that reads a folder, such as an Obsidian vault or a Maildir, needs that folder shared with
+          the collector's container. When you add one, <code>~</code> and relative paths mean the
+          machine you type on, not the container. On a terminal, a folder the container cannot see
+          is offered for sharing; the collector's container is then recreated with it, and the add
+          continues:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources add obsidian-notes ~/Documents/Vault</span>
+            </p>
+            <pre>
+/Users/maya/Documents/Vault is a folder on this machine. The collector runs in a container
+that sees only the folders shared with it.
+Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
+          </div>
+        </div>
+        <p>
+          A shared folder is mounted read-only at the same absolute path, so the source's settings
+          name the path you know. Manage them directly with <code>omnesis folders</code> (the list),
+          <code>omnesis folders share &lt;path&gt;</code> and
+          <code>omnesis folders unshare &lt;path&gt;</code>. The list is kept in
+          <code>shared-folders</code> in the config directory; re-running the installer and
+          <code>omnesis update</code> keep every share. Without a terminal, the add names the
+          <code>omnesis folders share</code> command to run.
         </p>
 
         <h3 id="docker-tls">TLS in Docker</h3>
@@ -1266,8 +1394,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             <strong>The Apple sources need a Mac.</strong> Apple Notes, Messages, Calendar,
             Reminders, Contacts, Things and Screen Time read macOS databases that do not exist in a
             Linux container. The usual setup is a Docker gateway with a native collector on the Mac,
-            installed with the <code>--collector</code> command the gateway's install prints.
-            Sources that sync over the network work fully in the container.
+            installed with the <code>--collector</code> command the gateway's install prints; on the
+            Docker machine itself it installs <a href="#docker-native-collector">beside</a> the
+            Docker install. Sources that sync over the network work fully in the container.
+          </li>
+          <li>
+            <strong>Host folders are shared one by one.</strong> The containers see the config
+            directory; a folder a source reads is <a href="#docker-folders">shared</a> read-only
+            with the collector's container.
           </li>
           <li>
             <strong>Discovery does not cross the Docker bridge.</strong> A container collector
@@ -1480,7 +1614,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             >docker compose … down --rmi all</code
           >), removes the compose file and the launcher, and with <code>--purge</code> the config
           directory. An install is removed as a whole. On a machine that only collects, it ends by
-          reminding you to remove its device on the gateway host, as a native collector's does.
+          reminding you to remove its device on the gateway host, as a native collector's does. A
+          <a href="#docker-native-collector">native collector beside it</a> stays; remove that one
+          with <code>omnesis-collector uninstall</code>, which in turn never touches the Docker
+          install.
         </p>
         <p>
           <strong>What only you can do.</strong> The command says which of these apply when it

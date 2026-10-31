@@ -213,7 +213,7 @@ import {
   type UpdateSignal,
   updateInterruptionRouter,
 } from "../update/interruption.js";
-import { prepareSourceRecoveryLauncher } from "../update/source-launcher.js";
+import { nativeLauncherPath, prepareSourceRecoveryLauncher } from "../update/source-launcher.js";
 import { prepareNodeGypHeaders } from "../update/node-gyp-headers.js";
 import { buildHeapEnv, buildMemoryTight } from "../update/build-heap.js";
 import {
@@ -3154,7 +3154,12 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     applyState: updateApplyStateStore(configDir),
     interruptions: updateInterruptionRouter,
     prepareSourceLauncher: (rootDir) => {
-      prepareSourceRecoveryLauncher(rootDir, configDir, homedir());
+      prepareSourceRecoveryLauncher(
+        rootDir,
+        configDir,
+        homedir(),
+        nativeLauncherPath(process.env, homedir()),
+      );
     },
     refreshDockerLauncher: async (install) => {
       const launcher = await import("../update/docker-launcher.js");
