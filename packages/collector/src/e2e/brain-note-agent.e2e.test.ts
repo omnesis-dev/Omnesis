@@ -5,7 +5,7 @@
  * Brain bench: the note agent.
  *
  * Every quick-capture note is the user speaking. Once it settles (and a
- * voice note's transcript is in), one bounded `background-agent` turn acts
+ * voice note's transcript is in), one bounded `agent` turn acts
  * on it: a task the note asks for is added (already scheduled when the note
  * says when), a task it reports done is completed, one it puts off is moved,
  * one the user gave up on is struck, and the receipt the user reads appears
@@ -13,7 +13,7 @@
  * suggestions; unrelated suggestions stay unchanged.
  *
  * The note agent is not part of the experimental Brain: it runs on any
- * install with a runnable background-agent model, so this suite boots a
+ * install with a runnable Agent model, so this suite boots a
  * STABLE gateway. The model is the bench puppet, matched on the note text
  * (the turn has no cognition envelope; `readRunContext` reads its note
  * block). A second, model-less gateway proves the agent stays idle.
@@ -25,7 +25,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { describeSchedule } from "../../../gateway/src/brain/storage/tasks.js";
 import { createOpenLoop } from "../../../gateway/src/brain/storage/open-loops.js";
-import { SyntheticE2EHarness } from "./synth-harness.js";
+import type { SyntheticE2EHarness } from "./synth-harness.js";
 import {
   BrainBench,
   call,
@@ -115,7 +115,7 @@ async function receiptFor(
   );
 }
 
-describe("the note agent (stable install, background-agent puppet)", () => {
+describe("the note agent (stable install, Agent puppet, no Brain model)", () => {
   let bench: BrainBench;
   // A note's capture day comes from its `capturedAt`, so a run that crosses
   // midnight UTC compares against the day each note was captured on.
@@ -144,6 +144,8 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     friday = fridayAfter(isoDay(new Date()));
     bench = await BrainBench.start({
       experimental: false,
+      agent: "puppet",
+      brainAgent: false,
       syncSources: false,
       embedder: true,
       extraInference: { assignments: { transcriber: "replay" } },
@@ -349,6 +351,14 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 60_000);
 
   test("a note asking for a task adds it, with the receipt under the note", async () => {
+    const status = await bench.harness.gatewayJson<{
+      experimental: boolean;
+      brain: { active: boolean; modelAssigned: boolean };
+      noteAgent: { active: boolean };
+    }>("/status");
+    expect(status.experimental).toBe(false);
+    expect(status.brain).toMatchObject({ active: false, modelAssigned: false });
+    expect(status.noteAgent.active).toBe(true);
     const id = await capture(TASK_NOTE);
     const agent = await receiptFor(tellNotes, id, dayOf(id));
     expect(agent.receipt).toMatchObject({
@@ -767,16 +777,17 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 });
 
-describe("the note agent with no background-agent model", () => {
+describe("a Brain assignment does not substitute for an Agent model", () => {
   let harness: SyntheticE2EHarness;
+  let bench: BrainBench;
 
   beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable", universe: "e2e-minimal" });
-    await harness.start();
+    bench = await BrainBench.start({ experimental: false, syncSources: false });
+    harness = bench.harness;
   }, 240_000);
 
   afterAll(async () => {
-    await harness?.destroy();
+    await bench?.destroy();
   }, 60_000);
 
   test("notes are saved and nothing reads them", async () => {
@@ -821,6 +832,7 @@ describe("the note agent with no background-agent model", () => {
     const note = listed.entries.find((n) => n.id === id);
     expect(note).toBeDefined();
     expect(note!.agent).toBeUndefined();
+    expect(bench.puppetCalls.filter((call) => call.flavour === "note")).toEqual([]);
     const db = new Database(harness.getDbPath(), { readonly: true, fileMustExist: true });
     try {
       expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_runs").get()).toEqual({ n: 0 });
