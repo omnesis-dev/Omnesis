@@ -1424,7 +1424,10 @@ describe("install.sh --docker: what it puts on this host", () => {
     );
     expect(run.output).toContain("https://omnesis.dev/docs/install#docker-tls");
     expect(run.output).toContain("read macOS databases");
-    expect(run.output).toContain("Multicast does not cross the Docker bridge");
+    // A Linux tip: see "the bridge multicast tip on a … host".
+    expect(run.output.includes("Multicast does not cross the Docker bridge")).toBe(
+      process.platform === "linux",
+    );
     expect(run.output).toContain("no OS keyring");
   });
 });
