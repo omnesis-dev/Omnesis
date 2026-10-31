@@ -5,6 +5,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
+import { HttpChatBackend } from "@omnesis/agent";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
@@ -26,7 +27,12 @@ import {
   hasPendingNotes,
   skipNewNotes,
 } from "./storage.js";
-import { NOTE_AGENT_SYSTEM_PROMPT, NoteAgent, type NoteAgentDeps } from "./runner.js";
+import {
+  NOTE_AGENT_SYSTEM_PROMPT,
+  NOTE_AGENT_TURN_TIMEOUT_MS,
+  NoteAgent,
+  type NoteAgentDeps,
+} from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
 
@@ -388,6 +394,7 @@ describe("note agent turn", () => {
 
   test("the turn is offered memory and read tools beside the task tools", async () => {
     const remembered: unknown[] = [];
+    let evidenceResult: unknown;
     const disposed: string[] = [];
     const stub = (name: string, mutates: boolean) => ({
       name,
@@ -403,7 +410,10 @@ describe("note agent turn", () => {
     const seen: TurnInput[] = [];
     const { runner } = agent(
       toolCallingBackend(
-        () => [{ tool: "annotate_person", args: { text: "vegetarian" } }],
+        () => [
+          { tool: "annotate_person", args: { text: "vegetarian" } },
+          { tool: "conversation_memory_evidence", args: {} },
+        ],
         "Remembered that you are vegetarian.",
         seen,
       ),
@@ -415,7 +425,14 @@ describe("note agent turn", () => {
               ...taskTools,
               stub("annotate_person", true) as unknown as ToolHandle,
               stub("search_many", false) as unknown as ToolHandle,
-              ...evidenceTools,
+              ...evidenceTools.map((tool) => ({
+                ...tool,
+                async invoke(...args: Parameters<ToolHandle["invoke"]>) {
+                  const result = await tool.invoke(...args);
+                  evidenceResult = result;
+                  return result;
+                },
+              })),
             ],
             dispose: async (sessionId) => {
               disposed.push(sessionId);
@@ -438,8 +455,7 @@ describe("note agent turn", () => {
     expect(seen[0]!.caller).toEqual({ kind: "operator" });
     expect(seen[0]!.timeZone).toBe("Europe/London");
     expect(disposed).toEqual([seen[0]!.sessionId]);
-    const evidence = seen[0]!.tools.find((tool) => tool.name === "conversation_memory_evidence")!;
-    expect(await evidence.invoke({}, {} as never)).toMatchObject({
+    expect(evidenceResult).toMatchObject({
       kind: "structured",
       data: { documentId: "doc_notes_2026-03-10", userMessages: ["I'm vegetarian now"] },
     });
@@ -1515,4 +1531,297 @@ describe("note agent retry after replayable bookkeeping", () => {
       });
     },
   );
+});
+
+describe("note agent pending action lifetime", () => {
+  test("an HTTP tool batch cancelled by read progress cannot replay a still-running write", async () => {
+    const id = queueNote("Watch for a greenhouse delivery update");
+    const abort = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutMock = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) => (ms === NOTE_AGENT_TURN_TIMEOUT_MS ? abort.signal : timeout(ms)));
+    const chunks = [
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: "write", function: { name: "watch_create", arguments: "{}" } },
+                { index: 1, id: "read", function: { name: "fetch_many", arguments: "{}" } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      "[DONE]",
+    ];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          chunks
+            .map(
+              (chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finished = false;
+    const writer: ToolHandle = {
+      name: "watch_create",
+      description: "A held scripted write.",
+      schema: z.object({}),
+      mutates: true,
+      async invoke() {
+        enter();
+        await held;
+        finished = true;
+        return { kind: "structured", resultType: "scripted.changed", data: {} };
+      },
+    };
+    const reader: ToolHandle = {
+      name: "fetch_many",
+      description: "A progress-producing scripted read.",
+      schema: z.object({}),
+      async invoke(_args, context) {
+        await entered;
+        abort.abort();
+        const result: ToolResult = { kind: "structured", resultType: "scripted.read", data: {} };
+        context.onChildResult?.({ index: 0, result });
+        return result;
+      },
+    };
+    const backend = new HttpChatBackend({ baseUrl: "http://127.0.0.1:9", model: "scripted" });
+    const { runner } = agent(backend, {
+      buildTools: () => ({ tools: [writer, reader], dispose: async () => {} }),
+    });
+    try {
+      expect(await runner.drain()).toBe(1);
+      expect(finished).toBe(false);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        receipt: { text: expect.stringContaining("still running and may finish after this note") },
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      fetchMock.mockRestore();
+      timeoutMock.mockRestore();
+    }
+    expect(finished).toBe(true);
+    expect(await runner.drain()).toBe(0);
+  });
+
+  function pendingTurn(options: {
+    stop: "error" | "canceled" | "end_turn";
+    name?: string;
+    mutates?: boolean;
+    cleanupResult?: "applied" | "error";
+  }) {
+    const id = queueNote("Watch for a greenhouse delivery update");
+    let now = T0 + 60_000;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pending: Promise<ToolResult> | undefined;
+    let calls = 0;
+    let writes = 0;
+    const tool: ToolHandle = {
+      name: options.name ?? "watch_create",
+      description: "A held scripted operation.",
+      mutates: options.mutates ?? true,
+      schema: z.object({}).strict(),
+      async invoke() {
+        calls += 1;
+        await gate;
+        if (options.cleanupResult === "error")
+          return { kind: "error", code: "refused", message: "Nothing was written." };
+        writes += 1;
+        return { kind: "structured", resultType: "scripted.changed", data: {} };
+      },
+    };
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        pending = input.tools
+          .find((handle) => handle.name === tool.name)!
+          .invoke(
+            {},
+            {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+            },
+          );
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: options.stop,
+          },
+        };
+      },
+    };
+    const { runner } = agent(backend, {
+      clock: () => now,
+      buildTools: () => ({
+        tools: [tool],
+        dispose: async () => {
+          if (options.cleanupResult) {
+            release();
+            await pending;
+          }
+        },
+      }),
+    });
+    return {
+      id,
+      runner,
+      calls: () => calls,
+      writes: () => writes,
+      advance: () => {
+        now += 6 * 60_000;
+      },
+      finish: async () => {
+        release();
+        await pending;
+      },
+    };
+  }
+
+  test.each(["error", "canceled", "end_turn"] as const)(
+    "%s with an admitted unfinished action is reviewable and never replayed",
+    async (stop) => {
+      const turn = pendingTurn({ stop });
+      try {
+        expect(await turn.runner.drain()).toBe(1);
+        expect(turn.writes()).toBe(0);
+        expect(getNoteRuns(db, [turn.id]).get(turn.id)).toMatchObject({
+          state: "done",
+          attempts: 1,
+          receipt: {
+            text: "An action is still running and may finish after this note. Review the result before asking again.",
+          },
+        });
+        await turn.finish();
+        expect(turn.writes()).toBe(1);
+        turn.advance();
+        expect(await turn.runner.drain()).toBe(0);
+        expect(turn.calls()).toBe(1);
+      } finally {
+        await turn.finish();
+      }
+    },
+  );
+
+  test.each(["error", "applied"] as const)(
+    "cleanup settles an action as %s before deciding whether to replay",
+    async (cleanupResult) => {
+      const turn = pendingTurn({ stop: "error", cleanupResult });
+      try {
+        await turn.runner.drain();
+        const row = getNoteRuns(db, [turn.id]).get(turn.id);
+        expect(row?.state).toBe(cleanupResult === "error" ? "pending" : "done");
+        expect(turn.writes()).toBe(cleanupResult === "error" ? 0 : 1);
+        if (cleanupResult === "applied")
+          expect(row?.receipt?.text).toBe(
+            "An action was applied before processing stopped. Review the result before asking again.",
+          );
+      } finally {
+        await turn.finish();
+      }
+    },
+  );
+
+  test.each([
+    { name: "conversation_memory_evidence", mutates: true },
+    { name: "cite_record", mutates: true },
+    { name: "search_many", mutates: false },
+  ])("pending $name does not block a safe retry", async ({ name, mutates }) => {
+    const turn = pendingTurn({ stop: "error", name, mutates });
+    try {
+      await turn.runner.drain();
+      expect(getNoteRuns(db, [turn.id]).get(turn.id)).toMatchObject({
+        state: "pending",
+        attempts: 1,
+        receipt: null,
+      });
+    } finally {
+      await turn.finish();
+    }
+  });
+});
+
+describe("note agent tool admission lifetime", () => {
+  test("retired task handles cannot write during cleanup or later, while a fresh note can", async () => {
+    queueNote("Save this note without a task");
+    let captured:
+      { handle: ToolHandle; context: { sessionId: string; messageId: string } } | undefined;
+    const cleanupResults: ToolResult[] = [];
+    const tasks = new TaskService(db, directWriteGate(db), () => T0 + 60_000);
+    const apply = vi.fn((command: Parameters<TaskService["apply"]>[0]) => tasks.apply(command));
+    const backend = toolCallingBackend((input) => {
+      captured = {
+        handle: input.tools.find((tool) => tool.name === "task_create")!,
+        context: { sessionId: input.sessionId, messageId: input.messageId },
+      };
+      return input.userMessage.includes("Add a fresh task")
+        ? [{ tool: "task_create", args: { title: "Plant a rooftop garden" } }]
+        : [];
+    }, "Saved.");
+    const { runner } = agent(backend, {
+      tasks: { apply },
+      buildTools: (_runId, taskTools) => ({
+        tools: taskTools,
+        dispose: async () => {
+          cleanupResults.push(
+            await captured!.handle.invoke({ title: "Late orphaned task" }, captured!.context),
+          );
+        },
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    const retired = captured!;
+    expect(cleanupResults).toEqual([
+      expect.objectContaining({ kind: "error", code: "note_finished" }),
+    ]);
+    expect(
+      await retired.handle.invoke({ title: "Another late task" }, retired.context),
+    ).toMatchObject({
+      kind: "error",
+      code: "note_finished",
+    });
+    expect(apply).not.toHaveBeenCalled();
+    expect(listOpenLoops(db, {})).toEqual([]);
+
+    queueNote("Add a fresh task");
+    expect(await runner.drain()).toBe(1);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(listOpenLoops(db, {})).toEqual([
+      expect.objectContaining({ title: "Plant a rooftop garden", origin: "note" }),
+    ]);
+    expect(cleanupResults).toHaveLength(2);
+    expect(cleanupResults[1]).toMatchObject({ kind: "error", code: "note_finished" });
+    expect(await retired.handle.invoke({ title: "Still retired" }, retired.context)).toMatchObject({
+      kind: "error",
+      code: "note_finished",
+    });
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
 });

@@ -106,12 +106,23 @@ function budgeted(
   tools: readonly ToolHandle[],
   budget: number,
   onExhausted: () => void,
-  onMutation: (outcome: "applied" | "uncertain", toolName: string, result?: ToolResult) => void,
+  onMutation: (
+    outcome: "started" | "settled" | "applied" | "uncertain",
+    toolName: string,
+    result?: ToolResult,
+  ) => void,
+  isFinished: () => boolean,
 ): ToolHandle[] {
   let used = 0;
   return tools.map((tool) => ({
     ...tool,
     async invoke(args, ctx): Promise<ToolResult> {
+      if (isFinished())
+        return {
+          kind: "error",
+          code: "note_finished",
+          message: "This note's turn has finished. Its tools can no longer be called.",
+        };
       used += 1;
       if (used > budget) {
         onExhausted();
@@ -122,6 +133,7 @@ function budgeted(
         };
       }
       const consequential = tool.mutates === true && !REPLAYABLE_BOOKKEEPING_TOOLS.has(tool.name);
+      if (consequential) onMutation("started", tool.name);
       let result: ToolResult;
       try {
         result = await tool.invoke(args, ctx);
@@ -129,6 +141,8 @@ function budgeted(
         // A write can commit before its follow-up work throws. Do not replay it.
         if (consequential) onMutation("uncertain", tool.name);
         throw err;
+      } finally {
+        if (consequential) onMutation("settled", tool.name);
       }
       if (
         consequential &&
@@ -273,6 +287,8 @@ export class NoteAgent {
     let exhausted = false;
     let appliedMutation = false;
     let uncertainMutation = false;
+    let pendingMutations = 0;
+    let finished = false;
     let otherAppliedMutation = false;
     const watchChanges = new Map<
       string,
@@ -312,6 +328,14 @@ export class NoteAgent {
         }
       },
       (outcome, toolName, result) => {
+        if (outcome === "started") {
+          pendingMutations += 1;
+          return;
+        }
+        if (outcome === "settled") {
+          pendingMutations -= 1;
+          return;
+        }
         if (outcome === "uncertain") {
           uncertainMutation = true;
           return;
@@ -339,6 +363,7 @@ export class NoteAgent {
           otherAppliedMutation = true;
         }
       },
+      () => finished,
     );
     session = new AgentSession({
       sessionId: `note-agent-${entry.id}`,
@@ -351,6 +376,7 @@ export class NoteAgent {
     });
     const changes: NoteAgentReceipt["changes"] = [];
     let partial = false;
+    let failedTurn: { error: unknown; exhausted: boolean } | null = null;
     let text = "";
     let finalText = "";
     const usage: AgentUsage = {};
@@ -381,6 +407,7 @@ export class NoteAgent {
           break;
         }
         case "agent.message.end": {
+          if (event.payload.stopReason !== "tool_use") finished = true;
           finalText = text.trim() || finalText;
           text = "";
           const u = event.payload.usage;
@@ -405,15 +432,14 @@ export class NoteAgent {
       );
       const terminal = await completion;
       const turn = classifyAgentTurn(terminal);
-      if (turn.status === "failed") {
-        if (!appliedMutation && !uncertainMutation && !exhausted)
-          throw new Error(turn.failure.message);
-        partial = appliedMutation || uncertainMutation;
-      }
+      if (turn.status === "failed")
+        failedTurn = { error: new Error(turn.failure.message), exhausted };
     } catch (err) {
-      if (!appliedMutation && !uncertainMutation) throw err;
-      partial = true;
+      failedTurn = { error: err, exhausted: false };
     } finally {
+      // Cleanup may receive delayed transport callbacks. Retired handles never
+      // admit another invocation; already admitted operations may still settle.
+      finished = true;
       unsubscribe();
       try {
         await session.dispose();
@@ -432,12 +458,23 @@ export class NoteAgent {
       if (this.deps.recordUsage)
         await this.deps.recordUsage(usage, backend.model).catch(() => undefined);
     }
+    // Some transports can finish before an admitted tool settles. Cancellation
+    // is not rollback: that invocation can still write after its model exits.
+    // Cleanup may settle it, so decide whether replay is safe only afterwards.
+    const pendingAction = pendingMutations > 0;
+    if (pendingAction) uncertainMutation = true;
+    if (failedTurn) {
+      if (!appliedMutation && !uncertainMutation && !failedTurn.exhausted) throw failedTurn.error;
+      partial = appliedMutation || uncertainMutation;
+    }
     const fallback = changes.length > 0 ? changes.map((change) => change.text).join(" ") : "Saved.";
-    const warning = uncertainMutation
-      ? "An action may have been applied. Review the result before asking again."
-      : partial
-        ? "An action was applied before processing stopped. Review the result before asking again."
-        : "";
+    const warning = pendingAction
+      ? "An action is still running and may finish after this note. Review the result before asking again."
+      : uncertainMutation
+        ? "An action may have been applied. Review the result before asking again."
+        : partial
+          ? "An action was applied before processing stopped. Review the result before asking again."
+          : "";
     // Watch identities come from saved tool results, never the model's caption.
     const watches = [...watchChanges.values()];
     const receipt = watches.length
