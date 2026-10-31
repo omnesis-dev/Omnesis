@@ -165,6 +165,14 @@ describe("installer source Node requirements", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.calls).toBe("");
   });
+  // A source install checks Node for the runtime and then for the build.
+  test("reports a Node it finds once, though a source install checks it twice", () => {
+    const result = run("24.16.0", {
+      command: "info() { printf 'info %s\\n' \"$*\"; }; prepare_node_for_install",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.split("Node v24.16.0 found")).toHaveLength(2);
+  });
   test("selects an existing supported keg before attempting an upgrade", () => {
     const result = run("24.15.0", { keg: "24.16.0" });
     expect(result.status, result.stderr).toBe(0);

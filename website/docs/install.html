@@ -572,7 +572,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
               </tr>
               <tr>
                 <td><code>--no-modify-path</code></td>
-                <td>Leave your shell profile alone and print the PATH line to add instead.</td>
+                <td>
+                  Leave your shell profile alone and print the PATH line to add instead. Without it,
+                  a profile that already puts <code>~/.local/bin</code> on PATH is left as it is.
+                </td>
               </tr>
               <tr>
                 <td><code>--gateway-url &lt;url&gt;</code></td>
@@ -1478,9 +1481,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <strong>Docker.</strong> On a Docker host, <code>omnesis uninstall</code> runs in the
           launcher on the host, not in a container: it takes the containers and images down (<code
             >docker compose … down --rmi all</code
-          >), removes the compose file and the launcher, and with <code>--purge</code> the config
-          directory. An install is removed as a whole. On a machine that only collects, it ends by
-          reminding you to remove its device on the gateway host, as a native collector's does.
+          >), removes the compose file, the launcher and the installer's PATH line (kept, and said,
+          when other programs live in <code>~/.local/bin</code>), and with <code>--purge</code> the
+          config directory. An install is removed as a whole. On a machine that only collects, it
+          ends by reminding you to remove its device on the gateway host, as a native collector's
+          does.
         </p>
         <p>
           <strong>What only you can do.</strong> The command says which of these apply when it
