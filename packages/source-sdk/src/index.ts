@@ -48,7 +48,13 @@ export {
   fieldValidator,
   type PathProbe,
 } from "./config-schema.js";
-export { nodePathProbe, expandHostPath } from "./path-probe-node.js";
+export {
+  nodePathProbe,
+  expandHostPath,
+  hostHomeDir,
+  containerPathHint,
+  HOST_HOME_ENV,
+} from "./path-probe-node.js";
 export type {
   ConfigSchema,
   ConfigField,
