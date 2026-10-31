@@ -74,10 +74,18 @@ cannot perform consequential writes. Its receipt asks for review and a fresh,
 separate request. Evidence/citation bookkeeping remains available. This is not an
 exactly-once guarantee.
 
-An untrusted edit revokes old pending work and does not enqueue an owner turn.
-Edits made while processing is disabled are saved without later replay. Explicitly
+A changed-text edit by a non-admin writer atomically revokes pending work and
+permanently clears the note's owner eligibility. A later admin edit cannot promote
+that externally changed text; a fresh owner note is required. A same-text external
+edit does not downgrade eligibility. Trusted edits while processing is disabled
+preserve the last finished baseline, but are saved without later replay. Explicitly
 editing an older owner note after enabling processing can act on the changed
 intent. Deleting the note cascades its revision history.
+
+Note turns share chat's memory-subject guidance and receive the current self-person
+identity. Personal facts belong on that self profile; document context belongs on
+the document. Without a self identity, the agent reports the fact as saved in the
+note rather than claiming profile memory. Existing annotations are not backfilled.
 
 ## Changes and maintenance
 
