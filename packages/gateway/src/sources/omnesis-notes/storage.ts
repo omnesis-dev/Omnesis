@@ -334,6 +334,10 @@ export function updateNoteEntryText(
         authority?.enabled !== false,
         Date.parse(nowIso),
       );
+    // Keep the external edit's skipped revision, then revoke owner provenance
+    // in the same transaction. Later owner edits cannot promote foreign prose.
+    if (result.changes && text !== entry.text && authority?.owner !== true)
+      db.prepare("UPDATE note_entries SET from_owner=0 WHERE id=?").run(id);
     return result.changes > 0;
   })();
 }

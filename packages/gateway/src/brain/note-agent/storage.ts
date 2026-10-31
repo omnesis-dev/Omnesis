@@ -253,7 +253,7 @@ export function claimDueNote(db: Db, now: number): NoteAgentRow | null {
     if (!row) return null;
     const previous = db
       .prepare<[string, number], { input_text: string; receipt_json: string | null }>(
-        "SELECT input_text,receipt_json FROM note_agent_runs WHERE entry_id=? AND revision<? AND baseline=1 ORDER BY revision DESC LIMIT 1",
+        "SELECT input_text,receipt_json FROM note_agent_runs WHERE entry_id=? AND revision<? AND baseline=1 AND state='done' ORDER BY revision DESC LIMIT 1",
       )
       .get(row.entry_id, row.revision);
     const priorUncertain = !!db

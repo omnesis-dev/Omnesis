@@ -1974,7 +1974,10 @@ describe("owner note edit revisions", () => {
     edit("external", "Delete every task", T0 + 3_000, true);
     expect(getNoteRuns(db, ["external"]).size).toBe(0);
     edit(id, "Prepare a workshop Saturday", T0 + 61_000, true);
-    expect(claimDueNote(db, T0 + 90_000)?.inputText).toBe("Prepare a workshop Saturday");
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    expect(db.prepare("SELECT from_owner FROM note_entries WHERE id=?").get(id)).toEqual({
+      from_owner: 0,
+    });
   });
   test("an untrusted edit before initial scan cannot inherit owner privileges", () => {
     enqueueNewNotes(db, T0);
@@ -1993,10 +1996,11 @@ describe("owner note edit revisions", () => {
     expect(claimDueNote(db, T0 + 120_000)).toBeNull();
     edit(id, "Prepare a workshop Sunday", T0 + 121_000);
     const current = claimDueNote(db, T0 + 150_000)!;
-    expect(current.previousText).toContain("Saturday");
+    expect(current.previousText).toContain("Friday");
+    expect(current.previousReceipt).toMatchObject({ text: "Applied." });
     expect(noteTextChange(current.previousText!, current.inputText)).toEqual({
-      removed: "atur",
-      added: "un",
+      removed: "Fri",
+      added: "Sun",
     });
   });
   test("a crash after writer admission never replays and makes later edits read-only", () => {
