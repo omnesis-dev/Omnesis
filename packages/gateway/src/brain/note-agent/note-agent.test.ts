@@ -1046,7 +1046,11 @@ describe("note agent retry after replayable bookkeeping", () => {
                   description: "Record an idempotent citation for this turn.",
                   mutates: true,
                   schema: z.object({}).strict(),
-                  invoke: async () => ({ kind: "text", text: "Citation recorded." }),
+                  invoke: async () => ({
+                    kind: "structured",
+                    resultType: "citation.recorded",
+                    data: {},
+                  }),
                 };
           return {
             tools: [
