@@ -17,7 +17,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -228,7 +228,8 @@ describe("a native collector after a Docker install on the same machine", () => 
     expect(shim).toContain(`CONFIG_DIR='${native.nativeDir}'`);
     expect(shim).toContain(`LAUNCHER='${native.innerLauncher}'`);
     expect(read(native.innerLauncher)).toContain(`DEFAULT_CONFIG_DIR='${native.nativeDir}'`);
-    expect(read(native.innerLauncher)).toContain(`SOURCE_ROOT='${fixturePath("checkout-beside")}'`);
+    // The checkout the run named (macOS reads a temp path through /private).
+    expect(read(native.innerLauncher)).toMatch(/^SOURCE_ROOT='[^']*\/checkout-beside'$/mu);
 
     // Pairing and the service point at this collector alone.
     expect(callStartingWith(native.calls, "pair ")).toBe(
@@ -590,8 +591,10 @@ describe("host folders the collector's container reads", () => {
     const call = read(dockerLog(docker.home))
       .split("\n")
       .find((line) => line.includes("sources list"));
+    // The working directory as the shell reports it: macOS names a temp
+    // directory through /private.
     expect(call).toContain(
-      `--env OMNESIS_HOST_HOME=${docker.home} --env OMNESIS_HOST_CWD=${docker.home}`,
+      `--env OMNESIS_HOST_HOME=${docker.home} --env OMNESIS_HOST_CWD=${realpathSync(docker.home)}`,
     );
     expect(call).not.toContain("/forged");
     // Without a terminal there is nobody to offer a share to.
