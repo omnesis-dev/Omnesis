@@ -288,6 +288,8 @@ describe("Brain cassettes (the note agent on a stable install)", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: false,
+      agent: "replay",
+      brainAgent: false,
       cassetteDir: CASSETTE_DIR,
       syncSources: false,
     });

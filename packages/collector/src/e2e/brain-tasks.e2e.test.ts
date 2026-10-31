@@ -177,6 +177,7 @@ describe("brain bench: tasks", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      agent: "puppet",
       clock: "virtual",
       syncSources: false,
       entailment: ({ claim }) => (claim.includes(UNSUPPORTED_FACT) ? "neutral" : "entailment"),
@@ -436,7 +437,7 @@ describe("brain bench: tasks", () => {
     await bench?.destroy();
   }, 60_000);
 
-  test("tasks are available, and a note agent is reported when a background model runs", async () => {
+  test("tasks are available, and a note agent is reported when an Agent model runs", async () => {
     const status = await bench.obs.status();
     expect(status.tasks).toEqual({ available: true, noteAgent: true });
   }, 60_000);
