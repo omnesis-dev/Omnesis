@@ -43,13 +43,25 @@ class CaptureViewModel @Inject constructor(
     private val transcriber: SpeechTranscriber,
     private val repository: NotesRepository,
     private val voiceNotes: VoiceNoteSessions,
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val surface: String = savedStateHandle.get<String>("surface") ?: CaptureSurface.APP
 
     private val _state = MutableStateFlow(CaptureUiState())
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
+
+    /** Presentation survives Activity recreation, so browsing never restarts capture. */
+    val historyOpen: StateFlow<Boolean> = savedStateHandle.getStateFlow("historyOpen", false)
+
+    fun openHistory() {
+        savedStateHandle["historyOpen"] = true
+        stopListening()
+    }
+
+    fun closeHistory() {
+        savedStateHandle["historyOpen"] = false
+    }
 
     /** True while the user wants the mic hot — recognition sessions auto-restart until this drops. */
     private var wantListening = false
@@ -114,6 +126,7 @@ class CaptureViewModel @Inject constructor(
 
     /** Called once the RECORD_AUDIO permission state is known (on open, or after the runtime prompt). */
     fun onMicPermission(granted: Boolean) {
+        if (historyOpen.value) return
         if (!granted) {
             _state.update { it.copy(speech = SpeechState.DENIED) }
             return

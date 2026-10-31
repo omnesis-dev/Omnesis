@@ -12,7 +12,7 @@ import Foundation
 /// is testable in the sim-less SwiftPM logic lane.
 @available(iOS 17.0, *)
 enum HomeTab: Hashable {
-    case agent, search, people, sources, privacy, tasks, watches
+    case agent, search, people, sources, privacy, tasks, watches, notes
 }
 
 /// What the app was presenting when it last left the foreground. Persisting

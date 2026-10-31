@@ -54,6 +54,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import dev.omnesis.android.ui.notes.NotesHistoryScreen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,6 +93,8 @@ import kotlinx.coroutines.delay
 fun CaptureScreen(
     onClose: () -> Unit,
     vm: CaptureViewModel = hiltViewModel(),
+    onOpenSettings: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
     /** Set when the capture completes a task with its note rather than saving a note. */
     completion: TaskCompletionCapture? = null,
 ) {
@@ -100,8 +105,10 @@ fun CaptureScreen(
             onDispose { vm.endTaskCompletion() }
         }
     }
+    val historyOpen by vm.historyOpen.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    DisposableEffect(vm) { onDispose { vm.stopListening() } }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -115,6 +122,7 @@ fun CaptureScreen(
     // Dictation starts as soon as the screen opens; the runtime prompt fires
     // first when the permission hasn't been granted yet.
     LaunchedEffect(Unit) {
+        if (historyOpen) return@LaunchedEffect
         if (micGranted()) vm.onMicPermission(true) else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
@@ -152,9 +160,17 @@ fun CaptureScreen(
         onCancel = onClose,
         onDismissError = vm::dismissError,
         onDiscardVoiceNote = vm::discardVoiceNote,
+        onHistory = if (completion == null) vm::openHistory else null,
         completionSubject = completion?.subject,
         completionKind = completion?.kind ?: TaskNoteKind.COMPLETE,
     )
+    if (historyOpen) Dialog(onDismissRequest = vm::closeHistory,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        NotesHistoryScreen(onBack = vm::closeHistory, onCapture = vm::closeHistory,
+            captureLabel = "Back to capture",
+            onOpenTask = { id -> vm.closeHistory(); onOpenTask(id) },
+            onOpenSettings = onOpenSettings)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,6 +183,7 @@ fun CaptureContent(
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
     onDiscardVoiceNote: () -> Unit = {},
+    onHistory: (() -> Unit)? = null,
     /** What the note is about — a task's title or a brief item's sentence — when it does not stand alone. */
     completionSubject: String? = null,
     /** What the note does to that subject, which words the screen. */
@@ -205,6 +222,7 @@ fun CaptureContent(
                         }
                     }
                 },
+                actions = { onHistory?.let { action -> TextButton(onClick = action, enabled = state.save !is SaveState.Saving) { Text("Notes") } } },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = Color.Transparent,
                     titleContentColor = c.textPrimary,

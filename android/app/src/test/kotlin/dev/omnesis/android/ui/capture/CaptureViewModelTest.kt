@@ -83,6 +83,7 @@ class CaptureViewModelTest {
     private fun makeVm(
         gateway: () -> NotesGateway?,
         vararg voiceNotes: VoiceNoteSession,
+        savedStateHandle: SavedStateHandle = SavedStateHandle(),
     ): CaptureViewModel {
         val context = ApplicationProvider.getApplicationContext<Context>()
         transcriber = FakeTranscriber(context)
@@ -100,7 +101,7 @@ class CaptureViewModelTest {
                 beginCount++
                 sessions.removeFirstOrNull()
             },
-            savedStateHandle = SavedStateHandle(),
+            savedStateHandle = savedStateHandle,
         )
     }
 
@@ -519,5 +520,28 @@ class CaptureViewModelTest {
 
     private companion object {
         val NOW = Instant.parse("2026-07-13T09:00:00.000Z")
+    }
+    @Test
+    fun history_survives_recreation_and_blocks_initial_or_late_permission_autostart() {
+        val saved = SavedStateHandle()
+        vm = makeVm(gateway = { null }, savedStateHandle = saved)
+        vm.onMicPermission(true)
+        assertEquals(1, transcriber.startCount)
+        vm.openHistory()
+        assertTrue(vm.historyOpen.value)
+        vm.onMicPermission(true)
+        assertEquals(1, transcriber.startCount)
+        assertEquals(SpeechState.IDLE, vm.state.value.speech)
+
+        val restored = SavedStateHandle(mapOf("historyOpen" to saved.get<Boolean>("historyOpen")))
+        vm = makeVm(gateway = { null }, savedStateHandle = restored)
+        assertTrue(vm.historyOpen.value)
+        vm.onMicPermission(true)
+        assertEquals(0, transcriber.startCount)
+        vm.closeHistory()
+        assertFalse(vm.historyOpen.value)
+        assertEquals(0, transcriber.startCount)
+        vm.startListening()
+        assertEquals(1, transcriber.startCount)
     }
 }

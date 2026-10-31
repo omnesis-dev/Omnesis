@@ -198,11 +198,10 @@ class MainMenuDrawerAuditRowTest {
     }
 
     /**
-     * The rows read Search, Tasks, Tell Omnesis, Sources, People, Audit, then the experimental
-     * rows: Tell Omnesis sits under Tasks because telling Omnesis is how a task is added.
+     * Notes sits below Tasks, with its capture control beside the navigation label.
      */
     @Test
-    fun rowsFollowTheMenuOrderWithTellOmnesisUnderTasks() {
+    fun rowsFollowTheMenuOrderWithNotesUnderTasks() {
         compose.setContent {
             OmnesisTheme(darkTheme = false) {
                 MainMenuDrawer(
@@ -221,7 +220,7 @@ class MainMenuDrawerAuditRowTest {
             }
         }
 
-        val labels = listOf("Search", "Tasks (3)", "Tell Omnesis", "Sources", "People", "Audit", "Watches")
+        val labels = listOf("Search", "Tasks (3)", "Notes", "Sources", "People", "Audit", "Watches")
         val tops = labels.map { label ->
             compose.onNodeWithText(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
         }

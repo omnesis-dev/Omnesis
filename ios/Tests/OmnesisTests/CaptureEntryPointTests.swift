@@ -15,7 +15,7 @@ final class CaptureEntryPointTests: XCTestCase {
             .deletingLastPathComponent()
     }
 
-    func testOnlyDrawerAndTasksOwnTheInAppCaptureAction() throws {
+    func testOnlyDrawerTasksAndNotesHistoryOwnTheInAppCaptureAction() throws {
         let uiRoot = iosRoot.appendingPathComponent("Sources/Omnesis/UI")
         let drawer = uiRoot.appendingPathComponent("MainMenuDrawer.swift")
         let drawerSource = try source(at: drawer)
@@ -34,8 +34,8 @@ final class CaptureEntryPointTests: XCTestCase {
                 includingPropertiesForKeys: nil
             )?.allObjects as? [URL]
         )
-        // The Tasks bar is the one screen with a capture button of its own:
-        // tasks are added by telling Omnesis.
+        // The Tasks bar owns the task-capture glyph: tasks are added by
+        // telling Omnesis. Notes history uses the ordinary microphone.
         let tasks = uiRoot.appendingPathComponent("Tasks/TasksView.swift")
         let offenders = try files
             .filter { $0.pathExtension == "swift" && $0.standardizedFileURL != tasks.standardizedFileURL }
@@ -57,13 +57,23 @@ final class CaptureEntryPointTests: XCTestCase {
         )
         // The Tasks UI-test harness (DEBUG only) installs the action the way Home does.
         let tasksHarness = uiRoot.appendingPathComponent("Tasks/TasksFanDemoSurface.swift")
-        let allowed = Set([drawer, captureKey, home, tasks, tasksHarness].map(\.standardizedFileURL))
+        // Browsing existing notes keeps a direct path back to immediate capture.
+        let notesHistory = uiRoot.appendingPathComponent("Capture/NotesHistoryView.swift")
+        let notesHistorySource = try source(at: notesHistory)
+        XCTAssertEqual(
+            notesHistorySource.components(separatedBy: "openCapture?()").count - 1,
+            1,
+            "Notes history owns one Tell Omnesis action"
+        )
+        let notesHarness = uiRoot.appendingPathComponent("Capture/NotesHistoryDemoSurface.swift")
+        XCTAssertTrue(try source(at: notesHarness).contains("#if DEBUG && canImport(SwiftUI) && canImport(UIKit)"))
+        let allowed = Set([drawer, captureKey, home, tasks, tasksHarness, notesHistory, notesHarness].map(\.standardizedFileURL))
         let actionOffenders = try files
             .filter { $0.pathExtension == "swift" && !allowed.contains($0.standardizedFileURL) }
             .filter { try source(at: $0).contains("openCapture") }
             .map(\.lastPathComponent)
 
-        XCTAssertEqual(actionOffenders, [], "In-app capture action escaped the drawer and the Tasks bar")
+        XCTAssertEqual(actionOffenders, [], "In-app capture action escaped the drawer, Tasks, and Notes history")
     }
 
     func testExternalCaptureSurfaceIsControlOnly() throws {

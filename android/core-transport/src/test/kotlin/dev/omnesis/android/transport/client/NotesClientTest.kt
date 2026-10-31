@@ -187,4 +187,29 @@ class NotesClientTest {
     fun voice_uploads_outlast_the_ordinary_api_timeout() {
         assertTrue(NotesClient.VOICE_UPLOAD_TIMEOUT.seconds > 30)
     }
+    @Test
+    fun history_decodes_receipt_and_preserves_opaque_cursor() = runTest {
+        val entry = entryJson.trim().dropLast(1) + """, "transcription":"pending", "agent":{"state":"done","receipt":{"text":"Task added.","changes":[{"text":"Water plants","taskId":"task-1","undoSeq":42}]}}}"""
+        server.enqueue(MockResponse().setBody("""{"entries":[$entry],"pageInfo":{"hasMore":true,"nextCursor":"next+/=","limit":25}}"""))
+        val result = client().history("cursor+/=")
+        assertEquals("next+/=", result.pageInfo.nextCursor)
+        assertEquals("Task added.", result.entries.single().agent?.receipt?.text)
+        assertEquals(42L, result.entries.single().agent?.receipt?.changes?.single()?.undoSeq)
+        val request = server.takeRequest()
+        assertEquals("cursor+/=", request.requestUrl?.queryParameter("cursor"))
+        assertEquals("no-store", request.getHeader("Cache-Control"))
+    }
+
+    @Test
+    fun edit_and_delete_encode_note_id_as_one_segment() = runTest {
+        server.enqueue(MockResponse().setBody(entryJson))
+        client().edit("note/one", "Updated thought")
+        val edit = server.takeRequest()
+        assertEquals("PATCH", edit.method)
+        assertEquals("/notes/note%2Fone", edit.path)
+        assertEquals("Updated thought", OmnesisJson.parseToJsonElement(edit.body.readUtf8()).jsonObject["text"]?.jsonPrimitive?.content)
+        server.enqueue(MockResponse().setResponseCode(204))
+        client().delete("note/one")
+        assertEquals("/notes/note%2Fone", server.takeRequest().path)
+    }
 }
