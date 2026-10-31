@@ -324,7 +324,7 @@ struct CaptureView: View {
     static let transcriptShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
     private var placeholder: String {
-        completion?.placeholder ?? "What should the brain remember?"
+        completion?.placeholder ?? "What should Omnesis remember?"
     }
 
     /// Live transcript / manual entry. Editable whenever speech is
