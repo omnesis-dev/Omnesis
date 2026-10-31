@@ -52,6 +52,31 @@ bounded session and needs no open chat. Assignments are never copied or used as
 fallbacks for each other. Evidence invalidation
 and privacy cleanup continue when autonomous synthesis is stopped.
 
+## Owner note corrections
+
+Tell Omnesis uses `agent`, independently of the Brain gate. An admin-authorized
+text edit to an originally owner-captured note queues a durable revision. Identical
+text queues nothing. A ten-second settling period coalesces unclaimed rapid edits;
+a newer edit waits for the earlier claimed revision to settle. Each edit has its
+own `note:<id>:revision:<n>` run identity. The system prompt carries previous and
+current text, the exact changed span and the prior finished receipt as data, so
+unchanged instructions are not new permission to repeat work. The current text
+remains the owner's instruction.
+
+The public edited entry is pending with no receipt until that revision finishes;
+previous receipts remain internal context. Mutation admission checks the current
+text, revision and claim at the writer boundary. An admitted older mutation may
+still finish; superseded or retired handles cannot admit new work. If a prior
+consequential action is uncertain or still in flight, the correction can read but
+cannot perform consequential writes. Its receipt asks for review and a fresh,
+separate request. Evidence/citation bookkeeping remains available. This is not an
+exactly-once guarantee.
+
+An untrusted edit revokes old pending work and does not enqueue an owner turn.
+Edits made while processing is disabled are saved without later replay. Explicitly
+editing an older owner note after enabling processing can act on the changed
+intent. Deleting the note cascades its revision history.
+
 ## Changes and maintenance
 
 Source writes record a durable change and invalidate affected evidence without

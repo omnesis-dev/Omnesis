@@ -809,6 +809,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           explicitly; other role assignments are not used as a fallback.
         </p>
         <p>
+          Editing your captured note also asks Agent to act on the correction. It compares the
+          previous and current text with its prior result, so unchanged instructions are not a fresh
+          request. Quick successive edits settle together; the edited note shows pending processing
+          until its new receipt is ready. If an earlier action has an uncertain result, Agent can
+          read back the state but asks you to review it before making a fresh, separate request.
+          Edits made while note processing is switched off are only saved.
+        </p>
+        <p>
           Notes are grouped by capture day, with a <strong>View combined note</strong> link to the
           day's searchable document. Expand <strong>Related to this day</strong> below the notes to
           see the dates they mention, each labelled <strong>Date mention</strong> with its kind,
