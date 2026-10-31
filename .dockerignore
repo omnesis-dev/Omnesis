@@ -11,3 +11,4 @@ docs
 *.md
 !packages/**/README.md
 .claude
+packages/gateway/duckdb-extensions/v*

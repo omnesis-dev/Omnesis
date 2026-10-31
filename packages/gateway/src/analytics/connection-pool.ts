@@ -48,6 +48,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { availableParallelism, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DuckDBInstance,
   StatementType,
@@ -63,6 +64,17 @@ const log = createLogger("gateway:analytics");
 
 const DEFAULT_POOL_SIZE = 4;
 const ANALYTICS_ATTACHED_DB = "omnesis_analytics";
+
+/**
+ * The DuckDB extensions the product ships, laid out as DuckDB lays out an
+ * extension directory (`<version>/<platform>/<name>.duckdb_extension`). The
+ * gateway package carries them beside `src/` and `dist/` alike;
+ * scripts/duckdb-extensions.mjs fetches them at install and image-build time,
+ * verified against the pins in its `manifest.json`.
+ */
+export const BUNDLED_DUCKDB_EXTENSION_DIRECTORY = fileURLToPath(
+  new URL("../../duckdb-extensions/", import.meta.url),
+);
 
 const MIB = 1024 * 1024;
 /**
@@ -135,6 +147,14 @@ export interface AnalyticsConnectionPoolOptions {
    * and lets its supervisor reopen the store from the WAL.
    */
   onFatal?: (error: Error) => void;
+  /** Where the shipped extensions live. Defaults to the gateway package's own copy. */
+  bundledExtensionDirectory?: string;
+  /**
+   * The repository a missing extension is downloaded from (DuckDB's
+   * `custom_extension_repository`). Defaults to DuckDB's own; only consulted
+   * when the shipped copy is missing or refused.
+   */
+  extensionRepository?: string;
 }
 
 export interface AnalyticsSandbox {
@@ -218,6 +238,7 @@ export class AnalyticsConnectionPool {
   private readonly memoryLimitMiB: number;
   private readonly threads: number;
   private readonly onFatal?: (error: Error) => void;
+  private readonly extensionSources: ExtensionSources;
 
   constructor(
     public readonly dbPath: string,
@@ -229,6 +250,10 @@ export class AnalyticsConnectionPool {
     this.memoryLimitMiB = opts?.memoryLimitMiB ?? defaultMemoryLimitMiB();
     this.threads = opts?.threads ?? defaultThreads();
     this.onFatal = opts?.onFatal;
+    this.extensionSources = {
+      bundledDirectory: opts?.bundledExtensionDirectory ?? BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
+      repository: opts?.extensionRepository,
+    };
   }
 
   /**
@@ -242,10 +267,11 @@ export class AnalyticsConnectionPool {
   }
 
   /**
-   * Where DuckDB resolves the extensions this instance loads. Beside the store,
-   * deliberately not in $HOME: the service unit mounts the home directory
-   * read-only, so DuckDB's default (~/.duckdb) cannot be created, `INSTALL
-   * httpfs` fails, and an encrypted store makes the gateway exit on every start.
+   * Where DuckDB resolves an extension the product did not ship a copy of, and
+   * where it installs one it has to download. Beside the store, deliberately
+   * not in $HOME: the service unit mounts the home directory read-only, so
+   * DuckDB's default (~/.duckdb) cannot be created, `INSTALL httpfs` fails,
+   * and an encrypted store makes the gateway exit on every start.
    * Not under tempDirectory either — that is wiped on open and removed on
    * close, and an extension has to outlive the instance or every start goes
    * back to the network for it.
@@ -266,9 +292,10 @@ export class AnalyticsConnectionPool {
    * Boot order matters and is pinned here:
    *   1. Point DuckDB at an extension directory beside the store, then load the
    *      extensions the instance needs (`httpfs` carries the read-write
-   *      encryption module). Loading is filesystem access, so it has to happen
-   *      before that access is disabled — and the default directory is in
-   *      $HOME, which the service unit mounts read-only.
+   *      encryption module) — the copy the product ships first, so no network
+   *      is needed. Loading is filesystem access, so it has to happen before
+   *      that access is disabled — and the default directory is in $HOME,
+   *      which the service unit mounts read-only.
    *   2. Declare the paths the instance may touch — the store, its WAL and
    *      checkpoint sidecar, and its spill directory.
    *   3. Disable external access and lock the configuration. From here on no
@@ -286,6 +313,7 @@ export class AnalyticsConnectionPool {
         this.dbPath,
         this.encryptionKeyHex,
         this.extensionDirectory,
+        this.extensionSources,
       );
     }
     const instance = await DuckDBInstance.create(":memory:");
@@ -296,7 +324,7 @@ export class AnalyticsConnectionPool {
       // read-only.
       mkdirSync(this.extensionDirectory, { recursive: true });
       await bootstrap.run(`SET extension_directory='${escapeStr(this.extensionDirectory)}'`);
-      if (this.encryptionKeyHex) await loadEncryptionModule(bootstrap);
+      if (this.encryptionKeyHex) await loadEncryptionModule(bootstrap, this.extensionSources);
       await bootstrap.run(`SET memory_limit='${this.memoryLimitMiB}MiB'`);
       await bootstrap.run(`SET threads=${this.threads}`);
       // A path only — DuckDB creates it when it first spills, so nothing on
@@ -845,26 +873,66 @@ function moveFile(from: string, to: string): void {
   }
 }
 
+interface ExtensionSources {
+  bundledDirectory: string;
+  repository?: string;
+}
+
 /**
  * The encryption module DuckDB links statically only reads encrypted files;
  * writing one needs the OpenSSL-backed module that ships with `httpfs`.
  * DuckDB autoloads it from the local extension directory when it can — which
  * it cannot once external access is disabled, so the load is explicit here.
- * A missing extension is installed first; that needs the network once.
+ *
+ * The copy the product ships comes first, loaded by path: DuckDB still checks
+ * its signature (unsigned extensions stay disabled) and refuses a build for
+ * another DuckDB version or platform. Without a usable shipped copy this falls
+ * back to a copy in the store's extension directory, then to downloading one
+ * there — the only step that needs the network.
  */
-async function loadEncryptionModule(conn: DuckDBConnection): Promise<void> {
+async function loadEncryptionModule(
+  conn: DuckDBConnection,
+  sources: ExtensionSources,
+): Promise<void> {
+  const reader = await conn.runAndReadAll(
+    "SELECT version(), (SELECT platform FROM pragma_platform())",
+  );
+  const [version, platform] = (reader.getRows()[0] ?? []).map(String);
+  const bundled = join(sources.bundledDirectory, version!, platform!, "httpfs.duckdb_extension");
+  let bundledProblem: string;
+  if (existsSync(bundled)) {
+    try {
+      await conn.run(`LOAD '${escapeStr(bundled)}'`);
+      return;
+    } catch (error) {
+      bundledProblem = `refused by DuckDB (${describeError(error)})`;
+    }
+  } else {
+    bundledProblem = "missing";
+  }
+  log.warn(
+    `The httpfs extension Omnesis ships for DuckDB ${version} on ${platform} is ${bundledProblem} at ${bundled}; falling back to the store's extension directory`,
+  );
   try {
     await conn.run("LOAD httpfs");
     return;
   } catch (loadError) {
     try {
+      if (sources.repository) {
+        await conn.run(`SET custom_extension_repository='${escapeStr(sources.repository)}'`);
+      }
       await conn.run("INSTALL httpfs");
       await conn.run("LOAD httpfs");
+      log.warn(`Downloaded DuckDB's httpfs extension into the store's extension directory`);
     } catch (installError) {
       throw new Error(
-        "Encrypted analytics storage needs DuckDB's httpfs extension, which could not be loaded " +
-          `(${describeError(loadError)}) or installed (${describeError(installError)}). ` +
-          "Install it once with network access: `INSTALL httpfs` in DuckDB, or start the gateway online.",
+        "Encrypted analytics storage needs DuckDB's httpfs extension. " +
+          `The copy Omnesis ships is ${bundledProblem} at ${bundled}; ` +
+          `no copy could be loaded from the store's extension directory (${describeError(loadError)}), ` +
+          `and downloading one failed (${describeError(installError)}). ` +
+          "Reinstall or update Omnesis to restore the shipped copy (in a source checkout: " +
+          "`node scripts/duckdb-extensions.mjs --package-dir packages/gateway`), " +
+          "or start the gateway once with network access.",
         { cause: installError },
       );
     }
@@ -964,6 +1032,7 @@ async function migratePlaintextDuckDbIfNeeded(
   path: string,
   encryptionKeyHex: string,
   extensionDirectory: string,
+  extensionSources: ExtensionSources,
 ): Promise<void> {
   if (!existsSync(path)) return;
   const keyed = await probeEncryptedDuckDb(path, encryptionKeyHex);
@@ -989,7 +1058,7 @@ async function migratePlaintextDuckDbIfNeeded(
     // the host's account cannot write, so the copy would fail on every start.
     mkdirSync(extensionDirectory, { recursive: true });
     await conn.run(`SET extension_directory='${escapeStr(extensionDirectory)}'`);
-    await loadEncryptionModule(conn);
+    await loadEncryptionModule(conn, extensionSources);
     await conn.run(attachSql(path, "_omnesis_plaintext_source", undefined, { readonly: true }));
     await conn.run(attachSql(tmp, "_omnesis_encrypted_dest", encryptionKeyHex));
     try {

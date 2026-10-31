@@ -49,6 +49,10 @@ const EXTRA_ASSETS = {
     { from: "models-dev", to: "models-dev" },
     { from: "../../scripts/native-runtime-preflight.mjs", to: "native-runtime-preflight.mjs" },
     { from: "../../scripts/native-vector-compat.mjs", to: "native-vector-compat.mjs" },
+    // Only the pins: the binaries are per platform, so an install fetches its
+    // own build (and the Dockerfile copies the image's in).
+    { from: "duckdb-extensions/manifest.json", to: "duckdb-extensions/manifest.json" },
+    { from: "../../scripts/duckdb-extensions.mjs", to: "duckdb-extensions.mjs" },
   ],
 };
 

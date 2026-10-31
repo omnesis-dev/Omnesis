@@ -27,7 +27,7 @@ FROM base AS workspace-install
 COPY package.json package-lock.json tsconfig*.json LICENSE ./
 COPY packages/ packages/
 COPY patches/ patches/
-COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/
+COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/duckdb-extensions.mjs scripts/
 # npm builds several native modules at once; without a node directory each
 # fetches Node's headers into the same node-gyp cache, and one can read a
 # common.gypi another is still writing. The CI wrapper builds against the
@@ -47,6 +47,13 @@ COPY scripts/seeded-state/ scripts/seeded-state/
 ARG NODE_OPTIONS=--max-old-space-size=3072
 RUN node scripts/runtime/stage-runtime.mjs --build \
       --package omnesis --out /opt/omnesis-runtime
+# Encrypted analytics needs DuckDB's httpfs extension, and an image must open
+# its stores with no network at all. npm ci's postinstall fetched this
+# platform's pinned build; this step verifies it against its pin (fetching it
+# again if that failed) and fails the build rather than ship without it. The
+# staged package carries only the pins, so the verified build is copied in.
+RUN node scripts/duckdb-extensions.mjs --package-dir packages/gateway \
+    && cp -R packages/gateway/duckdb-extensions/v* /opt/omnesis-runtime/packages/gateway/duckdb-extensions/
 
 # ── Production dependencies ───────────────────────────────────────────────────
 # Both images ship the CLI, and the CLI's own dependency tree spans the gateway
@@ -56,7 +63,7 @@ FROM base AS runtime-dependencies
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY patches/ patches/
-COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/
+COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/duckdb-extensions.mjs scripts/
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/release/ scripts/release/

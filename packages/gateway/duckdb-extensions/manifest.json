@@ -1,0 +1,25 @@
+{
+  "description": "DuckDB extensions the gateway loads from this directory instead of downloading them at run time. Each pin is the SHA-256 and size of the decompressed, DuckDB-signed binary DuckDB's repository serves for this exact DuckDB version and platform. scripts/duckdb-extensions.mjs fetches and verifies them into <duckdbVersion>/<platform>/<name>.duckdb_extension; `node scripts/duckdb-extensions.mjs pin` rewrites this file for a new DuckDB version.",
+  "duckdbVersion": "v1.5.0",
+  "repository": "https://extensions.duckdb.org",
+  "extensions": {
+    "httpfs": {
+      "linux_amd64": {
+        "sha256": "8d37def867e654c6af70e2a3e4c622b1dd66dcee1cc52091d20426d261aab0ab",
+        "size": 20562094
+      },
+      "linux_arm64": {
+        "sha256": "931145d6d0e4e8b12782c002a82fe505d4a0f5d819af8eec0e46378f5f616ec6",
+        "size": 18850430
+      },
+      "osx_amd64": {
+        "sha256": "3bd3347ac90f74e9fd67ce70e5030d9ac32673e6273bf35b99dc06b19b40fc95",
+        "size": 17044686
+      },
+      "osx_arm64": {
+        "sha256": "ad6da82921baaa9c6186b86da6edb119e21f50ca0b87e2a63f1b1a8daf78578e",
+        "size": 15529326
+      }
+    }
+  }
+}

@@ -56,3 +56,8 @@ android/**/build/outputs/roborazzi/
 # Eval runs are kept for their failure lists, not committed.
 packages/watch/eval-runs/
 .nx/
+
+# DuckDB extension binaries scripts/duckdb-extensions.mjs fetches at install
+# time; only their pinned manifest is tracked.
+packages/gateway/duckdb-extensions/*
+!packages/gateway/duckdb-extensions/manifest.json

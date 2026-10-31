@@ -210,6 +210,35 @@ function assertUnprivilegedIdentity(target) {
   }
 }
 
+/**
+ * Encrypted analytics needs DuckDB's httpfs extension, and an image must open
+ * its stores with no egress at all, so it carries the pinned build. The probe
+ * drives the image's own analytics pool with no network to download from.
+ */
+function assertOfflineEncryptedAnalytics(target) {
+  const probe = fileURLToPath(new URL("./docker/offline-analytics-probe.mjs", import.meta.url));
+  const output = docker(
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001",
+    "--mount",
+    `type=bind,source=${probe},target=/opt/omnesis-probe/offline-analytics-probe.mjs,readonly`,
+    "--entrypoint",
+    "node",
+    target,
+    "/opt/omnesis-probe/offline-analytics-probe.mjs",
+  );
+  if (!output.includes("with no network")) {
+    throw new Error(`${target} offline encrypted analytics probe printed: ${output}`);
+  }
+}
+
 try {
   if (process.argv.includes("--build")) {
     for (const [target, tag] of runtimeTargets) {
@@ -221,6 +250,7 @@ try {
   assertPatchedDependencies(image);
   assertUnprivilegedIdentity(image);
   assertOmnesisBinary(image);
+  assertOfflineEncryptedAnalytics(image);
 
   assertNoPackageManagers(collectorImage, "/app/packages/collector/dist/main.js");
   assertPatchedDependencies(collectorImage);
