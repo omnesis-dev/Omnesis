@@ -625,6 +625,36 @@ describe("Cognition Steward tools", () => {
     expect(data.droppedDocIds).toEqual(["doc_gone"]);
   });
 
+  test.each([true, false])(
+    "Brain document updates preserve existing references only for owned tasks (accepted=%s)",
+    async (accepted) => {
+      upsertDocuments(db, [
+        sourceDoc("reference-guide", "A guide the owner attached to the task."),
+        sourceDoc("reference-update", "New supporting information for the same task."),
+      ]);
+      const guide = docIdByExternal(db, "reference-guide")!;
+      const update = docIdByExternal(db, "reference-update")!;
+      const id = await createLoop({ docs: [guide] });
+      if (accepted)
+        expect(
+          applyTaskCommand(db, { kind: "accept", id, surface: "tasks", runId: "user:tasks" }, nowMs)
+            .ok,
+        ).toBe(true);
+      const result = await findTool(tools, "open_loop_update").invoke(
+        { id, docs: [update, update] },
+        CTX,
+      );
+      expect(result.kind).not.toBe("error");
+      expect(getOpenLoop(db, id)!.docs.sort()).toEqual(
+        (accepted ? [guide, update] : [update]).sort(),
+      );
+      if (accepted) {
+        await findTool(tools, "open_loop_update").invoke({ id, docs: [] }, CTX);
+        expect(getOpenLoop(db, id)!.docs.sort()).toEqual([guide, update].sort());
+      }
+    },
+  );
+
   test("open_loop_update with decayCheckPassed stamps last_decay_check and grows the back-off counter", async () => {
     const loopId = await createLoop();
     nowMs += 5_000;

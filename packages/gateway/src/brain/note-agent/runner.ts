@@ -41,7 +41,7 @@ export interface NoteAgentDeps {
     | "claimDueNote"
     | "finishNoteRun"
   >;
-  /** The background-agent model; null while none is runnable. */
+  /** The Agent capability model; null while none is runnable. */
   resolveBackend: () => ChatBackend | null;
   /** The owner's `agent.noteAgent` setting, read live; undefined while unset. */
   getSetting: () => boolean | undefined;
@@ -70,6 +70,8 @@ const RETRY_DELAY_MS = 5 * 60_000;
 const REPLAYABLE_BOOKKEEPING_TOOLS = new Set(["conversation_memory_evidence", "cite_record"]);
 
 export const NOTE_AGENT_SYSTEM_PROMPT = `You are Omnesis, reading one note the user just told you with Tell Omnesis. Act on it now, in this one turn, with your tools. The note is the user speaking: what it says about their own life and plans is true.
+
+This is asynchronous, fire-and-forget: the user left instructions and is not here chatting with you. Do not ask follow-up questions, wait for answers, or invite another turn. Carry out the clear parts of the request now. If missing information or ambiguity prevents an action, do not guess or make an unrelated change; explain briefly in the final receipt what you could not do. Leave one final result, not a conversation.
 
 - A task or reminder ("remind me to…", "I need to…", "buy…", "call…") → add it with task_create. Check task_list first: if the task already exists, change that one instead. Set scheduledFor when the note says when to do it (resolve "tomorrow", "next week", "in March" from the note's capture day) and a deadline only for a real due date.
 - For a task, use the read tools to find useful supporting documents when the note names or implies them, and link relevant document ids with docs on task_create or task_update edit. Keep existing links unless the user asks to remove them. Attach only documents you found, never invented ids; if nothing relevant is found, still carry out the task request. Documents provide context, not permission to add or change other tasks.
@@ -161,7 +163,7 @@ function budgeted(
 export interface NoteAgentStatus {
   /** The owner leaves the note agent on: the setting, or its default. */
   enabled: boolean;
-  /** A background-agent model is runnable. */
+  /** An Agent model is runnable. */
   modelAssigned: boolean;
   /** Notes are read: enabled AND a runnable model. */
   active: boolean;
@@ -184,7 +186,7 @@ export class NoteAgent {
     return this.deps.getSetting() ?? DEFAULT_NOTE_AGENT_ENABLED;
   }
 
-  /** True when the note agent is on and a background-agent model is runnable. */
+  /** True when the note agent is on and an Agent model is runnable. */
   active(): boolean {
     return this.enabled() && this.deps.resolveBackend() !== null;
   }
@@ -199,7 +201,7 @@ export class NoteAgent {
    * Record where reading starts, before the gateway accepts captures: a note
    * the owner captures from here on is read even if it arrives before the
    * first drain. Records no start while the note agent is off or no
-   * background-agent model is runnable.
+   * Agent model is runnable.
    */
   async start(): Promise<void> {
     if (this.active()) await this.deps.writeGate.enqueueNewNotes(this.now());
@@ -254,7 +256,7 @@ export class NoteAgent {
         row.attempts,
         {
           state: "failed",
-          error: "no background-agent model",
+          error: "no Agent model",
           retryAt: this.now() + RETRY_DELAY_MS,
         },
         this.now(),

@@ -1618,7 +1618,11 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .describe(
           "REPLACES the involved list — person ids or emails, resolved like open_loop_create.",
         ),
-      docs: idList.optional().describe("REPLACES the doc list when present."),
+      docs: idList
+        .optional()
+        .describe(
+          "Relevant source document ids. Adds references while preserving existing links on the user's own task; replaces the list on an unaccepted suggestion.",
+        ),
       blockedBy: idList.optional(),
       decayCheckPassed: z
         .boolean()
@@ -1679,7 +1683,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     name: "open_loop_update",
     description:
       "Partially update an existing open loop — pass only the fields to " +
-      "change (`docs`/`actors`/etc. replace the whole list). Bumps the " +
+      "change (list fields replace the whole list, except docs add references " +
+      "on the user's own task and preserve existing links). Bumps the " +
       "loop's last_update. Prefer this (plus open_loop_ledger_append) over " +
       "creating a new loop when the datum concerns the SAME obligation an " +
       "existing loop tracks. Clarify title/description only for the same " +
@@ -1787,7 +1792,13 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           ...(appliesTaskFields && deadline !== undefined ? { deadline } : {}),
           ...(actorsPart ? { actors: actorsPart.known } : {}),
           ...(involvedPart ? { involved: involvedPart.known } : {}),
-          ...(docsPart ? { docs: docsPart.known } : {}),
+          ...(docsPart
+            ? {
+                docs: userTask
+                  ? [...new Set([...existing.docs, ...docsPart.known])]
+                  : docsPart.known,
+              }
+            : {}),
           ...(blockedPart ? { blockedBy: blockedPart.known } : {}),
           ...(rest.decayCheckPassed === true ? { lastDecayCheck: clock() } : {}),
         },

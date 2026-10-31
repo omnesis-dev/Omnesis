@@ -86,6 +86,50 @@ afterEach(() => {
 });
 
 describe("/tasks", () => {
+  test("creation and edits save document references, validate them atomically and support undo", async () => {
+    upsertDocuments(
+      db,
+      ["guide", "quote"].map((name) => ({
+        providerId: ProviderId("synthetic"),
+        sourceId: SourceId("synthetic:test@example.com"),
+        externalId: `task-reference-${name}`,
+        title: `Greenhouse ${name}`,
+        content: `Fictional greenhouse ${name}.`,
+        contentHash: `greenhouse-${name}`,
+        sourceCreatedAt: "2026-03-09T09:00:00.000Z",
+        sourceUpdatedAt: "2026-03-09T09:00:00.000Z",
+        metadata: {},
+      })),
+    );
+    const ids = db
+      .prepare<[], { id: string }>("SELECT id FROM documents ORDER BY external_id")
+      .all()
+      .map((row) => row.id);
+    const created = await addTask("Plan the greenhouse", { docs: [ids[0], ids[0]] });
+    const read = async () => (await call("GET", `/tasks/${created.task.id}`)).json.task;
+    expect((await read()).documents.map((doc: { id: string }) => doc.id)).toEqual([ids[0]]);
+    const invalid = await action(created.task.id, {
+      action: "edit",
+      title: "Must not be saved",
+      docs: ["doc_missing"],
+    });
+    expect(invalid.status).toBe(400);
+    expect((await read()).title).toBe("Plan the greenhouse");
+    expect((await read()).documents.map((doc: { id: string }) => doc.id)).toEqual([ids[0]]);
+    await action(created.task.id, { action: "edit", docs: ids });
+    const cleared = await action(created.task.id, { action: "edit", docs: [] });
+    expect((await read()).documents).toEqual([]);
+    expect((await call("POST", "/tasks/undo", { seq: cleared.json.receipt.undoSeq })).status).toBe(
+      200,
+    );
+    expect((await read()).documents.map((doc: { id: string }) => doc.id).sort()).toEqual(
+      ids.sort(),
+    );
+    expect(
+      (await call("POST", "/tasks", { title: "Invalid references", docs: ["doc_missing"] })).status,
+    ).toBe(400);
+  });
+
   test("requires the admin scope", async () => {
     expect((await call("GET", "/tasks", undefined, reader)).status).toBe(403);
     expect((await call("POST", "/tasks", { title: "x" }, reader)).status).toBe(403);
