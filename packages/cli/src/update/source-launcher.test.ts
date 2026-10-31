@@ -28,6 +28,7 @@ import {
   UpdateLockBusyError,
 } from "@omnesis/core";
 import {
+  nativeLauncherPath,
   prepareSourceRecoveryLauncher as prepareRealSourceRecoveryLauncher,
   sourceRecoveryLauncher,
   sourceUpdateLockHelper,
@@ -249,6 +250,39 @@ writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1
     writeFileSync(join(homeDir, ".local", "bin", "omnesis"), readFileSync(path));
     expect(prepareSourceRecoveryLauncher(rootDir, "/tmp/config dir", homeDir)).toBe(
       join(homeDir, ".local", "bin", "omnesis"),
+    );
+  });
+
+  test("a collector beside a Docker install rewrites its own launcher, never the Docker one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
+    scratch.push(dir);
+    const homeDir = join(dir, "home");
+    const rootDir = join(homeDir, "omnesis-collector");
+    const configDir = join(homeDir, ".config", "omnesis-collector");
+    const dockerLauncher = join(homeDir, ".local", "bin", "omnesis");
+    const dockerText = "#!/bin/sh\n# Omnesis in Docker — written by install.sh --docker.\n";
+    mkdirSync(join(homeDir, ".local", "bin"), { recursive: true });
+    writeFileSync(dockerLauncher, dockerText);
+    const own = join(homeDir, ".local", "lib", "omnesis-collector", "omnesis");
+    mkdirSync(join(homeDir, ".local", "lib", "omnesis-collector"), { recursive: true });
+    writeFileSync(own, sourceRecoveryLauncher(rootDir, configDir));
+
+    const launcher = nativeLauncherPath({ OMNESIS_LAUNCHER: own }, homeDir);
+    expect(prepareRealSourceRecoveryLauncher(rootDir, configDir, homeDir, launcher)).toBe(own);
+    expect(readFileSync(own, "utf8")).toContain(rootDir);
+    expect(readFileSync(dockerLauncher, "utf8")).toBe(dockerText);
+
+    // Without the name, the Docker launcher is refused rather than replaced.
+    expect(() => prepareRealSourceRecoveryLauncher(rootDir, configDir, homeDir)).toThrow(
+      /is not this source checkout's Omnesis launcher/u,
+    );
+    expect(readFileSync(dockerLauncher, "utf8")).toBe(dockerText);
+  });
+
+  test("nativeLauncherPath defaults to ~/.local/bin/omnesis and ignores a relative name", () => {
+    expect(nativeLauncherPath({}, "/home/maya")).toBe("/home/maya/.local/bin/omnesis");
+    expect(nativeLauncherPath({ OMNESIS_LAUNCHER: "omnesis" }, "/home/maya")).toBe(
+      "/home/maya/.local/bin/omnesis",
     );
   });
 

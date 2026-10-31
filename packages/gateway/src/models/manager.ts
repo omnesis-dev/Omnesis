@@ -254,9 +254,15 @@ export class ModelManager {
       // through but get no portal card. Experimental-only roles are withheld
       // unless the gateway runs in experimental mode, so clients never render
       // a card for a model the operator can't use.
-      capabilities: Object.values(CAPABILITY_METADATA).filter(
-        (c) => !c.hidden && (!c.experimental || experimentalVisible()),
-      ),
+      capabilities: Object.values(CAPABILITY_METADATA)
+        .filter((c) => !c.hidden && (!c.experimental || experimentalVisible()))
+        .map(({ experimentalDescription, ...capability }) => ({
+          ...capability,
+          description:
+            experimentalDescription && experimentalVisible()
+              ? `${capability.description} ${experimentalDescription}`
+              : capability.description,
+        })),
     };
     return {
       ...overview,

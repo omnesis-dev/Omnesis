@@ -85,6 +85,7 @@ class HomeViewModel @Inject constructor(
      * Whether the gateway runs in experimental mode — gates the Triggers nav
      * entry (hidden unless on, tagged "Experimental" when on) in the drawer.
      */
+    val modelHealth = session.modelHealth
     val experimentalEnabled: StateFlow<Boolean> = session.experimentalEnabled
 
     /**

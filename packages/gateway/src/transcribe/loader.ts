@@ -29,9 +29,12 @@ import type { ResolvedAssignment, TranscribeCapability } from "@omnesis/core";
 import type { WhisperModuleLoader, WhisperWorkerSpawner } from "./whisper-transcriber.js";
 import type { AudioDecoder } from "./audio-decode.js";
 
+import type { InferenceHealth } from "../inference/model-health.js";
+
 const log = createLogger("gateway:transcribe:loader");
 
 export interface LoadTranscriberDeps {
+  health?: InferenceHealth;
   /**
    * Injectable native-module loader, used only for the availability probe
    * (tests / a non-default install path). The model itself loads in the worker
@@ -51,6 +54,17 @@ export interface LoadTranscriberDeps {
 export async function loadTranscriberFromResolved(
   resolved: ResolvedAssignment,
   deps: LoadTranscriberDeps = {},
+): Promise<TranscribeCapability | null> {
+  const beginModelCall = deps.health?.callFactory(resolved.role);
+  const provider = await loadProvider(resolved, deps);
+  return provider && deps.health
+    ? deps.health.observe(resolved, provider, ["transcribe"], beginModelCall)
+    : provider;
+}
+
+async function loadProvider(
+  resolved: ResolvedAssignment,
+  deps: LoadTranscriberDeps,
 ): Promise<TranscribeCapability | null> {
   switch (resolved.kind) {
     case "local": {

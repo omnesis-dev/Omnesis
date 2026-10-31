@@ -662,6 +662,12 @@ export interface PathProbe {
    */
   readable?(path: string): boolean;
   join(...parts: string[]): string;
+  /**
+   * A sentence to add when a path the operator named does not exist — what
+   * the host knows about why it might not (a container that sees only some
+   * of the machine's folders). A probe with nothing to add leaves this out.
+   */
+  missingHint?(resolved: string): string | undefined;
 }
 
 /**
@@ -798,7 +804,10 @@ function fieldIssue(field: ConfigField, value: string, probe: PathProbe): string
   if (field.kind === "path") {
     const resolved = probe.resolve(value);
     if (field.mustExist) {
-      if (!probe.exists(resolved)) return `${field.label} does not exist: ${value}`;
+      if (!probe.exists(resolved)) {
+        const hint = probe.missingHint?.(resolved);
+        return `${field.label} does not exist: ${value}${hint ? `. ${hint}` : ""}`;
+      }
       const isDir = probe.isDirectory(resolved);
       if (field.mustExist === "directory" && !isDir) {
         return `${field.label} must be a folder: ${value}`;

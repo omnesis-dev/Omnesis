@@ -4,6 +4,11 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
+private struct ModelsPollingLifetime: Hashable {
+    let active: Bool
+    let client: ObjectIdentifier?
+}
+
 /// Model-management page — mirrors the portal's Settings → Models tab
 /// (`packages/gateway/portal/js/views/models.js`). One card per capability
 /// (Embedder, Agent, Privacy reviewer, Transcriber, OCR),
@@ -30,12 +35,12 @@ import SwiftUI
 @available(iOS 17.0, *)
 struct ModelsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var overview: ModelsOverview?
     @State private var system: SystemInfo?
     @State private var loading = true
     @State private var loadError: Error?
-    @State private var pollTask: Task<Void, Never>?
     @State private var overviewRefreshGate = ModelOverviewRefreshGate()
 
     /// Preview-only flag: when true, `.task` never reaches the gateway, so a
@@ -78,9 +83,13 @@ struct ModelsView: View {
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .refreshable { await load() }
-            .task { await load() }
-            .onDisappear { pollTask?.cancel()
-                pollTask = nil
+            .task(id: ModelsPollingLifetime(active: scenePhase == .active, client: store.admin.map(ObjectIdentifier.init))) {
+                guard !isPreview, scenePhase == .active, store.admin != nil else { return }
+                await overviewRefreshGate.refreshWhileVisible(
+                    load: { await load() },
+                    interval: { overview?.activeDownloads.isEmpty == false ? .seconds(1) : .seconds(15) },
+                    refresh: { await refreshOverview() }
+                )
             }
     }
 
@@ -235,7 +244,7 @@ struct ModelsView: View {
 
     private func load() async {
         // Previews never reach the gateway — the seeded state is the snapshot.
-        if isPreview { return }
+        if isPreview || Task.isCancelled { return }
         guard let client = store.admin else {
             loading = false
             return
@@ -243,7 +252,9 @@ struct ModelsView: View {
         loading = true
         loadError = nil
         let ticket: Int
-        switch await overviewRefreshGate.fetch({ try await client.modelOverview() }) {
+        let refreshed = await overviewRefreshGate.fetch { try await client.modelOverview() }
+        guard !Task.isCancelled, store.admin === client else { return }
+        switch refreshed {
         case .loaded(let fresh, let currentTicket):
             overview = fresh
             loadError = nil
@@ -258,33 +269,21 @@ struct ModelsView: View {
         // the warnings, it doesn't fail the screen.
         if system == nil {
             let freshSystem = try? await client.systemInfo()
-            guard overviewRefreshGate.isCurrent(ticket) else { return }
+            guard !Task.isCancelled, overviewRefreshGate.isCurrent(ticket), store.admin === client else { return }
             system = freshSystem
         }
-        guard overviewRefreshGate.isCurrent(ticket) else { return }
+        guard !Task.isCancelled, overviewRefreshGate.isCurrent(ticket) else { return }
         loading = false
-        scheduleDownloadPoll()
     }
 
-    /// While any GGUF download is in flight, re-fetch the overview every second
-    /// so the progress bar advances and a completed/cancelled download flips the
-    /// row back. Mirrors the portal's `useVisiblePoll(refresh, 1000, …)`.
-    private func scheduleDownloadPoll() {
-        pollTask?.cancel()
-        pollTask = nil
-        guard overview?.activeDownloads.isEmpty == false, let client = store.admin else { return }
-        pollTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { return }
-                guard !loading else { continue }
-                guard case .loaded(let fresh, _) = await overviewRefreshGate.fetch({
-                    try await client.modelOverview()
-                }) else { continue }
-                overview = fresh
-                if fresh.activeDownloads.isEmpty { return }
-            }
-        }
+    /// Refresh one visible-screen snapshot using the currently paired gateway.
+    private func refreshOverview() async {
+        guard !Task.isCancelled, !loading, let client = store.admin else { return }
+        guard case .loaded(let fresh, _) = await overviewRefreshGate.fetch({
+            try await client.modelOverview()
+        }) else { return }
+        guard !Task.isCancelled, store.admin === client else { return }
+        overview = fresh
     }
 }
 
@@ -333,6 +332,9 @@ struct ModelsContent: View {
             VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                 if let notice {
                     noticeBanner(notice)
+                }
+                ForEach(overview.inference.health?.warnings ?? []) { warning in
+                    healthWarningCard(warning)
                 }
                 NavigationLink {
                     BackendsView()
@@ -388,11 +390,46 @@ struct ModelsContent: View {
             + overview.capabilities.filter { $0.section == "cognition" }
     }
 
+    private func healthWarningCard(_ warning: ModelHealthWarning) -> some View {
+        let title = overview.capabilities.first { $0.role == warning.role }?.title ?? ModelManagement.roleLabel(warning.role)
+        let lastFailure = Date(timeIntervalSince1970: warning.lastFailedAt / 1000)
+            .formatted(date: .abbreviated, time: .shortened)
+        return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Label(
+                "\(title) repeatedly failed",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Theme.warning)
+            Text(warning.assignment)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+            Text(warning.message)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textPrimary)
+            Text(
+                "At least \(warning.consecutiveFailures) consecutive failures · Last failure \(lastFailure)"
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textSecondary)
+            Text("This warning clears after a successful request or a change to the model configuration.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warning.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.large).stroke(Theme.warning.opacity(0.4)))
+    }
+
     private func capabilityCard(_ cap: CapabilityMeta) -> some View {
         CapabilityCard(
             cap: cap,
             display: overview.assignmentDisplays[cap.role],
-            state: ModelManagement.state(overview.inference.assignments[cap.role]),
+            state: overview.inference.health?.warnings.contains { $0.role == cap.role } == true
+                ? .warn : ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
             behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
             onTap: cap.configurableOnDevice ? { pickerRole = cap } : nil,
@@ -1294,6 +1331,15 @@ enum ModelCapabilityIcon {
         previewSelectedBackend: nil,
         previewRecent: ModelsPreviewData.recentEntries()
     )
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Models — repeated failures") {
+    NavigationStack {
+        ModelsView(previewOverview: ModelsPreviewData.overview(health: PreviewMocks.modelHealth))
+            .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth))
+    }
     .preferredColorScheme(.dark)
 }
 

@@ -1,5 +1,11 @@
 # @omnesis/agent
 
+## 0.7.2
+
+### Patch Changes
+
+- @omnesis/core@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes

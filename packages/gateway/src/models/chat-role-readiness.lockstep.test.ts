@@ -17,9 +17,10 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
+import { InferenceRegistry } from "../inference/registry.js";
 import { resolveRoleBackend } from "../agent/agent-lifecycle.js";
 import { chatRoleReadiness } from "./chat-role-readiness.js";
 import type { ChatRoleReadinessDeps } from "./chat-role-readiness.js";
@@ -179,11 +180,15 @@ function cases(): Array<{ name: string; resolved: ResolvedAssignment }> {
 
 describe("chatRoleReadiness agrees with resolveRoleBackend", () => {
   it.each(cases())("$name", ({ name, resolved: assignment }) => {
+    const inferenceRegistry = new InferenceRegistry({
+      modelsDir: dir,
+      configDir: dir,
+      manifest: () => ({ version: 1, models: [] }),
+      hasAnthropicApiKey: () => false,
+    });
+    vi.spyOn(inferenceRegistry, "resolve").mockReturnValue(assignment);
     const built = resolveRoleBackend(ROLE, {
-      inferenceRegistry: {
-        resolve: () => assignment,
-        getBackendApiKey: () => undefined,
-      } as never,
+      inferenceRegistry,
       configDir: dir,
       db,
       maxToolIterations: undefined,

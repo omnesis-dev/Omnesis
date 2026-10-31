@@ -46,6 +46,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
+import androidx.compose.material.icons.outlined.WarningAmber
+import dev.omnesis.android.transport.dto.ModelHealthWarning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,6 +109,15 @@ fun ModelsScreen(
     vm: ModelsViewModel = hiltViewModel(),
 ) {
     BackHandler(onBack = onBack)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, vm) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                vm.refreshHealth()
+                delay(15_000)
+            }
+        }
+    }
     val state by vm.state.collectAsStateWithLifecycle()
     val system by vm.system.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
@@ -267,6 +283,9 @@ private fun CapabilityList(
         if (notice != null) {
             NoticeBanner(notice, onDismissNotice)
         }
+        overview.inference.health.warnings.forEach { warning ->
+            ModelHealthWarningCard(warning, overview.capabilities.firstOrNull { it.role == warning.role }?.title ?: warning.role)
+        }
         OutlinedButton(onClick = onOpenBackends) {
             Text("Configure backends")
         }
@@ -274,6 +293,7 @@ private fun CapabilityList(
             overview.capabilities.filter { it.section == "cognition" }
         Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
             orderedCapabilities.forEach { cap ->
+                val warning = overview.inference.health.warnings.firstOrNull { it.role == cap.role }
                 val canEditBehavior = ModelBehaviorPresentation.supportsAssignment(
                     cap.role, overview.inference.assignments[cap.role]?.kind,
                 )
@@ -283,13 +303,36 @@ private fun CapabilityList(
                     behavior = overview.modelSettings[cap.role].takeIf { canEditBehavior },
                     controls = overview.modelSettings[cap.role]?.assignment?.let { overview.modelControls[it] }
                         .takeIf { canEditBehavior },
-                    state = ModelManagement.state(overview.inference.assignments[cap.role]),
+                    state = if (warning != null) ModelManagement.CapabilityState.WARN else ModelManagement.state(overview.inference.assignments[cap.role]),
                     reason = overview.inference.assignments[cap.role]?.reason,
                     onTap = { onOpenPicker(cap.role) }.takeIf { cap.configurableOnDevice },
                     disabled = busy,
                 )
             }
         }
+    }
+}
+
+@Composable
+internal fun ModelHealthWarningCard(warning: ModelHealthWarning, capability: String) {
+    val c = OmTheme.colors
+    Column(
+        Modifier.fillMaxWidth()
+            .background(c.warning.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+            .border(1.dp, c.warning.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .padding(OmSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(20.dp))
+            Text("$capability repeatedly failed", color = c.textPrimary, style = MaterialTheme.typography.titleSmall)
+        }
+        Text(warning.assignment, color = c.textSecondary, style = MaterialTheme.typography.labelMedium)
+        Text(warning.message, color = c.textPrimary, style = MaterialTheme.typography.bodyMedium)
+        Text("At least ${warning.consecutiveFailures} consecutive failures · Last failure ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(warning.lastFailedAt))}",
+            color = c.textSecondary, style = MaterialTheme.typography.labelSmall)
+        Text("This warning clears after a successful request or when the assignment changes.",
+            color = c.textSecondary, style = MaterialTheme.typography.labelSmall)
     }
 }
 

@@ -72,6 +72,7 @@ import {
   cliBackendAssignments,
 } from "./model-config.js";
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
+import { ModelHealthWarnings, WarningTriangle } from "../components/model-health.js";
 import { noteAgentSettingPatch } from "../lib/note-agent.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
@@ -84,18 +85,20 @@ function hasBehaviorControls(role, assignment) {
   return BEHAVIOR_KINDS.includes(assignment?.kind) && !NO_BEHAVIOR_ROLES.includes(role);
 }
 
-function CapabilityCard({ cap, assignment, display, behaviorSummary, onOpen }) {
+function CapabilityCard({ cap, assignment, display, behaviorSummary, warning, onOpen }) {
   // "on" → green tick; "warn" → configured but unavailable (needs attention);
   // "off" → not configured.
   const state = capabilityCardState(assignment);
-  const enabled = state === "on";
-  const warn = state === "warn";
+  const enabled = state === "on" && !warning;
+  const warn = state === "warn" || !!warning;
 
   return html`
     <button class="cap-card ${enabled ? "cap-card--on" : ""}" onClick=${onOpen}>
       <div class="cap-card-top">
         <span class="cap-card-glyph"><${CapabilityIcon} icon=${cap.icon} /></span>
-        ${enabled
+        ${warning
+          ? html`<${WarningTriangle} label="Repeated model failures" />`
+          : enabled
           ? html`<span class="cap-card-tick" title="Enabled" aria-label="Enabled">✓</span>`
           : warn
           ? html`<span class="cap-card-warn" title=${assignment.reason ?? "Configured but unavailable"} aria-label="Needs attention">!</span>`
@@ -136,6 +139,7 @@ export function CapabilityGrid({ overview, onConfigureBackends }) {
     cap=${cap}
     assignment=${assignments[cap.role]}
     display=${displays[cap.role]}
+    warning=${overview.inference.health?.warnings?.find((warning) => warning.role === cap.role)}
     behaviorSummary=${hasBehaviorControls(cap.role, assignments[cap.role])
       ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment]) : null}
     onOpen=${() => open(cap.role)}
@@ -355,10 +359,11 @@ function capabilityFor(overview, role) {
   return (overview.capabilities ?? []).find((c) => c.role === role);
 }
 
-function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
+export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
   const cap = capabilityFor(overview, role);
   const assignment = overview.inference.assignments[role];
   const display = overview.assignmentDisplays?.[role];
+  const runtimeWarning = overview.inference.health?.warnings?.some((warning) => warning.role === role);
   const enabled = isEnabled(assignment);
   const configured = isConfigured(assignment);
   const settings = overview.modelSettings?.[role];
@@ -379,9 +384,9 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
 
       <div class="cap-detail-status">
         ${enabled && display
-          ? html`<div class="cap-detail-active">
+          ? html`<div class=${`cap-detail-active${runtimeWarning ? " cap-detail-active--warning" : ""}`}>
               <div class="cap-detail-active-head">
-                <span class="cap-detail-tick">✓</span>
+                ${runtimeWarning ? html`<${WarningTriangle} label="Repeated model failures" />` : html`<span class="cap-detail-tick">✓</span>`}
                 <div>
                   <div class="cap-detail-active-model"><${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}</div>
                   <div class="cap-detail-active-provider">${display.providerLabel}</div>
@@ -604,7 +609,7 @@ export function resolveModelsSection(section, validRoles) {
   return { view: "grid", role: null };
 }
 
-export function ModelsView({ section }) {
+export function ModelsView({ section, onModelsRefresh }) {
   const [overview, setOverview] = useState(null);
   const [sys, setSys] = useState(null);
   const [error, setError] = useState(null);
@@ -644,6 +649,9 @@ export function ModelsView({ section }) {
       ]);
       if (sequence !== refreshSequence.current) return;
       setOverview(o);
+      // Navigation reads a fresh status rather than accepting a potentially
+      // older overview that raced a newer status response.
+      onModelsRefresh?.();
       setSys(s);
       setError(null);
     } catch (e) {
@@ -665,6 +673,7 @@ export function ModelsView({ section }) {
     refresh();
     refreshCodexRuntimePlan();
     return () => {
+      refreshSequence.current += 1;
       cloudConsentRef.current?.resolve(false);
       cloudConsentRef.current = null;
     };
@@ -681,6 +690,9 @@ export function ModelsView({ section }) {
     if (httpKeys.length === 0) return;
     Promise.allSettled(httpKeys.map((k) => probeBackend(k))).then(() => refresh());
   }, [overview, probed]);
+
+  // Runtime failures can arrive or recover while no download or probe is active.
+  useVisiblePoll(refresh, 30_000);
 
   const hasActiveDownload = (overview?.activeDownloads?.length ?? 0) > 0;
   useVisiblePoll(refresh, 1000, { enabled: hasActiveDownload });
@@ -1303,6 +1315,7 @@ export function ModelsView({ section }) {
         : null}
 
       ${flash ? html`<div class=${`config-banner ${flash.kind}`}>${flash.message}</div>` : null}
+      <${ModelHealthWarnings} overview=${overview} role=${view === "capability" ? role : null} />
       ${codexRuntimeError
         ? html`<div class="config-banner error" role="alert">
             Codex runtime status unavailable: ${codexRuntimeError}

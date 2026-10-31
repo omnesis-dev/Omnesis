@@ -59,6 +59,8 @@ import {
   contextualWitnessFailure,
 } from "./contextual-segments.js";
 
+import type { InferenceHealth } from "./model-health.js";
+
 const log = createLogger("inference:entailment");
 
 export type EntailmentPromptStyle = "judge" | "minicheck";
@@ -404,6 +406,7 @@ function anthropicEntailmentCompleter(modelId: string, apiKey: string): Entailme
 }
 
 export interface LoadEntailmentDeps {
+  health?: InferenceHealth;
   codexRuntimeService?: LoadCompletionDeps["codexRuntimeService"];
   claudeCodeService?: LoadCompletionDeps["claudeCodeService"];
   /** Gateway-host config dir — where Anthropic credentials live. */
@@ -422,6 +425,17 @@ export interface LoadEntailmentDeps {
  * then leaves the entailment gate absent.
  */
 export async function loadEntailmentFromResolved(
+  resolved: ResolvedAssignment,
+  deps: LoadEntailmentDeps,
+): Promise<EntailCapability | null> {
+  const beginModelCall = deps.health?.callFactory(resolved.role);
+  const provider = await loadVerifier(resolved, deps);
+  return provider && deps.health
+    ? deps.health.observe(resolved, provider, ["verify"], beginModelCall)
+    : provider;
+}
+
+async function loadVerifier(
   resolved: ResolvedAssignment,
   deps: LoadEntailmentDeps,
 ): Promise<EntailCapability | null> {
@@ -498,7 +512,7 @@ export async function loadEntailmentFromResolved(
 
     case "codex":
     case "claude-code": {
-      const completer = loadCompletionFromResolved(resolved, deps);
+      const completer = loadCompletionFromResolved(resolved, { ...deps, health: undefined });
       if (!(completer instanceof AgentTurnCompleter)) return null;
       return build({
         modelId: completer.modelId,

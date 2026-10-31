@@ -94,7 +94,6 @@ final class AdminCoordinator {
 
     // MARK: - Private internals
 
-    @ObservationIgnored
     private(set) var adminClient: AdminClient?
     private(set) var searchClient: SearchClient?
     private(set) var watchesClient: WatchesClient?

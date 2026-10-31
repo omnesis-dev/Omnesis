@@ -5,7 +5,10 @@ package dev.omnesis.android.ui.home
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -13,6 +16,7 @@ import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.ConversationSummary
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,6 +33,42 @@ import org.robolectric.annotation.Config
 class MainMenuDrawerAuditRowTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun modelWarningOpensModelsAndDisappearsAfterRecovery() {
+        val unhealthy = mutableStateOf(true)
+        var openedModels = false
+        var openedSettings = false
+        compose.setContent {
+            OmnesisTheme(darkTheme = false) {
+                MainMenuDrawer(
+                    currentRoute = "agent", conversations = emptyList(), conversationsLoading = false,
+                    onNewConversation = {}, onNavigate = {}, onResumeConversation = {}, onDeleteConversation = {},
+                    onOpenSettings = { openedSettings = true }, modelsNeedAttention = unhealthy.value,
+                    onOpenModelWarnings = { openedModels = true },
+                )
+            }
+        }
+        val settings = compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        val warning = compose.onNodeWithContentDescription("Show model capability errors").assertIsDisplayed()
+        val settingsBounds = settings.fetchSemanticsNode().boundsInRoot
+        val warningBounds = warning.fetchSemanticsNode().boundsInRoot
+        assertTrue("The warning must overlap the Settings target, rather than occupy another menu slot",
+            warningBounds.left < settingsBounds.right && warningBounds.right > settingsBounds.left)
+        assertEquals(settingsBounds.right, warningBounds.right, 0.5f)
+        assertEquals(settingsBounds.top, warningBounds.top, 0.5f)
+        assertTrue("The warning must stay above the gear center", warningBounds.bottom < settingsBounds.center.y)
+        // Physical taps also catch an expanded warning touch target stealing the gear center.
+        settings.performTouchInput { click(center) }
+        compose.runOnIdle { assertEquals(true, openedSettings); assertEquals(false, openedModels); openedSettings = false }
+        warning.performTouchInput { click(center) }
+        compose.runOnIdle { assertEquals(true, openedModels); assertEquals(false, openedSettings) }
+        compose.runOnIdle { unhealthy.value = false }
+        compose.onNodeWithContentDescription("Show model capability errors").assertDoesNotExist()
+        assertEquals(settingsBounds, settings.fetchSemanticsNode().boundsInRoot)
+        settings.performTouchInput { click(center) }
+        compose.runOnIdle { assertEquals(true, openedSettings) }
+    }
 
     @Test
     fun privacyIsReachableOnAStockGatewayWhileWatchesIsNot() {

@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { callError, RealtimeAdmissionError } from "./call-error.js";
 import { LiveCall, type LiveOffer, type LiveAnswer } from "./live-call.js";
 import { OpenAILiveProvider, LIVE_MODEL, type LiveProvider } from "./live-provider.js";
+import { observeLiveProvider, type ModelCallHealth } from "./model-health.js";
 import type { AgentService } from "../agent/service.js";
 import type { LiveVoiceUsageSample } from "./live-voice-usage.js";
 
@@ -16,6 +17,7 @@ interface LiveServiceDeps {
   hasCapacity(): boolean;
   recordUsage?(sample: LiveVoiceUsageSample): Promise<void>;
   provider?(key: string): LiveProvider;
+  beginModelCall?(): ModelCallHealth;
   warn(code: string): void;
 }
 interface Entry {
@@ -105,7 +107,11 @@ export class LiveVoiceService {
           timeZone: offer.timeZone,
           authorized,
         }),
-      provider: this.deps.provider?.(key) ?? new OpenAILiveProvider({ apiKey: key }),
+      provider: observeLiveProvider(
+        this.deps.provider?.(key) ?? new OpenAILiveProvider({ apiKey: key }),
+        this.deps.beginModelCall,
+        authorized,
+      ),
       authorized,
       authorityFailure: () =>
         callError(this.deps.isAuthorized(token, owner) ? "unavailable" : "pairing_rejected"),

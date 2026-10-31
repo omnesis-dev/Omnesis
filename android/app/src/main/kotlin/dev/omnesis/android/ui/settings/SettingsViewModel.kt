@@ -65,6 +65,7 @@ class SettingsViewModel @Inject constructor(
     private val _notificationHealth = MutableStateFlow(pushManager.deliveryHealth())
     val notificationHealth: StateFlow<String> = _notificationHealth
     val pushConfigured: Boolean get() = pushManager.configured
+    val modelHealth = session.modelHealth
     val pushPlan = session.pushPlan
     val pushRegistrationFailed = session.pushRegistrationFailed
     val pushAppId: String get() = BuildConfig.APPLICATION_ID

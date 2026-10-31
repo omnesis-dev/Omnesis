@@ -59,6 +59,8 @@ export function buildIndexerCutoffMap(config: {
 
 export interface IndexerWorkerOptions {
   lexicalOnly?: boolean;
+  /** Bound to this worker's model configuration, never the current replacement. */
+  beginModelCall?: () => { success(): void; failure(error: unknown): void };
   modelPath: string;
   /** Identity of the embedding model. Used by the worker to detect a
    * swap that bypassed the runtime config-change path. */
@@ -599,8 +601,27 @@ export class IndexerWorkerProxy implements Embedder {
     this.worker.postMessage(msg);
   }
 
+  private readonly modelCalls = new Map<
+    number,
+    { success(): void; failure(error: unknown): void }
+  >();
+
   private handleMessage(msg: IndexerToMain): void {
     switch (msg.type) {
+      case "embeddingStarted": {
+        const call = this.opts.beginModelCall?.();
+        if (call) this.modelCalls.set(msg.id, call);
+        break;
+      }
+      case "embeddingSettled": {
+        const call = this.modelCalls.get(msg.id);
+        this.modelCalls.delete(msg.id);
+        if (msg.canceled) break;
+        if (msg.failure)
+          call?.failure({ code: msg.failure.category, message: msg.failure.message });
+        else call?.success();
+        break;
+      }
       case "ready":
         this.lastHeartbeat = Date.now();
         if (!this.readySettled) {

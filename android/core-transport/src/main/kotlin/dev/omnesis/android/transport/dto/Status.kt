@@ -13,6 +13,7 @@ import kotlinx.serialization.json.intOrNull
 @Serializable
 data class StatusSnapshot(
     val documents: Documents = Documents(),
+    val modelHealth: ModelHealth = ModelHealth(),
     /** The main database file alone. Kept for gateways that predate [diskUsage]. */
     val dbSizeBytes: Long? = null,
     /**

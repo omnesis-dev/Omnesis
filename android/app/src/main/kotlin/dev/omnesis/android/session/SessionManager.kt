@@ -303,6 +303,9 @@ class SessionManager @Inject constructor(
      * status, so an experimental feature never flashes in before the probe lands
      * and never leaks across a re-pair to a non-experimental gateway.
      */
+    private val _modelHealth = MutableStateFlow(dev.omnesis.android.transport.dto.ModelHealth())
+    val modelHealth = _modelHealth.asStateFlow()
+
     private val _experimentalEnabled = MutableStateFlow(false)
     val experimentalEnabled: StateFlow<Boolean> = _experimentalEnabled.asStateFlow()
 
@@ -492,6 +495,7 @@ class SessionManager @Inject constructor(
         session = null
         // Re-probe per rebuild; clear so a stale value from a prior pairing can't
         // surface an experimental feature against a non-experimental gateway.
+        _modelHealth.value = dev.omnesis.android.transport.dto.ModelHealth()
         _experimentalEnabled.value = false
         _developerEnabled.value = false
         _tasksAvailable.value = false
@@ -818,6 +822,7 @@ class SessionManager @Inject constructor(
                 return@probe false
             }
             if (session !== current) return@probe false
+            _modelHealth.value = status.modelHealth
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _tasksAvailable.value = status.tasks?.available == true

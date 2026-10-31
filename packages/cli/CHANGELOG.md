@@ -1,5 +1,64 @@
 # omnesis
 
+## 0.7.2
+
+### Patch Changes
+
+- 9036d80: Pairing the browser extension now warns when it cannot work. A gateway serving a self-signed, expired or not-yet-valid certificate is one the Chrome extension can never reach, because it cannot click through a certificate warning; `omnesis devices pair --kind browser`, `omnesis devices repair` for a browser and the portal's pairing dialog now say so beside the code, with the fix (re-run the installer with Tailscale up, or `omnesis tls provision` on a native install) and a link to the setup guide. A mkcert certificate, or one you supplied, gets a softer note. The code is still issued. `omnesis devices pair` gains `--json`, whose record carries `browserCertificate.status` for scripts.
+- 40b1c03: Settings → Devices now offers a grid of device icons when pairing a new device. Select a tile to choose the device type, with Apple, Android, and Chrome logos for their respective apps and extension.
+- 4998f44: Docker installs are encrypted at rest by default, and `omnesis secure` now works on them.
+
+  - **The installer's keyring question under `--docker` defaults to encryption.** Pressing Enter generates an owner-only passphrase file (`~/.config/omnesis/keyring.pass`) that the containers read at start; `1` still installs without encryption. The "stop so you can unlock a keyring first" answer is gone under Docker, since no keyring on the host can reach a container. A re-run reuses the passphrase file the install already records instead of asking again.
+  - **`omnesis secure` on a Docker host just works.** Typed on the machine that runs the containers, it uses the passphrase backend, generates and records the passphrase file when none is configured, then runs the usual safe order — backup, root key, recovery code printed once, secret files, store keys. The `omnesis` command on the host then restarts the gateway and collector containers, which a container cannot do to itself, and verifies that the databases came back encrypted. A collector-only host restarts its collector container.
+  - **`omnesis secure` recognises a running gateway on a self-signed certificate**, such as a Docker gateway's default. It used to take such a gateway for stopped and then refuse the offline snapshot because the gateway held its directory; it now backs up through it, and waits for a gateway that is still starting.
+  - **A gateway whose home directory it cannot write no longer fails to encrypt an existing analytics store.** Copying a plaintext analytics store into an encrypted one loaded DuckDB's encryption extension from `~/.duckdb`, which a container running as the host's account (and a service unit with a read-only home) cannot create, so the gateway exited on every start after `omnesis secure`. The copy now uses the store's own extension directory, as opening the store already did.
+  - **`omnesis secure --verify`** checks, without changing anything, that encryption at rest is in effect.
+  - **`omnesis update` refreshes the host's `omnesis` command** to the new release's once the containers run it, so an existing Docker install picks up the new `secure` behaviour by updating.
+  - **The combined container's collector carries the host's name** (`<host>-collector`, with the host as its hostname) instead of `gateway`. An existing install keeps its device; a collector re-registering after a revoke comes back under the name it last paired as, so no second device row appears.
+  - **The credentials wizard says where a credential goes and whether it is encrypted.** Under Docker it prints the absolute path and says the file is on this machine; it also says when the file will not be encrypted at rest and that `omnesis secure` fixes that.
+
+- fc639ac: A Docker install, or `omnesis update` on one, no longer fails when a single registry connection is refused partway through pulling the images. `install.sh --docker` tries the pull up to three times, pausing longer each time and keeping the layers already downloaded. `omnesis update` pulls once more before rolling back. A refusal on credentials or a missing tag still stops at once, and the final message points at the network instead of the tag, which the installer has already checked. `install.sh --docker` also finds Docker Desktop's or OrbStack's `docker` when the terminal it runs in was opened before the install and so does not have it on PATH yet. It uses that `docker` for the install and says to open a new terminal, instead of reporting Docker as not installed.
+- c6c6662: The installer now sets up a trusted HTTPS certificate through Tailscale in every
+  install, Docker included. When Tailscale is running on the machine, it asks
+  "Tailscale detected — set up a trusted HTTPS certificate for <name>? [Y/n]"
+  (Yes by default; unattended runs go ahead unless `--no-tls` is passed). It says
+  plainly when the tailnet has HTTPS certificates switched off. Under `--docker`
+  the certificate is issued on the host, the machine running Docker, including
+  with the Tailscale app on a Mac. The containers serve it, and a host job (a
+  launchd agent on macOS, a systemd timer on Linux) renews it daily.
+  `omnesis uninstall` removes that job. Browsers and the Chrome extension can then
+  connect to a Docker gateway without certificate errors.
+
+  A gateway left on its self-signed certificate now ends the install with a
+  prominent warning that browsers and the Chrome extension cannot connect, and
+  names the one command that fixes it. The browser-extension steps no longer read
+  as if they would work. On a terminal, the portal address in the closing summary
+  carries a one-time login code that signs you in once, within 10 minutes. The
+  Docker summary now says that `omnesis` commands run in your terminal as usual.
+
+- e0fef6e: Experimental Paperless-ngx source, offered when the gateway and collector run with `OMNESIS_EXPERIMENTAL=1`. Adding it asks for the address of a self-hosted Paperless-ngx instance (2.16 or later) and an API token from My Profile; the token's user decides what is indexed, and Omnesis only reads.
+
+  Each archived document becomes a searchable document with the OCR text Paperless-ngx already extracted, its notes, correspondent, document type, tags and custom fields, linking back to the document in the Paperless-ngx web UI. Two SQL tables come with it: `paperless_documents`, one row per document dated by the document's own date, and `paperless_custom_field_values`, whose typed columns let monetary amounts be summed and due dates compared.
+
+  Syncs fetch only what changed. A rename of a tag, correspondent, document type or custom field re-reads every document once, since Paperless-ngx does not mark the documents changed, and a daily listing of every document id is how deletions are noticed.
+
+- d5697e3: `omnesis sources sync --wait` no longer gives up with "Cannot reach gateway" when one status check fails to connect, which a gateway busy indexing the very sync being waited on can cause. It checks again, and reports the gateway as unreachable only after five checks in a row fail to connect. Any other error still ends the wait at once.
+- 096f3ea: Experimental Telegram source, offered when the gateway and collector run with `OMNESIS_EXPERIMENTAL=1`. Connect a Telegram account with your own API app from my.telegram.org, a QR code scanned from Telegram, and the two-step password when the account has one (used once, never stored); the connection survives a collector restart and changes to the source's settings, a session ended from another Telegram device puts the source in needs-auth, and removing the source ends its Telegram session. Private chats, Saved Messages, groups, supergroups and archived chats are archived as one searchable conversation per chat per day; broadcast channels stay out unless you switch them on, and chats you list under Excluded chats are skipped. The whole history is read in the background at a measured pace, through a Telegram data export when Telegram grants one; edits and deletions are followed, messages missed while the collector was offline are recovered, forum messages carry their topic, and self-destructing and view-once messages are never kept. Voice notes are transcribed into the day's conversation, photos and documents become searchable attachments under your attachment settings, and other audio, video and stickers stay placeholders. The local archive and connection cache are encrypted with the collector's new `telegram-store` key.
+- 7b90616: Use one Omnesis Apple Watch complication to record audio and send it as Ask or Tell. With a decision model enabled, Send chooses the route automatically; the setting can be disabled to keep explicit Ask/Tell buttons. Gateway transcription applies to both routes, with strictly on-device iPhone transcription and vocabulary hints when gateway transcription is disabled.
+
+  Recordings are buffered durably across Watch and phone delivery. Questions display their answer on the Watch, with opt-in playback and audio-only follow-ups in the same conversation. A confirmed displayed answer suppresses the fallback notification. Notes confirm immediately and return to the watch face once their transfer is safe. Cancel from the complication also returns to the face. The existing Ask complication updates in place; the separate Tell complication is removed. Siri actions remain separate.
+
+- @omnesis/agent-integration@0.7.2
+  - @omnesis/cli-shared@0.7.2
+  - @omnesis/collector@0.7.2
+  - @omnesis/config@0.7.2
+  - @omnesis/core@0.7.2
+  - @omnesis/eval@0.7.2
+  - @omnesis/gateway@0.7.2
+  - @omnesis/gateway-client@0.7.2
+  - @omnesis/source-sdk@0.7.2
+  - @omnesis/types@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes

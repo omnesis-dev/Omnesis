@@ -732,7 +732,7 @@ describe("AgentLifecycle", () => {
       codexRuntimeService: { createBackend } as unknown as CodexRuntimeService,
     });
 
-    expect(backend).toBe(expected);
+    expect(backend?.runTurn).toBeTypeOf("function");
     // Privacy reviews use independent inference capacity.
     expect(createBackend).toHaveBeenCalledWith({
       model: "gpt-5.4",

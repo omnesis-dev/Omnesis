@@ -32,8 +32,9 @@ vi.mock("./credentials-wizard.js", async () => {
   };
 });
 import { ModelsView } from "./models.js";
+import { CAPABILITY_METADATA } from "@omnesis/core";
 
-const DECISION = { role: "decision", title: "Decision model", description: "Answers typed questions about a document.", icon: "scale", section: "cognition" };
+const DECISION = CAPABILITY_METADATA.decision;
 
 function overviewWith(assignment, extra = {}) {
   return {
@@ -90,6 +91,14 @@ describe("Models — the Decision model picker", () => {
     render(null, host);
     if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow;
+  });
+
+  it("explains the decision uses beside the model picker", async () => {
+    await openPicker();
+    expect(host.querySelector(".cap-detail-desc")?.textContent).toBe(DECISION.description);
+    expect(host.textContent).toContain("complication captures");
+    expect(host.textContent).toContain("email dates");
+    expect(host.textContent).toContain("TypeSafe");
   });
 
   it("offers no way to add a chat backend to the Decision model", async () => {

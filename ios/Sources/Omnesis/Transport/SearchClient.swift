@@ -1330,6 +1330,7 @@ public struct DocumentEventTrail: Decodable, Sendable, Equatable {
 /// response (analytics catalog summaries, model statuses, etc.) is
 /// decoded but not exposed.
 public struct StatusSnapshot: Decodable, Sendable {
+    public let modelHealth: ModelHealth?
     public let documents: Documents
     /// The main database file alone. Kept for gateways that predate `diskUsage`.
     public let dbSizeBytes: Int64?
@@ -1371,7 +1372,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         dictation: DictationStatus? = nil,
         watchCapture: WatchCaptureStatus? = nil,
         transcriptionVocabulary: Bool = false,
-        capabilities: GatewayCapabilities = GatewayCapabilities()
+        capabilities: GatewayCapabilities = GatewayCapabilities(),
+        modelHealth: ModelHealth? = nil
     ) {
         self.documents = documents
         self.dbSizeBytes = dbSizeBytes
@@ -1384,9 +1386,11 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
         self.capabilities = capabilities
+        self.modelHealth = modelHealth
     }
 
     private enum CodingKeys: String, CodingKey {
+        case modelHealth
         case documents
         case dbSizeBytes
         case diskUsage
@@ -1402,6 +1406,7 @@ public struct StatusSnapshot: Decodable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        modelHealth = try c.decodeIfPresent(ModelHealth.self, forKey: .modelHealth)
         documents = try c.decode(Documents.self, forKey: .documents)
         dbSizeBytes = try c.decodeIfPresent(Int64.self, forKey: .dbSizeBytes)
         diskUsage = try c.decodeIfPresent(DiskUsage.self, forKey: .diskUsage)

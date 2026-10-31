@@ -30,6 +30,7 @@ import {
   experimentalVisible,
   CLOUD_EGRESS_DISABLED_REASON,
   type CapabilityRole,
+  type ResolvedAssignment,
   type Logger,
 } from "@omnesis/core";
 import { CONFIG_DEFAULTS } from "@omnesis/config";
@@ -201,6 +202,15 @@ export function resolveRoleBackend(
   },
 ): ChatBackend | null {
   const resolved = ctx.inferenceRegistry.resolve(role);
+  const backend = resolveRawRoleBackend(role, resolved, ctx);
+  return backend ? ctx.inferenceRegistry.health.observeBackend(resolved, backend) : null;
+}
+
+function resolveRawRoleBackend(
+  role: CapabilityRole,
+  resolved: ResolvedAssignment,
+  ctx: Parameters<typeof resolveRoleBackend>[1],
+): ChatBackend | null {
   switch (resolved.kind) {
     case "anthropic": {
       if (!resolved.allowRemoteInference) return null;
@@ -310,7 +320,13 @@ function makeRoleAwareFactory(
     claudeCodeService?: ClaudeCodeService | null;
   },
 ): (role: CapabilityRole) => ChatBackend | null {
-  return (role) => (role === "agent" ? agentFactory() : resolveRoleBackend(role, ctx));
+  return (role) =>
+    role === "agent"
+      ? ctx.inferenceRegistry.health.observeBackend(
+          ctx.inferenceRegistry.resolve(role),
+          agentFactory(),
+        )
+      : resolveRoleBackend(role, ctx);
 }
 
 /**

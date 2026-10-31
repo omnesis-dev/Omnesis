@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CLAUDE_CODE_SUPPORTED_ROLES, CODEX_SUPPORTED_ROLES } from "@omnesis/core";
@@ -9,6 +10,9 @@ import {
   speechToSpeechAssignment,
   SPEECH_TO_SPEECH_MODEL,
   experimentalEnabled,
+  experimentalVisible,
+  CAPABILITY_METADATA,
+  type ModelHealth,
   getCatalogEntry as getBundledCatalogEntry,
   getCatalogEntryByFilename,
   defaultForRole,
@@ -52,6 +56,7 @@ import {
   chatAudioRequestBody,
   transcriptFromChatCompletion,
 } from "../transcribe/chat-audio-transcriber.js";
+import { InferenceHealth } from "./model-health.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const log = createLogger("inference:registry");
@@ -244,6 +249,40 @@ function asNativeOcrRuntime(value: string): OcrNativeRuntime | undefined {
 }
 
 export class InferenceRegistry {
+  readonly health: InferenceHealth;
+  private healthSelections = new Map<
+    CapabilityRole,
+    { signature: string; epoch: number; assignment: string; credentialFingerprint?: string }
+  >();
+  private healthEpoch = 0;
+  private getExternalCredential?: (backend: "typesafe" | "anthropic") => string | null;
+
+  private healthSelection(role: CapabilityRole): {
+    identity: string;
+    fingerprint: string;
+    assignment: string;
+  } {
+    const state = this.healthSelections.get(role);
+    const backend = state?.assignment.split("/")[0];
+    const credential =
+      backend === "typesafe" || backend === "anthropic"
+        ? this.getExternalCredential?.(backend)
+        : undefined;
+    const fingerprint = createHash("sha256")
+      .update(state?.signature ?? "")
+      .update(credential ?? "")
+      .digest("hex");
+    if (state && state.credentialFingerprint !== fingerprint) {
+      state.credentialFingerprint = fingerprint;
+      state.epoch = ++this.healthEpoch;
+    }
+    return {
+      identity: String(state?.epoch ?? 0),
+      fingerprint,
+      assignment: state?.assignment ?? role,
+    };
+  }
+
   private modelsDir: string;
   private configDir: string;
   private getManifest: () => Manifest;
@@ -282,6 +321,9 @@ export class InferenceRegistry {
   constructor(opts: {
     modelsDir: string;
     configDir: string;
+    modelHealthPath?: string;
+    /** Read only for a private health fingerprint; credentials never enter state or API payloads. */
+    getExternalCredential?: (backend: "typesafe" | "anthropic") => string | null;
     manifest: () => Manifest;
     hasAnthropicApiKey: () => boolean;
     /** Whether a TypeSafe API key is configured. Unset = never (no key). */
@@ -295,6 +337,8 @@ export class InferenceRegistry {
       protocol: "chat-completions" | "responses",
     ) => import("@omnesis/core").ModelControls;
   }) {
+    this.health = new InferenceHealth((role) => this.healthSelection(role), opts.modelHealthPath);
+    this.getExternalCredential = opts.getExternalCredential;
     this.modelsDir = opts.modelsDir;
     this.configDir = opts.configDir;
     this.getManifest = opts.manifest;
@@ -376,6 +420,38 @@ export class InferenceRegistry {
 
     this.assignmentValues = { ...(config.inference?.assignments ?? {}) };
     this.modelSettings = { ...(config.inference?.modelSettings ?? {}) };
+
+    for (const role of CAPABILITY_ROLES) {
+      const value = this.assignmentValues[role];
+      const assignment =
+        typeof value === "string"
+          ? value
+          : value === null
+            ? "disabled"
+            : role === "embedder"
+              ? "local/default"
+              : "disabled";
+      const backendKey = assignment.split("/")[0] ?? assignment;
+      const signature = createHash("sha256")
+        .update(
+          JSON.stringify({
+            assignment,
+            backend: this.httpBackends.get(backendKey)?.config,
+            typesafe: backendKey === "typesafe" ? config.inference?.typesafe : undefined,
+            local:
+              backendKey === "local" || !assignment.includes("/")
+                ? config.inference?.ocr
+                : undefined,
+            settings: this.modelSettings[role],
+            allowRemoteInference: this.allowRemoteInference,
+          }),
+        )
+        .digest("hex");
+      if (this.healthSelections.get(role)?.signature !== signature) {
+        this.healthSelections.set(role, { signature, epoch: ++this.healthEpoch, assignment });
+      }
+    }
+    this.health.snapshot();
 
     if (needsProbe) {
       this.probeBackends().catch((err) => {
@@ -1092,6 +1168,16 @@ export class InferenceRegistry {
     return { degradedRoles, lastConfigError };
   }
 
+  /** Only discover health for capability cards offered in the current mode. */
+  modelHealth(): ModelHealth {
+    return {
+      warnings: this.health.snapshot().warnings.filter((warning) => {
+        const metadata = CAPABILITY_METADATA[warning.role];
+        return !metadata.hidden && (!metadata.experimental || experimentalVisible());
+      }),
+    };
+  }
+
   /** Snapshot for the API response (GET /admin/models). */
   getOverview(): InferenceOverview {
     const backends: Record<string, BackendStatus> = {};
@@ -1120,7 +1206,12 @@ export class InferenceRegistry {
     const assignments = Object.fromEntries(
       CAPABILITY_ROLES.map((role) => [role, this.resolve(role)]),
     ) as Record<CapabilityRole, ResolvedAssignment>;
-    return { allowRemoteInference: this.allowRemoteInference, backends, assignments };
+    return {
+      allowRemoteInference: this.allowRemoteInference,
+      backends,
+      assignments,
+      health: this.modelHealth(),
+    };
   }
 
   /**

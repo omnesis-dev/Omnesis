@@ -28,6 +28,7 @@ import { LiveVoiceService } from "./live-service.js";
 import type { AgentTerminalFailure } from "@omnesis/core";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { LiveProvider } from "./live-provider.js";
+import type { ModelCallHealth } from "./model-health.js";
 import type { LiveVoiceUsageSample } from "./live-voice-usage.js";
 
 const MODEL = REALTIME_MODEL;
@@ -98,6 +99,7 @@ export interface RealtimeDeps {
   connect?: (apiKey: string) => WebSocket;
   logger?: Pick<ReturnType<typeof createLogger>, "info" | "warn">;
   liveProvider?: (apiKey: string) => LiveProvider;
+  beginModelCall?(): ModelCallHealth;
   recordLiveUsage?: (sample: LiveVoiceUsageSample) => Promise<void>;
   recordUsage?: (
     usage: { promptTokens: number; completionTokens: number; cacheReadTokens?: number },
@@ -134,6 +136,7 @@ export class RealtimeService {
       isAuthorized: (token, owner) => deps.isAuthorized(token, owner),
       hasCapacity: () => this.active.size + this.live.activeCount < 4,
       provider: deps.liveProvider,
+      beginModelCall: deps.beginModelCall,
       recordUsage: deps.recordLiveUsage,
       warn: (code) => this.log.warn(`Live voice event code=${code}`),
     });
@@ -187,6 +190,15 @@ export class RealtimeService {
       );
     if (this.active.size + this.live.activeCount >= 4)
       throw new RealtimeAdmissionError(callError("session_busy"));
+    // Admission and each provider response carry separate evidence. Merely opening
+    // a socket is not evidence that the model can serve inference requests.
+    let modelCall = this.deps.beginModelCall?.();
+    let modelCallFinished = false;
+    const modelFailure = (error: unknown) => {
+      if (modelCallFinished) return;
+      modelCallFinished = true;
+      modelCall?.failure(error);
+    };
     const diagnosticId = randomUUID();
     const diagnostics = new RealtimeDiagnostics((message) =>
       this.log.info(`Call ${diagnosticId} ${message}`),
@@ -302,6 +314,22 @@ export class RealtimeService {
       this.log.warn(
         `Call ${diagnosticId} failed reason=${reason} admissionCode=${admissionCode} code=${firstFailure.code}`,
       );
+      if (
+        [
+          "startup_timeout",
+          "upstream_handshake_rejected",
+          "upstream_socket_error",
+          "upstream_closed",
+          "upstream_send_failed",
+          "upstream_backpressure",
+          "invalid_upstream_event",
+          "transcription_failed",
+          "transcription_timeout",
+          "provider_error",
+        ].includes(reason)
+      ) {
+        modelFailure(firstFailure);
+      }
       report(firstFailure);
       close();
     };
@@ -334,6 +362,10 @@ export class RealtimeService {
     const backendAdapter = new RealtimeBackend(
       (event) => {
         if (!requireAuthority()) return;
+        if ((event as { type?: string }).type === "response.create" && modelCallFinished) {
+          modelCall = this.deps.beginModelCall?.();
+          modelCallFinished = false;
+        }
         if (sendUpstream(event) && (event as { type?: string }).type === "response.create")
           diagnostics.request(event);
       },
@@ -548,6 +580,19 @@ export class RealtimeService {
         }
         const accepted = backendAdapter.receive(event);
         if (event.type.startsWith("response.") && !accepted) return;
+        if (event.type === "response.done" && !modelCallFinished) {
+          const response = z
+            .object({
+              response: z.object({ status: z.string(), status_details: z.unknown().optional() }),
+            })
+            .safeParse(event);
+          if (response.success && response.data.response.status === "completed") {
+            modelCallFinished = true;
+            modelCall?.success();
+          } else if (response.success && response.data.response.status === "failed") {
+            modelFailure(providerCallError(response.data.response.status_details));
+          }
+        }
         diagnostics.upstream(event);
         if (event.type === "session.updated") {
           if (!agentSession) {
@@ -588,6 +633,7 @@ export class RealtimeService {
           if (running) {
             closeAfterTurn = true;
             providerFatalError ??= providerCallError({ error: event.error });
+            modelFailure(providerFatalError);
             report(providerFatalError);
             backendAdapter.fail(
               realtimeFailureCode(realtimeFailureDetails({ error: event.error })),

@@ -361,6 +361,22 @@ METHOD_FLAG=0
 SOURCE_DIR_FLAG=0
 NO_SERVICE_FLAG=0
 CONFIG_DIR="${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}"
+CONFIG_DIR_EXPLICIT=0
+[ -z "${OMNESIS_CONFIG_DIR:-}" ] || CONFIG_DIR_EXPLICIT=1
+# The launcher a native install writes, and the command the operator types to
+# run it. Both are ~/.local/bin/omnesis, except for a native collector beside
+# a Docker install (plan_beside_docker), which keeps that name for the Docker
+# install's launcher and gets one of its own.
+NATIVE_LAUNCHER="$HOME/.local/bin/omnesis"
+NATIVE_CMD="omnesis"
+BESIDE_DOCKER=0
+BESIDE_DOCKER_DIR=""
+BESIDE_DOCKER_GATEWAY=0
+# The second line of every launcher docker_render_wrapper writes.
+DOCKER_LAUNCHER_MARKER="# Omnesis in Docker — written by install.sh --docker."
+# The command a native collector beside a Docker install answers to.
+BESIDE_SHIM="$HOME/.local/bin/omnesis-collector"
+BESIDE_SHIM_MARKER="# Omnesis native collector beside a Docker install — written by install.sh."
 KEYRING_READY=0
 # Whether this host's live-storage keys exist for the process it runs; a
 # collector-only install mints its own, since no gateway boots beside it.
@@ -467,6 +483,9 @@ show_install_plan() {
     if [ "$HARNESS_EXISTING" = 1 ]; then
       PLAN_DELIVERY="none; the CLI already installed here ($HARNESS_EXISTING_WHAT)"
       PLAN_TARGET="$OMNESIS_BIN"
+    fi
+    if [ "$BESIDE_DOCKER" = 1 ]; then
+      PLAN_ROLE="$PLAN_ROLE, beside the Docker install in $BESIDE_DOCKER_DIR (command: $NATIVE_CMD, config: $CONFIG_DIR)"
     fi
   fi
 
@@ -2068,9 +2087,9 @@ SOURCE_RENDERER_EOF
 write_source_wrapper() {
   SOURCE_ROOT="$1"
   write_source_update_lock_helper
-  BIN_DIR="$HOME/.local/bin"
+  BIN_DIR="$(dirname "${NATIVE_LAUNCHER:-$HOME/.local/bin/omnesis}")"
   mkdir -p "$BIN_DIR"
-  OMNESIS_BIN="$BIN_DIR/omnesis"
+  OMNESIS_BIN="${NATIVE_LAUNCHER:-$HOME/.local/bin/omnesis}"
   SOURCE_WRAPPER_TMP="$(mktemp "$BIN_DIR/.omnesis.XXXXXX")" || fail "Could not create a private temporary source launcher."
   chmod 600 "$SOURCE_WRAPPER_TMP"
   if [ "${2:-legacy}" = installed ]; then
@@ -2099,6 +2118,10 @@ try {
 ' "$SOURCE_WRAPPER_TMP" "$OMNESIS_BIN" "$BIN_DIR" || fail "Could not atomically install the source recovery launcher."
   SOURCE_WRAPPER_TMP=""
   info "Wrote $OMNESIS_BIN"
+  if [ "${BESIDE_DOCKER:-0}" = 1 ]; then
+    write_beside_docker_shim
+    BIN_DIR="$(dirname "$BESIDE_SHIM")"
+  fi
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *)
@@ -2108,6 +2131,171 @@ try {
       export PATH
       ;;
   esac
+}
+
+# ── A native collector beside a Docker install ──────────────────────────────
+#
+# A Docker install owns ~/.local/bin/omnesis (its launcher runs the CLI in the
+# containers, and on a gateway host it holds the admin token) and its config
+# directory. The macOS sources need a native collector on the same Mac, so one
+# installs beside it without touching either: its own config directory
+# (~/.config/omnesis-collector), checkout (~/omnesis-collector), service and
+# device token, and its own command, omnesis-collector. The source launcher
+# lives off PATH, under ~/.local/lib/omnesis-collector, and omnesis-collector
+# is a small front door that points the CLI at that config directory and
+# handles `uninstall` itself, so removing one install never reaches into the
+# other.
+
+# The config directory of a working Docker install on this host, or failure:
+# the one ~/.local/bin/omnesis is the launcher of, or this run's config
+# directory when it records a Docker install with its compose file still there.
+# A marker alone is what an earlier, since removed Docker install leaves.
+docker_install_dir() {
+  if [ -f "$HOME/.local/bin/omnesis" ] && [ "$(sed -n 2p "$HOME/.local/bin/omnesis" 2>/dev/null)" = "$DOCKER_LAUNCHER_MARKER" ]; then
+    DOCKER_INSTALL_COMPOSE="$(sed -n "s/^COMPOSE_FILE='\(.*\)'\$/\1/p" "$HOME/.local/bin/omnesis" | head -n 1)"
+    if [ -n "$DOCKER_INSTALL_COMPOSE" ] && [ -f "$DOCKER_INSTALL_COMPOSE" ]; then
+      dirname "$DOCKER_INSTALL_COMPOSE"
+      return 0
+    fi
+  fi
+  if [ "$(cat "$CONFIG_DIR/install-method" 2>/dev/null)" = docker ] && [ -f "$CONFIG_DIR/docker-compose.yml" ]; then
+    printf '%s' "$CONFIG_DIR"
+    return 0
+  fi
+  return 1
+}
+
+# Whether ~/.local/bin/omnesis-collector is the front door this installer
+# writes for a native collector beside a Docker install.
+beside_docker_shim_present() {
+  [ -f "$BESIDE_SHIM" ] && [ "$(sed -n 2p "$BESIDE_SHIM" 2>/dev/null)" = "$BESIDE_SHIM_MARKER" ]
+}
+
+# Settle, before anything is planned, where a native install goes on a host
+# that already runs Omnesis in Docker. Only a collector installs beside it:
+# any other native role would replace the command the Docker install is run
+# with and share its config directory.
+plan_beside_docker() {
+  [ "$DOCKER" = 0 ] || return 0
+  BESIDE_DOCKER_DIR="$(docker_install_dir)" || { BESIDE_DOCKER_DIR=""; return 0; }
+  if [ "$COLLECTOR" != 1 ]; then
+    if [ -n "$HARNESS" ]; then BESIDE_ROLE="$(harness_label "$HARNESS") integration"
+    elif [ "$CLIENT_ONLY_FLAG" = 1 ]; then BESIDE_ROLE="CLI"
+    else BESIDE_ROLE="gateway"; fi
+    fail "This machine runs Omnesis in Docker ($BESIDE_DOCKER_DIR), and $HOME/.local/bin/omnesis is that install's launcher. A native $BESIDE_ROLE here would replace that command and share its config directory, so nothing was changed. Use the Docker install's omnesis on this machine (omnesis update moves it to a new release), or remove it first with: omnesis uninstall. A native collector, for the macOS sources, installs beside it with --collector."
+  fi
+  [ "$METHOD" != package ] || \
+    fail "A native collector beside the Docker install in $BESIDE_DOCKER_DIR is installed from source; --method package is not available for it yet. Re-run without --method."
+  METHOD=source
+  if [ "$CONFIG_DIR_EXPLICIT" = 1 ]; then
+    [ "$(cd "$CONFIG_DIR" 2>/dev/null && pwd -P)" != "$(cd "$BESIDE_DOCKER_DIR" && pwd -P)" ] || \
+      fail "OMNESIS_CONFIG_DIR names the Docker install's config directory ($BESIDE_DOCKER_DIR). A native collector beside it keeps a directory of its own: unset OMNESIS_CONFIG_DIR to use $HOME/.config/omnesis-collector, or name another one."
+  else
+    CONFIG_DIR="$HOME/.config/omnesis-collector"
+  fi
+  [ "$SOURCE_DIR_EXPLICIT" = 1 ] || SOURCE_DIR="$HOME/omnesis-collector"
+  OMNESIS_CONFIG_DIR="$CONFIG_DIR"
+  export OMNESIS_CONFIG_DIR
+  NATIVE_LAUNCHER="$HOME/.local/lib/omnesis-collector/omnesis"
+  NATIVE_CMD="omnesis-collector"
+  BESIDE_DOCKER=1
+  if grep -qx '  gateway:' "$BESIDE_DOCKER_DIR/docker-compose.yml" 2>/dev/null; then BESIDE_DOCKER_GATEWAY=1; fi
+  info "This machine runs Omnesis in Docker ($BESIDE_DOCKER_DIR). The native collector installs beside it: command $NATIVE_CMD, config directory $CONFIG_DIR."
+}
+
+# The front door of a native collector beside a Docker install. It points the
+# CLI at this collector's config directory and names the source launcher for
+# `update`, which rewrites that launcher. `uninstall` is handled here, from
+# what this installer wrote, so it can only ever remove this collector.
+write_beside_docker_shim() {
+  mkdir -p "$(dirname "$BESIDE_SHIM")"
+  BESIDE_TMP="$(mktemp "$(dirname "$BESIDE_SHIM")/.omnesis-collector.XXXXXX")" || fail "Could not create a private temporary launcher."
+  {
+    printf '#!/bin/sh\n%s\n' "$BESIDE_SHIM_MARKER"
+    printf 'CONFIG_DIR=%s\n' "$(shell_single_quote "$CONFIG_DIR")"
+    printf 'LAUNCHER=%s\n' "$(shell_single_quote "$NATIVE_LAUNCHER")"
+    printf 'DOCKER_DIR=%s\n' "$(shell_single_quote "$BESIDE_DOCKER_DIR")"
+    cat <<'SHIM_EOF'
+set -eu
+if [ "${1:-}" = uninstall ]; then
+  shift
+  YES=0; PURGE=0; DRY=0
+  for ARG in "$@"; do
+    case "$ARG" in
+      -y|--yes) YES=1 ;;
+      --purge) PURGE=1 ;;
+      --dry-run) DRY=1 ;;
+      -h|--help)
+        printf '%s\n' "Usage: omnesis-collector uninstall [--purge] [--yes] [--dry-run]" \
+          "Removes the native collector installed beside the Docker install: its service, checkout and command." \
+          "--purge also deletes its config directory: its token, keys and caches."
+        exit 0 ;;
+      *) printf 'omnesis-collector uninstall: %s is not an option it takes.\n' "$ARG" >&2; exit 2 ;;
+    esac
+  done
+  ROOT="$(sed -n "s/^SOURCE_ROOT='\(.*\)'\$/\1/p" "$LAUNCHER" 2>/dev/null | head -n 1)"
+  MANAGED=0
+  if [ -n "$ROOT" ] && [ "$(git -C "$ROOT" config --local --get omnesis.install 2>/dev/null || true)" = managed ]; then MANAGED=1; fi
+  DEVICE="$(sed -n 's/.*"deviceName":"\([^"]*\)".*/\1/p' "$CONFIG_DIR/collector-pairing-state.json" 2>/dev/null | head -n 1)"
+  UNIT=""
+  for CANDIDATE in "$HOME/Library/LaunchAgents/dev.omnesis.collector.plist" "$HOME/.config/systemd/user/omnesis-collector.service"; do
+    [ ! -f "$CANDIDATE" ] || UNIT="$CANDIDATE"
+  done
+  printf '%s\n' "Omnesis uninstall — the native collector beside the Docker install in $DOCKER_DIR:"
+  [ -z "$UNIT" ] || printf '  - %s\n' "Stop and remove its collector service"
+  [ "$MANAGED" = 0 ] || printf '  - %s\n' "Remove its checkout $ROOT"
+  printf '  - %s\n' "Remove $LAUNCHER and the omnesis-collector command"
+  if [ "$PURGE" = 1 ]; then printf '  - %s\n' "Delete its config directory $CONFIG_DIR (token, keys, caches)"
+  else printf '  - %s\n' "Keep its config directory $CONFIG_DIR"; fi
+  printf '  %s\n' "The Docker install, its omnesis command and its data are not touched."
+  follow_up() {
+    printf '\n%s\n' "Afterwards"
+    printf '  %s\n' "Remove its device from the gateway: omnesis devices revoke '${DEVICE:-<device>}' --forget"
+  }
+  if [ "$DRY" = 1 ]; then follow_up; printf '\n%s\n' "Dry run: nothing was changed."; exit 0; fi
+  if [ "$YES" != 1 ]; then
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+      printf '%s' "Remove these? [y/N] "
+      IFS= read -r REPLY </dev/tty || REPLY=""
+      case "$REPLY" in y|Y|yes|YES) ;; *) printf '%s\n' "Cancelled."; exit 130 ;; esac
+    else
+      printf '%s\n' "Refusing to uninstall without confirmation. Re-run with --yes, or --dry-run to see the plan." >&2
+      exit 2
+    fi
+  fi
+  if [ -n "$UNIT" ] && [ -x "$LAUNCHER" ]; then
+    OMNESIS_CONFIG_DIR="$CONFIG_DIR" "$LAUNCHER" service uninstall collector || {
+      printf '%s\n' "omnesis-collector uninstall: removing the collector service failed; nothing else was removed. Fix the error above and re-run." >&2
+      exit 1
+    }
+  fi
+  if [ "$MANAGED" = 1 ] && [ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null || echo changed)" ]; then
+    rm -rf "$ROOT"
+  elif [ "$MANAGED" = 1 ]; then
+    printf '%s\n' "Kept $ROOT: it has local changes."
+  fi
+  rm -rf "$(dirname "$LAUNCHER")"
+  if [ "$PURGE" = 1 ]; then
+    case "$CONFIG_DIR" in
+      /|"$HOME"|"$HOME"/|"$DOCKER_DIR") printf 'omnesis-collector uninstall: refusing to delete %s.\n' "$CONFIG_DIR" >&2; exit 1 ;;
+    esac
+    rm -rf "$CONFIG_DIR"
+  fi
+  rm -f "$0"
+  follow_up
+  printf '%s\n' "Removed the native collector."
+  exit 0
+fi
+OMNESIS_CONFIG_DIR="$CONFIG_DIR"
+OMNESIS_LAUNCHER="$LAUNCHER"
+export OMNESIS_CONFIG_DIR OMNESIS_LAUNCHER
+exec "$LAUNCHER" "$@"
+SHIM_EOF
+  } > "$BESIDE_TMP" || fail "Could not write $BESIDE_SHIM."
+  chmod 755 "$BESIDE_TMP"
+  mv -f "$BESIDE_TMP" "$BESIDE_SHIM" || fail "Could not write $BESIDE_SHIM."
+  info "Wrote $BESIDE_SHIM (this collector's command; omnesis stays the Docker install's)"
+  OMNESIS_BIN="$BESIDE_SHIM"
 }
 
 # A pathname under ~/.local/bin is not evidence that this installer owns it.
@@ -4489,7 +4677,35 @@ EOF
 # whichever role is pairing. A named URL is taken as given. Without one, the LAN
 # is browsed — the gateway advertises itself with its certificate fingerprint —
 # and the hit has to be confirmed on the terminal before anything is paired.
+# The URL a native collector beside a Docker gateway dials when none is named:
+# the gateway's published port on this machine, by `localhost`, when the
+# certificate it serves covers that name. Its own self-signed certificate is
+# pinned by fingerprint; one the operator supplied is verified as usual. The
+# LAN is not browsed: the gateway is right here, and Docker Desktop's VM does
+# not carry multicast.
+beside_docker_gateway_url() {
+  BESIDE_COMPOSE="$BESIDE_DOCKER_DIR/docker-compose.yml"
+  BESIDE_PORT="$(sed -n 's/^      - "\([0-9][0-9]*\):7600"$/\1/p' "$BESIDE_COMPOSE" 2>/dev/null | head -n 1)"
+  [ -n "$BESIDE_PORT" ] || BESIDE_PORT="$(sed -n 's/^      - OMNESIS_GATEWAY_PORT=\([0-9][0-9]*\)$/\1/p' "$BESIDE_COMPOSE" 2>/dev/null | head -n 1)"
+  [ -n "$BESIDE_PORT" ] || BESIDE_PORT=7600
+  BESIDE_CERT="$(sed -n 's/^OMNESIS_TLS_CERT=//p' "$BESIDE_DOCKER_DIR/.env" 2>/dev/null | tail -n 1)"
+  BESIDE_OWN_CERT=0
+  if [ -z "$BESIDE_CERT" ]; then BESIDE_CERT="$BESIDE_DOCKER_DIR/tls/cert.pem"; BESIDE_OWN_CERT=1; fi
+  [ -f "$BESIDE_CERT" ] || return 1
+  GATEWAY_PORT="$BESIDE_PORT" docker_cert_covers "$BESIDE_CERT" localhost || return 1
+  PAIR_GATEWAY_URL="https://localhost:$BESIDE_PORT"
+  if [ "$BESIDE_OWN_CERT" = 1 ] && [ -z "$PAIR_FINGERPRINT" ]; then
+    BESIDE_FP="$(docker_cert_fingerprint "$BESIDE_CERT" || true)"
+    [ -z "$BESIDE_FP" ] || PAIR_FINGERPRINT="sha256:$BESIDE_FP"
+  fi
+  info "Gateway: this machine's Docker gateway, at $PAIR_GATEWAY_URL"
+}
+
 resolve_gateway() {
+  if [ -z "$PAIR_GATEWAY_URL" ] && [ "$BESIDE_DOCKER" = 1 ] && [ "$BESIDE_DOCKER_GATEWAY" = 1 ]; then
+    beside_docker_gateway_url && return 0
+    fail "Could not tell which address this machine's Docker gateway answers to by a name its certificate covers. Re-run with the --gateway-url (and --trust-fingerprint) its install printed, or check it is running: docker compose -f $BESIDE_DOCKER_DIR/docker-compose.yml ps"
+  fi
   if [ -n "$PAIR_GATEWAY_URL" ]; then
     # Trailing slashes would end up in every URL the CLI builds from this.
     PAIR_GATEWAY_URL="$(printf '%s' "$PAIR_GATEWAY_URL" | sed 's#/*$##')"
@@ -4546,6 +4762,16 @@ process.stdin.on("end", () => {
 read_pairing_code() {
   PAIR_KIND="$1"
   if [ -n "$PAIR_CODE" ]; then return 0; fi
+  # Beside a Docker gateway the gateway host is this machine, and its omnesis
+  # holds the admin token: on a terminal the code is minted with it, and
+  # without one that is the exact command to run.
+  if [ "$BESIDE_DOCKER" = 1 ] && [ "$BESIDE_DOCKER_GATEWAY" = 1 ]; then
+    if ! is_promptable; then
+      fail "No terminal to mint the pairing code with. This machine's Docker gateway mints one: run \`omnesis devices pair --kind $PAIR_KIND\` here, then re-run this line with --code <code>."
+    fi
+    if mint_local_pairing_code "$PAIR_KIND"; then return 0; fi
+    warn "Could not mint a pairing code with this machine's Docker gateway (the message above says why)."
+  fi
   if ! is_promptable; then
     fail "No terminal to ask for the pairing code. Mint one on the gateway host with \`omnesis devices pair --kind $PAIR_KIND\` and re-run with --code <code>."
   fi
@@ -4555,6 +4781,17 @@ read_pairing_code() {
   printf '(or in the portal: Settings → Devices)\n\n' >/dev/tty
   PAIR_CODE="$(ask_tty 'Pairing code: ')"
   [ -n "$PAIR_CODE" ] || fail "No pairing code entered. Re-run once you have one."
+}
+
+# Mint a pairing code with the Docker install's launcher on this machine, into
+# PAIR_CODE. Its config directory and admin token are its own; this run only
+# reads the code it prints.
+mint_local_pairing_code() {
+  info "Minting a $1 pairing code with this machine's Docker gateway (omnesis devices pair --kind $1)..."
+  MINTED="$(env -u OMNESIS_CONFIG_DIR "$HOME/.local/bin/omnesis" devices pair --kind "$1" --json </dev/null)" || return 1
+  PAIR_CODE="$(printf '%s' "$MINTED" | tr -d '\r' | sed -n 's/.*"pairingCode"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9-]*\)".*/\1/p' | head -n 1)"
+  [ -n "$PAIR_CODE" ] || return 1
+  info "Minted a single-use pairing code."
 }
 
 # Redeem the code and save the device token. The token file is what the
@@ -4683,9 +4920,9 @@ print_collector_encryption_line() {
   if [ "$STORAGE_KEYS_READY" = 1 ]; then
     echo "  Storage:  encrypted at rest (this collector's own keys)"
   elif [ "$KEYRING_READY" = 1 ]; then
-    echo "  Storage:  keys not prepared yet — the daemon mints them at start; check: omnesis keyring storage-status --host collector"
+    echo "  Storage:  keys not prepared yet — the daemon mints them at start; check: $NATIVE_CMD keyring storage-status --host collector"
   else
-    echo "  Storage:  plaintext (no keyring) — arm it later with: omnesis secure"
+    echo "  Storage:  plaintext (no keyring) — arm it later with: $NATIVE_CMD secure"
   fi
 }
 
@@ -4694,7 +4931,11 @@ print_collector_banner() {
   if [ "$COLLECTOR_ONLINE" = 1 ]; then
     printf '\033[1m\033[0;32mCollector %s is online.\033[0m\n' "$COLLECTOR_DEVICE_NAME"
     echo ""
-    printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal:\n'
+    if [ "$BESIDE_DOCKER_GATEWAY" = 1 ]; then
+      printf '\033[1mAdd a source\033[0m — in this terminal (omnesis is this machine'"'"'s Docker gateway), or in the portal:\n'
+    else
+      printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal:\n'
+    fi
     echo ""
     # Quoted: a device name is a hostname plus a suffix, and a hostname with a
     # space in it would otherwise print a command that cannot be pasted.
@@ -4702,16 +4943,16 @@ print_collector_banner() {
   elif [ "$WANT_SERVICE" = 1 ]; then
     printf '\033[1m\033[0;33mCollector is paired\033[0m (the service is registered but has not reached the gateway yet):\n'
     echo ""
-    echo "    omnesis service status collector"
-    echo "    omnesis service logs collector"
+    echo "    $NATIVE_CMD service status collector"
+    echo "    $NATIVE_CMD service logs collector"
   elif [ "$COLLECTOR_SERVICE_REFUSED" = 1 ]; then
     printf '\033[1m\033[0;33mCollector is paired\033[0m (this machine refused the service — start the daemon yourself):\n'
     echo ""
-    echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL omnesis collector run"
+    echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
   else
     printf '\033[1m\033[0;32mCollector is paired\033[0m (no service registered — start the daemon yourself):\n'
     echo ""
-    echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL omnesis collector run"
+    echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
   fi
   echo ""
   echo "  Gateway:  $PAIR_GATEWAY_URL"
@@ -4719,8 +4960,15 @@ print_collector_banner() {
   print_collector_encryption_line
   echo ""
   print_full_disk_access_hint
-  echo "  Manage services:  omnesis service status|logs|restart"
-  echo "  Update later:     omnesis update"
+  echo "  Manage services:  $NATIVE_CMD service status|logs|restart"
+  echo "  Update later:     $NATIVE_CMD update"
+  if [ "$BESIDE_DOCKER" = 1 ]; then
+    echo "  Remove:           $NATIVE_CMD uninstall"
+    echo ""
+    echo "  This collector is installed beside the Docker install in $BESIDE_DOCKER_DIR,"
+    echo "  with its own config directory ($CONFIG_DIR), service and device token."
+    echo "  omnesis stays that install's command; $NATIVE_CMD is this collector's."
+  fi
   print_path_hints
   echo ""
 }
@@ -5668,9 +5916,12 @@ docker_compose_gateway_service() {
   printf '      # this install records means the same thing on both sides of the\n'
   printf '      # container boundary.\n'
   printf '      - %s:%s\n' "$CONFIG_DIR" "$CONFIG_DIR"
+  # The combined container runs the collector, so it reads the shared folders.
+  [ "$DOCKER_COMBINED" = 0 ] || docker_compose_shared_folders
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  docker_compose_host_home
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_GATEWAY_PORT=%s\n' "$GATEWAY_PORT"
   if [ "$DOCKER_COMBINED" = 1 ]; then
@@ -5709,6 +5960,39 @@ docker_compose_gateway_service() {
     printf '    stop_grace_period: 90s\n'
   fi
   printf '    restart: unless-stopped\n'
+}
+
+# The host folders shared with the collector (`omnesis folders share`, a
+# launcher command), mounted read-only at the same absolute path. The list
+# lives in the config directory, so every rewrite of this file keeps them.
+# The launcher rewrites the block between the markers itself.
+docker_compose_shared_folders() {
+  printf '      # Host folders shared with the collector, read-only at the same path\n'
+  printf '      # (omnesis folders share). Re-running the installer keeps them.\n'
+  printf '      # shared-folders:begin\n'
+  if [ -f "$CONFIG_DIR/shared-folders" ]; then
+    while IFS= read -r SHARED_FOLDER; do
+      case "$SHARED_FOLDER" in
+        /*) ;;
+        *) continue ;;
+      esac
+      case "$SHARED_FOLDER" in *:*|*"'"*) continue ;; esac
+      printf "      - '%s:%s:ro'\n" "$SHARED_FOLDER" "$SHARED_FOLDER"
+    done < "$CONFIG_DIR/shared-folders"
+  fi
+  printf '      # shared-folders:end\n'
+}
+
+# The home of this account on this host, for the CLI and the collector in the
+# containers: a path the operator types with `~` means this home, not the
+# container's. Left out for a home the compose file cannot carry plainly.
+docker_compose_host_home() {
+  case "$HOME" in
+    /*) ;;
+    *) return 0 ;;
+  esac
+  case "$HOME" in *[!A-Za-z0-9/:._@+-]*) return 0 ;; esac
+  printf '      - OMNESIS_HOST_HOME=%s\n' "$HOME"
 }
 
 docker_compose_oauth_ports() {
@@ -5757,10 +6041,12 @@ docker_compose_collector_service() {
   printf '      # subdirectory: the passphrase that unseals its secrets lives beside\n'
   printf '      # it, and a bind mount cannot reach outside itself.\n'
   printf '      - %s:%s\n' "$CONFIG_DIR" "$CONFIG_DIR"
+  docker_compose_shared_folders
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$(docker_collector_config_dir)"
   printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url)"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  docker_compose_host_home
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
   docker_compose_ca_env
   if [ -n "$PAIR_FINGERPRINT" ]; then
@@ -6581,6 +6867,12 @@ if [ "${1:-}" = uninstall ]; then
   # sources it hosts, until it is removed there; the same note a native
   # collector's uninstall leaves.
   uninstall_follow_ups() {
+    # A native collector installed beside this one keeps its own command,
+    # config directory and service, and is removed with its own command.
+    if [ -x "$HOME/.local/bin/omnesis-collector" ]; then
+      printf '\n%s\n' "The native collector beside this install stays: it has its own command, config directory and service."
+      printf '  %s\n' "Remove it too with: omnesis-collector uninstall"
+    fi
     [ "$SERVICE" = collector ] || return 0
     printf '\n%s\n' "Afterwards"
     printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke <device> --forget"
@@ -6660,6 +6952,139 @@ fi
   exit 1
 }
 
+# Host folders the collector's container reads. A container sees this install's
+# config directory and nothing else of the machine, so a folder a source reads
+# — an Obsidian vault, a mail archive — is shared with it read-only, at the same
+# absolute path, which is what the source's settings then name. The list lives
+# in the config directory and the installer writes it back into the compose
+# file whenever it rewrites that, so a re-run or an update keeps every share.
+FOLDERS_DIR="$(dirname "$COMPOSE_FILE")"
+FOLDERS_LIST="$FOLDERS_DIR/shared-folders"
+SHARE_REQUEST="$FOLDERS_DIR/share-request"
+folders_service() {
+  if grep -qx '  collector:' "$COMPOSE_FILE"; then printf collector
+  elif grep -q 'omnesis-combined' "$COMPOSE_FILE"; then printf gateway
+  else return 1
+  fi
+}
+folders_fail() { printf 'omnesis folders: %s\n' "$*" >&2; return 1; }
+# A path as the operator means it: ~ is their home, a relative path is read
+# from here, and a trailing slash names the same folder.
+folders_path() {
+  case "$1" in
+    "~") FOLDER="$HOME" ;;
+    "~/"*) FOLDER="$HOME/${1#"~/"}" ;;
+    /*) FOLDER="$1" ;;
+    *) FOLDER="$PWD/$1" ;;
+  esac
+  while :; do
+    case "$FOLDER" in /|*[!/]) break ;; */) FOLDER="${FOLDER%/}" ;; esac
+  done
+}
+# Rewrite the compose file's block of shared folders from the list. A compose
+# file written before shares existed gets the block after its config-directory
+# mount, in the service that runs the collector.
+folders_render() {
+  FOLDERS_SVC="$1"
+  FOLDERS_HAS_BLOCK=0
+  grep -qx '      # shared-folders:begin' "$COMPOSE_FILE" && FOLDERS_HAS_BLOCK=1
+  [ -f "$FOLDERS_LIST" ] || : > "$FOLDERS_LIST"
+  awk -v svc="$FOLDERS_SVC" -v list="$FOLDERS_LIST" -v has="$FOLDERS_HAS_BLOCK" \
+      -v mount="      - $FOLDERS_DIR:$FOLDERS_DIR" '
+    function entries(   line) {
+      while ((getline line < list) > 0) {
+        if (line ~ /^\// && line !~ /[:\047]/) print "      - \047" line ":" line ":ro\047"
+      }
+      close(list)
+    }
+    /^  [a-z][a-z0-9-]*:$/ { cur = $1; sub(/:$/, "", cur) }
+    inblock { if ($0 == "      # shared-folders:end") { entries(); print; inblock = 0; done = 1 } ; next }
+    $0 == "      # shared-folders:begin" { print; inblock = 1; next }
+    { print }
+    has == 0 && !done && cur == svc && $0 == mount {
+      print "      # Host folders shared with the collector, read-only at the same path"
+      print "      # (omnesis folders share). Re-running the installer keeps them."
+      print "      # shared-folders:begin"
+      entries()
+      print "      # shared-folders:end"
+      done = 1
+    }
+    END { exit done ? 0 : 3 }' "$COMPOSE_FILE" > "$COMPOSE_FILE.omnesis-folders" || {
+    rm -f "$COMPOSE_FILE.omnesis-folders"
+    folders_fail "could not find where $COMPOSE_FILE mounts $FOLDERS_DIR, so nothing was changed. Re-run the installer with the options you installed with to rewrite it, then share the folder again."
+    return 1
+  }
+  cat "$COMPOSE_FILE.omnesis-folders" > "$COMPOSE_FILE"
+  rm -f "$COMPOSE_FILE.omnesis-folders"
+}
+# Recreate the container that runs the collector, so it mounts the new list.
+folders_apply() {
+  printf 'Recreating the %s container so it sees the change...\n' "$1"
+  docker compose -f "$COMPOSE_FILE" up -d --no-deps "$1" || {
+    folders_fail "the $1 container did not come back. Check: docker compose -f $COMPOSE_FILE logs $1"
+    return 1
+  }
+}
+folders_share() {
+  folders_path "$1"
+  FOLDERS_SVC="$(folders_service)" || { folders_fail "this install runs no collector, so there is nothing to share a folder with."; return 1; }
+  case "$FOLDER" in
+    /) folders_fail "refusing to share the whole filesystem with the collector."; return 1 ;;
+    *:*|*"'"*|*'
+'*) folders_fail "$FOLDER contains a character a compose file cannot mount (a colon, a quote or a newline). Rename it or share a folder above it."; return 1 ;;
+  esac
+  [ -e "$FOLDER" ] || { folders_fail "$FOLDER does not exist on this machine."; return 1; }
+  if [ -f "$FOLDERS_LIST" ]; then
+    while IFS= read -r FOLDERS_SHARED; do
+      case "$FOLDER" in
+        "$FOLDERS_SHARED"|"$FOLDERS_SHARED"/*)
+          printf '%s is already shared with the collector (as %s).\n' "$FOLDER" "$FOLDERS_SHARED"
+          return 0 ;;
+      esac
+    done < "$FOLDERS_LIST"
+  fi
+  FOLDERS_BEFORE="$(cat "$FOLDERS_LIST" 2>/dev/null || true)"
+  ( umask 077; printf '%s\n' "$FOLDER" >> "$FOLDERS_LIST" )
+  folders_render "$FOLDERS_SVC" || {
+    if [ -n "$FOLDERS_BEFORE" ]; then printf '%s\n' "$FOLDERS_BEFORE" > "$FOLDERS_LIST"; else : > "$FOLDERS_LIST"; fi
+    return 1
+  }
+  folders_apply "$FOLDERS_SVC" || return 1
+  printf 'Shared %s with the collector, read-only, at the same path.\n' "$FOLDER"
+}
+if [ "${1:-}" = folders ]; then
+  shift
+  case "${1:-list}" in
+    list)
+      if [ -s "$FOLDERS_LIST" ]; then cat "$FOLDERS_LIST"
+      else printf '%s\n' "No folders are shared with the collector. Share one with: omnesis folders share <path>"; fi
+      exit 0 ;;
+    share)
+      [ "$#" = 2 ] || { printf '%s\n' "Usage: omnesis folders share <path>" >&2; exit 2; }
+      folders_share "$2" || exit 1
+      exit 0 ;;
+    unshare)
+      [ "$#" = 2 ] || { printf '%s\n' "Usage: omnesis folders unshare <path>" >&2; exit 2; }
+      folders_path "$2"
+      FOLDERS_SVC="$(folders_service)" || { folders_fail "this install runs no collector."; exit 1; }
+      grep -qxF -- "$FOLDER" "$FOLDERS_LIST" 2>/dev/null || { folders_fail "$FOLDER is not shared. omnesis folders lists what is."; exit 1; }
+      grep -vxF -- "$FOLDER" "$FOLDERS_LIST" > "$FOLDERS_LIST.omnesis-folders" || true
+      cat "$FOLDERS_LIST.omnesis-folders" > "$FOLDERS_LIST"
+      rm -f "$FOLDERS_LIST.omnesis-folders"
+      folders_render "$FOLDERS_SVC" || exit 1
+      folders_apply "$FOLDERS_SVC" || exit 1
+      printf 'The collector no longer sees %s. A source that reads it stops finding its files.\n' "$FOLDER"
+      exit 0 ;;
+    -h|--help)
+      printf '%s\n' "Usage: omnesis folders [list | share <path> | unshare <path>]" \
+        "Host folders the collector's container can read, mounted read-only at the same path."
+      exit 0 ;;
+    *)
+      printf 'omnesis folders: unknown command %s. Usage: omnesis folders [list | share <path> | unshare <path>]\n' "$1" >&2
+      exit 2 ;;
+  esac
+fi
+
 # `update` moves the containers themselves, which no container can do to
 # itself, so it runs in the one-shot updater container that holds this host's
 # Docker socket for that invocation alone.
@@ -6679,6 +7104,17 @@ if [ "${1:-}" = secure ]; then
   for ARG in "$@"; do
     case "$ARG" in --json|--rollback|--verify|-h|--help) SECURE=0 ;; esac
   done
+fi
+
+# A source names folders on this machine, which the CLI reads as this machine's:
+# `~` is this home and a relative path starts here. On a terminal, the CLI may
+# leave a request to share a folder the collector's container cannot see; this
+# launcher offers that share once the command exits, and runs the add again.
+SOURCES=0
+SHARE_OFFER=0
+if [ "${1:-}" = sources ]; then
+  SOURCES=1
+  if [ -t 0 ] && [ -t 1 ] && [ -r /dev/tty ]; then SHARE_OFFER=1; fi
 fi
 
 # Docker allocates a pseudo-terminal by default, which corrupts output the
@@ -6711,6 +7147,7 @@ for NAME in $(env | sed -n 's/^\(OMNESIS_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
     # What this launcher tells the container about itself is this launcher's
     # to say.
     OMNESIS_DOCKER_HOST_RESTART|OMNESIS_DOCKER_LAUNCHER) continue ;;
+    OMNESIS_HOST_HOME|OMNESIS_HOST_CWD|OMNESIS_DOCKER_SHARE_REQUEST) continue ;;
   esac
   # A value containing a newline makes `env` look like it listed another
   # variable; the default keeps that from ending the run under `set -u`.
@@ -6718,6 +7155,8 @@ for NAME in $(env | sed -n 's/^\(OMNESIS_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
   set -- "$@" --env "$NAME=$VALUE"
 done
 [ "$SECURE" = 0 ] || set -- "$@" --env OMNESIS_DOCKER_HOST_RESTART=1
+[ "$SOURCES" = 0 ] || set -- "$@" --env "OMNESIS_HOST_HOME=$HOME" --env "OMNESIS_HOST_CWD=$PWD"
+[ "$SHARE_OFFER" = 0 ] || set -- "$@" --env OMNESIS_DOCKER_SHARE_REQUEST=1
 
 if [ "$UPDATE" = 1 ]; then
   set -- "$@" updater
@@ -6766,7 +7205,45 @@ if [ "$SECURE" = 1 ]; then
   fi
   exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$SERVICE" omnesis secure --verify
 fi
-if docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -qx "$SERVICE"; then
+if [ "$SHARE_OFFER" = 1 ]; then
+  rm -f "$SHARE_REQUEST"
+  SHARE_STATUS=0
+  if service_running; then
+    docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@" || SHARE_STATUS=$?
+  else
+    docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@" || SHARE_STATUS=$?
+  fi
+  [ -f "$SHARE_REQUEST" ] || exit "$SHARE_STATUS"
+  # The request comes from a directory the containers write to: the folder is
+  # checked and shown to the operator before anything is mounted, and the
+  # command run again is only ever another `sources add` in the container.
+  SHARE_PATH=""
+  set --
+  while IFS= read -r SHARE_LINE; do
+    case "$SHARE_LINE" in
+      path=*) [ -n "$SHARE_PATH" ] || SHARE_PATH="${SHARE_LINE#path=}" ;;
+      arg=*) set -- "$@" "${SHARE_LINE#arg=}" ;;
+    esac
+  done < "$SHARE_REQUEST"
+  rm -f "$SHARE_REQUEST"
+  case "$SHARE_PATH" in /*) ;; *) exit "$SHARE_STATUS" ;; esac
+  [ -e "$SHARE_PATH" ] || { printf '%s does not exist on this machine either.\n' "$SHARE_PATH" >&2; exit "$SHARE_STATUS"; }
+  printf '\n%s is a folder on this machine. The collector runs in a container\nthat sees only the folders shared with it.\n' "$SHARE_PATH" >/dev/tty
+  printf 'Share %s with the collector, read-only? [Y/n] ' "$SHARE_PATH" >/dev/tty
+  IFS= read -r SHARE_REPLY </dev/tty || SHARE_REPLY=n
+  case "$SHARE_REPLY" in
+    ''|y|Y|yes|YES|Yes) ;;
+    *) printf 'Not shared. Share it later with: omnesis folders share %s\n' "'$SHARE_PATH'"; exit "$SHARE_STATUS" ;;
+  esac
+  folders_share "$SHARE_PATH" || exit 1
+  if [ "${1:-}" != sources ] || [ "${2:-}" != add ]; then
+    printf '%s\n' "Run the command again to finish adding the source."
+    exit 0
+  fi
+  printf '%s\n' "Picking the add up again..."
+  OMNESIS_ADD_WAIT_SECONDS=120 exec "$0" "$@"
+fi
+if service_running; then
   exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@"
 fi
 exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@"
@@ -6949,7 +7426,9 @@ print_docker_collector_banner() {
   echo ""
   echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
   echo "    that do not exist in a Linux container. Run a native collector on the Mac"
-  echo "    and pair it with the same gateway:"
+  echo "    and pair it with the same gateway. On this machine it installs beside this"
+  echo "    Docker install, with its own command (omnesis-collector), config directory"
+  echo "    and device:"
   echo ""
   if [ -n "$PAIR_FINGERPRINT" ]; then
     echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
@@ -7024,7 +7503,9 @@ print_docker_banner() {
   echo ""
   echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
   echo "    that do not exist in a Linux container. Run a native collector on the Mac"
-  echo "    and pair it with this gateway:"
+  echo "    and pair it with this gateway. On this machine it installs beside this"
+  echo "    Docker install, with its own command (omnesis-collector), config directory"
+  echo "    and device, and mints its pairing code here:"
   echo ""
   echo "      curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
   if [ -n "$TLS_PRIMARY_NAME" ]; then
@@ -7044,19 +7525,42 @@ print_docker_banner() {
     echo "  - A container has no OS keyring, so nothing is encrypted at rest yet. Arm"
     echo "    the passphrase backend with: omnesis secure"
   fi
+  if [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then
+    echo "  - The collector container sees only $CONFIG_DIR and the folders shared"
+    echo "    with it. A source that reads a folder on this machine (an Obsidian vault,"
+    echo "    a mail archive) offers to share it; or: omnesis folders share <path>"
+  fi
   print_path_hints
   echo ""
 }
 
-# A native install in this config directory does not go away because a Docker
-# one arrives on top of it: its service units keep running and keep the gateway
-# port, and this run is about to replace the wrapper that could stop them. Say
-# so while the operator can still act on it.
-docker_warn_native_install() {
-  [ -f "$CONFIG_DIR/omnesis.db" ] || return 0
-  [ ! -f "$CONFIG_DIR/install-method" ] || return 0
-  warn "$CONFIG_DIR already holds a native install's corpus. Its services keep running and hold port $GATEWAY_PORT, and this run replaces the omnesis command they were registered with."
-  warn "Stop them first if that is not what you meant: omnesis service status, then omnesis service uninstall"
+# A native install does not go away because a Docker one arrives: its service
+# units keep running ~/.local/bin/omnesis against its config directory, which
+# this run is about to replace with the Docker launcher and take over. So a
+# Docker install is refused while one is in use here, with the way out named,
+# rather than leaving two installs sharing one command and one device token.
+# A native collector installed beside an earlier Docker install has its own
+# command and config directory, and is no reason to stop.
+docker_refuse_native_install() {
+  DOCKER_MARKED=0
+  [ "$(cat "$CONFIG_DIR/install-method" 2>/dev/null)" != docker ] || DOCKER_MARKED=1
+  NATIVE_LAUNCHER_HERE=0
+  if [ -f "$HOME/.local/bin/omnesis" ] && [ "$(sed -n 2p "$HOME/.local/bin/omnesis" 2>/dev/null)" != "$DOCKER_LAUNCHER_MARKER" ]; then
+    NATIVE_LAUNCHER_HERE=1
+  fi
+  if [ -n "$REGISTERED_BEFORE_RUN" ] && ! beside_docker_shim_present; then
+    fail "This machine runs a native Omnesis install:$REGISTERED_BEFORE_RUN service registered, run by $HOME/.local/bin/omnesis. A Docker install would replace that command and take over its config directory ($CONFIG_DIR), so nothing was changed. Remove the native install first — omnesis uninstall (its data stays unless --purge) — then re-run this line. A native collector for the macOS sources can be installed again afterwards: it installs beside the Docker install with its own command, omnesis-collector."
+  fi
+  if [ "$DOCKER_MARKED" = 0 ] && [ -f "$CONFIG_DIR/collector-token" ] && [ ! -f "$CONFIG_DIR/omnesis.db" ]; then
+    fail "$CONFIG_DIR holds a native collector's device token (collector-token) and no gateway. The Docker install's collector would authenticate as that device, so nothing was changed. Move it aside first — omnesis uninstall --purge, or point this Docker install at another directory with OMNESIS_CONFIG_DIR — then re-run this line."
+  fi
+  if [ "$DOCKER_MARKED" = 0 ] && [ -f "$CONFIG_DIR/omnesis.db" ]; then
+    warn "$CONFIG_DIR already holds a native gateway's corpus, with no native service registered: the Docker gateway takes it over."
+  fi
+  if [ "$NATIVE_LAUNCHER_HERE" = 1 ] && [ "$DOCKER_MARKED" = 0 ]; then
+    warn "$HOME/.local/bin/omnesis is replaced by the Docker install's launcher."
+  fi
+  return 0
 }
 
 # One line turns this host into an Omnesis machine running in containers.
@@ -7132,7 +7636,7 @@ docker_install() {
   docker_require_unattended_answers
   docker_runtime_identity
   docker_registry_prepare
-  docker_warn_native_install
+  docker_refuse_native_install
   docker_resolve_tag
   docker_resolve_build_context
   docker_require_build_disk
@@ -7203,14 +7707,14 @@ print_path_hints() {
 # successful install look like it did not update.
 warn_path_shadow() {
   [ -n "${OMNESIS_BIN:-}" ] || return 0
-  PATH_COMMAND="$(PATH="$ORIGINAL_PATH" command -v omnesis 2>/dev/null || true)"
+  PATH_COMMAND="$(PATH="$ORIGINAL_PATH" command -v "$NATIVE_CMD" 2>/dev/null || true)"
   [ -n "$PATH_COMMAND" ] || return 0
   case "$PATH_COMMAND" in
-    "$OMNESIS_BIN"|"$HOME/.local/bin/omnesis") return 0 ;;
+    "$OMNESIS_BIN"|"$HOME/.local/bin/$NATIVE_CMD") return 0 ;;
   esac
-  if [ -x "$HOME/.local/bin/omnesis" ]; then FRESH_COMMAND="$HOME/.local/bin/omnesis"
+  if [ -x "$HOME/.local/bin/$NATIVE_CMD" ]; then FRESH_COMMAND="$HOME/.local/bin/$NATIVE_CMD"
   else FRESH_COMMAND="$OMNESIS_BIN"; fi
-  warn "Your shell resolves 'omnesis' to $PATH_COMMAND, ahead of the freshly installed command at $FRESH_COMMAND."
+  warn "Your shell resolves '$NATIVE_CMD' to $PATH_COMMAND, ahead of the freshly installed command at $FRESH_COMMAND."
   warn "Put $(dirname "$FRESH_COMMAND") before $(dirname "$PATH_COMMAND") on PATH, or remove the stale command."
 }
 
@@ -7858,7 +8362,7 @@ plan_existing_update() {
   else
     [ -n "$REGISTERED_BEFORE_RUN" ] || return 0
   fi
-  [ -x "$HOME/.local/bin/omnesis" ] || return 0
+  [ -x "$NATIVE_LAUNCHER" ] || return 0
   UPDATE_EXISTING=1
 }
 
@@ -7869,7 +8373,12 @@ update_existing_install() {
   ensure_node
   [ -z "$RECORDED_SOURCE_ROOT" ] || ensure_node source
   ensure_git
-  OMNESIS_BIN="$HOME/.local/bin/omnesis"
+  OMNESIS_BIN="$NATIVE_LAUNCHER"
+  if [ "$BESIDE_DOCKER" = 1 ]; then
+    # The front door names the launcher an update rewrites; an older one is
+    # brought up to this installer first.
+    write_beside_docker_shim
+  fi
   run_machine_update "$RECORDED_SOURCE_ROOT"
   print_update_banner
 }
@@ -8148,6 +8657,7 @@ main() {
   printf '\033[1mOmnesis installer\033[0m — fully local, fully private.\n'
   echo ""
   detect_platform
+  plan_beside_docker
   note_registered_services
   plan_existing_update
   plan_existing_harness

@@ -126,6 +126,7 @@ fun SettingsScreen(
     val pushPlan by vm.pushPlan.collectAsStateWithLifecycle()
     val pushRegistrationFailed by vm.pushRegistrationFailed.collectAsStateWithLifecycle()
     val voice by vm.voice.collectAsStateWithLifecycle()
+    val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
     val notificationIssue = notificationSetupIssue(vm.pushConfigured, pushPlan, notificationHealth, pushRegistrationFailed)
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermissions() }
@@ -151,6 +152,7 @@ fun SettingsScreen(
             // the pairing surface forward. onRepair lets the host dismiss any settings overlay.
             onRepair = { vm.repair(); onRepair() },
             onOpenModels = onOpenModels,
+            modelsNeedAttention = modelHealth.needsAttention,
             onOpenDevices = onOpenDevices,
             onOpenPolicies = onOpenPolicies,
             onOpenAccessAuthorization = onOpenAccessAuthorization,
@@ -269,6 +271,7 @@ fun SettingsContent(
     onUnpair: () -> Unit,
     onRepair: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    modelsNeedAttention: Boolean = false,
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
@@ -363,7 +366,7 @@ fun SettingsContent(
                     Spacer(Modifier.height(OmSpacing.sm))
                     ConnectionRowLabel(connection)
                     RowDivider()
-                    NavigationRow("Configure Models", onOpenModels)
+                    NavigationRow("Configure Models", onOpenModels, warning = modelsNeedAttention)
                     RowDivider()
                     NavigationRow("Configure Devices", onOpenDevices)
                     RowDivider()
@@ -676,7 +679,7 @@ private fun ActionRow(label: String, tint: Color, onClick: () -> Unit) {
 
 /** A Settings drill-in row with a familiar trailing disclosure indicator. */
 @Composable
-private fun NavigationRow(label: String, onClick: () -> Unit) {
+private fun NavigationRow(label: String, onClick: () -> Unit, warning: Boolean = false) {
     val c = OmTheme.colors
     Row(
         modifier = Modifier
@@ -692,6 +695,10 @@ private fun NavigationRow(label: String, onClick: () -> Unit) {
             color = c.accent,
             modifier = Modifier.weight(1f),
         )
+        if (warning) {
+            Icon(Icons.Outlined.WarningAmber, contentDescription = "Model capabilities need attention",
+                tint = c.warning, modifier = Modifier.size(20.dp))
+        }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,

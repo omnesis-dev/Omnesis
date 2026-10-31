@@ -527,6 +527,10 @@ export const CONTAINER_OWN_ENV: ReadonlySet<string> = new Set([
   // What the host launcher tells a container about itself.
   "OMNESIS_DOCKER_HOST_RESTART",
   "OMNESIS_DOCKER_LAUNCHER",
+  // Where the operator is on the host, which the launcher passes to `sources`.
+  "OMNESIS_HOST_HOME",
+  "OMNESIS_HOST_CWD",
+  "OMNESIS_DOCKER_SHARE_REQUEST",
   UPDATE_LOCK_ENV,
 ]);
 

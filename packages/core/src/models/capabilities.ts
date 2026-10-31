@@ -259,8 +259,10 @@ export interface CapabilityMetadata {
   readonly role: CapabilityRole;
   /** Human-readable title shown on the card and detail page. */
   readonly title: string;
-  /** One- or two-sentence plain-language description of what it's for. */
+  /** Plain-language description of what it is used for. */
   readonly description: string;
+  /** Additional uses appended by the gateway only when experimental features are visible. */
+  readonly experimentalDescription?: string;
   /** Lucide icon slug (e.g. "binary", "sparkles"); the portal maps it to SVG. */
   readonly icon: string;
   /**
@@ -391,16 +393,15 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     section: "core",
     backendFamily: "speech-to-speech",
   },
-  // Typed, cheap judgements about a document: whether an email is worth
-  // recording, asked by the mention worth gate (time queries) and by the
-  // Brain's worth gate (background-agent runs). Not a chat model — only
-  // typed-decision backends (TypeSafe Jev) serve it. Never auto-assigned —
-  // unset means neither gate runs.
+  // Typed decisions select a route or score significance; the selected agent
+  // handles any subsequent work. Only typed-decision backends serve this role.
   decision: {
     role: "decision",
     title: "Decision model",
     description:
-      "Answers typed questions about a document — yes/no, a score on described levels, or one choice. Judges whether an email is worth recording, so time queries can leave out the dates in marketing and newsletters when the mention worth gate is on. Supports TypeSafe Jev; each scored email's subject, sender and opening text are sent to TypeSafe.",
+      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Uses TypeSafe Jev: the transcript or email excerpt is sent to TypeSafe. The Agent answers Ask requests; the Background agent processes saved notes.",
+    experimentalDescription:
+      "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to TypeSafe.",
     icon: "scale",
     section: "cognition",
     backendFamily: "typed-decision",

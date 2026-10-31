@@ -36,6 +36,12 @@ TLS_CONFIG_DIR="$WORK/config-tls"
 TLS_COMPOSE_FILE="$TLS_CONFIG_DIR/docker-compose.yml"
 TLS_NAME="omnesis-smoke.example"
 OMNESIS="$HOME_DIR/.local/bin/omnesis"
+# A native collector installed beside the Docker install, from a bare remote
+# of this checkout: its own command and config directory.
+NATIVE="$HOME_DIR/.local/bin/omnesis-collector"
+NATIVE_DIR="$HOME_DIR/.config/omnesis-collector"
+SOURCE_REMOTE="$WORK/source.git"
+NATIVE_PID=""
 
 free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
@@ -74,6 +80,7 @@ die() {
       docker compose -f "$COMPOSE_FILE" logs --tail 25 collector || true
     } >&2
   fi
+  [[ ! -f "$WORK/native.log" ]] || { echo "--- native collector log tail ---"; tail -n 40 "$WORK/native.log"; } >&2
   if [[ -f "$TLS_COMPOSE_FILE" ]]; then
     {
       echo "--- tls install .env ---"; cat "$TLS_CONFIG_DIR/.env" || true
@@ -89,6 +96,7 @@ die() {
 cleanup() {
   local status=$?
   step "tearing down"
+  [[ -z "$NATIVE_PID" ]] || kill "$NATIVE_PID" >/dev/null 2>&1 || true
   # No --remove-orphans: it acts on the whole compose project and can only
   # remove containers this run did not create.
   if [[ -f "$COMPOSE_FILE" ]]; then
@@ -244,6 +252,86 @@ done
 docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null \
   | grep "WebSocket authenticated with gateway" >/dev/null || die "the collector never authenticated"
 ok "the collector paired itself and authenticated"
+
+# ── a native collector beside the Docker install ────────────────────────────
+
+# The setup the Docker banner recommends on a Mac: the same machine runs a
+# native collector for the Apple sources. Installed by the REAL installer from
+# a source checkout of this revision, it has to leave the Docker launcher and
+# config directory alone, hold a token of its own, and, after the gateway
+# container restarts, reconnect beside the container's collector as a second,
+# distinct device.
+online_collectors() {
+  "${omnesis_env[@]}" "$OMNESIS" devices list --json 2>/dev/null </dev/null | node -e '
+let s = ""; process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  try {
+    const ids = JSON.parse(s).items.filter((d) => d.kind === "collector" && d.online && !d.revokedAt).map((d) => d.id);
+    process.stdout.write(ids.sort().join("\n"));
+  } catch {}
+});'
+}
+wait_online() {
+  local want="$1" deadline=$((SECONDS + ${2:-300}))
+  while ((SECONDS < deadline)); do
+    [[ "$(online_collectors | grep -c . || true)" -ge "$want" ]] && return 0
+    sleep 3
+  done
+  return 1
+}
+
+step "a native collector beside the Docker install"
+wait_online 1 || die "the gateway does not list the container's collector as online"
+CONTAINER_COLLECTOR="$(online_collectors)"
+container_token="$(sha256sum "$CONFIG_DIR/collector-token" | cut -d' ' -f1)"
+docker_launcher="$(sha256sum "$OMNESIS" | cut -d' ' -f1)"
+SHA="$(git -C "$REPO" rev-parse HEAD)"
+git init -q --bare "$SOURCE_REMOTE"
+git --git-dir="$SOURCE_REMOTE" fetch -q --update-shallow --no-tags "$REPO" "$SHA:refs/heads/main"
+CODE="$("${omnesis_env[@]}" "$OMNESIS" devices pair --kind collector --json </dev/null \
+  | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d));process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).pairingCode))')"
+[[ -n "$CODE" ]] || die "the Docker gateway minted no pairing code"
+# Without OMNESIS_CONFIG_DIR, and without --gateway-url: beside a Docker gateway
+# on this host the installer picks its own directory and dials the gateway at
+# localhost, pinning its certificate.
+native_env=()
+for word in "${omnesis_env[@]}"; do
+  [[ "$word" == OMNESIS_CONFIG_DIR=* ]] || native_env+=("$word")
+done
+"${native_env[@]}" NPM_CONFIG_CACHE="$(npm config get cache)" OMNESIS_REPO_URL="file://$SOURCE_REMOTE" \
+  sh "$REPO/scripts/install.sh" --collector --commit "$SHA" --no-keyring --no-service --code "$CODE" \
+  > "$WORK/native-install.out" 2>&1 || { cat "$WORK/native-install.out" >&2; die "the native collector install failed"; }
+cat "$WORK/native-install.out"
+[[ "$(sha256sum "$OMNESIS" | cut -d' ' -f1)" == "$docker_launcher" ]] || die "the native install changed the Docker launcher"
+[[ "$(cat "$CONFIG_DIR/install-method")" == docker ]] || die "the native install removed the Docker install's marker"
+[[ "$(sha256sum "$CONFIG_DIR/collector-token" | cut -d' ' -f1)" == "$container_token" ]] \
+  || die "the native install changed the container collector's token"
+[[ -x "$NATIVE" ]] || die "no omnesis-collector command at $NATIVE"
+[[ -s "$NATIVE_DIR/collector-token" ]] || die "the native collector's token is not in $NATIVE_DIR"
+cmp -s "$NATIVE_DIR/collector-token" "$CONFIG_DIR/collector-token" && die "the two collectors share one token"
+native_gateway="$(sed -n 's/^  Gateway:  //p' "$WORK/native-install.out" | head -n 1)"
+[[ "$native_gateway" == "https://localhost:$GATEWAY_PORT" ]] || die "the native collector dials '$native_gateway', not this host's gateway"
+ok "its own command, config directory and token; the Docker install is untouched"
+
+"${native_env[@]}" OMNESIS_GATEWAY_URL="$native_gateway" "$NATIVE" collector run > "$WORK/native.log" 2>&1 &
+NATIVE_PID=$!
+wait_online 2 || die "the native collector never came online beside the container's"
+both="$(online_collectors)"
+[[ "$(printf '%s\n' "$both" | grep -c .)" == 2 ]] || die "expected two collector devices, got: $both"
+printf '%s\n' "$both" | grep -qx "$CONTAINER_COLLECTOR" || die "the container's collector lost its device"
+docker compose -f "$COMPOSE_FILE" restart gateway >/dev/null
+sleep 5
+wait_online 2 360 || die "both collectors did not come back after the gateway restarted (online: $(online_collectors | tr '\n' ' '))"
+[[ "$(online_collectors)" == "$both" ]] || die "after the restart the online collectors are $(online_collectors | tr '\n' ' '), not $both"
+ok "two distinct collector devices, both back online after the gateway restarted"
+
+"${native_env[@]}" "$NATIVE" uninstall --yes --purge || die "omnesis-collector uninstall failed"
+kill "$NATIVE_PID" >/dev/null 2>&1 || true
+NATIVE_PID=""
+[[ ! -e "$NATIVE" && ! -e "$NATIVE_DIR" ]] || die "omnesis-collector uninstall left the collector behind"
+[[ "$(sha256sum "$OMNESIS" | cut -d' ' -f1)" == "$docker_launcher" ]] || die "removing the native collector changed the Docker launcher"
+"${omnesis_env[@]}" "$OMNESIS" tokens list >/dev/null || die "the Docker install stopped answering"
+ok "removing the native collector leaves the Docker install answering"
 
 # ── an update killed during the pull ────────────────────────────────────────
 

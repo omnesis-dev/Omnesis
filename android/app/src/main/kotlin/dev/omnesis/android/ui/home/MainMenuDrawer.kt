@@ -121,6 +121,8 @@ fun MainMenuDrawer(
     onTogglePin: (String, Boolean) -> Unit = { _, _ -> },
     onDismissConversationActionError: () -> Unit = {},
     onOpenSettings: () -> Unit,
+    modelsNeedAttention: Boolean = false,
+    onOpenModelWarnings: () -> Unit = {},
     onRefreshConversations: () -> Unit = {},
     onLoadMoreConversations: () -> Unit = {},
     experimental: Boolean = false,
@@ -323,6 +325,8 @@ fun MainMenuDrawer(
         MenuActionBar(
             onNewConversation = onNewConversation,
             onOpenSettings = onOpenSettings,
+            modelsNeedAttention = modelsNeedAttention,
+            onOpenModelWarnings = onOpenModelWarnings,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .onSizeChanged { actionBarHeightPx = it.height },
@@ -350,6 +354,8 @@ fun MainMenuDrawer(
 private fun MenuActionBar(
     onNewConversation: () -> Unit,
     onOpenSettings: () -> Unit,
+    modelsNeedAttention: Boolean,
+    onOpenModelWarnings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = OmTheme.colors
@@ -371,21 +377,36 @@ private fun MenuActionBar(
                 .padding(start = OmSpacing.md, end = OmSpacing.md, top = OmSpacing.xl, bottom = OmSpacing.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(colors.bgSecondary)
-                    .clickable(onClick = onOpenSettings)
-                    .semantics { contentDescription = "Settings" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.Settings,
-                    contentDescription = null,
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
+            Box(Modifier.size(44.dp)) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(colors.bgSecondary)
+                        .clickable(onClick = onOpenSettings)
+                        .semantics { contentDescription = "Settings" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Settings,
+                        contentDescription = null,
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                if (modelsNeedAttention) {
+                    IconButton(
+                        onClick = onOpenModelWarnings,
+                        modifier = Modifier.align(Alignment.TopEnd).size(20.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.WarningAmber,
+                            contentDescription = "Show model capability errors",
+                            tint = colors.warning,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.weight(1f))
             Row(

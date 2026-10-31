@@ -14,6 +14,7 @@
 import { html } from "htm/preact";
 import { replaceRoute } from "../lib/router.js";
 import { lazy } from "../lib/lazy.js";
+import { WarningTriangle } from "../components/model-health.js";
 import { TabBar } from "../components/tab-bar.js";
 import {
   settingsTabs,
@@ -36,6 +37,8 @@ const MOON_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" he
 export function SettingsView({
   tab,
   modelsSection,
+  modelHealth,
+  onModelsRefresh,
   accessAuthorizationId,
   accessLevelId,
   accessNewLevel,
@@ -118,11 +121,12 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental })}
+        tabs=${settingsTabs({ experimental }).map((item) => item.key === "models" && modelHealth?.warnings?.length
+          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
       />
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
-      ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} />`}
+      ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
