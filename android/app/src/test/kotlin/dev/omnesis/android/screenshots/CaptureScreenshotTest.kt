@@ -55,6 +55,24 @@ class CaptureScreenshotTest {
         )
     }
 
+    @Test
+    fun capture_agent_missing_dark() = capture("capture_agent_missing_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(),
+            noteProcessingNotice = "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+            onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+        )
+    }
+
+    @Test
+    fun capture_processing_off_light() = capture("capture_processing_off_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(),
+            noteProcessingNotice = "Note processing is off. Notes are saved, but won't create or update tasks.",
+            onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+        )
+    }
+
     // --- empty (just opened, mic idle) ---
 
     @Test

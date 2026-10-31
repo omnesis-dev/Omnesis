@@ -413,7 +413,7 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
             <div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
             <${GatewayDictationSetting} />`
         : null}
-      ${role === "background-agent" ? html`<${NoteAgentSetting} />` : null}
+      ${role === "agent" ? html`<${NoteAgentSetting} statusRevision=${overview} />` : null}
       ${role === "ocr"
         ? html`<div class="cap-detail-hint">Images and scanned PDFs are OCR'd as sources sync. Already-ingested attachments are <strong>not</strong> re-OCR'd automatically; resync a source to reprocess them.</div>`
         : null}
@@ -525,24 +525,26 @@ export function GatewayDictationSetting() {
 
 // The note agent's on/off setting, beside the model that runs it. The
 // gateway's `noteAgent` verdict says whether the owner leaves it on and whether
-// a background-agent model can run. A gateway without the verdict hides the
+// the Agent model can run. A gateway without the verdict hides the
 // section.
-export function NoteAgentSetting() {
+export function NoteAgentSetting({ statusRevision } = {}) {
   const [noteAgent, setNoteAgent] = useState(null); // null = loading or hidden
+  const statusSequence = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
   // A failed read keeps the last verdict, so one transient error never hides
   // the section.
   async function refresh() {
+    const sequence = ++statusSequence.current;
     try {
       const status = await getStatus();
-      setNoteAgent(status?.noteAgent ?? null);
+      if (sequence === statusSequence.current) setNoteAgent(status?.noteAgent ?? null);
     } catch {
       // keep the current verdict
     }
   }
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [statusRevision]);
 
   if (!noteAgent) return null;
 
@@ -577,7 +579,7 @@ export function NoteAgentSetting() {
       </p>
       ${noteAgent.enabled && !noteAgent.modelAssigned
         ? html`<div class="cap-detail-hint">
-            <strong>Not in use yet.</strong> No background-agent model can run, so notes are only saved.
+            <strong>Not in use yet.</strong> The Agent model is missing or unavailable, so notes are saved but won’t create or update tasks.
           </div>`
         : null}
       ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}

@@ -843,3 +843,20 @@ describe("the note agent's receipts", () => {
     expect(getNotesHistory.mock.calls.length).toBe(calls);
   });
 });
+
+describe("inactive note processing notice", () => {
+  test("saves notes while showing the Agent model remedy", async () => {
+    render(null, host);
+    getStatus.mockResolvedValue({ noteAgent: { enabled: true, modelAssigned: false, active: false } });
+    await act(async () => { render(h(CaptureView, {}), host); });
+    await act(async () => {});
+    expect(host.textContent).toContain("Agent model is missing or unavailable");
+    expect(host.querySelector('a[href="/portal/settings/models/agent"]')).not.toBeNull();
+    expect(host.querySelector("textarea")).not.toBeNull();
+    createNote.mockResolvedValueOnce({ id: "saved-warning", day: "2026-09-11", text: "Plan a greenhouse", capturedAt: "2026-09-11T10:00:00Z" });
+    await type("Plan a greenhouse");
+    await submit();
+    expect(createNote).toHaveBeenCalledOnce();
+    expect(host.querySelector(".capture-told")).not.toBeNull();
+  });
+});

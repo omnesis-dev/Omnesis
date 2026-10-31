@@ -6,6 +6,7 @@ import {
   noteAgentActive,
   noteAgentDisplay,
   noteAgentPending,
+  noteAgentNotice,
   noteAgentSettingPatch,
   noteChangeHref,
   noteRefreshChanged,
@@ -58,6 +59,13 @@ describe("note agent display", () => {
     expect(noteAgentActive({ tasks: { available: true, noteAgent: true } })).toBe(true);
     expect(noteAgentActive({ tasks: { available: true, noteAgent: false } })).toBe(false);
     expect(noteAgentActive(null)).toBe(false);
+  });
+
+  it("only warns on known inactive verdicts and identifies the remedy", () => {
+    for (const status of [null, {}, { noteAgent: {} }, { noteAgent: { enabled: true, modelAssigned: true, active: true } }])
+      expect(noteAgentNotice(status)).toBeNull();
+    expect(noteAgentNotice({ noteAgent: { enabled: false, modelAssigned: true, active: false } })).toContain("Note processing is off");
+    expect(noteAgentNotice({ noteAgent: { enabled: true, modelAssigned: false, active: false } })).toContain("Agent model is missing or unavailable");
   });
 
   it("writes the setting as a config patch", () => {

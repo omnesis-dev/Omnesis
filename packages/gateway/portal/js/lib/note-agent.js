@@ -60,6 +60,15 @@ export function noteAgentActive(status) {
   return status?.tasks?.noteAgent === true;
 }
 
+/** Missing or unreadable status is unknown, never an inactive verdict. */
+export function noteAgentNotice(status) {
+  const agent = status?.noteAgent;
+  if (agent?.enabled === false) return "Note processing is off. Notes are saved, but won't create or update tasks.";
+  if (agent?.enabled === true && agent?.modelAssigned === false)
+    return "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.";
+  return null;
+}
+
 /** The config change that switches the note agent on or off. */
 export function noteAgentSettingPatch(on) {
   return { agent: { noteAgent: on === true } };

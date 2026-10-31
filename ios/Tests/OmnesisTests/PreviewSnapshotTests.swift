@@ -8744,6 +8744,31 @@ final class PreviewSnapshotTests: XCTestCase {
     /// The Brain's suggestions on an experimental gateway: the same rows as
     /// the person's own tasks, each with a dashed circle that marks it already
     /// done; the Suggested chip carries the waiting count.
+    func testNoteProcessingNotices() {
+        for (name, enabled, assigned) in [("missing-agent", true, false), ("off", false, true)] {
+            let status = NoteAgentStatus(enabled: enabled, modelAssigned: assigned, active: false)
+            let view = NoteProcessingNotice(previewStatus: status)
+                .environment(AppStore.preview())
+                .background(Theme.bgPrimary)
+            snapshot(view, name: "note-processing-\(name)", size: CGSize(width: 393, height: 180))
+        }
+        let base = PreviewMocks.statusSnapshotTasks
+        let status = StatusSnapshot(
+            documents: base.documents, dbSizeBytes: base.dbSizeBytes,
+            latestActivityBySource: base.latestActivityBySource, tasks: base.tasks,
+            noteAgent: NoteAgentStatus(enabled: true, modelAssigned: false, active: false)
+        )
+        let store = AppStore.preview(statusSnapshot: status)
+        let capture = CaptureView(speech: .preview(state: .unavailable))
+            .environment(store)
+        snapshot(capture, name: "capture-agent-missing")
+        let tasks = TasksScreen(
+            model: .fixture(tasks: PreviewMocks.tasksToday, now: PreviewMocks.tasksNow),
+            experimental: false, menuOpen: .constant(false)
+        ).environment(store)
+        snapshot(tasks, name: "tasks-agent-missing")
+    }
+
     func testTasksSuggested() {
         let view = NavigationStack {
             TasksContent(

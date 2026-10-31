@@ -136,6 +136,18 @@ class TasksScreenshotTest {
         ),
     )
 
+    @Test
+    fun tasks_agent_missing_dark() = capture("tasks_agent_missing_dark", dark = true) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
+            androidx.compose.foundation.layout.Column {
+                dev.omnesis.android.ui.tasks.NoteProcessingNotice(
+                    "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+                )
+                TasksContent(state = todayState, today = today)
+            }
+        }
+    }
+
     @Composable
     private fun Screen(state: TasksUiState, experimental: Boolean = false) {
         TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {

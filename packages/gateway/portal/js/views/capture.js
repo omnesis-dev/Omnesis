@@ -15,6 +15,7 @@ import { NoteAgentReceipt } from "../components/note-agent-receipt.js";
 import {
   NOTE_AGENT_REFRESH_MS,
   noteAgentActive,
+  noteAgentNotice,
   noteAgentPending,
   noteRefreshChanged,
 } from "../lib/note-agent.js";
@@ -89,13 +90,15 @@ export function CaptureView({ day, experimental = false } = {}) {
   // text re-sends it unchanged, so its idempotency key holds.
   const pendingRef = useRef(null);
   // Whether the gateway's note agent reads what is told here.
-  const [agentActive, setAgentActive] = useState(false);
+  const [status, setStatus] = useState(null);
+  const agentActive = noteAgentActive(status);
+  const agentNotice = noteAgentNotice(status);
 
   useEffect(() => {
     textareaRef.current?.focus();
     let live = true;
     getStatus()
-      .then((status) => live && setAgentActive(noteAgentActive(status)))
+      .then((status) => live && setStatus(status))
       .catch(() => {
         // Without a status read the page simply omits the hint.
       });
@@ -148,9 +151,10 @@ export function CaptureView({ day, experimental = false } = {}) {
       <div class="capture-column">
         <p class="capture-lead">
           Say what Omnesis should remember — a thought, a fact, something to follow up on. It joins
-          your notes and becomes searchable${agentActive ? "." : "; nothing replies."}
+          your notes and becomes searchable.
         </p>
         ${agentActive && html`<p class="capture-agent-hint">Omnesis will act on what you tell it</p>`}
+        ${agentNotice && html`<p class="capture-agent-hint" role="status">${agentNotice} <a href="/portal/settings/models/agent">Open Agent settings</a></p>`}
         <form class="capture-composer" onSubmit=${tell}>
           <!-- Read-only rather than disabled while saving, so focus stays in the field for the next note. -->
           <textarea

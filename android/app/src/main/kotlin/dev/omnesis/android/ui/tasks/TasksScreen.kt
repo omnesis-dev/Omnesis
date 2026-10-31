@@ -130,6 +130,8 @@ private const val RECEIPT_MILLIS = 5_000L
 @Composable
 fun TasksScreen(
     onOpenMenu: () -> Unit,
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenDocument: (String) -> Unit = {},
     onTellOmnesis: () -> Unit = {},
@@ -153,19 +155,22 @@ fun TasksScreen(
         if (state.segment !in TaskSegment.visible(experimental)) vm.select(TaskSegment.TODAY)
     }
     TasksFrame(onOpenMenu = onOpenMenu, onTellOmnesis = onTellOmnesis) {
-        TasksContent(
-            state = state,
-            experimental = experimental,
-            today = remember(state.day) { LocalDate.parse(state.day) },
-            actions = taskRowActions(vm, onOpenDocument),
-            iconFor = vm::iconFor,
-            onSelect = vm::select,
-            onRefresh = { vm.load(quietly = true) },
-            onRetry = { vm.load() },
-            onOpenSettings = onOpenSettings,
-            onUndo = vm::undo,
-            onReceiptExpired = vm::dismissReceipt,
-        )
+        Column {
+            NoteProcessingNotice(noteProcessingNotice, onOpenAgentSettings)
+            TasksContent(
+                state = state,
+                experimental = experimental,
+                today = remember(state.day) { LocalDate.parse(state.day) },
+                actions = taskRowActions(vm, onOpenDocument),
+                iconFor = vm::iconFor,
+                onSelect = vm::select,
+                onRefresh = { vm.load(quietly = true) },
+                onRetry = { vm.load() },
+                onOpenSettings = onOpenSettings,
+                onUndo = vm::undo,
+                onReceiptExpired = vm::dismissReceipt,
+            )
+        }
     }
 
     state.editing?.let { task ->
@@ -1115,5 +1120,15 @@ private fun ReceiptBar(
                 )
             }
         }
+    }
+}
+
+/** Known inactive processing does not disable quick capture. */
+@Composable
+fun NoteProcessingNotice(message: String?, onOpenAgentSettings: () -> Unit = {}) {
+    if (message == null) return
+    Column(Modifier.fillMaxWidth().padding(OmSpacing.md).testTag("noteProcessing.notice")) {
+        Text(message, style = MaterialTheme.typography.bodySmall, color = OmTheme.colors.textSecondary)
+        TextButton(onClick = onOpenAgentSettings) { Text("Open Agent settings") }
     }
 }

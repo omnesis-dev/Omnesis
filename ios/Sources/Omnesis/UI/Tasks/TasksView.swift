@@ -51,6 +51,35 @@ extension AppStore {
     }
 }
 
+/// A known inactive verdict never prevents saving a note.
+@available(iOS 17.0, *)
+struct NoteProcessingNotice: View {
+    @Environment(AppStore.self) private var store
+    @State private var showSettings = false
+    var previewStatus: NoteAgentStatus?
+
+    var body: some View {
+        if let notice = (previewStatus ?? store.statusSnapshot?.noteAgent)?.notice {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text(notice)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Agent settings") { showSettings = true }
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.accent)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Spacing.md)
+            .accessibilityIdentifier("noteProcessing.notice")
+            .sheet(isPresented: $showSettings) {
+                SettingsView(initialDestination: .models(initialRole: "agent"))
+                    .omnesisColorScheme()
+            }
+        }
+    }
+}
+
 /// Where the Tasks stack can push.
 @available(iOS 17.0, *)
 enum TasksRoute: Hashable {
@@ -93,15 +122,18 @@ struct TasksScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TasksContent(
-                model: model,
-                experimental: experimental,
-                onOpen: { details = $0 },
-                onDocument: { path.append(.document(id: $0.id, title: $0.title)) },
-                onChat: openConversation.map { open in
-                    { (task: TaskRecord) in chat(about: task, then: open) }
-                }
-            )
+            VStack(spacing: 0) {
+                NoteProcessingNotice()
+                TasksContent(
+                    model: model,
+                    experimental: experimental,
+                    onOpen: { details = $0 },
+                    onDocument: { path.append(.document(id: $0.id, title: $0.title)) },
+                    onChat: openConversation.map { open in
+                        { (task: TaskRecord) in chat(about: task, then: open) }
+                    }
+                )
+            }
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { TasksToolbar(menuOpen: $menuOpen) }
@@ -612,4 +644,17 @@ struct TaskFanPreview {
     .environment(AppStore.preview())
 }
 #endif
+#endif
+
+#if DEBUG && canImport(SwiftUI) && canImport(UIKit)
+@available(iOS 17.0, *)
+#Preview("Note processing — missing Agent") {
+    NoteProcessingNotice(previewStatus: PreviewMocks.noteProcessingMissingAgent)
+        .environment(AppStore.preview())
+}
+@available(iOS 17.0, *)
+#Preview("Note processing — off") {
+    NoteProcessingNotice(previewStatus: PreviewMocks.noteProcessingOff)
+        .environment(AppStore.preview())
+}
 #endif

@@ -43,6 +43,7 @@ data class StatusSnapshot(
      * screen" rather than as a fault.
      */
     val tasks: TasksStatusDto? = null,
+    val noteAgent: NoteAgentStatusDto? = null,
     /**
      * The gateway-dictation gate. Absent on a gateway that predates
      * the field, which reads as inactive: notes keep only the phone's transcript.
@@ -155,3 +156,18 @@ data class DictationStatusDto(
     /** The largest audio part `POST /notes/voice` accepts. */
     val maxAudioBytes: Long = 0,
 )
+
+/** Independent Tell Omnesis processing verdict from `GET /status`. */
+@Serializable
+data class NoteAgentStatusDto(
+    val enabled: Boolean,
+    val modelAssigned: Boolean,
+    val active: Boolean,
+) {
+    val notice: String?
+        get() = when {
+            !enabled -> "Note processing is off. Notes are saved, but won't create or update tasks."
+            !modelAssigned -> "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks."
+            else -> null
+        }
+}

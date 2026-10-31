@@ -88,6 +88,8 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun CaptureScreen(
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
     onClose: () -> Unit,
     vm: CaptureViewModel = hiltViewModel(),
     /** Set when the capture completes a task with its note rather than saving a note. */
@@ -135,6 +137,8 @@ fun CaptureScreen(
     }
 
     CaptureContent(
+        noteProcessingNotice = noteProcessingNotice.takeIf { completion == null },
+        onOpenAgentSettings = onOpenAgentSettings,
         state = state,
         onMicTap = {
             when (state.speech) {
@@ -160,6 +164,8 @@ fun CaptureScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptureContent(
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
     state: CaptureUiState,
     onMicTap: () -> Unit,
     onTextChange: (String) -> Unit,
@@ -216,6 +222,8 @@ fun CaptureContent(
             when (val save = state.save) {
                 is SaveState.Done -> SavedConfirmation(queued = save.queued)
                 else -> CaptureForm(
+                    noteProcessingNotice = noteProcessingNotice,
+                    onOpenAgentSettings = onOpenAgentSettings,
                     state = state,
                     completing = completionKind.takeIf { completionSubject != null },
                     saving = save is SaveState.Saving,
@@ -234,6 +242,8 @@ fun CaptureContent(
 
 @Composable
 private fun CaptureForm(
+    noteProcessingNotice: String?,
+    onOpenAgentSettings: () -> Unit,
     state: CaptureUiState,
     /** What the note does to its subject, when it has one. */
     completing: TaskNoteKind?,
@@ -255,6 +265,7 @@ private fun CaptureForm(
             .padding(OmSpacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        dev.omnesis.android.ui.tasks.NoteProcessingNotice(noteProcessingNotice, onOpenAgentSettings)
         Spacer(Modifier.height(OmSpacing.lg))
         MicVisual(speech = state.speech, hasVoiceNote = voiceNote != null, onTap = onMicTap)
         Spacer(Modifier.height(OmSpacing.md))

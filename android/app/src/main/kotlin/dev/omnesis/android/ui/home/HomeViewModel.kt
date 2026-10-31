@@ -114,6 +114,7 @@ class HomeViewModel @Inject constructor(
 
     /** Whether the menu offers Tasks: the paired gateway reports `tasks.available`. */
     val tasksAvailable: StateFlow<Boolean> = session.tasksAvailable
+    val noteAgent = session.noteAgent
 
     /**
      * Today's open tasks, for the menu's "Tasks (n)". The Tasks screen keeps it current while

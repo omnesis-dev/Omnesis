@@ -125,6 +125,7 @@ struct CaptureView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if completion == nil { NoteProcessingNotice() }
             if let completion {
                 Text(completion.subject)
                     .font(.system(size: 15))
@@ -711,6 +712,12 @@ extension VoiceNoteCaptureState {
 #Preview("Capture — speech unavailable (typing fallback)") {
     CaptureView(speech: .preview(state: .unavailable))
         .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Capture — Agent unavailable") {
+    CaptureView(speech: .preview(state: .unavailable))
+        .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotMissingAgent))
 }
 
 @available(iOS 17.0, *)

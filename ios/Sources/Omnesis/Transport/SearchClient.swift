@@ -1351,6 +1351,7 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// The Tasks surface. `nil` from a gateway that predates `/tasks`, which
     /// keeps the Tasks entry hidden.
     public let tasks: TasksStatus?
+    public let noteAgent: NoteAgentStatus?
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let watchCapture: WatchCaptureStatus?
@@ -1368,6 +1369,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         experimental: Bool = false,
         developer: Bool = false,
         tasks: TasksStatus? = nil,
+        noteAgent: NoteAgentStatus? = nil,
         dictation: DictationStatus? = nil,
         watchCapture: WatchCaptureStatus? = nil,
         transcriptionVocabulary: Bool = false,
@@ -1380,6 +1382,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.experimental = experimental
         self.developer = developer
         self.tasks = tasks
+        self.noteAgent = noteAgent
         self.watchCapture = watchCapture
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
@@ -1394,6 +1397,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case experimental
         case developer
         case tasks
+        case noteAgent
         case dictation
         case watchCapture
         case transcriptionVocabulary
@@ -1413,6 +1417,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         // A shape this app cannot read reads as absent rather than failing
         // the whole snapshot.
         tasks = try? c.decodeIfPresent(TasksStatus.self, forKey: .tasks)
+        noteAgent = try? c.decodeIfPresent(NoteAgentStatus.self, forKey: .noteAgent)
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
         watchCapture = try? c.decodeIfPresent(WatchCaptureStatus.self, forKey: .watchCapture)
