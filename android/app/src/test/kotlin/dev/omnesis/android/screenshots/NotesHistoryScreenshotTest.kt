@@ -79,4 +79,12 @@ class NotesHistoryScreenshotTest {
         NotesHistoryState(entries, loading = false), captureLabel = "Back to capture")
     @Test fun notes_detail_accessibility_light() = capture("notes_detail_accessibility_light", false,
         NotesHistoryState(entries, loading = false, selectedId = note.id), fontScale = 1.6f)
+    @Test fun notes_history_accessibility_dark() = capture("notes_history_accessibility_dark", true,
+        NotesHistoryState(entries, loading = false, cursor = "next"), fontScale = 1.6f)
+    @Test fun notes_detail_long_dark() = capture("notes_detail_long_dark", true,
+        NotesHistoryState(listOf(note.copy(text = "The rehearsal room key is in the desk drawer, beside the spare projector cable. " +
+            "For the next workshop, use the smaller room: it has a whiteboard and enough space for the prototype tables.\n\n" +
+            "The first session should focus on testing the cardboard model, collecting written feedback, and choosing the next experiment. " +
+            "Keep the equipment checklist with the printed workshop plan so everything is easy to find.")),
+            loading = false, selectedId = note.id))
 }

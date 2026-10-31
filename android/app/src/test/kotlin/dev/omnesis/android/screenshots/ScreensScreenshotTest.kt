@@ -20,6 +20,8 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
@@ -125,9 +127,10 @@ class ScreensScreenshotTest {
         contentHash = "sha256:abc", sourceCreatedAt = "2026-01-02T10:00:00Z",
     )
 
-    private fun capture(name: String, dark: Boolean, content: @androidx.compose.runtime.Composable () -> Unit) {
+    private fun capture(name: String, dark: Boolean, fontScale: Float = 1f, content: @androidx.compose.runtime.Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density.density, fontScale)) {
                 OmnesisTheme(darkTheme = dark) { content() }
             }
         }
@@ -284,6 +287,28 @@ class ScreensScreenshotTest {
             onNewConversation = {}, onNavigate = {}, onResumeConversation = {},
             onDeleteConversation = {}, onOpenSettings = {},
         )
+    }
+
+    @Test
+    fun main_menu_drawer_notes_dark() = capture("main_menu_drawer_notes_dark", dark = true) {
+        NotesMenuSample()
+    }
+
+    @Test
+    fun main_menu_drawer_notes_light() = capture("main_menu_drawer_notes_light", dark = false) {
+        NotesMenuSample()
+    }
+
+    @Test
+    fun main_menu_drawer_notes_accessibility_dark() = capture("main_menu_drawer_notes_accessibility_dark", dark = true, fontScale = 1.6f) {
+        NotesMenuSample()
+    }
+
+    @Composable
+    private fun NotesMenuSample() {
+        MainMenuDrawer(currentRoute = "notes", conversations = sampleConversations, conversationsLoading = false,
+            onNewConversation = {}, onNavigate = {}, onResumeConversation = {}, onDeleteConversation = {}, onOpenSettings = {},
+            tasksAvailable = true, queuedNotesNeedAttention = true)
     }
 
     /**

@@ -13,14 +13,36 @@ extension CaptureView {
     }
 }
 
+/// Keep this navigation harness outside the generic gesture-demo container so
+/// its real drawer owns capture's right-swipe, as it does in the app shell.
+@available(iOS 17.0, *)
+struct NotesDemoRootOverride: ViewModifier {
+    let isNotes: Bool
+
+    func body(content: Content) -> some View {
+        if isNotes {
+            NotesHistoryDemoSurface()
+                .environment(AppStore.preview())
+                .environment(\.appearanceStore, AppearanceStore(mode: .dark))
+        } else {
+            content
+        }
+    }
+}
+
 /// The real capture and history views over a stateful, in-process transport.
 /// UI tests can edit, delete and undo without recording audio or contacting a gateway.
 @available(iOS 17.0, *)
 struct NotesHistoryDemoSurface: View {
     @State private var model: NotesHistoryModel
+    @State private var menuOpen = true
+    @State private var selection: HomeTab = .search
+    @State private var captureOpen = false
 
     init() {
-        let session = NotesHistoryDemoSession(entries: PreviewMocks.noteHistory)
+        let entries = ProcessInfo.processInfo.environment["DEMO_NOTES_PENDING_RECEIPT"] == "1"
+            ? [PreviewMocks.noteHistoryTranscribingWithResponse] : PreviewMocks.noteHistory
+        let session = NotesHistoryDemoSession(entries: entries)
         let base = URL(string: "https://gateway.example.com")!
         _model = State(initialValue: NotesHistoryModel(
             client: NotesClient(baseURL: base, token: "preview", session: session),
@@ -29,10 +51,39 @@ struct NotesHistoryDemoSurface: View {
     }
 
     var body: some View {
-        CaptureView(
-            speech: .preview(state: .listening, transcript: PreviewMocks.noteHistoryCaptureDraft),
-            previewText: PreviewMocks.noteHistoryCaptureDraft
-        ).historyPreview(model)
+        if ProcessInfo.processInfo.environment["DEMO_NOTES_MENU"] == "1" {
+            menuSurface
+        } else {
+            CaptureView(
+                speech: .preview(state: .listening, transcript: PreviewMocks.noteHistoryCaptureDraft),
+                previewText: PreviewMocks.noteHistoryCaptureDraft
+            ).historyPreview(model)
+        }
+    }
+
+    private var menuSurface: some View {
+        MenuRevealContainer(isOpen: $menuOpen) {
+            MainMenuDrawer(
+                isOpen: $menuOpen,
+                selection: $selection,
+                onOpenSettings: {},
+                onSelectDestination: { captureOpen = false }
+            )
+        } content: {
+            if captureOpen {
+                CaptureView(onClose: { captureOpen = false }, speech: .preview(state: .listening))
+                    .historyPreview(model)
+            } else if selection == .notes {
+                NotesHistoryScreen(model: model, menuOpen: $menuOpen)
+            } else {
+                Theme.bgPrimary.ignoresSafeArea()
+            }
+        }
+        .environment(\.openCapture) {
+            captureOpen = true
+            menuOpen = false
+        }
+        .onChange(of: selection) { _, _ in captureOpen = false }
     }
 }
 

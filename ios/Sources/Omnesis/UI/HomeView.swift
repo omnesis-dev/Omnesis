@@ -327,7 +327,8 @@ struct HomeView: View {
             MainMenuDrawer(
                 isOpen: $menuOpen,
                 selection: $selection,
-                onOpenSettings: { settingsDestination = .root }
+                onOpenSettings: { settingsDestination = .root },
+                onSelectDestination: closeCapture
             )
         } content: {
             ZStack {

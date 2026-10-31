@@ -85,8 +85,8 @@ public struct OmnesisApp: App {
                 // Push-tap UI-test harness — see PushTapDemoRoot.
                 PushTapDemoRoot(mode: mode, delegate: appDelegate)
             } else if Self.menuRevealDemo {
-                // Menu-reveal UI-test harness — see MenuRevealDemoRoot.
                 MenuRevealDemoRoot(surface: Self.menuRevealDemoSurface ?? .list)
+                    .modifier(NotesDemoRootOverride(isNotes: Self.menuRevealDemoSurface == .notes))
             } else {
                 appRoot
             }

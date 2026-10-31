@@ -6,6 +6,10 @@ package dev.omnesis.android.ui.home
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertWidthIsEqualTo
+import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
@@ -86,9 +90,10 @@ class MainMenuDrawerPagingErrorTest {
     }
 
     @Test
-    fun tellOmnesisWarningIsExperimentalAndHasAnIndependentTapTarget() {
+    fun notesNavigationCaptureAndQueueWarningHaveIndependentTapTargets() {
         var captures = 0
         var diagnostics = 0
+        val destinations = mutableListOf<String>()
         compose.setContent {
             OmnesisTheme(darkTheme = false) {
                 MainMenuDrawer(
@@ -96,7 +101,7 @@ class MainMenuDrawerPagingErrorTest {
                     conversations = emptyList(),
                     conversationsLoading = false,
                     onNewConversation = {},
-                    onNavigate = {},
+                    onNavigate = { destinations += it },
                     onTellBrain = { captures += 1 },
                     queuedNotesNeedAttention = true,
                     onQueuedNotesWarning = { diagnostics += 1 },
@@ -114,12 +119,20 @@ class MainMenuDrawerPagingErrorTest {
         compose.runOnIdle {
             assertEquals(0, captures)
             assertEquals(1, diagnostics)
+            assertEquals(emptyList<String>(), destinations)
         }
 
-        compose.onNodeWithText("Tell Omnesis").performClick()
+        compose.onNodeWithTag("menu.notes").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf("notes"), destinations)
+            assertEquals(0, captures)
+            assertEquals(1, diagnostics)
+        }
+        compose.onNodeWithTag("menu.tellOmnesis").assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp).performClick()
         compose.runOnIdle {
             assertEquals(1, captures)
             assertEquals(1, diagnostics)
+            assertEquals(listOf("notes"), destinations)
         }
     }
 
@@ -142,7 +155,9 @@ class MainMenuDrawerPagingErrorTest {
             }
         }
 
-        compose.onNodeWithText("Tell Omnesis").assertIsDisplayed()
+        compose.onNodeWithText("Notes").assertIsDisplayed()
+        compose.onNodeWithText("Tell Omnesis").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Tell Omnesis").assertIsDisplayed()
         compose.onNodeWithContentDescription("Show notes waiting to sync").assertIsDisplayed()
     }
 

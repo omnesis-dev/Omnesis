@@ -5329,6 +5329,27 @@ extension PreviewMocks {
     static let noteHistoryCaptureDraft = "Keep the draft while reviewing earlier notes."
     static let noteHistoryEditSuffix = " Add a projector to the reservation."
 
+    static let noteHistoryTranscribingWithResponse: NoteEntry = {
+        let original = noteHistory[0]
+        return NoteEntry(
+            id: original.id,
+            day: original.day,
+            capturedAt: original.capturedAt,
+            updatedAt: original.updatedAt,
+            capturedTimeZoneId: original.capturedTimeZoneId,
+            capturedUtcOffsetSeconds: original.capturedUtcOffsetSeconds,
+            receivedAt: original.receivedAt,
+            text: original.text,
+            surface: original.surface,
+            deviceId: original.deviceId,
+            latitude: original.latitude,
+            longitude: original.longitude,
+            placeName: original.placeName,
+            transcription: "pending",
+            agent: original.agent
+        )
+    }()
+
     static let noteHistory: [NoteEntry] = [
         NoteEntry(
             id: "note-preview-reply",

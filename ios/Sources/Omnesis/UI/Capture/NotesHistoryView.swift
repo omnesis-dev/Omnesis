@@ -49,43 +49,19 @@ struct NotesHistoryScreen: View {
                 if model.entries.isEmpty, let error = model.error {
                     GatewayErrorView(context: "load notes", error: error) { Task { await model.load() } }
                 } else if model.entries.isEmpty, model.loading {
-                    ProgressView("Loading notes…")
+                    ProgressView("Loading notes…").tint(Theme.accent)
                 } else if model.entries.isEmpty {
-                    ContentUnavailableView(
-                        "Your notes will appear here",
-                        systemImage: "note.text",
-                        description: Text("Tell Omnesis something, then return here to see your note and what Omnesis did with it.")
-                    )
+                    emptyState
                 } else {
-                    List {
-                        if let error = model.error {
-                            Button { Task { await model.load() } } label: {
-                                Label(GatewayErrorView.classify(error).title, systemImage: "exclamationmark.triangle")
-                            }
-                        }
-                        ForEach(model.entries) { note in
-                            NavigationLink {
-                                NoteHistoryDetail(note: note, model: model)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(note.text).font(.body).lineLimit(3)
-                                    Text(note.capturedLabel).font(.caption).foregroundStyle(.secondary)
-                                    Label(note.statusLabel, systemImage: note.transcription == "pending" ? "waveform" : "sparkles")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    if let reply = note.agent?.receipt?.text, !reply.isEmpty {
-                                        Text(reply).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }.padding(.vertical, 6)
-                            }
-                        }
-                        if model.nextCursor != nil {
-                            Button("Load older notes") { Task { await model.load(more: true) } }
-                                .disabled(model.loading)
-                        }
-                    }.refreshable { await model.load() }
+                    history
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationTitle("Notes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { if let onClose { onClose() } else { menuOpen = true } } label: {
@@ -109,7 +85,64 @@ struct NotesHistoryScreen: View {
                     await model.refreshPending()
                 }
             }
-        }.tint(Theme.accent).omnesisColorScheme()
+        }
+        .background(Theme.bgPrimary.ignoresSafeArea())
+        .tint(Theme.accent)
+        .omnesisColorScheme()
+    }
+
+    private var history: some View {
+        ScrollView {
+            LazyVStack(spacing: Theme.Spacing.md) {
+                if let error = model.error {
+                    Button { Task { await model.load() } } label: {
+                        Label(GatewayErrorView.classify(error).title, systemImage: "exclamationmark.triangle")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.warning)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                ForEach(model.entries) { note in
+                    NavigationLink {
+                        NoteHistoryDetail(note: note, model: model)
+                    } label: {
+                        NoteHistoryRow(note: note)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if model.nextCursor != nil {
+                    Button { Task { await model.load(more: true) } } label: {
+                        HStack(spacing: 8) {
+                            if model.loading { ProgressView().controlSize(.small) }
+                            Text("Load older notes")
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: Theme.tapTarget)
+                    }
+                    .disabled(model.loading)
+                }
+            }
+            .padding(Theme.Spacing.lg)
+        }
+        .refreshable { await model.load() }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "note.text")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 72, height: 72)
+                .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+            Text("Your notes will appear here")
+                .font(.title3.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+            Text("Tell Omnesis something, then return here to see your note and what Omnesis did with it.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 310)
+        }
+        .padding(Theme.Spacing.xl)
     }
 }
 
@@ -125,65 +158,49 @@ struct NoteHistoryDetail: View {
     @State private var error: Error?
 
     var body: some View {
-        List {
-            Section("Your note") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+                NoteReadingHeader(note: note)
                 if editing {
-                    TextEditor(text: $draft)
-                        .frame(minHeight: 180)
-                        .disabled(busy)
-                        .accessibilityIdentifier("notes.editor")
-                    Text("Edits update your saved note; they do not ask Omnesis to process it again.").font(.footnote)
-                        .foregroundStyle(.secondary)
-                    if draft.utf16.count > 8192 {
-                        Text("Shorten this note to 8,192 characters to save.").font(.footnote).foregroundStyle(Theme.warning)
-                    }
-                    Button("Save changes") { Task { await save() } }
-                        .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.utf16.count > 8192)
-                    Button("Cancel editing") { editing = false }
-                        .disabled(busy)
-                } else { Text(note.text).textSelection(.enabled) }
-            }
-            Section("Omnesis") {
-                Label(note.statusLabel, systemImage: "sparkles")
-                if let receipt = note.agent?.receipt {
-                    Text(receipt.text).textSelection(.enabled)
-                    ForEach(Array(receipt.changes.enumerated()), id: \.offset) { _, change in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(change.text, systemImage: "checkmark.circle")
-                            if let seq = change.undoSeq {
-                                Button(model.undoneSequences.contains(seq) ? "Undone" : "Undo change") {
-                                    Task { await undo(seq) }
-                                }.disabled(busy || model.undoneSequences.contains(seq))
-                            }
-                        }
-                    }
-                } else if note.agent == nil {
-                    Text("No agent response is recorded for this note.").foregroundStyle(.secondary)
+                    editor
+                } else {
+                    Text(note.text)
+                        .font(.body)
+                        .lineSpacing(5)
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                 }
-            }
-            Section("Captured") {
-                LabeledContent("When", value: note.capturedLabel)
-                if let surface = note.surfaceLabel { LabeledContent("From", value: surface) }
-                if let place = note.placeName { LabeledContent("Place", value: place) }
-                if let zone = note.capturedTimeZoneId { LabeledContent("Time zone", value: zone) }
-                if note.updatedAt != note.capturedAt, note.updatedAt != note.transcribedAt { LabeledContent(
-                    "Edited",
-                    value: NotesTime.date(fromISO: note.updatedAt)?.formatted() ?? note.updatedAt
-                ) }
-            }
-            if let error {
-                Section {
+                NoteResponseCard(note: note, undone: model.undoneSequences, busy: busy) { seq in
+                    Task { await undo(seq) }
+                }
+                if let error {
                     let kind = GatewayErrorView.classify(error)
-                    Label(kind.title, systemImage: "exclamationmark.triangle")
-                    Text(kind.detail(for: "update this note")).font(.footnote).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(kind.title, systemImage: "exclamationmark.triangle")
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Theme.warning)
+                        Text(kind.detail(for: "update this note"))
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                captureDetails
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    Button("Delete note", role: .destructive) { confirmDelete = true }
+                        .font(.subheadline.weight(.medium))
+                        .frame(minHeight: Theme.tapTarget)
+                        .disabled(busy)
+                    Text("Deleting a note removes it from note history and search. Changes Omnesis already made to tasks or memory remain.")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Section {
-                Button("Delete note", role: .destructive) { confirmDelete = true }.disabled(busy)
-            } footer: {
-                Text("Deleting a note removes it from note history and search. Changes Omnesis already made to tasks or memory remain.")
-            }
+            .padding(Theme.Spacing.lg)
+            .padding(.bottom, Theme.Spacing.lg)
         }
+        .background(Theme.bgPrimary.ignoresSafeArea())
+        .tint(Theme.accent)
+        .scrollDismissesKeyboard(.interactively)
+        .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -203,6 +220,62 @@ struct NoteHistoryDetail: View {
                 await refresh()
                 guard note.shouldRefreshReceipt() else { break }
                 do { try await Task.sleep(for: .seconds(5)) } catch { break }
+            }
+        }
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            TextEditor(text: $draft)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 180)
+                .padding(Theme.Spacing.sm)
+                .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.large))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.large).strokeBorder(Theme.accent.opacity(0.4))
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("notes.editor")
+            Text("Edits update your saved note; they do not ask Omnesis to process it again.")
+                .font(.footnote).foregroundStyle(Theme.textSecondary)
+            if draft.utf16.count > 8192 {
+                Text("Shorten this note to 8,192 characters to save.")
+                    .font(.footnote).foregroundStyle(Theme.warning)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Theme.Spacing.md) { editingActions }
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) { editingActions }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editingActions: some View {
+        Button("Save changes") { Task { await save() } }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+            .foregroundStyle(Theme.bgPrimary)
+            .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.utf16.count > 8192)
+        Button("Cancel editing") { editing = false }
+            .disabled(busy)
+    }
+
+    @ViewBuilder
+    private var captureDetails: some View {
+        if note.capturedTimeZoneId != nil || (note.updatedAt != note.capturedAt && note.updatedAt != note.transcribedAt) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("CAPTURE DETAILS")
+                    .font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(Theme.textSecondary)
+                if let zone = note.capturedTimeZoneId {
+                    Label(zone, systemImage: "globe")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                }
+                if note.updatedAt != note.capturedAt, note.updatedAt != note.transcribedAt {
+                    Text("Edited " + (NotesTime.date(fromISO: note.updatedAt)?.formatted() ?? note.updatedAt))
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                }
             }
         }
     }
@@ -260,11 +333,11 @@ struct NoteHistoryDetail: View {
 }
 
 extension NoteEntry {
-    fileprivate var capturedLabel: String {
+    var capturedLabel: String {
         NotesTime.date(fromISO: capturedAt)?.formatted(date: .abbreviated, time: .shortened) ?? capturedAt
     }
 
-    fileprivate var statusLabel: String {
+    var statusLabel: String {
         transcription == "pending" ? "Transcribing voice note" : agent?.statusLabel ?? "Saved"
     }
 }

@@ -17,6 +17,8 @@ final class NotesInteractionUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["DEMO_MENU_REVEAL"] = "notes"
         app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_NOTES_MENU"] = nil
+        app.launchEnvironment["DEMO_NOTES_PENDING_RECEIPT"] = nil
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
     }
@@ -32,6 +34,74 @@ final class NotesInteractionUITests: XCTestCase {
         XCTAssertEqual(captureDraft.value as? String, draft)
         XCTAssertTrue(captureDraft.isEnabled)
         try captureEvidence("notes-interaction-draft-paused")
+    }
+
+    func testNotesMenuTitleOpensHistoryWithoutStartingTheMicrophone() throws {
+        launchNotesMenu()
+        let title = app.buttons["menu.notes"]
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertTrue(title.isHittable)
+        try captureEvidence("notes-menu-open")
+        title.tap()
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[original].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Stop listening"].exists, "history unexpectedly started dictation")
+        XCTAssertFalse(captureDraft.exists, "history unexpectedly opened capture")
+        try captureEvidence("notes-menu-title-opens-history")
+    }
+
+    func testNotesMenuMicrophoneStartsListeningWithoutOpeningHistory() throws {
+        launchNotesMenu()
+        let microphone = app.buttons["menu.tellOmnesis"]
+        XCTAssertTrue(microphone.waitForExistence(timeout: 15))
+        XCTAssertTrue(microphone.isHittable)
+        microphone.tap()
+        XCTAssertTrue(app.buttons["Stop listening"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Tell Omnesis"].exists)
+        XCTAssertTrue(captureDraft.exists)
+        XCTAssertFalse(app.navigationBars["Notes"].exists, "the microphone opened history first")
+        XCTAssertFalse(app.staticTexts[original].exists)
+        try captureEvidence("notes-menu-microphone-listening")
+    }
+
+    func testNotesDestinationClosesCaptureWhenItIsAlreadySelected() throws {
+        launchNotesMenu()
+        let destination = app.buttons["menu.notes"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 15))
+        destination.tap()
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 5))
+        app.buttons["Open menu"].tap()
+        app.buttons["menu.tellOmnesis"].tap()
+        XCTAssertTrue(app.buttons["Stop listening"].waitForExistence(timeout: 5))
+
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.35))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.35))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: destination)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed, "capture did not reveal the real Notes menu")
+        destination.tap()
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[original].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Stop listening"].exists, "same-tab navigation left capture active")
+        XCTAssertFalse(captureDraft.exists)
+        try captureEvidence("notes-menu-return-to-selected-history")
+    }
+
+    func testTranscribingNoteKeepsItsExistingAgentResponseVisible() throws {
+        app.terminate()
+        app.launchEnvironment["DEMO_NOTES_PENDING_RECEIPT"] = "1"
+        app.launch()
+        openNotes()
+        let transcribing = app.staticTexts["Transcribing voice note"]
+        XCTAssertTrue(transcribing.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[reply].exists, "transcription hid the existing response in history")
+        try captureEvidence("notes-pending-with-response-history")
+        app.staticTexts[original].tap()
+        XCTAssertTrue(app.navigationBars["Note"].waitForExistence(timeout: 5))
+        XCTAssertTrue(transcribing.exists)
+        XCTAssertTrue(app.staticTexts[reply].exists, "transcription hid the existing response in the note")
+        try captureEvidence("notes-pending-with-response-detail")
     }
 
     func testReplyEditUndoAndConfirmedDeletionStayInSync() throws {
@@ -85,6 +155,12 @@ final class NotesInteractionUITests: XCTestCase {
 
     private var captureDraft: XCUIElement {
         app.textFields["captureTranscript"].exists ? app.textFields["captureTranscript"] : app.textViews["captureTranscript"]
+    }
+
+    private func launchNotesMenu() {
+        app.terminate()
+        app.launchEnvironment["DEMO_NOTES_MENU"] = "1"
+        app.launch()
     }
 
     private func openNotes() {

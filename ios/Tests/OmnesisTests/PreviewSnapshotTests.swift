@@ -46,6 +46,19 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "note-history-detail"
         )
         snapshot(
+            NotesHistoryScreen(
+                model: NotesHistoryModel(client: nil, entries: [PreviewMocks.noteHistoryTranscribingWithResponse]),
+                menuOpen: .constant(false)
+            ),
+            name: "notes-transcribing-with-response"
+        )
+        snapshot(
+            NavigationStack {
+                NoteHistoryDetail(note: PreviewMocks.noteHistoryTranscribingWithResponse, model: NotesHistoryModel(client: nil))
+            },
+            name: "note-detail-transcribing-with-response"
+        )
+        snapshot(
             NavigationStack { NoteHistoryDetail.editingPreview(note: PreviewMocks.noteHistory[0]) },
             name: "note-history-editing"
         )
@@ -59,6 +72,75 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "note-history-long-large"
         )
         snapshot(CaptureView(speech: .preview(state: .listening)).environment(AppStore.preview()), name: "capture-with-history")
+    }
+
+    func testNotesActiveMainMenu() {
+        let store = AppStore.preview(
+            statusSnapshot: PreviewMocks.statusSnapshotTasks,
+            tasksTodayCount: 4,
+            agentPreview: PreviewMocks.agentConversationsWithMorningBrief
+        )
+        let view = ZStack(alignment: .leading) {
+            Theme.bgDrawer.ignoresSafeArea()
+            MainMenuDrawer(isOpen: .constant(true), selection: .constant(.notes), onOpenSettings: {})
+                .frame(width: MenuReveal.menuWidth(forContainerWidth: 393), alignment: .leading)
+        }
+        .environment(store)
+        .environment(\.openCapture) {}
+        snapshot(view, name: "notes-active-main-menu")
+    }
+
+    func testNotesHistoryLargeText() {
+        let view = NotesHistoryScreen(
+            model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory),
+            menuOpen: .constant(false)
+        ).dynamicTypeSize(.accessibility3)
+        snapshot(view, name: "notes-history-large-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    /// Check rendered navigation chrome and content gutters, where a default
+    /// UIKit black/grouped background can otherwise disagree with the app canvas.
+    func testNotesCanvasUsesAppBackground() throws {
+        for scheme in [ColorScheme.dark, .light] {
+            let view = NotesHistoryScreen(
+                model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory),
+                menuOpen: .constant(false)
+            )
+            let image = render(view, name: "notes-canvas-theme-\(scheme)", size: Self.canvasSize, scheme: scheme)
+            let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+            let expected = UIColor(Theme.bgPrimary).resolvedColor(with: traits)
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            XCTAssertTrue(expected.getRed(&red, green: &green, blue: &blue, alpha: nil))
+            for point in [CGPoint(x: 4, y: 12), CGPoint(x: 4, y: 76), CGPoint(x: 4, y: 300), CGPoint(x: 4, y: 760)] {
+                let pixel = try notesCanvasPixel(image, at: point)
+                for (index, component) in [red, green, blue].enumerated() {
+                    XCTAssertLessThanOrEqual(
+                        abs(Int(pixel[index]) - Int((component * 255).rounded())),
+                        4,
+                        "Notes \(scheme) canvas disagrees with the app background at \(point)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func notesCanvasPixel(_ image: UIImage, at point: CGPoint) throws -> [UInt8] {
+        let bounds = CGRect(x: point.x * image.scale, y: point.y * image.scale, width: 1, height: 1)
+        let crop = try XCTUnwrap(image.cgImage?.cropping(to: bounds))
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &bytes,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ))
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return bytes
     }
 
     func testPeopleReadClientReadiness() throws {
@@ -907,13 +989,15 @@ final class PreviewSnapshotTests: XCTestCase {
     /// `ignoresSafeArea` lays the view out with no safe-area inset. A hosting
     /// controller outside a window otherwise reserves one at the bottom, which
     /// hides the foot of a full-screen page that pins its actions there.
+    @discardableResult
     private func render(
         _ view: some View,
         name: String,
         size: CGSize,
         scheme: ColorScheme,
         ignoresSafeArea: Bool = false
-    ) {
+    )
+        -> UIImage {
         let isDark = scheme == .dark
         let host = UIHostingController(rootView:
             view
@@ -947,6 +1031,7 @@ final class PreviewSnapshotTests: XCTestCase {
         } catch {
             XCTFail("snapshot write failed for \(name): \(error)")
         }
+        return image
     }
 
     private var canvasSize: CGSize {

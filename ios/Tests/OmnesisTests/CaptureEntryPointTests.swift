@@ -65,7 +65,9 @@ final class CaptureEntryPointTests: XCTestCase {
             1,
             "Notes history owns one Tell Omnesis action"
         )
-        let allowed = Set([drawer, captureKey, home, tasks, tasksHarness, notesHistory].map(\.standardizedFileURL))
+        let notesHarness = uiRoot.appendingPathComponent("Capture/NotesHistoryDemoSurface.swift")
+        XCTAssertTrue(try source(at: notesHarness).contains("#if DEBUG && canImport(SwiftUI) && canImport(UIKit)"))
+        let allowed = Set([drawer, captureKey, home, tasks, tasksHarness, notesHistory, notesHarness].map(\.standardizedFileURL))
         let actionOffenders = try files
             .filter { $0.pathExtension == "swift" && !allowed.contains($0.standardizedFileURL) }
             .filter { try source(at: $0).contains("openCapture") }
