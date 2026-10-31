@@ -123,6 +123,8 @@ describe("refreshDockerLauncher", () => {
       ]),
     );
     expect(write.args.at(-1)).toBe(LAUNCHER);
+    // Quiet: Compose's "Container … Created" lines are no part of the update's account.
+    expect(write.args.slice(0, 5)).toEqual(["compose", "-f", COMPOSE, "--progress", "quiet"]);
     // Byte for byte what the installer writes, for the same service.
     expect(write.input).toBe(render("gateway"));
     expect(write.input).toContain("OMNESIS_DOCKER_HOST_RESTART");
