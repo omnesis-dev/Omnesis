@@ -5,12 +5,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import {
-  createLogger,
-  type AgentEvent,
-  type ToolResult,
-  type WatchUpsertedResult,
-} from "@omnesis/core";
+import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { insertNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
@@ -365,7 +360,7 @@ describe("note agent turn", () => {
                 type: "agent.text.delta",
                 payload: { ...ids, delta: "I'll check whether this task already exists." },
               };
-            if (event.type === "agent.tool.result" && event.payload.tool === "task_list")
+            if (event.type === "agent.tool.result" && event.payload.toolCallId === "call_0")
               yield {
                 type: "agent.text.delta",
                 payload: { ...ids, delta: "No matching task exists; I'll add it now." },
@@ -738,6 +733,8 @@ describe("note agent turn", () => {
       expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 2 });
     },
   );
+
+  type WatchUpsertedResult = Extract<ToolResult, { kind: "watch.upserted" }>;
 
   function watchResult(overrides: Partial<WatchUpsertedResult> = {}): WatchUpsertedResult {
     return {
