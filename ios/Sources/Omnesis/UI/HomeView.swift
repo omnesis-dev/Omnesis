@@ -732,6 +732,7 @@ struct HomeView: View {
         case .search: SearchView(menuOpen: $menuOpen)
         case .sources: SourcesView(menuOpen: $menuOpen)
         case .people: PeopleView(menuOpen: $menuOpen)
+        case .notes: NotesHistoryView(menuOpen: $menuOpen)
         // A standard section, reached from its drawer row or a push deep-link.
         // It mounts without consulting the app's mirror of /status so a queued
         // target lands even while that mirror is unresolved; against a gateway

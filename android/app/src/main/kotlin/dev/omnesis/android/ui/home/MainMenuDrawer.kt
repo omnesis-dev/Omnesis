@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
@@ -212,6 +213,10 @@ fun MainMenuDrawer(
                 )
             }
 
+            item {
+                MenuRow(id = "notes", icon = Icons.Outlined.History, label = "Notes",
+                    active = currentRoute == "notes", onClick = { onNavigate("notes") })
+            }
             item {
                 MenuRow(
                     id = "sources",

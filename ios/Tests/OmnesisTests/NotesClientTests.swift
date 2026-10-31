@@ -43,6 +43,57 @@ final class NotesClientTests: XCTestCase {
     }
     """
 
+    func testHistoryDecodesReceiptAndOpaqueCursor() async throws {
+        let session = MockSession()
+        session.responder = { req in
+            self.makeResponse(
+                status: 200,
+                body: """
+                {"entries":[{"id":"n1","day":"2026-06-12","capturedAt":"2026-06-12T10:00:00Z",
+                "updatedAt":"2026-06-12T10:00:00Z","text":"Reserve a workshop room","transcription":"pending",
+                "agent":{"state":"done","receipt":{"text":"Added the task.",
+                "changes":[{"text":"Reserve the room","taskId":"t1","undoSeq":42}]}}}],
+                "pageInfo":{"hasMore":true,"nextCursor":"next+/="}}
+                """,
+                url: req.url!
+            )
+        }
+        let client = NotesClient(baseURL: base, token: "test-token", session: session)
+        let page = try await client.history(cursor: "opaque+/=")
+        XCTAssertEqual(page.entries[0].agent?.receipt?.changes.first?.undoSeq, 42)
+        XCTAssertEqual(page.entries[0].transcription, "pending")
+        XCTAssertEqual(page.pageInfo.nextCursor, "next+/=")
+        let request = try XCTUnwrap(session.requests.first)
+        let query = try URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first { $0.name == "cursor" }?.value, "opaque+/=")
+        XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalAndRemoteCacheData)
+    }
+
+    func testEditAndDeleteUseSingleEncodedPathSegment() async throws {
+        let session = MockSession()
+        session.responder = { req in
+            self.makeResponse(
+                status: req.httpMethod == "DELETE" ? 204 : 200,
+                body: req.httpMethod == "DELETE" ? "" : self.entryJSON,
+                url: req.url!
+            )
+        }
+        let client = NotesClient(baseURL: base, token: "test-token", session: session)
+        _ = try await client.editNote(id: "note/with?#%", text: "Updated workshop note")
+        try await client.deleteNote(id: "note/with?#%")
+        XCTAssertEqual(session.requests.map(\.httpMethod), ["PATCH", "DELETE"])
+        XCTAssertEqual(session.requests[0].url?.absoluteString, "http://gateway.local:7600/notes/note%2Fwith%3F%23%25")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(session.requests[0].httpBody)) as? [String: String]
+        XCTAssertEqual(body?["text"], "Updated workshop note")
+    }
+
+    func testHistoryWithoutReceiptRemainsReadable() throws {
+        let entry = try JSONDecoder().decode(NoteEntry.self, from: Data(entryJSON.utf8))
+        XCTAssertNil(entry.agent)
+        XCTAssertNil(entry.transcription)
+        XCTAssertNil(entry.transcribedAt)
+    }
+
     func testCreateNoteEncodesBodyAndDecodes201() async throws {
         let session = MockSession()
         session.responder = { [weak self] req in

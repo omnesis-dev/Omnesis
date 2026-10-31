@@ -118,6 +118,51 @@ public final class NotesClient: Sendable {
     /// A voice note uploads a recording of up to the gateway's byte limit.
     static let voiceNoteTimeout: TimeInterval = 120
 
+    public func history(cursor: String? = nil, day: String? = nil) async throws -> NotesHistoryPage {
+        var query = URLComponents()
+        query.queryItems = [URLQueryItem(name: "limit", value: "25")]
+        if let cursor {
+            query.queryItems?.append(URLQueryItem(name: "cursor", value: cursor))
+        } else if let day {
+            query.queryItems?.append(URLQueryItem(name: "day", value: day))
+        }
+        let (data, _) = try await dispatch(
+            method: "GET",
+            path: "/notes/history?" + (query.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B"),
+            body: nil
+        )
+        return try decodeOrThrow(NotesHistoryPage.self, from: data)
+    }
+
+    public func dayEntries(day: String) async throws -> [NoteEntry] {
+        var query = URLComponents()
+        query.queryItems = [URLQueryItem(name: "day", value: day)]
+        let (data, _) = try await dispatch(
+            method: "GET",
+            path: "/notes?" + (query.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B"),
+            body: nil
+        )
+        return try decodeOrThrow(NotesDayPage.self, from: data).entries
+    }
+
+    public func editNote(id: String, text: String) async throws -> NoteEntry {
+        let (data, _) = try await dispatch(method: "PATCH", path: notePath(id), body: encoder.encode(["text": text]))
+        return try decodeOrThrow(NoteEntry.self, from: data)
+    }
+
+    public func deleteNote(id: String) async throws {
+        _ = try await dispatch(method: "DELETE", path: notePath(id), body: nil)
+    }
+
+    private func notePath(_ id: String) throws -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#%")
+        guard !id.isEmpty, id != ".", id != "..", let encoded = id.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            throw GatewayClient.Error.invalidURL
+        }
+        return "/notes/" + encoded
+    }
+
     // MARK: - Internals
 
     private func dispatch(
@@ -130,6 +175,8 @@ public final class NotesClient: Sendable {
             throw GatewayClient.Error.invalidURL
         }
         var request = URLRequest(url: requestURL)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -186,6 +233,9 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
     public let longitude: Double?
     /// Reverse-geocoded place name (e.g. "Paris"), or nil.
     public let placeName: String?
+    public let transcription: String?
+    public let transcribedAt: String?
+    public let agent: NoteAgentResult?
 
     public init(
         id: String,
@@ -200,7 +250,10 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
         deviceId: String?,
         latitude: Double? = nil,
         longitude: Double? = nil,
-        placeName: String? = nil
+        placeName: String? = nil,
+        transcription: String? = nil,
+        transcribedAt: String? = nil,
+        agent: NoteAgentResult? = nil
     ) {
         self.id = id
         self.day = day
@@ -215,6 +268,40 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
         self.latitude = latitude
         self.longitude = longitude
         self.placeName = placeName
+        self.transcription = transcription
+        self.transcribedAt = transcribedAt
+        self.agent = agent
+    }
+}
+
+extension NoteEntry {
+    /// A just-received note can precede the scheduler's first queue row.
+    /// Keep its ordinary Saved label while allowing the receipt to arrive.
+    public func shouldRefreshReceipt(now: Date = Date()) -> Bool {
+        if transcription == "pending" || ["pending", "running"].contains(agent?.state ?? "") { return true }
+        guard agent == nil, let received = NotesTime.date(fromISO: receivedAt ?? capturedAt) else { return false }
+        let age = now.timeIntervalSince(received)
+        return age >= -60 && age < 60
+    }
+
+    public var surfaceLabel: String? {
+        guard let surface else { return nil }
+        switch surface {
+        case "ios-app": return "iPhone app"
+        case "ios-siri": return "Siri"
+        case "ios-action-button": return "Action Button"
+        case "ios-control": return "Control Center"
+        case "ios-widget": return "iPhone widget"
+        case "ios-quick-action": return "iPhone quick action"
+        case "ios-watch": return "Apple Watch"
+        case "android-app": return "Android app"
+        case "android-widget": return "Android widget"
+        case "android-shortcut": return "Android shortcut"
+        case "portal": return "Web portal"
+        case "cli": return "Command line"
+        case "browser-extension": return "Browser extension"
+        default: return "Other capture surface"
+        }
     }
 }
 
@@ -321,5 +408,42 @@ public enum NotesTime {
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
         return plain.date(from: iso)
+    }
+}
+
+public struct NotesHistoryPage: Decodable, Sendable {
+    public let entries: [NoteEntry]
+    public let pageInfo: PageInfo
+    public struct PageInfo: Decodable, Sendable {
+        public let hasMore: Bool
+        public let nextCursor: String?
+    }
+}
+
+private struct NotesDayPage: Decodable { let entries: [NoteEntry] }
+
+public struct NoteAgentResult: Codable, Equatable, Sendable {
+    public let state: String
+    public let receipt: Receipt?
+    public struct Receipt: Codable, Equatable, Sendable {
+        public let text: String
+        public let changes: [Change]
+    }
+
+    public struct Change: Codable, Equatable, Sendable {
+        public let text: String
+        public let taskId: String?
+        public let undoSeq: Int?
+    }
+
+    public var statusLabel: String {
+        switch state {
+        case "pending": "Waiting for Omnesis"
+        case "running": "Omnesis is reading"
+        case "done": "Read by Omnesis"
+        case "failed": "Couldn’t process note"
+        case "skipped": "Not processed"
+        default: "Agent status unavailable"
+        }
     }
 }

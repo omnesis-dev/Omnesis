@@ -236,6 +236,9 @@ struct MainMenuDrawer: View {
             // Tell Omnesis is generally available. The offline queue still
             // preserves captures when paired to an older gateway without /notes.
             tellOmnesisRow
+            row(id: "notes", icon: "note.text", label: "Notes", isActive: selection == .notes) {
+                select(.notes)
+            }
             row(id: "sources", icon: "square.grid.2x2", label: "Sources", isActive: selection == .sources) {
                 select(.sources)
             }

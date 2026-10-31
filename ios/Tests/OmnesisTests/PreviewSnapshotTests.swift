@@ -26,6 +26,41 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testNotesHistoryStates() {
+        snapshot(
+            NotesHistoryScreen(model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory), menuOpen: .constant(false)),
+            name: "notes-history"
+        )
+        snapshot(NotesHistoryScreen(model: NotesHistoryModel(client: nil), menuOpen: .constant(false)), name: "notes-history-empty")
+        snapshot(
+            NotesHistoryScreen(model: NotesHistoryModel(client: nil, loading: true), menuOpen: .constant(false)),
+            name: "notes-history-loading"
+        )
+        snapshot(
+            NotesHistoryScreen(model: NotesHistoryModel(client: nil, error: URLError(.notConnectedToInternet)), menuOpen: .constant(false))
+                .environment(AppStore.preview()),
+            name: "notes-history-error"
+        )
+        snapshot(
+            NavigationStack { NoteHistoryDetail(note: PreviewMocks.noteHistory[0], model: NotesHistoryModel(client: nil)) },
+            name: "note-history-detail"
+        )
+        snapshot(
+            NavigationStack { NoteHistoryDetail.editingPreview(note: PreviewMocks.noteHistory[0]) },
+            name: "note-history-editing"
+        )
+        snapshot(
+            NavigationStack { NoteHistoryDetail.editingPreview(note: PreviewMocks.noteHistory[0], busy: true) },
+            name: "note-history-editing-busy"
+        )
+        snapshot(
+            NavigationStack { NoteHistoryDetail(note: PreviewMocks.longHistoryNote, model: NotesHistoryModel(client: nil)) }
+                .dynamicTypeSize(.accessibility3),
+            name: "note-history-long-large"
+        )
+        snapshot(CaptureView(speech: .preview(state: .listening)).environment(AppStore.preview()), name: "capture-with-history")
+    }
+
     func testPeopleReadClientReadiness() throws {
         let coordinator = AdminCoordinator()
         let arrived = expectation(description: "The read client becoming available invalidates the view")

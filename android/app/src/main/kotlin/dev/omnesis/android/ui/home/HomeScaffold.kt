@@ -67,6 +67,7 @@ import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
 import dev.omnesis.android.ui.models.ModelsScreen
+import dev.omnesis.android.ui.notes.NotesHistoryScreen
 import dev.omnesis.android.ui.notes.PendingNotesSheet
 import dev.omnesis.android.notes.PENDING_WARNING_AGE
 import dev.omnesis.android.notes.pendingNoteNeedsAttention
@@ -882,6 +883,14 @@ fun HomeScaffold(
                     onOpenSettings = openSettings,
                 )
             }
+            composable("notes") {
+                NotesHistoryScreen(
+                    onBack = { nav.popBackStack() },
+                    onCapture = { openCapture(CaptureSurface.APP) },
+                    onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
+                    onOpenSettings = openSettings,
+                )
+            }
             composable(
                 route = "capture?surface={surface}",
                 arguments = listOf(
@@ -893,6 +902,8 @@ fun HomeScaffold(
             ) {
                 CaptureScreen(
                     onClose = { nav.popBackStack() },
+                    onOpenSettings = openSettings,
+                    onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
                 )
             }
             composable(route = PHONE_SETUP_ROUTE_PATTERN, arguments = phoneSetupArguments(PhoneSetupEntry.SETTINGS)) {

@@ -3,6 +3,12 @@
 
 package dev.omnesis.android.transport.client
 
+import dev.omnesis.android.transport.dto.NotesDayDto
+import dev.omnesis.android.transport.dto.NotesHistoryDto
+import dev.omnesis.android.transport.dto.EditNoteBody
+import dev.omnesis.android.transport.http.getPrivateJson
+import dev.omnesis.android.transport.http.deleteSegments
+import dev.omnesis.android.transport.http.decodeBody
 import dev.omnesis.android.transport.dto.CreateNoteBody
 import dev.omnesis.android.transport.dto.NoteEntryDto
 import dev.omnesis.android.transport.dto.OmnesisJson
@@ -17,6 +23,7 @@ import kotlinx.serialization.encodeToString
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Client for the gateway's quick-capture `/notes` surface ("Tell Omnesis").
@@ -39,6 +46,22 @@ class NotesClient(private val http: GatewayHttp) {
      */
     suspend fun createVoice(note: VoiceNoteBody, audio: File, audioMimeType: String): VoiceNoteAcceptedDto =
         http.postBody("notes/voice", voiceNoteBody(note, audio, audioMimeType), VOICE_UPLOAD_TIMEOUT)
+
+    suspend fun day(day: String): NotesDayDto = http.getPrivateJson(listOf("notes"), mapOf("day" to day))
+
+    suspend fun history(cursor: String? = null): NotesHistoryDto =
+        http.getPrivateJson(listOf("notes", "history"), buildMap {
+            put("limit", "25")
+            cursor?.let { put("cursor", it) }
+        })
+
+    suspend fun edit(id: String, text: String): NoteEntryDto {
+        val body = OmnesisJson.encodeToString(EditNoteBody(text))
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        return decodeBody(http.execute(http.newRequest(http.urlForSegments(listOf("notes", id))).patch(body).build()))
+    }
+
+    suspend fun delete(id: String) = http.deleteSegments(listOf("notes", id))
 
     companion object {
         /** Minutes of audio over a phone's uplink outlast the ordinary API timeout. */

@@ -39,6 +39,11 @@ data class NoteEntryDto(
     val text: String,
     val surface: String? = null,
     val deviceId: String? = null,
+    val transcription: String? = null,
+    val transcribedAt: String? = null,
+    val receivedAt: String? = null,
+    val agent: NoteAgentDto? = null,
+    val placeName: String? = null,
 )
 
 /**
@@ -74,3 +79,24 @@ data class CreateNoteBody(
     val surface: String? = null,
     val deviceId: String? = null,
 )
+
+@Serializable
+data class NoteAgentDto(val state: String, val receipt: NoteReceiptDto? = null)
+
+@Serializable
+data class NoteReceiptDto(val text: String = "", val changes: List<NoteChangeDto> = emptyList())
+
+@Serializable
+data class NoteChangeDto(val text: String, val taskId: String? = null, val undoSeq: Long? = null)
+
+@Serializable
+data class NotesHistoryDto(val entries: List<NoteEntryDto>, val pageInfo: NotesPageInfoDto)
+
+@Serializable
+data class NotesPageInfoDto(val hasMore: Boolean = false, val nextCursor: String? = null, val limit: Int = 25)
+
+@Serializable
+data class EditNoteBody(val text: String)
+
+@Serializable
+data class NotesDayDto(val entries: List<NoteEntryDto>)

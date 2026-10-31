@@ -78,6 +78,7 @@ struct CaptureView: View {
     /// 422) shown inline; the text stays in the editor for fixing.
     @State private var saveError: String?
     @State private var confirmDiscard = false
+    @State private var showNoteHistory = false
     /// The gateway's byte limit when this capture is a voice note — read
     /// once, when it opens; nil for the on-device transcript.
     @State private var voiceNoteLimit: Int?
@@ -164,10 +165,7 @@ struct CaptureView: View {
             }
         }
         .omnesisColorScheme()
-        // Swipe-down anywhere discards, mirroring a sheet's pull-down
-        // (full-screen covers don't get that gesture for free). High
-        // threshold + strong downward bias so vertical scrolling inside
-        // the transcript editor doesn't trigger it.
+        // A downward swipe discards; the threshold keeps editor scrolling distinct.
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -189,19 +187,27 @@ struct CaptureView: View {
             }
             Button("Keep editing", role: .cancel) {}
         }
+        .sheet(isPresented: $showNoteHistory) {
+            NotesHistoryScreen(
+                model: NotesHistoryModel(
+                    client: store.pairing.map { NotesClient(baseURL: $0.url, token: $0.token) },
+                    tasks: store.pairing.map { TasksClient(baseURL: $0.url, token: $0.token) }
+                ),
+                menuOpen: .constant(false),
+                onClose: { showNoteHistory = false },
+                historyRevision: store.notes.historyRevision
+            )
+        }
         .onAppear {
             if voiceNoteLimit == nil, completion == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
-            // Listening starts the moment the surface appears — that is
-            // the point of the feature. Chained onto the permission
-            // grants so a first-ever run prompts, then starts.
+            // Listen immediately, requesting permission on the first capture.
             if phase == .capturing, speech.state == .idle, text.isEmpty, !voiceNote.hasRecording {
                 prepareRecording()
                 speech.requestPermissionsAndStart()
             }
         }
         .onDisappear {
-            // Belt and braces: never leave the audio session running
-            // behind a dismissed cover.
+            // A dismissed capture must release its audio session.
             if speech.isListening { speech.cancel() }
             discardRecording()
         }
@@ -218,17 +224,18 @@ struct CaptureView: View {
             }
         }
         .onChange(of: speech.state) { oldValue, newValue in
+            if showNoteHistory, newValue == .listening {
+                stopDictation()
+                return
+            }
             if isVoiceNote {
                 if newValue == .listening { voiceNote.startRun(at: Date()) }
                 if oldValue == .listening { voiceNote.stopRun(at: Date()) }
                 if newValue == .unavailable { keyboardFocused = true }
                 return
             }
-            // Commit the final transcript when recognition wraps up —
-            // appended onto the dictation base, and only if the user
-            // hasn't edited the text since stopping (their edit wins
-            // over a late final-transcript callback). Hand the user the
-            // keyboard when speech isn't available at all.
+            // Commit a final transcript only when it cannot overwrite an edit.
+            // Hand the user the keyboard when speech is unavailable.
             if oldValue == .listening || oldValue == .finishing,
                newValue == .idle {
                 if !speech.transcript.isEmpty, textAtStop == nil || text == textAtStop {
@@ -243,24 +250,6 @@ struct CaptureView: View {
     }
 
     // MARK: - Pieces
-
-    private var header: some View {
-        HStack {
-            Button("Cancel") { cancel() }
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityLabel("Cancel capture")
-            Spacer()
-            Text(completion?.heading ?? "Tell Omnesis")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-            // Mirror the Cancel button's width so the title stays
-            // optically centered.
-            Text("Cancel").font(.system(size: 16)).hidden()
-        }
-        .padding(.top, Theme.Spacing.sm)
-    }
 
     /// Where the mic's centre sits, as a fraction of the screen's height. The
     /// halo behind it is anchored to the same fraction.
@@ -562,10 +551,40 @@ struct CaptureView: View {
     }
 }
 
-// MARK: - Voice note
+// MARK: - Capture chrome and voice note
 
 @available(iOS 17.0, *)
 extension CaptureView {
+    private var header: some View {
+        HStack {
+            Button("Cancel") { cancel() }
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityLabel("Cancel capture")
+            Spacer()
+            Text(completion?.heading ?? "Tell Omnesis")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            if completion == nil {
+                Button {
+                    keyboardFocused = false
+                    if speech.isListening { stopDictation() }
+                    showNoteHistory = true
+                } label: {
+                    Label("Notes", systemImage: "clock.arrow.circlepath")
+                        .labelStyle(.titleOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Previous notes")
+                .disabled(phase != .capturing)
+            } else {
+                Text("Cancel").font(.system(size: 16)).hidden()
+            }
+        }
+        .padding(.top, Theme.Spacing.sm)
+    }
+
     /// A voice-note capture already holding typed text stays a typed note.
     fileprivate var typedNoteBlocksRecording: Bool {
         isVoiceNote && !voiceNote.hasRecording && !text.isEmpty
