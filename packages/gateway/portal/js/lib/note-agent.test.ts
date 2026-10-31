@@ -76,6 +76,7 @@ describe("note agent display", () => {
   it("spots a refreshed copy with news", () => {
     const base = { id: "n", agent: { state: "running", receipt: null } };
     expect(noteRefreshChanged(base, { ...base })).toBe(false);
+    expect(noteRefreshChanged({ ...base, updatedAt: "2026-09-12T10:00:00Z" }, { ...base, updatedAt: "2026-09-11T10:00:00Z", agent: { state: "done" } })).toBe(false);
     expect(noteRefreshChanged(base, { id: "n", agent: { state: "done", receipt: { text: "x", changes: [] } } })).toBe(true);
     expect(noteRefreshChanged({ id: "n", transcription: "pending" }, { id: "n" })).toBe(true);
   });

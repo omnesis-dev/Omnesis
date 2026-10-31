@@ -80,6 +80,7 @@ export function noteAgentSettingPatch(on) {
  */
 export function noteRefreshChanged(current, fresh) {
   if (!current || !fresh) return false;
+  if (current.updatedAt && fresh.updatedAt && fresh.updatedAt < current.updatedAt) return false;
   if ((current.transcription ?? null) !== (fresh.transcription ?? null)) return true;
   return JSON.stringify(current.agent ?? null) !== JSON.stringify(fresh.agent ?? null);
 }
