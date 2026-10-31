@@ -37,6 +37,8 @@ export interface PuppetCall {
   subject: string | null;
   detail: string | null;
   prompt: string;
+  /** The actual wire system context, separate from owner input. */
+  systemPrompt: string;
   emitted: NextTurn;
 }
 
@@ -115,6 +117,10 @@ export async function startPuppetModelServer(opts: {
         subject: ctx?.subject ?? null,
         detail: ctx?.detail ?? null,
         prompt,
+        systemPrompt: messages
+          .filter((message) => message.role === "system" || message.role === "developer")
+          .map((message) => message.content ?? "")
+          .join("\n"),
         emitted: turn,
       });
       return turn.kind === "tool"

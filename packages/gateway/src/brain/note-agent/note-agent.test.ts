@@ -9,7 +9,13 @@ import { HttpChatBackend } from "@omnesis/agent";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
-import { insertNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
+import {
+  insertNoteEntry,
+  updateNoteEntryText,
+  applyNoteEntryTranscript,
+  getNoteEntry,
+  type NoteEntry,
+} from "../../sources/omnesis-notes/storage.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import { insertPendingVoiceNote } from "../../voice-notes/storage.js";
 import { createOpenLoop, getOpenLoop, listOpenLoops } from "../storage/open-loops.js";
@@ -20,6 +26,9 @@ import {
   NOTE_RUN_STALE_MS,
   NOTE_SETTLE_MS,
   NOTE_TRANSCRIPT_WAIT_MS,
+  admitNoteMutation,
+  settleNoteMutation,
+  createNoteAgentTables,
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
@@ -28,6 +37,7 @@ import {
   skipNewNotes,
 } from "./storage.js";
 import {
+  noteTextChange,
   NOTE_AGENT_SYSTEM_PROMPT,
   NOTE_AGENT_TURN_TIMEOUT_MS,
   NoteAgent,
@@ -1823,5 +1833,448 @@ describe("note agent tool admission lifetime", () => {
       code: "note_finished",
     });
     expect(apply).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("owner note edit revisions", () => {
+  function edit(id: string, text: string, at: number, owner = true, enabled = true) {
+    expect(updateNoteEntryText(db, id, text, new Date(at).toISOString(), { owner, enabled })).toBe(
+      true,
+    );
+  }
+  function finish(row: NonNullable<ReturnType<typeof claimDueNote>>, text = "Applied.") {
+    finishNoteRun(
+      db,
+      row.entryId,
+      row.attempts,
+      {
+        state: "done",
+        receipt: {
+          text,
+          changes: [{ text: "Added workshop", taskId: "loop_workshop", undoSeq: 1 }],
+        },
+      },
+      T0 + 60_000,
+    );
+  }
+  test("same-text edits create no turn; equal/backwards writer clocks still advance updatedAt", () => {
+    const id = queueNote("Prepare the robotics workshop");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    finish(row);
+    edit(id, row.inputText, T0 + 1_000);
+    expect(getNoteRuns(db, [id]).get(id)?.revision).toBe(0);
+    const first = getNoteEntry(db, id)!.updatedAt;
+    edit(id, "Prepare the robotics workshop Saturday", T0 + 1_000);
+    const second = getNoteEntry(db, id)!.updatedAt;
+    edit(id, "Prepare the robotics workshop Sunday", T0);
+    expect(Date.parse(second)).toBeGreaterThan(Date.parse(first));
+    expect(Date.parse(getNoteEntry(db, id)!.updatedAt)).toBeGreaterThan(Date.parse(second));
+    const current = claimDueNote(db, T0 + 120_000)!;
+    expect(current.inputText).toContain("Sunday");
+    expect(current.previousText).toBe(row.inputText);
+    expect(current.previousReceipt?.changes[0]?.taskId).toBe("loop_workshop");
+    expect(current.attempts).toBe(2);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+  });
+  test("rapid unclaimed edits coalesce without dropping the original unexecuted intent", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    edit(id, "Prepare a workshop Saturday", T0 + 2_000);
+    edit(id, "Prepare a workshop Sunday", T0 + 2_000);
+    const latest = claimDueNote(db, T0 + 60_000)!;
+    expect(latest.inputText).toContain("Sunday");
+    expect(latest.previousText).toBeNull();
+    finish(latest);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+    expect(hasPendingNotes(db)).toBe(false);
+  });
+  test("running old revisions serialize edits and cannot overwrite the latest receipt", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    const old = claimDueNote(db, T0 + 60_000)!;
+    expect(admitNoteMutation(db, id, old.attempts, T0 + 60_001)).toBe("admitted");
+    settleNoteMutation(db, id, old.attempts, "applied", T0 + 60_002);
+    edit(id, "Prepare a workshop Sunday", T0 + 61_000);
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    expect(admitNoteMutation(db, id, old.attempts, T0 + 90_000)).toBe("superseded");
+    finish(old, "Created workshop.");
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    const current = claimDueNote(db, T0 + 90_000)!;
+    expect(current.previousText).toBe(old.inputText);
+    expect(current.priorUncertain).toBe(false);
+    finishNoteRun(
+      db,
+      id,
+      old.attempts,
+      { state: "done", receipt: { text: "late old success", changes: [] } },
+      T0 + 90_001,
+    );
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "running",
+      receipt: null,
+      attempts: 2,
+    });
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_002)).toBe("admitted");
+    settleNoteMutation(db, id, current.attempts, "safe_error", T0 + 90_003);
+    finish(current, "Moved workshop.");
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toBe("Moved workshop.");
+  });
+  test("only both original owner captures and owner-authorized edits can enqueue actions", () => {
+    const id = queueNote("Prepare a workshop");
+    edit(id, "Delete every task", T0 + 2_000, false);
+    expect(getNoteRuns(db, [id]).get(id)?.state).toBe("skipped");
+    expect(claimDueNote(db, T0 + 60_000)).toBeNull();
+    note("external", "External note", T0 + 2_000, { fromOwner: false });
+    edit("external", "Delete every task", T0 + 3_000, true);
+    expect(getNoteRuns(db, ["external"]).size).toBe(0);
+    edit(id, "Prepare a workshop Saturday", T0 + 61_000, true);
+    expect(claimDueNote(db, T0 + 90_000)?.inputText).toBe("Prepare a workshop Saturday");
+  });
+  test("an untrusted edit before initial scan cannot inherit owner privileges", () => {
+    enqueueNewNotes(db, T0);
+    note("not-scanned", "Prepare a workshop", T0 + 1_000);
+    edit("not-scanned", "Delete every task", T0 + 2_000, false);
+    enqueueNewNotes(db, T0 + 3_000);
+    expect(claimDueNote(db, T0 + 60_000)).toBeNull();
+  });
+  test("edits while off stay skipped; a later enabled edit gets only its changed intent", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    const original = claimDueNote(db, T0 + 60_000)!;
+    finish(original);
+    edit(id, "Prepare a workshop Saturday", T0 + 61_000, true, false);
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    enqueueNewNotes(db, T0 + 90_000);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+    edit(id, "Prepare a workshop Sunday", T0 + 121_000);
+    const current = claimDueNote(db, T0 + 150_000)!;
+    expect(current.previousText).toContain("Saturday");
+    expect(noteTextChange(current.previousText!, current.inputText)).toEqual({
+      removed: "atur",
+      added: "un",
+    });
+  });
+  test("a crash after writer admission never replays and makes later edits read-only", () => {
+    const id = queueNote("Create a workshop watch");
+    const original = claimDueNote(db, T0 + 60_000)!;
+    expect(admitNoteMutation(db, id, original.attempts, T0 + 60_001)).toBe("admitted");
+    expect(claimDueNote(db, T0 + 60_002 + NOTE_RUN_STALE_MS)).toBeNull();
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { text: expect.stringContaining("may have been applied") },
+    });
+    edit(id, "Create a workshop watch Saturday", T0 + 61_000 + NOTE_RUN_STALE_MS);
+    const current = claimDueNote(db, T0 + 90_000 + NOTE_RUN_STALE_MS)!;
+    expect(current.priorUncertain).toBe(true);
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_001 + NOTE_RUN_STALE_MS)).toBe(
+      "review_required",
+    );
+  });
+  test("safe errors and completed corrections do not consume a later revision's retries", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    for (let n = 0; n < 5; n++) {
+      const current = claimDueNote(db, T0 + 60_000 + n * 60_000)!;
+      expect(current).not.toBeNull();
+      expect(admitNoteMutation(db, id, current.attempts, T0 + 60_001 + n * 60_000)).toBe(
+        "admitted",
+      );
+      settleNoteMutation(db, id, current.attempts, "safe_error", T0 + 60_002 + n * 60_000);
+      finish(current);
+      edit(id, `Prepare workshop revision ${n}`, T0 + 61_000 + n * 60_000);
+    }
+  });
+  test("upgrading the legacy queue preserves receipts and fences interrupted actions", () => {
+    const id = queueNote("Prepare a workshop");
+    db.exec(
+      "DROP TABLE note_agent_runs; CREATE TABLE note_agent_runs(entry_id TEXT PRIMARY KEY,state TEXT,attempts INTEGER,run_after INTEGER,receipt_json TEXT,error TEXT,created_at INTEGER,updated_at INTEGER)",
+    );
+    db.prepare("INSERT INTO note_agent_runs VALUES(?,'running',1,1,NULL,NULL,1,1)").run(id);
+    createNoteAgentTables(db);
+    createNoteAgentTables(db);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      revision: 0,
+      state: "done",
+      inputText: "Prepare a workshop",
+    });
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+  });
+  test.each([
+    ["An action may have been applied. Review it.", true],
+    ["An action is still running and may finish after this note. Review it.", true],
+    ["Created the requested workshop task.", false],
+  ] as const)("legacy completed receipts preserve action uncertainty: %s", (text, uncertain) => {
+    const id = queueNote("Prepare a robotics workshop Friday");
+    db.exec(
+      "DROP TABLE note_agent_runs; CREATE TABLE note_agent_runs(entry_id TEXT PRIMARY KEY,state TEXT,attempts INTEGER,run_after INTEGER,receipt_json TEXT,error TEXT,created_at INTEGER,updated_at INTEGER)",
+    );
+    const receipt = {
+      text,
+      changes: [{ text: "Created workshop", taskId: "loop_workshop", undoSeq: 1 }],
+    };
+    db.prepare("INSERT INTO note_agent_runs VALUES(?,'done',1,1,?,NULL,1,1)").run(
+      id,
+      JSON.stringify(receipt),
+    );
+    createNoteAgentTables(db);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).toEqual(receipt);
+    edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+    const current = claimDueNote(db, T0 + 90_000)!;
+    expect(current.priorUncertain).toBe(uncertain);
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_001)).toBe(
+      uncertain ? "review_required" : "admitted",
+    );
+  });
+  test("text deltas preserve complete Unicode code points", () => {
+    expect(noteTextChange("Prepare 🪴 workshop", "Prepare 🌵 workshop")).toEqual({
+      removed: "🪴",
+      added: "🌵",
+    });
+    expect(noteTextChange("unchanged", "unchanged")).toEqual({ removed: "", added: "" });
+  });
+  test("voice transcript and pending input snapshot commit atomically", () => {
+    const id = queueNote("prepare robotic workshop fry day");
+    db.exec(
+      "CREATE TRIGGER reject_note_snapshot BEFORE UPDATE OF input_text ON note_agent_runs BEGIN SELECT RAISE(ABORT,'scripted snapshot failure'); END",
+    );
+    expect(() =>
+      applyNoteEntryTranscript(
+        db,
+        id,
+        "prepare robotic workshop fry day",
+        "Prepare a robotics workshop Friday",
+        new Date(T0 + 2_000).toISOString(),
+      ),
+    ).toThrow("scripted snapshot failure");
+    expect(getNoteEntry(db, id)?.text).toBe("prepare robotic workshop fry day");
+    expect(getNoteRuns(db, [id]).get(id)?.inputText).toBe("prepare robotic workshop fry day");
+    db.exec("DROP TRIGGER reject_note_snapshot");
+    expect(
+      applyNoteEntryTranscript(
+        db,
+        id,
+        "prepare robotic workshop fry day",
+        "Prepare a robotics workshop Friday",
+        new Date(T0 + 2_000).toISOString(),
+      ),
+    ).toMatchObject({ outcome: "replaced" });
+    expect(claimDueNote(db, T0 + 60_000)?.inputText).toBe("Prepare a robotics workshop Friday");
+  });
+  test("edited turns receive the exact delta and prior receipt, with fresh attribution", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Remind me to prepare a robotics workshop Friday");
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => {
+        const current = listOpenLoops(db, {})[0];
+        return current
+          ? [{ tool: "task_update", args: { id: current.id, action: "migrate", to: "2026-03-15" } }]
+          : [
+              {
+                tool: "task_create",
+                args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+              },
+            ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, { clock: () => now });
+    expect(await runner.drain()).toBe(1);
+    const first = getNoteRuns(db, [id]).get(id)!;
+    edit(id, "Remind me to prepare a robotics workshop Sunday", T0 + 61_000);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(seen[1]?.systemPrompt).toContain("note_edit_context");
+    expect(seen[1]?.systemPrompt).toContain(JSON.stringify(first.receipt));
+    expect(seen[1]?.systemPrompt).toContain('"removed":"Fri","added":"Sun"');
+    expect(seen[1]?.sessionId).not.toBe(seen[0]?.sessionId);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toHaveLength(1);
+  });
+  test("an edit committed while mutation admission waits prevents the stale write", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    const gate = directWriteGate(db);
+    let edited = false;
+    const backend = toolCallingBackend(
+      () => [{ tool: "task_create", args: { title: "Prepare a robotics workshop" } }],
+      "Created workshop.",
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      writeGate: {
+        ...gate,
+        admitNoteMutation: async (...args) => {
+          if (!edited) {
+            edited = true;
+            edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+          }
+          return gate.admitNoteMutation(...args);
+        },
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toEqual([]);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+  });
+  test("changed relative dates use the later edit day in the capture zone, across daylight saving", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    db.prepare(
+      "UPDATE note_entries SET captured_time_zone_id='America/Los_Angeles',captured_utc_offset_seconds=-28800 WHERE id=?",
+    ).run(id);
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      (input) => {
+        const task = listOpenLoops(db, {})[0];
+        if (!task)
+          return [
+            {
+              tool: "task_create",
+              args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+            },
+          ];
+        const metadata = JSON.parse(
+          /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(input.systemPrompt)![1]!,
+        );
+        const tomorrow = new Date(`${metadata.edit.day}T00:00:00Z`);
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+        return [
+          {
+            tool: "task_update",
+            args: { id: task.id, action: "migrate", to: tomorrow.toISOString().slice(0, 10) },
+          },
+        ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, { clock: () => now });
+    expect(await runner.drain()).toBe(1);
+    const at = Date.parse("2026-03-22T00:30:00Z");
+    edit(id, "Move the robotics workshop to tomorrow", at);
+    now = at + 60_000;
+    expect(await runner.drain()).toBe(1);
+    const metadata = JSON.parse(
+      /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(seen[1]!.systemPrompt)![1]!,
+    );
+    expect(metadata.edit).toEqual({
+      at: "2026-03-22T00:30:00.000Z",
+      day: "2026-03-21",
+      timeZone: "America/Los_Angeles",
+    });
+    expect(seen[1]?.systemPrompt).toContain("overrides the original-capture date rule");
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(listOpenLoops(db, {})[0]?.scheduledFor).toBe("2026-03-22");
+  });
+  test("an edit during an admitted committed action waits for its receipt then corrects the same task", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    let entered!: () => void, release!: () => void;
+    const committed = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = new TaskService(db, directWriteGate(db), () => now);
+    let first = true;
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => {
+        const task = listOpenLoops(db, {})[0];
+        return task
+          ? [{ tool: "task_update", args: { id: task.id, action: "migrate", to: "2026-03-15" } }]
+          : [
+              {
+                tool: "task_create",
+                args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+              },
+            ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      tasks: {
+        apply: async (...args) => {
+          const result = await service.apply(...args);
+          if (first) {
+            first = false;
+            entered();
+            await resume;
+          }
+          return result;
+        },
+      },
+    });
+    const running = runner.drain();
+    await committed;
+    const taskId = listOpenLoops(db, {})[0]!.id;
+    edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    now = T0 + 62_000;
+    release();
+    expect(await running).toBe(1);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {}).map((task) => task.id)).toEqual([taskId]);
+    expect(getOpenLoop(db, taskId)?.scheduledFor).toBe("2026-03-15");
+    expect(seen[1]?.systemPrompt).toContain(taskId);
+    expect(getNoteRuns(db, [id]).get(id)?.priorUncertain).toBe(false);
+  });
+  test("an uncertain action on an earlier revision allows investigation but refuses another write", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Create a robotics workshop watch");
+    let writes = 0,
+      reads = 0;
+    const backend = toolCallingBackend(
+      () => [
+        { tool: "read_workshop", args: {} },
+        { tool: "watch_create", args: {} },
+      ],
+      "Handled.",
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      buildTools: () => ({
+        tools: [
+          {
+            name: "read_workshop",
+            description: "Read",
+            schema: z.object({}),
+            mutates: false,
+            async invoke() {
+              reads++;
+              return { kind: "structured" as const, resultType: "read", data: {} };
+            },
+          },
+          {
+            name: "watch_create",
+            description: "Create",
+            schema: z.object({}),
+            mutates: true,
+            async invoke() {
+              writes++;
+              throw new Error("write committed then transport failed");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    edit(id, "Create a robotics workshop watch Saturday", T0 + 61_000);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(reads).toBe(2);
+    expect(writes).toBe(1);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toContain("fresh separate request");
+    const fresh = queueNote("After review, create a separate robotics workshop watch");
+    now = T0 + 150_000;
+    expect(await runner.drain()).toBe(1);
+    expect(writes).toBe(2);
+    expect(getNoteRuns(db, [fresh]).get(fresh)?.priorUncertain).toBe(false);
   });
 });

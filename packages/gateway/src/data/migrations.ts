@@ -4881,6 +4881,11 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "preserve structured authorship on pushed conversation turns",
     up: addConversationAuthors,
   },
+  {
+    version: 207,
+    description: "process owner note edits as fenced revisions",
+    up: createNoteAgentTables,
+  },
 ];
 
 /**

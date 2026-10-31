@@ -18,6 +18,8 @@ import {
   type NewInterestSignal,
 } from "./brain/storage/interest.js";
 import {
+  admitNoteMutation,
+  settleNoteMutation,
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
@@ -2073,6 +2075,17 @@ export interface WriteGate extends KnowledgeWriteGate {
   skipNewNotes(now: number): Promise<number>;
   /** Claim the next settled note for the note agent, or null. */
   claimDueNote(now: number): Promise<NoteAgentRow | null>;
+  admitNoteMutation(
+    entryId: string,
+    attempt: number,
+    now: number,
+  ): Promise<ReturnType<typeof admitNoteMutation>>;
+  settleNoteMutation(
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof settleNoteMutation>[3],
+    now: number,
+  ): Promise<void>;
   finishNoteRun(
     entryId: string,
     attempt: number,
@@ -2148,7 +2161,12 @@ export interface WriteGate extends KnowledgeWriteGate {
    * Replace an entry's text (bumps `updated_at`). Returns false when
    * the id is unknown.
    */
-  updateNoteEntry(id: string, text: string, now: string): Promise<boolean>;
+  updateNoteEntry(
+    id: string,
+    text: string,
+    now: string,
+    authority?: Parameters<typeof updateNoteEntryText>[4],
+  ): Promise<boolean>;
   updateBrowserNoteEntry(input: BrowserNoteEditInput): Promise<BrowserNoteEditResult>;
   /**
    * Hard-delete one entry. Returns whether a row was deleted plus its
@@ -2829,6 +2847,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     clearMorningBriefMessageItems: (messageId) =>
       call("cognition.morningBriefItemsClear", [messageId]),
     claimDueNote: (now) => call("noteAgent.claim", [now]),
+    admitNoteMutation: (...args) => call("noteAgent.admitMutation", args),
+    settleNoteMutation: (...args) => call("noteAgent.settleMutation", args),
     finishNoteRun: (entryId, attempt, outcome, now) =>
       call("noteAgent.finish", [entryId, attempt, outcome, now]),
     proposeTaskChange: (loopId, proposal, now) =>
@@ -2855,7 +2875,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
 
     appendNoteEntry: (entry, audit, browserAuthority) =>
       call("notes.appendEntry", [entry, audit, browserAuthority]),
-    updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
+    updateNoteEntry: (id, text, now, authority) =>
+      call("notes.updateEntry", [id, text, now, authority]),
     updateBrowserNoteEntry: (input) => call("notes.updateBrowserEntry", [input]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
     applyNoteEntryTranscript: (id, expected, text, now) =>
@@ -3527,6 +3548,8 @@ export function directWriteGate(db: Db): WriteGate {
     clearMorningBriefMessageItems: async (messageId) =>
       clearMorningBriefMessageItems(db, messageId),
     claimDueNote: async (now) => claimDueNote(db, now),
+    admitNoteMutation: async (...args) => admitNoteMutation(db, ...args),
+    settleNoteMutation: async (...args) => settleNoteMutation(db, ...args),
     finishNoteRun: async (entryId, attempt, outcome, now) =>
       finishNoteRun(db, entryId, attempt, outcome, now),
     proposeTaskChange: async (loopId, proposal, now) =>
@@ -3552,7 +3575,8 @@ export function directWriteGate(db: Db): WriteGate {
 
     appendNoteEntry: async (entry, audit, browserAuthority) =>
       insertNoteEntry(db, entry, audit, browserAuthority),
-    updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
+    updateNoteEntry: async (id, text, now, authority) =>
+      updateNoteEntryText(db, id, text, now, authority),
     updateBrowserNoteEntry: async (input) => updateBrowserNoteEntry(db, input),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
     applyNoteEntryTranscript: async (id, expected, text, now) =>

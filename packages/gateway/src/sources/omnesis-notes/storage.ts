@@ -16,7 +16,11 @@
 
 import { experimentalEnabled } from "@omnesis/core";
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
-import { skipNoteAtCapture } from "../../brain/note-agent/storage.js";
+import {
+  queueNoteEdit,
+  refreshNoteTranscript,
+  skipNoteAtCapture,
+} from "../../brain/note-agent/storage.js";
 import {
   browserNoteRevision,
   browserNoteContext,
@@ -295,10 +299,19 @@ export function insertNoteEntry(
  * Replace an entry's text and bump `updated_at`. Returns false when no
  * row with that id exists.
  */
-export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: string): boolean {
+export function updateNoteEntryText(
+  db: Db,
+  id: string,
+  text: string,
+  nowIso: string,
+  authority?: { owner: boolean; enabled: boolean },
+): boolean {
   return db.transaction(() => {
     const entry = getNoteEntry(db, id);
     if (!entry) return false;
+    const updatedAt = new Date(
+      Math.max(Date.parse(nowIso), Date.parse(entry.updatedAt) + 1),
+    ).toISOString();
     // Legacy browser entries can still establish their original identity before
     // their first edit. Already edited entries cannot safely reconstruct it.
     const page =
@@ -310,7 +323,17 @@ export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: st
         : entry.page;
     const result = db
       .prepare(`UPDATE note_entries SET text = ?, updated_at = ?, page_context = ? WHERE id = ?`)
-      .run(text, nowIso, page ? JSON.stringify(page) : null, id);
+      .run(text, updatedAt, page ? JSON.stringify(page) : null, id);
+    if (result.changes)
+      queueNoteEdit(
+        db,
+        id,
+        entry.text,
+        text,
+        authority?.owner === true,
+        authority?.enabled !== false,
+        Date.parse(nowIso),
+      );
     return result.changes > 0;
   })();
 }
@@ -416,17 +439,22 @@ export function applyNoteEntryTranscript(
   text: string,
   nowIso: string,
 ): { outcome: "replaced"; day: string } | { outcome: "changed" | "missing" } {
-  const row = db
-    .prepare<[string], { day: string; text: string }>(
-      `SELECT day, text FROM note_entries WHERE id = ?`,
-    )
-    .get(id);
-  if (!row) return { outcome: "missing" };
-  if (row.text !== expected) return { outcome: "changed" };
-  db.prepare(
-    `UPDATE note_entries SET text = ?, updated_at = ?, transcribed_at = ? WHERE id = ?`,
-  ).run(text, nowIso, nowIso, id);
-  return { outcome: "replaced", day: row.day };
+  return db.transaction(
+    (): { outcome: "replaced"; day: string } | { outcome: "changed" | "missing" } => {
+      const row = db
+        .prepare<[string], { day: string; text: string }>(
+          `SELECT day, text FROM note_entries WHERE id = ?`,
+        )
+        .get(id);
+      if (!row) return { outcome: "missing" };
+      if (row.text !== expected) return { outcome: "changed" };
+      db.prepare(
+        `UPDATE note_entries SET text = ?, updated_at = ?, transcribed_at = ? WHERE id = ?`,
+      ).run(text, nowIso, nowIso, id);
+      refreshNoteTranscript(db, id, text);
+      return { outcome: "replaced", day: row.day };
+    },
+  )();
 }
 
 /**

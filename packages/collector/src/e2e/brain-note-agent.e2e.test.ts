@@ -81,6 +81,8 @@ const GREENHOUSE_NOTE =
   "Add a task to plan the community greenhouse, and attach the supplies guide.";
 const GREENHOUSE_QUOTE_NOTE =
   "Attach the delivery quote to my task to plan the community greenhouse too.";
+const EDITED_GREENHOUSE_NOTE =
+  "Add a task to plan the community greenhouse next month, and attach the supplies guide.";
 const GREENHOUSE_TITLE = "Plan the community greenhouse";
 const GUIDE_TITLE = "Community greenhouse supplies guide";
 const QUOTE_TITLE = "Community greenhouse delivery quote";
@@ -151,6 +153,22 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
       extraInference: { assignments: { transcriber: "replay" } },
       behaviors: {
         behaviors: [
+          {
+            flavour: "note",
+            subject: EDITED_GREENHOUSE_NOTE,
+            plan: {
+              calls: [
+                call("task_list", { query: "community greenhouse" }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id"),
+                  action: "migrate",
+                  to: nextMonth,
+                }),
+              ],
+              finalText:
+                "Moved the existing greenhouse task to next month; its guide stays attached.",
+            },
+          },
           {
             flavour: "note",
             promptContains: TASK_NOTE,
@@ -456,6 +474,46 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
     const undo = await bench.obs.undoTask(updateReceipt.receipt!.changes[0]!.undoSeq!);
     expect(undo.status).toBe(200);
     expect((await bench.obs.task(taskId)).task.documents).toEqual([guide]);
+    const edit = await bench.harness.gatewayFetch(`/notes/${created}`, {
+      method: "PATCH",
+      body: JSON.stringify({ text: EDITED_GREENHOUSE_NOTE }),
+    });
+    expect(edit.status).toBe(200);
+    expect(((await edit.json()) as { agent: unknown }).agent).toEqual({
+      state: "pending",
+      receipt: null,
+    });
+    const editedReceipt = await receiptFor(tellNotes, created, dayOf(created));
+    expect(editedReceipt.receipt?.changes).toHaveLength(1);
+    expect(editedReceipt.receipt?.changes[0]?.taskId).toBe(taskId);
+    const moved = await bench.obs.task(taskId);
+    expect(moved.task.scheduledFor).toBe(nextMonth);
+    expect(moved.task.documents).toEqual([guide]);
+    expect(moved.history[0]).toMatchObject({
+      kind: "migrated",
+      surface: "note",
+    });
+    const editedTurns = noteCalls().filter((c) => c.subject === EDITED_GREENHOUSE_NOTE);
+    expect(editedTurns[0]?.systemPrompt).toContain("note_edit_context");
+    expect(editedTurns[0]?.systemPrompt).toContain(JSON.stringify(creationReceipt.receipt));
+    expect(
+      editedTurns
+        .filter((c) => c.emitted.kind === "tool")
+        .map((c) => (c.emitted.kind === "tool" ? c.emitted.name : "")),
+    ).toEqual(["task_list", "task_update"]);
+    const proof = new Database(bench.harness.getDbPath(), { readonly: true, fileMustExist: true });
+    try {
+      expect(
+        proof
+          .prepare("SELECT run_id FROM open_loop_ledger WHERE seq=?")
+          .get(editedReceipt.receipt!.changes[0]!.undoSeq!),
+      ).toEqual({ run_id: `note:${created}:revision:1` });
+      expect(
+        proof.prepare("SELECT id FROM open_loops WHERE title=?").all(GREENHOUSE_TITLE),
+      ).toEqual([{ id: taskId }]);
+    } finally {
+      proof.close();
+    }
     expect((await bench.obs.status()).experimental).toBe(false);
   }, 240_000);
 

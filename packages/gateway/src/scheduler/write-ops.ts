@@ -576,6 +576,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "noteAgent.skip", priority: "background" },
   { name: "cognition.morningBriefItemsClear", priority: "background" },
   { name: "noteAgent.claim", priority: "background" },
+  { name: "noteAgent.admitMutation", priority: "user" },
+  { name: "noteAgent.settleMutation", priority: "user" },
   { name: "noteAgent.finish", priority: "background" },
   { name: "cognition.notesWrite", priority: "background" },
   { name: "cognition.notesAppend", priority: "background" },
