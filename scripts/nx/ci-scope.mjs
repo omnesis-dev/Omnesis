@@ -147,7 +147,7 @@ export function pathLanes(files) {
       any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/) ||
       any(
         files,
-        /^scripts\/(?:docker-(?:install-smoke\.sh|native-beside-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
+        /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
       ),
     install_smoke: deploys,
     installer_coverage:

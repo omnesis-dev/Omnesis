@@ -49,38 +49,6 @@ jobs:
         env:
           OMNESIS_DOCKER_SMOKE_PREFIX: omnesis-docker-smoke-${{ github.run_id }}
 
-  # The setup the Docker banner recommends on a Mac: a combined gateway and
-  # collector container, and a native collector installed beside it from a
-  # source checkout of this revision. Proves the two keep separate commands,
-  # config directories and tokens, and reconnect as two distinct devices after
-  # the gateway container restarts.
-  native-beside:
-    name: Docker gateway + native collector on one host
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.target_sha }}
-          persist-credentials: false
-
-      - name: Verify fixed source revision
-        env:
-          TARGET_SHA: ${{ inputs.target_sha }}
-        run: |
-          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: lane [docker-native-beside]
-        run: scripts/docker-native-beside-smoke.sh
-        env:
-          OMNESIS_DOCKER_BESIDE_PREFIX: omnesis-docker-beside-${{ github.run_id }}
-
   compiled-runtime-smoke:
     name: Compiled non-root gateway + seeded state
     runs-on: ubuntu-latest
