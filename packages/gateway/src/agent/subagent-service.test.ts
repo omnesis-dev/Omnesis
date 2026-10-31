@@ -995,6 +995,100 @@ describe("SubagentService", () => {
     expect(joined.results[0]).toMatchObject({ status: "complete", summary: "done" });
   });
 
+  it("disposing a tree cancels queued children and waits for a running child to unwind", async () => {
+    const backends: GatedBackend[] = [];
+    let active = 0;
+    const { service, emitted } = makeHarness({
+      concurrencyCap: 1,
+      roleBackends: {
+        "subagent-fanout": () => {
+          const backend = new GatedBackend(
+            () => active++,
+            () => active--,
+            "done",
+          );
+          backends.push(backend);
+          return backend;
+        },
+      },
+    });
+    await service.spawn({ parentSessionId: "S", specialist: "a", task: "running" });
+    await tick(3);
+    await service.spawn({ parentSessionId: "S", specialist: "a", task: "queued" });
+    expect(backends).toHaveLength(1);
+    emitted.length = 0;
+
+    let disposed = false;
+    const disposal = service.disposeTree("S").then(() => {
+      disposed = true;
+    });
+    await tick(3);
+    expect(disposed).toBe(false);
+    expect(active).toBe(1);
+
+    backends[0]!.release();
+    await disposal;
+    expect(active).toBe(0);
+    expect(backends).toHaveLength(1);
+    expect(emitted).toEqual([]);
+  });
+
+  it("disposing a tree waits for descendants without cancelling another root", async () => {
+    const backends: GatedBackend[] = [];
+    let active = 0;
+    const { service, emitted } = makeHarness({
+      roleBackends: {
+        "subagent-fanout": () => {
+          const backend = new GatedBackend(
+            () => active++,
+            () => active--,
+            "done",
+          );
+          backends.push(backend);
+          return backend;
+        },
+      },
+    });
+    const child = await service.spawn({ parentSessionId: "S", specialist: "a", task: "child" });
+    await tick(3);
+    const descendant = await service.spawn({
+      parentSessionId: child.subagentId,
+      specialist: "a",
+      task: "descendant",
+    });
+    await tick(3);
+    const other = await service.spawn({ parentSessionId: "other", specialist: "a", task: "other" });
+    await tick(3);
+    expect(active).toBe(3);
+    emitted.length = 0;
+
+    let disposed = false;
+    const disposal = service.disposeTree("S").then(() => {
+      disposed = true;
+    });
+    backends[0]!.release();
+    await tick(3);
+    expect(disposed).toBe(false);
+    backends[1]!.release();
+    await disposal;
+    expect(active).toBe(1);
+    expect(
+      emitted.some(
+        (event) =>
+          "subagentId" in event.payload &&
+          [child.subagentId, descendant.subagentId].includes(event.payload.subagentId),
+      ),
+    ).toBe(false);
+
+    backends[2]!.release();
+    const joined = await service.join({
+      parentSessionId: "other",
+      subagentIds: [other.subagentId],
+    });
+    expect(joined.results[0]).toMatchObject({ status: "complete", summary: "done" });
+    expect(active).toBe(0);
+  });
+
   describe("cognition-spend recording", () => {
     it("records one sample per completed child under the default subagent label", async () => {
       const { service, spendSamples } = makeHarness({

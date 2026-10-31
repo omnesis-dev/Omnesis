@@ -172,6 +172,76 @@ describe("task commands", () => {
     });
   });
 
+  function seedTaskDocument(id: string) {
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+        source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES (?, 'p', 's', ?, 'Garden reference', 'body', 'h', ?, ?, ?, ?)`,
+    ).run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+  }
+
+  test("editing task documents replaces and deduplicates attachments, and undo restores them", () => {
+    seedTaskDocument("doc_original");
+    seedTaskDocument("doc_plan");
+    seedTaskDocument("doc_quote");
+    const { loopId } = create("Prepare the garden plan", {
+      docs: ["doc_original"],
+      scheduledFor: "2026-03-12",
+    });
+    const edited = ok(
+      apply({
+        kind: "edit",
+        id: loopId,
+        fields: { docs: ["doc_plan", "doc_quote", "doc_plan"] },
+      }),
+    );
+    expect(edited.loop).toMatchObject({
+      docs: ["doc_plan", "doc_quote"],
+      title: "Prepare the garden plan",
+      scheduledFor: "2026-03-12",
+    });
+    expect(listOpenLoopLedger(db, loopId).at(-1)?.event).toMatchObject({
+      kind: "edited",
+      before: { docs: ["doc_original"] },
+      fields: [],
+    });
+    expect(ok(apply({ kind: "undo", seq: edited.eventSeq! })).loop?.docs).toEqual(["doc_original"]);
+  });
+
+  test("task attachments can be cleared and restored by undo", () => {
+    seedTaskDocument("doc_order");
+    const { loopId } = create("Review the seed order", { docs: ["doc_order"] });
+    const cleared = ok(apply({ kind: "edit", id: loopId, fields: { docs: [] } }));
+    expect(cleared.loop?.docs).toEqual([]);
+    expect(ok(apply({ kind: "undo", seq: cleared.eventSeq! })).loop?.docs).toEqual(["doc_order"]);
+  });
+
+  test("undo does not restore a document deleted after the task change", () => {
+    seedTaskDocument("doc_removed");
+    const { loopId } = create("Review the garden layout", { docs: ["doc_removed"] });
+    const edited = ok(apply({ kind: "edit", id: loopId, fields: { docs: [] } }));
+    db.prepare("DELETE FROM documents WHERE id = ?").run("doc_removed");
+    expect(ok(apply({ kind: "undo", seq: edited.eventSeq! })).loop?.docs).toEqual([]);
+  });
+
+  test("undoing an older event without a document snapshot preserves attachments", () => {
+    seedTaskDocument("doc_budget");
+    const { loopId } = create("Review the garden budget", { docs: ["doc_budget"] });
+    const edited = ok(
+      apply({ kind: "edit", id: loopId, fields: { title: "Review the planting budget" } }),
+    );
+    const event = listOpenLoopLedger(db, loopId).at(-1)!.event!;
+    delete event.before!.docs;
+    db.prepare("UPDATE open_loop_ledger SET event_json = ? WHERE seq = ?").run(
+      JSON.stringify(event),
+      edited.eventSeq,
+    );
+    expect(ok(apply({ kind: "undo", seq: edited.eventSeq! })).loop).toMatchObject({
+      title: "Review the garden budget",
+      docs: ["doc_budget"],
+    });
+  });
+
   test("a Brain suggestion is accepted before it can be scheduled or edited", () => {
     const loop = brainLoop();
     expect(apply({ kind: "migrate", id: loop.id, to: "2026-03-11" })).toMatchObject({

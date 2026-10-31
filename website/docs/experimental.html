@@ -601,28 +601,30 @@
           <strong>Accept for…</strong> a planned day, month or someday,
           <strong>Mark as done</strong> and <strong>Ignore</strong>; the portal offers the same
           actions on the suggestion's line. A note written while accepting is saved as a Tell
-          Omnesis note about that task, and the note agent applies it to the task.
-          <strong>Ignore</strong> only takes the suggestion out of Tasks: Brain keeps tracking the
-          loop behind it and does not suggest it again. Each of these can be undone from its
-          receipt. Accepting a suggestion is where you decide whether a task is worth tracking;
-          after that, Brain keeps it current on its own. It retitles a task or rewrites its
-          description when you did not write that text, adds to a description you did write, and
-          marks a task done or sets its deadline when a source states the fact explicitly and the
-          entailment verifier confirms the quoted text establishes it. Striking a task, changing
-          anything else you wrote or edited yourself, and a completion or deadline that cannot be
-          verified are proposed instead: the task shows the proposed change and its reason, with
-          <strong>Confirm</strong> to apply it or <strong>Keep</strong> to leave the task as it is.
-          A change Brain applied reads <strong>Marked done by Omnesis</strong> or
-          <strong>Updated by Omnesis</strong> in the task's history, with its reason and an
-          <strong>Undo</strong>; undoing it also keeps Brain from making that change on its own
-          again, and the next morning brief mentions such changes in one line. When a decision model
-          is assigned, a new title applies on its own only after it is checked to still name the
-          same task, and a note that only repeats a task's history is left out of it. Proposals
-          still waiting when Brain starts are checked again: one that no longer changes anything is
-          dropped, and one Brain would now apply on its own is applied. Set
-          <code>brain.tasks.autoApply</code> to <code>false</code> to have every change proposed.
-          Your own tasks never decay. Without experimental mode, neither the Suggested view nor
-          proposed changes appear.
+          Omnesis note about that task, and the note agent applies it to the task. You can also ask
+          Tell Omnesis or an interactive conversation to accept or ignore a suggestion. The agent
+          finds the suggested task and records the requested action with an undoable receipt; it
+          does not accept other suggestions on its own. <strong>Ignore</strong> only takes the
+          suggestion out of Tasks: Brain keeps tracking the loop behind it and does not suggest it
+          again. Each of these can be undone from its receipt. Accepting a suggestion is where you
+          decide whether a task is worth tracking; after that, Brain keeps it current on its own. It
+          retitles a task or rewrites its description when you did not write that text, adds to a
+          description you did write, and marks a task done or sets its deadline when a source states
+          the fact explicitly and the entailment verifier confirms the quoted text establishes it.
+          Striking a task, changing anything else you wrote or edited yourself, and a completion or
+          deadline that cannot be verified are proposed instead: the task shows the proposed change
+          and its reason, with <strong>Confirm</strong> to apply it or <strong>Keep</strong> to
+          leave the task as it is. A change Brain applied reads
+          <strong>Marked done by Omnesis</strong> or <strong>Updated by Omnesis</strong> in the
+          task's history, with its reason and an <strong>Undo</strong>; undoing it also keeps Brain
+          from making that change on its own again, and the next morning brief mentions such changes
+          in one line. When a decision model is assigned, a new title applies on its own only after
+          it is checked to still name the same task, and a note that only repeats a task's history
+          is left out of it. Proposals still waiting when Brain starts are checked again: one that
+          no longer changes anything is dropped, and one Brain would now apply on its own is
+          applied. Set <code>brain.tasks.autoApply</code> to <code>false</code> to have every change
+          proposed. Your own tasks never decay. Without experimental mode, neither the Suggested
+          view nor proposed changes appear.
         </p>
         <p>
           With a decision model assigned, a new suggestion that resembles something you reacted to

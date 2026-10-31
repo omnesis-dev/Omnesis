@@ -22,7 +22,7 @@ export function buildConversationMemoryEvidenceTool(
   return {
     name: "conversation_memory_evidence",
     description:
-      "Persist this conversation and obtain its evidence document ID and user-authored messages for durable memory. Quote only the returned user text when remembering something the user told you. Takes no arguments. If unavailable, do not claim the memory was saved.",
+      "Obtain the persisted evidence document ID and user-authored messages for this conversation or captured note. Quote only the returned user text when remembering something the user told you. Takes no arguments. If unavailable, do not claim the memory was saved.",
     schema,
     mutates: true,
     summarize: () => "",
@@ -42,7 +42,7 @@ export function buildConversationMemoryEvidenceTool(
         kind: "error",
         code: "memory_evidence_unavailable",
         message:
-          "No persisted user-message evidence is available. Conversation indexing must be available to remember facts from this chat. Do not claim the memory was saved.",
+          "No persisted user-message evidence is available. Evidence must be available to remember facts from this conversation or note. Do not claim the memory was saved.",
       };
     },
   };

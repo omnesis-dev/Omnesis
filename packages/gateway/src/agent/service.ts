@@ -1602,26 +1602,58 @@ export class AgentService {
   }
 
   /**
-   * Tool set for a top-level interactive (or voice) session. Such a session
-   * (never a sub-agent) gains the Cognition Steward's own
-   * annotation tools in every mode and broader MUTATING tools in experimental
-   * mode, so facts the user provides
-   * mid-conversation are written straight into the substrate. The handles are
-   * stamped with an interactive-origin run id so the audit trail says where a
-   * write came from. this.tools already
-   * carries the read registry (search/fetch/people/sql/loop-read/…), so
-   * buildOwnTools returns only the write surface — no read-tool duplication.
-   * Sub-agents are built from this.tools via selectSubagentTools, never this
-   * per-session array, so they never see these write tools.
+   * Shared owner-directed capabilities for chat, voice and captured notes.
+   * Each surface supplies its provenance and evidence context. Experimental
+   * gates and maintained-page write exclusions apply identically; child
+   * agents continue to receive only their restricted read registry.
    */
+  buildOwnerTools(
+    runId: string,
+    taskTools: readonly ToolHandle[],
+    evidenceTools: readonly ToolHandle[] = [],
+  ): readonly ToolHandle[] {
+    const memory = this.interactiveMemoryProfile?.buildOwnTools(runId) ?? [];
+    const experimental =
+      this.interactiveWriteProfile && experimentalVisible()
+        ? adaptInteractiveKnowledgeReads(
+            this.interactiveWriteProfile
+              .buildOwnTools(runId)
+              .filter(
+                (tool) =>
+                  !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
+                  !(tool.name.startsWith("knowledge_") && tool.mutates === true),
+              ),
+            this.tools,
+            this.documentPort.supportsKnowledgeAliases === true,
+            this.documentPort.knowledgePageRef?.bind(this.documentPort),
+          )
+        : [];
+    // The broader profile tracks annotation consumption alongside its writes.
+    const experimentalNames = new Set(experimental.map((tool) => tool.name));
+    return withTodaysTasks([
+      ...this.tools,
+      ...evidenceTools,
+      ...memory.filter((tool) => !experimentalNames.has(tool.name)),
+      ...experimental,
+      ...taskTools,
+    ]);
+  }
+
+  /** Settle this standalone owner's delegated work before releasing its runtime. */
+  async disposeOwnerTurn(sessionId: string): Promise<void> {
+    await this.subagentService?.disposeTree(sessionId);
+    this.evictChildren(sessionId);
+    this.planStore.forgetSession(sessionId);
+  }
+
   private buildInteractiveTools(
     sessionId: string,
     profile: "interactive" | "voice",
     originKind?: string,
   ): readonly ToolHandle[] {
-    const memory = this.interactiveMemoryProfile?.buildOwnTools(`interactive_${sessionId}`) ?? [];
+    const evidenceTools: ToolHandle[] = [];
     if (this.interactiveMemoryProfile && this.ensureConversationEvidence && this.store) {
-      memory.push(
+      evidenceTools.push(
         buildConversationMemoryEvidenceTool(async () => {
           const live = this.sessions.get(sessionId);
           // A watch-firing thread opens on a hidden briefing, which is not
@@ -1632,32 +1664,12 @@ export class AgentService {
         }),
       );
     }
-    const experimental =
-      this.interactiveWriteProfile && experimentalVisible()
-        ? adaptInteractiveKnowledgeReads(
-            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`).filter(
-              (tool) =>
-                !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
-                // Conversations read maintained pages; only the Brain writes them.
-                !(tool.name.startsWith("knowledge_") && tool.mutates === true),
-            ),
-            this.tools,
-            this.documentPort.supportsKnowledgeAliases === true,
-            this.documentPort.knowledgePageRef?.bind(this.documentPort),
-          )
-        : [];
     const taskTools =
       this.taskTools?.(sessionId, originKind === undefined ? {} : { originKind }) ?? [];
-    // The broader profile shares annotation consumption with loop/brief writes.
-    // Preserve those handles so their provenance tracker sees every memory read.
-    const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = withTodaysTasks([
-      ...this.tools,
+    const base = [
+      ...this.buildOwnerTools(`interactive_${sessionId}`, taskTools, evidenceTools),
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
-      ...memory.filter((tool) => !experimentalNames.has(tool.name)),
-      ...experimental,
-      ...taskTools,
-    ]);
+    ];
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that

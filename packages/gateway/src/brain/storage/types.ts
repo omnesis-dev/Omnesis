@@ -236,6 +236,8 @@ export interface TaskSnapshot {
   description: string;
   deadline: unknown | null;
   scheduledFor: TaskSchedule | null;
+  /** Absent from events recorded before task attachments were editable. */
+  docs?: string[];
   accepted: boolean;
   /** Absent from events recorded before suggestions could be ignored. */
   ignored?: boolean;
