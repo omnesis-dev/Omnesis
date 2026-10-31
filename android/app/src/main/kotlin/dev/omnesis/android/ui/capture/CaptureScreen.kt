@@ -91,14 +91,14 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun CaptureScreen(
-    noteProcessingNotice: String? = null,
-    onOpenAgentSettings: () -> Unit = {},
     onClose: () -> Unit,
     vm: CaptureViewModel = hiltViewModel(),
     onOpenSettings: () -> Unit = {},
     onOpenTask: (String) -> Unit = {},
     /** Set when the capture completes a task with its note rather than saving a note. */
     completion: TaskCompletionCapture? = null,
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
 ) {
     if (completion != null) {
         // Before the permission effect below starts listening, so this visit starts afresh.
@@ -180,8 +180,6 @@ fun CaptureScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptureContent(
-    noteProcessingNotice: String? = null,
-    onOpenAgentSettings: () -> Unit = {},
     state: CaptureUiState,
     onMicTap: () -> Unit,
     onTextChange: (String) -> Unit,
@@ -194,6 +192,8 @@ fun CaptureContent(
     completionSubject: String? = null,
     /** What the note does to that subject, which words the screen. */
     completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
