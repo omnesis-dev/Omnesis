@@ -5,7 +5,12 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { createLogger, type AgentEvent } from "@omnesis/core";
+import {
+  createLogger,
+  type AgentEvent,
+  type ToolResult,
+  type WatchUpsertedResult,
+} from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { insertNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
@@ -533,7 +538,7 @@ describe("note agent turn", () => {
           attempts: 1,
           error: null,
           receipt: {
-            text: "An action was applied before processing stopped. Review the result before asking again.",
+            text: "An action was applied before processing stopped. Review the result before asking again. Created watch “Greenhouse supplies”. Notify when greenhouse supplies are ready.",
             changes: [],
           },
         });
@@ -733,6 +738,173 @@ describe("note agent turn", () => {
       expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 2 });
     },
   );
+
+  function watchResult(overrides: Partial<WatchUpsertedResult> = {}): WatchUpsertedResult {
+    return {
+      kind: "watch.upserted",
+      watchId: "watch_greenhouse",
+      name: "greenhouse-seed-tray-delivery",
+      action: "created",
+      enabled: true,
+      interpretation: "Notify when the greenhouse seed trays are delivered.",
+      ...overrides,
+    };
+  }
+
+  async function watchReceipt(
+    results: ToolResult[],
+    options: { mixed?: boolean; fail?: boolean; uncertain?: boolean } = {},
+  ) {
+    const id = queueNote("Watch for the greenhouse delivery and carry out the requested updates.");
+    let index = 0;
+    const calls = results.map((result) => ({
+      tool:
+        result.kind === "watch.upserted"
+          ? result.action === "updated"
+            ? "watch_update"
+            : "watch_create"
+          : "watch_delete",
+      args: {},
+    }));
+    if (options.mixed) {
+      calls.push({ tool: "task_create", args: { title: "Prepare the seed trays" } });
+      calls.push({ tool: "annotate_person", args: {} });
+    }
+    if (options.uncertain) calls.push({ tool: "notes_append", args: {} });
+    const scripted = toolCallingBackend(
+      () => calls,
+      "Created the requested Greenhouse delivery reminder.",
+    );
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        for await (const event of scripted.runTurn(input))
+          if (
+            !options.fail ||
+            (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+          )
+            yield event;
+        if (options.fail) throw new Error("scripted outage after the watch call");
+      },
+    };
+    const { runner } = agent(backend, {
+      buildTools: (_, taskTools) => ({
+        tools: [
+          ...taskTools,
+          ...["watch_create", "watch_update", "watch_delete"].map((name): ToolHandle => ({
+            name,
+            description: "Persist the requested watch action.",
+            mutates: true,
+            schema: z.object({}),
+            invoke: async () => results[index++]!,
+          })),
+          {
+            name: "annotate_person",
+            description: "Remember the requested preference.",
+            mutates: true,
+            schema: z.object({}),
+            invoke: async () => ({
+              kind: "structured",
+              resultType: "person_annotation.created",
+              data: { id: "panno_preference" },
+            }),
+          },
+          {
+            name: "notes_append",
+            description: "Append requested memory.",
+            mutates: true,
+            schema: z.object({}),
+            async invoke() {
+              throw new Error("uncertain notes write");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    await runner.drain();
+    return getNoteRuns(db, [id]).get(id)!;
+  }
+
+  test("watch receipts use saved canonical names and interpretations instead of the model's invented label", async () => {
+    const run = await watchReceipt([watchResult({ summary: "A caption chosen by the model" })]);
+    expect(run.receipt?.text).toBe(
+      "Created watch “greenhouse-seed-tray-delivery”. Notify when the greenhouse seed trays are delivered.",
+    );
+    expect(run.receipt?.text).not.toContain("Greenhouse delivery reminder");
+    expect(run.receipt?.text).not.toContain("caption chosen");
+  });
+
+  test("a watch's latest update replaces its earlier name and interpretation in the receipt", async () => {
+    const run = await watchReceipt([
+      watchResult({ name: "old-seed-delivery", interpretation: "Old condition." }),
+      watchResult({
+        action: "updated",
+        name: "current-seed-delivery",
+        interpretation: "Current condition.",
+      }),
+    ]);
+    expect(run.receipt?.text).toBe("Updated watch “current-seed-delivery”. Current condition.");
+  });
+
+  test("a removed watch is not reported as still saved", async () => {
+    const run = await watchReceipt([
+      watchResult(),
+      { kind: "structured", resultType: "watch.removed", data: { watchId: "watch_greenhouse" } },
+    ]);
+    expect(run.receipt?.text).toBe("Removed watch “greenhouse-seed-tray-delivery”.");
+    expect(run.receipt?.text).not.toContain("Created");
+    const removal = await watchReceipt([
+      { kind: "structured", resultType: "watch.removed", data: { watchId: "watch_other" } },
+    ]);
+    expect(removal.receipt?.text).toBe("Removed the requested watch.");
+  });
+
+  test("a mixed watch, task and memory note reports grounded actions and advisory warnings", async () => {
+    const run = await watchReceipt(
+      [watchResult({ enabled: false, warnings: ["Push delivery is not configured."] })],
+      { mixed: true },
+    );
+    expect(run.receipt?.text).toBe(
+      "Created watch “greenhouse-seed-tray-delivery” (not enabled). Push delivery is not configured. Added: Prepare the seed trays Other changes were also applied. Notify when the greenhouse seed trays are delivered.",
+    );
+    expect(run.receipt?.changes).toEqual([
+      expect.objectContaining({
+        text: "Added: Prepare the seed trays",
+        undoSeq: expect.any(Number),
+      }),
+    ]);
+  });
+
+  test.each([false, true])(
+    "review warnings retain priority and canonical watch identity (uncertain=%s)",
+    async (uncertain) => {
+      const run = await watchReceipt(
+        [watchResult()],
+        uncertain ? { uncertain: true } : { fail: true },
+      );
+      expect(run.state).toBe("done");
+      expect(run.receipt?.text).toBe(
+        `${uncertain ? "An action may have been applied." : "An action was applied before processing stopped."} Review the result before asking again. Created watch “greenhouse-seed-tray-delivery”. Notify when the greenhouse seed trays are delivered.`,
+      );
+    },
+  );
+
+  test("a long interpretation cannot truncate the canonical name or delivery warning", async () => {
+    const run = await watchReceipt([
+      watchResult({
+        interpretation: "Detailed condition. ".repeat(150),
+        warnings: ["Push delivery is not configured."],
+      }),
+    ]);
+    expect(run.receipt?.text).toHaveLength(1000);
+    expect(
+      run.receipt?.text?.startsWith(
+        "Created watch “greenhouse-seed-tray-delivery”. Push delivery is not configured.",
+      ),
+    ).toBe(true);
+  });
 
   test("completes an existing task the note reports done", async () => {
     const created = applyTaskCommand(

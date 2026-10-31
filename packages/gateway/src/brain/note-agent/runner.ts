@@ -106,7 +106,7 @@ function budgeted(
   tools: readonly ToolHandle[],
   budget: number,
   onExhausted: () => void,
-  onMutation: (outcome: "applied" | "uncertain") => void,
+  onMutation: (outcome: "applied" | "uncertain", toolName: string, result?: ToolResult) => void,
 ): ToolHandle[] {
   let used = 0;
   return tools.map((tool) => ({
@@ -127,7 +127,7 @@ function budgeted(
         result = await tool.invoke(args, ctx);
       } catch (err) {
         // A write can commit before its follow-up work throws. Do not replay it.
-        if (consequential) onMutation("uncertain");
+        if (consequential) onMutation("uncertain", tool.name);
         throw err;
       }
       if (
@@ -137,7 +137,7 @@ function budgeted(
           ((tool.name === "watch_create" || tool.name === "watch_update") &&
             result.code === "unarmed"))
       )
-        onMutation("applied");
+        onMutation("applied", tool.name, result);
       return result;
     },
   }));
@@ -273,6 +273,17 @@ export class NoteAgent {
     let exhausted = false;
     let appliedMutation = false;
     let uncertainMutation = false;
+    let otherAppliedMutation = false;
+    const watchChanges = new Map<
+      string,
+      {
+        name: string;
+        action: "created" | "updated" | "removed";
+        enabled: boolean;
+        interpretation: string;
+        warnings: readonly string[];
+      }
+    >();
     let session: AgentSession | null = null;
     const taskTools = buildTaskTools({
       db: this.deps.db,
@@ -300,9 +311,33 @@ export class NoteAgent {
           setTimeout(() => session?.cancel(), 30_000).unref?.();
         }
       },
-      (outcome) => {
-        if (outcome === "applied") appliedMutation = true;
-        else uncertainMutation = true;
+      (outcome, toolName, result) => {
+        if (outcome === "uncertain") {
+          uncertainMutation = true;
+          return;
+        }
+        appliedMutation = true;
+        if (result?.kind === "watch.upserted") {
+          watchChanges.set(result.watchId, {
+            name: result.name,
+            action: result.action,
+            enabled: result.enabled,
+            interpretation: result.interpretation ?? "",
+            warnings: result.warnings ?? [],
+          });
+        } else if (result?.kind === "structured" && result.resultType === "watch.removed") {
+          const data = result.data as { watchId?: unknown };
+          if (typeof data.watchId === "string")
+            watchChanges.set(data.watchId, {
+              name: watchChanges.get(data.watchId)?.name ?? "",
+              action: "removed",
+              enabled: false,
+              interpretation: "",
+              warnings: [],
+            });
+        } else if (result?.kind !== "error" && !toolName.startsWith("task_")) {
+          otherAppliedMutation = true;
+        }
       },
     );
     session = new AgentSession({
@@ -398,11 +433,31 @@ export class NoteAgent {
         await this.deps.recordUsage(usage, backend.model).catch(() => undefined);
     }
     const fallback = changes.length > 0 ? changes.map((change) => change.text).join(" ") : "Saved.";
-    const receipt = uncertainMutation
+    const warning = uncertainMutation
       ? "An action may have been applied. Review the result before asking again."
       : partial
         ? "An action was applied before processing stopped. Review the result before asking again."
-        : finalText || fallback;
+        : "";
+    // Watch identities come from saved tool results, never the model's caption.
+    const watches = [...watchChanges.values()];
+    const receipt = watches.length
+      ? [
+          warning,
+          ...watches.map((watch) =>
+            watch.action === "removed"
+              ? watch.name
+                ? `Removed watch “${watch.name}”.`
+                : "Removed the requested watch."
+              : `${watch.action === "created" ? "Created" : "Updated"} watch “${watch.name}”${watch.enabled ? "" : " (not enabled)"}.`,
+          ),
+          ...watches.flatMap((watch) => watch.warnings),
+          ...changes.map((change) => change.text),
+          ...(otherAppliedMutation ? ["Other changes were also applied."] : []),
+          ...watches.map((watch) => watch.interpretation),
+        ]
+          .filter((part) => part.trim().length > 0)
+          .join(" ")
+      : warning || finalText || fallback;
     return { text: receipt.slice(0, 1000), changes };
   }
 }
