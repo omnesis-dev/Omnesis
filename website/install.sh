@@ -342,6 +342,7 @@ IMAGE_TAG=""
 COMPOSE_FILE=""
 DOCKER_SOCKET=""
 DOCKER_SOCKET_GID=""
+RECOVERY_CODE_SHOWN=0
 # Which container the CLI wrapper runs in — the gateway on a full stack, the
 # collector on a host that only collects.
 DOCKER_CLI_SERVICE="gateway"
@@ -554,14 +555,50 @@ print_manual_path_hint() {
   warn "  echo '$(path_export_line "$1")' >> $PATH_HINT_PROFILE"
 }
 
-# Append a PATH line to a shell profile under a marker, unless the profile
-# already carries it. Succeeds when the profile ends up with the line.
+# Append a PATH line ($2) to a shell profile ($1) under a marker, unless the
+# profile already carries it, or puts the directory ($3) on PATH a way of its
+# own. Succeeds when the profile ends up with the directory on PATH.
 profile_has_path_line() {
   if [ -f "$1" ] && grep -qxF "$2" "$1" 2>/dev/null; then
     return 0
   fi
+  if [ -f "$1" ] && profile_puts_on_path "$1" "$3"; then
+    return 0
+  fi
   mkdir -p "$(dirname "$1")" 2>/dev/null || return 1
   { printf '\n# Added by the Omnesis installer\n%s\n' "$2" >> "$1"; } 2>/dev/null
+}
+
+# Whether profile $1 already puts directory $2 on PATH, as its operator wrote
+# it: a PATH assignment or fish_add_path naming the directory spelled out, or
+# through $HOME, ${HOME} or ~. A PATH that lacks the directory in this run is no
+# proof the profile lacks it — a piped or SSH-run installer may never have read
+# that profile — and a second line for it is only noise there.
+profile_puts_on_path() {
+  case "$2" in
+    "$HOME"/*) PROFILE_DIR_REL="${2#"$HOME"/}" ;;
+    *) PROFILE_DIR_REL="" ;;
+  esac
+  awk -v plain="$2" -v rel="$PROFILE_DIR_REL" -v q="'" '
+    # The directory, ending where a PATH entry ends: not a prefix of another.
+    function ends(c) { return c == "" || c == ":" || c == "\"" || c == q || c == " " || c == "\t" || c == ";" || c == ")" }
+    function names(line, dir,   at, rest, after) {
+      rest = line
+      while ((at = index(rest, dir)) > 0) {
+        after = substr(rest, at + length(dir), 1)
+        if (after == "/") after = substr(rest, at + length(dir) + 1, 1)
+        if (ends(after)) return 1
+        rest = substr(rest, at + 1)
+      }
+      return 0
+    }
+    /^[[:space:]]*#/ { next }
+    /PATH|fish_add_path|path[+]?=/ {
+      if (names($0, plain)) { found = 1; exit }
+      if (rel != "" && (names($0, "$HOME/" rel) || names($0, "${HOME}/" rel) || names($0, "~/" rel))) { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$1" 2>/dev/null
 }
 
 # The directory holding the omnesis command is not on PATH. Put it in the
@@ -571,7 +608,7 @@ profile_has_path_line() {
 print_path_hint() {
   PATH_HINT_PROFILE="$(shell_profile_file)"
   PATH_HINT_LINE="$(path_export_line "$1")"
-  if [ "$MODIFY_PATH" = 1 ] && profile_has_path_line "$PATH_HINT_PROFILE" "$PATH_HINT_LINE"; then
+  if [ "$MODIFY_PATH" = 1 ] && profile_has_path_line "$PATH_HINT_PROFILE" "$PATH_HINT_LINE" "$1"; then
     info "New terminals find the omnesis command: $1 is on PATH through $PATH_HINT_PROFILE."
     info "To use it in this terminal, run: $PATH_HINT_LINE"
   else
@@ -825,7 +862,11 @@ ensure_node() {
     NODE_INSTALL_RANGE=">=24"
   fi
   if node_install_compatible; then
-    info "Node $(node --version) found"
+    # A source install checks twice, for the runtime and then for the build;
+    # the same Node is reported once.
+    NODE_FOUND_VERSION="$(node --version)"
+    [ "$NODE_FOUND_VERSION" = "${NODE_REPORTED_VERSION:-}" ] || info "Node $NODE_FOUND_VERSION found"
+    NODE_REPORTED_VERSION="$NODE_FOUND_VERSION"
     # In this shell, so cleanup_temp_files removes it; see with_npm_trust.
     : "${NPM_TRUST_DIR:=$(mktemp -d)}"
     return
@@ -3886,7 +3927,7 @@ arm_passphrase_keyring() {
     warn "$PASS_FILE is mode $PASS_MODE — every local account can read the passphrase that unseals your index. Restrict it (chmod 600) and re-run."
   fi
   docker_own_path "$PASS_FILE"
-  if OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$PASS_FILE" \
+  if cli_for_person env OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$PASS_FILE" \
        "$OMNESIS_BIN" keyring init --backend passphrase; then
     KEYRING_READY=1
     KEYRING_BACKEND=passphrase
@@ -3903,19 +3944,46 @@ arm_passphrase_keyring() {
   fi
 }
 
-# The recovery code is printed exactly once, by the command that mints it.
+# The recovery code is printed exactly once, by the command that mints it, and
+# to the terminal alone: a log this run's output is captured into is no place
+# for it. Writing to the terminal is also what gives the CLI one — natively
+# and in a container alike — so it shows the code as a person reads it rather
+# than as JSON.
 print_recovery_code() {
-  if ! OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
+  if is_promptable; then
+    OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
+      "$OMNESIS_BIN" keyring export-recovery --backend passphrase </dev/tty >/dev/tty && { RECOVERY_CODE_SHOWN=1; return 0; }
+  elif OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
          "$OMNESIS_BIN" keyring export-recovery --backend passphrase; then
-    warn "Could not write a recovery envelope. Create one later with: omnesis keyring export-recovery"
+    return 0
   fi
+  warn "Could not write a recovery envelope. Create one later with: omnesis keyring export-recovery"
+}
+
+# Run a CLI step whose output is for the person running this installer: the
+# command and its arguments are "$@". Natively the CLI writes to this run's
+# own output. Under --docker it runs in a container, which gets a terminal only
+# when the launcher's input is one, and without a terminal the CLI answers in
+# JSON meant for a program. So a Docker run hands it the terminal when there
+# is one, and otherwise keeps that JSON out of the output: the line this
+# installer prints next says what the step did. Errors still show.
+cli_for_person() {
+  if [ "$DOCKER" = 1 ]; then
+    if is_promptable; then
+      "$@" </dev/tty
+    else
+      "$@" >/dev/null
+    fi
+    return
+  fi
+  "$@"
 }
 
 setup_keyring_migrate() {
   [ "$WANT_KEYRING" = 1 ] || return 0
   [ "$KEYRING_READY" = 1 ] || return 0
   if [ "$KEYRING_BACKEND" = passphrase ]; then
-    if OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
+    if cli_for_person env OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
          "$OMNESIS_BIN" keyring migrate --backend passphrase; then
       info "Credential/token files migrated to keyring-wrapped storage."
     else
@@ -4883,7 +4951,7 @@ setup_collector_storage_keys() {
   [ "$KEYRING_READY" = 1 ] || return 0
   info "Preparing this collector's live-storage keys..."
   if [ "$KEYRING_BACKEND" = passphrase ]; then
-    if OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
+    if cli_for_person env OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
          "$OMNESIS_BIN" keyring storage-init --host collector --backend passphrase; then
       STORAGE_KEYS_READY=1
     fi
@@ -5334,7 +5402,9 @@ docker_require_compose_version() {
 
 # The Unix socket this host's Docker client talks to, and the group that owns
 # it. The one-shot update container needs that group to reach the daemon while
-# still running as this account rather than as root.
+# still running as this account rather than as root. What this host's `stat`
+# says is only a first guess: docker_probe_socket_group asks a container once
+# the images are here, because that is where the group has to match.
 docker_socket_facts() {
   DOCKER_SOCKET="/var/run/docker.sock"
   DOCKER_ENDPOINT="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
@@ -6757,19 +6827,40 @@ docker_tls_prepare() {
 docker_write_compose() {
   COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
   COMPOSE_PROJECT="$(docker_project_name)"
-  {
-    printf '# Generated by the Omnesis installer (install.sh --docker). Re-running the\n'
-    printf '# installer rewrites it.\n'
-    printf '#\n'
-    printf '# The image tag is OMNESIS_IMAGE_TAG in the .env file beside this one.\n'
-    printf 'name: %s\n' "$COMPOSE_PROJECT"
-    printf 'services:\n'
-    [ "$COLLECTOR" = 1 ] || docker_compose_gateway_service
-    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_compose_collector_service; fi
-    docker_compose_updater_service
-  } > "$COMPOSE_FILE"
+  docker_render_compose > "$COMPOSE_FILE"
   set_env OMNESIS_IMAGE_TAG "$IMAGE_TAG"
   info "Wrote $COMPOSE_FILE"
+}
+
+docker_render_compose() {
+  printf '# Generated by the Omnesis installer (install.sh --docker). Re-running the\n'
+  printf '# installer rewrites it.\n'
+  printf '#\n'
+  printf '# The image tag is OMNESIS_IMAGE_TAG in the .env file beside this one.\n'
+  printf 'name: %s\n' "$COMPOSE_PROJECT"
+  printf 'services:\n'
+  [ "$COLLECTOR" = 1 ] || docker_compose_gateway_service
+  if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_compose_collector_service; fi
+  docker_compose_updater_service
+}
+
+# The group the update container has to join is the one the socket has INSIDE
+# a container, and that is not always the one it has on this host. Docker
+# Desktop, OrbStack and colima run the daemon in a Linux VM and hand a
+# container the VM's side of the socket, owned by root there whatever owns the
+# file on the Mac; rootless Docker maps its owner to the container's root. So
+# the updater image is asked, through the very service, mount and account an
+# update runs with. When it cannot answer, the host's group stands, which is
+# the right one on a Docker Engine host.
+docker_probe_socket_group() {
+  PROBED_SOCKET_GID="$(docker compose -f "$COMPOSE_FILE" --progress quiet --profile update \
+    run --rm --no-deps -T --entrypoint stat updater -c '%g' /var/run/docker.sock 2>/dev/null </dev/null \
+    | tr -d '\r' | sed -n '$p')" || PROBED_SOCKET_GID=""
+  case "$PROBED_SOCKET_GID" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$PROBED_SOCKET_GID" != "$DOCKER_SOCKET_GID" ] || return 0
+  info "Containers see the Docker socket as group $PROBED_SOCKET_GID${DOCKER_SOCKET_GID:+ (group $DOCKER_SOCKET_GID on this host)}; the update container joins that group."
+  DOCKER_SOCKET_GID="$PROBED_SOCKET_GID"
+  docker_render_compose > "$COMPOSE_FILE"
 }
 
 # How this config directory's install runs, for `omnesis update` to read. A
@@ -6863,6 +6954,18 @@ if [ "${1:-}" = uninstall ]; then
   # it lives outside the config directory, so --purge alone would leave it.
   UNINSTALL_RENEW="$HOME/.local/share/omnesis/$(sed -n 's/^name: *//p' "$COMPOSE_FILE" 2>/dev/null | head -n 1)-tls-renew.sh"
   [ ! -f "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
+  # The PATH line the installer added goes too, as it does for a native
+  # install, unless other programs share the directory it puts on PATH.
+  UNINSTALL_SHARED=0
+  [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null | grep -vx omnesis)" ] || UNINSTALL_SHARED=1
+  for UNINSTALL_PROFILE in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+    [ -f "$UNINSTALL_PROFILE" ] && grep -qxF '# Added by the Omnesis installer' "$UNINSTALL_PROFILE" || continue
+    if [ "$UNINSTALL_SHARED" = 0 ]; then
+      printf '  - %s\n' "Remove the installer's PATH line from $UNINSTALL_PROFILE"
+    else
+      printf '  %s\n' "The installer's PATH line for $UNINSTALL_BIN stays in $UNINSTALL_PROFILE: other programs live there."
+    fi
+  done
   # A collector is a device of a gateway elsewhere, which keeps it, and the
   # sources it hosts, until it is removed there; the same note a native
   # collector's uninstall leaves.
@@ -7121,6 +7224,9 @@ fi
 # moment a command is piped or captured. Ask for one only when there is one.
 TTY_FLAG=""
 [ -t 0 ] || TTY_FLAG="-T"
+# Every `run` below is quiet (--progress quiet): Compose's account of creating
+# the one-shot container — "Container … Creating", "Created" — would otherwise
+# wrap the command's own output. Its errors still print.
 
 # The command line is assembled in the positional parameters, because a POSIX
 # shell has exactly one argument list and this needs the flags before the
@@ -7169,7 +7275,7 @@ while [ "$ARG_COUNT" -gt 0 ]; do
 done
 
 if [ "$UPDATE" = 1 ]; then
-  exec docker compose -f "$COMPOSE_FILE" --profile update run --rm --no-deps $TTY_FLAG "$@"
+  exec docker compose -f "$COMPOSE_FILE" --progress quiet --profile update run --rm --no-deps $TTY_FLAG "$@"
 fi
 service_running() {
   docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -qx "$SERVICE"
@@ -7181,7 +7287,7 @@ if [ "$SECURE" = 1 ]; then
   if service_running; then
     docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@" || SECURE_STATUS=$?
   else
-    docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@" || SECURE_STATUS=$?
+    docker compose -f "$COMPOSE_FILE" --progress quiet run --rm --no-deps $TTY_FLAG "$@" || SECURE_STATUS=$?
   fi
   if [ "$SECURE_STATUS" != 0 ] || [ ! -f "$RESTART_REQUEST" ]; then
     rm -f "$RESTART_REQUEST"
@@ -7203,7 +7309,7 @@ if [ "$SECURE" = 1 ]; then
   if service_running; then
     exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$SERVICE" omnesis secure --verify
   fi
-  exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$SERVICE" omnesis secure --verify
+  exec docker compose -f "$COMPOSE_FILE" --progress quiet run --rm --no-deps $TTY_FLAG "$SERVICE" omnesis secure --verify
 fi
 if [ "$SHARE_OFFER" = 1 ]; then
   rm -f "$SHARE_REQUEST"
@@ -7246,7 +7352,7 @@ fi
 if service_running; then
   exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@"
 fi
-exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@"
+exec docker compose -f "$COMPOSE_FILE" --progress quiet run --rm --no-deps $TTY_FLAG "$@"
 WRAPPER_EOF
 }
 
@@ -7285,8 +7391,9 @@ docker_fetch_images() {
       fail "Building the images failed. Read the output above; the compose file is $COMPOSE_FILE."
     return 0
   fi
-  info "Pulling the $IMAGE_TAG images..."
+  info "Pulling the $IMAGE_TAG images from $IMAGE_REPO..."
   REGISTRY_DIAGNOSTIC="$REGISTRY_TMP_DIR/pull.err"
+  DOCKER_PULLED_SERVICES=""
   # A pull opens a hundred or so connections to the registry and its blob
   # store, and Docker gives up on the whole image when one of them is refused.
   # Layers that already landed stay, so another attempt only fetches the rest.
@@ -7308,23 +7415,43 @@ docker_fetch_images() {
   fail "Could not pull the required $IMAGE_REPO images at tag $IMAGE_TAG after $DOCKER_PULL_ATTEMPTS attempts; the output above names the request that failed. Check this host's network connection to the registry and re-run, which keeps the layers already downloaded. A checkout of the repository can build the images itself: scripts/install.sh --docker --build."
 }
 
-# One `compose pull`, its errors shown as they happen and kept in
-# REGISTRY_DIAGNOSTIC for classification.
+# One pass over the images still to pull, one service at a time, each with a
+# line of its own. Compose's own progress is left out: written anywhere but a
+# terminal it is a line per layer per state change, hundreds of them, and the
+# errors are the only part worth keeping. Those are shown and kept in
+# REGISTRY_DIAGNOSTIC for classification. A service pulled by an earlier pass
+# is not pulled again.
 docker_pull_images_once() {
-  REGISTRY_PULL_PIPE="$REGISTRY_TMP_DIR/pull.pipe"
-  REGISTRY_PULL_STATUS=0
-  rm -f "$REGISTRY_PULL_PIPE"
-  if command -v mkfifo >/dev/null 2>&1 && command -v tee >/dev/null 2>&1 && mkfifo "$REGISTRY_PULL_PIPE" 2>/dev/null; then
-    tee "$REGISTRY_DIAGNOSTIC" < "$REGISTRY_PULL_PIPE" >&2 &
-    REGISTRY_TEE_PID=$!
-    docker compose -f "$COMPOSE_FILE" --profile update pull 2>"$REGISTRY_PULL_PIPE" || REGISTRY_PULL_STATUS=$?
-    wait "$REGISTRY_TEE_PID" || true
-    rm -f "$REGISTRY_PULL_PIPE"
-  else
-    docker compose -f "$COMPOSE_FILE" --profile update pull 2>"$REGISTRY_DIAGNOSTIC" || REGISTRY_PULL_STATUS=$?
+  : > "$REGISTRY_DIAGNOSTIC"
+  set -- $(docker_pull_services)
+  PULL_TOTAL=$#
+  PULL_INDEX=0
+  for PULL_SERVICE in "$@"; do
+    PULL_INDEX=$((PULL_INDEX + 1))
+    case " $DOCKER_PULLED_SERVICES " in *" $PULL_SERVICE "*) continue ;; esac
+    info "  [$PULL_INDEX/$PULL_TOTAL] $(docker_service_image "$PULL_SERVICE"):$IMAGE_TAG"
+    if docker compose -f "$COMPOSE_FILE" --profile update pull --quiet "$PULL_SERVICE" 2>"$REGISTRY_DIAGNOSTIC"; then
+      DOCKER_PULLED_SERVICES="$DOCKER_PULLED_SERVICES $PULL_SERVICE"
+      continue
+    fi
     cat "$REGISTRY_DIAGNOSTIC" >&2
-  fi
-  return "$REGISTRY_PULL_STATUS"
+    return 1
+  done
+}
+
+# The services this install pulls, in the order the compose file declares them.
+docker_pull_services() {
+  [ "$COLLECTOR" = 1 ] || printf 'gateway\n'
+  if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then printf 'collector\n'; fi
+  printf 'updater\n'
+}
+
+# The image a service runs, without the registry, as a pull names it.
+docker_service_image() {
+  case "$1" in
+    gateway) if [ "$DOCKER_COMBINED" = 1 ]; then printf 'omnesis-combined'; else printf 'omnesis-gateway'; fi ;;
+    *) printf 'omnesis-%s' "$1" ;;
+  esac
 }
 
 docker_up() {
@@ -7442,6 +7569,7 @@ print_docker_collector_banner() {
     echo ""
     echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
     echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
+    [ "$RECOVERY_CODE_SHOWN" = 0 ] || echo "    The recovery code shown above recovers your data if that file is lost."
   fi
   print_path_hints
   echo ""
@@ -7514,13 +7642,16 @@ print_docker_banner() {
     print_docker_self_signed_join
   fi
   echo ""
-  if [ "$DOCKER_NETWORK" = bridge ]; then
+  # Host networking puts a container on the LAN only where the daemon runs on
+  # this host's own network stack: Linux. Elsewhere the tip has no use.
+  if [ "$DOCKER_NETWORK" = bridge ] && [ "$PLATFORM" = linux ]; then
     echo "  - Multicast does not cross the Docker bridge. For Linux LAN discovery,"
     echo "    use --docker-network host; collectors can always use --gateway-url."
   fi
   if [ "$KEYRING_READY" = 1 ]; then
     echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
     echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
+    [ "$RECOVERY_CODE_SHOWN" = 0 ] || echo "    The recovery code shown above recovers your data if that file is lost."
   else
     echo "  - A container has no OS keyring, so nothing is encrypted at rest yet. Arm"
     echo "    the passphrase backend with: omnesis secure"
@@ -7656,6 +7787,7 @@ docker_install() {
   docker_record_method
   docker_tls_renewal_install
   docker_fetch_images
+  docker_probe_socket_group
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
   # The catalog answers from the image, so the question can be asked — and

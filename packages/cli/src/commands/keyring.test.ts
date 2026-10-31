@@ -16,6 +16,7 @@ import {
   collectSecretFileCandidates,
   keyringCommand,
   migrateInlineConfigApiKeys,
+  recoveryCodePurpose,
 } from "./keyring.js";
 
 const dirs: string[] = [];
@@ -220,5 +221,25 @@ describe("keyring storage-init --host", () => {
     const dir = tmp("omnesis-keyring-badhost-");
     await expect(storageInit(dir, ["--host", "phone"])).rejects.toThrow(/Invalid --host/u);
     expect(await presentKeys(dir, ALL)).toEqual([]);
+  });
+});
+
+describe("recoveryCodePurpose", () => {
+  // A passphrase-backed install loses its key with the file that seals it,
+  // not with an OS keyring it never had.
+  test("names the passphrase file on the passphrase backend", () => {
+    const lines = recoveryCodePurpose("passphrase", {
+      OMNESIS_KEYRING_PASSPHRASE_FILE: "/home/maya/.config/omnesis/keyring.pass",
+    }).join(" ");
+    expect(lines).toContain("if the passphrase file that seals it");
+    expect(lines).toContain("(/home/maya/.config/omnesis/keyring.pass) is lost");
+    expect(lines).not.toContain("OS keyring");
+    expect(recoveryCodePurpose("passphrase", {}).join(" ")).toContain("that seals it is lost");
+  });
+
+  test("names the OS keyring otherwise", () => {
+    for (const backend of ["auto", "macos-keychain", "secret-service"] as const) {
+      expect(recoveryCodePurpose(backend, {}).join(" ")).toContain("lose the OS keyring");
+    }
   });
 });

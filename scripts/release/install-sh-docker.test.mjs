@@ -62,7 +62,7 @@ const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
   info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
-  context) printf 'unix:///var/run/docker.sock\\n'; exit 0 ;;
+  context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -92,8 +92,12 @@ esac
 # so an exact word match cannot confuse the two.
 SEEN=0
 CLI_ARGS=""
+# Compose gives the container a terminal unless it is run with -T, and the CLI
+# answers a person on one and a program, in JSON, without.
+CLI_TTY=1
 for ARG in "$@"; do
   if [ "$SEEN" = 1 ]; then CLI_ARGS="$CLI_ARGS $ARG"; continue; fi
+  if [ "$ARG" = -T ]; then CLI_TTY=0; fi
   if [ "$ARG" = omnesis ]; then SEEN=1; fi
 done
 
@@ -113,6 +117,22 @@ if [ "$SEEN" = 1 ]; then
       if [ "$2 \${3:-} \${4:-}" = "pair --kind portal" ]; then
         printf '\\n\\033[1mPairing code:\\033[0m \\033[36m%s\\033[0m\\n\\033[2mExpires in 599s. Scopes: admin\\033[0m\\n' "\${OMNESIS_TEST_PORTAL_CODE:-3F9A0C21BE}"
       fi
+      ;;
+    keyring)
+      # What the real commands print, for a person and for a program. The
+      # recovery code is a fixture's, recognisable wherever it lands.
+      case "$2" in
+        init)
+          if [ "$CLI_TTY" = 1 ]; then echo "Install root key ready (passphrase)."
+          else printf '{ "keyName": "install-root-key-v1", "created": true }\n'; fi ;;
+        export-recovery)
+          if [ "$CLI_TTY" = 1 ]; then
+            printf '\nOmnesis recovery code\n\n    RCVR-FIXT-CODE-0001\n\nWrite this down and keep it offline — it is shown only once.\n'
+          else printf '{ "recoveryCode": "RCVR-FIXT-CODE-0001", "envelopePath": "/x" }\n'; fi ;;
+        migrate|storage-init)
+          if [ "$CLI_TTY" = 1 ]; then echo "Migrated 2 secret files."
+          else printf '{ "candidates": 2, "present": 0, "encrypted": 0 }\n'; fi ;;
+      esac
       ;;
     pair)
       if [ -t 0 ]; then printf 'pair stdin is a tty\n' >> "$OMNESIS_TEST_CALLS"; fi
@@ -144,9 +164,29 @@ for ARG in "$@"; do
         awk '/^  [a-z-]+:/ { sub(/:$/, "", $1); print $1 }' "$3"
       fi
       exit 0 ;;
+    stat)
+      # The socket's group as a container sees it, asked through the updater.
+      [ -z "\${OMNESIS_TEST_SOCKET_GID:-}" ] || printf '%s\r\n' "$OMNESIS_TEST_SOCKET_GID"
+      exit 0 ;;
     pull)
+      for PULLED in "$@"; do :; done
+      # Compose's progress, written anywhere but a terminal: a line per layer
+      # per state change.
+      case " $* " in
+        *" --quiet "*) ;;
+        *) for LAYER in a290a7533579 b3c1d2e4f5a6; do
+             printf ' %s Downloading 358.6MB\n %s Extracting 3B\n' "$LAYER" "$LAYER" >&2
+           done ;;
+      esac
+      # Failures are counted across every pull, or across one service's when
+      # OMNESIS_TEST_PULL_FAIL_SERVICE names it.
+      PULL_PATTERN='--profile update pull'
+      if [ -n "\${OMNESIS_TEST_PULL_FAIL_SERVICE:-}" ]; then
+        [ "$PULLED" = "$OMNESIS_TEST_PULL_FAIL_SERVICE" ] || exit 0
+        PULL_PATTERN="--profile update pull.* $PULLED$"
+      fi
       if [ -n "\${OMNESIS_TEST_PULL_FAIL_TIMES:-}" ] && \\
-         [ "$(grep -c -- '--profile update pull' "$OMNESIS_TEST_DOCKER")" -le "$OMNESIS_TEST_PULL_FAIL_TIMES" ]; then
+         [ "$(grep -c -- "$PULL_PATTERN" "$OMNESIS_TEST_DOCKER")" -le "$OMNESIS_TEST_PULL_FAIL_TIMES" ]; then
         echo "\${OMNESIS_TEST_PULL_ERROR:-dial tcp 20.26.156.211:443: connect: connection refused}" >&2
         exit 1
       fi
@@ -544,13 +584,16 @@ describe("install.sh --docker: what it puts on this host", () => {
     // Commands run in the live container when there is one...
     expect(wrapper).toContain('exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG "$@"');
     // ...and in a throwaway one when there is not.
+    // Quietly: Compose's "Container … Creating" lines would wrap the output.
     expect(wrapper).toContain(
-      'exec docker compose -f "$COMPOSE_FILE" run --rm --no-deps $TTY_FLAG "$@"',
+      'exec docker compose -f "$COMPOSE_FILE" --progress quiet run --rm --no-deps $TTY_FLAG "$@"',
     );
     // `update` moves the containers themselves, so it is the one command that
     // runs beside them rather than inside one.
     expect(wrapper).toContain('if [ "${1:-}" = update ]; then UPDATE=1; fi');
-    expect(wrapper).toContain('--profile update run --rm --no-deps $TTY_FLAG "$@"');
+    expect(wrapper).toContain(
+      '--progress quiet --profile update run --rm --no-deps $TTY_FLAG "$@"',
+    );
     // The container's own paths, URL and port never come from the host's
     // environment.
     expect(wrapper).toContain("OMNESIS_CONFIG_DIR|OMNESIS_GATEWAY_URL|OMNESIS_GATEWAY_PORT");
@@ -1155,7 +1198,15 @@ describe("install.sh --docker: what it puts on this host", () => {
   test("a pull a refused connection broke is tried again, keeping what it downloaded", () => {
     const run = runInstaller("pull-transient", QUIET, { OMNESIS_TEST_PULL_FAIL_TIMES: "2" });
     expect(run.status, run.output).toBe(0);
-    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(3);
+    const pull = (service) =>
+      `docker compose -f ${run.configDir}/docker-compose.yml --profile update pull --quiet ${service}`;
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toEqual([
+      pull("gateway"),
+      pull("gateway"),
+      pull("gateway"),
+      pull("collector"),
+      pull("updater"),
+    ]);
     expect(run.output).toContain("connection refused");
     expect(run.output).toContain("attempt 1 of 3");
     expect(run.output).toContain("attempt 2 of 3");
@@ -1213,18 +1264,6 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).not.toContain("fixture-token");
     expect(run.docker.some((call) => call.startsWith("docker login"))).toBe(false);
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
-  });
-
-  test("pull authentication still classifies when FIFO streaming is unavailable", () => {
-    writeExecutable(fixturePath("fake-bin", "mkfifo"), "#!/bin/sh\nexit 1\n");
-    const run = runInstaller("pull-auth-no-fifo", QUIET, {
-      OMNESIS_TEST_MANIFEST_MODE: "unsupported",
-      OMNESIS_TEST_PULL_FAIL: "1",
-      OMNESIS_TEST_PULL_ERROR: "unauthorized: authentication required",
-    });
-    expect(run.status).not.toBe(0);
-    expect(run.output).toContain("docker login ghcr.io");
-    expect(run.output).toContain("authentication required");
   });
 
   test("a pull missing-image failure does not blame whichever image was inspected last", () => {
@@ -2302,11 +2341,11 @@ exit 0
     const proc = secure(run, [], { SHIM_RUNNING: "" });
     expect(proc.status, proc.stderr).toBe(0);
     expect(proc.docker).toContain(
-      `compose -f ${compose} run --rm --no-deps -T --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis secure`,
+      `compose -f ${compose} --progress quiet run --rm --no-deps -T --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis secure`,
     );
     expect(proc.docker).toContain(`compose -f ${compose} restart gateway collector`);
     expect(proc.docker.at(-1)).toBe(
-      `compose -f ${compose} run --rm --no-deps -T gateway omnesis secure --verify`,
+      `compose -f ${compose} --progress quiet run --rm --no-deps -T gateway omnesis secure --verify`,
     );
   });
 
@@ -2475,7 +2514,21 @@ describe("the wrapper's uninstall, on the host", () => {
     const run = runInstaller("uninstall-shared-bin", QUIET);
     const profile = profileWithPathLine(run);
     writeExecutable(join(run.home, ".local", "bin", "uv"), "#!/bin/sh\n");
-    expect(runWrapper(run, ["uninstall", "--yes"]).status).toBe(0);
+    const proc = runWrapper(run, ["uninstall", "--yes"]);
+    expect(proc.status).toBe(0);
+    expect(readFileSync(profile, "utf8")).toContain("# Added by the Omnesis installer");
+    // Said, as a native uninstall says it, rather than left for the operator to find.
+    expect(proc.stdout).toContain(
+      `The installer's PATH line for ${run.home}/.local/bin stays in ${profile}: other programs live there.`,
+    );
+  });
+
+  test("the plan names the PATH line it removes", () => {
+    const run = runInstaller("uninstall-plan-path", QUIET);
+    const profile = profileWithPathLine(run);
+    const dry = runWrapper(run, ["uninstall", "--dry-run"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain(`Remove the installer's PATH line from ${profile}`);
     expect(readFileSync(profile, "utf8")).toContain("# Added by the Omnesis installer");
   });
 
@@ -3237,5 +3290,214 @@ exit 0
     expect(existsSync(join(units, "omnesis-tls-renew.timer"))).toBe(true);
     expect(run.calls).toContain("systemctl enable --now omnesis-tls-renew.timer");
     expect(readFileSync(renewScript(run), "utf8")).toContain("OWNER='10001:10001'");
+  });
+});
+
+describe("install.sh --docker: the socket group the update container joins", () => {
+  /** A socket this host's `stat` reads as owned by this test's own group. */
+  function hostSocket(name) {
+    const path = join(prepareHome(name), "docker.sock");
+    writeFileSync(path, "");
+    return { path, gid: String(statSync(path).gid) };
+  }
+
+  function installWithSocket(name, socket, inside) {
+    return runInstaller(name, QUIET, {
+      OMNESIS_TEST_DOCKER_ENDPOINT: `unix://${socket.path}`,
+      ...(inside === undefined ? {} : { OMNESIS_TEST_SOCKET_GID: inside }),
+    });
+  }
+
+  const probe = (run) =>
+    `docker compose -f ${run.configDir}/docker-compose.yml --progress quiet --profile update ` +
+    "run --rm --no-deps -T --entrypoint stat updater -c %g /var/run/docker.sock";
+
+  // A daemon in a VM hands a container the VM's side of the socket, owned by
+  // root there whatever owns the file on this host; a rootless daemon maps the
+  // owner to the container's root. Either way the host's group is the wrong one.
+  test("a socket a container sees under another group gets that group", () => {
+    const socket = hostSocket("socket-vm");
+    const inside = socket.gid === "0" ? "4242" : "0";
+    const run = installWithSocket("socket-vm", socket, inside);
+    expect(run.status, run.output).toBe(0);
+    const updater = parseYaml(composeAt(run)).services.updater;
+    expect(updater.group_add).toEqual([inside]);
+    expect(updater.volumes).toContain(`${socket.path}:/var/run/docker.sock`);
+    expect(run.output).toContain(
+      `Containers see the Docker socket as group ${inside} (group ${socket.gid} on this host)`,
+    );
+    // Asked through the updater itself, once its image is on this host.
+    const lastPull = run.docker.findLastIndex((call) => call.includes("--profile update pull"));
+    expect(run.docker.indexOf(probe(run))).toBeGreaterThan(lastPull);
+    // Only the group moved: the rest of the project is what it was.
+    const rest = (text) => text.replace(/ {4}group_add:\n {6}- "\d+"\n/u, "");
+    const engine = installWithSocket("socket-vm-engine", hostSocket("socket-vm-engine"));
+    expect(rest(composeAt(run)).replaceAll(run.home, "~")).toBe(
+      rest(composeAt(engine)).replaceAll(engine.home, "~"),
+    );
+  });
+
+  test("a socket a container sees as this host does keeps the host's group, quietly", () => {
+    const socket = hostSocket("socket-engine");
+    const run = installWithSocket("socket-engine", socket, socket.gid);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).services.updater.group_add).toEqual([socket.gid]);
+    expect(run.docker).toContain(probe(run));
+    expect(run.output).not.toContain("Containers see the Docker socket");
+  });
+
+  test("a probe that cannot answer leaves the host's group", () => {
+    const socket = hostSocket("socket-unanswered");
+    const run = installWithSocket("socket-unanswered", socket);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).services.updater.group_add).toEqual([socket.gid]);
+  });
+});
+
+describe("install.sh --docker: what an operator reads", () => {
+  test("the images are pulled quietly, one line each", () => {
+    const run = runInstaller("pull-quiet", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const pull = (service) =>
+      `docker compose -f ${run.configDir}/docker-compose.yml --profile update pull --quiet ${service}`;
+    expect(run.docker.filter((call) => call.includes(" pull"))).toEqual([
+      pull("gateway"),
+      pull("collector"),
+      pull("updater"),
+    ]);
+    expect(run.output).not.toMatch(/Extracting|Downloading/u);
+    expect(run.output).toContain("Pulling the 9.9.0 images from ghcr.io/omnesis-dev...");
+    for (const line of [
+      "[1/3] omnesis-gateway:9.9.0",
+      "[2/3] omnesis-collector:9.9.0",
+      "[3/3] omnesis-updater:9.9.0",
+    ]) {
+      expect(run.output).toContain(line);
+    }
+
+    const combined = runInstaller("pull-quiet-combined", [...QUIET, "--combined"]);
+    expect(combined.status, combined.output).toBe(0);
+    expect(combined.output).toContain("[1/2] omnesis-combined:9.9.0");
+    expect(combined.output).toContain("[2/2] omnesis-updater:9.9.0");
+  });
+
+  test("a retry pulls only what the failed attempt did not", () => {
+    const run = runInstaller("pull-retry-rest", QUIET, {
+      OMNESIS_TEST_PULL_FAIL_SERVICE: "updater",
+      OMNESIS_TEST_PULL_FAIL_TIMES: "1",
+    });
+    expect(run.status, run.output).toBe(0);
+    expect(
+      run.docker.filter((call) => call.includes(" pull")).map((call) => call.split(" ").at(-1)),
+    ).toEqual(["gateway", "collector", "updater", "updater"]);
+    // Its error is shown, once, beside the retry it caused.
+    expect(run.output.split("connection refused")).toHaveLength(2);
+    expect(run.output).toContain("attempt 1 of 3");
+  });
+
+  test.each([
+    ["Darwin", false],
+    ["Linux", true],
+  ])("the bridge multicast tip on a %s host: %s", (os, shown) => {
+    writeExecutable(
+      fixturePath("fake-bin", "uname"),
+      `#!/bin/sh\ncase "$1" in -m) echo ${os === "Darwin" ? "arm64" : "x86_64"} ;; *) echo ${os} ;; esac\n`,
+    );
+    const run = runInstaller(`multicast-${os}`, QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output.includes("Multicast does not cross the Docker bridge")).toBe(shown);
+  });
+
+  test("a profile that already puts ~/.local/bin on PATH is left as it is", () => {
+    for (const line of [
+      'export PATH="$HOME/.local/bin:$PATH"',
+      "path=(~/.local/bin $path)",
+      'export PATH="${HOME}/.local/bin/:$PATH"',
+    ]) {
+      const name = `path-own-${line.length}`;
+      const profile = join(prepareHome(name), ".zshrc");
+      writeFileSync(profile, `export EDITOR=vim\n${line}\n`);
+      const run = runInstaller(name, QUIET);
+      expect(run.status, run.output).toBe(0);
+      expect(readFileSync(profile, "utf8")).toBe(`export EDITOR=vim\n${line}\n`);
+      expect(run.output).toContain(`is on PATH through ${profile}`);
+    }
+  });
+
+  test("a profile naming only another directory under it still gets the line, once", () => {
+    const name = "path-other-dir";
+    const profile = join(prepareHome(name), ".zshrc");
+    writeFileSync(profile, 'export PATH="$HOME/.local/bin/tools:$PATH"\n# ~/.local/bin\n');
+    expect(runInstaller(name, QUIET).status).toBe(0);
+    expect(runInstaller(name, QUIET).status).toBe(0);
+    expect(readFileSync(profile, "utf8").split("# Added by the Omnesis installer")).toHaveLength(2);
+  });
+});
+
+describe.skipIf(!HAS_PTY)("install.sh --docker: the keyring steps on a terminal", () => {
+  const RECOVERY_CODE = "RCVR-FIXT-CODE-0001";
+  const ENCRYPT = ["--docker", "--no-model", "--version", "9.9.0"];
+
+  /** On a terminal, its input the pipe `curl … | sh` gives it. */
+  function oneLiner(name, extra = {}) {
+    const home = prepareHome(name);
+    const run = runInstallerOnTtyRaw(name, ENCRYPT, [""], withDockerEnv(home), {
+      pipedStdin: true,
+      ...extra,
+    });
+    return { ...run, docker: readDockerCalls(run.home) };
+  }
+
+  test("each step speaks to the person, and the recovery code is shown once", () => {
+    const run = oneLiner("keyring-human");
+    expect(run.status, run.output).toBe(0);
+    expect(run.output.split(RECOVERY_CODE)).toHaveLength(2);
+    expect(run.output).toContain("Write this down and keep it offline");
+    expect(run.output).toContain("Install root key ready (passphrase).");
+    expect(run.output).toContain("Migrated 2 secret files.");
+    for (const json of ['"recoveryCode"', '"keyName"', '"candidates"']) {
+      expect(run.output).not.toContain(json);
+    }
+    // The containers were given the terminal: none of these ran with -T.
+    const keyringCalls = run.docker.filter((call) => call.includes(" omnesis keyring "));
+    expect(keyringCalls.length).toBeGreaterThanOrEqual(3);
+    for (const call of keyringCalls) expect(call).not.toContain(" -T ");
+    expect(run.output).toContain(
+      "The recovery code shown above recovers your data if that file is lost.",
+    );
+  });
+
+  test("captured into a log, the run keeps the recovery code on the terminal", () => {
+    const name = "keyring-logged";
+    const log = join(prepareHome(name), "install.log");
+    const run = oneLiner(name, { stdoutFile: log });
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(RECOVERY_CODE);
+    expect(readFileSync(log, "utf8")).not.toContain(RECOVERY_CODE);
+  });
+});
+
+describe("install.sh --docker: the keyring steps without a terminal", () => {
+  test("arming from a passphrase file prints the installer's lines, not the CLI's JSON", () => {
+    const name = "keyring-headless";
+    const configDir = join(prepareHome(name), ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true });
+    const pass = join(configDir, "keyring.pass");
+    writeFileSync(pass, "fictional-passphrase-for-tests\n", { mode: 0o600 });
+    const run = runInstaller(name, [
+      "--docker",
+      "--no-model",
+      "--version",
+      "9.9.0",
+      "--keyring-passphrase-file",
+      pass,
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(callStartingWith(run.calls, "keyring init")).toBe("keyring init --backend passphrase");
+    expect(run.output).toContain("Passphrase keyring armed — encryption at rest is on.");
+    expect(run.output).toContain("Credential/token files migrated to keyring-wrapped storage.");
+    for (const leak of ['"keyName"', '"candidates"', "RCVR-FIXT-CODE-0001"]) {
+      expect(run.output).not.toContain(leak);
+    }
   });
 });

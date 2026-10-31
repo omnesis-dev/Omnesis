@@ -7,6 +7,7 @@ import { defineCommand, runCommand } from "citty";
 import {
   DEFAULT_CONFIG_DIR,
   ENCRYPTED_ARTIFACT_SUFFIX,
+  PASSPHRASE_FILE_ENV,
   SECRET_STORE_BACKENDS,
   atomicWriteFileSync,
   clearConfigSecretRefSync,
@@ -407,6 +408,28 @@ export function resolveRecoveryCode(codeArg: unknown): string {
   );
 }
 
+/**
+ * What the recovery code stands in for: whatever seals the root key. On the
+ * passphrase backend that is a file, which a reinstall or a lost disk takes
+ * with it just as surely as an OS keyring.
+ */
+export function recoveryCodePurpose(
+  backend: SecretStoreBackend,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (backend === "passphrase") {
+    const file = env[PASSPHRASE_FILE_ENV];
+    return [
+      "It is the only way to recover your encrypted data if the passphrase file that seals it",
+      `${file ? `(${file}) ` : ""}is lost: a reinstall, a dead disk, or a config directory restored without it.`,
+    ];
+  }
+  return [
+    "It is the only way to recover your encrypted data if you lose the OS keyring",
+    "(reinstall, dead disk, or a forgotten login password).",
+  ];
+}
+
 const keyringExportRecoveryCommand = defineCommand({
   meta: {
     name: "export-recovery",
@@ -453,8 +476,7 @@ const keyringExportRecoveryCommand = defineCommand({
     console.log(
       `${c.yellow}Write this down and keep it offline — it is shown only once.${c.reset}`,
     );
-    console.log("It is the only way to recover your encrypted data if you lose the OS keyring");
-    console.log("(reinstall, dead disk, or a forgotten login password).");
+    for (const line of recoveryCodePurpose(backend)) console.log(line);
     console.log(
       `${c.dim}Recovery envelope written to ${outPath} — safe to keep with your backups.${c.reset}`,
     );
