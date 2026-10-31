@@ -2735,7 +2735,11 @@
         "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
         "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
         "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json",
-        "packages/providers/discord/src/normalizer.test.ts"
+        "packages/providers/discord/src/normalizer.test.ts",
+        "evals/universes/immich-sync/cast.json",
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/source.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -2847,7 +2851,13 @@
         "evals/universes/sacha-bellamy/sources/gmail/messages.json",
         "evals/universes/sacha-bellamy/sources/google-drive/files.json",
         "packages/providers/discord/src/normalizer.test.ts",
-        "packages/providers/discord/src/source.test.ts"
+        "packages/providers/discord/src/source.test.ts",
+        "evals/universes/immich-sync/cast.json",
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/collector/src/e2e/immich-sync.e2e.test.ts",
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/provider.test.ts",
+        "packages/providers/immich/src/source.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3300,7 +3310,11 @@
         "packages/providers-synth/apple/src/fixtures.test.ts",
         "packages/providers-synth/whatsapp/src/fixtures.test.ts",
         "packages/providers/discord/src/normalizer.test.ts",
-        "packages/providers/discord/src/source.test.ts"
+        "packages/providers/discord/src/source.test.ts",
+        "evals/universes/immich-sync/cast.json",
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/providers/immich/src/normalizer.test.ts",
+        "packages/providers/immich/src/provider.test.ts"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
@@ -7160,7 +7174,11 @@
       "value": "Example City",
       "paths": [
         "evals/universes/default/sources/core-location-visits/visits.json",
-        "evals/universes/e2e-minimal/sources/core-location-visits/visits.json"
+        "evals/universes/e2e-minimal/sources/core-location-visits/visits.json",
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/normalizer.test.ts",
+        "packages/providers/immich/src/source.test.ts"
       ],
       "reason": "reviewed invented location fixture"
     },
@@ -10242,7 +10260,13 @@
         "packages/gateway/src/watch/ontology.test.ts",
         "packages/gateway/src/workers/indexer-worker-boot.test.ts",
         "packages/providers/maildir/src/source.test.ts",
-        "packages/providers/outlook/src/onedrive.test.ts"
+        "packages/providers/outlook/src/onedrive.test.ts",
+        "evals/universes/immich-sync/cast.json",
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/collector/src/e2e/immich-sync.e2e.test.ts",
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/normalizer.test.ts",
+        "packages/providers/immich/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -12417,6 +12441,48 @@
       "value": "No Paperless",
       "paths": ["packages/providers/paperless/src/provider.test.ts"],
       "reason": "the start of a Paperless-ngx error message, not a person"
+    },
+    {
+      "value": "Harbour Weekend",
+      "paths": [
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/collector/src/e2e/immich-sync.e2e.test.ts",
+        "packages/providers-synth/immich/src/index.test.ts",
+        "packages/providers/immich/src/album-store.test.ts",
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/normalizer.test.ts",
+        "packages/providers/immich/src/source.test.ts"
+      ],
+      "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Studio Northstar Open",
+      "paths": [
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/providers/immich/src/source.test.ts"
+      ],
+      "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Example Harbour",
+      "paths": [
+        "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "packages/collector/src/e2e/immich-sync.e2e.test.ts"
+      ],
+      "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Example State",
+      "paths": [
+        "packages/providers/immich/src/document-event-profile.test.ts",
+        "packages/providers/immich/src/normalizer.test.ts"
+      ],
+      "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Main Camera",
+      "paths": ["packages/providers/immich/src/normalizer.test.ts"],
+      "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
     }
   ],
   "secretFixtures": [

@@ -36,6 +36,12 @@ TLS_CONFIG_DIR="$WORK/config-tls"
 TLS_COMPOSE_FILE="$TLS_CONFIG_DIR/docker-compose.yml"
 TLS_NAME="omnesis-smoke.example"
 OMNESIS="$HOME_DIR/.local/bin/omnesis"
+# A native collector installed beside the Docker install, from a bare remote
+# of this checkout: its own command and config directory.
+NATIVE="$HOME_DIR/.local/bin/omnesis-collector"
+NATIVE_DIR="$HOME_DIR/.config/omnesis-collector"
+SOURCE_REMOTE="$WORK/source.git"
+NATIVE_PID=""
 
 free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
@@ -74,6 +80,7 @@ die() {
       docker compose -f "$COMPOSE_FILE" logs --tail 25 collector || true
     } >&2
   fi
+  [[ ! -f "$WORK/native.log" ]] || { echo "--- native collector log tail ---"; tail -n 40 "$WORK/native.log"; } >&2
   if [[ -f "$TLS_COMPOSE_FILE" ]]; then
     {
       echo "--- tls install .env ---"; cat "$TLS_CONFIG_DIR/.env" || true
@@ -89,6 +96,7 @@ die() {
 cleanup() {
   local status=$?
   step "tearing down"
+  [[ -z "$NATIVE_PID" ]] || kill "$NATIVE_PID" >/dev/null 2>&1 || true
   # No --remove-orphans: it acts on the whole compose project and can only
   # remove containers this run did not create.
   if [[ -f "$COMPOSE_FILE" ]]; then
@@ -203,7 +211,31 @@ omnesis_env+=(
 
 step "install.sh --docker"
 "${omnesis_env[@]}" sh "$REPO/scripts/install.sh" \
-  --docker --no-model --no-keyring --version "$TAG_A" --port "$GATEWAY_PORT"
+  --docker --no-model --no-keyring --version "$TAG_A" --port "$GATEWAY_PORT" 2>&1 | tee "$WORK/install.out"
+
+# Compose's own pull progress, written anywhere but a terminal, is a line per
+# layer per state change; the installer prints one line per image instead. The
+# one-shot containers the CLI and the socket probe run in are created quietly.
+# (`up -d` still says which daemon containers it starts.)
+NOISE='Pulling fs layer|Extracting|Download complete|Container [^ ]+-run-[0-9a-f]+ +Creat'
+if grep -Eq "$NOISE" "$WORK/install.out"; then
+  die "the install printed Compose's progress: $(grep -E "$NOISE" "$WORK/install.out" | head -n 5)"
+fi
+ok "the pull printed one line per image, and the one-shot containers nothing"
+
+# The group the update container joins is the one the socket has inside a
+# container, asked of the updater image itself.
+socket_gid() {
+  docker compose -f "$COMPOSE_FILE" --progress quiet --profile update run --rm --no-deps -T \
+    --entrypoint stat updater -c %g /var/run/docker.sock | tr -d '\r'
+}
+updater_group() {
+  awk '/^  updater:/ { u = 1; next } /^  [a-z]/ { u = 0 } u && /^      - "[0-9]+"$/ { gsub(/[ "-]/, ""); print; exit }' "$COMPOSE_FILE"
+}
+SOCKET_GID="$(socket_gid)"
+[[ "$SOCKET_GID" =~ ^[0-9]+$ ]] || die "the updater image could not stat the socket: '$SOCKET_GID'"
+[[ "$(updater_group)" == "$SOCKET_GID" ]] || die "the updater joins group '$(updater_group)', not the socket's $SOCKET_GID"
+ok "the updater joins the socket's group ($SOCKET_GID) as containers see it"
 
 [[ -f "$COMPOSE_FILE" ]] || die "no compose file at $COMPOSE_FILE"
 [[ "$(cat "$CONFIG_DIR/install-method")" == docker ]] || die "the install method was not recorded"
@@ -245,6 +277,86 @@ docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null \
   | grep "WebSocket authenticated with gateway" >/dev/null || die "the collector never authenticated"
 ok "the collector paired itself and authenticated"
 
+# ── a native collector beside the Docker install ────────────────────────────
+
+# The setup the Docker banner recommends on a Mac: the same machine runs a
+# native collector for the Apple sources. Installed by the REAL installer from
+# a source checkout of this revision, it has to leave the Docker launcher and
+# config directory alone, hold a token of its own, and, after the gateway
+# container restarts, reconnect beside the container's collector as a second,
+# distinct device.
+online_collectors() {
+  "${omnesis_env[@]}" "$OMNESIS" devices list --json 2>/dev/null </dev/null | node -e '
+let s = ""; process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  try {
+    const ids = JSON.parse(s).items.filter((d) => d.kind === "collector" && d.online && !d.revokedAt).map((d) => d.id);
+    process.stdout.write(ids.sort().join("\n"));
+  } catch {}
+});'
+}
+wait_online() {
+  local want="$1" deadline=$((SECONDS + ${2:-300}))
+  while ((SECONDS < deadline)); do
+    [[ "$(online_collectors | grep -c . || true)" -ge "$want" ]] && return 0
+    sleep 3
+  done
+  return 1
+}
+
+step "a native collector beside the Docker install"
+wait_online 1 || die "the gateway does not list the container's collector as online"
+CONTAINER_COLLECTOR="$(online_collectors)"
+container_token="$(sha256sum "$CONFIG_DIR/collector-token" | cut -d' ' -f1)"
+docker_launcher="$(sha256sum "$OMNESIS" | cut -d' ' -f1)"
+SHA="$(git -C "$REPO" rev-parse HEAD)"
+git init -q --bare "$SOURCE_REMOTE"
+git --git-dir="$SOURCE_REMOTE" fetch -q --update-shallow --no-tags "$REPO" "$SHA:refs/heads/main"
+CODE="$("${omnesis_env[@]}" "$OMNESIS" devices pair --kind collector --json </dev/null \
+  | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d));process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).pairingCode))')"
+[[ -n "$CODE" ]] || die "the Docker gateway minted no pairing code"
+# Without OMNESIS_CONFIG_DIR, and without --gateway-url: beside a Docker gateway
+# on this host the installer picks its own directory and dials the gateway at
+# localhost, pinning its certificate.
+native_env=()
+for word in "${omnesis_env[@]}"; do
+  [[ "$word" == OMNESIS_CONFIG_DIR=* ]] || native_env+=("$word")
+done
+"${native_env[@]}" NPM_CONFIG_CACHE="$(npm config get cache)" OMNESIS_REPO_URL="file://$SOURCE_REMOTE" \
+  sh "$REPO/scripts/install.sh" --collector --commit "$SHA" --no-keyring --no-service --code "$CODE" \
+  > "$WORK/native-install.out" 2>&1 || { cat "$WORK/native-install.out" >&2; die "the native collector install failed"; }
+cat "$WORK/native-install.out"
+[[ "$(sha256sum "$OMNESIS" | cut -d' ' -f1)" == "$docker_launcher" ]] || die "the native install changed the Docker launcher"
+[[ "$(cat "$CONFIG_DIR/install-method")" == docker ]] || die "the native install removed the Docker install's marker"
+[[ "$(sha256sum "$CONFIG_DIR/collector-token" | cut -d' ' -f1)" == "$container_token" ]] \
+  || die "the native install changed the container collector's token"
+[[ -x "$NATIVE" ]] || die "no omnesis-collector command at $NATIVE"
+[[ -s "$NATIVE_DIR/collector-token" ]] || die "the native collector's token is not in $NATIVE_DIR"
+cmp -s "$NATIVE_DIR/collector-token" "$CONFIG_DIR/collector-token" && die "the two collectors share one token"
+native_gateway="$(sed -n 's/^  Gateway:  //p' "$WORK/native-install.out" | head -n 1)"
+[[ "$native_gateway" == "https://localhost:$GATEWAY_PORT" ]] || die "the native collector dials '$native_gateway', not this host's gateway"
+ok "its own command, config directory and token; the Docker install is untouched"
+
+"${native_env[@]}" OMNESIS_GATEWAY_URL="$native_gateway" "$NATIVE" collector run > "$WORK/native.log" 2>&1 &
+NATIVE_PID=$!
+wait_online 2 || die "the native collector never came online beside the container's"
+both="$(online_collectors)"
+[[ "$(printf '%s\n' "$both" | grep -c .)" == 2 ]] || die "expected two collector devices, got: $both"
+printf '%s\n' "$both" | grep -qx "$CONTAINER_COLLECTOR" || die "the container's collector lost its device"
+docker compose -f "$COMPOSE_FILE" restart gateway >/dev/null
+sleep 5
+wait_online 2 360 || die "both collectors did not come back after the gateway restarted (online: $(online_collectors | tr '\n' ' '))"
+[[ "$(online_collectors)" == "$both" ]] || die "after the restart the online collectors are $(online_collectors | tr '\n' ' '), not $both"
+ok "two distinct collector devices, both back online after the gateway restarted"
+
+"${native_env[@]}" "$NATIVE" uninstall --yes --purge || die "omnesis-collector uninstall failed"
+kill "$NATIVE_PID" >/dev/null 2>&1 || true
+NATIVE_PID=""
+[[ ! -e "$NATIVE" && ! -e "$NATIVE_DIR" ]] || die "omnesis-collector uninstall left the collector behind"
+[[ "$(sha256sum "$OMNESIS" | cut -d' ' -f1)" == "$docker_launcher" ]] || die "removing the native collector changed the Docker launcher"
+"${omnesis_env[@]}" "$OMNESIS" tokens list >/dev/null || die "the Docker install stopped answering"
+ok "removing the native collector leaves the Docker install answering"
+
 # ── an update killed during the pull ────────────────────────────────────────
 
 # The footprint a kill during the pull leaves: the tag on file already names
@@ -271,6 +383,40 @@ ok "the unfinished update was detected and reapplied without --force"
 wait_served "$TAG_A" 60 || die "the gateway did not return to $TAG_A"
 ok "returned to $TAG_A"
 
+# ── an update container that cannot open the socket ─────────────────────────
+
+# What an install made by an earlier release meets on a daemon in a VM: the
+# updater joins the host's group for the socket, which is not the one the
+# socket has inside a container. Reproduced here with an account and a group
+# that do not own it; the update has to change nothing, say so, and give the
+# updater the socket's group.
+step "an update whose container cannot open the Docker socket"
+ORIGINAL_UPDATER_USER="$(awk '/^  updater:/ { u = 1; next } /^  [a-z]/ { u = 0 } u && /^    user: / { print; exit }' "$COMPOSE_FILE")"
+node - "$COMPOSE_FILE" "$(id -u)" <<'NODE'
+const fs = require('node:fs');
+const [path, uid] = process.argv.slice(2);
+const text = fs.readFileSync(path, 'utf8');
+const split = text.indexOf('  updater:\n');
+if (split < 0) throw new Error('Missing updater service');
+const service = text.slice(split)
+  .replace(/^    user: .*$/m, `    user: "${uid}:4243"`)
+  .replace(/^(    group_add:\n)      - "\d+"$/m, '$1      - "4242"');
+fs.writeFileSync(path, text.slice(0, split) + service);
+NODE
+[[ "$(updater_group)" == 4242 ]] || die "the fixture did not take the updater's group away"
+if "${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --no-backup \
+     > "$WORK/denied.out" 2>&1; then
+  cat "$WORK/denied.out" >&2; die "an update that cannot reach the daemon reported success"
+fi
+cat "$WORK/denied.out"
+grep -q "Nothing was changed: this install still runs $TAG_A" "$WORK/denied.out" || die "the refusal did not say nothing changed"
+grep -q "now joins group $SOCKET_GID" "$WORK/denied.out" || die "the refusal did not correct the updater's group"
+grep -q "Rolling back" "$WORK/denied.out" && die "a refusal before any change rolled back"
+grep -q "OMNESIS_IMAGE_TAG=$TAG_A" "$CONFIG_DIR/.env" || die "the refused update moved the recorded tag"
+[[ "$(served_version)" == "$TAG_A" ]] || die "the refused update changed what the gateway serves"
+[[ "$(updater_group)" == "$SOCKET_GID" ]] || die "the updater's group is '$(updater_group)', not $SOCKET_GID"
+ok "refused before any change, and the updater given group $SOCKET_GID"
+
 # ── the update ──────────────────────────────────────────────────────────────
 
 # The backup runs for real here: it is taken through the gateway's API from
@@ -295,7 +441,15 @@ ls "$CONFIG_DIR"/backups/* >/dev/null 2>&1 || die "the pre-update backup was not
 ok "the pre-update backup was taken through the gateway API"
 grep -q "OMNESIS_IMAGE_TAG=$TAG_B" "$CONFIG_DIR/.env" || die "the recorded tag did not move to $TAG_B"
 wait_served "$TAG_B" 60 || die "the gateway did not come back on $TAG_B"
-ok "the gateway serves $TAG_B and the recorded tag moved with it"
+ok "the gateway serves $TAG_B and the recorded tag moved with it, through the corrected group"
+# The account the installer gave the updater, for the rest of this lane.
+UPDATER_USER="$ORIGINAL_UPDATER_USER" node - "$COMPOSE_FILE" <<'NODE'
+const fs = require('node:fs');
+const [path] = process.argv.slice(2);
+const text = fs.readFileSync(path, 'utf8');
+const split = text.indexOf('  updater:\n');
+fs.writeFileSync(path, text.slice(0, split) + text.slice(split).replace(/^    user: .*$/m, process.env.UPDATER_USER));
+NODE
 
 step "omnesis update to $TAG_C, which never serves"
 if "${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_C" --no-backup \

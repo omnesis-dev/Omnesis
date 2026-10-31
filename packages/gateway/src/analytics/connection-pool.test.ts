@@ -2,16 +2,26 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   AnalyticsConnectionPool,
+  BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
   AnalyticsStoreOpenError,
   SandboxSqlRefusedError,
   isDuckDbInvalidated,
@@ -22,6 +32,35 @@ import { AnalyticsQueryRunner } from "./query-runner.js";
 const duckdbPackageDir = dirname(
   createRequire(import.meta.url).resolve("@duckdb/node-api/package.json"),
 );
+
+/**
+ * Refuses connections at once, so any extension download attempted against it
+ * fails. The encrypted pools in this file are given it: they must run on the
+ * httpfs build the product ships, never on the network.
+ */
+const UNREACHABLE_REPOSITORY = "http://127.0.0.1:9";
+
+/** The DuckDB version and platform this process runs — what a LOAD accepts. */
+let host: { version: string; platform: string };
+/** The httpfs build the product ships for that DuckDB, as the pool resolves it. */
+let bundledHttpfs: string;
+
+beforeAll(async () => {
+  const instance = await DuckDBInstance.create(":memory:");
+  const conn = await instance.connect();
+  const [[version, platform]] = (
+    await conn.runAndReadAll("SELECT version(), (SELECT platform FROM pragma_platform())")
+  ).getRows();
+  conn.closeSync();
+  instance.closeSync();
+  host = { version: String(version), platform: String(platform) };
+  bundledHttpfs = join(
+    BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
+    host.version,
+    host.platform,
+    "httpfs.duckdb_extension",
+  );
+});
 
 function attachSql(path: string, keyHex: string | undefined, readonly: boolean): string {
   const options = [
@@ -65,8 +104,8 @@ async function otherProcessHolder(path: string, keyHex?: string): Promise<ChildP
       const conn = await inst.connect();
       ${
         keyHex
-          ? // As the pool does: load httpfs, installing it first on a host that lacks it.
-            'try { await conn.run("LOAD httpfs"); } catch { await conn.run("INSTALL httpfs"); await conn.run("LOAD httpfs"); }'
+          ? // As the pool does: load the httpfs build the product ships.
+            `await conn.run(${JSON.stringify(`LOAD '${bundledHttpfs.replace(/'/g, "''")}'`)});`
           : ""
       }
       await conn.run(${JSON.stringify(attachSql(path, keyHex, false))});
@@ -108,7 +147,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("keeps its exclusive file lock across user SQL, backups and checkpoints", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open(async (conn) => {
       await conn.run("CREATE TABLE sample AS SELECT 1 AS id");
     });
@@ -155,7 +197,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     // extension directory (~/.duckdb) cannot be created: `INSTALL httpfs` then
     // fails and an encrypted store makes the gateway exit on every start. Seen
     // on Fedora 42, where $HOME had no .duckdb yet.
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open();
     const [[configured]] = await pool.withConn(async ({ conn }) =>
       (await conn.runAndReadAll("SELECT current_setting('extension_directory')")).getRows(),
@@ -193,7 +238,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("runs sandbox statements inside a read-only transaction on a dedicated connection", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open(async (conn) => {
       await conn.run("CREATE TABLE sample AS SELECT 1 AS id");
     });
@@ -228,7 +276,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("refuses functions that read files, run SQL from text or operate the engine", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open();
     const refusals: Record<string, RegExp> = {
       "SELECT * FROM read_csv('/etc/hosts')": /read_csv/,
@@ -257,7 +308,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("stages backups and exports inside its spill directory and moves them out", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open(async (conn) => {
       await conn.run("CREATE TABLE sample AS SELECT 1 AS id");
     });
@@ -276,7 +330,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("leaves the holder's spill directory alone when its own open is refused", async () => {
-    const seed = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    const seed = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await seed.open();
     await seed.close();
     // Stand in for the live owner's scratch: a spill file it is still using.
@@ -284,7 +341,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     await writeFile(join(`${dbPath}.tmp`, "spill-in-use"), "the holder's working set");
 
     const holder = await otherProcessHolder(dbPath, keyHex);
-    const refused = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    const refused = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     try {
       await expect(refused.open()).rejects.toBeInstanceOf(AnalyticsStoreOpenError);
       expect(existsSync(join(`${dbPath}.tmp`, "spill-in-use"))).toBe(true);
@@ -297,19 +357,28 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     }
 
     // The next pool that actually takes the store clears what the last life left.
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open();
     expect(existsSync(join(`${dbPath}.tmp`, "spill-in-use"))).toBe(false);
     expect(existsSync(join(`${dbPath}.tmp`, "stage"))).toBe(true);
   });
 
   it("names the process holding the store when it cannot open it", async () => {
-    const seed = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    const seed = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await seed.open();
     await seed.close();
     const holder = await otherProcessHolder(dbPath, keyHex);
     try {
-      const failure = await new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex })
+      const failure = await new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      })
         .open()
         .catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(AnalyticsStoreOpenError);
@@ -326,7 +395,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   it.skipIf(!encrypted)(
     "reports a damaged store as damaged, with DuckDB's words, never as a fresh install",
     async () => {
-      pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+      pool = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
       await pool.open(async (conn) => {
         await conn.run("CREATE TABLE sample AS SELECT i FROM range(20000) r(i)");
         await conn.run("CHECKPOINT");
@@ -338,7 +410,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
       bytes[4096 + 100] ^= 0xff;
       await writeFile(dbPath, bytes);
 
-      const reopened = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+      const reopened = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
       const failure = await reopened.open().catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(AnalyticsStoreOpenError);
       const message = (failure as Error).message;
@@ -368,7 +443,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
       await utimes(`${dbPath}.plaintext-older`, earlier, earlier);
       await writeFile(`${dbPath}.encrypted-partial.tmp`, "half");
 
-      pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+      pool = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
       await pool.open();
       const rows = await pool.withConn(async ({ conn }) =>
         (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
@@ -399,7 +477,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     const priorHome = process.env.HOME;
     process.env.HOME = home;
     try {
-      pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+      pool = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
       await pool.open();
     } finally {
       process.env.HOME = priorHome;
@@ -413,7 +494,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it.skipIf(!encrypted)("removes a plaintext copy a completed migration left behind", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open(async (conn) => {
       await conn.run("CREATE TABLE sample AS SELECT 7 AS id");
     });
@@ -423,7 +507,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     // renamed original.
     await writeFile(`${dbPath}.plaintext-done`, "the corpus, in the clear");
 
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open();
     expect(existsSync(`${dbPath}.plaintext-done`)).toBe(false);
     const rows = await pool.withConn(async ({ conn }) =>
@@ -456,7 +543,10 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
   });
 
   it("interrupts a sandbox statement that outlives close", async () => {
-    pool = new AnalyticsConnectionPool(dbPath, { encryptionKeyHex: keyHex });
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
     await pool.open();
     const longQuery = pool
       .withSandboxStatement(
@@ -469,5 +559,188 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     pool = null;
     expect(await longQuery).toBeInstanceOf(Error);
     expect(otherProcessAttach(dbPath, keyHex).opened).toBe(true);
+  });
+});
+
+/**
+ * Encrypted analytics needs DuckDB's httpfs extension, and the product ships
+ * the pinned, DuckDB-signed build of it so that opening an encrypted store
+ * never needs the network: an offline gateway, a blocked egress or a
+ * read-only filesystem must not stop it.
+ */
+describe("AnalyticsConnectionPool shipped DuckDB extensions", () => {
+  let directory: string;
+  let dbPath: string;
+  let keyHex: string;
+  let pool: AnalyticsConnectionPool | null;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "omnesis-test-pool-extensions-"));
+    dbPath = join(directory, "analytics.db");
+    keyHex = randomBytes(32).toString("hex");
+    pool = null;
+  });
+
+  afterEach(async () => {
+    await pool?.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("ships the pinned httpfs build for this DuckDB and platform", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(BUNDLED_DUCKDB_EXTENSION_DIRECTORY, "manifest.json"), "utf8"),
+    ) as {
+      duckdbVersion: string;
+      extensions: Record<string, Record<string, { sha256: string; size: number }>>;
+    };
+    // A DuckDB bump without new pins would leave every install downloading at run time.
+    expect(manifest.duckdbVersion).toBe(host.version);
+    expect(Object.keys(manifest.extensions.httpfs!).sort()).toEqual([
+      "linux_amd64",
+      "linux_arm64",
+      "osx_amd64",
+      "osx_arm64",
+    ]);
+    const pin = manifest.extensions.httpfs![host.platform];
+    expect(pin, `no httpfs pin for ${host.platform}`).toBeDefined();
+    expect(
+      existsSync(bundledHttpfs),
+      `${bundledHttpfs} is missing — npm ci's postinstall fetches it; run ` +
+        "`node scripts/duckdb-extensions.mjs --package-dir packages/gateway`",
+    ).toBe(true);
+    const binary = readFileSync(bundledHttpfs);
+    expect(binary.length).toBe(pin!.size);
+    expect(createHash("sha256").update(binary).digest("hex")).toBe(pin!.sha256);
+  });
+
+  it("creates, reopens and migrates encrypted stores with downloads impossible", async () => {
+    const home = join(directory, "empty-home");
+    await mkdir(home, { mode: 0o500 });
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      // A fresh encrypted store.
+      pool = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
+      await pool.open(async (conn) => {
+        await conn.run("CREATE TABLE sample AS SELECT 11 AS id");
+      });
+      // The shipped build is DuckDB-signed: signature checks stay on.
+      const [[unsigned]] = await pool.withConn(async ({ conn }) =>
+        (await conn.runAndReadAll("SELECT current_setting('allow_unsigned_extensions')")).getRows(),
+      );
+      expect(unsigned).toBe(false);
+      await pool.close();
+      pool = null;
+
+      pool = new AnalyticsConnectionPool(dbPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
+      await pool.open();
+      expect(
+        await pool.withConn(async ({ conn }) =>
+          (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
+        ),
+      ).toEqual([[11]]);
+      await pool.close();
+      pool = null;
+
+      // A plaintext store `omnesis secure` asks the next start to encrypt.
+      const plaintextPath = join(directory, "plaintext.db");
+      pool = new AnalyticsConnectionPool(plaintextPath);
+      await pool.open(async (conn) => {
+        await conn.run("CREATE TABLE sample AS SELECT 12 AS id");
+      });
+      await pool.close();
+      pool = null;
+      pool = new AnalyticsConnectionPool(plaintextPath, {
+        encryptionKeyHex: keyHex,
+        extensionRepository: UNREACHABLE_REPOSITORY,
+      });
+      await pool.open();
+      expect(
+        await pool.withConn(async ({ conn }) =>
+          (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
+        ),
+      ).toEqual([[12]]);
+      await expect(
+        DuckDBInstance.create(plaintextPath, { access_mode: "READ_ONLY" }),
+      ).rejects.toThrow();
+    } finally {
+      process.env.HOME = priorHome;
+    }
+    // Nothing was installed beside either store or in $HOME.
+    for (const store of [dbPath, join(directory, "plaintext.db")]) {
+      expect(existsSync(join(`${store}.extensions`, host.version))).toBe(false);
+    }
+    expect(readdirSync(home)).toEqual([]);
+  });
+
+  it("falls back to a copy in the store's extension directory when the shipped one is missing", async () => {
+    const storeCopy = join(
+      `${dbPath}.extensions`,
+      host.version,
+      host.platform,
+      "httpfs.duckdb_extension",
+    );
+    await mkdir(dirname(storeCopy), { recursive: true });
+    await copyFile(bundledHttpfs, storeCopy);
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      bundledExtensionDirectory: join(directory, "nothing-shipped"),
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
+    await pool.open(async (conn) => {
+      await conn.run("CREATE TABLE sample AS SELECT 13 AS id");
+    });
+    expect(
+      await pool.withConn(async ({ conn }) =>
+        (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
+      ),
+    ).toEqual([[13]]);
+  });
+
+  it("names the missing shipped copy when nothing can be loaded or downloaded", async () => {
+    const shipped = join(directory, "nothing-shipped");
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      bundledExtensionDirectory: shipped,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
+    const failure = await pool.open().then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    pool = null;
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure!.message).toContain(
+      `The copy Omnesis ships is missing at ${join(shipped, host.version, host.platform, "httpfs.duckdb_extension")}`,
+    );
+    expect(failure!.message).toMatch(/downloading one failed \(.*127\.0\.0\.1:9/);
+    expect(failure!.message).toContain("node scripts/duckdb-extensions.mjs");
+    expect(existsSync(dbPath)).toBe(false);
+  });
+
+  it("refuses a shipped copy whose signature does not verify", async () => {
+    const shipped = join(directory, "tampered");
+    const tampered = join(shipped, host.version, host.platform, "httpfs.duckdb_extension");
+    await mkdir(dirname(tampered), { recursive: true });
+    const binary = await readFile(bundledHttpfs);
+    binary[Math.floor(binary.length / 2)]! ^= 0xff;
+    await writeFile(tampered, binary);
+    pool = new AnalyticsConnectionPool(dbPath, {
+      encryptionKeyHex: keyHex,
+      bundledExtensionDirectory: shipped,
+      extensionRepository: UNREACHABLE_REPOSITORY,
+    });
+    const failure = await pool.open().then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    pool = null;
+    expect(failure?.message).toMatch(/The copy Omnesis ships is refused by DuckDB \(.*signature/);
   });
 });

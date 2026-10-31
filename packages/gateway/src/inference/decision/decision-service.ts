@@ -25,9 +25,12 @@ import {
 import { ReplayDecision } from "./replay-decision.js";
 import { TypeSafeDecision } from "./typesafe-client.js";
 
+import type { InferenceHealth } from "../model-health.js";
+
 const log = createLogger("gateway:decision");
 
 export interface DecisionServiceDeps {
+  health?: InferenceHealth;
   resolveAssignment: () => ResolvedAssignment;
   readTypeSafeApiKey: () => string | null;
   /** Fixture used by a bare `replay` assignment (e.g. `OMNESIS_DECISION_FIXTURE`). */
@@ -51,7 +54,9 @@ export class DecisionService {
         : undefined;
     const signature = signatureOf(resolved, apiKey, fixture);
     if (this.current?.signature === signature) return this.current.capability;
-    const capability = this.load(resolved, apiKey, fixture);
+    const loaded = this.load(resolved, apiKey, fixture);
+    const capability =
+      loaded && this.deps.health ? this.deps.health.observe(resolved, loaded, ["decide"]) : loaded;
     this.current = { signature, capability };
     return capability;
   }

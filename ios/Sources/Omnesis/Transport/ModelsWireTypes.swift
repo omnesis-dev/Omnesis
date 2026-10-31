@@ -314,15 +314,18 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
     /// addable but not an installed backend row.
     public let codex: CodexBackendStatus?
     public let assignments: [String: ResolvedAssignment]
+    public let health: ModelHealth?
 
     public init(
         backends: [String: BackendStatus],
         codex: CodexBackendStatus? = nil,
-        assignments: [String: ResolvedAssignment]
+        assignments: [String: ResolvedAssignment],
+        health: ModelHealth? = nil
     ) {
         self.backends = backends
         self.codex = codex
         self.assignments = assignments
+        self.health = health
     }
 }
 

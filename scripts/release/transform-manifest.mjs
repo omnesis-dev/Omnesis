@@ -111,9 +111,18 @@ export function transformManifest(pkg, version, opts = {}) {
   if (pkg.name === "@omnesis/gateway") {
     out.scripts = {
       preinstall: "node native-runtime-preflight.mjs",
-      postinstall: "node native-vector-compat.mjs --package-dir .",
+      // The DuckDB extensions are pinned per platform, so the package carries
+      // their manifest and fetches this machine's build when it is installed.
+      postinstall:
+        "node native-vector-compat.mjs --package-dir . && " +
+        "node duckdb-extensions.mjs --package-dir . --best-effort",
     };
-    out.files = [...(out.files ?? []), "native-runtime-preflight.mjs", "native-vector-compat.mjs"];
+    out.files = [
+      ...(out.files ?? []),
+      "native-runtime-preflight.mjs",
+      "native-vector-compat.mjs",
+      "duckdb-extensions.mjs",
+    ];
   }
 
   // Single source of truth for the publish-only metadata. Matches the repo

@@ -12,8 +12,8 @@
  * it.
  *
  * The prose obeys the same contract asked of a community sweep, which is the
- * point of writing them this way: it names the substrate it maintains (briefs,
- * loops, deadlines) but never a tool, a source, or a person. A sweep that
+ * point of writing them this way: it names the substrate it maintains
+ * (observations, loops, deadlines) but never a tool, a source, or a person. A sweep that
  * needs to know how Omnesis is built is not portable, and portability is the
  * whole reason a sweep is prose rather than code.
  *
@@ -38,7 +38,7 @@ export const SYSTEM_SWEEPS: readonly SystemSweepDef[] = [
     // overnight work found, and this pass is most of that work.
     expectedBeforeDigest: true,
     steeringPrompt:
-      "Prepare the user for the day that is starting. Look at what is happening today — meetings, appointments, scheduled events — and for the ones that merit it write an informative brief: what it is, when, with whom, and the context worth having to hand, drawn from the surrounding correspondence. Stamp each brief with the time of the event it concerns so the feed can rank it into the right part of the day, and cite the documents you drew it from. Check the open loops falling due today or very shortly and remind the user where a reminder would help. Then look a week out — across both source-owned schedules and your own recorded interpretations of upcoming time — and for anything genuinely approaching that needs preparing, surface it and open a loop if it is a real obligation nobody is tracking yet. If along the way you find a tracked obligation has already been fulfilled — a receipt, a confirmation, a reply that settles it — close its loop as done with a note and remove the briefs it made moot; never delete a loop that was actually completed, because the record of what happened is worth keeping. Check what is already in the feed before writing anything, so an earlier pass's card is updated rather than duplicated. Where an event later today would benefit from the freshest possible picture, schedule yourself a short follow-up shortly beforehand to rebuild its brief. Most days only a handful of things merit a brief, and an empty pass is a fine outcome.",
+      "Prepare the user for the day that is starting. Look at what is happening today — meetings, appointments, scheduled events — and for the ones that merit it note an informative observation for the morning brief: what it is, when, with whom, and the context worth having to hand, drawn from the surrounding correspondence. Include the time of the event it concerns and cite the documents you drew it from. Check the open loops falling due today or very shortly and note a reminder observation where it would help. Then look a week out — across both source-owned schedules and your own recorded interpretations of upcoming time — and for anything genuinely approaching that needs preparing, note an observation and open a loop if it is a real obligation nobody is tracking yet. If along the way you find a tracked obligation has already been fulfilled — a receipt, a confirmation, a reply that settles it — close its loop as done with a note and withdraw the observations it made moot; never delete a loop that was actually completed, because the record of what happened is worth keeping. Check existing observations before writing anything, so an earlier pass's observation is updated rather than duplicated. Where a future event would benefit from a fresher picture, schedule yourself a follow-up to recheck it and refresh its observation only if it will still be useful at the next morning brief. Most days only a handful of things merit an observation, and an empty pass is a fine outcome.",
   },
   {
     id: "missed-calls",
@@ -47,7 +47,7 @@ export const SYSTEM_SWEEPS: readonly SystemSweepDef[] = [
     at: "05:10",
     enabled: true,
     // Its cross-channel reconciliation is overnight work for the digest, but
-    // its cards still face the ordinary reactive-awareness gate.
+    // its observations still face the morning recheck and salience ranking.
     expectedBeforeDigest: true,
     steeringPrompt:
       "Review recent genuinely missed incoming calls. Do not treat a call known to have been blocked, rejected, or answered elsewhere as missed; treat one sent to voicemail according to whether it left an unresolved action. Try to identify each caller from the available identity links and surrounding corpus even when no contact name is attached, but never guess. Reconcile what happened afterwards with that person across every channel. A later unanswered follow-up strengthens the case only when it plausibly concerns the same attempt or underlying matter; only a connected return call, a substantive reply from the user that plausibly handles that attempt or matter, or other clear evidence that it was handled makes the call moot. Surface only credible calls that still appear to need a response or action, and leave an isolated unidentified call quiet unless repetition or corroborating context makes it matter. An empty pass is a fine outcome.",

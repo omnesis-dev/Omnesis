@@ -1,0 +1,17 @@
+{
+  "name": "@omnesis/provider-immich-synth",
+  "version": "0.7.2",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/provider-immich": "*",
+    "@omnesis/providers-synth-common": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

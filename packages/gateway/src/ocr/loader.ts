@@ -33,6 +33,8 @@ import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 import type { ResolvedAssignment, OcrCapability } from "@omnesis/core";
 
+import type { InferenceHealth } from "../inference/model-health.js";
+
 const log = createLogger("gateway:ocr:loader");
 
 /** File paths for the built-in `gguf` OCR runtime (`llama-mtmd-cli`). */
@@ -44,6 +46,7 @@ export interface OcrGgufRuntimeConfig {
 }
 
 export interface LoadOcrDeps {
+  health?: InferenceHealth;
   /** Create a vision backend on the independent Codex completion lane. */
   codexRuntimeService?: Pick<CodexRuntimeService, "createBackend"> &
     Partial<Pick<CodexRuntimeService, "snapshot">>;
@@ -66,6 +69,17 @@ export interface LoadOcrDeps {
 export async function loadOcrFromResolved(
   resolved: ResolvedAssignment,
   deps: LoadOcrDeps = {},
+): Promise<OcrCapability | null> {
+  const beginModelCall = deps.health?.callFactory(resolved.role);
+  const provider = await loadProvider(resolved, deps);
+  return provider && deps.health
+    ? deps.health.observe(resolved, provider, ["recognize"], beginModelCall)
+    : provider;
+}
+
+async function loadProvider(
+  resolved: ResolvedAssignment,
+  deps: LoadOcrDeps,
 ): Promise<OcrCapability | null> {
   switch (resolved.kind) {
     case "local": {

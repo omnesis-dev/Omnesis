@@ -27,9 +27,12 @@ import { AnthropicCompleter } from "./anthropic-completer.js";
 import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 
+import type { InferenceHealth } from "./model-health.js";
+
 const log = createLogger("inference:completion");
 
 export interface LoadCompletionDeps {
+  health?: InferenceHealth;
   /** Gateway-owned independent inference lane, safe inside another Codex turn. */
   codexRuntimeService?: Pick<CodexRuntimeService, "createBackend">;
   /** Gateway-owned Claude Code inference lane, safe inside another Claude Code turn. */
@@ -64,6 +67,20 @@ export interface LoadCompletionDeps {
  * disposing it.
  */
 export function loadCompletionFromResolved(
+  resolved: ResolvedAssignment,
+  deps: LoadCompletionDeps,
+): CompleteCapability | null {
+  const provider = loadCompletionProvider(resolved, deps);
+  return provider && deps.health
+    ? deps.health.observe(resolved, provider, [
+        "complete",
+        "completeWithUsage",
+        "completeWithUsageSettled",
+      ])
+    : provider;
+}
+
+function loadCompletionProvider(
   resolved: ResolvedAssignment,
   deps: LoadCompletionDeps,
 ): CompleteCapability | null {

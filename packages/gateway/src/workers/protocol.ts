@@ -240,6 +240,16 @@ export type IndexerJobUpdate = {
 };
 
 export type IndexerToMain =
+  | { type: "embeddingStarted"; id: number }
+  | {
+      type: "embeddingSettled";
+      id: number;
+      canceled?: boolean;
+      failure?: {
+        category: import("@omnesis/core").ModelHealthWarning["category"];
+        message: string;
+      };
+    }
   | { type: "ready" }
   | { type: "initError"; error: string }
   | { type: "heartbeat"; ts: number }

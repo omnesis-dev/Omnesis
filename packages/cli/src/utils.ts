@@ -3,12 +3,7 @@
 
 import { createInterface } from "node:readline";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import {
-  dirname,
-  basename as pathBasename,
-  join as pathJoin,
-  resolve as pathResolve,
-} from "node:path";
+import { dirname, basename as pathBasename, join as pathJoin } from "node:path";
 import {
   c as cShared,
   disabledColors,
@@ -31,6 +26,8 @@ import {
   resolveToken,
 } from "@omnesis/core";
 import { sourceTypeOf } from "@omnesis/types";
+import { hostHomeDir } from "@omnesis/source-sdk";
+import { resolveOperatorPath } from "./operator-path.js";
 import type { CliFx, SourceMeta, SpinnerHandle } from "@omnesis/cli-shared";
 
 export {
@@ -324,7 +321,7 @@ export function pathInput(opts: {
         // Local completions would be actively misleading for a path that is
         // owned by another collector's filesystem.
         if (opts.resolvePath === false) return [[], line];
-        const home = process.env.HOME ?? "";
+        const home = hostHomeDir();
         const expanded = line.startsWith("~") ? home + line.slice(1) : line;
 
         // Determine the directory to list and the partial filename to match
@@ -392,13 +389,9 @@ export function pathInput(opts: {
 
       // A remote collector must expand its own `~` and relative paths. Resolving
       // them here would silently substitute the operator host's filesystem.
-      const home = process.env.HOME ?? "";
-      const resolved =
-        opts.resolvePath === false
-          ? answer.trim()
-          : answer.startsWith("~")
-            ? home + answer.slice(1)
-            : pathResolve(answer);
+      // On a Docker install `~` and a relative path are the operator's own,
+      // on the machine that runs Docker, not the container's.
+      const resolved = opts.resolvePath === false ? answer.trim() : resolveOperatorPath(answer);
 
       // Validate
       if (opts.validate) {

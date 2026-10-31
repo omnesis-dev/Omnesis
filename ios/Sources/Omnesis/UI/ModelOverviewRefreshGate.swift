@@ -20,9 +20,26 @@ final class ModelOverviewRefreshGate {
         let ticket = revision
         do {
             let overview = try await request()
-            return ticket == revision ? .loaded(overview, ticket: ticket) : .stale
+            return !Task.isCancelled && ticket == revision ? .loaded(overview, ticket: ticket) : .stale
         } catch {
-            return ticket == revision ? .failed(error, ticket: ticket) : .stale
+            return !Task.isCancelled && ticket == revision ? .failed(error, ticket: ticket) : .stale
+        }
+    }
+
+    /// Awaited by the view's structured task; a late request cannot create a
+    /// polling lifetime after the screen disappears or the app becomes inactive.
+    func refreshWhileVisible(
+        load: () async -> Void,
+        interval: () -> Duration,
+        refresh: () async -> Void,
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async {
+        guard !Task.isCancelled else { return }
+        await load()
+        while !Task.isCancelled {
+            do { try await sleep(interval()) } catch { return }
+            guard !Task.isCancelled else { return }
+            await refresh()
         }
     }
 

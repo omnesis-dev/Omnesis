@@ -11,8 +11,8 @@ import SwiftUI
 ///
 /// Layout (top → bottom):
 ///   - Header: the "Omnesis" wordmark.
-///   - Navigation rows: Search, Tasks when the gateway offers it, Tell
-///     Omnesis, Sources, People, and experimental-only destinations.
+///   - Navigation rows: Search, Tasks when the gateway offers it, Notes
+///     with an immediate-capture microphone, Sources, People, and gated destinations.
 ///   - Conversations list: prior agent sessions with the active one
 ///     highlighted.
 ///   - A bar held across the bottom carrying the two actions that are never a
@@ -40,6 +40,7 @@ struct MainMenuDrawer: View {
     @Binding var isOpen: Bool
     @Binding var selection: HomeTab
     let onOpenSettings: () -> Void
+    var onSelectDestination: (() -> Void)?
     @State private var showPendingNotes: Bool = false
     @State private var warningClock = Date()
     @State private var warningDeadlineTask: Task<Void, Never>?
@@ -67,6 +68,7 @@ struct MainMenuDrawer: View {
             //     full relaunch.
             .onChange(of: isOpen) { _, nowOpen in
                 if nowOpen {
+                    Task { await store.refreshGatewayStats() }
                     Task { await store.refreshTasksTodayCount() }
                     Task { await store.refreshPrivacyPendingCount() }
                     Task { await store.agent.refreshConversations() }
@@ -78,6 +80,13 @@ struct MainMenuDrawer: View {
                     scheduleWarningDeadline()
                 } else {
                     warningDeadlineTask?.cancel()
+                }
+            }
+            .task(id: isOpen) {
+                guard isOpen else { return }
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                    await store.refreshGatewayStats()
                 }
             }
             .onChange(of: store.notes.pending) { _, _ in
@@ -107,9 +116,8 @@ struct MainMenuDrawer: View {
                     // — taps from non-Agent sections (e.g. Search) would
                     // otherwise load the conversation in the background
                     // without bringing its transcript on-screen.
-                    selection = .agent
+                    select(.agent)
                     Task { await store.agent.resumeConversation(id: item.sessionId) }
-                    close()
                 })
             }
         }
@@ -150,16 +158,24 @@ struct MainMenuDrawer: View {
                     .frame(width: Theme.tapTarget, height: Theme.tapTarget)
                     .background(Circle().fill(Theme.bgSecondary))
                     .contentShape(Circle())
+                    .overlay(alignment: .topTrailing) {
+                        if store.statusSnapshot?.modelHealth?.needsAttention == true {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.warning)
+                                .accessibilityHidden(true)
+                        }
+                    }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
+            .accessibilityLabel(store.statusSnapshot?.modelHealth?.needsAttention == true
+                ? "Settings, models need attention" : "Settings")
 
             Spacer(minLength: 0)
 
             Button {
                 store.agent.newConversation()
-                selection = .agent
-                close()
+                select(.agent)
             } label: {
                 HStack(spacing: Theme.Spacing.sm) {
                     Image(systemName: "square.and.pencil")
@@ -233,9 +249,7 @@ struct MainMenuDrawer: View {
                 }
             }
 
-            // Tell Omnesis is generally available. The offline queue still
-            // preserves captures when paired to an older gateway without /notes.
-            tellOmnesisRow
+            notesRow
             row(id: "sources", icon: "square.grid.2x2", label: "Sources", isActive: selection == .sources) {
                 select(.sources)
             }
@@ -272,26 +286,27 @@ struct MainMenuDrawer: View {
         }
     }
 
-    /// Capture and queue recovery deliberately use separate tap targets:
-    /// the wide row always starts listening, while the exceptional yellow
-    /// triangle opens diagnostics without pretending to start a note.
-    private var tellOmnesisRow: some View {
+    /// History, immediate capture and exceptional queue recovery are sibling targets.
+    private var notesRow: some View {
         let warningCount = store.notes.warnedPending(now: warningClock).count
         return row(
-            id: "tellOmnesis",
-            icon: "mic.fill",
-            label: "Tell Omnesis",
-            isActive: false,
+            id: "notes",
+            icon: "note.text",
+            label: "Notes",
+            isActive: selection == .notes,
             warning: warningCount > 0
                 ? RowWarning(
                     label: "\(warningCount) unsent \(warningCount == 1 ? "note" : "notes"). "
                         + "Show delivery details",
                     onTap: { showPendingNotes = true }
                 )
-                : nil
+                : nil,
+            trailingAction: RowAction(id: "tellOmnesis", icon: "mic.fill", label: "Tell Omnesis") {
+                close()
+                openCapture?()
+            }
         ) {
-            close()
-            openCapture?()
+            select(.notes)
         }
     }
 
@@ -333,6 +348,7 @@ struct MainMenuDrawer: View {
         badge: Int = 0,
         badgeDescription: String = MenuBadge.unreadDescription,
         warning: RowWarning? = nil,
+        trailingAction: RowAction? = nil,
         action: @escaping () -> Void
     )
         -> some View {
@@ -359,10 +375,9 @@ struct MainMenuDrawer: View {
                 // A warning row ends in a 48pt glyph block, whichever shape the
                 // triangle takes, so the two align down the trailing edge when
                 // both are on screen. Rows without one pad to the margin.
-                .padding(.trailing, warning == nil ? Theme.Spacing.md : 0)
+                .padding(.trailing, warning == nil && trailingAction == nil ? Theme.Spacing.md : 0)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(isActive ? Theme.accent.opacity(0.14) : Color.clear)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -374,19 +389,40 @@ struct MainMenuDrawer: View {
                     // the row's padded label already spans.
                     warningGlyph
                         .frame(height: 48)
-                        .background(isActive ? Theme.accent.opacity(0.14) : Color.clear)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(warning.label)
             }
+            if let trailingAction {
+                Button(action: trailingAction.onTap) {
+                    Image(systemName: trailingAction.icon)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 34, height: 34)
+                        .background(Theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: Theme.Radius.large))
+                        .frame(width: 48, height: 48)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(trailingAction.label)
+                .accessibilityIdentifier("menu.\(trailingAction.id)")
+            }
         }
+        .background(isActive ? Theme.accent.opacity(0.14) : Color.clear)
+    }
+
+    struct RowAction {
+        let id: String
+        let icon: String
+        let label: String
+        let onTap: () -> Void
     }
 
     /// A row's attention marker: an amber triangle at the trailing edge, sized
     /// so both shapes line up. `onTap` gives it its own target for the one case
     /// where it leads somewhere the row does not — unsent notes open delivery
-    /// details while the row still starts a capture. Left nil, the row is a
+    /// details while the Notes title still opens history. Left nil, the row is a
     /// single target whose own action is the repair route.
     ///
     /// The label is not optional: an unlabelled triangle is a visible warning
@@ -398,7 +434,7 @@ struct MainMenuDrawer: View {
 
     /// The marker itself. Fixed **width** only: a 48pt block at the trailing
     /// edge centres the triangle identically in both shapes, so the two line up
-    /// when a marked row and Tell Omnesis are on screen together. Height is
+    /// when marked rows and the Notes microphone are on screen together. Height is
     /// left to the row, which would otherwise grow to 48pt of glyph plus its
     /// own vertical padding and sit taller than every unmarked row.
     private var warningGlyph: some View {
@@ -409,6 +445,7 @@ struct MainMenuDrawer: View {
     }
 
     private func select(_ tab: HomeTab) {
+        onSelectDestination?()
         selection = tab
         close()
     }
@@ -530,5 +567,14 @@ private struct MenuBadge: View {
     }
     .preferredColorScheme(.dark)
 }
+
+@available(iOS 17.0, *)
+#Preview("Menu — Models warning") {
+    MainMenuDrawer(isOpen: .constant(true), selection: .constant(.agent), onOpenSettings: {})
+        .frame(width: MenuReveal.menuWidth(forContainerWidth: 393))
+        .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth))
+        .preferredColorScheme(.dark)
+}
+
 #endif
 #endif

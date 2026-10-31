@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
@@ -120,6 +121,8 @@ fun MainMenuDrawer(
     onTogglePin: (String, Boolean) -> Unit = { _, _ -> },
     onDismissConversationActionError: () -> Unit = {},
     onOpenSettings: () -> Unit,
+    modelsNeedAttention: Boolean = false,
+    onOpenModelWarnings: () -> Unit = {},
     onRefreshConversations: () -> Unit = {},
     onLoadMoreConversations: () -> Unit = {},
     experimental: Boolean = false,
@@ -196,22 +199,19 @@ fun MainMenuDrawer(
                     )
                 }
             }
-            // Tell Omnesis sits under Tasks: telling Omnesis is how a task is added.
             item {
                 MenuRow(
-                    id = "tellOmnesis",
-                    icon = Icons.Outlined.Mic,
-                    label = "Tell Omnesis",
-                    active = currentRoute?.startsWith("capture") == true,
-                    onClick = onTellBrain,
+                    id = "notes",
+                    icon = Icons.Outlined.History,
+                    label = "Notes",
+                    active = currentRoute == "notes" || currentRoute?.startsWith("capture") == true,
+                    onClick = { onNavigate("notes") },
                     warning = if (queuedNotesNeedAttention) {
                         MenuRowWarning("Show notes waiting to sync", onQueuedNotesWarning)
-                    } else {
-                        null
-                    },
+                    } else null,
+                    trailingAction = MenuRowAction("tellOmnesis", Icons.Outlined.Mic, "Tell Omnesis", onTellBrain),
                 )
             }
-
             item {
                 MenuRow(
                     id = "sources",
@@ -325,6 +325,8 @@ fun MainMenuDrawer(
         MenuActionBar(
             onNewConversation = onNewConversation,
             onOpenSettings = onOpenSettings,
+            modelsNeedAttention = modelsNeedAttention,
+            onOpenModelWarnings = onOpenModelWarnings,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .onSizeChanged { actionBarHeightPx = it.height },
@@ -352,6 +354,8 @@ fun MainMenuDrawer(
 private fun MenuActionBar(
     onNewConversation: () -> Unit,
     onOpenSettings: () -> Unit,
+    modelsNeedAttention: Boolean,
+    onOpenModelWarnings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = OmTheme.colors
@@ -373,21 +377,36 @@ private fun MenuActionBar(
                 .padding(start = OmSpacing.md, end = OmSpacing.md, top = OmSpacing.xl, bottom = OmSpacing.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(colors.bgSecondary)
-                    .clickable(onClick = onOpenSettings)
-                    .semantics { contentDescription = "Settings" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.Settings,
-                    contentDescription = null,
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
+            Box(Modifier.size(44.dp)) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(colors.bgSecondary)
+                        .clickable(onClick = onOpenSettings)
+                        .semantics { contentDescription = "Settings" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Settings,
+                        contentDescription = null,
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                if (modelsNeedAttention) {
+                    IconButton(
+                        onClick = onOpenModelWarnings,
+                        modifier = Modifier.align(Alignment.TopEnd).size(20.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.WarningAmber,
+                            contentDescription = "Show model capability errors",
+                            tint = colors.warning,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.weight(1f))
             Row(
@@ -459,12 +478,15 @@ private fun SectionHeader(title: String) {
 /**
  * A row's attention marker: an amber triangle at the trailing edge. It is its own tap target,
  * separate from the row, because it leads somewhere the row does not — unsent notes open
- * delivery details while the row still starts a capture.
+ * delivery details while the row opens saved notes.
  *
  * Both fields are required. An unlabelled triangle is a visible warning no screen reader can
  * announce, and one without a destination is a control that does nothing.
  */
 private data class MenuRowWarning(val description: String, val onClick: () -> Unit)
+
+/** A sibling control whose action is independent of the row's navigation. */
+private data class MenuRowAction(val id: String, val icon: ImageVector, val description: String, val onClick: () -> Unit)
 
 /**
  * A single navigation row. The active row paints a full-bleed accent@14% band (zero
@@ -483,6 +505,7 @@ private fun MenuRow(
     active: Boolean,
     onClick: () -> Unit,
     warning: MenuRowWarning? = null,
+    trailingAction: MenuRowAction? = null,
     /** Unread count, shown as a pill. In-app attention only — never an OS badge. */
     badge: Int = 0,
     /** What the pill's number counts, for a screen reader. */
@@ -490,47 +513,34 @@ private fun MenuRow(
 ) {
     val colors = OmTheme.colors
     Row(
-        Modifier
-            .fillMaxWidth()
-            .testTag("menu.$id")
-            .background(if (active) colors.accent.copy(alpha = 0.14f) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth()
+            .background(if (active) colors.accent.copy(alpha = 0.14f) else Color.Transparent),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = if (active) colors.accent else colors.textPrimary,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Text(
-            label,
-            style = TextStyle(
-                fontSize = 18.sp,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-            ),
-            color = colors.textPrimary,
-        )
-        if (badge > 0) {
-            Spacer(Modifier.weight(1f))
-            MenuBadge(count = badge, description = badgeDescription)
+        Row(
+            Modifier.weight(1f).testTag("menu.$id").clickable(onClick = onClick)
+                .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null,
+                    tint = if (active) colors.accent else colors.textPrimary, modifier = Modifier.size(18.dp))
+            }
+            Text(label, modifier = Modifier.weight(1f),
+                style = TextStyle(fontSize = 18.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal),
+                color = colors.textPrimary)
+            if (badge > 0) MenuBadge(count = badge, description = badgeDescription)
         }
         if (warning != null) {
-            if (badge <= 0) Spacer(Modifier.weight(1f))
-            IconButton(
-                onClick = warning.onClick,
-                modifier = Modifier.size(48.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.WarningAmber,
-                    contentDescription = warning.description,
-                    tint = colors.warning,
-                    modifier = Modifier.size(20.dp),
-                )
+            IconButton(onClick = warning.onClick, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = warning.description,
+                    tint = colors.warning, modifier = Modifier.size(20.dp))
+            }
+        }
+        trailingAction?.let { action ->
+            IconButton(onClick = action.onClick, modifier = Modifier.size(48.dp).testTag("menu.${action.id}")) {
+                Icon(action.icon, contentDescription = action.description, tint = colors.accent, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -568,7 +578,7 @@ private fun ConversationDrawerRow(
                     onClick = onClick,
                     onLongClick = { menuOpen = true },
                 )
-                .height(40.dp)
+                .heightIn(min = 40.dp)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

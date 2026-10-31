@@ -1061,6 +1061,28 @@ enum PreviewMocks {
 
     // MARK: - /status snapshot
 
+    static let modelHealth = ModelHealth(warnings: [
+        ModelHealthWarning(
+            role: "background-agent", assignment: "northstar/reasoning-model", consecutiveFailures: 5,
+            firstFailedAt: 1_783_591_200_000, lastFailedAt: 1_783_591_500_000,
+            category: "quota", message: "The inference provider has exhausted its quota. Check billing or usage limits."
+        ),
+        ModelHealthWarning(
+            role: "decision", assignment: "typesafe/decision-model", consecutiveFailures: 3,
+            firstFailedAt: 1_783_591_200_000, lastFailedAt: 1_783_591_500_000,
+            category: "unavailable", message: "The inference backend is unavailable. Check the service and connection."
+        ),
+    ])
+
+    static var statusSnapshotModelHealth: StatusSnapshot {
+        StatusSnapshot(
+            documents: statusSnapshot.documents,
+            dbSizeBytes: statusSnapshot.dbSizeBytes,
+            latestActivityBySource: statusSnapshot.latestActivityBySource,
+            modelHealth: modelHealth
+        )
+    }
+
     static let statusSnapshot = StatusSnapshot(
         documents: StatusSnapshot.Documents(
             total: 165_135,
@@ -5326,6 +5348,78 @@ enum PreviewMocks {
 
 @available(iOS 17.0, *)
 extension PreviewMocks {
+    static let longHistoryNote = NoteEntry(
+        id: "note-preview-long",
+        day: "2026-06-12",
+        capturedAt: "2026-06-12T10:00:00.000Z",
+        updatedAt: "2026-06-12T10:00:00.000Z",
+        text: String(repeating: "Leave room in the workshop agenda for questions and practical exercises. ", count: 20),
+        surface: "ios-watch",
+        deviceId: nil
+    )
+
+    static let noteHistoryCaptureDraft = "Keep the draft while reviewing earlier notes."
+    static let noteHistoryEditSuffix = " Add a projector to the reservation."
+
+    static let noteHistoryTranscribingWithResponse: NoteEntry = {
+        let original = noteHistory[0]
+        return NoteEntry(
+            id: original.id,
+            day: original.day,
+            capturedAt: original.capturedAt,
+            updatedAt: original.updatedAt,
+            capturedTimeZoneId: original.capturedTimeZoneId,
+            capturedUtcOffsetSeconds: original.capturedUtcOffsetSeconds,
+            receivedAt: original.receivedAt,
+            text: original.text,
+            surface: original.surface,
+            deviceId: original.deviceId,
+            latitude: original.latitude,
+            longitude: original.longitude,
+            placeName: original.placeName,
+            transcription: "pending",
+            agent: original.agent
+        )
+    }()
+
+    static let noteHistory: [NoteEntry] = [
+        NoteEntry(
+            id: "note-preview-reply",
+            day: "2026-06-12",
+            capturedAt: "2026-06-12T10:15:00.000Z",
+            updatedAt: "2026-06-12T10:15:00.000Z",
+            text: "Remind me to reserve a room for the design workshop next week.",
+            surface: "ios-app",
+            deviceId: nil,
+            agent: NoteAgentResult(
+                state: "done",
+                receipt: .init(
+                    text: "I added a task to reserve the workshop room.",
+                    changes: [.init(text: "Reserve a room for the design workshop", taskId: "task-preview-workshop", undoSeq: 42)]
+                )
+            )
+        ),
+        NoteEntry(
+            id: "note-preview-pending",
+            day: "2026-06-12",
+            capturedAt: "2026-06-12T09:00:00.000Z",
+            updatedAt: "2026-06-12T09:00:00.000Z",
+            text: "A short voice note is being transcribed.",
+            surface: "android-app",
+            deviceId: nil,
+            transcription: "pending"
+        ),
+        NoteEntry(
+            id: "note-preview-text",
+            day: "2026-06-11",
+            capturedAt: "2026-06-11T18:00:00.000Z",
+            updatedAt: "2026-06-11T18:00:00.000Z",
+            text: "The workshop agenda should leave space for questions.",
+            surface: "portal",
+            deviceId: nil
+        ),
+    ]
+
     static let privacyExternalAgent = PrivacyExternalAgent(
         displayName: "Atlas",
         narrativeName: "Atlas",

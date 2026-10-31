@@ -937,6 +937,37 @@ final class SearchClientTests: XCTestCase {
 
     // MARK: - /status on-disk size
 
+    func testModelHealthDecodesInStatusAndInferenceAndClearsOnRecovery() throws {
+        let health = """
+        {"warnings":[{"role":"background-agent","assignment":"northstar/model","consecutiveFailures":3,
+        "firstFailedAt":1783591200000,"lastFailedAt":1783591500000,"category":"future-category",
+        "message":"The inference backend is unavailable."}]}
+        """
+        let status = try decodeStatus("""
+        {"documents":{"total":0,"bySource":{}},"modelHealth":\(health)}
+        """)
+        XCTAssertTrue(status.modelHealth?.needsAttention == true)
+        XCTAssertEqual(status.modelHealth?.warnings.first?.role, "background-agent")
+        XCTAssertEqual(status.modelHealth?.warnings.first?.consecutiveFailures, 3)
+        XCTAssertEqual(status.modelHealth?.warnings.first?.lastFailedAt, 1_783_591_500_000)
+        XCTAssertEqual(status.modelHealth?.warnings.first?.category, "future-category")
+        let inference = try JSONDecoder().decode(InferenceOverview.self, from: Data("""
+        {"backends":{},"assignments":{},"health":\(health)}
+        """.utf8))
+        XCTAssertEqual(inference.health, status.modelHealth)
+        let recovered = try decodeStatus("""
+        {"documents":{"total":0,"bySource":{}},"modelHealth":{"warnings":[]}}
+        """)
+        XCTAssertFalse(recovered.modelHealth?.needsAttention == true)
+        XCTAssertNil(try decodeStatus("""
+        {"documents":{"total":0,"bySource":{}}}
+        """).modelHealth)
+        let legacyInference = try JSONDecoder().decode(InferenceOverview.self, from: Data("""
+        {"backends":{},"assignments":{}}
+        """.utf8))
+        XCTAssertNil(legacyInference.health)
+    }
+
     func testStatusOnDiskPrefersTheWholeFootprint() throws {
         let status = try decodeStatus("""
         { "documents": { "total": 5, "bySource": {} }, "dbSizeBytes": 1000,

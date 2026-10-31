@@ -285,6 +285,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+                .task(id: scenePhase) { await refreshModelHealthWhileActive() }
                 .refreshable {
                     await store.syncAll()
                     await store.refreshSourcePermissionHealth()
@@ -877,7 +878,7 @@ struct SettingsView: View {
             }
 
             NavigationLink(value: SettingsDestination.models(initialRole: nil)) {
-                Label("Configure Models", systemImage: "cube")
+                modelsSettingsLabel
             }
             NavigationLink(value: SettingsDestination.devices) {
                 Label("Configure Devices", systemImage: "laptopcomputer.and.iphone")
@@ -1293,6 +1294,28 @@ extension SettingsView {
     }
 }
 
+@available(iOS 17.0, *)
+extension SettingsView {
+    fileprivate var modelsSettingsLabel: some View {
+        HStack {
+            Label("Configure Models", systemImage: "cube")
+            if store.statusSnapshot?.modelHealth?.needsAttention == true {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.warning)
+                    .accessibilityLabel("Models need attention")
+            }
+        }
+    }
+
+    fileprivate func refreshModelHealthWhileActive() async {
+        guard destinationMode == .live, scenePhase == .active else { return }
+        while !Task.isCancelled {
+            await store.refreshGatewayStats()
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+        }
+    }
+}
+
 /// The same lifecycle explanation is used for Settings and source removal.
 @available(iOS 17.0, *)
 struct SourceDepartureConfirmation: View {
@@ -1582,5 +1605,13 @@ struct SourceDepartureConfirmation: View {
         ))
         .frame(width: 320)
 }
+
+@available(iOS 17.0, *)
+#Preview("Settings — Models warning") {
+    SettingsView(initialDestination: .root, previewData: true)
+        .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotModelHealth))
+        .preferredColorScheme(.dark)
+}
+
 #endif
 #endif

@@ -85,8 +85,8 @@ public struct OmnesisApp: App {
                 // Push-tap UI-test harness — see PushTapDemoRoot.
                 PushTapDemoRoot(mode: mode, delegate: appDelegate)
             } else if Self.menuRevealDemo {
-                // Menu-reveal UI-test harness — see MenuRevealDemoRoot.
                 MenuRevealDemoRoot(surface: Self.menuRevealDemoSurface ?? .list)
+                    .modifier(NotesDemoRootOverride(isNotes: Self.menuRevealDemoSurface == .notes))
             } else {
                 appRoot
             }
@@ -250,7 +250,7 @@ public struct OmnesisApp: App {
 /// drag; `tasks` and `briefs`, the Tasks screen and the Morning brief conversation over demo gateways.
 @available(iOS 17.0, *)
 enum MenuRevealDemoSurface: String {
-    case list, capture, tasks, briefs
+    case list, capture, tasks, briefs, notes
 }
 
 /// Harness for the menu-reveal gesture tests: a `MenuRevealContainer` over a fixture surface, so it needs no gateway.
@@ -304,8 +304,8 @@ private struct MenuRevealDemoRoot: View {
                 CaptureView(surface: .app, speech: .preview(state: .listening))
             case .tasks: TasksFanDemoSurface(menuOpen: $menuOpen)
             case .briefs: DailyBriefDemoSurface(menuOpen: $menuOpen)
-            case .list:
-                listSurface
+            case .notes: NotesHistoryDemoSurface()
+            case .list: listSurface
             }
         }
         .environment(AppStore.preview())

@@ -37,6 +37,21 @@ describe("Settings header actions", () => {
     else globalThis.window = originalWindow;
   });
 
+  test("marks the Models tab while another settings page is open and clears on recovery", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }), host);
+    });
+    const warning = host.querySelector('.config-tab [aria-label="Models need attention"]');
+    expect(warning).not.toBeNull();
+    const tab = warning?.closest("button") as HTMLButtonElement;
+    await act(async () => { tab.click(); });
+    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/models");
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", modelHealth: { warnings: [] } }), host);
+    });
+    expect(host.querySelector(".warning-triangle")).toBeNull();
+  });
+
   test("renders logout in the settings header and invokes the app handler", async () => {
     const onLogout = vi.fn();
     await act(async () => {

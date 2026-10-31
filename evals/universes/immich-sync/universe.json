@@ -1,0 +1,20 @@
+{
+  "name": "immich-sync",
+  "description": "Single-source Immich universe for the gateway-level wraps-real E2E. Its fake-corpus.json drives the synth twin, which runs the REAL Immich provider, client, sync source and normalizer over the in-memory SimulatedImmich: the self user's photos and a video with places, named faces and two albums, a partner's shared photo that stays out because the source indexes only the user's own, a trashed photo, a live photo's hidden motion part, and a locked photo.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "nas",
+      "name": "Riverside-NAS",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "immich",
+      "accountIds": ["maya.reeves@example.com"],
+      "device": "nas"
+    }
+  ]
+}

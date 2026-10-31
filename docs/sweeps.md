@@ -134,27 +134,31 @@ Beyond that:
 - **Name no source, no tool, no person.** A sweep that needs to know how
   Omnesis is built, or whose data this is, stops being portable — and
   portability is the entire reason a sweep is prose rather than code. Naming
-  the substrate it maintains (briefs, loops, deadlines, annotations) is fine;
+  the substrate it maintains (observations, loops, deadlines, annotations) is fine;
   that vocabulary is shared.
 - **Say when to stay quiet.** An empty pass is a success. Prose that cannot
   produce an empty pass is a noise generator on a timer.
-- **Prefer precision to recall.** A couple of high-value briefs beat many
-  mediocre ones, and the brief judge will hold the weak ones anyway.
+- **Prefer precision to recall.** A couple of high-value observations beat many
+  mediocre ones. Note only findings that will still matter at the next morning
+  brief.
 
-## The push bar
+## Observations and the morning brief
 
-Briefs a sweep writes face the brief judge — the ship/no-ship pass that decides
-whether a card earns an interrupt. Which of its gates apply depends on the
-sweep's editorial lane, and **only a system sweep can declare one**: the
-day-ahead pass is chartered to restate today with the context around it, which
-the reactive awareness gate would otherwise read as an echo of what the user
-already knows.
+Sweeps note observations rather than sending individual briefs or push
+notifications. Check existing observations before writing, update findings
+instead of duplicating them, and withdraw observations that later evidence
+makes moot. Closing a fulfilled loop preserves its history and drops related
+open observations unless another related loop is still active.
 
-Every operator-authored sweep faces all four gates. So does a fork of a system
-sweep that carried a lane: the grant was made for the prose the gateway ships,
-and a file that replaces that prose has not been through the same judgment.
-Retiming, renaming or switching a system sweep off keeps its lane — none of
-those change what its cards say.
+The morning recheck considers open observations from sweeps alongside those
+from other Brain runs. It checks evidence and loop state, applies salience
+judgements, and ranks the survivors for the morning brief. System and
+operator-authored sweeps use the same observation pipeline; a sweep's origin
+does not grant an exception to the morning recheck.
+
+A scheduled follow-up can refresh an observation, but it should only note a
+finding that will still be useful at the next morning brief. An observation is
+a candidate for that brief, not a promise of inclusion or an immediate alert.
 
 ## Steering is data, not instruction
 
@@ -175,9 +179,9 @@ read the prose before enabling it.
 
 ## What a sweep has produced
 
-Every settled sweep run folds into `cognition_sweep_tally` — runs, tokens,
-briefs created, briefs the judge held, loops opened and touched, annotations
-recorded. The Sweeps tab reports from it.
+Every settled sweep run folds into `cognition_sweep_tally` — completed and
+failed runs, tokens, observations noted, loops opened and touched, and
+annotations recorded. The Sweeps tab reports from it.
 
 It is a durable tally rather than a query for two reasons that both bite
 silently: run rows are pruned, so joins through `created_by_run` would quietly

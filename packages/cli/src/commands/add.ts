@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isAbsolute } from "node:path";
 import { defineCommand } from "citty";
+import { DEFAULT_CONFIG_DIR } from "@omnesis/core";
 import {
   c,
   fetchDescriptors,
@@ -30,6 +32,14 @@ import {
   resolveDeviceFlag,
   type UnionDescriptor,
 } from "../device-picker.js";
+import { resolveOperatorPath } from "../operator-path.js";
+import {
+  dockerFolders,
+  shareFolderCommand,
+  visibleInContainer,
+  writeShareRequest,
+  type DockerFolders,
+} from "../docker-folders.js";
 import {
   describeAccountChoice,
   describeAddChoice,
@@ -88,18 +98,97 @@ export function extraPositionalArg(
 /**
  * Normalize a path only when the CLI and addressed collector share a host.
  * Remote collectors own their filesystem namespace, including `~` and
- * relative-path expansion; their descriptor validator is the authority.
+ * relative-path expansion; their descriptor validator is the authority. On a
+ * Docker install the host is the machine that runs Docker, not the container
+ * this CLI runs in (see `resolveOperatorPath`).
  */
 export function pathValueForCollector(
   value: string,
   collectorHostname: string | undefined,
-  deps: Pick<AddFlowDeps, "resolve" | "join">,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
   if (!isSameHostAsCollector(collectorHostname)) return value.trim();
-  if (value === "~" || value.startsWith("~/")) {
-    return deps.join(process.env.HOME ?? "", value.slice(1));
+  return resolveOperatorPath(value, env);
+}
+
+/** Seconds a re-run add waits for its collector to reconnect; set by the host launcher. */
+const ADD_WAIT_ENV = "OMNESIS_ADD_WAIT_SECONDS";
+
+/**
+ * Wait until the device `input` names is online, or `timeoutMs` passes. A
+ * gateway that is itself restarting (a combined container recreated) answers
+ * nothing for a while, so a failed request is one more reason to wait, not an
+ * error; whatever is still wrong at the deadline surfaces from the add itself.
+ */
+export async function waitForDeviceOnline(
+  input: string,
+  timeoutMs: number,
+  deps: {
+    listDevices: () => Promise<AdminDeviceEntry[]>;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+  } = {
+    listDevices: async () =>
+      (await gatewayJson<{ items: AdminDeviceEntry[] }>("/admin/devices")).items,
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    now: () => Date.now(),
+  },
+): Promise<boolean> {
+  const deadline = deps.now() + timeoutMs;
+  for (;;) {
+    try {
+      const devices = await deps.listDevices();
+      if (devices.some((d) => (d.id === input || d.name === input) && d.online === true)) {
+        return true;
+      }
+    } catch {
+      // Not answering yet.
+    }
+    if (deps.now() >= deadline) return false;
+    await deps.sleep(2000);
   }
-  return deps.resolve(value);
+}
+
+/** What `addSingleSource` does with a path the collector refused. */
+export type ContainerFolderOutcome =
+  /** Not a folder hidden by the container boundary: print the collector's error. */
+  | { kind: "none" }
+  /** The launcher offers the share once this command exits. */
+  | { kind: "requested"; message: string }
+  /** No launcher to offer it: the error, and the command that shares the folder. */
+  | { kind: "explain"; message: string };
+
+/**
+ * A path the collector refused, read for the one cause the operator cannot
+ * see: the folder exists on their machine, outside what the collector's
+ * container is given. Only a collector on this host (the Docker install's own)
+ * and an absolute path outside the config directory and the shared folders
+ * qualify — a remote collector's path is that machine's, and a folder already
+ * shared is refused for some other reason.
+ */
+export function containerFolderOutcome(input: {
+  value: string;
+  error: string;
+  collectorIsLocal: boolean;
+  folders: DockerFolders | null;
+  resume: readonly string[];
+  writeRequest?: typeof writeShareRequest;
+}): ContainerFolderOutcome {
+  const { value, error, folders } = input;
+  if (!input.collectorIsLocal || !folders || !isAbsolute(value)) return { kind: "none" };
+  if (visibleInContainer(value, folders)) return { kind: "none" };
+  const write = input.writeRequest ?? writeShareRequest;
+  if (folders.canRequest && write(folders, value, input.resume)) {
+    return {
+      kind: "requested",
+      message: `${c.red}${error}${c.reset}\n${value} is not among the folders this install's collector can see.`,
+    };
+  }
+  const command = shareFolderCommand(value);
+  const hint = error.includes(command)
+    ? ""
+    : `\nThe collector runs in a Docker container and sees only this install's config directory and the folders shared with it. Share this one from the machine that runs Docker, then add the source again:\n  ${command}`;
+  return { kind: "explain", message: `${c.red}${error}${c.reset}${hint}` };
 }
 
 export const addCommand = defineCommand({
@@ -144,6 +233,15 @@ export const addCommand = defineCommand({
     // honor it directly; otherwise we fetch the union of descriptors
     // (across all online collectors) and pick a device per-descriptor
     // after the user selects a source.
+    // The host launcher runs an add again once it has shared a folder with the
+    // collector's container, which it recreated to do so: wait for that
+    // collector to be back before asking it anything.
+    const reconnectWait = Number(process.env[ADD_WAIT_ENV] ?? "");
+    if (deviceFlag && Number.isFinite(reconnectWait) && reconnectWait > 0) {
+      await withSpinner("Waiting for the collector to reconnect", () =>
+        waitForDeviceOnline(deviceFlag, reconnectWait * 1000),
+      );
+    }
     const explicitDevice = deviceFlag ? await resolveDeviceFlag(deviceFlag) : null;
 
     // Descriptor fetch shape depends on whether the user pinned a device:
@@ -923,15 +1021,8 @@ async function recoverFromMissingCredentials(
 }
 
 async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps): Promise<void> {
-  const {
-    prompts,
-    resolve,
-    join,
-    findDescriptor,
-    descriptorsByProvider,
-    extraPositional,
-    joinConfirmation,
-  } = deps;
+  const { prompts, findDescriptor, descriptorsByProvider, extraPositional, joinConfirmation } =
+    deps;
   // One report for the whole add: the accounts the gateway already lists are
   // settled wherever they turn up (discovery, a path, a sign-in), and what
   // they came to is stated once, next to what the add itself achieved.
@@ -984,6 +1075,27 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       descriptor!.multiDeviceMode,
     );
   const collectorIsLocal = isSameHostAsCollector(ctx.collectorHostname);
+  // A refused path may be a host folder the collector's container cannot see.
+  // The launcher can share it and pick the add up again: with the path as the
+  // positional answer when the source asks for nothing else, otherwise by
+  // asking again from the start.
+  const reportParamError = (error: string, path: string | null): void => {
+    const outcome =
+      path === null
+        ? ({ kind: "none" } as const)
+        : containerFolderOutcome({
+            value: path,
+            error,
+            collectorIsLocal,
+            folders: dockerFolders(process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR),
+            resume:
+              descriptor!.params?.length === 1
+                ? ["sources", "add", descriptor!.id, path, "--device", ctx.deviceId]
+                : process.argv.slice(2).filter((arg) => arg !== "--"),
+          });
+    if (outcome.kind === "requested") throw new CliError(outcome.message, EXIT_USER_ERROR);
+    console.error(outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`);
+  };
 
   // A prompt is one line, so the source's own explanation of the setting has
   // to ride along with the label. For an optional field that sentence is
@@ -998,11 +1110,11 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       if (cliValue && descriptor.params.length === 1) {
         let value = cliValue;
         if (param.type === "path") {
-          value = pathValueForCollector(value, ctx.collectorHostname, { resolve, join });
+          value = pathValueForCollector(value, ctx.collectorHostname);
         }
         const err = await validateParam(ctx, descriptor.id, param.name, value);
         if (err) {
-          console.error(`${c.red}${err}${c.reset}`);
+          reportParamError(err, param.type === "path" ? value : null);
           return;
         }
         params[param.name] = value;
@@ -1029,7 +1141,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         }
         const err = await validateParam(ctx, descriptor.id, param.name, value);
         if (err) {
-          console.error(`${c.red}${err}${c.reset}`);
+          reportParamError(err, value);
           return;
         }
         params[param.name] = value;

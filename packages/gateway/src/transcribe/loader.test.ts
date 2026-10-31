@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
+import { InferenceHealth } from "../inference/model-health.js";
 import { loadTranscriberFromResolved } from "./loader.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
@@ -125,5 +126,24 @@ describe("loadTranscriberFromResolved protocols", () => {
     expect(capability).toBeInstanceOf(HttpTranscriber);
     await capability!.transcribe(new Uint8Array([1]), "audio/ogg");
     expect(seen).toEqual(Array(3).fill("http://127.0.0.1:8080/openai/v1/audio/transcriptions"));
+  });
+  test("a provider whose async load overlaps reassignment cannot report against the new model", async () => {
+    let identity = "old";
+    const health = new InferenceHealth(() => ({
+      identity,
+      fingerprint: identity,
+      assignment: "gpu/example",
+    }));
+    const loading = loadTranscriberFromResolved(http, {
+      health,
+      decodeAudio: async () => new Float32Array(16_000),
+      fetchFn: async () => new Response("quota exhausted", { status: 402 }),
+    });
+    identity = "new";
+    const provider = await loading;
+    expect(provider).not.toBeNull();
+    for (let i = 0; i < 3; i++)
+      await expect(provider!.transcribe(new Uint8Array([1]), "audio/ogg")).rejects.toThrow();
+    expect(health.snapshot().warnings).toEqual([]);
   });
 });

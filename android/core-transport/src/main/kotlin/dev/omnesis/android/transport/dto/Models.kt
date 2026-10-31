@@ -169,6 +169,7 @@ data class InferenceOverview(
     /** Experimental Codex backend status; present only when the gateway exposes it. */
     val codex: CodexBackendStatus? = null,
     val assignments: Map<String, ResolvedAssignment> = emptyMap(),
+    val health: ModelHealth = ModelHealth(),
 )
 
 /**
@@ -579,4 +580,22 @@ data class CredentialField(
 @Serializable
 data class SetModelCredentialsBody(
     val fields: Map<String, String>,
+)
+
+/** Safe runtime diagnostics from the gateway inference health tracker. */
+@Serializable
+data class ModelHealth(val warnings: List<ModelHealthWarning> = emptyList()) {
+    val needsAttention: Boolean get() = warnings.isNotEmpty()
+}
+
+@Serializable
+data class ModelHealthWarning(
+    val role: String,
+    val assignment: String,
+    val consecutiveFailures: Int,
+    val firstFailedAt: Long,
+    val lastFailedAt: Long,
+    /** Kept open to future gateway categories. */
+    val category: String,
+    val message: String,
 )

@@ -45,6 +45,8 @@ private actor NoteQueueOperationGate {
 public final class NotesCoordinator {
     /// Queued-not-yet-delivered notes, oldest first.
     public private(set) var pending: [PendingNote] = []
+    /// Invalidates a mounted history after a capture or offline delivery lands.
+    public private(set) var historyRevision = 0
 
     @ObservationIgnored
     private var client: NotesClient?
@@ -146,6 +148,7 @@ public final class NotesCoordinator {
         )
         switch outcome {
         case .saved:
+            historyRevision += 1
             // A successful POST proves the gateway is reachable and
             // accepting notes — the moment to deliver anything queued
             // from earlier.
@@ -280,6 +283,7 @@ public final class NotesCoordinator {
         pending = await store.list()
         await queueGate.release()
         if delivered > 0 {
+            historyRevision += 1
             log.info("Drained \(delivered, privacy: .public) queued notes to the gateway")
         }
     }

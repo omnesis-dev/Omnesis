@@ -9,7 +9,7 @@ satisfy the notice-retention requirements of the permissive licenses (MIT, BSD,
 ISC, Apache-2.0, OFL) and the weak-copyleft licenses (MPL-2.0, LGPL-3.0) those
 components carry.
 
-It includes a Models.dev catalog notice and seven sections:
+It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and seven sections:
 
 1. **Vendored browser libraries** — minified JS bundles committed under
    `packages/gateway/portal/vendor/` and served by the gateway's web portal.
@@ -70,6 +70,20 @@ checksum are recorded in `packages/gateway/models-dev/snapshot.json`.
 Provider SVG logos are fetched by the gateway at runtime and cached locally.
 They are not bundled in the repository or published packages. The marks remain
 the property of their respective owners; see `TRADEMARKS.md`.
+
+---
+
+## DuckDB httpfs extension
+
+The Docker images carry, and source and package installs fetch at install time,
+the signed `httpfs` extension binary DuckDB's extension repository
+(`extensions.duckdb.org`) serves for the DuckDB version Omnesis uses, under
+`packages/gateway/duckdb-extensions/<version>/<platform>/`. It is redistributed
+unmodified; its version and per-platform checksums are pinned in
+`packages/gateway/duckdb-extensions/manifest.json`. The extension
+([duckdb/duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)) is licensed under
+MIT, copyright the DuckDB Foundation, and statically links OpenSSL, licensed under
+Apache-2.0 (<https://www.openssl.org/source/license.html>).
 
 ---
 
@@ -298,6 +312,12 @@ The Discord source bundles the path data of the `discord` glyph from
 Simple Icons releases its icon files under CC0-1.0
 (<https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md>); the mark
 itself remains Discord Inc.'s, see `TRADEMARKS.md`.
+
+The Immich source bundles the path data of Immich's logo, `design/immich-logo.svg`
+from the Immich repository (<https://github.com/immich-app/immich>), unmodified
+(`packages/providers/immich/src/icons.ts`). The Immich repository is licensed under
+AGPL-3.0, the license Omnesis is distributed under; the mark itself remains the
+Immich team's (FUTO), see `TRADEMARKS.md`.
 
 ---
 

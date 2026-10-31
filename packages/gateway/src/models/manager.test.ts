@@ -139,6 +139,23 @@ describe("ModelManager", () => {
       expect(roles).not.toContain("entailment-verifier");
     });
 
+    it("describes only the decision uses available in the gateway mode", () => {
+      const mgr = new ModelManager({ modelsDir: dir });
+      const decision = () =>
+        mgr.getOverview(fakeInference).capabilities.find((c) => c.role === "decision")!;
+      const stable = decision();
+      expect(stable.description).toContain("complication captures");
+      expect(stable.description).toContain("email dates");
+      expect(stable.description).not.toContain("Brain");
+      expect(stable.description).not.toContain("browser Find");
+      expect(stable).not.toHaveProperty("experimentalDescription");
+      process.env.OMNESIS_EXPERIMENTAL = "1";
+      expect(decision().description).toContain("browser Find");
+      expect(decision().description).toContain("Brain");
+      process.env.OMNESIS_EXPERIMENTAL = "0";
+      expect(decision().description).toBe(stable.description);
+    });
+
     it("serves the experimental capability cards when OMNESIS_EXPERIMENTAL=1", () => {
       process.env.OMNESIS_EXPERIMENTAL = "1";
       const mgr = new ModelManager({ modelsDir: dir });

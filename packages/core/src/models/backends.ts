@@ -619,12 +619,31 @@ export interface CapabilityVerdict {
 
 // ── Inference overview (API response snapshot) ────────────────────────
 
+/** Repeated runtime failures for a capability's current model assignment. */
+export interface ModelHealthWarning {
+  role: CapabilityRole;
+  assignment: string;
+  /** Lower bound, capped at the repeated-failure threshold to keep concurrent evidence bounded. */
+  consecutiveFailures: number;
+  firstFailedAt: number;
+  lastFailedAt: number;
+  category: "quota" | "authentication" | "unavailable" | "configuration" | "timeout" | "unknown";
+  /** Fixed, content-free explanation; never a provider response or prompt. */
+  message: string;
+}
+
+export interface ModelHealth {
+  warnings: ModelHealthWarning[];
+}
+
 export interface InferenceOverview {
   /**
    * Global network policy for user-declared HTTP inference backends. When
    * false/omitted, non-loopback HTTP inference URLs are blocked before fetch.
    */
   allowRemoteInference?: boolean;
+  /** Absent on gateways that predate runtime model health. */
+  health?: ModelHealth;
   backends: Record<string, BackendStatus>;
   /** Built-in Codex backend status. Separate from HTTP backends because it is
    * backed by the local Codex CLI/ChatGPT login, not an OpenAI-compatible URL. */

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +68,7 @@ import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
 import dev.omnesis.android.ui.models.ModelsScreen
+import dev.omnesis.android.ui.notes.NotesHistoryScreen
 import dev.omnesis.android.ui.notes.PendingNotesSheet
 import dev.omnesis.android.notes.PENDING_WARNING_AGE
 import dev.omnesis.android.notes.pendingNoteNeedsAttention
@@ -108,6 +110,7 @@ fun HomeScaffold(
 ) {
     val connection by vm.connection.collectAsStateWithLifecycle()
     val agentState by vm.agentState.collectAsStateWithLifecycle()
+    val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
     val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
     val tasksAvailable by vm.tasksAvailable.collectAsStateWithLifecycle()
     val noteAgent by vm.noteAgent.collectAsStateWithLifecycle()
@@ -267,6 +270,14 @@ fun HomeScaffold(
     // missing, future, or hour-old snapshot starts a focused blank conversation. Explicit launch
     // intents are already represented by the buses below and always own navigation.
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                vm.refreshGatewayStatus()
+                delay(30_000)
+            }
+        }
+    }
     val latestHasExplicitLaunch by rememberUpdatedState(
         captureRequest != null || searchRequest != null || privacyApprovalRequest != null ||
             accessAuthorizationRequest != null ||
@@ -514,6 +525,8 @@ fun HomeScaffold(
                     closeDrawer()
                     nav.navigate("settings") { launchSingleTop = true }
                 },
+                modelsNeedAttention = modelHealth.needsAttention,
+                onOpenModelWarnings = openModels,
                 onRefreshConversations = { vm.refreshConversations() },
                 onLoadMoreConversations = { vm.loadMoreConversations() },
                 experimental = experimental,
@@ -885,6 +898,14 @@ fun HomeScaffold(
                     onOpenSettings = openSettings,
                 )
             }
+            composable("notes") {
+                NotesHistoryScreen(
+                    onBack = { nav.popBackStack() },
+                    onCapture = { openCapture(CaptureSurface.APP) },
+                    onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
+                    onOpenSettings = openSettings,
+                )
+            }
             composable(
                 route = "capture?surface={surface}",
                 arguments = listOf(
@@ -898,6 +919,8 @@ fun HomeScaffold(
                     noteProcessingNotice = noteAgent?.notice,
                     onOpenAgentSettings = openModels,
                     onClose = { nav.popBackStack() },
+                    onOpenSettings = openSettings,
+                    onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
                 )
             }
             composable(route = PHONE_SETUP_ROUTE_PATTERN, arguments = phoneSetupArguments(PhoneSetupEntry.SETTINGS)) {

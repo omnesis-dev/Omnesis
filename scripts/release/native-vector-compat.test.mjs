@@ -237,7 +237,8 @@ test("owns and drains a surviving grandchild after a successful leader exits", a
 test("root and published gateway share the standalone helper after patch-package", () => {
   const manifest = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
   expect(manifest.scripts.postinstall).toBe(
-    "patch-package && node scripts/native-vector-compat.mjs --package-dir packages/gateway",
+    "patch-package && node scripts/native-vector-compat.mjs --package-dir packages/gateway && " +
+      "node scripts/duckdb-extensions.mjs --package-dir packages/gateway --best-effort",
   );
 });
 

@@ -117,6 +117,10 @@ async function fixture() {
   const usage = vi.fn();
   let currentConfig = config();
   let apiKey: string | undefined = "fixture-key";
+  const modelCalls: Array<{
+    success: ReturnType<typeof vi.fn>;
+    failure: ReturnType<typeof vi.fn>;
+  }> = [];
   const service = new RealtimeService({
     getConfig: () => currentConfig,
     getApiKey: () => apiKey,
@@ -125,6 +129,11 @@ async function fixture() {
     connect: () => socket as unknown as WebSocket,
     logger,
     recordUsage: usage,
+    beginModelCall: () => {
+      const call = { success: vi.fn(), failure: vi.fn() };
+      modelCalls.push(call);
+      return call;
+    },
   });
   let connection: ReturnType<RealtimeService["open"]> | undefined;
   cleanups.push(async () => {
@@ -138,6 +147,7 @@ async function fixture() {
     agent,
     store,
     ordinary,
+    modelCalls,
     search,
     fetch,
     sql,
@@ -227,6 +237,27 @@ async function settle(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("direct realtime Omnesis runtime", () => {
+  it("records a rejected upstream handshake as model health evidence", async () => {
+    const f = await fixture();
+    f.service.open(f.peer, "token:owner", { token: "fixture" });
+    f.socket.emit("error", new Error("network unavailable"));
+    expect(f.modelCalls[0]?.failure).toHaveBeenCalledOnce();
+    expect(f.modelCalls[0]?.success).not.toHaveBeenCalled();
+  });
+
+  it("does not clear model failures just because a voice session connects", async () => {
+    const f = await fixture();
+    const connection = f.service.open(f.peer, "token:owner", { token: "fixture" });
+    f.socket.emit("open");
+    await vi.waitFor(() =>
+      expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
+    );
+    f.socket.event({ type: "session.updated" });
+    expect(f.modelCalls[0]?.success).not.toHaveBeenCalled();
+    connection.close();
+    expect(f.modelCalls[0]?.failure).not.toHaveBeenCalled();
+  });
+
   it("requires explicit assignment, strict experimental mode, remote consent, real OpenAI origin and a key", () => {
     expect(realtimeBackend(config(), () => "key")).toBe("cloud");
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
@@ -798,10 +829,16 @@ describe("direct realtime Omnesis runtime", () => {
       error: { code: "quota_exhausted", retryable: false, fatal: false },
     });
     expect(f.peer.close).not.toHaveBeenCalled();
+    expect(f.modelCalls[0]?.failure).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ code: "quota_exhausted" }),
+    );
+    expect(f.modelCalls[0]?.success).not.toHaveBeenCalled();
     await speech(f, "r2", "next-input");
     done(f, "r2");
     await settle(f);
     expect(f.peer.close).not.toHaveBeenCalled();
+    expect(f.modelCalls[1]?.success).toHaveBeenCalledOnce();
+    expect(f.modelCalls[1]?.failure).not.toHaveBeenCalled();
   });
   it.each([1, 2] as const)(
     "preserves legacy version %s call continuity on canonical failure",

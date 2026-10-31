@@ -253,6 +253,14 @@
             it lacks at start, and each store is encrypted as it next opens.
           </li>
         </ul>
+        <p>
+          The encrypted analytics database needs DuckDB's signed <code>httpfs</code> extension.
+          Omnesis ships the build pinned for its DuckDB version: the Docker images carry it, and
+          source and package installs fetch it once while installing and verify its checksum. The
+          gateway loads that copy, so encrypted analytics opens without network access. Should it be
+          missing, the gateway downloads the extension beside the analytics database on first open
+          and says so in its log; re-running the installer or update restores the shipped copy.
+        </p>
 
         <h3 id="passphrase">Headless machines: the passphrase backend</h3>
         <p>

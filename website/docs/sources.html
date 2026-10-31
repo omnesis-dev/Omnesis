@@ -946,6 +946,19 @@
               </tr>
               <tr>
                 <td>
+                  Immich<br /><span class="pill">any collector</span>
+                  <span class="pill">API key</span> <span class="pill">experimental</span>
+                </td>
+                <td>
+                  <strong>Experimental</strong> — offered only when the gateway and collector run
+                  with <code>OMNESIS_EXPERIMENTAL=1</code>. One document per photo or video in a
+                  self-hosted Immich library — when and where it was taken, the people Immich
+                  recognised and you named, its albums, description and camera — with a link back to
+                  the asset. Never the images. See <a href="#immich">Immich</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
                   Paperless-ngx<br /><span class="pill">any collector</span>
                   <span class="pill">API token</span> <span class="pill">Experimental</span>
                 </td>
@@ -1009,6 +1022,77 @@
             only once a scan has read its folder from end to end. A folder that could not be read —
             an unmounted drive, a changed permission — is left alone until it can be, and the other
             folders are unaffected. Remove the source to purge everything at once.
+          </li>
+        </ul>
+
+        <h3 id="immich">Immich</h3>
+        <div class="callout warn">
+          <strong>Experimental.</strong> The Immich source is unstable and offered in
+          <strong>Add source</strong> only when the gateway and the collector run with
+          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+        </div>
+        <p>
+          Immich indexes one Immich user's photo and video library from a server you run, version
+          3.0 or later. It reads text and metadata only: the capture time and place, the people
+          Immich recognised by face and you named, album names, descriptions, favorites and the
+          camera. Photos and videos themselves never leave the Immich server.
+        </p>
+        <ol>
+          <li>
+            Sign in to Immich as the user whose library you want to index and open
+            <strong>Account Settings → API Keys</strong>.
+          </li>
+          <li>
+            Create a key with the <code>asset.read</code>, <code>album.read</code> and
+            <code>user.read</code> permissions.
+          </li>
+          <li>
+            Paste the key and the address you open Immich at, such as
+            <code>http://immich.local:2283</code>, into the add flow. A plain <code>http</code>
+            address works on a home network; the key then crosses that network unencrypted.
+          </li>
+        </ol>
+        <ul>
+          <li>
+            <strong>One user, one source.</strong> Each source reads with one user's key, so Immich
+            decides what it can see. A source is named by the user's email, so a gateway connects
+            one Immich user per email; a second server whose user has the same email is refused. A
+            key that belongs to an Immich administrator, or that is granted every permission, is
+            accepted with a warning; the source still reads only that user's own view and never
+            calls an administrator endpoint.
+          </li>
+          <li>
+            <strong>Own photos only.</strong> Only the photos the user owns are indexed. Photos a
+            partner shares, and photos in albums others share, are left out: they belong to the
+            other person's library, which they can connect with their own key.
+          </li>
+          <li>
+            <strong>People.</strong> Named faces become people in Omnesis. Face names belong to each
+            Immich user, so the same person in two users' libraries, or already known from mail or
+            messages, is a separate person until you merge them. Unnamed and hidden faces are left
+            out.
+          </li>
+          <li>
+            <strong>Albums</strong> are re-read once a day, so a photo added to an album shows the
+            album by the next day. If the key cannot read albums, the source keeps syncing and shows
+            a warning naming the permission to add.
+          </li>
+          <li>
+            <strong>Links.</strong> <em>Open in source</em> opens the photo at the address the
+            source was added with. When that is a home-network address, set the advanced
+            <em>Address for links</em> setting to the address you open Immich at from elsewhere.
+          </li>
+          <li>
+            <strong>Deletion.</strong> A photo moved to the trash leaves the index on the next sync.
+            A photo deleted for good leaves after daily full reads have confirmed it is gone. Live
+            photos are indexed once, as the still; locked photos are never indexed.
+          </li>
+          <li>
+            <strong>Households.</strong> Several family members can each connect their own key to
+            one gateway; each library is its own source, so a shared photo is indexed once, under
+            its owner. Access levels then limit each connected agent to the sources you allow, but
+            they are a boundary for agents, not isolation between people: whoever runs the gateway
+            can see every source, and the people graph links faces across them.
           </li>
         </ul>
 

@@ -1,0 +1,118 @@
+{
+  "self": {
+    "id": "8a1d2c3e-0000-4000-8000-00000000a001",
+    "email": "maya.reeves@example.com",
+    "name": "Maya Reeves"
+  },
+  "partners": [
+    {
+      "id": "8a1d2c3e-0000-4000-8000-00000000a002",
+      "email": "jamie.lopez@example.com",
+      "name": "Jamie Lopez",
+      "inTimeline": true
+    }
+  ],
+  "albums": [
+    {
+      "id": "6b2e3d4f-0000-4000-8000-00000000b001",
+      "albumName": "Harbour Weekend",
+      "assetIds": ["5c3f4e5a-0000-4000-8000-00000000c001", "5c3f4e5a-0000-4000-8000-00000000c002"]
+    },
+    {
+      "id": "6b2e3d4f-0000-4000-8000-00000000b002",
+      "albumName": "Studio Northstar Open Day",
+      "assetIds": ["5c3f4e5a-0000-4000-8000-00000000c003"]
+    }
+  ],
+  "assets": [
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c001",
+      "owner": "self",
+      "type": "IMAGE",
+      "originalFileName": "IMG_2041.HEIC",
+      "takenAt": "2026-04-18T16:42:10.000Z",
+      "timeZone": "Europe/Lisbon",
+      "city": "Example Harbour",
+      "country": "Exampleland",
+      "latitude": 38.71,
+      "longitude": -9.14,
+      "camera": ["Apple", "iPhone 15"],
+      "description": "Kite festival on the harbour wall",
+      "people": [{ "id": "7d4a5b6c-0000-4000-8000-00000000d001", "name": "Sarah Mendez" }],
+      "isFavorite": true
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c002",
+      "owner": "self",
+      "type": "VIDEO",
+      "originalFileName": "IMG_2042.MOV",
+      "takenAt": "2026-04-18T17:05:00.000Z",
+      "timeZone": "Europe/Lisbon",
+      "city": "Example Harbour",
+      "country": "Exampleland",
+      "durationMs": 48000,
+      "people": [
+        { "id": "7d4a5b6c-0000-4000-8000-00000000d001", "name": "Sarah Mendez" },
+        { "id": "7d4a5b6c-0000-4000-8000-00000000d002", "name": "David Lin" }
+      ]
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c003",
+      "owner": "self",
+      "type": "IMAGE",
+      "originalFileName": "DSC01877.ARW",
+      "takenAt": "2026-05-09T10:20:00.000Z",
+      "timeZone": "Europe/Lisbon",
+      "city": "Example City",
+      "country": "Exampleland",
+      "camera": ["Sony", "ILCE-7M4"],
+      "description": "Pottery wheel demonstration",
+      "people": [{ "id": "7d4a5b6c-0000-4000-8000-00000000d002", "name": "David Lin" }]
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c004",
+      "owner": "self",
+      "type": "IMAGE",
+      "originalFileName": "IMG_2101.HEIC",
+      "takenAt": "2026-05-20T08:00:00.000Z",
+      "description": "Marathon entry form, signed"
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c005",
+      "owner": "partner",
+      "type": "IMAGE",
+      "originalFileName": "PXL_0412.jpg",
+      "takenAt": "2026-04-19T09:30:00.000Z",
+      "city": "Example Harbour",
+      "country": "Exampleland",
+      "description": "Breakfast before the ferry"
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c006",
+      "owner": "self",
+      "type": "IMAGE",
+      "originalFileName": "IMG_2050.HEIC",
+      "takenAt": "2026-04-20T12:00:00.000Z",
+      "description": "Blurry duplicate of the ferry",
+      "isTrashed": true
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c007",
+      "owner": "self",
+      "type": "VIDEO",
+      "visibility": "hidden",
+      "originalFileName": "IMG_2041.MOV",
+      "takenAt": "2026-04-18T16:42:10.000Z",
+      "durationMs": 2000
+    },
+    {
+      "id": "5c3f4e5a-0000-4000-8000-00000000c008",
+      "owner": "self",
+      "type": "IMAGE",
+      "visibility": "locked",
+      "originalFileName": "IMG_2200.HEIC",
+      "takenAt": "2026-05-25T08:00:00.000Z",
+      "description": "Passport scan"
+    }
+  ]
+}

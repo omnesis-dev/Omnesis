@@ -185,6 +185,23 @@ const current: Record<string, unknown> = {
     pageCursor: "page-2",
     syncedUpTo: timestamp,
   },
+  immich: {
+    phase: "snapshot",
+    page: 3,
+    windowEnd: timestamp,
+    syncedUpTo: timestamp,
+    snapshot: { ids: { assets: ["x"] } },
+    sweepIssues: [
+      {
+        code: "partial-read",
+        scope: "partition",
+        kind: "permission",
+        count: 1,
+        subject: "Album names",
+        message: "Albums could not be read",
+      },
+    ],
+  },
   "paperless-documents": {
     phase: "snapshot",
     watermark: timestamp,
@@ -219,6 +236,21 @@ const historical: Record<string, unknown> = {
 // Other cursors an install could hold besides the current fixture. Each must
 // resume as itself, whether stored bare or in the envelope the host writes.
 const installed: Record<string, Record<string, Record<string, unknown>>> = {
+  immich: {
+    // Between sweeps: no page in progress, no ledger.
+    settled: { phase: "incremental", syncedUpTo: timestamp, lastSnapshotAt: timestamp },
+    // Mid-way through the first sweep: a page in progress and its ledger.
+    backfill: {
+      phase: "backfill",
+      page: 7,
+      windowEnd: timestamp,
+      snapshot: { ids: { assets: ["x", "y"] } },
+    },
+    // Re-reading an incremental window that took more than one page.
+    recheck: { phase: "incremental", page: 1, windowEnd: timestamp, recheck: true },
+    // A sweep too large to vouch for: no ledger, presence withheld.
+    withheld: { phase: "snapshot", page: 2, windowEnd: timestamp, presenceWithheld: true },
+  },
   "paperless-documents": {
     // Between sweeps: nothing pending, the watermark settled.
     settled: {

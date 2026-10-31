@@ -1210,6 +1210,8 @@ export type {
   CodexRuntimeUpdateSnapshot,
   CapabilityVerdict,
   InferenceOverview,
+  ModelHealth,
+  ModelHealthWarning,
   InferenceConfig,
   DegradedRole,
   ConfigHealth,

@@ -126,6 +126,18 @@ function activeMarker(resolved: ResolvedAssignment, id: string): string {
   return available ? `${c.green}★${c.reset}` : `${c.yellow}★${c.reset}`;
 }
 
+/**
+ * The text that redraws a single in-place progress line: a carriage return,
+ * the line, and enough spaces to cover what the previous line left past its
+ * end. Without the padding a line that gets shorter (an ETA going from
+ * `156s` to `57s`, a speed from `1.2 MB/s` to `980 KB/s`) keeps the old tail
+ * on screen, so `ETA 57s` reads as `ETA 57s6s`. Spaces rather than an erase
+ * sequence, so the output stays plain text where it is captured.
+ */
+export function redrawProgressLine(line: string, previous: string): string {
+  return `\r${line}${" ".repeat(Math.max(0, previous.length - line.length))}`;
+}
+
 function pctBar(d: ActiveDownload): string {
   const total = d.progress.totalBytes || 1;
   const pct = Math.min(100, Math.floor((d.progress.downloadedBytes / total) * 100));
@@ -545,9 +557,9 @@ const modelInstallCommand = defineCommand({
         }
         break;
       }
-      const line = `\r${pctBar(dl)}`;
+      const line = pctBar(dl);
       if (line !== lastLine) {
-        process.stdout.write(line);
+        process.stdout.write(redrawProgressLine(line, lastLine));
         lastLine = line;
       }
       await sleep(500);

@@ -25,6 +25,13 @@ if [ "$role" = updater ]; then
   exit 0
 fi
 case "$role" in gateway|collector|combined) ;; *) echo 'Unknown image role' >&2; exit 2;; esac
+# Encrypted analytics with no egress at all: the image's own analytics pool must
+# open, reopen and encrypt stores on the DuckDB httpfs build the image carries.
+probe="$(cd "$(dirname "$0")" && pwd)/offline-analytics-probe.mjs"
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001 \
+  --mount "type=bind,source=$probe,target=/opt/omnesis-probe/offline-analytics-probe.mjs,readonly" \
+  --entrypoint node "$image" /opt/omnesis-probe/offline-analytics-probe.mjs
 keyring_env=(-e OMNESIS_SECRET_STORE=passphrase -e OMNESIS_KEYRING_PASSPHRASE_FILE=/var/lib/omnesis/keyring.pass)
 init_volume() {
   docker volume create "$1" >/dev/null

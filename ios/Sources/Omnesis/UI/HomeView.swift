@@ -327,7 +327,11 @@ struct HomeView: View {
             MainMenuDrawer(
                 isOpen: $menuOpen,
                 selection: $selection,
-                onOpenSettings: { settingsDestination = .root }
+                onOpenSettings: {
+                    settingsDestination = store.statusSnapshot?.modelHealth?.needsAttention == true
+                        ? .models(initialRole: nil) : .root
+                },
+                onSelectDestination: closeCapture
             )
         } content: {
             ZStack {
@@ -732,6 +736,7 @@ struct HomeView: View {
         case .search: SearchView(menuOpen: $menuOpen)
         case .sources: SourcesView(menuOpen: $menuOpen)
         case .people: PeopleView(menuOpen: $menuOpen)
+        case .notes: NotesHistoryView(menuOpen: $menuOpen)
         // A standard section, reached from its drawer row or a push deep-link.
         // It mounts without consulting the app's mirror of /status so a queued
         // target lands even while that mirror is unresolved; against a gateway

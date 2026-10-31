@@ -1016,6 +1016,27 @@ To change a shared constant: edit the literal in **all three** source files **an
 
 - Guard + table: `scripts/check-parity.mjs`, `scripts/parity-constants.json`; standing test `scripts/check-parity.test.mjs`
 
+### Runtime model health belongs to the capability assignment
+
+Record model-call outcomes through `InferenceHealth`, including streamed terminal
+failures and failures delivered after session admission. Capture the assignment's
+call factory before asynchronous provider loading or probing, and retain that
+factory with workers and providers so late results cannot affect a replacement.
+Record streamed terminal outcomes before yielding them: a consumer may stop at
+that event without resuming the generator.
+
+The recorder retains the three newest failed logical requests and ignores
+cancellation. A successful request removes failure evidence from earlier requests,
+preserving failures from later requests that overlap it. Relevant configuration
+changes clear the old assignment's evidence. Counts are bounded lower bounds. Warnings persist as bounded, content-free metadata: fixed error
+categories and descriptions, counts, timestamps and assignment identifiers. Never
+retain provider bodies, prompts, credentials or arbitrary exception text here.
+Clients explain the warning beside the capability picker; navigation only marks
+Models as needing attention and links to it.
+
+- Canonical recorder: `packages/gateway/src/inference/model-health.ts`
+- Safe classification: `packages/gateway/src/inference/model-health-errors.ts`
+
 ### Navigation marks; the surface that owns the subject explains
 
 A navigation menu — the iOS and Android drawers, the portal's sidebar — lists destinations and flags the ones needing attention with one shared affordance: an amber warning triangle, always carrying a caller-supplied accessibility label. It never renders a sentence of diagnostics. Chrome has no room to say what a message is about, and no control to act on it, so a backend error parked there reads as a fault with no owner.

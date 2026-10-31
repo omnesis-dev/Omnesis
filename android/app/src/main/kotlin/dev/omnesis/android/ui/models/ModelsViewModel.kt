@@ -183,6 +183,20 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    /** Refresh only diagnostics so a background recovery never replaces unsaved picker controls. */
+    suspend fun refreshHealth() {
+        val owner = session.session ?: return
+        val generation = overviewGeneration
+        val fresh = runCatching { overviewReader.read() }.getOrNull() ?: return
+        if (generation != overviewGeneration || session.session !== owner) return
+        _state.update { current ->
+            if (current is Loadable.Content) {
+                Loadable.Content(current.value.copy(inference = current.value.inference.copy(health = fresh.inference.health)))
+            } else current
+        }
+        session.refreshStatus()
+    }
+
     /** Start a gateway-side GGUF download for [id], then reload + poll progress. */
     fun install(id: String) = runLifecycle("Downloading $id…") {
         session.requireSession().admin.installModel(id)

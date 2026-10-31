@@ -147,6 +147,13 @@ for pdir in "$primary"/packages/*/; do
   ln -sfn "$src" "packages/$pkg/node_modules"
 done
 
+# The DuckDB extension builds npm's postinstall fetched into the primary
+# (gitignored, so a new worktree has none; scripts/duckdb-extensions.mjs).
+for bundle in "$primary"/packages/gateway/duckdb-extensions/v*; do
+  [ -d "$bundle" ] || continue
+  ln -sfn "$bundle" "packages/gateway/duckdb-extensions/$(basename "$bundle")"
+done
+
 echo ""
 echo "Done. Verifying cross-package resolution:"
 # `cd … && pwd -P` resolves all symlinks to a physical path using only POSIX

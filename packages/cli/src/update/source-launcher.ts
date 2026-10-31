@@ -3,7 +3,7 @@
 
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { atomicWriteFileSync, PRELOAD_SOURCE } from "@omnesis/core";
 import { NODE_GYP_HEADERS_SCRIPT } from "./node-gyp-headers.js";
 
@@ -510,13 +510,27 @@ for (;;) {
 `;
 }
 
+/**
+ * Names the source launcher of a native collector installed beside a Docker
+ * install. That install owns `~/.local/bin/omnesis`, so the collector's
+ * launcher lives elsewhere and its own command (`omnesis-collector`) exports
+ * where.
+ */
+const NATIVE_LAUNCHER_ENV = "OMNESIS_LAUNCHER";
+
+/** The source launcher this CLI was installed with. */
+export function nativeLauncherPath(env: NodeJS.ProcessEnv, homeDir: string): string {
+  const named = env[NATIVE_LAUNCHER_ENV];
+  return named && isAbsolute(named) ? named : join(homeDir, ".local", "bin", "omnesis");
+}
+
 /** Upgrade a legacy one-line source wrapper before the checkout is mutated. */
 export function prepareSourceRecoveryLauncher(
   rootDir: string,
   configDir: string,
   homeDir: string,
+  launcher: string = join(homeDir, ".local", "bin", "omnesis"),
 ): string {
-  const launcher = join(homeDir, ".local", "bin", "omnesis");
   const helper = join(homeDir, ".local", "lib", "omnesis", "update-lock.cjs");
   if (existsSync(launcher)) {
     if (!lstatSync(launcher).isFile()) {

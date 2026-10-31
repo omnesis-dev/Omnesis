@@ -3058,7 +3058,13 @@ describe("scripts/setup-worktree.sh workspace links", () => {
         mkdirSync(join(primary, dir), { recursive: true });
         writeFileSync(join(primary, dir, "package.json"), JSON.stringify({ name }));
       }
-      writeFileSync(join(primary, ".gitignore"), "node_modules\n");
+      const extensions = join("packages", "gateway", "duckdb-extensions");
+      mkdirSync(join(primary, extensions), { recursive: true });
+      writeFileSync(join(primary, extensions, "manifest.json"), "{}");
+      writeFileSync(
+        join(primary, ".gitignore"),
+        `node_modules\n${extensions}/*\n!${extensions}/manifest.json\n`,
+      );
       git(primary, "init", "-q", "-b", "main");
       git(primary, "add", ".");
       git(primary, "commit", "-q", "-m", "fixture");
@@ -3070,6 +3076,10 @@ describe("scripts/setup-worktree.sh workspace links", () => {
         "../../packages/providers/old",
         join(primary, "node_modules", "@omnesis", "provider-old"),
       );
+      // The extension builds the primary's postinstall fetched are gitignored.
+      const build = join(extensions, "v9.8.7", "linux_amd64", "httpfs.duckdb_extension");
+      mkdirSync(dirname(join(primary, build)), { recursive: true });
+      writeFileSync(join(primary, build), "an invented extension build");
       git(primary, "worktree", "add", "-q", worktree);
 
       const result = spawnSync("bash", [join(worktree, "scripts", "setup-worktree.sh")], {
@@ -3086,6 +3096,7 @@ describe("scripts/setup-worktree.sh workspace links", () => {
       expect(realpathSync(join(worktree, "node_modules", "left-pad"))).toBe(
         realpathSync(join(primary, "node_modules", "left-pad")),
       );
+      expect(readFileSync(join(worktree, build), "utf8")).toBe("an invented extension build");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
