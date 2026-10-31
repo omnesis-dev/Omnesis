@@ -552,19 +552,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><code>agent</code></td>
                 <td>
                   Powers <a href="/docs/agent">the agent</a> in the portal and mobile apps, and the
-                  agent that prepares Answer results for external agents.
-                </td>
-              </tr>
-              <tr>
-                <td><code>background-agent</code></td>
-                <td>
-                  Reads each note you capture with Tell Omnesis from the portal, the apps or the CLI
-                  and acts on it: adds or updates tasks, remembers stated facts, answers a question
-                  (see
-                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
-                  takes the same chat models as <code>agent</code> and is never assigned
-                  automatically. Without it, or with <code>agent.noteAgent</code> set to
-                  <code>false</code>, notes are saved and indexed but not acted on.
+                  agent that prepares Answer results for external agents. It also reads and acts on
+                  notes you capture with Tell Omnesis from the portal, apps or CLI: task changes,
+                  document research, memory and questions. No open chat is needed. With no Agent
+                  model available, or with <code>agent.noteAgent</code> set to <code>false</code>,
+                  notes are saved and indexed but not acted on. See
+                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
                 </td>
               </tr>
               <tr>
@@ -634,9 +627,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <code>omnesis codex login</code> or the portal's Codex backend settings, where you can
             copy the one-time login code with the copy button beside it.
             <code>omnesis codex status</code> shows the runtime and sign-in state. Codex serves the
-            <code>agent</code>, <code>background-agent</code>, <code>privacy-reviewer</code> and
-            image-capable <code>ocr</code> roles from one login; it has no embedding or
-            transcription models.
+            <code>agent</code>, <code>privacy-reviewer</code> and image-capable
+            <code>ocr</code> roles from one login; it has no embedding or transcription models.
           </li>
           <li>
             <strong>Claude Code</strong>, assigned as <code>claude-code/&lt;model&gt;</code>, which
@@ -649,9 +641,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             before it is listed), or with <code>omnesis claude-code refresh</code>.
             <code>omnesis claude-code status</code> shows the installation, sign-in state and the
             models the CLI offers. Claude Code serves the <code>agent</code>,
-            <code>background-agent</code>, <code>privacy-reviewer</code> and image-capable
-            <code>ocr</code> roles from one login; it has no embedding or transcription models.
-            Sign-in and isolation are covered in
+            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
+            it has no embedding or transcription models. Sign-in and isolation are covered in
             <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
           </li>
         </ul>

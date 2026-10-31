@@ -120,7 +120,8 @@ classification passes that ask a model one bounded question. It is what
 the assigned backend is an OpenAI-compatible HTTP server, so it serves the
 `entailment-verifier` role (the annotation write gate's firewall) and the
 token-identity classification pass, which runs during backfill on the
-`background-agent` assignment.
+`background-agent` assignment only while the experimental Brain is active.
+Deterministic contact matching remains available without the Brain.
 
 - `POST <base><apiPathPrefix>/chat/completions`, **non-streaming**, body
   `{ model, messages: [{ role: "user", content }], max_tokens: 150,

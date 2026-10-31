@@ -45,7 +45,11 @@ so its token benefit is downstream; the preflight discovery gate avoids whole ru
 
 The autonomous Brain is experimental and unstable. Enable
 `OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
-start it. Either alone leaves autonomous work inactive. Evidence invalidation
+start it. Either alone leaves autonomous work inactive. Settings labels this experimental role
+**Brain agent**; its internal key remains `background-agent`. Chat and Tell Omnesis
+notes instead share the ordinary `agent` assignment. Each note gets a separate
+bounded session and needs no open chat. Assignments are never copied or used as
+fallbacks for each other. Evidence invalidation
 and privacy cleanup continue when autonomous synthesis is stopped.
 
 ## Changes and maintenance
