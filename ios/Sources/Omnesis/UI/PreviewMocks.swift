@@ -5326,6 +5326,9 @@ extension PreviewMocks {
         deviceId: nil
     )
 
+    static let noteHistoryCaptureDraft = "Keep the draft while reviewing earlier notes."
+    static let noteHistoryEditSuffix = " Add a projector to the reservation."
+
     static let noteHistory: [NoteEntry] = [
         NoteEntry(
             id: "note-preview-reply",

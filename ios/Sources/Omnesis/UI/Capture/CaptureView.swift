@@ -79,6 +79,9 @@ struct CaptureView: View {
     @State private var saveError: String?
     @State private var confirmDiscard = false
     @State private var showNoteHistory = false
+    #if DEBUG
+    var previewHistoryModel: NotesHistoryModel?
+    #endif
     /// The gateway's byte limit when this capture is a voice note — read
     /// once, when it opens; nil for the on-device transcript.
     @State private var voiceNoteLimit: Int?
@@ -189,10 +192,7 @@ struct CaptureView: View {
         }
         .sheet(isPresented: $showNoteHistory) {
             NotesHistoryScreen(
-                model: NotesHistoryModel(
-                    client: store.pairing.map { NotesClient(baseURL: $0.url, token: $0.token) },
-                    tasks: store.pairing.map { TasksClient(baseURL: $0.url, token: $0.token) }
-                ),
+                model: noteHistoryModel(pairing: store.pairing),
                 menuOpen: .constant(false),
                 onClose: { showNoteHistory = false },
                 historyRevision: store.notes.historyRevision

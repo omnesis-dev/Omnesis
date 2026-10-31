@@ -5,6 +5,19 @@
 import SwiftUI
 
 @available(iOS 17.0, *)
+extension CaptureView {
+    func noteHistoryModel(pairing: Pairing?) -> NotesHistoryModel {
+        #if DEBUG
+        if let previewHistoryModel { return previewHistoryModel }
+        #endif
+        return NotesHistoryModel(
+            client: pairing.map { NotesClient(baseURL: $0.url, token: $0.token) },
+            tasks: pairing.map { TasksClient(baseURL: $0.url, token: $0.token) }
+        )
+    }
+}
+
+@available(iOS 17.0, *)
 struct NotesHistoryView: View {
     @Environment(AppStore.self) private var store
     @Binding var menuOpen: Bool
@@ -118,6 +131,7 @@ struct NoteHistoryDetail: View {
                     TextEditor(text: $draft)
                         .frame(minHeight: 180)
                         .disabled(busy)
+                        .accessibilityIdentifier("notes.editor")
                     Text("Edits update your saved note; they do not ask Omnesis to process it again.").font(.footnote)
                         .foregroundStyle(.secondary)
                     if draft.utf16.count > 8192 {

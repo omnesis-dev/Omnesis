@@ -50,6 +50,7 @@ final class SpeechRecognizer {
     // MARK: - Lifecycle
 
     #if DEBUG
+    private var previewOnly = false
     /// Snapshot rendering must not request live microphone or speech access.
     /// The snapshot suite scopes this override and restores its previous value.
     static var permissionRequestsDisabledForSnapshots = false
@@ -137,6 +138,11 @@ final class SpeechRecognizer {
 
     /// Begin streaming speech recognition.
     func startListening() {
+        #if DEBUG
+        if previewOnly { state = .listening
+            return
+        }
+        #endif
         guard state == .idle else { return }
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             state = .unavailable
@@ -211,6 +217,11 @@ final class SpeechRecognizer {
 
     /// Stop listening and finalize the transcript.
     func stopListening() {
+        #if DEBUG
+        if previewOnly { state = .idle
+            return
+        }
+        #endif
         guard state == .listening else { return }
         state = .finishing
         audioEngine.stop()
@@ -243,6 +254,7 @@ final class SpeechRecognizer {
     /// and snapshot tests. Not available in release builds.
     static func preview(state: State, transcript: String = "") -> SpeechRecognizer {
         let r = SpeechRecognizer()
+        r.previewOnly = true
         r.state = state
         r.transcript = transcript
         return r
