@@ -734,12 +734,6 @@ extension VoiceNoteCaptureState {
 }
 
 @available(iOS 17.0, *)
-#Preview("Capture — Agent unavailable") {
-    CaptureView(speech: .preview(state: .unavailable))
-        .environment(AppStore.preview(statusSnapshot: PreviewMocks.statusSnapshotMissingAgent))
-}
-
-@available(iOS 17.0, *)
 #Preview("Capture — saved confirmation") {
     CaptureView(
         speech: .preview(state: .idle),

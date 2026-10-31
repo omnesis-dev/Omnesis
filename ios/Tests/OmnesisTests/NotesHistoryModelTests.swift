@@ -54,7 +54,8 @@ final class NotesHistoryModelTests: XCTestCase {
         )
         session.respond = { request in
             if request.httpMethod == "PATCH" { return self.response(request, body: pendingJSON) }
-            XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, note.day)
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, note.day)
             return self.response(request, body: "{\"entries\":[\(doneJSON)]}")
         }
         let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
@@ -66,7 +67,8 @@ final class NotesHistoryModelTests: XCTestCase {
         XCTAssertEqual(model.entries.first?.agent?.state, "pending")
         await model.refreshPending()
         XCTAssertEqual(model.entries.first?.agent?.receipt?.text, "Moved the workshop.")
-        XCTAssertFalse(model.entries.first!.shouldRefreshReceipt())
+        let settled = try XCTUnwrap(model.entries.first)
+        XCTAssertFalse(settled.shouldRefreshReceipt())
     }
 
     func testEditDoesNotInventReceiptWhenGatewayOmitsIt() async throws {
@@ -103,7 +105,9 @@ final class NotesHistoryModelTests: XCTestCase {
         let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
         let model = NotesHistoryModel(client: client, entries: [note])
         let read = Task { await model.load() }
-        while resumeRead == nil { await Task.yield() }
+        while resumeRead == nil {
+            await Task.yield()
+        }
         _ = try await model.edit(note, text: "Edited workshop")
         resumeRead?.resume()
         await read.value

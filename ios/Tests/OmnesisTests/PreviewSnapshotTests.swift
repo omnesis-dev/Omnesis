@@ -8932,8 +8932,10 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         let base = PreviewMocks.statusSnapshotTasks
         let status = StatusSnapshot(
-            documents: base.documents, dbSizeBytes: base.dbSizeBytes,
-            latestActivityBySource: base.latestActivityBySource, tasks: base.tasks,
+            documents: base.documents,
+            dbSizeBytes: base.dbSizeBytes,
+            latestActivityBySource: base.latestActivityBySource,
+            tasks: base.tasks,
             noteAgent: NoteAgentStatus(enabled: true, modelAssigned: false, active: false)
         )
         let store = AppStore.preview(statusSnapshot: status)
@@ -8942,7 +8944,8 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(capture, name: "capture-agent-missing")
         let tasks = TasksScreen(
             model: .fixture(tasks: PreviewMocks.tasksToday, now: PreviewMocks.tasksNow),
-            experimental: false, menuOpen: .constant(false)
+            experimental: false,
+            menuOpen: .constant(false)
         ).environment(store)
         snapshot(tasks, name: "tasks-agent-missing")
     }
