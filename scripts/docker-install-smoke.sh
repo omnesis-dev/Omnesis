@@ -206,11 +206,14 @@ step "install.sh --docker"
   --docker --no-model --no-keyring --version "$TAG_A" --port "$GATEWAY_PORT" 2>&1 | tee "$WORK/install.out"
 
 # Compose's own pull progress, written anywhere but a terminal, is a line per
-# layer per state change; the installer prints one line per image instead.
-if grep -Eq 'Pulling fs layer|Extracting|Download complete|Container .* Creat' "$WORK/install.out"; then
-  die "the install printed Compose's progress: $(grep -E 'Pulling fs layer|Extracting|Download complete|Container .* Creat' "$WORK/install.out" | head -n 5)"
+# layer per state change; the installer prints one line per image instead. The
+# one-shot containers the CLI and the socket probe run in are created quietly.
+# (`up -d` still says which daemon containers it starts.)
+NOISE='Pulling fs layer|Extracting|Download complete|Container [^ ]+-run-[0-9a-f]+ +Creat'
+if grep -Eq "$NOISE" "$WORK/install.out"; then
+  die "the install printed Compose's progress: $(grep -E "$NOISE" "$WORK/install.out" | head -n 5)"
 fi
-ok "the pull printed one line per image"
+ok "the pull printed one line per image, and the one-shot containers nothing"
 
 # The group the update container joins is the one the socket has inside a
 # container, asked of the updater image itself.
