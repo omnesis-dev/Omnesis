@@ -3,6 +3,7 @@
 
 import { describe, test, expect } from "vitest";
 import { sanitizeColumnName, mapDatabaseToSchema, extractDatabaseTitle } from "./schema-mapper.js";
+import { buildPropertyColumnMap, extractRowRecord } from "./property-extractor.js";
 
 // ── sanitizeColumnName ────────────────────────────────────────────────
 
@@ -174,6 +175,88 @@ describe("mapDatabaseToSchema", () => {
     const schema = mapDatabaseToSchema(mockDb);
     expect(schema.exampleQueries).toBeDefined();
     expect(schema.exampleQueries!.length).toBeGreaterThan(0);
+  });
+});
+
+// ── Derived date columns ──────────────────────────────────────────────
+
+describe("date properties next to a property named like their derived columns", () => {
+  const dateProp = { id: "dt", type: "date", date: {} };
+  const textProp = { id: "txt", type: "rich_text", rich_text: {} };
+  const dbWith = (properties: Record<string, unknown>) =>
+    ({
+      object: "database",
+      id: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      title: [{ plain_text: "Race calendar" }],
+      properties: { Name: { id: "title", type: "title", title: {} }, ...properties },
+    }) as any;
+  const page = (properties: Record<string, unknown>) =>
+    ({
+      id: "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      url: "https://www.notion.so/example/row",
+      created_time: "2026-01-02T00:00:00.000Z",
+      last_edited_time: "2026-01-03T00:00:00.000Z",
+      properties: {
+        Name: { type: "title", title: [{ plain_text: "Spring 10k" }] },
+        ...properties,
+      },
+    }) as any;
+  const orders = {
+    "date first": { Date: dateProp, "date start": textProp },
+    "text first": { "date start": textProp, Date: dateProp },
+  };
+
+  for (const [order, properties] of Object.entries(orders)) {
+    test(`gives every column a distinct name (${order})`, () => {
+      const names = mapDatabaseToSchema(dbWith(properties)).columns.map((c) => c.name);
+      expect(new Set(names).size).toBe(names.length);
+    });
+
+    test(`keeps the date's start and end together and its source ids stable (${order})`, () => {
+      const columns = mapDatabaseToSchema(dbWith(properties)).columns;
+      const start = columns.find((c) => c.sourceColumnId === "notion:dt:start");
+      const end = columns.find((c) => c.sourceColumnId === "notion:dt:end");
+      const text = columns.find((c) => c.sourceColumnId === "notion:txt");
+      expect(start?.type).toBe("TIMESTAMP");
+      expect(end?.name).toBe(start!.name.replace(/_start$/, "_end"));
+      expect(text?.type).toBe("VARCHAR");
+      expect(text!.name).not.toBe(start!.name);
+    });
+
+    test(`writes each row value to a column of the table (${order})`, () => {
+      const db = dbWith(properties);
+      const schema = mapDatabaseToSchema(db);
+      const record = extractRowRecord(
+        page({
+          Date: { type: "date", date: { start: "2026-04-12", end: null } },
+          "date start": { type: "rich_text", rich_text: [{ plain_text: "Early wave" }] },
+        }),
+        schema,
+        buildPropertyColumnMap(db),
+      );
+      const columnNames = new Set(schema.columns.map((c) => c.name));
+      for (const key of Object.keys(record)) expect(columnNames).toContain(key);
+      const start = schema.columns.find((c) => c.sourceColumnId === "notion:dt:start")!;
+      const text = schema.columns.find((c) => c.sourceColumnId === "notion:txt")!;
+      expect(record[start.name]).toBe("2026-04-12");
+      expect(record[text.name]).toBe("Early wave");
+    });
+  }
+
+  test("leaves the names of a database without a collision unchanged", () => {
+    const names = mapDatabaseToSchema(dbWith({ Date: dateProp, Notes: textProp })).columns.map(
+      (c) => c.name,
+    );
+    expect(names).toEqual([
+      "id",
+      "notion_url",
+      "created_time",
+      "last_edited_time",
+      "name",
+      "date_start",
+      "date_end",
+      "notes",
+    ]);
   });
 });
 

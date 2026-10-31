@@ -12,11 +12,11 @@ import {
   accumulateSnapshotIds,
   truncateIsoToMinute,
 } from "./snapshot-state.js";
+import { isInaccessibleNotionError, type NotionClient } from "./client.js";
 import type { SyncResult } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints.js";
 import type { NotionPagesCursor, UserMap } from "./types.js";
-import type { NotionClient } from "./client.js";
 
 const log = createLogger("source:notion-pages");
 
@@ -111,6 +111,7 @@ export class NotionPagesSource {
     let skippedPartial = 0;
     let skippedDbRow = 0;
     let skippedArchived = 0;
+    let skippedUnreadable = 0;
 
     for (const result of response.results) {
       if (!isFullPage(result)) {
@@ -165,12 +166,27 @@ export class NotionPagesSource {
         continue;
       }
 
+      // A page search just listed can be gone, or unshared, by the time its
+      // blocks are read. Skip it rather than fail the run; it is still counted
+      // present above, so a snapshot never deletes a page on the strength of
+      // one unreadable fetch, and the watermark below stays short of it, so
+      // the next run reads it again.
+      let content: { markdown: string; linkedPageIds: string[] };
+      try {
+        content = await this.client.getPageContent(page.id);
+      } catch (err) {
+        if (!isInaccessibleNotionError(err)) throw err;
+        skippedUnreadable++;
+        log.warn(`Page ${page.id} is not readable; skipped this run`);
+        continue;
+      }
+      const { markdown, linkedPageIds } = content;
+
       // Track the newest edited time for the next cursor
       if (!newestEditedTime || page.last_edited_time > newestEditedTime) {
         newestEditedTime = page.last_edited_time;
       }
 
-      const { markdown, linkedPageIds } = await this.client.getPageContent(page.id);
       const doc = pageToDocument(
         page,
         markdown,
@@ -182,9 +198,9 @@ export class NotionPagesSource {
       documents.push(doc);
     }
 
-    if (skippedPartial || skippedDbRow || skippedArchived) {
+    if (skippedPartial || skippedDbRow || skippedArchived || skippedUnreadable) {
       log.info(
-        `Skipped: ${skippedPartial} partial, ${skippedDbRow} db rows, ${skippedArchived} archived`,
+        `Skipped: ${skippedPartial} partial, ${skippedDbRow} db rows, ${skippedArchived} archived, ${skippedUnreadable} unreadable`,
       );
     }
 

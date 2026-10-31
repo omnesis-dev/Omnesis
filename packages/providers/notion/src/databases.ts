@@ -13,7 +13,7 @@ import {
 } from "./property-extractor.js";
 import { databaseSummaryToDocument, databaseRowToDocument, rowExternalId } from "./normalizer.js";
 import { INCREMENTAL_MARGIN_MS, shouldEnterSnapshotMode } from "./snapshot-state.js";
-import type { NotionClient } from "./client.js";
+import { isInaccessibleNotionError, type NotionClient } from "./client.js";
 import type { NotionDatabasesCursor, DatabaseMeta, UserMap, SkippedDatabase } from "./types.js";
 import type {
   PageObjectResponse,
@@ -75,17 +75,6 @@ function isFullPage(result: unknown): result is PageObjectResponse {
     result !== null &&
     "properties" in result &&
     (result as { object?: string }).object === "page"
-  );
-}
-
-// Notion's search is eventually consistent with retrieve/query — a database
-// ID surfaced by search can 404 when later retrieved (inline databases,
-// parent-page permission propagation, sub-DBs in archived pages). Treat these
-// as "skip this DB" rather than failing the entire sync.
-function isInaccessibleDatabaseError(err: unknown): boolean {
-  return (
-    APIResponseError.isAPIResponseError(err) &&
-    (err.code === APIErrorCode.ObjectNotFound || err.code === APIErrorCode.RestrictedResource)
   );
 }
 
@@ -426,7 +415,7 @@ export class NotionDatabasesSource {
     try {
       dbResponse = await this.client.getDatabase(db.id, db.dataSourceId);
     } catch (err) {
-      if (isInaccessibleDatabaseError(err) || isTransientServerError(err)) {
+      if (isInaccessibleNotionError(err) || isTransientServerError(err)) {
         // Transient 5xx / network errors get the same skip-with-backoff
         // treatment as 404s — the next sync retries this DB after the
         // cooldown rather than failing the entire multi-DB sync and
@@ -465,7 +454,7 @@ export class NotionDatabasesSource {
         db.dataSourceId,
       );
     } catch (err) {
-      if (isInaccessibleDatabaseError(err) || isTransientServerError(err)) {
+      if (isInaccessibleNotionError(err) || isTransientServerError(err)) {
         return this.recordSkipAndAdvance(cursor, db, err, "query");
       }
       throw err;
