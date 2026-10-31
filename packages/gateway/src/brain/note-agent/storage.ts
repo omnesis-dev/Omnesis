@@ -271,7 +271,7 @@ export function claimDueNote(db: Db, now: number): NoteAgentRow | null {
       previous_text=?,previous_receipt_json=?,prior_uncertain=?,updated_at=? WHERE entry_id=? AND revision=?`,
     ).run(
       attempt,
-      previous?.input_text ?? null,
+      previous?.input_text ?? row.previous_text,
       previous?.receipt_json ?? null,
       priorUncertain ? 1 : 0,
       now,
@@ -282,7 +282,7 @@ export function claimDueNote(db: Db, now: number): NoteAgentRow | null {
       ...row,
       state: "running",
       attempts: attempt,
-      previous_text: previous?.input_text ?? null,
+      previous_text: previous?.input_text ?? row.previous_text,
       previous_receipt_json: previous?.receipt_json ?? null,
       prior_uncertain: priorUncertain ? 1 : 0,
       updated_at: now,
@@ -377,12 +377,13 @@ export function queueNoteEdit(
   ).run(entryId);
   const revision = (latest?.revision ?? 0) + 1;
   db.prepare(
-    `INSERT INTO note_agent_runs(entry_id,revision,input_text,state,run_after,created_at,updated_at,baseline)
-    VALUES(?,?,?,?,?,?,?,?)`,
+    `INSERT INTO note_agent_runs(entry_id,revision,input_text,previous_text,state,run_after,created_at,updated_at,baseline)
+    VALUES(?,?,?,?,?,?,?,?,?)`,
   ).run(
     entryId,
     revision,
     text,
+    previousText,
     owner && enabled ? "pending" : "skipped",
     now,
     now,

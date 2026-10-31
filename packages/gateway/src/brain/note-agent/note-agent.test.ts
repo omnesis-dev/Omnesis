@@ -1882,11 +1882,59 @@ describe("owner note edit revisions", () => {
     edit(id, "Prepare a workshop Sunday", T0 + 2_000);
     const latest = claimDueNote(db, T0 + 60_000)!;
     expect(latest.inputText).toContain("Sunday");
-    expect(latest.previousText).toBeNull();
+    expect(latest.previousText).toBe("Prepare a workshop Saturday");
     finish(latest);
     expect(claimDueNote(db, T0 + 120_000)).toBeNull();
     expect(hasPendingNotes(db)).toBe(false);
   });
+  test.each([false, true])(
+    "edits before first claim carry a system diff and fulfill all unexecuted requests once (rapid=%s)",
+    async (rapid) => {
+      const original = "Prepare the robotics workshop Friday. Also buy seed trays.";
+      const intermediate = "Prepare the robotics workshop Saturday. Also buy seed trays.";
+      const current = "Prepare the robotics workshop Sunday. Also buy seed trays.";
+      const id = queueNote(original);
+      if (rapid) edit(id, intermediate, T0 + 2_000);
+      edit(id, current, T0 + 2_000);
+      const seen: TurnInput[] = [];
+      const backend = toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "robotics workshop" } },
+          {
+            tool: "task_create",
+            args: { title: "Prepare the robotics workshop", scheduledFor: "2026-03-15" },
+          },
+          { tool: "task_list", args: { query: "seed trays" } },
+          { tool: "task_create", args: { title: "Buy seed trays" } },
+        ],
+        "Added the workshop and seed trays.",
+        seen,
+      );
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      expect(await runner.drain()).toBe(0);
+      expect(seen).toHaveLength(1);
+      const metadata = JSON.parse(
+        /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(seen[0]!.systemPrompt)![1]!,
+      );
+      const previous = rapid ? intermediate : original;
+      expect(metadata.previousText).toBe(previous);
+      expect(metadata.previousReceipt).toBeNull();
+      expect(metadata.change).toEqual(noteTextChange(previous, current));
+      expect(seen[0]?.systemPrompt).toContain("No prior confirmed action receipt is available");
+      expect(seen[0]?.systemPrompt).toContain("including unchanged requests that never ran");
+      expect(listOpenLoops(db, {})).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: "Prepare the robotics workshop",
+            scheduledFor: "2026-03-15",
+          }),
+          expect.objectContaining({ title: "Buy seed trays" }),
+        ]),
+      );
+      expect(listOpenLoops(db, {})).toHaveLength(2);
+    },
+  );
   test("running old revisions serialize edits and cannot overwrite the latest receipt", () => {
     const id = queueNote("Prepare a workshop Friday");
     const old = claimDueNote(db, T0 + 60_000)!;
