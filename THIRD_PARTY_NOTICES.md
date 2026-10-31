@@ -9,7 +9,7 @@ satisfy the notice-retention requirements of the permissive licenses (MIT, BSD,
 ISC, Apache-2.0, OFL) and the weak-copyleft licenses (MPL-2.0, LGPL-3.0) those
 components carry.
 
-It includes a Models.dev catalog notice and seven sections:
+It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and seven sections:
 
 1. **Vendored browser libraries** — minified JS bundles committed under
    `packages/gateway/portal/vendor/` and served by the gateway's web portal.
@@ -70,6 +70,20 @@ checksum are recorded in `packages/gateway/models-dev/snapshot.json`.
 Provider SVG logos are fetched by the gateway at runtime and cached locally.
 They are not bundled in the repository or published packages. The marks remain
 the property of their respective owners; see `TRADEMARKS.md`.
+
+---
+
+## DuckDB httpfs extension
+
+The Docker images carry, and source and package installs fetch at install time,
+the signed `httpfs` extension binary DuckDB's extension repository
+(`extensions.duckdb.org`) serves for the DuckDB version Omnesis uses, under
+`packages/gateway/duckdb-extensions/<version>/<platform>/`. It is redistributed
+unmodified; its version and per-platform checksums are pinned in
+`packages/gateway/duckdb-extensions/manifest.json`. The extension
+([duckdb/duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)) is licensed under
+MIT, copyright the DuckDB Foundation, and statically links OpenSSL, licensed under
+Apache-2.0 (<https://www.openssl.org/source/license.html>).
 
 ---
 

@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,8 +55,16 @@ describe("release package runtime assets", () => {
       const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
       expect(manifest.scripts).toEqual({
         preinstall: "node native-runtime-preflight.mjs",
-        postinstall: "node native-vector-compat.mjs --package-dir .",
+        postinstall:
+          "node native-vector-compat.mjs --package-dir . && " +
+          "node duckdb-extensions.mjs --package-dir . --best-effort",
       });
+      // The DuckDB extension pins ship; the per-platform binaries a checkout
+      // fetched do not — an install fetches its own platform's build.
+      expect(readdirSync(join(staged, "duckdb-extensions"))).toEqual(["manifest.json"]);
+      expect(readFileSync(join(staged, "duckdb-extensions.mjs"), "utf8")).toBe(
+        readFileSync(join(repoRoot, "scripts/duckdb-extensions.mjs"), "utf8"),
+      );
       // npm's file filter decides whether the root install scripts ship; the
       // thousands of compiled files only make the pack slow, so leave them out.
       rmSync(join(staged, "dist"), { recursive: true, force: true });
@@ -57,6 +73,8 @@ describe("release package runtime assets", () => {
       );
       expect(pack.files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
       expect(pack.files.map(({ path }) => path)).toContain("native-vector-compat.mjs");
+      expect(pack.files.map(({ path }) => path)).toContain("duckdb-extensions.mjs");
+      expect(pack.files.map(({ path }) => path)).toContain("duckdb-extensions/manifest.json");
       expect(readFileSync(join(staged, "native-vector-compat.mjs"), "utf8")).toBe(
         readFileSync(join(repoRoot, "scripts/native-vector-compat.mjs"), "utf8"),
       );

@@ -101,9 +101,15 @@ describe("transformManifest", () => {
     const cli = transformManifest({ name: "omnesis", version: VERSION }, VERSION);
     expect(gateway.scripts).toEqual({
       preinstall: "node native-runtime-preflight.mjs",
-      postinstall: "node native-vector-compat.mjs --package-dir .",
+      postinstall:
+        "node native-vector-compat.mjs --package-dir . && " +
+        "node duckdb-extensions.mjs --package-dir . --best-effort",
     });
-    expect(gateway.files).toEqual(["native-runtime-preflight.mjs", "native-vector-compat.mjs"]);
+    expect(gateway.files).toEqual([
+      "native-runtime-preflight.mjs",
+      "native-vector-compat.mjs",
+      "duckdb-extensions.mjs",
+    ]);
     expect(cli.scripts).toBeUndefined();
   });
 
