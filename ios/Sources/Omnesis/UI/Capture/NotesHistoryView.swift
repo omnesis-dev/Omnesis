@@ -255,6 +255,7 @@ extension NoteEntry {
     }
 }
 
+#if DEBUG
 #Preview("Notes") {
     NotesHistoryScreen(model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory), menuOpen: .constant(false))
 }
@@ -303,4 +304,5 @@ extension NoteEntry {
 #Preview("Notes section") {
     NotesHistoryView(menuOpen: .constant(false)).environment(AppStore.preview())
 }
+#endif
 #endif
