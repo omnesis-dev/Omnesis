@@ -811,7 +811,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           Editing your captured note also asks Agent to act on the correction. It compares the
           previous and current text with its prior result, so unchanged instructions are not a fresh
-          request. Quick successive edits settle together; the edited note shows pending processing
+          request. Relative dates in a correction use the day you edit the note, in its capture time
+          zone. Quick successive edits settle together; the edited note shows pending processing
           until its new receipt is ready. If an earlier action has an uncertain result, Agent can
           read back the state but asks you to review it before making a fresh, separate request.
           Edits made while note processing is switched off are only saved.

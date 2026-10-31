@@ -11,6 +11,7 @@ import {
   preserveCurrentOwner,
   ref,
   sourceInterpretations,
+  waitFor,
 } from "./brain-bench/index.js";
 
 compressCognitionCadences();
@@ -32,7 +33,12 @@ test("enabling Brain keeps an existing owner's task, references and authored dea
     experimental: false,
     syncSources: false,
     entailment: () => "entailment",
-    brain: { bootstrap: { enabled: false }, mergeAdjudication: { enabled: false } },
+    brain: {
+      bootstrap: { enabled: false },
+      mergeAdjudication: { enabled: false },
+      // Exercise the transition now instead of waiting the production 1h/6h intake delays.
+      knowledge: { soonDelay: "0s", routineDelay: "0s" },
+    },
     behaviors: {
       dynamic: sourceInterpretations({
         maintainNode: preserveCurrentOwner,
@@ -77,6 +83,7 @@ test("enabling Brain keeps an existing owner's task, references and authored dea
     ).toBe(false);
 
     await bench.harness.restartGateway({ gatewayMode: "experimental" });
+    expect(await bench.obs.status()).toMatchObject({ experimental: true, brain: { active: true } });
     const afterRestart = (await bench.obs.task(taskId)).task;
     expect(afterRestart).toMatchObject({
       id: taskId,
@@ -88,7 +95,20 @@ test("enabling Brain keeps an existing owner's task, references and authored dea
     });
     expect(afterRestart.documents.map((doc) => doc.id)).toEqual([guideId]);
 
-    const [updateId] = await bench.pushAndSettle([UPDATE]);
+    await bench.push(UPDATE);
+    const updateId = await bench.docId(UPDATE.externalId);
+    await waitFor(
+      "the Brain interprets the reservation update",
+      async () => {
+        try {
+          return await bench.obs.interpretationForSource(updateId);
+        } catch {
+          return null;
+        }
+      },
+      90_000,
+    );
+    await bench.drainUntilQuiet();
     const afterBrain = (await bench.obs.task(taskId)).task;
     expect(afterBrain).toMatchObject({
       id: taskId,

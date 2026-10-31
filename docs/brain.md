@@ -61,7 +61,9 @@ a newer edit waits for the earlier claimed revision to settle. Each edit has its
 own `note:<id>:revision:<n>` run identity. The system prompt carries previous and
 current text, the exact changed span and the prior finished receipt as data, so
 unchanged instructions are not new permission to repeat work. The current text
-remains the owner's instruction.
+remains the owner's instruction. Changed relative dates use the trusted edit instant and
+local day in the original capture's validated IANA time zone, including daylight
+saving transitions; unchanged intent retains the original capture context.
 
 The public edited entry is pending with no receipt until that revision finishes;
 previous receipts remain internal context. Mutation admission checks the current
