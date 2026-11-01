@@ -84,6 +84,31 @@ export function acknowledgePendingSourcePage(
   })();
 }
 
+/**
+ * Discard a page the gateway refused as invalid, while its cursor is still
+ * uncommitted. Nothing it carried has taken effect beyond row writes the next
+ * fetch from the same cursor repeats: documents land only with the cursor, and
+ * snapshot evidence counts only after it. So this is the same as the collector
+ * stopping before it prepared the page. A committed page is never discarded:
+ * its remaining work must finish exactly as recorded.
+ */
+export function abandonPendingSourcePage(
+  db: Db,
+  args: Omit<PreparePendingSourcePage, "payload">,
+): boolean {
+  return db.transaction(() => {
+    if (getWipeEpoch(db, args.sourceId, args.cursorRow) !== args.writeEpoch) return false;
+    return (
+      db
+        .prepare(
+          `DELETE FROM pending_source_pages WHERE source_id = ? AND cursor_row = ?
+      AND page_id = ? AND cursor_committed = 0`,
+        )
+        .run(args.sourceId, args.cursorRow, args.id).changes > 0
+    );
+  })();
+}
+
 /** Used by explicit resets, never by claiming a new attempt after a failure. */
 export function clearPendingSourcePages(db: Db, sourceId: string, cursorRow?: string): void {
   if (cursorRow === undefined)

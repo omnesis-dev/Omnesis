@@ -90,6 +90,7 @@ import type {
 import {
   preparePendingSourcePage,
   acknowledgePendingSourcePage,
+  abandonPendingSourcePage,
   type PendingSourcePage,
   type PreparePendingSourcePage,
 } from "./data/repositories/PendingSourcePageRepository.js";
@@ -850,6 +851,7 @@ export interface WriteGate extends KnowledgeWriteGate {
   ): Promise<void>;
   preparePendingSourcePage(args: PreparePendingSourcePage): Promise<PendingSourcePage | null>;
   acknowledgePendingSourcePage(args: Omit<PreparePendingSourcePage, "payload">): Promise<boolean>;
+  abandonPendingSourcePage(args: Omit<PreparePendingSourcePage, "payload">): Promise<boolean>;
   /** Revoke `expectedEpoch` only when no newer attempt has claimed that row. */
   revokeSyncAttempt(sourceId: string, expectedEpoch: number, cursorRow?: string): Promise<boolean>;
   /** Send one member's cursor row back to a bootstrap: no cursor, its epoch advanced, the row kept. */
@@ -2438,6 +2440,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     replaceSourceSyncIssues: (sourceId, deviceId, issues, assessments) =>
       call("db.replaceSourceSyncIssues", [sourceId, deviceId, issues, assessments]),
     acknowledgePendingSourcePage: (args) => call("db.acknowledgePendingSourcePage", [args]),
+    abandonPendingSourcePage: (args) => call("db.abandonPendingSourcePage", [args]),
     revokeSyncAttempt: (sourceId, expectedEpoch, cursorRow) =>
       call("db.revokeSyncAttempt", [sourceId, expectedEpoch, cursorRow]),
     resetMemberCursor: (sourceId, deviceId) => call("db.resetMemberCursor", [sourceId, deviceId]),
@@ -3014,6 +3017,7 @@ export function directWriteGate(db: Db): WriteGate {
     replaceSourceSyncIssues: async (sourceId, deviceId, issues, assessments) =>
       replaceSourceSyncIssues(db, sourceId, deviceId, issues, undefined, assessments),
     acknowledgePendingSourcePage: async (args) => acknowledgePendingSourcePage(db, args),
+    abandonPendingSourcePage: async (args) => abandonPendingSourcePage(db, args),
     revokeSyncAttempt: async (sourceId, expectedEpoch, cursorRow) =>
       revokeSyncAttempt(db, sourceId, expectedEpoch, cursorRow ?? ""),
     resetMemberCursor: async (sourceId, deviceId) => {

@@ -1302,6 +1302,28 @@ export class SourceService {
     return { acknowledged };
   }
 
+  async abandonStructuredPage(
+    sourceId: string,
+    input: { id: string; writeEpoch: number },
+    auth: { deviceId: DeviceId | null },
+  ) {
+    const { deviceId } = this.requireLeaseCaller(SourceId(sourceId), auth);
+    const cursorRow = this.cursorRowFor(sourceId, auth);
+    const abandon = () => {
+      this.requireLeaseCaller(SourceId(sourceId), auth);
+      return this.deps.writeGate.abandonPendingSourcePage({
+        ...input,
+        sourceId,
+        cursorRow,
+        deviceId,
+      });
+    };
+    const abandoned = this.deps.sourceWriteEpochFence
+      ? await this.deps.sourceWriteEpochFence.run(epochScope(sourceId, cursorRow), abandon)
+      : await abandon();
+    return { abandoned };
+  }
+
   assertPendingStructuredPage(
     sourceId: string,
     id: string,

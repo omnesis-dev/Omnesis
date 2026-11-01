@@ -72,6 +72,23 @@ import type { RegisteredSource } from "./sync-engine-types.js";
 
 const log = createLogger("collector:sync");
 
+/**
+ * Whether the gateway answered a request by refusing its body as invalid
+ * (`Gateway error 400:` with the `VALIDATION_ERROR` envelope), which no retry
+ * of the same body can change — unlike a conflict, a lease refusal or an
+ * outage.
+ */
+export function isGatewayValidationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const match = /^Gateway error 400: (.*)$/s.exec(err.message);
+  if (!match) return false;
+  try {
+    return (JSON.parse(match[1]) as { code?: unknown }).code === "VALIDATION_ERROR";
+  } catch {
+    return false;
+  }
+}
+
 /** Replay keeps its key space; only additive account ownership may precede it. */
 function replayOwnershipSchemas(
   writes: TableWrite[],
@@ -763,23 +780,48 @@ export class SourceSyncRunner {
                 ? source.instance.analyticsSchemas?.find((s) => s.tableName === write.tableName)
                 : undefined);
             seenTables.add(write.tableName);
-            const analyticsResult = await this.gateway.ingestAnalyticsPage({
-              tableName: write.tableName,
-              records: write.records ?? [],
-              schema,
-              sourceId: source.id,
-              deletedKeys: write.deletedKeys,
-              deletedIds: write.deletedIds,
-              deleteKeyColumn: write.deleteKeyColumn,
-              // Snapshot evidence is deliberately committed only after the
-              // SQLite cursor transaction below succeeds. DuckDB row upserts
-              // are replay-safe; absence observations are not evidence of a
-              // completed source snapshot until the cursor advances.
-              presentKeys: undefined,
-              writeEpoch: wipeEpoch,
-              pendingPageId: pendingStructuredPage?.id,
-              writeOrdinal: pendingStructuredPage ? writeOrdinal : undefined,
-            });
+            let analyticsResult;
+            try {
+              analyticsResult = await this.gateway.ingestAnalyticsPage({
+                tableName: write.tableName,
+                records: write.records ?? [],
+                schema,
+                sourceId: source.id,
+                deletedKeys: write.deletedKeys,
+                deletedIds: write.deletedIds,
+                deleteKeyColumn: write.deleteKeyColumn,
+                // Snapshot evidence is deliberately committed only after the
+                // SQLite cursor transaction below succeeds. DuckDB row upserts
+                // are replay-safe; absence observations are not evidence of a
+                // completed source snapshot until the cursor advances.
+                presentKeys: undefined,
+                writeEpoch: wipeEpoch,
+                pendingPageId: pendingStructuredPage?.id,
+                writeOrdinal: pendingStructuredPage ? writeOrdinal : undefined,
+              });
+            } catch (err) {
+              // The stored page is replayed byte for byte, so a page the
+              // gateway refuses as invalid is refused on every retry, and the
+              // source never moves again. Its cursor has not committed, so
+              // dropping it is the same as stopping before it was prepared:
+              // this attempt still fails, and the next fetches afresh.
+              if (
+                pendingStructuredPage &&
+                wipeEpoch !== undefined &&
+                isGatewayValidationError(err) &&
+                this.gateway.abandonStructuredPage
+              ) {
+                const { abandoned } = await this.gateway.abandonStructuredPage(source.id, {
+                  id: pendingStructuredPage.id,
+                  writeEpoch: wipeEpoch,
+                });
+                if (abandoned)
+                  log.warn(
+                    `${source.id}: the gateway refused stored page ${pendingStructuredPage.id} for ${write.tableName} as invalid; discarded it so the next sync fetches the page again`,
+                  );
+              }
+              throw err;
+            }
             {
               if (isAnalyticsLeaseRejection(analyticsResult)) {
                 stopLeaseLost(analyticsResult.holder);

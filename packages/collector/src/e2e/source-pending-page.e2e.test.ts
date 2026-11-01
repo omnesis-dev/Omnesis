@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Database from "better-sqlite3";
 import { expect, test, vi } from "vitest";
 import { HttpGatewayClient } from "@omnesis/gateway-client";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
@@ -396,6 +397,97 @@ test("mixed pages survive lost analytics responses, gateway restart, committed-c
     expect(
       (await client.queryAnalytics(`SELECT value FROM ${FIRST} WHERE id = 'old'`)).rows,
     ).toEqual([{ value: 99 }]);
+  } finally {
+    vi.restoreAllMocks();
+    await harness.destroy();
+  }
+}, 120_000);
+
+test("a stored page the gateway now refuses as invalid is discarded once, and the next sync fetches it afresh", async () => {
+  const harness = new MultiCollectorHarness();
+  try {
+    await harness.start();
+    const device = await harness.addCollector({
+      name: "refused-page-collector",
+      hostableSourceTypes: ["notes-synth"],
+    });
+    const registration = await fetch(`${harness.gatewayUrl}/devices/sources/bulk-upsert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${device.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sources: [{ type: "notes-synth", accountId: "journal" }] }),
+    });
+    expect((await registration.json()).errors).toEqual([]);
+    const client = new HttpGatewayClient(harness.gatewayUrl, device.token);
+
+    // An earlier gateway accepted a page whose schema declared one column
+    // twice. Prepare a valid page, then give its stored schema that flaw, as
+    // the older gateway would have stored it.
+    const epoch = (await client.getWipeEpoch(SOURCE)) ?? 0;
+    const stored = await client.prepareStructuredPage(SOURCE, {
+      id: "33333333-3333-4333-8333-333333333333",
+      writeEpoch: epoch,
+      result: {
+        analytics: [
+          { tableName: FIRST, schema: schema(FIRST), records: [{ id: "stale", value: 1 }] },
+        ],
+        documents: [document],
+        cursor: { generation: 1 },
+        hasMore: false,
+      },
+    });
+    const db = new Database(harness.getDbPath());
+    try {
+      db.pragma("busy_timeout = 5000");
+      const row = db
+        .prepare<[string], { payload_json: string }>(
+          "SELECT payload_json FROM pending_source_pages WHERE page_id = ?",
+        )
+        .get(stored.id)!;
+      const payload = JSON.parse(row.payload_json) as {
+        result: { analytics: Array<{ schema: AnalyticsTableSchema }> };
+      };
+      const columns = payload.result.analytics[0].schema.columns;
+      columns.push({ ...columns[1] });
+      db.prepare("UPDATE pending_source_pages SET payload_json = ? WHERE page_id = ?").run(
+        JSON.stringify(payload),
+        stored.id,
+      );
+    } finally {
+      db.close();
+    }
+
+    const fresh: StructuredSyncResult = {
+      analytics: [
+        { tableName: FIRST, schema: schema(FIRST), records: [{ id: "fresh", value: 2 }] },
+      ],
+      documents: [document],
+      cursor: { generation: 2 },
+      hasMore: false,
+    };
+    const fetchPage = vi.fn(async () => fresh);
+    const abandon = vi.spyOn(client, "abandonStructuredPage");
+
+    const refused = collector(client, fetchPage, [schema(FIRST)]);
+    await refused.run();
+    expect(refused.status()?.state).toBe("error");
+    expect(fetchPage).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(await abandon.mock.results[0].value).toEqual({ abandoned: true });
+    expect(await client.getPendingStructuredPage(SOURCE)).toBeNull();
+    expect((await client.getSyncState(SOURCE))?.cursor ?? null).toBeNull();
+    expect(await client.getDocumentCount(SOURCE)).toBe(0);
+
+    const next = collector(client, fetchPage, [schema(FIRST)]);
+    await next.run();
+    expect(next.status()?.state).toBe("idle");
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(await client.getPendingStructuredPage(SOURCE)).toBeNull();
+    expect((await client.getSyncState(SOURCE))?.cursor).toEqual({ generation: 2 });
+    expect(
+      (await client.queryAnalytics(`SELECT id, value FROM ${FIRST} ORDER BY id`)).rows,
+    ).toEqual([{ id: "fresh", value: 2 }]);
+    expect(await client.getDocumentCount(SOURCE)).toBe(1);
   } finally {
     vi.restoreAllMocks();
     await harness.destroy();
