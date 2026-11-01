@@ -365,6 +365,9 @@ final class NotesCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.pending.isEmpty)
     }
 
+}
+
+extension NotesCoordinatorTests {
     // MARK: - Drain
 
     func testDrainPostsOriginalCapturedAtAndIdempotencyKeyAndClearsQueue() async throws {
