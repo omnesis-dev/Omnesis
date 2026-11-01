@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tasks_widget_background_start">#19304D</color>
+    <color name="tasks_widget_background_end">#0D1117</color>
+    <color name="tasks_widget_accent">#58A6FF</color>
+    <color name="tasks_widget_ink">#E6EDF3</color>
+    <color name="tasks_widget_secondary">#8B949E</color>
+    <color name="tasks_widget_divider">#30363D</color>
+    <color name="tasks_widget_selected">#2058A6FF</color>
+    <color name="tasks_widget_danger">#F85149</color>
+</resources>

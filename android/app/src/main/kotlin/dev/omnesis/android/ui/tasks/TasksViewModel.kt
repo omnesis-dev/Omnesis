@@ -3,6 +3,10 @@
 
 package dev.omnesis.android.ui.tasks
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.omnesis.android.widgets.TaskWidgetDeepLink
+import dev.omnesis.android.widgets.TaskWidgetUpdates
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -50,8 +54,8 @@ private class SessionTasksGateway(private val session: SessionManager) : TasksGa
 }
 
 /**
- * The Tasks journal. Every view is read for the phone's own local day, because the gateway
- * places carried and due tasks relative to the day it is given. Each mutation shows the
+ * The Tasks journal. Views follow the local day or an explicit widget-selected date, because
+ * the gateway places carried and due tasks relative to the day it is given. Each mutation shows the
  * gateway's receipt with Undo and then re-reads the view, so what the screen shows is always
  * the gateway's account rather than a client-side guess at where a task now belongs.
  */
@@ -63,6 +67,7 @@ class TasksViewModel internal constructor(
     private val focusBus: TaskFocusBus? = null,
     /** Whether the gateway opens conversations about tasks; absent reads as never. */
     private val chatAvailable: Flow<Boolean>? = null,
+    private val onTasksChanged: () -> Unit = {},
     private val today: () -> LocalDate,
 ) : ViewModel() {
     @Inject constructor(
@@ -70,12 +75,14 @@ class TasksViewModel internal constructor(
         catalog: SourceCatalog,
         countsStore: TaskCountsStore,
         focusBus: TaskFocusBus,
+        @ApplicationContext context: Context,
     ) : this(
         SessionTasksGateway(session),
         catalog,
         countsStore,
         focusBus,
         session.taskConversationsAvailable,
+        { TaskWidgetUpdates.refresh(context) },
         { LocalDate.now() },
     )
 
@@ -85,6 +92,14 @@ class TasksViewModel internal constructor(
     private val _state = MutableStateFlow(TasksUiState(day = today().toString()))
     val state: StateFlow<TasksUiState> = _state.asStateFlow()
     private var receiptCounter = 0L
+
+    /**
+     * Each read and each command takes the next generation; a read applies only while its
+     * generation is still the latest. A read that started before a command was sent can
+     * otherwise land after the command's own re-read and paint the task as it was.
+     */
+    private var generation = 0L
+    private var focusGeneration = 0L
 
     init {
         load()
@@ -101,15 +116,41 @@ class TasksViewModel internal constructor(
         }
     }
 
-    /** The device's local day, as the views were last read for. */
-    val localDay: LocalDate get() = LocalDate.parse(_state.value.day)
+    /** Called only from the resumed Tasks screen, so an off-screen back-stack model cannot steal a destination. */
+    suspend fun collectWidgetRequests() {
+        val bus = focusBus ?: return
+        bus.journal.filterNotNull().collect { request ->
+            if (bus.takeJournal(request)) {
+                openJournal(request.journal)
+                request.journal.taskId?.let(::focus)
+            }
+        }
+    }
 
-    /**
-     * Each read and each command takes the next generation; a read applies only while its
-     * generation is still the latest. A read that started before a command was sent can
-     * otherwise land after the command's own re-read and paint the task as it was.
-     */
-    private var generation = 0L
+    /** The real local day stays authoritative for task moves, even while browsing a future page. */
+    val localDay: LocalDate get() = today()
+
+    fun openJournal(link: TaskWidgetDeepLink) {
+        generation++
+        focusGeneration++
+        val referenceDay = link.day.toString().takeUnless { it == today().toString() }
+        _state.update {
+            it.copy(
+                referenceDay = referenceDay,
+                day = link.day.toString(),
+                segment = if (link.view == TaskWidgetDeepLink.View.MONTH) TaskSegment.MONTH else TaskSegment.TODAY,
+                tasks = emptyList(), counts = dev.omnesis.android.transport.dto.TaskCountsDto(),
+                loading = true, refreshing = false, loadError = null, editing = null, history = null,
+            )
+        }
+        load()
+    }
+
+    fun returnToToday() {
+        openJournal(TaskWidgetDeepLink(TaskWidgetDeepLink.View.TODAY, today()))
+    }
+
+    private fun tasksChanged() { runCatching(onTasksChanged) }
 
     /**
      * Read the current segment. [quietly] keeps the rows on screen under the pull-to-refresh
@@ -121,7 +162,7 @@ class TasksViewModel internal constructor(
     private fun reread() = read(showRefresh = false, keepRows = true)
 
     private fun read(showRefresh: Boolean, keepRows: Boolean = showRefresh) {
-        val day = today().toString()
+        val day = _state.value.referenceDay ?: today().toString()
         val readGeneration = ++generation
         _state.update {
             it.copy(
@@ -137,7 +178,7 @@ class TasksViewModel internal constructor(
                 if (readGeneration != generation) return@launch
                 // Every view carries the whole journal's counts, so each read — including the
                 // re-read after a command — keeps the menu's count current.
-                if (view.day.isEmpty() || view.day == day) countsStore?.publish(view.counts)
+                if (_state.value.referenceDay == null && (view.day.isEmpty() || view.day == day)) countsStore?.publish(view.counts)
                 _state.update { TasksReducer.viewLoaded(it, segment, view) }
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -259,6 +300,7 @@ class TasksViewModel internal constructor(
         return viewModelScope.async {
             try {
                 val result = gateway.act(task.id, action)
+                tasksChanged()
                 _state.update { TasksReducer.mutated(it, task.id, result, ++receiptCounter) }
                 reread()
                 null
@@ -298,6 +340,7 @@ class TasksViewModel internal constructor(
         viewModelScope.launch {
             try {
                 val result = gateway.undo(seq)
+                tasksChanged()
                 _state.update { TasksReducer.undone(it, result, ++receiptCounter) }
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -324,13 +367,16 @@ class TasksViewModel internal constructor(
      * longer exists says so instead.
      */
     fun focus(taskId: String) {
+        val focusRequest = ++focusGeneration
         viewModelScope.launch {
             try {
                 val detail = gateway.detail(taskId)
+                if (focusRequest != focusGeneration) return@launch
                 _state.update { it.copy(editing = detail.task, history = null) }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
+                if (focusRequest != focusGeneration) return@launch
                 _state.update { it.copy(actionError = classifyGatewayError(error)) }
             }
         }
@@ -374,6 +420,7 @@ class TasksViewModel internal constructor(
         viewModelScope.launch {
             try {
                 val result = call()
+                tasksChanged()
                 _state.update { TasksReducer.mutated(it, task.id, result, ++receiptCounter) }
                 reread()
             } catch (cancellation: CancellationException) {

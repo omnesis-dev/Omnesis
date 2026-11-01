@@ -122,7 +122,8 @@ public final class TasksClient: Sendable {
     }
 
     func percentEncode(_ raw: String) -> String {
-        raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? raw
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        return raw.addingPercentEncoding(withAllowedCharacters: allowed) ?? raw
     }
 }
 

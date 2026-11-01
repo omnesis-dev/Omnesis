@@ -29,7 +29,7 @@ struct TasksView: View {
         // One model per paired client: a re-pair starts the screen afresh
         // rather than carrying rows read from another gateway.
         TasksScreen(
-            model: TasksModel(service: store.tasks),
+            model: TasksModel(service: store.tasks, onMutation: { TaskWidgetAppBridge.reload() }),
             experimental: store.experimentalEnabled,
             menuOpen: $menuOpen,
             focus: focus,
@@ -115,11 +115,20 @@ struct TasksScreen: View {
             }
             .task(id: focus) {
                 // The task as it now stands, wherever it sits in the journal.
-                guard let focus, let detail = try? await model.detail(id: focus.taskId) else { return }
+                guard let focus else { return }
                 path = []
+                details = nil
+                if let journal = focus.journal {
+                    model.openJournal(journal)
+                    await model.load()
+                }
+                guard !Task.isCancelled, let taskId = focus.taskId,
+                      let detail = try? await model.detail(id: taskId), !Task.isCancelled else { return }
                 details = detail.task
             }
-            .onChange(of: model.counts) { _, counts in onCounts(counts) }
+            .onChange(of: model.counts) { _, counts in
+                if model.referenceDay == nil { onCounts(counts) }
+            }
             .sheet(item: $details) { task in
                 TaskEditorSheet(task: task, today: model.today, model: model) { action in
                     await model.perform(action, on: task)
@@ -197,6 +206,7 @@ struct TellOmnesisToolbarButton: View {
 /// Keep on a row) exist only there, so they are shown only then.
 @available(iOS 17.0, *)
 struct TasksContent: View {
+    @Environment(\.scenePhase) private var scenePhase
     let model: TasksModel
     var experimental = false
     /// Opens a task's details.
@@ -221,10 +231,25 @@ struct TasksContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if model.referenceDay != nil {
+                HStack {
+                    Text("Viewing \(TaskSchedule().dayLabel(model.readDay, today: model.today) ?? model.readDay)")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Button("Back to today") { model.returnToToday() }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .frame(minHeight: Theme.tapTarget)
+                .background(Theme.bgSecondary)
+            }
             TaskSegmentBar(
                 segments: segments,
                 selected: model.selected,
                 counts: model.counts,
+                dayLabel: model.referenceDay == nil ? nil : "Day",
                 onSelect: { view in withAnimation(Self.pageAnimation) { model.show(view) } }
             )
             Divider().overlay(Theme.borderLight)
@@ -238,7 +263,10 @@ struct TasksContent: View {
         }
         // Whichever way a view was reached — swipe, tap, banner — it is read
         // again, showing what was last read of it meanwhile.
-        .task(id: model.selected) { await model.revisit() }
+        .task(id: "\(model.selected.rawValue)/\(model.readDay)") { await model.revisit() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.revisit() } }
+        }
         // The views either side are read ahead, and read again after a
         // change, so a swipe draws in a page that is already filled.
         .task(id: ReadAhead(selected: model.selected, invalidations: model.invalidations, experimental: experimental)) {
@@ -319,6 +347,7 @@ struct TaskSegmentBar: View {
     let segments: [TaskViewKind]
     let selected: TaskViewKind
     let counts: TaskCounts
+    var dayLabel: String?
     let onSelect: (TaskViewKind) -> Void
 
     var body: some View {
@@ -343,7 +372,8 @@ struct TaskSegmentBar: View {
     private func chip(_ view: TaskViewKind) -> some View {
         let isSelected = view == selected
         let badge = view == .suggested ? counts.suggested : 0
-        let title = TaskJournal.segmentLabel(for: view, counts: counts)
+        let title = view == .today ? (dayLabel ?? TaskJournal.segmentLabel(for: view, counts: counts))
+            : TaskJournal.segmentLabel(for: view, counts: counts)
         return Button {
             onSelect(view)
         } label: {
@@ -379,7 +409,7 @@ struct TaskSegmentBar: View {
     /// "Today, 4 open" rather than the chip's "Today (4)", which VoiceOver
     /// would read with its parentheses.
     private func accessibilityLabel(_ view: TaskViewKind, badge: Int) -> String {
-        let label = TaskJournal.label(for: view)
+        let label = view == .today ? (dayLabel ?? TaskJournal.label(for: view)) : TaskJournal.label(for: view)
         if badge > 0 { return "\(label), \(badge) waiting" }
         let count = view == .suggested ? 0 : TaskJournal.count(of: view, in: counts)
         return count > 0 ? "\(label), \(count) open" : label
@@ -421,6 +451,19 @@ struct TaskFanPreview {
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Tasks — widget date context") {
+    NavigationStack {
+        TasksContent(model: .fixture(
+            selected: .month,
+            tasks: PreviewMocks.tasksWidgetMonth,
+            now: PreviewMocks.tasksNow,
+            referenceDay: "2026-11-01"
+        ))
     }
     .environment(AppStore.preview())
 }

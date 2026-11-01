@@ -115,19 +115,31 @@ describe("iOS build identities", () => {
   });
 
   it.each(["dev.omnesis.ios", "com.example.myomnesis"])(
-    "keeps the app and notification extension on the same shared Keychain group for %s",
+    "isolates notification and task-widget Keychain groups for %s",
     (base) => {
       const shared = `${base}.notifications`;
+      const widgetShared = `${base}.task-widgets`;
       const production = read("ios/Omnesis.entitlements");
       const demo = read("ios/Omnesis-Demo.entitlements");
       const service = read("ios/OmnesisNotificationService.entitlements");
+      const widgets = read("ios/OmnesisWidgets.entitlements");
       const group = (xml) =>
         [...xml.matchAll(/<string>\$\(AppIdentifierPrefix\)([^<]+)<\/string>/g)].map((match) =>
           expanded(match[1], base),
         );
-      expect(group(production)).toEqual([base, shared]);
+      expect(group(production)).toEqual([base, shared, widgetShared]);
       expect(group(demo)).toEqual([`${base}.demo`]);
       expect(group(service)).toEqual([shared]);
+      expect(group(widgets)).toEqual([widgetShared]);
+      expect(targetSetting("OmnesisWidgets", "CODE_SIGN_ENTITLEMENTS")).toBe(
+        "OmnesisWidgets.entitlements",
+      );
+      for (const path of ["ios/Info.plist", "ios/Sources/OmnesisWidgets/Info.plist"]) {
+        expect(expanded(plistValue(path, "OmnesisTaskWidgetAccessGroup"), base)).toBe(
+          `$(AppIdentifierPrefix)${widgetShared}`,
+        );
+      }
+      expect(read("ios/Info-Demo.plist")).not.toContain("OmnesisTaskWidgetAccessGroup");
       expect(expanded(plistValue("ios/Info.plist", "OmnesisKeychainAccessGroup"), base)).toBe(
         `$(AppIdentifierPrefix)${shared}`,
       );

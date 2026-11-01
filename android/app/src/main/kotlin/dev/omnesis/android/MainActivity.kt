@@ -33,6 +33,9 @@ import dev.omnesis.android.ui.root.RootScreen
 import dev.omnesis.android.ui.search.SearchLaunchBus
 import dev.omnesis.android.ui.settings.AppearanceMode
 import dev.omnesis.android.ui.settings.AppearanceStore
+import dev.omnesis.android.ui.tasks.TaskFocusBus
+import dev.omnesis.android.widgets.TaskWidgetDeepLink
+import dev.omnesis.android.widgets.TaskWidgetUpdates
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -59,6 +62,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var searchLaunchBus: SearchLaunchBus
+
+    @Inject
+    lateinit var taskFocusBus: TaskFocusBus
 
     /**
      * The tile stamp of the last capture intent already handled, restored across
@@ -94,6 +100,7 @@ class MainActivity : ComponentActivity() {
         maybeHandleSourcePermissionIntent(intent, firstCreation = savedInstanceState == null)
         maybeHandleRemoteSourcePermissionIntent(intent, firstCreation = savedInstanceState == null)
         maybeHandleSearchIntent(intent, freshDelivery = savedInstanceState == null)
+        maybeHandleTaskWidgetDeepLink(intent)
         // Draw edge-to-edge so the themed app background paints behind the status + navigation
         // bars (the bars themselves are coloured + their icons toned from the active theme below).
         enableEdgeToEdge()
@@ -163,6 +170,7 @@ class MainActivity : ComponentActivity() {
         maybeHandleSourcePermissionIntent(intent)
         maybeHandleRemoteSourcePermissionIntent(intent)
         maybeHandleSearchIntent(intent, freshDelivery = true)
+        maybeHandleTaskWidgetDeepLink(intent)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -187,6 +195,7 @@ class MainActivity : ComponentActivity() {
         // Registration is best-effort during pairing; retry on every foreground
         // so a transient gateway or FCM failure does not permanently disable push.
         sessionManager.beginForegroundVisit()
+        TaskWidgetUpdates.refresh(applicationContext)
         lifecycleScope.launch { sessionManager.retryFcmRegistration() }
         // Feature gates the operator may have changed from another device while this
         // app was in the background, gateway dictation among them.
@@ -218,6 +227,14 @@ class MainActivity : ComponentActivity() {
         lastHandledLaunchStamp = stamp
         val surface = launchIntent.getStringExtra(EXTRA_SURFACE) ?: CaptureSurface.APP
         captureLaunchBus.post(surface)
+    }
+
+    private fun maybeHandleTaskWidgetDeepLink(launchIntent: Intent?) {
+        if (launchIntent?.action != Intent.ACTION_VIEW) return
+        val link = TaskWidgetDeepLink.parse(launchIntent.dataString) ?: return
+        taskFocusBus.postLaunch(link)
+        // A theme change or Activity recreation must not replay a consumed destination.
+        setIntent(Intent(launchIntent).apply { action = null; data = null })
     }
 
     private fun maybeHandleSearchIntent(launchIntent: Intent?, freshDelivery: Boolean) {
