@@ -45,6 +45,26 @@ final class PushTapUITests: XCTestCase {
         try runPushTap(mode: "privacy-cold", expectedNavBar: "Privacy decision")
     }
 
+    func testWidgetTaskTapClosesAnAlreadyOpenMenuOnTasks() {
+        let app = Self.harnessApp()
+        app.launchEnvironment["DEMO_PUSH_TAP"] = "widget-menu"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Tasks"].waitForExistence(timeout: 20))
+
+        // Repeat while Tasks is mounted: its target consumer can clear the
+        // target before HomeView's pending-target observer runs.
+        for _ in 0 ..< 2 {
+            app.buttons["menu.toggle"].tap()
+            let menuRow = app.buttons["menu.search"]
+            XCTAssertTrue(menuRow.waitForExistence(timeout: 5))
+            app.buttons["demo.widgetTaskTap"].tap()
+            let closed = NSPredicate(format: "exists == false")
+            expectation(for: closed, evaluatedWith: menuRow)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(app.navigationBars["Tasks"].exists)
+        }
+    }
+
     func testSettingsCanOpenMCPAuthorization() {
         let app = Self.harnessApp()
         app.launchEnvironment["DEMO_SETTINGS_PREVIEW"] = "1"

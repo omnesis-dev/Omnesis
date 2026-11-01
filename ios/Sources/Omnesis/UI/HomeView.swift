@@ -40,9 +40,14 @@ extension HomeView {
     /// the type checker.
     private func tracksDeferredPresentations(_ content: some View) -> some View {
         content
+            .onChange(of: router.navigationRevision) { _, _ in
+                // A mounted destination can consume the target before home
+                // observes it. The revision still closes the menu in that case.
+                menuOpen = false
+                invalidateAutomaticForegroundWork()
+            }
             .onChange(of: router.pendingTarget) { _, target in
                 guard target != nil else { return }
-                invalidateAutomaticForegroundWork()
                 requestDeferred(.pushTarget)
             }
             .onChange(of: store.relayPushConsentRequest) { _, request in
@@ -199,6 +204,7 @@ extension HomeView {
     /// Send a pending push target to its destination.
     private func routePendingTarget() -> Bool {
         guard let target = router.pendingTarget else { return false }
+        menuOpen = false
         if case .accessAuthorization = target {
             _ = router.consume()
             accessAuthorizationPresentation = AccessAuthorizationPresentation(initialCode: nil)
