@@ -33,12 +33,21 @@ export function noteAgentDisplay(agent) {
     case "done": {
       const text = (agent.receipt?.text ?? "").trim();
       const changes = (agent.receipt?.changes ?? []).filter((change) => change?.text);
-      if (!text && changes.length === 0) return null;
-      return { kind: "receipt", text, changes };
+      const conversationHref = noteConversationHref(agent.receipt);
+      if (!text && changes.length === 0 && !conversationHref) return null;
+      return { kind: "receipt", text, changes, ...(conversationHref ? { conversationHref } : {}) };
     }
     default:
       return null;
   }
+}
+
+/** Open only the conversation the gateway already saved for this receipt. */
+export function noteConversationHref(receipt) {
+  const id = receipt?.conversationId;
+  return typeof id === "string" && id.trim()
+    ? `/portal/agent/${encodeURIComponent(id)}`
+    : null;
 }
 
 /** Where a change's task opens; null for a change that names no task. */

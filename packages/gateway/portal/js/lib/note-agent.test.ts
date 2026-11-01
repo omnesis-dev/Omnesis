@@ -9,6 +9,7 @@ import {
   noteAgentNotice,
   noteAgentSettingPatch,
   noteChangeHref,
+  noteConversationHref,
   noteRefreshChanged,
   noteUndoErrorMessage,
   // @ts-expect-error — the portal is plain JS, no .d.ts ships alongside.
@@ -48,6 +49,22 @@ describe("note agent display", () => {
   it("links a change with a task to Tasks", () => {
     expect(noteChangeHref({ taskId: "loop_a" })).toBe("/portal/tasks");
     expect(noteChangeHref({ taskId: null })).toBeNull();
+  });
+
+  it("opens a saved clarification thread only after the note is done", () => {
+    const receipt = { text: "Which workshop booking did you mean?", changes: [], conversationId: "chat/clarify?one" };
+    expect(noteAgentDisplay({ state: "done", receipt })).toMatchObject({
+      kind: "receipt", conversationHref: "/portal/agent/chat%2Fclarify%3Fone",
+    });
+    expect(noteAgentDisplay({ state: "done", receipt: { conversationId: "chat_1" } })).toMatchObject({
+      conversationHref: "/portal/agent/chat_1",
+    });
+    for (const state of ["pending", "running", "failed", "skipped"]) {
+      expect(noteAgentDisplay({ state, receipt })?.conversationHref).toBeUndefined();
+    }
+    for (const value of [null, {}, { conversationId: " " }, { conversationId: 42 }]) {
+      expect(noteConversationHref(value)).toBeNull();
+    }
   });
 
   it("explains a refused undo", () => {

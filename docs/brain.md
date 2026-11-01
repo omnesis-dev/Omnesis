@@ -87,6 +87,20 @@ identity. Personal facts belong on that self profile; document context belongs o
 the document. Without a self identity, the agent reports the fact as saved in the
 note rather than claiming profile memory. Existing annotations are not backfilled.
 
+## Note clarification conversations
+
+A clear owner request blocked by ambiguity or missing information can deliberately
+hand off to normal Agent chat with the Note-only `continue_in_chat` tool. It takes
+a plain question and context, without choice-button arguments. Note turns omit
+chat-only presentation tools and prompting; the subsequent reply uses the ordinary
+chat prompt and tools. The original note remains saved. The note turn creates a durable conversation with a `note` origin carrying the note ID, revision
+and run ID; the original request and assistant question remain visible. Only after
+the conversation is saved does the completed note receipt expose `conversationId`.
+The receipt links to the existing conversation route; clients never create a second
+thread. A proactive conversation notification brings the owner back. Their reply
+uses normal Agent tools with the preserved context. Ordinary actionable notes stay
+asynchronous; they do not ask conversational follow-ups by default.
+
 ## Changes and maintenance
 
 Source writes record a durable change and invalidate affected evidence without
