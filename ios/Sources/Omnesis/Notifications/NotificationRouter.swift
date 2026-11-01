@@ -83,6 +83,8 @@ public enum PushTarget: Equatable, Sendable {
     /// One task, shown in Tasks with its details open: what a task chip under
     /// a morning brief opens. In-app only; no push carries it.
     case task(taskId: String)
+    /// The journal date and optional task selected in a Home Screen widget.
+    case taskJournal(TaskWidgetDeepLink)
     /// A durable mobile permission alert. The affected device determines
     /// whether this phone may show its trusted local remediation snapshot.
     case sourcePermission(
@@ -105,6 +107,7 @@ extension PushTarget {
         case .watchFiring: "watch-firing"
         case .watch: "watch"
         case .task: "task"
+        case .taskJournal: "task-journal"
         case .sourcePermission: "source-permission"
         }
     }
@@ -113,7 +116,7 @@ extension PushTarget {
     /// client embeds. Returns nil for any malformed shape — taps on
     /// unrecognised payloads silently fall through to the app's
     /// normal launch flow.
-    // One parser intentionally owns compatibility for canonical and legacy payloads.
+    /// One parser intentionally owns compatibility for canonical and legacy payloads.
     // swiftlint:disable:next cyclomatic_complexity
     public static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }

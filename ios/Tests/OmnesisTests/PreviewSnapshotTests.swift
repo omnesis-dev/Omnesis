@@ -8818,9 +8818,22 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "310-tasks-today", size: CGSize(width: 393, height: 1500))
     }
 
-    /// Today on an experimental gateway: the Suggested segment with its
-    /// count, one task carrying the Brain's "thinks this is done" proposal
-    /// with Confirm / Keep, and the review banner at the foot of the page.
+    /// A widget opens its selected future month with a route back to today.
+    func testTasksWidgetDateContext() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(
+                selected: .month,
+                tasks: PreviewMocks.tasksWidgetMonth,
+                now: PreviewMocks.tasksNow,
+                referenceDay: "2026-11-01"
+            ))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        snapshot(view.environment(AppStore.preview()), name: "tasks-widget-date-context")
+    }
+
+    /// Today on an experimental gateway: suggestions and proposed changes.
     func testTasksTodayExperimental() {
         let view = NavigationStack {
             TasksContent(

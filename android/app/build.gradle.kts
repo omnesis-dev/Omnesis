@@ -155,7 +155,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.7.2"
+        versionName = "0.7.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The UI journeys (src/androidTest, run by scripts/run-mobile-journeys.sh)
         // each start from a fresh install: the orchestrator runs every test in its
@@ -241,6 +241,7 @@ dependencies {
     implementation(project(":feature-photos"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

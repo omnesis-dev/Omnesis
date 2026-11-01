@@ -1350,6 +1350,13 @@ enum PreviewMocks {
     /// Counts with a single suggestion waiting, for the singular review line.
     static let tasksOneSuggestionCounts = TaskCounts(today: 5, month: 10, suggested: 1)
 
+    /// A future month opened from a task widget.
+    static let tasksWidgetMonth: [TaskRecord] = [
+        TaskRecord(id: "widget_month_1", title: "Plan the winter reading list", scheduledFor: "2026-11-04"),
+        TaskRecord(id: "widget_month_2", title: "Review the workshop outline", scheduledFor: "2026-11-12"),
+        TaskRecord(id: "widget_month_3", title: "Organize the sketchbook collection", scheduledFor: "2026-11"),
+    ]
+
     /// The rest of the month: enough rows that the last one sits at the foot
     /// of a phone screen, where its actions open below the fold.
     static let tasksMonth: [TaskRecord] = [

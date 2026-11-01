@@ -118,6 +118,7 @@ fun HomeScaffold(
     val pendingApprovalToPresent by vm.pendingApprovalToPresent.collectAsStateWithLifecycle()
     val captureRequest by vm.captureRequest.collectAsStateWithLifecycle()
     val searchRequest by vm.searchRequest.collectAsStateWithLifecycle()
+    val taskWidgetRequest by vm.taskWidgetRequest.collectAsStateWithLifecycle()
     val privacyApprovalRequest by vm.privacyApprovalRequest.collectAsStateWithLifecycle()
     val accessAuthorizationRequest by vm.accessAuthorizationRequest.collectAsStateWithLifecycle()
     val agentConversationRequest by vm.agentConversationRequest.collectAsStateWithLifecycle()
@@ -281,7 +282,7 @@ fun HomeScaffold(
         }
     }
     val latestHasExplicitLaunch by rememberUpdatedState(
-        captureRequest != null || searchRequest != null || privacyApprovalRequest != null ||
+        captureRequest != null || searchRequest != null || taskWidgetRequest != null || privacyApprovalRequest != null ||
             accessAuthorizationRequest != null ||
             agentConversationRequest != null || watchFiringRequest != null ||
             sourcePermissionRequest != null || remoteSourcePermissionRequest != null,
@@ -346,6 +347,15 @@ fun HomeScaffold(
             openCapture(request.surface)
             vm.consumeCaptureRequest()
         }
+    }
+
+    LaunchedEffect(taskWidgetRequest, setupPresenting) {
+        if (vm.setupPresenting.value) return@LaunchedEffect
+        val request = taskWidgetRequest ?: return@LaunchedEffect
+        vm.recordExplicitLaunch()
+        closeDrawer()
+        vm.openTaskWidget(request)
+        nav.navigate("tasks") { launchSingleTop = true }
     }
 
     LaunchedEffect(searchRequest, setupPresenting) {

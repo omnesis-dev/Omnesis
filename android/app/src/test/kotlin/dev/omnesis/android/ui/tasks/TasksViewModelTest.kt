@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.ui.tasks
 
+import dev.omnesis.android.widgets.TaskWidgetDeepLink
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -380,4 +382,48 @@ class TasksViewModelTest {
         assertEquals("This task no longer exists.", vm.state.value.chatError)
         assertEquals(readsBefore + 1, gateway.views.size)
     }
+    @Test fun `widget journal reads the selected date but moves relative to real today`() = runTest {
+        vm.openJournal(TaskWidgetDeepLink(TaskWidgetDeepLink.View.MONTH, LocalDate.of(2026, 11, 1)))
+        assertEquals(TaskView.MONTH to "2026-11-01", gateway.views.last())
+        assertEquals("2026-11-01", vm.state.value.referenceDay)
+        assertEquals(sunday, vm.localDay)
+        vm.perform(gateway.tasks.first(), TaskFanAction.Tomorrow)
+        assertEquals(TaskAction.Migrate("2026-10-19"), gateway.actions.last().second)
+        vm.returnToToday()
+        assertNull(vm.state.value.referenceDay)
+        assertEquals(TaskView.TODAY to sunday.toString(), gateway.views.last())
+    }
+
+    @Test fun `off-screen models cannot steal a widget journal from the resumed destination`() = runTest {
+        val bus = TaskFocusBus()
+        val offscreen = TasksViewModel(gateway, focusBus = bus) { sunday }
+        bus.postJournal(TaskWidgetDeepLink(TaskWidgetDeepLink.View.MONTH, LocalDate.of(2026, 12, 1), "a"))
+        val visible = TasksViewModel(gateway, focusBus = bus) { sunday }
+        assertEquals(TaskSegment.TODAY, offscreen.state.value.segment)
+        assertEquals(TaskSegment.TODAY, visible.state.value.segment)
+        assertTrue(bus.journal.value != null)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { visible.collectWidgetRequests() }
+        assertEquals(TaskSegment.TODAY, offscreen.state.value.segment)
+        assertEquals(TaskSegment.MONTH, visible.state.value.segment)
+        assertEquals("2026-12-01", visible.state.value.day)
+        assertTrue(visible.state.value.tasks.isNotEmpty())
+        assertEquals("a", visible.state.value.editing?.id)
+        assertNull(bus.journal.value)
+    }
+
+    @Test fun `successful edits notes and undo refresh widgets even when counts stay equal`() = runTest {
+        var changes = 0
+        val editing = TasksViewModel(gateway, onTasksChanged = { changes++ }) { sunday }
+        val task = gateway.tasks.first()
+        editing.saveEdit(task, TaskAction.Edit(title = "Read a chapter"))
+        assertEquals(1, changes)
+        editing.saveNote(task, "Finished the outline")
+        assertEquals(2, changes)
+        editing.undo(TaskReceipt(1, "Changed", 9))
+        assertEquals(3, changes)
+        gateway.failNextAction = GatewayException.NotFound()
+        editing.saveEdit(task, TaskAction.Edit(title = "Write a postcard"))
+        assertEquals(3, changes)
+    }
+
 }

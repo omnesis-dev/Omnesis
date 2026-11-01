@@ -1,5 +1,47 @@
 # omnesis
 
+## 0.7.3
+
+### Patch Changes
+
+- 74bb5b1: Docker installs on a Mac (Docker Desktop, or another daemon that runs in a VM) can update again. The update container joined the group the Docker socket has on the host, but inside a container the socket belongs to another group (root's, in the VM), so `omnesis update` stopped at `docker compose pull` with "permission denied" on the Docker socket, and its rollback failed the same way.
+
+  **If you installed with `--docker` on a Mac with 0.7.1 or 0.7.2, re-run the installer once**, with the options you installed with — for a default install:
+
+  ```sh
+  curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker
+  ```
+
+  It keeps your data, keyring and pairing, asks a container which group the socket has, and moves you to the newest release. `omnesis update` works from then on. Docker Engine installs on Linux are not affected.
+
+  - The installer now asks the updater image which group the socket has inside a container, and the update checks that its container can reach the daemon before it changes anything. If it cannot, it says nothing was changed and which release the install still runs, and corrects the updater's group in the Compose file (run `omnesis update` again) or prints the installer line to run.
+  - When a failed pull also fails on the way back, the update now says nothing was changed, instead of "may be built inconsistently".
+  - Docker installs pull their images quietly, with one line per image, instead of hundreds of layer-progress lines.
+  - On a terminal, the Docker installer's keyring steps print what the native installer prints instead of raw JSON, and the recovery code is shown once, prominently, on the terminal only — never in a log the run's output is captured into. Compose's "Container … Created" lines no longer surround `omnesis` commands that run in a one-shot container.
+  - The recovery code's note on the passphrase backend says it recovers your data if the passphrase file is lost.
+  - The Docker install's closing tip about multicast and `--docker-network host` is shown on Linux only.
+  - The installer no longer adds a PATH line to a shell profile that already puts `~/.local/bin` on PATH, and `omnesis uninstall` on a Docker host says when it keeps the installer's PATH line because other programs share the directory.
+  - A source install reports the Node it found once.
+
+- 7456a50: A native collector now installs cleanly on the same machine as a Docker install. Running the `--collector` line a Docker install prints, on that machine, puts the collector beside it with its own command (`omnesis-collector`), config directory (`~/.config/omnesis-collector`), checkout, service and device token, instead of replacing the Docker install's `omnesis` command and sharing its directory and token. When the Docker gateway is on the same machine, the collector dials it at `localhost` and, on a terminal, mints its own pairing code with it. `omnesis-collector uninstall` and the Docker install's `omnesis uninstall` each remove only their own install, and a Docker install is refused while a native install it would take over is still registered.
+
+  A Docker install's collector can now read folders on the host. `~` and relative paths in `omnesis sources add` mean the machine you type on, not the container; a folder the collector's container cannot see is offered for sharing on a terminal, mounted read-only at the same path, and the add continues. `omnesis folders`, `omnesis folders share <path>` and `omnesis folders unshare <path>` manage the shares, which re-runs and updates keep. A path the container cannot see now says so and names the command that shares it.
+
+  The download progress line of `omnesis model install` no longer leaves stray characters behind when it gets shorter.
+
+- c22cc11: Experimental Immich source, offered when the gateway and collector run with `OMNESIS_EXPERIMENTAL=1`. Connect one Immich user's library (Immich 3.0 or later) with that user's API key and the address you open Immich at; a key that belongs to an administrator or holds every permission is accepted with a warning. Each photo and video becomes a searchable document with when and where it was taken, the people Immich recognised and you named, its albums, description and camera, and a link back to the asset; the images themselves are never copied. Only the user's own photos are indexed; photos partners share stay with the partner's own source. A photo moved to the trash leaves the index on the next sync, and one deleted for good leaves after daily full reads confirm it is gone.
+- 331cb1d: Encrypted analytics storage now works without network access. It needs DuckDB's `httpfs` extension, which the gateway used to download from DuckDB's repository the first time each analytics database was opened — so an offline gateway, one whose outbound traffic is blocked, or a container with no network could not create or encrypt its analytics store. Omnesis now ships the exact signed build pinned for its DuckDB version: the Docker images carry it, and source and package installs fetch it once while installing and check it against a pinned checksum. The gateway loads that copy, with DuckDB's signature check still on. If the shipped copy is missing, the gateway falls back to downloading the extension as before, logs that it did, and its error names the missing copy and how to restore it.
+- @omnesis/agent-integration@0.7.3
+  - @omnesis/cli-shared@0.7.3
+  - @omnesis/collector@0.7.3
+  - @omnesis/config@0.7.3
+  - @omnesis/core@0.7.3
+  - @omnesis/eval@0.7.3
+  - @omnesis/gateway@0.7.3
+  - @omnesis/gateway-client@0.7.3
+  - @omnesis/source-sdk@0.7.3
+  - @omnesis/types@0.7.3
+
 ## 0.7.2
 
 ### Patch Changes

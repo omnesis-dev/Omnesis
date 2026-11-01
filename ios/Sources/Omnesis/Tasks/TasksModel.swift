@@ -58,6 +58,12 @@ public struct TaskViewState {
 @MainActor
 @Observable
 public final class TasksModel {
+    /// Calendar context chosen by a widget; nil follows the current day.
+    public private(set) var referenceDay: String?
+    public var readDay: String {
+        referenceDay ?? today
+    }
+
     public private(set) var selected: TaskViewKind = .today
     public private(set) var pages: [TaskViewKind: TaskViewState] = [:]
     public private(set) var counts = TaskCounts()
@@ -70,6 +76,7 @@ public final class TasksModel {
 
     @ObservationIgnored private let service: TasksService?
     @ObservationIgnored private let schedule: TaskSchedule
+    @ObservationIgnored private let onMutation: () -> Void
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var generations: [TaskViewKind: Int] = [:]
     @ObservationIgnored private var toastCounter = 0
@@ -79,10 +86,12 @@ public final class TasksModel {
     public init(
         service: TasksService?,
         schedule: TaskSchedule = TaskSchedule(),
+        onMutation: @escaping () -> Void = {},
         now: @escaping () -> Date = Date.init
     ) {
         self.service = service
         self.schedule = schedule
+        self.onMutation = onMutation
         self.now = now
     }
 
@@ -94,11 +103,13 @@ public final class TasksModel {
         counts: TaskCounts = .init(),
         toast: TaskToast? = nil,
         loadError: Error? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        referenceDay: String? = nil
     )
         -> TasksModel {
         let model = TasksModel(service: nil, now: { now })
         model.selected = selected
+        model.referenceDay = referenceDay
         model.pages[selected] = TaskViewState(tasks: tasks, loadError: loadError, loaded: true)
         model.counts = counts
         model.toast = toast
@@ -108,6 +119,30 @@ public final class TasksModel {
     /// The device's local day, `YYYY-MM-DD`.
     public var today: String {
         schedule.day(now())
+    }
+
+    /// Changes the calendar context and discards every date-dependent page.
+    /// Advancing generations prevents an older in-flight read landing here.
+    public func openJournal(_ link: TaskWidgetDeepLink) {
+        guard TaskWidgetDeepLink.validDay(link.day) else { return }
+        setReferenceDay(link.day == today ? nil : link.day)
+        show(link.view == .today ? .today : .month)
+    }
+
+    public func returnToToday() {
+        setReferenceDay(nil)
+        show(.today)
+    }
+
+    private func setReferenceDay(_ day: String?) {
+        guard referenceDay != day else { return }
+        referenceDay = day
+        for view in TaskViewKind.allCases {
+            generations[view, default: 0] &+= 1
+        }
+        pages = [:]
+        counts = TaskCounts()
+        invalidations &+= 1
     }
 
     /// `view` as last read; empty and unread before its first read.
@@ -186,7 +221,7 @@ public final class TasksModel {
         defer { if generation == generations[view] { pages[view]?.loading = false } }
         do {
             let limit = view == .done ? Self.doneLimit : nil
-            let read = try await service.view(view, day: today, limit: limit, before: nil)
+            let read = try await service.view(view, day: readDay, limit: limit, before: nil)
             guard generation == generations[view] else { return }
             pages[view] = TaskViewState(
                 tasks: read.tasks,
@@ -211,7 +246,7 @@ public final class TasksModel {
         loadingMore = true
         defer { loadingMore = false }
         do {
-            let older = try await service.view(.done, day: today, limit: Self.doneLimit, before: before)
+            let older = try await service.view(.done, day: readDay, limit: Self.doneLimit, before: before)
             guard generation == generations[.done], var done = pages[.done] else { return }
             let known = Set(done.tasks.map(\.id))
             done.tasks += older.tasks.filter { !known.contains($0.id) }
@@ -261,6 +296,7 @@ public final class TasksModel {
         var undone = false
         do {
             let mutation = try await service.undo(seq: seq)
+            onMutation()
             present(text: mutation.receipt.text, undoSeq: nil, isError: false)
             undone = true
         } catch {
@@ -306,6 +342,7 @@ public final class TasksModel {
         defer { busyIds.remove(id) }
         do {
             let mutation = try await service.perform(action, on: id)
+            onMutation()
             // The row shows the task as the gateway now holds it straight
             // away — an accepted suggestion loses its Accept — and the views
             // are re-read to move it wherever it now belongs.

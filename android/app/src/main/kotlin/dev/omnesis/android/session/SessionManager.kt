@@ -3,7 +3,10 @@
 
 package dev.omnesis.android.session
 
+import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.omnesis.android.widgets.TaskWidgetUpdates
 import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.distribution.DistributionSourceIntegration
 import dev.omnesis.android.distribution.DistributionSourceSession
@@ -200,6 +203,7 @@ internal suspend fun <Session> beginRelayEnrollmentForSession(
 @Singleton
 class SessionManager @Inject constructor(
     private val pairingService: PairingService,
+    @ApplicationContext private val applicationContext: Context,
     private val speechVocabulary: SpeechVocabulary = SpeechVocabulary(),
     private val deviceCapabilities: DeviceCapabilities,
     private val sourceCatalog: SourceCatalog,
@@ -506,6 +510,7 @@ class SessionManager @Inject constructor(
         _pushRegistrationFailed.value = false
         relayConsentDeferral.clear()
         val pairing = pairingService.current()
+        TaskWidgetUpdates.pairingChanged(applicationContext)
         if (pairing == null) {
             session = null
             relayEnroller.clearAll()

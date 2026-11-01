@@ -86,6 +86,21 @@ final class TasksClientTests: XCTestCase {
         XCTAssertFalse(task.isSuggestion)
     }
 
+    func testOpaqueTaskIdsStayInOneURLPathSegment() async throws {
+        let session = MockSession()
+        let service = client(session)
+        let id = "task:/one?query=two#three&four"
+        session.body = "{\"task\":\(Self.taskJSON),\"history\":[]}"
+        _ = try await service.detail(id: id)
+        session.body = #"{"task":null,"receipt":{"text":"Done","undoSeq":null}}"#
+        _ = try await service.perform(.complete(note: nil), on: id)
+        let urls = try session.requests.map { try XCTUnwrap($0.url) }
+        let encoded = "task%3A%2Fone%3Fquery%3Dtwo%23three%26four"
+        XCTAssertEqual(urls[0].absoluteString, base.absoluteString + "/tasks/" + encoded)
+        XCTAssertEqual(urls[1].absoluteString, base.absoluteString + "/tasks/" + encoded + "/actions")
+        XCTAssertTrue(urls.allSatisfy { $0.query == nil && $0.fragment == nil })
+    }
+
     func testDonePagingSendsLimitAndBefore() async throws {
         let session = MockSession()
         session.body = #"{"view":"done","day":"2026-10-14","tasks":[],"counts":{}}"#

@@ -269,6 +269,13 @@ class HomeViewModel @Inject constructor(
     /** Pending App Actions GET_THING request; SearchViewModel consumes the payload. */
     val searchRequest: StateFlow<SearchLaunchBus.Request?> = searchLaunchBus.request
 
+    val taskWidgetRequest: StateFlow<TaskFocusBus.Launch?> = taskFocus.launch
+
+    fun openTaskWidget(request: TaskFocusBus.Launch) {
+        taskFocus.postJournal(request.journal)
+        taskFocus.consumeLaunch(request)
+    }
+
     val privacyApprovalRequest: StateFlow<NotificationLaunchBus.PrivacyApproval?> =
         notificationLaunchBus.privacyApproval
     val accessAuthorizationRequest: StateFlow<NotificationLaunchBus.AccessAuthorization?> =

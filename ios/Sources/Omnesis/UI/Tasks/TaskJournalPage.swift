@@ -73,7 +73,7 @@ struct TaskJournalPage: View {
                     // lazy stack of rows that measure themselves can keep
                     // re-placing its rows without end once scrolled to its foot.
                     VStack(alignment: .leading, spacing: 0) {
-                        TaskPageHeading(view: view, today: model.today, tasks: page.tasks)
+                        TaskPageHeading(view: view, today: model.readDay, tasks: page.tasks)
                         rows
                     }
                     .padding(.bottom, Theme.Spacing.xl)

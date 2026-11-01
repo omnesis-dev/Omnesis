@@ -28,7 +28,7 @@ settings:
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
-    MARKETING_VERSION: "0.7.2"
+    MARKETING_VERSION: "0.7.3"
     CURRENT_PROJECT_VERSION: "337"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
     # The pinned WebRTC binary has an arm64 simulator slice. Apply this
@@ -95,7 +95,6 @@ targetTemplates:
       - path: Sources/Omnesis/Intents/WatchVoice.swift
       # The complication link contract, shared with OmnesisWatchWidgets so
       # the link a complication opens is the one this app parses.
-      - path: Resources/WatchBrand.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
       # Watch app icon — a separate asset catalog (not the iOS
@@ -138,7 +137,6 @@ targetTemplates:
         excludes:
           - PrivacyInfo.xcprivacy
       - path: Sources/OmnesisWatchWidgets/PrivacyInfo.xcprivacy
-      - path: Resources/WatchBrand.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
     settings:
@@ -292,7 +290,7 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: Omnesis Notification Service App Store
 
   # OmnesisWidgets — WidgetKit extension embedded in the production
-  # Omnesis app. Hosts the iOS 18+ Control Center / Lock Screen control.
+  # Omnesis app. Hosts interactive Tasks widgets and the iOS 18+ capture control.
   # The two shared intent files are compiled into BOTH the app and this
   # extension: dual target
   # membership is what lets a Control Center button launch its container
@@ -313,13 +311,22 @@ targets:
       - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/OpenCaptureControlIntent.swift
       - path: Sources/Omnesis/Intents/CaptureRouter.swift
+      # Widget data, intents and views are shared with the app for actions
+      # and simulator snapshots. Only the app owns the pairing lifecycle bridge.
+      - path: Sources/Omnesis/Tasks/Widgets
+        excludes:
+          - TaskWidgetAppBridge.swift
+      - path: Sources/Omnesis/Tasks/TaskWidgetDeepLink.swift
+      - path: Sources/Omnesis/Pairing/Keychain.swift
+      - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).widgets
         INFOPLIST_FILE: Sources/OmnesisWidgets/Info.plist
-        # No entitlements: the extension holds no keychain / gateway
-        # access — it only launches the app into capture.
-        CODE_SIGN_ENTITLEMENTS: ""
+        # Dedicated shared Keychain group for task credentials and snapshots.
+        CODE_SIGN_ENTITLEMENTS: OmnesisWidgets.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
       configs:
         Release:

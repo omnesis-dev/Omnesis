@@ -59,6 +59,14 @@
                     android:scheme="omnesis"
                     android:host="access-authorization" />
             </intent-filter>
+            <!-- Read-only task destinations from a widget. Task completion uses
+                 an app-private receiver, never a URI-triggered mutation. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="omnesis" android:host="tasks" />
+            </intent-filter>
             <!-- QS tile / app shortcut land here with the surface slug as an extra. -->
             <intent-filter>
                 <action android:name="dev.omnesis.android.action.TELL_BRAIN" />
@@ -78,6 +86,23 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.OmnesisAndroid" />
+
+        <receiver
+            android:name=".widgets.TasksWidgetProvider"
+            android:exported="false"
+            android:label="@string/tasks_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.CONFIGURATION_CHANGED" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tasks_widget_info" />
+        </receiver>
 
         <!-- FCM carries either the constant content-free wake or a relay enrolment challenge. -->
         <service

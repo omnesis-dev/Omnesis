@@ -192,6 +192,8 @@ data class TasksUiState(
     val openConversation: String? = null,
     /** Why "Chat about this" did not open a conversation, said once and then cleared. */
     val chatError: String? = null,
+    /** Date selected by a widget; null follows the real local day. */
+    val referenceDay: String? = null,
 ) {
     val entries: List<TaskJournalEntry> get() = TasksReducer.entries(segment, tasks)
 }

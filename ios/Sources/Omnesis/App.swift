@@ -114,6 +114,10 @@ public struct OmnesisApp: App {
             .environment(store.notificationRouter)
             .environment(\.appearanceStore, store.appearance)
             .onOpenURL { url in
+                if let link = TaskWidgetDeepLink(url: url) {
+                    store.notificationRouter.pendingTarget = .taskJournal(link)
+                    return
+                }
                 // A QR carries only a temporary code. Record it only while
                 // this phone is already paired, so it can never initiate or
                 // silently change a Gateway pairing.
@@ -960,6 +964,7 @@ public final class AppStore {
     /// carried or by asking the gateway. Best-effort; failures zero it.
     public func refreshTasksTodayCount(from counts: TaskCounts? = nil) async {
         await adminCoord.refreshTasksTodayCount(from: counts)
+        if counts != nil { TaskWidgetAppBridge.reload() }
     }
 
     /// Agent coordinator — observable handle for the Agent tab. Always
@@ -1680,6 +1685,7 @@ public final class AppStore {
         pushGatewayRegistrationFailure = nil
         relayPushConsentRequest = nil
         let state = pairingCoord.reload()
+        TaskWidgetAppBridge.configure(pairing: pairingCoord.pairing)
         TranscriptionVocabularyCache.shared.configure(pairing: pairingCoord.pairing, enabled: false)
         if let pairing = pairingCoord.pairing, localSourceOwner.deviceId == nil {
             // A launch that finds a pairing and no recorded owner gives the pairing the local source state.
@@ -1770,6 +1776,7 @@ public final class AppStore {
         adminCoord.stopAdmin()
         agentCoord.teardown()
         NotificationClaimCredentials.clear()
+        TaskWidgetAppBridge.clear()
         clearPushRegistrationAfterPairingLoss()
         // Wipe the pending notes queue only once the pairing is
         // actually cleared — notes are user-authored content, and a
@@ -1858,6 +1865,7 @@ public final class AppStore {
         guard pairingCoord.clear() else { return }
         phoneSetup.endForPairingLoss()
         NotificationClaimCredentials.clear()
+        TaskWidgetAppBridge.clear()
         clearPushRegistrationAfterPairingLoss()
         await syncCoord.tearDownCollector()
         PairingCoordinator.wipeBufferDirectory()
@@ -2389,6 +2397,7 @@ public final class AppStore {
     }
 
     func onActive() async {
+        TaskWidgetAppBridge.configure(pairing: pairingCoord.pairing)
         Task { await TranscriptionVocabularyCache.shared.refreshIfDue() }
         await retryPendingDeviceRevocation()
         // Decide navigation before any sync/network await. This gives the
@@ -2556,6 +2565,7 @@ public final class AppStore {
     /// Run after a successful pair / pair-async / reload to spin up the
     /// collector and admin clients on the new pairing.
     private func rebuildAfterPairingChange() async {
+        TaskWidgetAppBridge.configure(pairing: pairingCoord.pairing)
         await rebuildCollectorWithCurrentSources()
         guard let pairing = pairingCoord.pairing else { return }
         await restoreLocalSourceIntentState(pairing: pairing)
