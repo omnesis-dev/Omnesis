@@ -76,6 +76,28 @@ describe("embedChunksResilient", () => {
     expect(onTruncate).toHaveBeenCalledWith(0, 500, 2000);
   });
 
+  test("the local embedder's usable-context overflow is shrunk to fit, not left failing", async () => {
+    const e: Embedder = {
+      async embed(texts: string[]) {
+        if (texts.some((t) => t.length > 500))
+          throw new Error(
+            "Input is longer than the usable context size. Try to increase the context size or use " +
+              "another model that supports longer contexts.",
+          );
+        return texts.map(() => new Float32Array([1, 2, 3]));
+      },
+      async embedQuery() {
+        return new Float32Array([0]);
+      },
+      async dispose() {},
+    };
+    const onTruncate = vi.fn();
+    const out = await embedChunksResilient(e, ["x".repeat(2000)], { onTruncate });
+
+    expect(out[0]).toBeInstanceOf(Float32Array);
+    expect(onTruncate).toHaveBeenCalledWith(0, 500, 2000);
+  });
+
   test("input that never fits is dropped at the floor", async () => {
     const e = new MockEmbedder(() => "overflow");
     const onDrop = vi.fn();
