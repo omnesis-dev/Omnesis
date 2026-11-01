@@ -210,6 +210,9 @@ export class GithubCommitsSource {
     let budget = MAX_LANE_PAGES_PER_CALL;
     while (budget > 0) {
       if (!cur.lane) {
+        // Yield to materialization between repositories; see threads.ts for
+        // why the entry check in `runSync` alone never does.
+        if (pending.length >= MAX_PENDING_BEFORE_MATERIALIZE) return;
         const repo = cur.discoveryQueue?.shift();
         if (!repo) return;
         const state = this.repoState(cur, repo);
