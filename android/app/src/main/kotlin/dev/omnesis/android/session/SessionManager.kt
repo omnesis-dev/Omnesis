@@ -335,6 +335,9 @@ class SessionManager @Inject constructor(
      * Whether the gateway opens a conversation about a task ("Chat about this"), from the same
      * `/status` probe. Cleared on every rebuild like [tasksAvailable].
      */
+    private val _taskNoteCaptureAvailable = MutableStateFlow(false)
+    val taskNoteCaptureAvailable: StateFlow<Boolean> = _taskNoteCaptureAvailable.asStateFlow()
+
     private val _taskConversationsAvailable = MutableStateFlow(false)
     val taskConversationsAvailable: StateFlow<Boolean> = _taskConversationsAvailable.asStateFlow()
 
@@ -504,6 +507,7 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _developerEnabled.value = false
         _tasksAvailable.value = false
+        _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
         _dictation.value = null
         _noteAgent.value = null
@@ -832,6 +836,7 @@ class SessionManager @Inject constructor(
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _tasksAvailable.value = status.tasks?.available == true
+            _taskNoteCaptureAvailable.value = status.taskNoteCapture
             _taskConversationsAvailable.value = status.taskConversations
             _dictation.value = status.dictation
             _noteAgent.value = status.noteAgent

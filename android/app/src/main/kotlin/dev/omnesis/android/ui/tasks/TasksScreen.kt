@@ -6,6 +6,8 @@ package dev.omnesis.android.ui.tasks
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +42,8 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +60,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -104,6 +110,7 @@ import dev.omnesis.android.ui.capture.CaptureScreen
 import dev.omnesis.android.ui.capture.CaptureViewModel
 import dev.omnesis.android.ui.capture.TaskCompletionCapture
 import dev.omnesis.android.ui.capture.TaskNoteKind
+import dev.omnesis.android.ui.capture.TaskNoteContext
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.PullToRefresh
 import java.time.LocalDate
@@ -209,6 +216,10 @@ fun TasksScreen(
         }
     }
 
+    state.telling?.let { task ->
+        TaskTellCapture(task = task, onClose = vm::closeTell, notice = noteProcessingNotice, onOpenAgentSettings = onOpenAgentSettings, onOpenConversation = onOpenConversation)
+    }
+
     state.noting?.let { task ->
         TaskNoteCapture(task = task, onClose = vm::closeNote, onSave = { note -> vm.saveNote(task, note) })
     }
@@ -247,6 +258,20 @@ private fun TaskNoteCapture(task: TaskDto, onClose: () -> Unit, onSave: suspend 
                         save = onSave,
                     )
                 },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskTellCapture(task: TaskDto, onClose: () -> Unit, notice: String?, onOpenAgentSettings: () -> Unit, onOpenConversation: (String) -> Unit) {
+    val capture: CaptureViewModel = hiltViewModel(key = "task-tell-capture")
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary)) {
+            CaptureScreen(
+                onClose = onClose, vm = capture, taskContext = TaskNoteContext(task.id, task.title),
+                noteProcessingNotice = notice, onOpenAgentSettings = onOpenAgentSettings,
+                onOpenConversation = onOpenConversation,
             )
         }
     }
@@ -362,6 +387,7 @@ fun TasksContent(
     val fan = rememberTaskFanController()
     fan.perform = actions.onFanAction
     fan.chatAvailable = state.chatAvailable
+    fan.tellAvailable = state.tellAvailable
     // A fan belongs to the list it opened over.
     LaunchedEffect(state.segment) { fan.dismiss() }
     Box(Modifier.fillMaxSize()) {
@@ -496,6 +522,7 @@ private fun TaskList(
                         experimental = experimental,
                         fanOpen = fan.task?.id == entry.task.id,
                         chat = state.chatAvailable,
+                        tell = state.tellAvailable,
                         fan = fan,
                         actions = actions,
                         iconFor = iconFor,
@@ -711,6 +738,7 @@ private fun SectionHeader(title: String, count: Int) {
  * press anywhere on one of the user's own open tasks opens its action fan, and TalkBack reaches
  * every fan action from the row as a custom action.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TaskRow(
     task: TaskDto,
@@ -720,6 +748,7 @@ private fun TaskRow(
     experimental: Boolean,
     fanOpen: Boolean,
     chat: Boolean,
+    tell: Boolean,
     fan: TaskFanController,
     actions: TaskRowActions,
     iconFor: (String) -> SourceIconModel,
@@ -727,6 +756,7 @@ private fun TaskRow(
     val c = OmTheme.colors
     val suggestion = task.isSuggestion
     val fanned = hasActionFan(task)
+    var resolvedMenu by remember(task.id) { mutableStateOf(false) }
     DisposableEffect(task.id) { onDispose { fan.unregisterRow(task.id) } }
     Column(
         Modifier
@@ -746,9 +776,11 @@ private fun TaskRow(
                         },
                         CustomAccessibilityAction("Mark as done") { actions.onFanAction(task, TaskFanAction.Done); true },
                         CustomAccessibilityAction("Ignore") { actions.onFanAction(task, TaskFanAction.Ignore); true },
+                        CustomAccessibilityAction("Tell Omnesis") { actions.onFanAction(task, TaskFanAction.Tell); true },
                     )
                     fanned -> listOf(
                         CustomAccessibilityAction("Done") { actions.onFanAction(task, TaskFanAction.Done); true },
+                        CustomAccessibilityAction("Tell Omnesis") { actions.onFanAction(task, TaskFanAction.Tell); true },
                         CustomAccessibilityAction("Done with note") {
                             actions.onFanAction(task, TaskFanAction.DoneWithNote); true
                         },
@@ -767,9 +799,12 @@ private fun TaskRow(
                     } else {
                         emptyList()
                     }
-                    task.isResolved -> listOf(CustomAccessibilityAction("Reopen") { actions.onTapBullet(task); true })
+                    task.isResolved -> listOf(
+                        CustomAccessibilityAction("Reopen") { actions.onTapBullet(task); true },
+                        CustomAccessibilityAction("Tell Omnesis") { actions.onFanAction(task, TaskFanAction.Tell); true },
+                    )
                     else -> emptyList()
-                }
+                }.filter { tell || it.label != "Tell Omnesis" }
             }
             .testTag("tasks.row.${task.id}"),
     ) {
@@ -783,7 +818,10 @@ private fun TaskRow(
             Column(
                 Modifier
                     .weight(1f)
-                    .clickable(onClickLabel = "Open details", role = Role.Button) { actions.onOpen(task) }
+                    .then(if (task.isResolved && tell) Modifier.combinedClickable(
+                        onClickLabel = "Open details", onLongClickLabel = "Task actions", role = Role.Button,
+                        onClick = { actions.onOpen(task) }, onLongClick = { resolvedMenu = true },
+                    ) else Modifier.clickable(onClickLabel = "Open details", role = Role.Button) { actions.onOpen(task) })
                     .semantics {
                         stateDescription = when {
                             task.isDone -> "Done"
@@ -825,6 +863,18 @@ private fun TaskRow(
                         fontStyle = FontStyle.Italic,
                         color = c.textSecondary,
                     )
+                }
+            }
+            if (task.isResolved && tell) {
+                DropdownMenu(expanded = resolvedMenu, onDismissRequest = { resolvedMenu = false }) {
+                    DropdownMenuItem(text = { Text("Tell Omnesis") }, onClick = {
+                        resolvedMenu = false
+                        actions.onFanAction(task, TaskFanAction.Tell)
+                    })
+                    DropdownMenuItem(text = { Text("Reopen") }, onClick = {
+                        resolvedMenu = false
+                        actions.onTapBullet(task)
+                    })
                 }
             }
             if (pending) {

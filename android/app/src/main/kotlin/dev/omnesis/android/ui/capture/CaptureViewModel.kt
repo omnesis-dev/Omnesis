@@ -96,6 +96,21 @@ class CaptureViewModel @Inject constructor(
      * Save hands them over as [CaptureUiState.completionNote] instead of sending them.
      */
     private var completingTask = false
+    private var taskContext: TaskNoteContext? = null
+
+    fun beginTaskNote(context: TaskNoteContext) {
+        release()
+        taskContext = context
+        voiceNotesUnusable = true
+        _state.value = CaptureUiState(text = context.initialText, taskContext = context)
+    }
+
+    fun endTaskNote() {
+        release()
+        taskContext = null
+        voiceNotesUnusable = false
+        _state.value = CaptureUiState()
+    }
 
     /** Start afresh as the note of a task's completion. */
     fun beginTaskCompletion() {
@@ -214,7 +229,7 @@ class CaptureViewModel @Inject constructor(
             return
         }
         val text = current.textWithPartial().trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty() || taskContext?.hasInstruction(text) == false) return
         if (wantListening) {
             wantListening = false
             // The displayed text (committed + partial) is the note being saved;
@@ -309,11 +324,12 @@ class CaptureViewModel @Inject constructor(
     }
 
     private fun send(text: String, audio: VoiceNoteAudio?) {
+        val taskId = taskContext?.id
         viewModelScope.launch {
             try {
                 // The repository queues unreachable-gateway and feature-off (404)
                 // saves itself; only deterministic per-note rejections throw.
-                val outcome = repository.capture(text, surface, audio)
+                val outcome = repository.capture(text, surface, audio, taskId)
                 _state.update { it.copy(save = SaveState.Done(queued = (outcome as? CaptureOutcome.Queued)?.reason)) }
             } catch (e: Exception) {
                 _state.update { it.copy(voiceNote = null, save = SaveState.Failed(classifyGatewayError(e))) }

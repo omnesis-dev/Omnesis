@@ -13,6 +13,7 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.capture.TaskNoteContext
 import dev.omnesis.android.ui.capture.TaskNoteKind
 import dev.omnesis.android.ui.capture.VoiceNoteUi
 import org.junit.Test
@@ -34,6 +35,14 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class CaptureScreenshotTest {
+
+    private fun taskTell(dark: Boolean) = capture("capture_task_tell_${if (dark) "dark" else "light"}", dark) {
+        CaptureContent(CaptureUiState(text = "About this task…\n\n", speech = SpeechState.IDLE,
+            taskContext = TaskNoteContext("task_example", "Repair the telescope")),
+            {}, {}, {}, {}, {}, onHistory = {})
+    }
+    @Test fun capture_task_tell_light() = taskTell(false)
+    @Test fun capture_task_tell_dark() = taskTell(true)
 
     private fun capture(name: String, dark: Boolean, content: @Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {

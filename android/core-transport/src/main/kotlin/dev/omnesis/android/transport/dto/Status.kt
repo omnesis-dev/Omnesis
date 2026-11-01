@@ -62,6 +62,9 @@ data class StatusSnapshot(
     val taskConversations: Boolean
         get() = speaks(TASK_CONVERSATIONS, TASK_CONVERSATIONS_VERSION)
 
+    val taskNoteCapture: Boolean
+        get() = speaks("taskNoteCapture", 1)
+
     /** Whether the capability [name] advertises a version range that includes [version]. */
     private fun speaks(name: String, version: Int): Boolean {
         val range = ((capabilities as? JsonObject)?.get(name) as? JsonObject) ?: return false

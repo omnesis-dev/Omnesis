@@ -127,6 +127,7 @@ class TasksScreenshotTest {
     )
 
     private val todayState = TasksUiState(
+        tellAvailable = true,
         day = "2026-10-12",
         loading = false,
         tasks = listOf(carried, proposed, planned, due, done, struck),
@@ -281,6 +282,7 @@ class TasksScreenshotTest {
     }
 
     private val suggestedState = TasksUiState(
+        tellAvailable = true,
         segment = TaskSegment.SUGGESTED,
         day = "2026-10-12",
         loading = false,

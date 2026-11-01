@@ -23,6 +23,9 @@ sealed interface TaskFanAction {
 
     /** Opens the note composer; saving completes the task with the note. */
     data object DoneWithNote : TaskFanAction
+
+    /** Opens an ordinary Tell Omnesis note linked to this task. */
+    data object Tell : TaskFanAction
     data object Tomorrow : TaskFanAction
     data object NextMonth : TaskFanAction
 
@@ -115,6 +118,7 @@ class TaskFanSession(
     val suggestion: Boolean = false,
     /** The gateway opens conversations about tasks, so a task's main fan ends with Chat about this. */
     val chat: Boolean = false,
+    val tell: Boolean = false,
 ) {
     sealed interface Mode {
         data object Main : Mode
@@ -280,7 +284,7 @@ class TaskFanSession(
         highlighted = null
         hoverSinceMillis = null
         val labelled = when (mode) {
-            Mode.Main -> mainActions(suggestion, chat)
+            Mode.Main -> mainActions(suggestion, chat, tell)
             Mode.When -> WHEN_ACTIONS
             is Mode.Months -> monthActions(mode.page, today, metrics.monthsPerPage, locale)
         }
@@ -309,6 +313,7 @@ class TaskFanSession(
             TaskFanAction.NextMonth to "Next month",
             TaskFanAction.OtherMonth to "Other month…",
             TaskFanAction.CancelTask to "Cancel task",
+            TaskFanAction.Tell to "Tell Omnesis",
         )
 
         /** A suggestion's main fan, nearest the finger first. */
@@ -318,6 +323,7 @@ class TaskFanSession(
             TaskFanAction.AcceptFor to "Accept for…",
             TaskFanAction.Done to "Mark as done",
             TaskFanAction.Ignore to "Ignore",
+            TaskFanAction.Tell to "Tell Omnesis",
         )
 
         /** The last target of a task's main fan, furthest from the finger, when the gateway offers it. */
@@ -328,11 +334,11 @@ class TaskFanSession(
          * holds; it goes last, so offering it never changes the order of the targets the thumb
          * already knows. A suggestion's fan is about deciding on it and has no chat.
          */
-        fun mainActions(suggestion: Boolean, chat: Boolean): List<Pair<TaskFanAction, String>> = when {
+        fun mainActions(suggestion: Boolean, chat: Boolean, tell: Boolean = false): List<Pair<TaskFanAction, String>> = when {
             suggestion -> SUGGESTION_ACTIONS
             chat -> MAIN_ACTIONS + CHAT_ACTION
             else -> MAIN_ACTIONS
-        }
+        }.filter { tell || it.first != TaskFanAction.Tell }
 
         /** "Accept for…": Back nearest the finger, then the times to plan the suggestion for. */
         val WHEN_ACTIONS: List<Pair<TaskFanAction, String>> = listOf(

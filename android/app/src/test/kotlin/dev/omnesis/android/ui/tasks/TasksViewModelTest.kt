@@ -83,12 +83,37 @@ class TasksViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         gateway = FakeGateway()
         store = TaskCountsStore()
-        vm = TasksViewModel(gateway, countsStore = store) { sunday }
+        vm = TasksViewModel(gateway, countsStore = store, tellAvailable = MutableStateFlow(true)) { sunday }
     }
 
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun an_older_gateway_cannot_open_task_linked_capture() {
+        val older = TasksViewModel(gateway) { sunday }
+        older.perform(gateway.tasks.single(), TaskFanAction.Tell)
+        assertNull(older.state.value.telling)
+    }
+
+    @Test
+    fun telling_a_resolved_task_does_not_reopen_it() {
+        val task = gateway.tasks.single().copy(state = "done")
+        vm.perform(task, TaskFanAction.Tell)
+        assertEquals(task, vm.state.value.telling)
+        assertTrue(gateway.actions.isEmpty())
+    }
+
+    @Test
+    fun tell_opens_a_linked_capture_without_mutating_the_task() {
+        val task = gateway.tasks.single()
+        vm.perform(task, TaskFanAction.Tell)
+        assertEquals(task, vm.state.value.telling)
+        assertTrue(gateway.actions.isEmpty())
+        vm.closeTell()
+        assertNull(vm.state.value.telling)
     }
 
     @Test

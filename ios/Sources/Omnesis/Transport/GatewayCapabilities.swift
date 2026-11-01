@@ -9,23 +9,28 @@ import Foundation
 public struct GatewayCapabilities: Decodable, Equatable, Sendable {
     /// Starting a chat about a task (`POST /tasks/:id/conversation`).
     public let taskConversations: GatewayCapabilityRange?
+    public let taskNoteCapture: GatewayCapabilityRange?
 
     /// The `taskConversations` version this app speaks.
     static let taskConversationsVersion = 1
 
-    public init(taskConversations: GatewayCapabilityRange? = nil) {
+    public init(taskConversations: GatewayCapabilityRange? = nil, taskNoteCapture: GatewayCapabilityRange? = nil) {
         self.taskConversations = taskConversations
+        self.taskNoteCapture = taskNoteCapture
     }
 
     private enum CodingKeys: String, CodingKey {
-        case taskConversations
+        case taskConversations, taskNoteCapture
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Decoded per entry, so one malformed entry withholds only its own feature.
+        taskNoteCapture = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .taskNoteCapture)
         taskConversations = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .taskConversations)
     }
+
+    public var supportsTaskNoteCapture: Bool { taskNoteCapture?.contains(1) ?? false }
 
     /// Whether this app can start a chat about a task on this gateway.
     public var supportsTaskConversations: Bool {

@@ -303,6 +303,17 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun task_note_capture_requires_a_supported_protocol() {
+        fun status(capabilities: String?) = OmnesisJson.decodeFromString<StatusSnapshot>(
+            if (capabilities == null) """{"documents":{"total":0}}""" else """{"documents":{"total":0},"capabilities":$capabilities}""",
+        )
+        assertFalse(status(null).taskNoteCapture)
+        assertFalse(status("""{"taskNoteCapture":true}""").taskNoteCapture)
+        assertFalse(status("""{"taskNoteCapture":{"min":2,"max":3}}""").taskNoteCapture)
+        assertTrue(status("""{"taskNoteCapture":{"min":1,"max":3}}""").taskNoteCapture)
+    }
+
+    @Test
     fun status_offers_task_conversations_only_for_a_range_this_build_speaks() {
         fun status(capabilities: String?) = OmnesisJson.decodeFromString<StatusSnapshot>(
             if (capabilities == null) """{"documents":{"total":3}}""" else """{"documents":{"total":3},"capabilities":$capabilities}""",

@@ -42,7 +42,8 @@ public final class NotesClient: Sendable {
         capturedUtcOffsetSeconds: Int? = nil,
         surface: String? = nil,
         deviceId: String? = nil,
-        location: NoteLocation? = nil
+        location: NoteLocation? = nil,
+        taskId: String? = nil
     ) async throws
         -> NoteEntry {
         let body = CreateNoteRequest(
@@ -55,7 +56,8 @@ public final class NotesClient: Sendable {
             deviceId: deviceId,
             latitude: location?.latitude,
             longitude: location?.longitude,
-            placeName: location?.placeName
+            placeName: location?.placeName,
+            taskId: taskId
         )
         let (data, _) = try await dispatch(method: "POST", path: "/notes", body: encoder.encode(body))
         return try decodeOrThrow(NoteEntry.self, from: data)
@@ -235,6 +237,7 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
     public let placeName: String?
     public let transcription: String?
     public let transcribedAt: String?
+    public let taskId: String?
     public let agent: NoteAgentResult?
 
     public init(
@@ -253,7 +256,8 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
         placeName: String? = nil,
         transcription: String? = nil,
         transcribedAt: String? = nil,
-        agent: NoteAgentResult? = nil
+        agent: NoteAgentResult? = nil,
+        taskId: String? = nil
     ) {
         self.id = id
         self.day = day
@@ -271,6 +275,7 @@ public struct NoteEntry: Codable, Equatable, Sendable, Identifiable {
         self.transcription = transcription
         self.transcribedAt = transcribedAt
         self.agent = agent
+        self.taskId = taskId
     }
 }
 
@@ -321,11 +326,13 @@ private struct CreateNoteRequest: Encodable {
     let latitude: Double?
     let longitude: Double?
     let placeName: String?
+    let taskId: String?
 }
 
 /// The `note` part of `POST /notes/voice`: the `POST /notes` fields, with
 /// the phone's transcript as `text`, plus the recording's locale.
 public struct VoiceNoteUpload: Encodable, Equatable, Sendable {
+    public let taskId: String?
     /// Client-generated UUID — the note's idempotency key.
     public let id: String
     /// The phone's own transcript, shown until the gateway's replaces it.
@@ -352,7 +359,8 @@ public struct VoiceNoteUpload: Encodable, Equatable, Sendable {
         surface: String,
         deviceId: String?,
         location: NoteLocation?,
-        language: String?
+        language: String?,
+        taskId: String? = nil
     ) {
         self.id = id
         self.text = text
@@ -365,6 +373,7 @@ public struct VoiceNoteUpload: Encodable, Equatable, Sendable {
         longitude = location?.longitude
         placeName = location?.placeName
         self.language = language
+        self.taskId = taskId
     }
 }
 
@@ -428,6 +437,13 @@ public struct NoteAgentResult: Codable, Equatable, Sendable {
     public struct Receipt: Codable, Equatable, Sendable {
         public let text: String
         public let changes: [Change]
+        public let conversationId: String?
+
+        public init(text: String, changes: [Change], conversationId: String? = nil) {
+            self.text = text
+            self.changes = changes
+            self.conversationId = conversationId
+        }
     }
 
     public struct Change: Codable, Equatable, Sendable {

@@ -150,7 +150,7 @@ final class TasksInteractionUITests: XCTestCase {
         // the month fan opened under and onto Jan 2027.
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
-        touch.slide(to: target(from: anchor, index: 4, of: 7))
+        touch.slide(to: target(from: anchor, index: 4, of: 8))
         touch.hold(0.9)
         touch.slide(to: target(from: anchor, index: 2, of: 8))
         touch.hold(0.2)
@@ -215,7 +215,7 @@ final class TasksInteractionUITests: XCTestCase {
     func testFanAcceptMovesTheSuggestionIntoTheTasks() throws {
         openSuggested()
         let title = Fixture.tent
-        try fan(on: title, choose: 0, of: 5)
+        try fan(on: title, choose: 0, of: 6)
         XCTAssertTrue(wait { self.text("Added to your tasks: \(title)").exists }, "no receipt")
         XCTAssertTrue(wait { !self.text(title).exists }, "the accepted suggestion is still in Suggested")
         XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount - 1 }, chip("Suggested").label)
@@ -229,7 +229,7 @@ final class TasksInteractionUITests: XCTestCase {
     func testFanAcceptWithNoteAcceptsWithTheNote() throws {
         openSuggested()
         let title = Fixture.tent
-        try fan(on: title, choose: 1, of: 5)
+        try fan(on: title, choose: 1, of: 6)
         XCTAssertTrue(app.staticTexts["Accept with a note"].waitForExistence(timeout: 5), "the composer did not open")
         XCTAssertTrue(text(title).exists, "the composer does not name the task")
         let field = app.textFields["captureTranscript"].exists ? app.textFields["captureTranscript"] : app.textViews["captureTranscript"]
@@ -247,7 +247,7 @@ final class TasksInteractionUITests: XCTestCase {
     func testCancellingTheAcceptNoteChangesNothing() throws {
         openSuggested()
         let title = Fixture.tent
-        try fan(on: title, choose: 1, of: 5)
+        try fan(on: title, choose: 1, of: 6)
         XCTAssertTrue(app.staticTexts["Accept with a note"].waitForExistence(timeout: 5))
         app.buttons["Cancel capture"].tap()
         XCTAssertTrue(wait { !self.app.staticTexts["Accept with a note"].exists })
@@ -262,7 +262,7 @@ final class TasksInteractionUITests: XCTestCase {
         let anchor = try pressPoint(on: title, needing: 7)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
-        touch.slide(to: target(from: anchor, index: 2, of: 5))
+        touch.slide(to: target(from: anchor, index: 2, of: 6))
         touch.hold(0.9)
         // Tomorrow opens under the finger, which must move deliberately
         // before anything is chosen: across Today, then back up onto it.
@@ -284,7 +284,7 @@ final class TasksInteractionUITests: XCTestCase {
         let anchor = try pressPoint(on: title, needing: 7)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
-        touch.slide(to: target(from: anchor, index: 2, of: 5))
+        touch.slide(to: target(from: anchor, index: 2, of: 6))
         touch.hold(0.9)
         touch.slide(to: target(from: anchor, index: 6, of: 7))
         touch.hold(0.2)
@@ -297,12 +297,12 @@ final class TasksInteractionUITests: XCTestCase {
     func testFanMarkAsDoneResolvesTheSuggestion() throws {
         openSuggested()
         let title = Fixture.tent
-        try fan(on: title, choose: 3, of: 5)
+        try fan(on: title, choose: 3, of: 6)
         XCTAssertTrue(wait { self.text("Done: \(title)").exists }, "no receipt")
         XCTAssertTrue(wait { !self.circle(complete: title).exists }, "the suggestion marked done is still open")
         undo()
         XCTAssertTrue(wait { self.isListed(self.circle(complete: title)) }, "Undo did not bring the suggestion back")
-        try fan(on: title, choose: 3, of: 5)
+        try fan(on: title, choose: 3, of: 6)
         XCTAssertTrue(wait { !self.circle(complete: title).exists })
         open("Done")
         XCTAssertTrue(text(title).waitForExistence(timeout: 5), "the suggestion marked done is not in Done")
@@ -313,14 +313,14 @@ final class TasksInteractionUITests: XCTestCase {
     func testFanIgnoreHidesTheSuggestionAndUndoRestoresIt() throws {
         openSuggested()
         let title = Fixture.tent
-        try fan(on: title, choose: 4, of: 5)
+        try fan(on: title, choose: 4, of: 6)
         XCTAssertTrue(wait { self.text("Ignored: \(title)").exists }, "no receipt")
         XCTAssertTrue(wait { !self.text(title).exists }, "the ignored suggestion is still shown")
         XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount - 1 }, chip("Suggested").label)
         undo()
         XCTAssertTrue(wait { self.isListed(self.circle(complete: title)) }, "Undo did not bring the suggestion back")
         XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount }, chip("Suggested").label)
-        try fan(on: title, choose: 4, of: 5)
+        try fan(on: title, choose: 4, of: 6)
         XCTAssertTrue(wait { !self.text(title).exists })
         for name in ["Today", "Anytime", "Done", "Suggested"] {
             open(name)
@@ -420,6 +420,22 @@ final class TasksInteractionUITests: XCTestCase {
         XCTAssertTrue(chipLabel("Today").hasPrefix("Today (5)"), chipLabel("Today"))
     }
 
+    func testTaskTellOpensPrefilledCaptureWithoutCompleting() throws {
+        let title = Fixture.insurance
+        try fan(on: title, choose: 6)
+        XCTAssertTrue(app.buttons["Cancel capture"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["captureTranscript"].value as? String == "About this task…\n\n")
+        XCTAssertFalse(app.buttons["captureDoneButton"].isEnabled)
+        keepScreenshot("tasks-tell-prefilled")
+        let field = app.textFields["captureTranscript"]
+        field.tap()
+        field.typeText("Order the replacement lens.")
+        XCTAssertTrue(app.buttons["captureDoneButton"].isEnabled)
+        app.buttons["Cancel capture"].tap()
+        if app.buttons["Discard"].waitForExistence(timeout: 2) { app.buttons["Discard"].tap() }
+        XCTAssertTrue(text(title).waitForExistence(timeout: 5))
+    }
+
     // MARK: - 10. Chat about this
 
     /// The fan's farthest target starts a chat about the task: the chat
@@ -428,7 +444,7 @@ final class TasksInteractionUITests: XCTestCase {
     /// `/tmp/omnesis-snapshots` for review.
     func testChatAboutThisOpensAChatOnTheTasksCard() throws {
         let title = Fixture.insurance
-        try fan(on: title, choose: 6)
+        try fan(on: title, choose: 7)
         let card = app.buttons["agent.taskContextCard"]
         XCTAssertTrue(card.waitForExistence(timeout: 10), "the chat did not open on the task's card")
         XCTAssertTrue(card.label.contains(title), "the card names another task: \(card.label)")
@@ -599,9 +615,9 @@ final class TasksInteractionUITests: XCTestCase {
     }
 
     /// Long-press `title`, slide onto main-fan target `index` of `count`
-    /// (a task's fan holds seven with Chat about this, a suggestion's five)
+    /// (a task's fan holds eight with Chat about this, a suggestion's six)
     /// and lift.
-    private func fan(on title: String, choose index: Int, of count: Int = 7) throws {
+    private func fan(on title: String, choose index: Int, of count: Int = 8) throws {
         let anchor = try pressPoint(on: title, needing: count)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)

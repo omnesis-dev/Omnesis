@@ -153,7 +153,8 @@ enum VoiceNoteDelivery {
             capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
             surface: note.surface,
             deviceId: note.deviceId,
-            location: location
+            location: location,
+            taskId: note.taskId
         )
         return .text
     }

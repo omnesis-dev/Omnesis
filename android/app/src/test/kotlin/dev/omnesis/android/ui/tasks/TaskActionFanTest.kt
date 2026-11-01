@@ -34,16 +34,23 @@ class TaskActionFanTest {
         locale = Locale.UK,
         suggestion = suggestion,
         chat = chat,
+        tell = true,
     )
 
     private fun TaskFanSession.target(action: TaskFanAction) = targets.single { it.action == action }
+
+    @Test
+    fun an_older_gateway_does_not_offer_task_tell() {
+        val fan = TaskFanSession(Offset(300f, 600f), bounds, today)
+        assertTrue(fan.targets.none { it.action == TaskFanAction.Tell })
+    }
 
     // --- Layout ------------------------------------------------------------------------------
 
     @Test
     fun the_main_fan_lists_its_targets_nearest_first_in_a_fixed_order() {
         assertEquals(
-            listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task"),
+            listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task", "Tell Omnesis"),
             session().targets.map { it.label },
         )
     }
@@ -51,7 +58,7 @@ class TaskActionFanTest {
     @Test
     fun a_suggestions_fan_offers_its_own_actions_nearest_first() {
         assertEquals(
-            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"),
+            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore", "Tell Omnesis"),
             session(suggestion = true).targets.map { it.label },
         )
     }
@@ -64,11 +71,11 @@ class TaskActionFanTest {
     @Test
     fun chat_about_this_ends_a_tasks_main_fan_only_when_the_gateway_offers_it() {
         assertEquals(
-            listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task", "Chat about this"),
+            listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task", "Tell Omnesis", "Chat about this"),
             session(chat = true).targets.map { it.label },
         )
         assertEquals(
-            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"),
+            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore", "Tell Omnesis"),
             session(suggestion = true, chat = true).targets.map { it.label },
         )
         // Only the main fans: the month and when fans are about moving the task.

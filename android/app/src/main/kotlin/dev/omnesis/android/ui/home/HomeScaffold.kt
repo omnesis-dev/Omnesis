@@ -903,6 +903,11 @@ fun HomeScaffold(
                     onBack = { nav.popBackStack() },
                     onCapture = { openCapture(CaptureSurface.APP) },
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
+                    onOpenConversation = { id ->
+                        vm.resumeConversation(id)
+                        vm.refreshConversations()
+                        bringAgentForward()
+                    },
                     onOpenSettings = openSettings,
                 )
             }
@@ -919,6 +924,11 @@ fun HomeScaffold(
                     noteProcessingNotice = noteAgent?.notice,
                     onOpenAgentSettings = openModels,
                     onClose = { nav.popBackStack() },
+                    onOpenConversation = { id ->
+                        vm.resumeConversation(id)
+                        vm.refreshConversations()
+                        bringAgentForward()
+                    },
                     onOpenSettings = openSettings,
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
                 )

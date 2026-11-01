@@ -40,6 +40,7 @@ struct TaskRowView: View {
     var onFanAction: (TaskFanAction) -> Void = { _ in }
     /// Whether the fan offers Chat about this, so VoiceOver does too.
     var offersChat = false
+    var offersTell = false
 
     /// Whether a long press opens the action fan: any open task, a
     /// suggestion included. A resolved task is reopened instead.
@@ -113,6 +114,7 @@ struct TaskRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
+        .modifier(ResolvedTaskMenu(resolved: task.isResolved && offersTell, tell: { onFanAction(.tell) }, reopen: onBullet))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(accessibilityState)
@@ -124,9 +126,11 @@ struct TaskRowView: View {
                 Button("Accept for…") { onFanAction(.acceptFor) }
                 Button("Mark as done") { onFanAction(.done) }
                 Button("Ignore") { onFanAction(.ignore) }
+                if offersTell { Button("Tell Omnesis") { onFanAction(.tell) } }
             } else if hasFan {
                 Button("Done") { onFanAction(.done) }
                 Button("Done with note") { onFanAction(.doneWithNote) }
+                if offersTell { Button("Tell Omnesis") { onFanAction(.tell) } }
                 Button("Tomorrow") { onFanAction(.tomorrow) }
                 Button("Next month") { onFanAction(.nextMonth) }
                 Button("Move to month…") { onFanAction(.otherMonth) }
@@ -136,6 +140,7 @@ struct TaskRowView: View {
                 }
             } else if task.isResolved {
                 Button("Reopen", action: onBullet)
+                if offersTell { Button("Tell Omnesis") { onFanAction(.tell) } }
             }
         }
     }
@@ -460,4 +465,24 @@ struct TaskPillButtonStyle: ButtonStyle {
     .background(Theme.bgPrimary)
 }
 #endif
+/// Resolved rows keep their existing tap/bullet behavior and offer a small contextual menu.
+@available(iOS 17.0, *)
+private struct ResolvedTaskMenu: ViewModifier {
+    let resolved: Bool
+    let tell: () -> Void
+    let reopen: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if resolved {
+            content.contextMenu {
+                Button("Tell Omnesis", systemImage: "mic", action: tell)
+                Button("Reopen", systemImage: "arrow.uturn.backward", action: reopen)
+            }
+        } else {
+            content
+        }
+    }
+}
+
 #endif

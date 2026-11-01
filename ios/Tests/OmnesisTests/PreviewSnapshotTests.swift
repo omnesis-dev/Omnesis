@@ -26,6 +26,38 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testTaskTellFanLayouts() {
+        testTasksFanMain()
+        testTasksFanChat()
+        testTasksFanNearBottom()
+        testTasksFanNearTopLargeText()
+        testTasksSuggestionFan()
+    }
+
+    func testTaskTellAndNoteHandoff() {
+        let task = TaskNoteContext(id: "task_example", title: "Repair the telescope")
+        let capture = CaptureView(speech: .preview(state: .idle), taskContext: task)
+            .environment(AppStore.preview())
+        snapshot(capture, name: "capture-task-tell")
+        let note = NoteEntry(
+            id: "note_example",
+            day: "2026-11-01",
+            capturedAt: "2026-11-01T10:00:00Z",
+            updatedAt: "2026-11-01T10:00:00Z",
+            text: task.initialText + "I need help choosing the replacement part.",
+            surface: "ios-app",
+            deviceId: nil,
+            agent: .init(
+                state: "done",
+                receipt: .init(text: "Which part needs replacing?", changes: [], conversationId: "conversation_example")
+            )
+        )
+        let detail = NavigationStack { NoteHistoryDetail(note: note, model: NotesHistoryModel(client: nil)) }
+            .environment(AppStore.preview())
+            .environment(\.openAgentConversation, { _ in })
+        snapshot(detail, name: "note-handoff")
+    }
+
     func testNotesHistoryStates() {
         snapshot(
             NotesHistoryScreen(model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory), menuOpen: .constant(false)),
@@ -8847,6 +8879,7 @@ final class PreviewSnapshotTests: XCTestCase {
                     now: PreviewMocks.tasksNow
                 ),
                 experimental: experimental,
+                offersTell: true,
                 onChat: offersChat ? { _ in } : nil,
                 initialFan: fan
             )
