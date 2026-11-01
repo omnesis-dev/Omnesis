@@ -45,7 +45,7 @@ final class PushTapUITests: XCTestCase {
         try runPushTap(mode: "privacy-cold", expectedNavBar: "Privacy decision")
     }
 
-    func testWidgetTaskTapClosesAnAlreadyOpenMenuOnTasks() {
+    func testWidgetTaskTapClosesAnAlreadyOpenMenuOnTasks() throws {
         let app = Self.harnessApp()
         app.launchEnvironment["DEMO_PUSH_TAP"] = "widget-menu"
         app.launch()
@@ -63,6 +63,9 @@ final class PushTapUITests: XCTestCase {
             waitForExpectations(timeout: 5)
             XCTAssertTrue(app.navigationBars["Tasks"].exists)
         }
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try app.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("widget-task-menu-closed.png"))
     }
 
     func testSettingsCanOpenMCPAuthorization() {
