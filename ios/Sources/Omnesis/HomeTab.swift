@@ -223,7 +223,7 @@ func homeTab(for target: PushTarget) -> HomeTab {
     case .accessAuthorization: .agent
     case .agentAnswer: .agent
     case .watchFiring, .watch: .watches
-    case .task: .tasks
+    case .task, .taskJournal: .tasks
     case .sourcePermission: .sources
     }
 }

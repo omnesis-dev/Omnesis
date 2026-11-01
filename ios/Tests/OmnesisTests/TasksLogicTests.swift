@@ -379,6 +379,32 @@ final class TasksModelTests: XCTestCase {
         XCTAssertEqual(model.counts.suggested, 3)
     }
 
+    func testWidgetDateContextReadsSelectedDayWithoutChangingActionCalendar() async {
+        let service = FakeService()
+        let model = model(service)
+        await model.load()
+        model.openJournal(TaskWidgetDeepLink(view: .month, day: "2027-01-01"))
+        XCTAssertTrue(model.pages.isEmpty)
+        XCTAssertEqual(model.today, "2026-10-14")
+        XCTAssertEqual(model.readDay, "2027-01-01")
+        XCTAssertEqual(model.selected, .month)
+        await model.load()
+        model.returnToToday()
+        XCTAssertNil(model.referenceDay)
+        XCTAssertEqual(model.selected, .today)
+        await model.load()
+        let calls = await service.calls
+        XCTAssertEqual(calls, ["view today 2026-10-14", "view month 2027-01-01", "view today 2026-10-14"])
+    }
+
+    func testInvalidWidgetDateDoesNotChangeJournal() {
+        let service = FakeService()
+        let model = model(service)
+        model.openJournal(TaskWidgetDeepLink(view: .today, day: "2026-02-30"))
+        XCTAssertNil(model.referenceDay)
+        XCTAssertEqual(model.selected, .today)
+    }
+
     func testBulletCompletesThenShowsUndoableReceipt() async {
         let service = FakeService()
         let task = TaskRecord(id: "t", title: "Pay the invoice")

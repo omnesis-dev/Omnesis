@@ -130,7 +130,7 @@ targetTemplates:
   # The watch complications — WidgetKit extension embedded in the watch app,
   # hosting the Ask Omnesis and Omnesis note complications. Each one only
   # opens the watch app at its WatchComplication link, where the app
-  # presents dictation — so, like OmnesisWidgets, it holds no pairing or
+  # presents dictation — it holds no pairing or
   # keychain access and needs no entitlements.
   WatchWidgets:
     type: app-extension
@@ -294,7 +294,7 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: Omnesis Notification Service App Store
 
   # OmnesisWidgets — WidgetKit extension embedded in the production
-  # Omnesis app. Hosts the iOS 18+ Control Center / Lock Screen control.
+  # Omnesis app. Hosts interactive Tasks widgets and the iOS 18+ capture control.
   # The two shared intent files are compiled into BOTH the app and this
   # extension: dual target
   # membership is what lets a Control Center button launch its container
@@ -315,13 +315,22 @@ targets:
       - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/OpenCaptureControlIntent.swift
       - path: Sources/Omnesis/Intents/CaptureRouter.swift
+      # Widget data, intents and views are shared with the app for actions
+      # and simulator snapshots. Only the app owns the pairing lifecycle bridge.
+      - path: Sources/Omnesis/Tasks/Widgets
+        excludes:
+          - TaskWidgetAppBridge.swift
+      - path: Sources/Omnesis/Tasks/TaskWidgetDeepLink.swift
+      - path: Sources/Omnesis/Pairing/Keychain.swift
+      - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).widgets
         INFOPLIST_FILE: Sources/OmnesisWidgets/Info.plist
-        # No entitlements: the extension holds no keychain / gateway
-        # access — it only launches the app into capture.
-        CODE_SIGN_ENTITLEMENTS: ""
+        # Dedicated shared Keychain group for task credentials and snapshots.
+        CODE_SIGN_ENTITLEMENTS: OmnesisWidgets.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
       configs:
         Release:
