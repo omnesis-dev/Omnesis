@@ -364,7 +364,6 @@ final class NotesCoordinatorTests: XCTestCase {
         XCTAssertEqual(postedTexts, ["fresh note", "queued earlier offline"])
         XCTAssertTrue(coordinator.pending.isEmpty)
     }
-
 }
 
 extension NotesCoordinatorTests {
