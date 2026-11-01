@@ -74,10 +74,11 @@ function makeProfile(): { profile: InteractiveWriteProfile; seenRunIds: string[]
   return { profile, seenRunIds };
 }
 
-function makeService() {
+function makeService(knowledgeReads = true) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
   const service = new AgentService({
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: (_role: CapabilityRole) => backend,
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "test",
@@ -101,6 +102,32 @@ describe("interactive-agent substrate write access", () => {
   afterEach(() => {
     if (prevExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = prevExperimental;
+  });
+
+  it("withholds profile wiki reads when maintained knowledge reads are disabled", async () => {
+    const { service, backend } = makeService(false);
+    service.setInteractiveWriteProfile({
+      buildOwnTools: () =>
+        ["knowledge_list", "knowledge_fetch", "open_loop_search", "open_loop_fetch"].map(
+          (name) => ({
+            name,
+            description: name,
+            mutates: false,
+            schema: undefined as never,
+            invoke: async () => ({ kind: "structured" as const, resultType: "noop", data: {} }),
+          }),
+        ),
+    });
+    const { sessionId } = await service.createSession("device:A");
+    service.sendMessage("device:A", sessionId, "what does the project page say?");
+    await settle();
+    expect(backend.sawTools).toContain("fetch_many");
+    expect(backend.sawTools).toContain("search_many");
+    expect(backend.sawTools).not.toContain("knowledge_list");
+    expect(backend.sawTools).not.toContain("knowledge_fetch");
+    expect(backend.sawTools).not.toContain("open_loop_search");
+    expect(backend.sawTools).not.toContain("open_loop_fetch");
+    expect(service.listTools().map((tool) => tool.name)).not.toContain("fetch_loop");
   });
 
   it("appends the profile's write tools to a top-level session, stamped interactive_<sessionId>", async () => {

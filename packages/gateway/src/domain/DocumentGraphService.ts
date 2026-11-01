@@ -93,8 +93,8 @@ export type { DocumentGraph, BuildDocumentGraphOptions };
  * newest members of the permitted set. People stay reachable either way.
  */
 export interface GraphTraversalPolicy {
-  /** Document-to-document link types the walk follows. Person edges are unaffected. */
-  readonly linkTypes: ReadonlySet<string>;
+  /** Document-to-document link types the walk follows; unset permits all. Person edges are unaffected. */
+  readonly linkTypes?: ReadonlySet<string>;
   /** Whether a reached document is left out of the walk. Seeds are never excluded. */
   excludes(sourceId: string, documentType: string | null | undefined): boolean;
 }
@@ -436,7 +436,7 @@ function expandDocument(
       policy && expander.neighborKind === "document"
         ? fetched.filter(
             (r) =>
-              policy.linkTypes.has(r.type) &&
+              (!policy.linkTypes || policy.linkTypes.has(r.type)) &&
               !(r.other && policy.excludes(r.other.sourceId, r.other.documentType)),
           )
         : fetched;

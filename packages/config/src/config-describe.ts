@@ -146,6 +146,11 @@ export const CONFIG_PATHS_BACKEND_ONLY: readonly {
   reason: string;
 }[] = [
   {
+    path: ["agent", "useBrainKnowledgeMode"],
+    reason:
+      "Maintained knowledge retrieval comparisons are configured through the CLI or config file.",
+  },
+  {
     path: ["search", "v2"],
     reason: "Agent search provenance is configured through the CLI or config file.",
   },

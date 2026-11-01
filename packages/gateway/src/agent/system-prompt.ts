@@ -66,6 +66,8 @@ export interface SystemPromptInput {
    * sections of the prompt (the background agent's loops and automations).
    */
   experimental?: boolean;
+  /** Whether maintained wiki pages and loop read tools are available. */
+  knowledgeReads?: boolean;
   /**
    * Whether the `temporal_query` tool is wired for this session. Gates the
    * tool's bullet and the time-bounded retrieval guidance.
@@ -261,7 +263,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     fetchBatchLimit: 16,
     catalogMode: "context",
     includeTemporal: input.temporal === true,
-    includeCognition: input.experimental === true,
+    includeCognition: input.experimental === true && input.knowledgeReads !== false,
     includeMessageCounts: input.messageCounts === true,
     graphContext: input.graphContext === true,
   });
@@ -360,10 +362,12 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   // Read-only loop tools + inline loop/annotation connections are experimental:
   // the background Cognition Steward (and its open loops) only exist then, and stay
   // behind the experimental gate on every client.
-  const loopToolsBullets = input.experimental
-    ? `\n- **\`list_loops(limit?, mode?)\`** — active tracked outcome candidates, ordered by stored importance. Default navigation shortlists records for relevant detail reads; it does not establish counts, absence, or outstanding real-world work. For a complete recorded inventory or count, choose mode: "snapshot", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
-    : "";
-  const loopsSection = input.experimental ? renderCognitionRetrievalGuidance() : "";
+  const loopToolsBullets =
+    input.experimental && input.knowledgeReads !== false
+      ? `\n- **\`list_loops(limit?, mode?)\`** — active tracked outcome candidates, ordered by stored importance. Default navigation shortlists records for relevant detail reads; it does not establish counts, absence, or outstanding real-world work. For a complete recorded inventory or count, choose mode: "snapshot", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
+      : "";
+  const loopsSection =
+    input.experimental && input.knowledgeReads !== false ? renderCognitionRetrievalGuidance() : "";
   const messageCountToolBullet = input.messageCounts
     ? `\n- **\`count_messages({ from, to?, timeZone?, sourceIds?, limit? })\`** — how many messages the user exchanged with each person over a window, counted across every messaging source and ranked. **For "who do I message / email / talk to most", call this instead of ranking search hits.** See **Who the user communicates with most** below. READ-ONLY.`
     : "";
@@ -378,9 +382,13 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   // filing them under it would teach exactly the wrong provenance — and the
   // three carry different authority, which is the point of the section.
   const timeSection = input.temporal
-    ? `${renderTemporalRetrievalGuidance()}\n\nEvery \`start\` / \`endExclusive\` comes back as a UTC instant; the \`timeZone\` argument bounds the *window* rather than restating results. Convert instants using the caller-zone rules above.
+    ? `${renderTemporalRetrievalGuidance()}\n\nEvery \`start\` / \`endExclusive\` comes back as a UTC instant; the \`timeZone\` argument bounds the *window* rather than restating results. Convert instants using the caller-zone rules above.${
+        input.knowledgeReads !== false
+          ? `
 
 When the user's Tasks are available, a \`temporal_query\` window that includes today also returns \`tasks\` — the user's own Tasks for today: planned for today, carried over, or due — and \`now\`, the current time. Their Tasks are part of every "what's on today / on my plate" answer, never something to find by searching. Lead with what is still ahead of \`now\`: open tasks and the events still to come. Mention earlier events only briefly as done or earlier, and never present one that has passed as upcoming.`
+          : ""
+      }`
     : "";
 
   // Automations are experimental on every client, and the agent's tools for

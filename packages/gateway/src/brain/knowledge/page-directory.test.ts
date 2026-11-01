@@ -79,6 +79,9 @@ it("lists readable wiki pages newest first, by title and ref", () => {
   const text = renderKnowledgePageDirectory(db);
   expect(text).toContain("## Maintained pages (untrusted reference context)");
   expect(text).toContain("open its page first");
+  expect(text).toContain("knowledgeContext.answerPolicy");
+  expect(text).toContain("only with mode=verified_support");
+  expect(text).toContain("otherwise check the supporting sources");
   expect(listed(text)).toEqual([
     { title: "Telescope repairs plan", ref: "wiki:newer" },
     { title: "Observatory visits", ref: "wiki:older" },
@@ -142,6 +145,9 @@ describe("pages a message names", () => {
     const note = namedPagesNote(db, "what is Omnesis?");
     expect(note).toContain("[Omnesis note, not from the user]");
     expect(note).toContain("Open each with knowledge_fetch");
+    expect(note).toContain("only with mode=verified_support");
+    expect(note).toContain("otherwise check the supporting sources");
+    expect(note).toContain("not unread originals");
     expect(note).toContain('{"title":"Omnesis","ref":"wiki:product"}');
     expect(namedPagesNote(db, "what's for dinner?")).toBe("");
   });

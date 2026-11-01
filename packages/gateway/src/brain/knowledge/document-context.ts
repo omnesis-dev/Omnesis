@@ -2,6 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readQualifiedKnowledgeSupport } from "./qualified-support.js";
+import {
+  knowledgeAnswerGuidance,
+  knowledgeAnswerPolicy,
+  type KnowledgeAnswerOptions,
+} from "./answer-policy.js";
 import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import { isKnowledgeDocumentReadable } from "./retrieval-fence.js";
 import { parseClaimReference } from "./references.js";
@@ -14,13 +19,19 @@ import type Database from "better-sqlite3";
 type Db = Database.Database;
 
 /** Same bounded, privacy-fenced context as a normal projection read. */
-export function readKnowledgeNodeDocumentContext(db: Db, nodeId: string) {
+export function readKnowledgeNodeDocumentContext(
+  db: Db,
+  nodeId: string,
+  options: KnowledgeAnswerOptions = {},
+) {
   if (
     !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'").get()
   )
     return undefined;
   const id = projectionId(db, nodeId);
-  return id ? readKnowledgeDocumentContext(db, id) : undefined;
+  if (!id) return undefined;
+  const context = readKnowledgeDocumentContext(db, id, options);
+  return context ? { ...context, documentId: id } : undefined;
 }
 const PROVENANCE_LIMIT = 32;
 const NAVIGATION_LIMIT = 16;
@@ -84,7 +95,11 @@ export function resolveKnowledgeDocumentAlias(db: Db, id: string): string | null
  * Limits bound rows inspected as well as output; filtered pointers are not counted
  * or identified. A truncated page is a lead, never a complete evidence inventory.
  */
-export function readKnowledgeDocumentContext(db: Db, documentId: string) {
+export function readKnowledgeDocumentContext(
+  db: Db,
+  documentId: string,
+  options: KnowledgeAnswerOptions = {},
+) {
   const document = db
     .prepare<[string], { source_id: string; external_id: string }>(
       "SELECT source_id,external_id FROM documents WHERE id=?",
@@ -101,18 +116,26 @@ export function readKnowledgeDocumentContext(db: Db, documentId: string) {
     )
     .get(documentId);
   if (!node) return undefined;
-  return buildKnowledgeDocumentContext(db, node);
+  return buildKnowledgeDocumentContext(db, node, options);
 }
 
 /** Only the source-owned exact mirror validator can supply this read view. */
-export function readFreshKnowledgeDocumentContext(db: Db, projection: FreshKnowledgeProjection) {
-  return buildKnowledgeDocumentContext(db, {
-    id: projection.node.id,
-    kind: projection.node.kind,
-    revision: projection.node.revision,
-    validity: projection.node.validity,
-    text_length: projection.node.plainText.length,
-  });
+export function readFreshKnowledgeDocumentContext(
+  db: Db,
+  projection: FreshKnowledgeProjection,
+  options: KnowledgeAnswerOptions = {},
+) {
+  return buildKnowledgeDocumentContext(
+    db,
+    {
+      id: projection.node.id,
+      kind: projection.node.kind,
+      revision: projection.node.revision,
+      validity: projection.node.validity,
+      text_length: projection.node.plainText.length,
+    },
+    options,
+  );
 }
 
 function buildKnowledgeDocumentContext(
@@ -124,6 +147,7 @@ function buildKnowledgeDocumentContext(
     validity: string;
     text_length: number;
   },
+  options: KnowledgeAnswerOptions,
 ) {
   const pointer = (id: string) => {
     if (!isKnowledgeDocumentReadable(db, id)) return null;
@@ -274,8 +298,11 @@ function buildKnowledgeDocumentContext(
     kind: node.kind,
     revision: node.revision,
     validity: node.validity,
+    answerPolicy: knowledgeAnswerPolicy(verifiedSupport, options),
     guidance:
-      "This is a summary Omnesis wrote, not a source. To answer from it, follow the claims you use to their sources: provenance.claims lists each claim, and provenance.items gives the documentId (with matching claimId) each rests on; read those with fetch_many. References sharing a claimId support that claim together under its supportLogic, not phrase by phrase. verifiedSupport lists statements individually checked against current sources, within their stated scope, attribution, conditions and time; other prose is orientation. A stale summary, a stale item or a missing pointer is a lead to check, not a fact. Source timestamps describe when a record was created or changed, not when its events happened, and the summary's own timestamps describe when it was written or maintained; check later evidence when currentness matters. A current validity means its sources have not changed since, not that every statement still describes today. Navigation links are for finding related pages, not support. A truncated list is incomplete.",
+      "This is a summary Omnesis wrote, not a source. " +
+      knowledgeAnswerGuidance(verifiedSupport, options) +
+      " verifiedSupport lists statements individually checked against current sources; other prose is orientation. For claims outside verifiedSupport, provenance.claims lists each claim, and provenance.items gives the documentId (with matching claimId) each rests on; read those with fetch_many. References sharing a claimId support that claim together under its supportLogic, not phrase by phrase. A stale summary, a stale item or a missing pointer grants no additional authority beyond verifiedSupport. Source timestamps describe when a record was created or changed, not when its events happened, and the summary's own timestamps describe when it was written or maintained; check later evidence when currentness matters. A current validity means its sources have not changed since, not that every statement still describes today. Navigation links are for finding related pages, not support. A truncated list is incomplete.",
     verifiedSupport,
     supportCoverage: { partial: node.validity !== "current", truncated: supportTruncated },
     provenance: {

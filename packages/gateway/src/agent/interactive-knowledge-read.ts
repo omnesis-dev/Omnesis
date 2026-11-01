@@ -45,7 +45,7 @@ export function adaptInteractiveKnowledgeReads(
         "Read a maintained wiki or root page using its exact bare node ID, a wiki:<nodeId> " +
         "reference without a claim selector, or the documentId of its search hit. Normal reads return " +
         "the same document.batch result as fetch_many, including qualified knowledgeContext " +
-        "and a turn-bound citation read. This does not read cited original documents. " +
+        "and a turn-bound citation read. Follow knowledgeContext.answerPolicy: mode=verified_support permits answering only from exact returned verifiedSupport, preserving its qualifications, without reopening originals; cite this fetched maintained document, not unread originals. Missing policy or mode=source_checks requires supporting-source checks even when verifiedSupport is nonempty. Newest/current-status questions and conflicts still need later-evidence checks. This does not read cited original documents. " +
         "Other record kinds use fetch_loop or scoped people/document/search tools.",
       async invoke(rawArgs, context) {
         const valid = tool.schema.safeParse(rawArgs);

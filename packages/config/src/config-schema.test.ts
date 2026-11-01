@@ -1193,6 +1193,15 @@ describe("resolveSourceSettings", () => {
 });
 
 describe("validateConfig — agent", () => {
+  test("accepts the three maintained knowledge modes and rejects other values", () => {
+    for (const useBrainKnowledgeMode of ["off", "check_all_sources", "check_stale_claims"]) {
+      expect(validateConfig({ agent: { useBrainKnowledgeMode } }).ok).toBe(true);
+    }
+    for (const useBrainKnowledgeMode of [true, false, "current", "false", ""]) {
+      expect(validateConfig({ agent: { useBrainKnowledgeMode } }).ok).toBe(false);
+    }
+    expect(validateConfig({ agent: { knowledgeReads: true } }).ok).toBe(false);
+  });
   test("accepts every documented tunable", () => {
     const res = validateConfig({
       agent: {

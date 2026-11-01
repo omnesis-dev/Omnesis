@@ -65,6 +65,7 @@ import { mergeFilters } from "../search/filters.js";
 import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
 import { hydrateBrowserRecord } from "./record-browser-urls.js";
+import { isKnowledgeReadDocument, isKnowledgeReadSource } from "./knowledge-read-policy.js";
 import type Database from "better-sqlite3";
 import type {
   Breadcrumb,
@@ -132,19 +133,10 @@ export function createGatewaySearchPort(
   pipeline: SearchPipeline,
   syncStatus?: SyncStatusRegistry,
   db?: Db,
-): SearchPort;
-export function createGatewaySearchPort(
-  pipeline: SearchPipeline,
-  syncStatus: SyncStatusRegistry | undefined,
-  db: Db,
-  authorization: CorpusAuthorization,
-): SearchPort;
-export function createGatewaySearchPort(
-  pipeline: SearchPipeline,
-  syncStatus?: SyncStatusRegistry,
-  db?: Db,
   authorization?: CorpusAuthorization,
+  knowledgeReads = true,
 ): SearchPort {
+  if (!knowledgeReads && !db) throw new Error("Knowledge read filtering needs the database");
   if (authorization && !db) {
     throw new Error("An authorized search port needs the database to resolve its sources");
   }
@@ -158,7 +150,19 @@ export function createGatewaySearchPort(
       const parsed = authorization?.restricted ? parseQuery(input.query) : null;
       if (parsed) rejectUnsupportedRestrictedFilters(parsed.tokens);
       const requestedFilters = parsed ? mergeFilters(parsed.filters, input.filters) : input.filters;
-      const permitted = authorization && db ? permittedSourceIds(db, authorization) : null;
+      let permitted = authorization && db ? permittedSourceIds(db, authorization) : null;
+      if (!knowledgeReads && db) {
+        // Pass the boundary before ranking so withheld mirrors cannot crowd
+        // original documents out of a capped candidate set.
+        const sources = db
+          .prepare<[], { source_id: string }>("SELECT DISTINCT source_id FROM documents")
+          .all();
+        permitted = new Set(
+          sources
+            .map((row) => row.source_id)
+            .filter((id) => !isKnowledgeReadSource(id) && (!permitted || permitted.has(id))),
+        );
+      }
       const currentConversationId = input.currentConversationId;
       const findOwnConversation = (): string | null =>
         db && currentConversationId
@@ -187,7 +191,8 @@ export function createGatewaySearchPort(
           // down-weighted). Agent search port only — the public /search route
           // never sets this, so its behaviour is unchanged. The pipeline re-gates
           // on experimental defensively.
-          cognitiveProjection: authorization?.restricted ? false : experimentalVisible(),
+          cognitiveProjection:
+            !knowledgeReads || authorization?.restricted ? false : experimentalVisible(),
         },
         permitted
           ? {
@@ -228,12 +233,12 @@ export function createGatewaySearchPort(
       // Graph context replaces it: the facts on the leading hits cover the
       // same neighbours, and the prompt describes only one of the two.
       if (db && !authorization?.restricted && !pipeline.agentSearchV2Enabled) {
-        attachBreadcrumbs(db, results, ownConversationDocId);
+        attachBreadcrumbs(db, results, ownConversationDocId, knowledgeReads);
       }
       // Durable memory is generally available; loop and temporal connections
       // remain experimental. Restricted callers receive no memory overlays.
       if (db && !authorization?.restricted) {
-        attachDocConnections(db, results);
+        attachDocConnections(db, results, knowledgeReads);
       }
       return {
         query: input.query,
@@ -302,13 +307,23 @@ const BREADCRUMB_FANOUT = 3;
  * conversation reappears as a neighbour of its own citations, handing back the
  * id that was just withheld from the result list.
  */
-function attachBreadcrumbs(db: Db, results: DocRef[], excludeDocId: string | null = null): void {
+function attachBreadcrumbs(
+  db: Db,
+  results: DocRef[],
+  excludeDocId: string | null = null,
+  knowledgeReads = true,
+): void {
   for (let i = 0; i < results.length && i < BREADCRUMB_TOP_N; i++) {
     const r = results[i]!;
-    const { neighbors } = expandOneHop(db, r.documentId, { fanout: BREADCRUMB_FANOUT });
-    const visible = excludeDocId
-      ? neighbors.filter((n) => n.documentId !== excludeDocId)
-      : neighbors;
+    const { neighbors } = expandOneHop(db, r.documentId, {
+      fanout: BREADCRUMB_FANOUT,
+      ...(!knowledgeReads ? { policy: { excludes: isKnowledgeReadSource } } : {}),
+    });
+    const visible = neighbors.filter(
+      (n) =>
+        n.documentId !== excludeDocId &&
+        (knowledgeReads || !isKnowledgeReadSource(n.sourceId ?? "")),
+    );
     if (visible.length > 0) r.breadcrumb = visible.map(oneHopNeighborToBreadcrumb);
   }
 }
@@ -321,12 +336,12 @@ function attachBreadcrumbs(db: Db, results: DocRef[], excludeDocId: string | nul
  * port only (never the public /search route), so the payload stays lean for
  * the portal / iOS clients.
  */
-function attachDocConnections(db: Db, results: DocRef[]): void {
+function attachDocConnections(db: Db, results: DocRef[], knowledgeReads = true): void {
   for (const r of results) {
     const { openLoops, annotations, temporalAnnotations } = readDocConnections(db, r.documentId, {
       annotations: true,
       temporalAnnotations: experimentalVisible(),
-      openLoops: experimentalVisible(),
+      openLoops: knowledgeReads && experimentalVisible(),
     });
     if (openLoops.length > 0) r.openLoops = openLoops;
     if (annotations.length > 0) r.annotations = annotations;
@@ -435,6 +450,10 @@ export function createGatewayDocumentPort(
     maxStoredDocumentBytes?: number;
     /** Neighbours follow the graph context policy search graph context uses. */
     graphContext?: boolean;
+    /** Withhold maintained pages, loop mirrors and their read overlays. */
+    knowledgeReads?: boolean;
+    /** Permit exact returned qualified claims without reopening their sources. */
+    allowVerifiedAnswers?: boolean;
     /**
      * Refuse a citation of a document this turn has not fetched. Background
      * Brain runs only: a conversation cites what it found without re-reading.
@@ -444,17 +463,21 @@ export function createGatewayDocumentPort(
   authorization?: CorpusAuthorization,
 ): DocumentPort {
   return {
-    supportsKnowledgeAliases: true,
+    supportsKnowledgeAliases: options?.knowledgeReads !== false,
     requiresCitationRead: options?.requireCitationRead === true,
-    knowledgePageRef: (documentId) => knowledgePageRefForDocument(db, documentId),
+    knowledgePageRef: (documentId) =>
+      options?.knowledgeReads === false ? null : knowledgePageRefForDocument(db, documentId),
     async fetch(
       documentId: string,
       opts?: { includeNeighbors?: boolean },
     ): Promise<DocumentPortResult | null> {
       return db.transaction(() => {
+        if (options?.knowledgeReads === false && documentId.startsWith("wiki:")) return null;
         const resolvedId = resolveKnowledgeDocumentAlias(db, documentId);
         if (!resolvedId) return null;
         documentId = resolvedId;
+        if (options?.knowledgeReads === false && isKnowledgeReadDocument(db, documentId))
+          return null;
         const permitted = authorization ? permittedSourceIds(db, authorization) : null;
         const rows =
           options?.maxStoredDocumentBytes === undefined && !permitted
@@ -480,14 +503,15 @@ export function createGatewayDocumentPort(
                 // the body between authorization and materialization.
                 return listDocumentsByIds(db, [id]);
               })(documentId, options?.maxStoredDocumentBytes);
-        const freshProjection = rows[0]
-          ? null
-          : readFreshKnowledgeProjection(
-              db,
-              documentId,
-              permitted,
-              options?.maxStoredDocumentBytes,
-            );
+        const freshProjection =
+          rows[0] || options?.knowledgeReads === false
+            ? null
+            : readFreshKnowledgeProjection(
+                db,
+                documentId,
+                permitted,
+                options?.maxStoredDocumentBytes,
+              );
         const row = rows[0] ?? freshProjection?.row;
         if (!row) return null;
         const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
@@ -523,7 +547,7 @@ export function createGatewayDocumentPort(
           const conn = readDocConnections(db, row.id, {
             annotations: true,
             temporalAnnotations: experimentalVisible(),
-            openLoops: experimentalVisible(),
+            openLoops: options?.knowledgeReads !== false && experimentalVisible(),
           });
           if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
           if (conn.annotations.length > 0) ref.annotations = conn.annotations;
@@ -531,11 +555,16 @@ export function createGatewayDocumentPort(
             ref.temporalAnnotations = conn.temporalAnnotations;
           }
         }
-        const knowledgeContext = !authorization?.restricted
-          ? freshProjection
-            ? readFreshKnowledgeDocumentContext(db, freshProjection)
-            : readKnowledgeDocumentContext(db, row.id)
-          : undefined;
+        const knowledgeContext =
+          !authorization?.restricted && options?.knowledgeReads !== false
+            ? freshProjection
+              ? readFreshKnowledgeDocumentContext(db, freshProjection, {
+                  allowVerifiedAnswers: options?.allowVerifiedAnswers,
+                })
+              : readKnowledgeDocumentContext(db, row.id, {
+                  allowVerifiedAnswers: options?.allowVerifiedAnswers,
+                })
+            : undefined;
         const result: DocumentPortResult = {
           ref,
           document: {
@@ -547,7 +576,9 @@ export function createGatewayDocumentPort(
             metadata,
             sourceCreatedAt: row.sourceCreatedAt,
             updatedAt: row.updatedAt,
-            ...(!authorization?.restricted ? { knowledgeContext } : {}),
+            ...(!authorization?.restricted && options?.knowledgeReads !== false
+              ? { knowledgeContext }
+              : {}),
           },
         };
         const pageAuthority = knowledgePageReadAuthority(db, knowledgeContext, {
@@ -572,12 +603,19 @@ export function createGatewayDocumentPort(
           const expansion = expandOneHop(
             db,
             row.id,
-            options?.graphContext ? { policy: graphContextPolicy() } : {},
+            options?.graphContext
+              ? { policy: graphContextPolicy() }
+              : options?.knowledgeReads === false
+                ? { policy: { excludes: isKnowledgeReadSource } }
+                : {},
           );
           if (expansion.neighbors.length > 0) {
-            result.neighbors = expansion.neighbors.map((n) =>
-              oneHopNeighborToDocRef(n, syncStatus),
-            );
+            result.neighbors = expansion.neighbors
+              .filter(
+                (n) =>
+                  options?.knowledgeReads !== false || !isKnowledgeReadSource(n.sourceId ?? ""),
+              )
+              .map((n) => oneHopNeighborToDocRef(n, syncStatus));
             result.neighborsTruncated = expansion.truncated;
           }
         }
@@ -608,12 +646,15 @@ export function createGatewayDocumentByUrlPort(
   db: Db,
   syncStatus?: SyncStatusRegistry,
   authorization?: CorpusAuthorization,
+  knowledgeReads = true,
 ): DocumentByUrlPort {
   return {
     async lookup(url: string): Promise<DocumentByUrlPortResult> {
       const t0 = Date.now();
       const matches = lookupDocumentIdsBySourceUrl(db, [url], getUrlCanonicalizers());
-      const ids = matches.get(url) ?? [];
+      const ids = (matches.get(url) ?? []).filter(
+        (id) => knowledgeReads || !isKnowledgeReadDocument(db, id),
+      );
       if (ids.length === 0) {
         return { url, durationMs: Date.now() - t0 };
       }
@@ -1114,7 +1155,7 @@ function humaniseSlug(slug: string): string {
  */
 export function createGatewayPersonPort(
   db: Db,
-  opts?: { lookupGate?: PersonLookupGate },
+  opts?: { lookupGate?: PersonLookupGate; knowledgeReads?: boolean },
 ): PersonPort {
   return {
     async lookup(input: PersonPortInput): Promise<PersonPortResult> {
@@ -1129,6 +1170,8 @@ export function createGatewayPersonPort(
       const results = opts?.lookupGate
         ? await opts.lookupGate.lookupPeople(input.query, limit, { experimental })
         : assemblePersonLookup(db, input.query, limit, { experimental });
+
+      if (opts?.knowledgeReads === false) for (const result of results) delete result.openLoops;
 
       return {
         query: input.query,
@@ -1147,7 +1190,7 @@ const CHILD_SEED_DEFAULT_DEPTH = 2;
 export function createGatewayTrailPort(
   db: Db,
   analytics: AnalyticsDb,
-  options: { graphContext?: boolean } = {},
+  options: { graphContext?: boolean; knowledgeReads?: boolean } = {},
 ): TrailPort {
   const graphContext = options.graphContext === true;
   return {
@@ -1173,6 +1216,9 @@ export function createGatewayTrailPort(
           );
         }
         const fullId = rows[0]!.id;
+        if (options.knowledgeReads === false && isKnowledgeReadDocument(db, fullId)) {
+          throw new Error("Maintained knowledge reads are disabled");
+        }
         if (seen.has(fullId)) continue;
         seen.add(fullId);
         resolved.push(fullId);
@@ -1200,7 +1246,15 @@ export function createGatewayTrailPort(
       const graph = await buildDocumentGraphWithBoundRows(db, analytics, resolved, {
         depth: opts?.depth ?? (childSeeds ? CHILD_SEED_DEFAULT_DEPTH : 4),
         fanoutCap: opts?.fanoutCap ?? 25,
-        ...(graphContext ? { policy: graphContextPolicy(opts?.includeLinkTypes) } : {}),
+        ...(graphContext || options.knowledgeReads === false
+          ? {
+              policy: graphContext
+                ? graphContextPolicy(opts?.includeLinkTypes)
+                : {
+                    excludes: (sourceId: string) => isKnowledgeReadSource(sourceId),
+                  },
+            }
+          : {}),
       });
       await attachRecordFields(db, analytics, graph);
       return eventTrailFromGraph(graph);

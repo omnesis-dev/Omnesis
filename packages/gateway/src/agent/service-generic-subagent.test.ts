@@ -10,7 +10,7 @@
  * rejects tautological prompt-content change-detectors).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type ChatBackend,
@@ -256,12 +256,16 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
 }
 
-function makeService(spawnArgs: { task: string; title?: string; specialist?: string }) {
+function makeService(
+  spawnArgs: { task: string; title?: string; specialist?: string },
+  knowledgeReads = true,
+) {
   const captured: WsEvent[] = [];
   const parent = new SpawnInvokingBackend(spawnArgs);
   const child = new RecordingChildBackend();
   let parentMade = false;
   const service = new AgentService({
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     // Parent and sub-agents now share the "agent" role (Deep Research runs on
     // the agent model), so the role no longer distinguishes them. The service
     // builds the parent session's backend first and the spawned child next —
@@ -273,7 +277,19 @@ function makeService(spawnArgs: { task: string; title?: string; specialist?: str
       }
       return child;
     },
-    ports: { search: stubSearch, document: stubDocument },
+    ports: {
+      search: stubSearch,
+      document: stubDocument,
+      loopRead: {
+        search: async () => {
+          throw new Error("not called");
+        },
+        fetch: async () => null,
+        list: async () => {
+          throw new Error("not called");
+        },
+      },
+    },
     systemPrompt: "parent-prompt",
     broadcastEvent: (e) => captured.push(e),
     sessionIdGen: () => "S_parent",
@@ -291,6 +307,27 @@ function makeService(spawnArgs: { task: string; title?: string; specialist?: str
 }
 
 describe("AgentService × generic sub-agent profile", () => {
+  it("applies the maintained knowledge read switch to delegated workers", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    try {
+      for (const enabled of [true, false]) {
+        const { service, child } = makeService({ task: "find the original project note" }, enabled);
+        try {
+          const { sessionId } = await service.createSession("device:A");
+          service.sendMessage("device:A", sessionId, "go");
+          await settle();
+          expect(child.sawTools).toContain("search_many");
+          expect(child.sawTools).toContain("fetch_many");
+          expect(child.sawTools.includes("fetch_loop")).toBe(enabled);
+          expect(service.listTools().some((tool) => tool.name === "fetch_loop")).toBe(enabled);
+        } finally {
+          await service.dispose();
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("replays live-only parent state without duplicating transcript text", async () => {
     const captured: WsEvent[] = [];
     const backend = new GatedLiveStateBackend();

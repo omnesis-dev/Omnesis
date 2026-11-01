@@ -74,6 +74,7 @@ import {
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
 import { withTodaysTasks } from "./temporal-with-tasks.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
@@ -130,6 +131,7 @@ import {
   watchFiringThreadTitle,
   type OpenWatchFiringThreadInput,
 } from "./watch-firing-thread.js";
+import type { AgentKnowledgeMode } from "@omnesis/config";
 import type { ConversationReadStatePort } from "./conversation-read-state-service.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
@@ -217,6 +219,8 @@ export interface AgentServiceDeps {
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
+  /** Fixed for this service; changing the config requires a restart. */
+  useBrainKnowledgeMode?: AgentKnowledgeMode;
   /**
    * A model-only note for a conversation turn whose message names maintained
    * pages, telling the agent to open them first; empty when none is named.
@@ -900,6 +904,8 @@ export class AgentService {
   private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  readonly useBrainKnowledgeMode: AgentKnowledgeMode;
+  private readonly knowledgeReads: boolean;
   private readonly citationReads = new CitationReads();
   private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
   private readonly documentPort: DocumentPort;
@@ -1145,12 +1151,15 @@ export class AgentService {
       });
     }
     this.namedPagesNote = deps.namedPagesNote;
-    this.tools = buildBuiltinTools({
+    this.useBrainKnowledgeMode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+    this.knowledgeReads = this.useBrainKnowledgeMode !== "off";
+    const tools = buildBuiltinTools({
       citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
       planStore: this.planStore,
       experimental: experimentalVisible(),
     });
+    this.tools = this.knowledgeReads ? tools : withoutKnowledgeReadTools(tools);
     this.documentPort = deps.ports.document;
     this.searchRecordPort = deps.ports.record;
     this.systemPrompt = deps.systemPrompt;
@@ -1556,6 +1565,7 @@ export class AgentService {
    * with the plain prompt rather than failing the user's message.
    */
   private originPromptSection(sessionId: string): string {
+    if (!this.knowledgeReads) return "";
     const origin = this.sessions.get(sessionId)?.meta.origin;
     if (origin?.kind !== "task" || !this.taskContext) return "";
     try {
@@ -1651,18 +1661,21 @@ export class AgentService {
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = withTodaysTasks([
+    const base = [
       ...this.tools,
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
       ...taskTools,
-    ]);
+    ];
+    // Filter before the temporal adapter captures task_list: the journal is
+    // loop-backed, so its today overlay follows the same read boundary.
+    const readable = withTodaysTasks(this.knowledgeReads ? base : withoutKnowledgeReadTools(base));
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
     // reopening a voice conversation in the app shows no Timeline.
-    const tools = profile === "voice" ? selectNonCitationTools(base) : base;
+    const tools = profile === "voice" ? selectNonCitationTools(readable) : readable;
     return tools.map((handle) =>
       withVoiceMutationAdmission(handle, (ctx, invoke) => {
         const batch = this.voiceMutationBatches.get(sessionId);
