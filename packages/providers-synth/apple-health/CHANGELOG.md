@@ -1,5 +1,12 @@
 # @omnesis/provider-apple-health-synth
 
+## 0.7.3
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.3
+  - @omnesis/source-sdk@0.7.3
+
 ## 0.7.2
 
 ### Patch Changes

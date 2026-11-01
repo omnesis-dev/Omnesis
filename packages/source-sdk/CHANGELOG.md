@@ -1,5 +1,13 @@
 # @omnesis/source-sdk
 
+## 0.7.3
+
+### Patch Changes
+
+- @omnesis/config@0.7.3
+  - @omnesis/core@0.7.3
+  - @omnesis/types@0.7.3
+
 ## 0.7.2
 
 ### Patch Changes
