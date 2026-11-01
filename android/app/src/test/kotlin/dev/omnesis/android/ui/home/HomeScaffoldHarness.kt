@@ -169,6 +169,10 @@ class MockGateway : AutoCloseable {
     @Volatile
     var accessOverviewFails: Boolean = false
 
+    /** Status capabilities returned by this gateway version. */
+    @Volatile
+    var statusJson: String = """{"documents":{"total":0,"bySource":{}},"experimental":false}"""
+
     /** Every request path the gateway received, in arrival order. */
     val requestPaths = CopyOnWriteArrayList<String>()
 
@@ -202,7 +206,7 @@ class MockGateway : AutoCloseable {
                         """{"device":{"id":"device-test","name":"Test phone","kind":"android"},""" +
                             """"tokenId":"token-row-test","token":"token-test","scopes":["admin"]}""",
                     )
-                    route == "/status" -> json("""{"documents":{"total":0,"bySource":{}},"experimental":false}""")
+                    route == "/status" -> json(statusJson)
                     route == "/admin/privacy/approvals" -> approvalsPage()
                     route.startsWith("/admin/privacy/approvals/") -> json(
                         """{"approval":{"id":"${route.substringAfterLast('/')}","status":"pending",""" +

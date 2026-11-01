@@ -2,6 +2,30 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Foundation
+
+/// A fresh external invocation reveals the current capture without replacing it.
+/// The same policy covers process-local shortcuts and URL handoffs.
+enum CaptureRequestHandling {
+    static func handle(
+        isFresh: Bool,
+        isPresented: Bool,
+        reveal: () -> Void,
+        enqueue: () -> Void
+    ) {
+        guard isFresh else { return }
+        reveal()
+        guard !isPresented else { return }
+        enqueue()
+    }
+
+    static func accepts(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "omnesis",
+              url.user == nil, url.password == nil, url.port == nil, url.fragment == nil else { return false }
+        return (url.host == "capture" && url.path.isEmpty)
+            || (url.host == nil && url.path == "/capture")
+    }
+}
+
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 import UIKit
@@ -221,8 +245,7 @@ extension HomeView {
         guard let surface = pendingCaptureSurface else { return false }
         pendingCaptureSurface = nil
         captureSurface = surface
-        menuOpen = false
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        revealCapture()
         unifiedCapture = true
         return true
     }
@@ -661,9 +684,15 @@ struct HomeView: View {
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
-        guard !unifiedCapture, captureRouter.isFresh() else { return }
-        pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
-        requestDeferred(.capture)
+        CaptureRequestHandling.handle(
+            isFresh: captureRouter.isFresh(),
+            isPresented: unifiedCapture,
+            reveal: revealCapture,
+            enqueue: {
+                pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
+                requestDeferred(.capture)
+            }
+        )
     }
 
     /// Offer the oldest waiting privacy decision, if the app coming to the
@@ -744,13 +773,24 @@ struct HomeView: View {
     /// Screen / Control Center control's `OpenURLIntent` uses. Other
     /// URLs fall through untouched.
     private func handleCaptureURL(_ url: URL) {
-        guard !unifiedCapture else { return }
-        guard url.host == "capture" || url.path == "/capture" else { return }
+        guard CaptureRequestHandling.accepts(url) else { return }
         invalidateAutomaticForegroundWork()
-        let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "surface" })?.value
-        pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
-        requestDeferred(.capture)
+        CaptureRequestHandling.handle(
+            isFresh: true,
+            isPresented: unifiedCapture,
+            reveal: revealCapture,
+            enqueue: {
+                let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "surface" })?.value
+                pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
+                requestDeferred(.capture)
+            }
+        )
+    }
+
+    private func revealCapture() {
+        menuOpen = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func invalidateAutomaticForegroundWork() {

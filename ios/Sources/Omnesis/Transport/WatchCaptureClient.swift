@@ -3,18 +3,16 @@
 
 import Foundation
 
-/// Authenticated transport used by the phone's durable complication inbox.
+/// Shared voice routing and transcription for phone controls and Watch captures.
 struct WatchCaptureClient: Sendable {
     let baseURL: URL
     let token: String
     var session: URLSessionLike = OmnesisURLSession.shared
-    /// Phone controls share the classifier and transcriber with the Watch.
-    var phoneCapture = false
 
     func route(_ text: String) async throws -> WatchCaptureRoute {
         struct Response: Decodable { let route: WatchCaptureRoute }
         let data = try await post(
-            path: phoneCapture ? "/capture/route" : "/watch/capture/route",
+            path: "/watch/capture/route",
             body: JSONEncoder().encode(["text": text]),
             contentType: "application/json"
         )
@@ -29,7 +27,7 @@ struct WatchCaptureClient: Sendable {
         }
         let language = locale?.split(whereSeparator: { $0 == "_" || $0 == "-" }).first.map(String.init) ?? ""
         let suffix = language.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let endpoint = legacyGateway ? "/inference/transcribe" : (phoneCapture ? "/capture/transcribe" : "/watch/capture/transcribe")
+        let endpoint = legacyGateway ? "/inference/transcribe" : "/watch/capture/transcribe"
         let data = try await post(
             path: "\(endpoint)?language=\(suffix)",
             body: Data(contentsOf: file),

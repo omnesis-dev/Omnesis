@@ -149,3 +149,8 @@ public struct WatchCaptureStatus: Decodable, Equatable, Sendable {
     public let enabled: Bool
     public let active: Bool
 }
+
+/// Phone controls and the Watch complication use the same gateway routing gate.
+extension StatusSnapshot {
+    public var captureDecisionGateActive: Bool { watchCapture?.active == true }
+}

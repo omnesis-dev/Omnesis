@@ -884,10 +884,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           starts listening immediately, with the same microphone animation as Tell Omnesis. With a
           decision model available, tap <strong>Send</strong> and the gateway chooses whether to
           open an agent conversation or save a note. Without an available decision model, or with
-          <code>inference.dictation.useDecisionGateForCapture</code> set to <code>false</code>,
-          choose <strong>Ask</strong> or <strong>Tell</strong> yourself. This applies only to the
-          control and voice shortcut; the app's chat and Tell Omnesis screens keep their separate
-          flows.
+          <code>inference.dictation.useDecisionGateForWatch</code> set to <code>false</code>, choose
+          <strong>Ask</strong> or <strong>Tell</strong> yourself. This applies only to the control
+          and voice shortcut; the app's chat and Tell Omnesis screens keep their separate flows.
+          Phone controls and the Watch complication use the same gateway routing capability and
+          setting, including gateways that already support Watch capture.
         </p>
         <p>
           For the iPhone Action button, choose
@@ -961,8 +962,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           screen for one-tap access. In the expanded Quick Settings shade, choose Edit and add the
           <strong>Omnesis</strong> tile for the same flow. Both start listening immediately and use
           Send with a decision model, or Ask and Tell when routing is disabled or unavailable. They
-          share <code>inference.dictation.useDecisionGateForCapture</code> with the iPhone control.
-          A phone's configurable hardware button or gesture can use the shortcut if its manufacturer
+          share <code>inference.dictation.useDecisionGateForWatch</code> with the iPhone control. A
+          phone's configurable hardware button or gesture can use the shortcut if its manufacturer
           supports app shortcuts; the available buttons and setup vary by device.
         </p>
         <div class="callout warn">

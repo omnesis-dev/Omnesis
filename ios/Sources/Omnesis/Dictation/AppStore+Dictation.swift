@@ -71,7 +71,7 @@ extension AppStore {
                 statusKnown: statusSnapshot != nil,
                 paired: pairing != nil,
                 now: Date(),
-                decisionGate: statusSnapshot?.watchCapture?.active == true,
+                decisionGate: statusSnapshot?.captureDecisionGateActive == true,
                 captureSupported: true
             )
         } onChange: { [weak self] in
