@@ -34,6 +34,11 @@ export async function requestSearch(
   return { response, agentContext };
 }
 
+/** The closing tally of a search: "1 result", "2 results". */
+export function resultCount(count: number): string {
+  return `${count} ${count === 1 ? "result" : "results"}`;
+}
+
 /** Third-party text must not inject terminal controls into plain output. */
 function terminalText(value: string): string {
   // eslint-disable-next-line no-control-regex
@@ -98,6 +103,6 @@ export function renderAgentSearch(
     }
     if (index < result.results.length - 1) lines.push("");
   }
-  if (!verbose) lines.push("", `${result.results.length} results in ${result.durationMs}ms`);
+  if (!verbose) lines.push("", `${resultCount(result.results.length)} in ${result.durationMs}ms`);
   return lines;
 }
