@@ -45,8 +45,12 @@ const MINTED_CODE = "M1NT3DC0DE";
 const TYPED_CODE = "K7QX2M9ZB4";
 const NATIVE_DEVICE = "field-station-mac-collector";
 const NATIVE_DEVICE_ID = "dev_0f1e2d3c";
-/** What the installer asks the native collector beside Docker to pair as, on Linux. */
-const PAIR_NAME = "field-station-native-collector";
+/**
+ * What the installer asks the native collector beside Docker to pair as: the
+ * Mac's collector on macOS, the native one elsewhere (the suite runs on both).
+ */
+const PAIR_NAME =
+  process.platform === "darwin" ? "field-station-mac-collector" : "field-station-native-collector";
 
 /**
  * The containers' side. Every call is logged to OMNESIS_TEST_DOCKER; a compose
