@@ -24,6 +24,8 @@ export function withoutKnowledgeReadTools(tools: readonly ToolHandle[]): ToolHan
     (tool) =>
       !tool.name.startsWith("knowledge_") &&
       !tool.name.startsWith("open_loop_") &&
+      // The Task journal shares the loop store, including accepted suggestions.
+      !tool.name.startsWith("task_") &&
       !["list_loops", "search_loops", "fetch_loop", "entity_context"].includes(tool.name),
   );
 }

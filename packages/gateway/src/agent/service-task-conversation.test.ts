@@ -47,13 +47,14 @@ function capturingBackend(seen: TurnInput[]): ChatBackend {
   };
 }
 
-function makeService() {
+function makeService(knowledgeReads = true) {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-task-conversation-test-"));
   tempDirs.push(dir);
   const store = new FsConversationStore(dir);
   const seen: TurnInput[] = [];
   let n = 0;
   const service = new AgentService({
+    knowledgeReads,
     backendFactory: () => capturingBackend(seen),
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "default chat prompt",
@@ -95,6 +96,26 @@ async function sendAndSettle(
 }
 
 describe("task conversations", () => {
+  it("does not inject loop-backed task context when knowledge reads are disabled", async () => {
+    const { service, store, seen } = makeService(false);
+    let calls = 0;
+    service.setTaskContextProvider(() => {
+      calls += 1;
+      return "Maintained task context sentinel";
+    });
+    try {
+      const { id } = await service.openTaskConversation("token:t1", {
+        taskId: "loop_lease",
+        snapshot: SNAPSHOT,
+      });
+      await service.createSession("token:t1", { resumeFromId: id });
+      await sendAndSettle(service, store, id, "When is this due?", 2);
+      expect(seen.at(-1)!.systemPrompt).toBe("default chat prompt");
+      expect(calls).toBe(0);
+    } finally {
+      await service.dispose();
+    }
+  });
   it("opens an empty conversation titled after the task, with the snapshot in its origin", async () => {
     const { service, store } = makeService();
     const summary = await service.openTaskConversation("token:t1", {

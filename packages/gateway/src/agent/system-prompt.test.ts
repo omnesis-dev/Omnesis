@@ -110,6 +110,7 @@ describe("buildSystemPrompt — read-only loop tools (experimental)", () => {
     expect(prompt).not.toContain("entity_context");
     expect(prompt).not.toContain("Maintained knowledge and tracked outcomes");
     expect(prompt).toContain("temporal_query");
+    expect(prompt).not.toContain("Tasks are part of every");
   });
   test("omits the loop tools + loops section when experimental is off", () => {
     const prompt = buildSystemPrompt({ experimental: false });

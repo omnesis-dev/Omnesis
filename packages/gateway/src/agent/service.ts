@@ -1563,6 +1563,7 @@ export class AgentService {
    * with the plain prompt rather than failing the user's message.
    */
   private originPromptSection(sessionId: string): string {
+    if (!this.knowledgeReads) return "";
     const origin = this.sessions.get(sessionId)?.meta.origin;
     if (origin?.kind !== "task" || !this.taskContext) return "";
     try {
@@ -1658,18 +1659,20 @@ export class AgentService {
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = withTodaysTasks([
+    const base = [
       ...this.tools,
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
       ...taskTools,
-    ]);
+    ];
+    // Filter before the temporal adapter captures task_list: the journal is
+    // loop-backed, so its today overlay follows the same read boundary.
+    const readable = withTodaysTasks(this.knowledgeReads ? base : withoutKnowledgeReadTools(base));
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
     // reopening a voice conversation in the app shows no Timeline.
-    const readable = this.knowledgeReads ? base : withoutKnowledgeReadTools(base);
     const tools = profile === "voice" ? selectNonCitationTools(readable) : readable;
     return tools.map((handle) =>
       withVoiceMutationAdmission(handle, (ctx, invoke) => {

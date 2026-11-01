@@ -98,66 +98,118 @@ describe("temporal_query with today's tasks", () => {
   });
 });
 
-// A puppet of the conversation agent asked "what's on my plate today?": its
-// first and only read is temporal_query, and the user's tasks still arrive.
-it("gives a conversation's today read the user's tasks", async () => {
-  let seen: ToolResult | undefined;
-  let resolveTurn!: () => void;
-  const turnComplete = new Promise<void>((resolve) => {
-    resolveTurn = resolve;
-  });
-  const backend: ChatBackend = {
-    name: "puppet",
-    model: "puppet",
-    async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
-      const temporal = input.tools.find((t) => t.name === "temporal_query")!;
-      seen = await temporal.invoke({ from: "today" }, input);
-      yield {
-        type: "agent.message.end",
-        payload: { sessionId: input.sessionId, messageId: input.messageId, stopReason: "end_turn" },
-      };
-    },
-  };
-  const search: SearchPort = {
-    search: async (q) => ({ query: q.query, durationMs: 1, results: [] }),
-  };
-  const document: DocumentPort = { fetch: async () => null };
-  const service = new AgentService({
-    backendFactory: () => backend,
-    ports: {
-      search,
-      document,
-      temporal: {
-        query: async () => ({
-          type: "temporal.results",
-          window: londonDay,
-          summary: { anchored: 0, spanning: 0 },
-          items: [],
-          coverage: {
-            projectionSources: [],
-            specialistSources: [],
-            annotations: { selective: true },
-          },
-          truncated: false,
-        }),
-      },
-    },
-    systemPrompt: "test",
-    broadcastEvent: (event) => {
-      if (event.type === "agent.message.end") resolveTurn();
-    },
-    sessionIdGen: () => "S_today",
-  });
-  service.setTaskToolsProvider(() => [taskListTool()]);
-  try {
-    const { sessionId } = await service.createSession("token:test", {});
-    service.sendMessage("token:test", sessionId, "What's on my plate today?");
-    await turnComplete;
-    expect(seen).toMatchObject({
-      kind: "structured",
-      data: { tasks: { view: "today", tasks: tasksData.tasks } },
+// A scripted conversation probes the journal directly and through its time
+// query overlay. Both paths must obey the same knowledge read boundary.
+it.each([true, false])(
+  "applies the knowledge read boundary before today's task overlay (%s)",
+  async (knowledgeReads) => {
+    let seen: ToolResult | undefined;
+    let direct: ToolResult | undefined;
+    let toolNames: string[] = [];
+    const taskCalls: unknown[] = [];
+    const loopSentinel = {
+      today: TODAY,
+      tasks: [{ id: "brain-loop", title: "Maintained loop sentinel" }],
+      truncated: false,
+    };
+    let resolveTurn!: () => void;
+    const turnComplete = new Promise<void>((resolve) => {
+      resolveTurn = resolve;
     });
-  } finally {
-    await service.dispose();
-  }
-});
+    const backend: ChatBackend = {
+      name: "puppet",
+      model: "puppet",
+      async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+        toolNames = input.tools.map((tool) => tool.name);
+        const taskList = input.tools.find((tool) => tool.name === "task_list");
+        if (taskList) direct = await taskList.invoke({ view: "suggested" }, input);
+        const temporal = input.tools.find((t) => t.name === "temporal_query")!;
+        seen = await temporal.invoke({ from: "today" }, input);
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: "end_turn",
+          },
+        };
+      },
+    };
+    const search: SearchPort = {
+      search: async (q) => ({ query: q.query, durationMs: 1, results: [] }),
+    };
+    const document: DocumentPort = { fetch: async () => null };
+    const service = new AgentService({
+      knowledgeReads,
+      backendFactory: () => backend,
+      ports: {
+        search,
+        document,
+        temporal: {
+          query: async () => ({
+            type: "temporal.results",
+            window: londonDay,
+            summary: { anchored: 0, spanning: 0 },
+            items: [],
+            coverage: {
+              projectionSources: [],
+              specialistSources: [],
+              annotations: { selective: true },
+            },
+            truncated: false,
+          }),
+        },
+      },
+      systemPrompt: "test",
+      broadcastEvent: (event) => {
+        if (event.type === "agent.message.end") resolveTurn();
+      },
+      sessionIdGen: () => "S_today",
+    });
+    service.setTaskToolsProvider(() => [
+      {
+        ...taskListTool(taskCalls),
+        invoke: async (args) => {
+          taskCalls.push(args);
+          return { kind: "structured", resultType: "task.list", data: loopSentinel };
+        },
+      },
+      ...["task_create", "task_update", "task_undo"].map(
+        (name): ToolHandle => ({
+          name,
+          description: "Task journal command",
+          mutates: true,
+          schema: z.object({}),
+          invoke: async () => ({
+            kind: "structured",
+            resultType: "task.changed",
+            data: loopSentinel,
+          }),
+        }),
+      ),
+    ]);
+    try {
+      const { sessionId } = await service.createSession("token:test", {});
+      service.sendMessage("token:test", sessionId, "What's on my plate today?");
+      await turnComplete;
+      expect(seen).toMatchObject({ kind: "structured", data: { window: londonDay, items: [] } });
+      if (knowledgeReads) {
+        expect(direct).toMatchObject({ kind: "structured", data: loopSentinel });
+        expect(seen).toMatchObject({
+          kind: "structured",
+          data: { tasks: { view: "today", ...loopSentinel } },
+        });
+        expect(taskCalls).toEqual([{ view: "suggested" }, { view: "today" }]);
+        expect(toolNames.filter((name) => name.startsWith("task_"))).toHaveLength(4);
+      } else {
+        expect(direct).toBeUndefined();
+        expect(taskCalls).toEqual([]);
+        expect(toolNames.filter((name) => name.startsWith("task_"))).toEqual([]);
+        expect(JSON.stringify(seen)).not.toContain("Maintained loop sentinel");
+        if (seen?.kind === "structured") expect(seen.data).not.toHaveProperty("tasks");
+      }
+    } finally {
+      await service.dispose();
+    }
+  },
+);

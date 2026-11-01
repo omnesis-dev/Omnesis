@@ -879,10 +879,13 @@
           <code>agent.knowledgeReads</code> to <code>false</code>, restart the gateway, and start
           fresh conversations. The built-in answering agent and its delegated workers then receive
           no wiki/root context or tracked-outcome read tools, and their document, search and graph
-          tools exclude those pages and outcomes. Original documents, analytics and grounded memory
-          remain available. The Brain continues maintaining its knowledge, and existing pages and
-          outcomes are retained. The default is <code>true</code>. Independent Direct connections
-          are unaffected; old conversations may still contain information read before the change.
+          tools exclude those pages and outcomes. The loop-backed Task journal tools, automatic
+          Tasks overlay on today's time queries, and injected task-conversation context are also
+          unavailable to the answering agent in this comparison mode. Original documents, analytics
+          and grounded memory remain available. The Brain continues maintaining its knowledge, and
+          existing pages and outcomes are retained. The default is <code>true</code>. Independent
+          Direct connections are unaffected; old conversations may still contain information read
+          before the change.
         </p>
         <p>
           Debug groups the library, agent runs, maintenance batches, discovery controls, and
