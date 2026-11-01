@@ -1059,6 +1059,8 @@ public final class AppStore {
     @ObservationIgnored
     private var foregroundDecisionPending = true
     @ObservationIgnored
+    private var foregroundNavigationRevision: UInt64 = 0
+    @ObservationIgnored
     private var foregroundRequestId = 0
 
     /// Chosen interface appearance (System / Light / Dark). Injected
@@ -2387,23 +2389,24 @@ public final class AppStore {
         // outset. Check here as well as in HomeView: the destination view may
         // consume a queued push during its own onAppear before the parent's
         // automatic-request observer runs.
-        guard notificationRouter.pendingTarget == nil,
+        guard notificationRouter.allowsAutomaticNavigation(since: foregroundNavigationRevision),
               !CaptureRouter.shared.isFresh() else { return }
         foregroundRequestId &+= 1
         foregroundConversationRequest = ForegroundConversationRequest(
             id: foregroundRequestId,
-            action: foregroundConversationStore.action()
+            action: foregroundConversationStore.action(),
+            navigationRevision: foregroundNavigationRevision
         )
     }
 
     func onActive() async {
         TaskWidgetAppBridge.configure(pairing: pairingCoord.pairing)
         Task { await TranscriptionVocabularyCache.shared.refreshIfDue() }
-        await retryPendingDeviceRevocation()
         // Decide navigation before any sync/network await. This gives the
         // explicit fresh/exact-conversation choice a generation immediately,
         // so bootstrap or foreground reconciliation cannot land over it.
         applyForegroundConversationPolicyIfNeeded()
+        await retryPendingDeviceRevocation()
         // A request that arrived while the app was away is offered by the
         // home banner. The read runs beside the foreground work rather than
         // ahead of it, so a gateway that is slow to answer cannot hold up
@@ -2505,6 +2508,7 @@ public final class AppStore {
         }
         foregroundConversationStore.save(state: state)
         foregroundDecisionPending = true
+        foregroundNavigationRevision = notificationRouter.navigationRevision
         await syncCoord.onBackground()
     }
 

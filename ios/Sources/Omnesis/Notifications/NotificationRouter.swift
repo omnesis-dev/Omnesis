@@ -20,7 +20,20 @@ public final class NotificationRouter {
     /// the active section for it; the destination view (Watches,
     /// Privacy, Agent) consumes it on appear or on change. Nil
     /// when nothing is queued.
-    public var pendingTarget: PushTarget?
+    public var pendingTarget: PushTarget? {
+        didSet {
+            if pendingTarget != nil { navigationRevision &+= 1 }
+        }
+    }
+
+    /// Explicit navigation remains authoritative after its destination consumes
+    /// the target. A foreground request captures the revision at backgrounding,
+    /// so neither a late decision nor a delayed consumer can restore over it.
+    public private(set) var navigationRevision: UInt64 = 0
+
+    public func allowsAutomaticNavigation(since revision: UInt64) -> Bool {
+        pendingTarget == nil && navigationRevision == revision
+    }
 
     /// When a target was last consumed. A destination view can take a target
     /// while something else is waiting on a network read — the ledger lookup

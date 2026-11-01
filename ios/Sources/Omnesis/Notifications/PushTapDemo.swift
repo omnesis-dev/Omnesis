@@ -56,12 +56,28 @@ struct PushTapDemoRoot: View {
         ]
     }
 
+    /// Repeated taps exercise a task destination that is already mounted and
+    /// may consume the target before HomeView observes pendingTarget.
+    private var widgetTarget: PushTarget {
+        .taskJournal(TaskWidgetDeepLink(view: .today, day: "2026-11-01", taskId: "task-demo"))
+    }
+
     var body: some View {
         HomeView()
             .environment(store)
             .environment(store.notificationRouter)
+            .overlay(alignment: .bottomTrailing) {
+                if mode == "widget-menu" {
+                    Button("Simulate widget task tap") {
+                        store.notificationRouter.pendingTarget = widgetTarget
+                    }
+                    .accessibilityIdentifier("demo.widgetTaskTap")
+                }
+            }
             .task {
-                if mode == "cold" {
+                if mode == "widget-menu" {
+                    store.notificationRouter.pendingTarget = widgetTarget
+                } else if mode == "cold" {
                     // Cold shape: the tap arrives before the SwiftUI task
                     // binds the delegate — buffered, then drained by the
                     // bind. The drain hands the target over via a deferred
