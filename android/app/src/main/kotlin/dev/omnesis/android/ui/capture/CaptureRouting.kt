@@ -15,9 +15,7 @@ class CaptureRouting internal constructor(
     @Inject
     constructor(sessions: SessionManager) : this(
         active = {
-            sessions.session?.gateway?.status()?.capture?.let {
-                it.supported && it.enabled && it.active
-            } == true
+            sessions.session?.gateway?.status()?.watchCapture?.active == true
         },
         route = { text ->
             val session = sessions.session ?: error("Not paired")

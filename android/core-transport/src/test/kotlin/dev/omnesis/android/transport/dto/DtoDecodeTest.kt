@@ -421,6 +421,27 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun status_reads_the_existing_watch_capture_gate_without_a_phone_capability() {
+        val status = OmnesisJson.decodeFromString<StatusSnapshot>("""{
+            "dictation":{"visible":true,"enabled":true,"modelAssigned":true,"active":true},
+            "watchCapture":{"supported":true,"enabled":true,"active":true,"completionNotifications":true}
+        }""")
+        assertTrue(status.dictation!!.active)
+        assertTrue(status.watchCapture!!.active)
+    }
+
+    @Test
+    fun status_does_not_infer_watch_routing_from_the_obsolete_phone_capability() {
+        val status = OmnesisJson.decodeFromString<StatusSnapshot>("""{
+            "capture":{"supported":true,"enabled":true,"active":true},
+            "watchCapture":{"supported":true,"enabled":false,"active":false}
+        }""")
+        assertFalse(status.watchCapture!!.active)
+        val older = OmnesisJson.decodeFromString<StatusSnapshot>("""{"dictation":{"active":true}}""")
+        assertNull(older.watchCapture)
+    }
+
+    @Test
     fun status_experimental_defaults_false_when_absent() {
         // An older gateway omits the field entirely — it must decode as `false`
         // so experimental surfaces stay hidden rather than crashing the decode.

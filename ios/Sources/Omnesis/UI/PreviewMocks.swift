@@ -1088,7 +1088,7 @@ enum PreviewMocks {
     static let voiceEntryAutomaticStatus = StatusSnapshot(
         documents: .init(total: 0, bySource: [:], unitCountBySource: nil),
         dbSizeBytes: nil, latestActivityBySource: nil,
-        capture: .init(supported: true, enabled: true, active: true)
+        watchCapture: .init(supported: true, enabled: true, active: true)
     )
 
     static let statusSnapshot = StatusSnapshot(

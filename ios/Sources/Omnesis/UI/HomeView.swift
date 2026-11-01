@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import Foundation
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 import UIKit
@@ -227,8 +226,7 @@ extension HomeView {
         guard let surface = pendingCaptureSurface else { return false }
         pendingCaptureSurface = nil
         captureSurface = surface
-        menuOpen = false
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        revealCapture()
         unifiedCapture = true
         return true
     }
@@ -659,17 +657,20 @@ struct HomeView: View {
         }
     }
 
-    /// Queue pending `CaptureRouter` requests for the capture surface. A
-    /// request's freshness is judged when home first sees it, so one made
-    /// while phone setup holds the screen still opens once setup closes, while
-    /// a control tap that sat unconsumed (e.g. filed before pairing, seen only
-    /// when this view first appears minutes later) never pops up.
+    /// Judge freshness when Home first sees a request. Fresh requests wait through setup;
+    /// pre-pairing requests first seen minutes later are ignored.
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
-        guard !unifiedCapture, captureRouter.isFresh() else { return }
-        pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
-        requestDeferred(.capture)
+        CaptureRequestHandling.handle(
+            isFresh: captureRouter.isFresh(),
+            isPresented: unifiedCapture,
+            reveal: revealCapture,
+            enqueue: {
+                pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
+                requestDeferred(.capture)
+            }
+        )
     }
 
     /// Offer the oldest waiting privacy decision, if the app coming to the
@@ -746,17 +747,26 @@ struct HomeView: View {
         )
     }
 
-    /// `omnesis://capture[?surface=<slug>]` — the deep link the Lock
-    /// Screen / Control Center control's `OpenURLIntent` uses. Other
-    /// URLs fall through untouched.
+    /// Reveal capture for its control URL; ignore unrelated deep links.
     private func handleCaptureURL(_ url: URL) {
-        guard !unifiedCapture else { return }
-        guard url.host == "capture" || url.path == "/capture" else { return }
+        guard CaptureRequestHandling.accepts(url) else { return }
         invalidateAutomaticForegroundWork()
-        let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "surface" })?.value
-        pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
-        requestDeferred(.capture)
+        CaptureRequestHandling.handle(
+            isFresh: true,
+            isPresented: unifiedCapture,
+            reveal: revealCapture,
+            enqueue: {
+                let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "surface" })?.value
+                pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
+                requestDeferred(.capture)
+            }
+        )
+    }
+
+    private func revealCapture() {
+        menuOpen = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func invalidateAutomaticForegroundWork() {

@@ -23,9 +23,7 @@ extension CaptureView {
     }
 
     private var automaticRouting: Bool {
-        !routingFailed && store.statusSnapshot?.capture?.supported == true
-            && store.statusSnapshot?.capture?.enabled == true
-            && store.statusSnapshot?.capture?.active == true
+        !routingFailed && store.statusSnapshot?.captureDecisionGateActive == true
     }
 
     var unifiedButtons: some View {
@@ -80,14 +78,14 @@ extension CaptureView {
         do {
             let pairing = store.pairing
             let client = pairing.map {
-                WatchCaptureClient(baseURL: $0.url, token: $0.token, phoneCapture: true)
+                WatchCaptureClient(baseURL: $0.url, token: $0.token)
             }
             if let audio = preparedAudio {
                 guard let client,
                       let transcript = try await client.transcribe(
                           audio,
                           locale: Locale.current.identifier,
-                          legacyGateway: store.statusSnapshot?.capture?.supported != true
+                          legacyGateway: store.statusSnapshot?.watchCapture?.supported != true
                       ),
                       !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GatewayClient.Error.invalidResponse

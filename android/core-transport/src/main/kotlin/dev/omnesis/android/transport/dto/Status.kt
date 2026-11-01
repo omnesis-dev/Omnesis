@@ -49,8 +49,8 @@ data class StatusSnapshot(
      * the field, which reads as inactive: notes keep only the phone's transcript.
      */
     val dictation: DictationStatusDto? = null,
-    /** Automatic Ask/Tell routing for external phone capture. Missing on older gateways. */
-    val capture: CaptureRoutingStatusDto? = null,
+    /** The same Ask/Tell decision gate used by the Watch capture flow. */
+    val watchCapture: WatchCaptureStatusDto? = null,
     /**
      * Optional features a client must ask about before offering them, each named with the
      * protocol versions the gateway speaks (`{ min, max }`). Kept as raw JSON because the map
@@ -160,7 +160,7 @@ data class DictationStatusDto(
 )
 
 @Serializable
-data class CaptureRoutingStatusDto(
+data class WatchCaptureStatusDto(
     val supported: Boolean = false,
     val enabled: Boolean = false,
     val active: Boolean = false,

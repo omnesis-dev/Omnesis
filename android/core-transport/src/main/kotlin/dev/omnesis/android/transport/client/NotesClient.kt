@@ -34,14 +34,14 @@ class NotesClient(private val http: GatewayHttp) {
 
     /** Classifies an utterance without saving a note or submitting a question. */
     suspend fun routeCapture(text: String): CaptureRouteResponse =
-        http.postJson("capture/route", CaptureRouteBody(text))
+        http.postJson("watch/capture/route", CaptureRouteBody(text))
 
     /** Transcribes foreground voice capture without creating a note. */
     suspend fun transcribeCapture(audio: File, mimeType: String): String? {
         val response: CaptureTranscriptResponse = try {
-            http.postBody("capture/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
+            http.postBody("watch/capture/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
         } catch (_: dev.omnesis.android.transport.GatewayException.NotFound) {
-            // Gateways predating phone capture expose the same authenticated transcriber here.
+            // Gateways predating Watch capture expose the same authenticated transcriber here.
             http.postBody("inference/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
         }
         return response.text?.takeIf { response.available }

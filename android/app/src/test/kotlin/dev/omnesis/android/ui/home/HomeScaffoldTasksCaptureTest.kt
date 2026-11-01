@@ -100,6 +100,33 @@ class HomeScaffoldTasksCaptureTest {
         compose.onNode(hasSetTextAction()).assertTextContains("Keep this unfinished note")
     }
 
+    @Test
+    fun externalCaptureUsesTheWatchDecisionGateWithoutASeparatePhoneCapability() {
+        harness.gateway.statusJson = """{
+            "documents":{"total":0,"bySource":{}},
+            "watchCapture":{"supported":true,"enabled":true,"active":true}
+        }"""
+        harness.composeShell()
+        compose.runOnUiThread { harness.captureLaunchBus.post(dev.omnesis.android.ui.capture.CaptureSurface.TILE) }
+        harness.waitUntil { harness.currentRoute == CAPTURE_ROUTE }
+        harness.waitUntil { compose.onAllNodes(hasText("Send")).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(compose.onAllNodes(hasText("Ask")).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodes(hasText("Tell")).fetchSemanticsNodes().isEmpty())
+
+        compose.onNodeWithContentDescription("Cancel").performClick()
+        harness.waitUntil { harness.currentRoute != CAPTURE_ROUTE }
+        harness.gateway.statusJson = """{
+            "documents":{"total":0,"bySource":{}},
+            "watchCapture":{"supported":true,"enabled":false,"active":false},
+            "capture":{"supported":true,"enabled":true,"active":true}
+        }"""
+        compose.runOnUiThread { harness.captureLaunchBus.post(dev.omnesis.android.ui.capture.CaptureSurface.TILE) }
+        harness.waitUntil { harness.currentRoute == CAPTURE_ROUTE }
+        assertTrue(compose.onAllNodes(hasText("Ask")).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodes(hasText("Tell")).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodes(hasText("Send")).fetchSemanticsNodes().isEmpty())
+    }
+
     private companion object {
         const val CAPTURE_ROUTE = "capture?surface={surface}"
     }

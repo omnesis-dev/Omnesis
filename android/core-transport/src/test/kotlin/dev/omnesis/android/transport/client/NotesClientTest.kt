@@ -50,9 +50,21 @@ class NotesClientTest {
         server.enqueue(MockResponse().setBody("""{"route":"ask"}"""))
         assertEquals("ask", client().routeCapture("Where is the example document?").route)
         val request = server.takeRequest()
-        assertEquals("/capture/route", request.path)
+        assertEquals("/watch/capture/route", request.path)
         assertEquals("Bearer tok", request.getHeader("Authorization"))
         assertEquals("""{"text":"Where is the example document?"}""", request.body.readUtf8())
+    }
+
+    @Test
+    fun unavailableWatchRoutingDoesNotTryASeparatePhoneClassifier() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("Not found"))
+        try {
+            client().routeCapture("Where is the example document?")
+            fail("Expected missing Watch routing to remain unavailable")
+        } catch (_: GatewayException.NotFound) {
+            assertEquals(1, server.requestCount)
+            assertEquals("/watch/capture/route", server.takeRequest().path)
+        }
     }
 
     @Test
@@ -63,7 +75,7 @@ class NotesClientTest {
             server.enqueue(MockResponse().setBody("""{"available":true,"text":"Example question"}"""))
             assertEquals("Example question", client().transcribeCapture(audio, "audio/wav"))
             val request = server.takeRequest()
-            assertEquals("/capture/transcribe", request.path)
+            assertEquals("/watch/capture/transcribe", request.path)
             assertEquals("audio/wav", request.getHeader("Content-Type"))
             assertTrue(byteArrayOf(1, 2, 3).contentEquals(request.body.readByteArray()))
         } finally { audio.delete() }
@@ -77,7 +89,7 @@ class NotesClientTest {
             server.enqueue(MockResponse().setResponseCode(404).setBody("Not found"))
             server.enqueue(MockResponse().setBody("""{"available":true,"text":"Example question"}"""))
             assertEquals("Example question", client().transcribeCapture(audio, "audio/wav"))
-            assertEquals("/capture/transcribe", server.takeRequest().path)
+            assertEquals("/watch/capture/transcribe", server.takeRequest().path)
             val legacy = server.takeRequest()
             assertEquals("/inference/transcribe", legacy.path)
             assertEquals("Bearer tok", legacy.getHeader("Authorization"))
