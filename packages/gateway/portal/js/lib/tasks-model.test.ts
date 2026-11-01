@@ -338,17 +338,27 @@ describe("history and resolution", () => {
 describe("grouping", () => {
   const today = "2026-10-12";
 
-  it("splits Today into carried, today and resolved — keeping the today group even when empty", () => {
+  it("preserves the gateway's open Today order across carried tasks before resolved tasks", () => {
     const groups = groupTasks(
       "today",
       [
+        task({ id: "new", scheduledFor: today }),
         task({ id: "c", carried: true, scheduledFor: "2026-10-09" }),
         task({ id: "d", state: "done" }),
+        task({ id: "older", scheduledFor: today }),
+        task({ id: "old-carried", carried: true, scheduledFor: "2026-10-08" }),
       ],
       today,
     );
     expect(groups.map((g: { key: string; tasks: { id: string }[] }) => [g.key, g.tasks.map((t) => t.id)])).toEqual([
-      ["carried", ["c"]],
+      ["today", ["new", "c", "older", "old-carried"]],
+      ["resolved", ["d"]],
+    ]);
+  });
+
+  it("keeps an empty Today group when only resolved tasks remain", () => {
+    const groups = groupTasks("today", [task({ id: "d", state: "done" })], today);
+    expect(groups.map((g: { key: string; tasks: { id: string }[] }) => [g.key, g.tasks.map((t) => t.id)])).toEqual([
       ["today", []],
       ["resolved", ["d"]],
     ]);

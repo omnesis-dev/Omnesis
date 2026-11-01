@@ -84,14 +84,23 @@ final class TasksLogicTests: XCTestCase {
 
     // MARK: - Journal
 
-    func testTodaySectionsOrderCarriedThenPlannedThenResolved() {
+    func testTodayDoesNotRegroupCarriedRowsInTheGatewayOrder() {
+        let tasks = [
+            TaskRecord(id: "new-carried", title: "Review the exhibit plan", carried: true),
+            TaskRecord(id: "current", title: "Prepare the display labels"),
+            TaskRecord(id: "old-carried", title: "Inspect the storage shelves", carried: true),
+        ]
+        XCTAssertEqual(TaskJournal.entries(for: .today, tasks: tasks).map(\.id), tasks.map(\.id))
+    }
+
+    func testTodayPreservesOpenTaskOrderBeforeResolved() {
         let carried = TaskRecord(id: "c", title: "Carried", carried: true)
         let planned = TaskRecord(id: "p", title: "Planned")
         let done = TaskRecord(id: "d", title: "Done", state: .done)
         let struck = TaskRecord(id: "s", title: "Struck", state: .dismissed)
         let sections = TaskJournal.sections(for: .today, tasks: [planned, done, carried, struck])
-        XCTAssertEqual(sections.map(\.title), ["Carried over", "Today", "Done today"])
-        XCTAssertEqual(sections.map { $0.tasks.map(\.id) }, [["c"], ["p"], ["d", "s"]])
+        XCTAssertEqual(sections.map(\.title), ["Today", "Done today"])
+        XCTAssertEqual(sections.map { $0.tasks.map(\.id) }, [["p", "c"], ["d", "s"]])
 
         // A page with only today's tasks needs no heading at all.
         let plain = TaskJournal.sections(for: .today, tasks: [planned])
@@ -162,9 +171,9 @@ final class TasksLogicTests: XCTestCase {
         let planned = TaskRecord(id: "t1", title: "Planned", scheduledFor: "2026-10-14")
         let carried = TaskRecord(id: "t0", title: "Carried", scheduledFor: "2026-10-12", carried: true)
         let before = TaskJournal.entries(for: .today, tasks: [carried, planned])
-        XCTAssertEqual(before.map(\.id), ["heading:carried", "t0", "heading:today", "t1"])
+        XCTAssertEqual(before.map(\.id), ["t0", "t1"])
         let after = TaskJournal.entries(for: .today, tasks: [carried, planned.with(state: .done)])
-        XCTAssertEqual(after.map(\.id), ["heading:carried", "t0", "heading:resolved", "t1"])
+        XCTAssertEqual(after.map(\.id), ["heading:today", "t0", "heading:resolved", "t1"])
         XCTAssertEqual(Set(after.map(\.id)).count, after.count, "every line has its own id")
         guard case .task(let moved) = after.last else { return XCTFail("the task is not last") }
         XCTAssertTrue(moved.isResolved)

@@ -184,7 +184,7 @@ export class TaskQueryService {
           const placed = placeTask(loop, day);
           return placed.view === "today" ? [enrich(loop, placed.carried)] : [];
         });
-        open.sort((a, b) => Number(b.carried) - Number(a.carried) || byPlace(a, b));
+        open.sort((a, b) => b.row.createdAt - a.row.createdAt || a.row.id.localeCompare(b.row.id));
         const resolved = this.resolvedOn(day).map((loop) => enrich(loop));
         tasks = [...open, ...resolved];
         break;

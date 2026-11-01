@@ -486,9 +486,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
               <tr>
                 <td>Today</td>
                 <td>
-                  Tasks carried over from an earlier day or month first, marked as carried; then
-                  tasks planned for today, and unplanned tasks whose deadline is today or past; then
-                  tasks you completed or struck today.
+                  Open tasks newest first by when they were created: tasks planned for today, tasks
+                  carried from an earlier day or month, and tasks whose deadline is today or past.
+                  Carried tasks keep their marker. Tasks completed or struck today appear below.
                 </td>
               </tr>
               <tr>
@@ -585,10 +585,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           Tap a task's circle to complete it from a Home Screen or rectangular Lock Screen widget;
           the device may ask you to unlock first. Tap its title to open the task in Omnesis. Future
           periods show their planned tasks and deadlines; today's outstanding tasks are carried into
-          the current period. Unscheduled tasks without a deadline stay in the app's Anytime view.
-          Widgets refresh when iOS allows and after task actions; if the gateway is unreachable, a
-          Home Screen widget labels its saved list as offline. Completion requires a connection and
-          a failed action leaves the task open.
+          the current period. The Today view shows tasks newest first. Unscheduled tasks without a
+          deadline stay in the app's Anytime view. Widgets refresh when iOS allows and after task
+          actions; if the gateway is unreachable, a Home Screen widget labels its saved list as
+          offline. Completion requires a connection and a failed action leaves the task open.
         </p>
 
         <h3 id="android-task-widgets">Android task widgets</h3>
@@ -602,8 +602,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           date range, the arrows to browse earlier or later periods, and the date to return to the
           current period. The page control shows more tasks. Tap a circle to complete a task, or its
           title to open it in the app. Future periods show their plans and deadlines; only the
-          current period includes today's outstanding tasks. Month-only plans appear in the month
-          view. Tasks without a plan or deadline stay in Anytime in the app.
+          current period includes today's outstanding tasks. The Today view shows tasks newest
+          first. Month-only plans appear in the month view. Tasks without a plan or deadline stay in
+          Anytime in the app.
         </p>
         <p>
           Widgets follow the device's light or dark theme. A saved list remains available while the

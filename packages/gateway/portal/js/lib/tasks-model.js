@@ -330,16 +330,15 @@ export function resolvedLabel(task, today) {
 }
 
 /**
- * A view's rows, grouped the way the journal reads them. Today splits
- * carried tasks, the day's own tasks and what was resolved today; Month
+ * A view's rows, grouped the way the journal reads them. Today keeps open
+ * tasks in the gateway's newest-created-first order before resolved tasks; Month
  * groups by planned day; Future by month; the others are one flat list.
  */
 export function groupTasks(view, tasks, today) {
   const rows = tasks ?? [];
   if (view === "today") {
     const groups = [
-      { key: "carried", label: "Carried over", tasks: rows.filter((t) => !isResolved(t) && t.carried) },
-      { key: "today", label: "Today", tasks: rows.filter((t) => !isResolved(t) && !t.carried) },
+      { key: "today", label: "Today", tasks: rows.filter((t) => !isResolved(t)) },
       { key: "resolved", label: "Resolved today", tasks: rows.filter(isResolved) },
     ];
     return groups.filter((group) => group.tasks.length > 0 || group.key === "today");

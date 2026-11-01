@@ -132,6 +132,11 @@ public struct TaskWidgetSchedule: Sendable {
             return due >= bounds.0 && due <= bounds.1
         }
         .sorted { lhs, rhs in
+            if period == .day, bounds.0 == today {
+                let left = lhs.createdAt ?? ""
+                let right = rhs.createdAt ?? ""
+                return left == right ? lhs.id < rhs.id : left > right
+            }
             let left = Self.sortDate(lhs)
             let right = Self.sortDate(rhs)
             if left != right { return left < right }

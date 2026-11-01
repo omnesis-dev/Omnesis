@@ -206,19 +206,16 @@ data class TasksUiState(
 object TasksReducer {
 
     /**
-     * Today reads like the day's page of a bullet journal: what was carried over from earlier
-     * days first, then what is planned or due today, then what got resolved today. Every other
-     * segment is one run in the gateway's order. Empty sections are dropped, and Today's own
-     * rows need no heading when nothing else is on the page.
+     * Keep open tasks in the gateway's newest-created-first order, including carried tasks,
+     * then show what got resolved today. Every other segment is one run in the gateway's order.
+     * Empty sections are dropped; an open-only page needs no extra heading.
      */
     fun entries(segment: TaskSegment, tasks: List<TaskDto>): List<TaskJournalEntry> {
         if (segment != TaskSegment.TODAY) return tasks.map { TaskJournalEntry.Task(it) }
-        val carried = tasks.filter { !it.isResolved && it.carried }
-        val planned = tasks.filter { !it.isResolved && !it.carried }
+        val open = tasks.filter { !it.isResolved }
         val resolved = tasks.filter { it.isResolved }
         val sections = listOf(
-            Triple("carried", "Carried over", carried),
-            Triple("today", if (carried.isEmpty() && resolved.isEmpty()) null else "Today", planned),
+            Triple("today", if (resolved.isEmpty()) null else "Today", open),
             Triple("resolved", "Done today", resolved),
         )
         return sections.filter { it.third.isNotEmpty() }.flatMap { (id, title, rows) ->

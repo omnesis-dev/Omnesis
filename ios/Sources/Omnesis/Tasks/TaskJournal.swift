@@ -81,20 +81,17 @@ public enum TaskJournal {
             : "Omnesis has created \(suggested) tasks for your review"
     }
 
-    /// Today reads like the day's page of a bullet journal: what was carried
-    /// over from earlier days first, then what is planned or due today, then
-    /// what got resolved today. Every other view is one run in the gateway's
-    /// order. Empty sections are dropped.
+    /// Keep open tasks in the gateway's newest-created-first order, including
+    /// carried tasks, then show what got resolved today. Every other view is
+    /// one run in the gateway's order. Empty sections are dropped.
     public static func sections(for view: TaskViewKind, tasks: [TaskRecord]) -> [Section] {
         guard view == .today else {
             return tasks.isEmpty ? [] : [Section(id: view.rawValue, title: nil, tasks: tasks)]
         }
-        let carried = tasks.filter { !$0.isResolved && $0.carried }
-        let planned = tasks.filter { !$0.isResolved && !$0.carried }
+        let open = tasks.filter { !$0.isResolved }
         let resolved = tasks.filter(\.isResolved)
         return [
-            Section(id: "carried", title: "Carried over", tasks: carried),
-            Section(id: "today", title: carried.isEmpty && resolved.isEmpty ? nil : "Today", tasks: planned),
+            Section(id: "today", title: resolved.isEmpty ? nil : "Today", tasks: open),
             Section(id: "resolved", title: "Done today", tasks: resolved),
         ].filter { !$0.tasks.isEmpty }
     }

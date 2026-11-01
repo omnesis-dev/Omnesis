@@ -111,7 +111,7 @@ describe("/tasks", () => {
     );
   });
 
-  test("today shows carried tasks first, then today's, then what was resolved today", async () => {
+  test("today shows open tasks newest first, then what was resolved today", async () => {
     const carried = await addTask("Return the library books", { scheduledFor: "2026-03-08" });
     const planned = await addTask("Call the garage", { scheduledFor: TODAY });
     const due = await addTask("Submit the grant form", {
@@ -123,15 +123,75 @@ describe("/tasks", () => {
 
     const today = await view("today");
     expect(today.tasks.map((t: { id: string }) => t.id)).toEqual([
-      carried.task.id,
-      planned.task.id,
       due.task.id,
+      planned.task.id,
+      carried.task.id,
       done.task.id,
     ]);
-    expect(today.tasks[0]).toMatchObject({ carried: true, scheduledFor: "2026-03-08" });
+    expect(today.tasks[2]).toMatchObject({ carried: true, scheduledFor: "2026-03-08" });
     expect(today.tasks[3]).toMatchObject({ state: "done", completionNote: "at the post office" });
     expect(today.counts).toMatchObject({ carried: 1, suggested: 0, proposals: 0 });
     expect((await view("month")).tasks.map((t: { id: string }) => t.id)).toEqual([later.task.id]);
+  });
+
+  test("today orders by creation, including carried tasks, without promoting recently edited tasks", async () => {
+    const overdue = await addTask("Check the display frame", {
+      deadline: { type: "by", date: "2026-03-09" },
+    });
+    const planned = await addTask("Label the seed trays", { scheduledFor: TODAY });
+    const carried = await addTask("Check the garden timer", { scheduledFor: "2026-03-09" });
+    const newestCarried = await addTask("Print the star chart", { scheduledFor: "2026-02" });
+    const newest = await addTask("Sort the blue tokens", { scheduledFor: TODAY });
+    clock.set(clock() + 60_000);
+    expect(
+      (await action(planned.task.id, { action: "edit", title: "Label the seed trays carefully" }))
+        .status,
+    ).toBe(200);
+    // Moving an old task onto today also leaves its creation order intact.
+    expect((await action(overdue.task.id, { action: "migrate", to: TODAY })).status).toBe(200);
+
+    const today = await view("today");
+    expect(today.tasks.map((task: { id: string }) => task.id)).toEqual([
+      newest.task.id,
+      newestCarried.task.id,
+      carried.task.id,
+      planned.task.id,
+      overdue.task.id,
+    ]);
+    expect(today.tasks.map((task: { carried: boolean }) => task.carried)).toEqual([
+      false,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(Date.parse(today.tasks[3].lastUpdate)).toBeGreaterThan(
+      Date.parse(today.tasks[0].createdAt),
+    );
+  });
+
+  test("today uses a stable task ID order when creation instants match", async () => {
+    for (const [id, scheduledFor] of [
+      ["loop_z", "2026-03-09"],
+      ["loop_a", TODAY],
+    ] as const) {
+      createOpenLoop(
+        db,
+        {
+          id,
+          scheduledFor,
+          createdByRun: "user:fixture",
+          title: "Sort the display tokens",
+          origin: "user",
+          confidence: 1,
+          importance: 0,
+        },
+        NOW,
+      );
+    }
+    const ids = async () => (await view("today")).tasks.map((task: { id: string }) => task.id);
+    expect(await ids()).toEqual(["loop_a", "loop_z"]);
+    expect(await ids()).toEqual(["loop_a", "loop_z"]);
   });
 
   test("month, future, anytime and done place tasks by schedule and deadline", async () => {

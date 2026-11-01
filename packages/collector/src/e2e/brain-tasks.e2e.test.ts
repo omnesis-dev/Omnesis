@@ -521,6 +521,7 @@ describe("brain bench: tasks", () => {
     const carried = await create({ title: "Water the seedlings", scheduledFor: YESTERDAY });
     const someday = await create({ title: "Learn to juggle", scheduledFor: "someday" });
     const anytime = await create({ title: "Find the spare key" });
+    await bench.clock.advance(1);
     const due = await create({
       title: "Send the tax form",
       deadline: { type: "by", date: TODAY },
@@ -530,8 +531,8 @@ describe("brain bench: tasks", () => {
     expect(today.tasks.find((t) => t.id === carried.task!.id)).toMatchObject({ carried: true });
     expect(today.tasks.find((t) => t.id === due.task!.id)).toMatchObject({ dueDay: TODAY });
     expect(today.counts.carried).toBe(1);
-    // Carried-over tasks lead the day.
-    expect(today.tasks[0]!.id).toBe(carried.task!.id);
+    // The newest-created task leads, including when an older task is carried.
+    expect(today.tasks[0]!.id).toBe(due.task!.id);
     expect(await titles("future")).toContain("Learn to juggle");
     expect(await titles("anytime")).toEqual(["Find the spare key"]);
 

@@ -94,7 +94,13 @@ object TaskWidgetSchedule {
                 }
                 else -> (due?.let { minOf(plan, it) } ?: plan) in first..last
             }
-        }.sortedWith(compareBy<WidgetTask> { effectiveDate(it) }.thenBy { it.createdAt.orEmpty() }.thenBy { it.id })
+        }.sortedWith(
+            if (state.period == TaskWidgetPeriod.DAY && date == today) {
+                compareByDescending<WidgetTask> { it.createdAt.orEmpty() }.thenBy { it.id }
+            } else {
+                compareBy<WidgetTask> { effectiveDate(it) }.thenBy { it.createdAt.orEmpty() }.thenBy { it.id }
+            },
+        )
     }
 
     fun effectiveDate(task: WidgetTask): String {

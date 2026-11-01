@@ -262,9 +262,7 @@ ${countLabel(v.label, count)}</a>`;
           : html`<div class="tasks-groups">
               ${groups.map((group) => html`
                 <section key=${group.key} class="tasks-group" aria-label=${group.label ?? TASK_VIEWS.find((v) => v.key === view)?.label}>
-                  ${group.label && html`<h2 class="tasks-group-title">${group.label}
-                    ${group.key === "carried" && html`<span class="tasks-group-hint">planned for an earlier day</span>`}
-                  </h2>`}
+                  ${group.label && html`<h2 class="tasks-group-title">${group.label}</h2>`}
                   ${group.tasks.length === 0
                     ? html`<div class="tasks-empty">${emptyViewMessage(view)}</div>`
                     : html`<ul class="tasks-list">

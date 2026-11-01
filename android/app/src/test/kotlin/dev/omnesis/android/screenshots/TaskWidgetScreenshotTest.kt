@@ -27,6 +27,7 @@ import dev.omnesis.android.widgets.TaskWidgetStatus
 import dev.omnesis.android.widgets.WidgetTask
 import java.time.LocalDate
 import java.util.Locale
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -107,6 +108,19 @@ class TaskWidgetScreenshotTest {
             capture("accessibility", dark, 360, 360, content = content, fontScale = 2f)
             capture("minimum_accessibility", dark, 150, 150, content = content, fontScale = 2f)
         }
+    }
+
+    @Test fun today_newest_light() = newestToday(false)
+    @Test fun today_newest_dark() = newestToday(true)
+
+    private fun newestToday(dark: Boolean) {
+        val content = TaskWidgetSnapshot(listOf(
+            WidgetTask("older", "Inspect the storage shelves", scheduledFor = "2026-06-15", createdAt = "2026-06-15T08:00:00Z"),
+            WidgetTask("new-carried", "Review the exhibit plan", scheduledFor = "2026-06-14", createdAt = "2026-06-15T11:00:00Z"),
+            WidgetTask("current", "Prepare display labels", scheduledFor = "2026-06-15", createdAt = "2026-06-15T10:00:00Z"),
+        ), snapshot.updatedAt)
+        assertEquals(2, TaskWidgetRenderer.Size(270, 180).capacity)
+        capture("today_newest", dark, 270, 180, content = content)
     }
 
     private fun capture(

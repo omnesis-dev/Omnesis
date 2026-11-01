@@ -107,6 +107,35 @@ it("shows each view's count on its tab, never on History or a zero", async () =>
   expect(tabs()).toEqual(["Today (2)", "Month (10)", "Future", "Anytime (3)", "Waiting (1)", "Suggested (4)", "Done"]);
 });
 
+it("renders Today in server order without promoting carried tasks above newly created tasks", async () => {
+  api.listTasks.mockImplementation(async (view: string, day: string) => ({
+    view,
+    day,
+    counts: COUNTS,
+    tasks: [
+      task({ id: "new", title: "Prepare the display labels" }),
+      task({ id: "new-carried", title: "Review the exhibit plan", carried: true }),
+      task({ id: "old", title: "Check the lighting plan" }),
+      task({ id: "old-carried", title: "Inspect the storage shelves", carried: true }),
+      task({ id: "done", title: "Pack the display stands", state: "done" }),
+    ],
+  }));
+  await mount();
+  expect([...host.querySelectorAll(".tasks-row-title")].map((title) => title.textContent?.trim())).toEqual([
+    "Prepare the display labels",
+    "Review the exhibit plan",
+    "Check the lighting plan",
+    "Inspect the storage shelves",
+    "Pack the display stands",
+  ]);
+  expect([...host.querySelectorAll(".tasks-group-title")].map((title) => title.textContent?.trim())).toEqual([
+    "Today",
+    "Resolved today",
+  ]);
+  expect(row("Review the exhibit plan").textContent).toContain("Carried");
+  expect(row("Inspect the storage shelves").textContent).toContain("Carried");
+});
+
 it("points at the capture view instead of offering a text field", async () => {
   await mount();
   expect(host.querySelector(".tasks-add-input, form.tasks-add")).toBeNull();
