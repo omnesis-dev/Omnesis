@@ -471,6 +471,149 @@ describe("note agent turn", () => {
     expect(details.map((row) => row.detail).join(" ")).toContain("idx_note_handoffs_active");
   });
 
+  test("a clear action with an unidentified target broadens once and hands off instead of a not-found receipt", async () => {
+    expect(
+      applyTaskCommand(
+        db,
+        {
+          kind: "create",
+          surface: "tasks",
+          runId: "user:fixture",
+          id: "loop_poster_related",
+          origin: "user",
+          title: "Archive the astronomy club poster",
+        },
+        T0,
+      ).ok,
+    ).toBe(true);
+    const id = queueNote("Cancel the astronomy club leaflet task.");
+    const opened: import("./handoffs.js").NoteHandoff[] = [];
+    const results: ToolResult[] = [];
+    const inner = toolCallingBackend((input) => {
+      expect(input.systemPrompt).toContain("you must call continue_in_chat when available");
+      expect(input.systemPrompt).toContain("Never repeat an identical query with different views");
+      expect(input.systemPrompt).toContain(
+        "If a plausible match is uncertain or multiple tasks could match",
+      );
+      expect(input.systemPrompt).toContain("broaden it once to a short distinctive noun");
+      expect(input.systemPrompt).toContain(
+        "apply the blocked-action handoff rule instead of stopping with a not-found receipt",
+      );
+      return [
+        { tool: "task_list", args: { query: "astronomy club leaflet" } },
+        { tool: "task_list", args: { query: "astronomy" } },
+        {
+          tool: "continue_in_chat",
+          args: {
+            question: "Which astronomy club task should I cancel?",
+            context:
+              "A related poster task exists, but the note names a different item. No task has been changed.",
+          },
+        },
+      ];
+    }, "The question is in chat.");
+    const backend: ChatBackend = {
+      ...inner,
+      async *runTurn(input) {
+        for await (const event of inner.runTurn(input)) {
+          if (event.type === "agent.tool.result") results.push(event.payload.result);
+          yield event;
+        }
+      },
+    };
+    const { runner } = agent(backend, {
+      openClarification: async (input) => {
+        opened.push(input);
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(results[0]).toMatchObject({
+      kind: "structured",
+      resultType: "task.list",
+      data: { tasks: [] },
+    });
+    expect(results[1]).toMatchObject({
+      kind: "structured",
+      resultType: "task.list",
+      data: { tasks: [expect.objectContaining({ id: "loop_poster_related" })] },
+    });
+    expect(opened).toHaveLength(1);
+    expect(getOpenLoop(db, "loop_poster_related")?.state).toBe("open");
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { conversationId: opened[0]!.conversationId, changes: [] },
+    });
+  });
+
+  test("an untracked completed-work report stays a note without an unnecessary chat", async () => {
+    const id = queueNote("I cleaned my astronomy notebook.");
+    const opened = vi.fn();
+    const { runner } = agent(
+      toolCallingBackend((input) => {
+        expect(input.systemPrompt).toContain(
+          "A plain completed-work report with no relevant task and no explicit action request may remain a saved note without opening a chat",
+        );
+        return [{ tool: "task_list", args: { query: "astronomy" } }];
+      }, "Saved your note."),
+      { openClarification: opened },
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(opened).not.toHaveBeenCalled();
+    expect(listOpenLoops(db, {})).toEqual([]);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { text: "Saved your note.", changes: [] },
+    });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).not.toHaveProperty("conversationId");
+  });
+
+  test.each(["complete", "strike"] as const)(
+    "a verified already-fulfilled %s request needs no handoff",
+    async (action) => {
+      const taskId = "loop_finished_poster";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            kind: "create",
+            surface: "tasks",
+            runId: "user:fixture",
+            id: taskId,
+            origin: "user",
+            title: "Archive the astronomy club poster",
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      expect(
+        applyTaskCommand(
+          db,
+          { kind: action, surface: "tasks", runId: "user:fixture", id: taskId },
+          T0,
+        ).ok,
+      ).toBe(true);
+      const id = queueNote(
+        action === "complete"
+          ? "Mark the astronomy club poster task done."
+          : "Cancel the astronomy club poster task.",
+      );
+      const opened = vi.fn();
+      const { runner } = agent(
+        toolCallingBackend((input) => {
+          expect(input.systemPrompt).toContain(
+            "For an explicit task action, only treat the request as already fulfilled after verifying",
+          );
+          return [{ tool: "task_list", args: { view: "done" } }];
+        }, "The task is already finished as requested; nothing changed."),
+        { openClarification: opened },
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(opened).not.toHaveBeenCalled();
+      expect(getOpenLoop(db, taskId)?.state).toBe(action === "complete" ? "done" : "dismissed");
+      expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([]);
+    },
+  );
+
   test("a blocked note hands off once, preserves work and refuses subsequent mutations", async () => {
     const id = queueNote("Prepare the observatory chart and ask which dome needs a repair.");
     const opened: import("./handoffs.js").NoteHandoff[] = [];

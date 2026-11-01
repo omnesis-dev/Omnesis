@@ -143,14 +143,14 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
         .max(100)
         .optional()
         .describe(
-          "Find open tasks whose title or description contains this text, across every view.",
+          "Case-insensitive literal substring of title or description, not semantic search. Searches today, month, future, anytime and suggested together; view is ignored when query is present. Omit query to inspect waiting or done.",
         ),
     })
     .strict();
   const taskList: ToolHandle = {
     name: "task_list",
     description:
-      "List the user's tasks, or find one by text. Read this before changing a task so you use its id.",
+      "List the user's tasks, or find one by a short case-insensitive literal substring. query searches today, month, future, anytime and suggested together; view is ignored when query is present. Omit query to inspect a specific view, such as waiting or done. Read before changing a task so you use its id.",
     schema: listSchema,
     summarize: (args) => {
       const a = (args ?? {}) as { query?: unknown; view?: unknown };

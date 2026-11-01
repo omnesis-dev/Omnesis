@@ -74,6 +74,34 @@ describe("task tools", () => {
     expect(tools({ observations: true }).handles.at(-1)?.name).toBe("observation_suppress");
   });
 
+  test("query is a literal substring across supported journal views and ignores view", async () => {
+    const { handles, call } = tools();
+    expect(
+      applyTaskCommand(
+        db,
+        {
+          kind: "create",
+          surface: "tasks",
+          runId: "user:fixture",
+          id: "loop_literal_query",
+          origin: "user",
+          title: "Archive the astronomy club poster",
+          scheduledFor: "2026-05-18",
+        },
+        NOW,
+      ).ok,
+    ).toBe(true);
+    const exact = data(await call("task_list", { query: "I archived the astronomy club poster" }));
+    expect(exact.tasks).toEqual([]);
+    const global = data(await call("task_list", { query: "ASTRONOMY" }));
+    expect(global.tasks).toHaveLength(1);
+    expect(data(await call("task_list", { query: "ASTRONOMY", view: "done" }))).toEqual(global);
+    expect(data(await call("task_list", { view: "done" })).tasks).toEqual([]);
+    expect(handles.find((handle) => handle.name === "task_list")?.description).toContain(
+      "view is ignored when query is present",
+    );
+  });
+
   test("interest_record is offered only where the engine is, and it mutates", () => {
     expect(tools().handles.map((t) => t.name)).not.toContain("interest_record");
     const record = vi.fn<InterestEngine["record"]>();
