@@ -26,6 +26,8 @@ struct OmnesisWatchApp: App {
     var body: some Scene {
         WindowGroup {
             WatchRootView()
+                .onAppear { openPendingControl() }
+                .onChange(of: WatchControlRouter.shared.requestCount) { _, _ in openPendingControl() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
                         WatchDictation.appDidEnterBackground()
@@ -40,6 +42,12 @@ struct OmnesisWatchApp: App {
                 .watchDemoAutoPilot()
             #endif
         }
+    }
+
+    @MainActor
+    private func openPendingControl() {
+        guard WatchControlRouter.shared.consume() else { return }
+        Task { await WatchComplicationCapture.shared.start(fromComplication: true) }
     }
 }
 

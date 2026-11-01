@@ -75,9 +75,17 @@ reported delivered — with the same retries, 7-day/50-note limit and dropped
 notice. The phone saves a note once by its ref, which is also its gateway
 note id. Questions keep their live relay.
 
-The **Speak to Omnesis** App Shortcut opens the same recorder as the complication,
-so a one-action shortcut assigned to the Apple Watch Ultra Action button starts
-recording without Siri asking for a parameter.
+On watchOS 26 or later, the native **Omnesis** `ControlWidget` in
+`Sources/OmnesisWatchWidgets/OmnesisWatchWidgets.swift` opens the same recorder as
+the complication from watch Control Center, Smart Stack or the Apple Watch Ultra
+Action button. Its intent has dual target membership through
+`Sources/Omnesis/Intents/WatchComplication.swift`; the action runs on the watch,
+not the paired phone. Keep the watchOS 26 availability gate: the watch app and
+complication still support watchOS 10.
+
+The **Speak to Omnesis** App Shortcut opens the same recorder as the complication.
+It remains the Action button fallback for older watchOS versions: a one-action
+shortcut starts recording without Siri asking for a parameter.
 
 The watch ships one **Omnesis** logo complication. Its link enters
 `WatchComplicationCapture`, separate from `WatchDictation` and both Siri intents.
@@ -86,8 +94,8 @@ Ask/Tell stop and durably enqueue the recording in one tap. The phone publishes
 unified-capture support and the gateway's decision-gate status in
 `WatchDictationGate`. With the decision gate active, Send replaces Ask/Tell.
 Legacy deep links enter the unified capture. Normal app launch shows a branded
-Tap to speak button that opens the same recorder; only the complication starts
-listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
+Tap to speak button that opens the same recorder; the complication, control and
+Speak to Omnesis action start listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
 Cancel from a complication-launched capture discards its recording and returns
 to the watch face; home capture Cancel stays in the app, and follow-up Cancel
 returns to the previous answer.

@@ -883,13 +883,18 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           note Siri shortcuts keep their separate flows.
         </p>
         <p>
-          On Apple Watch Ultra, the Action button can open the same recorder as the Omnesis
-          complication. In Shortcuts on iPhone, create a shortcut containing the
-          <strong>Speak to Omnesis</strong> action and enable
-          <strong>Show on Apple Watch</strong> in its details. On the watch, choose
-          <strong>Settings → Action Button → Shortcut</strong>
-          and select it. Recording starts immediately; Send or Ask and Tell follow the same decision
-          setting as the complication.
+          On watchOS 26 or later, add the <strong>Omnesis</strong> logo control to the watch's
+          Control Center or Smart Stack. On Apple Watch Ultra, choose
+          <strong>Settings → Action Button → Control</strong> and select <strong>Omnesis</strong>.
+          This control runs on the watch and opens the same recorder as the complication; it does
+          not open the iPhone app. Recording starts immediately, with Send or Ask and Tell following
+          the same decision setting as the complication.
+        </p>
+        <p>
+          The <strong>Speak to Omnesis</strong> shortcut also opens that recorder, including on
+          older watchOS versions. In Shortcuts on iPhone, create a shortcut containing that action
+          and enable <strong>Show on Apple Watch</strong> in its details. On Apple Watch Ultra,
+          choose <strong>Settings → Action Button → Shortcut</strong> and select it.
         </p>
         <p>
           Gateway transcription applies to both Ask and Tell from the complication. When it is

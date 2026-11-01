@@ -72,8 +72,7 @@ targetTemplates:
     platform: watchOS
     deploymentTarget: "10.0"
     dependencies:
-      # The Ask Omnesis and Omnesis note complications, embedded in the
-      # watch app's PlugIns so they install with it.
+      # The logo complication and native controls install with the watch app.
       - target: ${widgetsTarget}
         embed: true
     sources:
@@ -97,6 +96,7 @@ targetTemplates:
       # The complication link contract, shared with OmnesisWatchWidgets so
       # the link a complication opens is the one this app parses.
       - path: Resources/WatchBrand.xcassets
+      - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
       # Watch app icon — a separate asset catalog (not the iOS
       # Assets.xcassets, which carries iOS-only image sets) holding the
@@ -127,11 +127,8 @@ targetTemplates:
           CODE_SIGN_IDENTITY: Apple Distribution
           PROVISIONING_PROFILE_SPECIFIER: ${profile}
 
-  # The watch complications — WidgetKit extension embedded in the watch app,
-  # hosting the Ask Omnesis and Omnesis note complications. Each one only
-  # opens the watch app at its WatchComplication link, where the app
-  # presents dictation — so, like OmnesisWidgets, it holds no pairing or
-  # keychain access and needs no entitlements.
+  # Watch WidgetKit extension: the logo complication and watchOS 26 controls
+  # open unified capture in the watch app. No pairing or keychain access.
   WatchWidgets:
     type: app-extension
     platform: watchOS
@@ -142,6 +139,7 @@ targetTemplates:
           - PrivacyInfo.xcprivacy
       - path: Sources/OmnesisWatchWidgets/PrivacyInfo.xcprivacy
       - path: Resources/WatchBrand.xcassets
+      - path: Resources/BrandSymbols.xcassets
       - path: Sources/Omnesis/Intents/WatchComplication.swift
     settings:
       base:
