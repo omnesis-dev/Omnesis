@@ -175,8 +175,8 @@ it("withholds wiki aliases and mirror IDs while retaining original document read
   expect(await port.fetch("wiki:overview")).toBeNull();
   expect(await port.fetch("projection-overview")).toBeNull();
   const original = await port.fetch("evidence");
-  expect(original?.document.content).toBe("The observatory opens Saturday.");
-  expect(original?.document.knowledgeContext).toBeUndefined();
+  expect(original).toMatchObject({ document: { content: "The observatory opens Saturday." } });
+  expect(original?.document).not.toHaveProperty("knowledgeContext");
   // Turning reads off does not delete the stored page.
   expect(await createGatewayDocumentPort(db).fetch("wiki:overview")).not.toBeNull();
 });

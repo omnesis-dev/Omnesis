@@ -230,7 +230,9 @@ describe("maintained knowledge read boundary", () => {
     const docs = createGatewayDocumentPort(db, undefined, { knowledgeReads: false });
     expect(await docs.fetch("loop-mirror")).toBeNull();
     const source = await docs.fetch("doc-memory", { includeNeighbors: true });
-    expect(source?.document.content).toContain("draft project schedule");
+    expect(source).toMatchObject({
+      document: { content: expect.stringContaining("draft project schedule") },
+    });
     expect(source?.neighbors).toBeUndefined();
     const urls = createGatewayDocumentByUrlPort(db, undefined, undefined, false);
     expect((await urls.lookup("https://example.org/wiki")).ref).toBeUndefined();
