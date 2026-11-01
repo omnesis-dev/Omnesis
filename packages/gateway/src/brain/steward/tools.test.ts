@@ -18,7 +18,7 @@ import { createLogger, TEMPORAL_KINDS } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
-import { getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
+import { getOpenLoop, listOpenLoopLedger, updateOpenLoop } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
 import {
   createObservation,
@@ -652,6 +652,44 @@ describe("Cognition Steward tools", () => {
         await findTool(tools, "open_loop_update").invoke({ id, docs: [] }, CTX);
         expect(getOpenLoop(db, id)!.docs.sort()).toEqual([guide, update].sort());
       }
+    },
+  );
+
+  test.each([99, 100, 110])(
+    "automatic document additions preserve %s owner links and report omitted references",
+    async (count) => {
+      upsertDocuments(
+        db,
+        Array.from({ length: count + 3 }, (_, n) =>
+          sourceDoc(`task-reference-${n}`, `Fictional supporting reference ${n}.`),
+        ),
+      );
+      const ids = Array.from({ length: count + 3 }, (_, n) =>
+        docIdByExternal(db, `task-reference-${n}`)!,
+      );
+      const existing = ids.slice(0, count);
+      const added = ids.slice(count);
+      const id = await createLoop({ docs: existing.slice(0, 100) });
+      expect(
+        applyTaskCommand(db, { kind: "accept", id, surface: "tasks", runId: "user:tasks" }, nowMs)
+          .ok,
+      ).toBe(true);
+      if (count > 100) updateOpenLoop(db, id, { docs: existing }, nowMs);
+      const result = structured(
+        await findTool(tools, "open_loop_update").invoke(
+          { id, docs: [existing[0], added[0], ...added, "doc_unavailable"] },
+          CTX,
+        ),
+      );
+      const accepted = added.slice(0, Math.max(0, 100 - count));
+      expect(getOpenLoop(db, id)!.docs.sort()).toEqual([...existing, ...accepted].sort());
+      expect((result.data.loop as { docs: string[] }).docs.sort()).toEqual(
+        [...existing, ...accepted].sort(),
+      );
+      expect(result.data.documentLinkWarning).toContain("100-link limit");
+      expect((result.data.droppedDocIds as string[]).sort()).toEqual(
+        ["doc_unavailable", ...added.slice(accepted.length)].sort(),
+      );
     },
   );
 

@@ -2318,13 +2318,6 @@ export class AgentService {
     ];
   }
 
-  /**
-   * Open a new, empty conversation about one of the user's tasks. The record
-   * is written straight to the store, as the Morning brief conversation is,
-   * so the client's resume builds the live session in the client's own time
-   * zone. The title is the task's; the origin carries the task snapshot the
-   * client's context card draws. Every call opens a new conversation.
-   */
   /** Seed one durable owner-note clarification without invoking a model. */
   async openNoteClarification(input: NoteHandoff): Promise<void> {
     const store = this.store;
@@ -2407,6 +2400,13 @@ export class AgentService {
     });
   }
 
+  /**
+   * Open a new, empty conversation about one of the user's tasks. The record
+   * is written straight to the store, as the Morning brief conversation is,
+   * so the client's resume builds the live session in the client's own time
+   * zone. The title is the task's; the origin carries the task snapshot the
+   * client's context card draws. Every call opens a new conversation.
+   */
   async openTaskConversation(
     callerId: CallerId,
     input: { taskId: string; snapshot: TaskConversationOriginSnapshot },
