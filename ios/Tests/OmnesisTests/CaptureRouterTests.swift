@@ -71,7 +71,9 @@ final class CaptureRequestHandlingTests: XCTestCase {
         CaptureRequestHandling.handle(
             isFresh: router.isFresh(),
             isPresented: true,
-            reveal: { menuOpen = false; keyboardFocused = false },
+            reveal: { menuOpen = false
+                keyboardFocused = false
+            },
             enqueue: { presentations += 1 }
         )
         XCTAssertFalse(menuOpen)
@@ -86,7 +88,9 @@ final class CaptureRequestHandlingTests: XCTestCase {
             isFresh: true,
             isPresented: false,
             reveal: { drawerOpen = false },
-            enqueue: { XCTAssertFalse(drawerOpen); queued = true }
+            enqueue: { XCTAssertFalse(drawerOpen)
+                queued = true
+            }
         )
         XCTAssertTrue(queued)
     }
@@ -109,12 +113,18 @@ final class CaptureRequestHandlingTests: XCTestCase {
 
     func testOnlyCaptureURLsCanRevealTheCapture() throws {
         let accepted = ["omnesis://capture", "omnesis://capture?surface=ios-control", "omnesis:/capture"]
-        let rejected = ["https://capture", "omnesis://tasks", "omnesis://capture/other", "omnesis://user@capture", "omnesis://capture#other"]
+        let rejected = [
+            "https://capture",
+            "omnesis://tasks",
+            "omnesis://capture/other",
+            "omnesis://user@capture",
+            "omnesis://capture#other",
+        ]
         for raw in accepted {
-            XCTAssertTrue(CaptureRequestHandling.accepts(try XCTUnwrap(URL(string: raw))), raw)
+            XCTAssertTrue(try CaptureRequestHandling.accepts(XCTUnwrap(URL(string: raw))), raw)
         }
         for raw in rejected {
-            XCTAssertFalse(CaptureRequestHandling.accepts(try XCTUnwrap(URL(string: raw))), raw)
+            XCTAssertFalse(try CaptureRequestHandling.accepts(XCTUnwrap(URL(string: raw))), raw)
         }
     }
 }

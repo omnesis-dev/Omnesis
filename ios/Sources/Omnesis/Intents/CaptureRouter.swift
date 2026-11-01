@@ -57,3 +57,26 @@ public final class CaptureRouter {
         return now.timeIntervalSince(lastRequestAt) < Self.freshnessWindow
     }
 }
+
+/// A fresh external invocation reveals the current capture without replacing it.
+/// The same policy covers process-local shortcuts and URL handoffs.
+enum CaptureRequestHandling {
+    static func handle(
+        isFresh: Bool,
+        isPresented: Bool,
+        reveal: () -> Void,
+        enqueue: () -> Void
+    ) {
+        guard isFresh else { return }
+        reveal()
+        guard !isPresented else { return }
+        enqueue()
+    }
+
+    static func accepts(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "omnesis",
+              url.user == nil, url.password == nil, url.port == nil, url.fragment == nil else { return false }
+        return (url.host == "capture" && url.path.isEmpty)
+            || (url.host == nil && url.path == "/capture")
+    }
+}

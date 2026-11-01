@@ -1,31 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import Foundation
-
-/// A fresh external invocation reveals the current capture without replacing it.
-/// The same policy covers process-local shortcuts and URL handoffs.
-enum CaptureRequestHandling {
-    static func handle(
-        isFresh: Bool,
-        isPresented: Bool,
-        reveal: () -> Void,
-        enqueue: () -> Void
-    ) {
-        guard isFresh else { return }
-        reveal()
-        guard !isPresented else { return }
-        enqueue()
-    }
-
-    static func accepts(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "omnesis",
-              url.user == nil, url.password == nil, url.port == nil, url.fragment == nil else { return false }
-        return (url.host == "capture" && url.path.isEmpty)
-            || (url.host == nil && url.path == "/capture")
-    }
-}
-
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 import UIKit
@@ -676,11 +651,8 @@ struct HomeView: View {
         }
     }
 
-    /// Queue pending `CaptureRouter` requests for the capture surface. A
-    /// request's freshness is judged when home first sees it, so one made
-    /// while phone setup holds the screen still opens once setup closes, while
-    /// a control tap that sat unconsumed (e.g. filed before pairing, seen only
-    /// when this view first appears minutes later) never pops up.
+    /// Judge freshness when Home first sees a request. Fresh requests wait through setup;
+    /// pre-pairing requests first seen minutes later are ignored.
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
@@ -769,9 +741,7 @@ struct HomeView: View {
         )
     }
 
-    /// `omnesis://capture[?surface=<slug>]` — the deep link the Lock
-    /// Screen / Control Center control's `OpenURLIntent` uses. Other
-    /// URLs fall through untouched.
+    /// Reveal capture for its control URL; ignore unrelated deep links.
     private func handleCaptureURL(_ url: URL) {
         guard CaptureRequestHandling.accepts(url) else { return }
         invalidateAutomaticForegroundWork()
