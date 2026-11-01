@@ -1070,6 +1070,111 @@ describe("note agent turn", () => {
     });
   });
 
+  test.each([null, "2026-05-18"])(
+    "a first-person completion report looks up a matching task beyond today's list (schedule=%s)",
+    async (scheduledFor) => {
+      const id = "loop_astronomy";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            surface: "tasks",
+            runId: "user:tasks",
+            kind: "create",
+            id,
+            origin: "user",
+            title: "Archive the astronomy club poster",
+            scheduledFor,
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      const noteId = queueNote("I have archived the astronomy club poster.");
+      const seen: TurnInput[] = [];
+      const results: ToolResult[] = [];
+      const inner = toolCallingBackend(
+        (input) => {
+          expect(input.systemPrompt).toContain("task progress even without an explicit command");
+          expect(input.systemPrompt).toContain("short salient terms across task views");
+          expect(input.systemPrompt).toContain(
+            "Other information with no request and no task progress",
+          );
+          return [
+            { tool: "task_list", args: { query: "astronomy" } },
+            { tool: "task_update", args: { id, action: "complete" } },
+          ];
+        },
+        "Marked archiving the astronomy club poster done.",
+        seen,
+      );
+      const backend: ChatBackend = {
+        ...inner,
+        async *runTurn(input) {
+          for await (const event of inner.runTurn(input)) {
+            if (event.type === "agent.tool.result") results.push(event.payload.result);
+            yield event;
+          }
+        },
+      };
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      expect(results[0]).toMatchObject({
+        kind: "structured",
+        resultType: "task.list",
+        data: { tasks: [expect.objectContaining({ id })] },
+      });
+      expect(getOpenLoop(db, id)).toMatchObject({ state: "done", accepted: true });
+      expect(listOpenLoops(db, {})).toHaveLength(1);
+      expect(getNoteRuns(db, [noteId]).get(noteId)?.receipt?.changes).toEqual([
+        expect.objectContaining({ taskId: id, text: expect.stringContaining("Done") }),
+      ]);
+      expect(seen).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    ["partial", "I have started archiving the astronomy club poster.", 1],
+    ["negated", "I have not archived the astronomy club poster.", 1],
+    ["future", "I will archive the astronomy club poster tomorrow.", 1],
+    ["ambiguous", "I have archived the astronomy club poster.", 2],
+    ["unmatched", "I have archived the astronomy club poster.", 0],
+  ] as const)("%s reports leave tasks unchanged after lookup", async (_kind, text, matches) => {
+    for (let n = 0; n < matches; n++)
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            surface: "tasks",
+            runId: "user:tasks",
+            kind: "create",
+            id: `loop_astronomy_${n}`,
+            origin: "user",
+            title: `Archive the astronomy club poster ${n + 1}`,
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+    const noteId = queueNote(text);
+    const { runner } = agent(
+      toolCallingBackend((input) => {
+        expect(input.systemPrompt).toContain(
+          "Partial progress, negation and future intent do not mean completion",
+        );
+        expect(input.systemPrompt).toContain(
+          "If no task matches or the match is ambiguous, do not create or change a task",
+        );
+        return [{ tool: "task_list", args: { query: "astronomy" } }];
+      }, "Saved the note; no task was marked done."),
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(matches);
+    expect(listOpenLoops(db, {}).every((task) => task.state === "open")).toBe(true);
+    expect(getNoteRuns(db, [noteId]).get(noteId)?.receipt).toMatchObject({
+      text: "Saved the note; no task was marked done.",
+      changes: [],
+    });
+  });
+
   test("a note written while accepting a task is applied to that task", async () => {
     createOpenLoop(
       db,
