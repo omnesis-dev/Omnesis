@@ -99,7 +99,8 @@ the conversation is saved does the completed note receipt expose `conversationId
 The receipt links to the existing conversation route; clients never create a second
 thread. A proactive conversation notification brings the owner back. Their reply
 uses normal Agent tools with the preserved context. Ordinary actionable notes stay
-asynchronous; they do not ask conversational follow-ups by default.
+asynchronous. A Note turn never waits for an inline answer; the explicit handoff
+ends that turn, and any answer arrives as a later normal chat turn.
 
 ## Changes and maintenance
 

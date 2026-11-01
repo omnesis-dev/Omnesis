@@ -142,6 +142,13 @@ temperature: 0.3, stop? }`. Reads `choices[0].message.content`, with inline
 
 ### Agent — `HttpAgentBackend`
 
+Chat and Tell Omnesis share the `agent` assignment, not an identical presentation
+context. Notes use a bounded non-interactive prompt and omit chat-only citation
+and choice tools. A Note-only `continue_in_chat` can deliberately save a normal
+conversation when a clear request needs clarification; it does not wait for a
+reply inside the note turn. The next user reply uses the ordinary chat prompt and
+tools. Neither path requires the experimental Brain.
+
 `packages/agent/src/http-agent-backend.ts` routes each turn to one of two
 OpenAI-compatible wire protocols, with no per-provider branching:
 
