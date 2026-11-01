@@ -908,7 +908,7 @@ describe("note agent turn", () => {
       new Date(T0 + 61_000).toISOString(),
       { owner: true, enabled: true },
     );
-    expect(claimNoteHandoff(db)).toBeNull();
+    expect(claimNoteHandoff(db, T0 + 61_000)).toBeNull();
     expect(
       (
         db

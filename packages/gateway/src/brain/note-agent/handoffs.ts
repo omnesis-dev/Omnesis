@@ -58,7 +58,7 @@ export function reserveNoteHandoff(db: Database.Database, input: NoteHandoff): b
       .get(input.noteId, input.revision);
   })();
 }
-export function claimNoteHandoff(db: Database.Database, now = Date.now()): NoteHandoff | null {
+export function claimNoteHandoff(db: Database.Database, now: number): NoteHandoff | null {
   return db.transaction(() => {
     db.prepare(
       `UPDATE note_agent_handoffs SET state='canceled',payload_json=json_object('changes',json_extract(payload_json,'$.changes')) WHERE state IN ('pending','publishing') AND state='pending' AND NOT EXISTS(
