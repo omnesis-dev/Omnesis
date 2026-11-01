@@ -627,7 +627,7 @@ struct HomeView: View {
         consumedForegroundRequest = request.id
         guard let action = ForegroundNavigationArbiter.automaticAction(
             request.action,
-            pushPending: router.pendingTarget != nil,
+            pushPending: !router.allowsAutomaticNavigation(since: request.navigationRevision),
             capturePending: showCapture || unifiedCapture || captureRouter.isFresh()
         ) else { return }
 
@@ -640,7 +640,7 @@ struct HomeView: View {
             automaticForegroundTask = Task { @MainActor in
                 await Task.yield()
                 guard !Task.isCancelled,
-                      router.pendingTarget == nil,
+                      router.allowsAutomaticNavigation(since: request.navigationRevision),
                       !showCapture, !unifiedCapture,
                       !captureRouter.isFresh() else { return }
                 await store.agent.resumeConversation(id: id)
