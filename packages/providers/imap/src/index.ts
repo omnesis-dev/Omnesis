@@ -22,6 +22,7 @@ import {
   loadBrokeredCredentials,
   loadCredentials,
   resolveBrokeredAccount,
+  verifyImapLogin,
 } from "./provider.js";
 import { ImapEmailSource, validateImapEmailCursor } from "./source.js";
 import { imapStateSpec } from "./state.js";
@@ -85,6 +86,7 @@ export default defineProvider<ImapContext>({
     ],
     params: [{ name: "host", label: "IMAP hostname (TLS on port 993)", required: true }],
     resolveAccount: resolveBrokeredAccount,
+    verify: (accountId) => verifyImapLogin(accountId),
   },
 
   // An account is the login the mailbox was connected with. That is almost

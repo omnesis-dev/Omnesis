@@ -31,14 +31,17 @@ const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey
 const REF = { providerConfigKey: "private-api-generic", connectionId: "conn-lunchflow" };
 const ACCOUNT = String(deriveAccountId("lf_key_linked"));
 
-async function brokeredConfigDir(): Promise<string> {
+/** An account linked as linking now writes it: with the bank accounts its key reached. */
+async function brokeredConfigDir(
+  params: Record<string, string> | null = { bankAccounts: JSON.stringify(["481"]) },
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-lunchflow-broker-"));
   tmpDirs.push(dir);
   await writeCredentialBrokerConfig(BROKER, dir);
   await writeBrokerBinding(
     "lunchflow",
     ACCOUNT,
-    { broker: "nango", connections: { default: REF } },
+    { broker: "nango", connections: { default: REF }, ...(params ? { params } : {}) },
     dir,
   );
   return dir;
@@ -178,9 +181,13 @@ describe("Lunch Flow with a brokered key", () => {
   });
 
   test("resolves the account to the hash of the key, as a paste of it would", async () => {
-    stubNetwork({ keys: { "conn-lunchflow": ["lf_key_linked"] }, banks: { lf_key_linked: [] } });
+    stubNetwork({
+      keys: { "conn-lunchflow": ["lf_key_linked"] },
+      banks: { lf_key_linked: [481, 12] },
+    });
     await expect(definition.broker!.resolveAccount(credentialsFor(), {})).resolves.toEqual({
       accountId: ACCOUNT,
+      params: { bankAccounts: JSON.stringify(["12", "481"]) },
     });
   });
 
@@ -234,7 +241,92 @@ describe("Lunch Flow with a brokered key", () => {
       });
       await expect(resolveBrokeredAccount(credentialsFor(), { configDir })).resolves.toEqual({
         accountId: ACCOUNT,
+        params: { bankAccounts: JSON.stringify(["481"]) },
       });
+    });
+  });
+});
+
+describe("a brokered Lunch Flow key is re-checked against the linked connection", () => {
+  const lunchflowCalls = (calls: ReturnType<typeof stubNetwork>) =>
+    calls.filter((c) => c.url.startsWith("https://www.lunchflow.app"));
+
+  test("the key the account was linked with syncs without an extra request", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork({
+      keys: { "conn-lunchflow": ["lf_key_linked"] },
+      banks: { lf_key_linked: [481] },
+    });
+    const context = await brokeredContext(configDir);
+    await context.client.listAccounts();
+    expect(lunchflowCalls(calls)).toHaveLength(1);
+  });
+
+  test("a rotated key reaching a linked bank account is accepted once and kept", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork({
+      keys: { "conn-lunchflow": ["lf_key_rotated"] },
+      banks: { lf_key_rotated: [481, 502] },
+    });
+    const context = await brokeredContext(configDir);
+    await context.client.listAccounts();
+    await context.client.listAccounts();
+    expect(lunchflowCalls(calls)).toHaveLength(3);
+  });
+
+  test("a key reaching none of the linked bank accounts stops with identity-changed", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork({
+      keys: { "conn-lunchflow": ["lf_key_swapped"] },
+      banks: { lf_key_swapped: [9001] },
+    });
+    const context = await brokeredContext(configDir);
+    const failure = await context.client.listAccounts().then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toMatchObject({
+      name: "BrokerCredentialError",
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    // Only the check was made; no transactions were asked for.
+    expect(lunchflowCalls(calls).map((c) => new URL(c.url).pathname)).toEqual(["/api/v1/accounts"]);
+    expect(readdirSync(join(configDir, "lunchflow", ACCOUNT))).toEqual(["broker.json"]);
+  });
+
+  test("a binding that recorded no bank accounts refuses any other key without asking", async () => {
+    const configDir = await brokeredConfigDir(null);
+    const calls = stubNetwork({
+      keys: { "conn-lunchflow": ["lf_key_rotated"] },
+      banks: { lf_key_rotated: [481] },
+    });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listAccounts()).rejects.toMatchObject({
+      reason: "identity-changed",
+    });
+    expect(lunchflowCalls(calls)).toHaveLength(0);
+  });
+
+  test("a check Lunch Flow fails keeps its kind and is never taken as a match", async () => {
+    const configDir = await brokeredConfigDir();
+    stubNetwork({ keys: { "conn-lunchflow": ["lf_key_rotated"] }, banks: {} });
+    await expect((await brokeredContext(configDir)).client.listAccounts()).rejects.toMatchObject({
+      kind: "auth",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).startsWith(BROKER.url)
+          ? Promise.resolve(
+              Response.json({ credentials: { type: "API_KEY", apiKey: "lf_key_rotated" } }),
+            )
+          : Promise.reject(new TypeError("fetch failed")),
+      ),
+    );
+    await expect((await brokeredContext(configDir)).client.listAccounts()).rejects.toMatchObject({
+      kind: "network",
     });
   });
 });

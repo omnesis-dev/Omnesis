@@ -40,6 +40,9 @@ const REFS = {
 
 type Purpose = keyof typeof REFS;
 
+/** The account's own person id, as People reports it for `people/me`. */
+const PERSON = "people/104";
+
 function binding(...purposes: Purpose[]): BrokerBinding {
   return {
     broker: "nango",
@@ -47,11 +50,23 @@ function binding(...purposes: Purpose[]): BrokerBinding {
   };
 }
 
+/** A binding as linking writes it: with Contacts, the person id it recorded. */
+function linkedBinding(...purposes: Purpose[]): BrokerBinding {
+  return {
+    ...binding(...purposes),
+    ...(purposes.includes("contacts") ? { params: { contactsPerson: PERSON } } : {}),
+  };
+}
+
 async function brokeredConfigDir(...purposes: Purpose[]): Promise<string> {
+  return configDirWith(linkedBinding(...purposes));
+}
+
+async function configDirWith(stored: BrokerBinding): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-google-broker-"));
   tmpDirs.push(dir);
   await writeCredentialBrokerConfig(BROKER, dir);
-  await writeBrokerBinding("google", ACCOUNT, binding(...purposes), dir);
+  await writeBrokerBinding("google", ACCOUNT, stored, dir);
   return dir;
 }
 
@@ -72,7 +87,7 @@ function defaultGoogle(url: URL): unknown {
     case "www.googleapis.com/calendar/v3/calendars/primary":
       return { id: ACCOUNT };
     case "people.googleapis.com/v1/people/me":
-      return { resourceName: "people/104", etag: "etag-1" };
+      return { resourceName: PERSON, etag: "etag-1" };
     case "people.googleapis.com/v1/people/me/connections":
       return { connections: [], nextSyncToken: "sync-1" };
     default:
@@ -91,13 +106,13 @@ function defaultGoogle(url: URL): unknown {
  */
 function stubNetwork(
   opts: {
-    google?: (url: URL) => unknown;
+    google?: (url: URL, authorization: string | null) => unknown;
     expiresInMs?: (connectionId: string, n: number) => number;
   } = {},
 ) {
   const calls: Call[] = [];
   const answered = new Map<string, number>();
-  const answer = (url: URL): Response => {
+  const answer = (url: URL, authorization: string | null): Response => {
     if (url.origin === BROKER.url) {
       const connectionId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
       const n = (answered.get(connectionId) ?? 0) + 1;
@@ -114,13 +129,19 @@ function stubNetwork(
         metadata: {},
       });
     }
-    const body = (opts.google ?? defaultGoogle)(url);
+    const body = (opts.google ?? defaultGoogle)(url, authorization);
+    if (body instanceof Error) throw body;
     return body instanceof Response ? body : Response.json(body);
   };
   const handler = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
-    return Promise.resolve(answer(url));
+    const authorization = new Headers(init?.headers).get("authorization");
+    calls.push({ url, authorization });
+    try {
+      return Promise.resolve(answer(url, authorization));
+    } catch (err) {
+      return Promise.reject(err as Error);
+    }
   };
   vi.stubGlobal("fetch", vi.fn(handler));
   google.options({ fetchImplementation: handler as never });
@@ -245,8 +266,11 @@ describe("Google with brokered grants", () => {
 
     for (let i = 0; i < 3; i++) await api.users.getProfile({ userId: "me" });
 
+    // Each new token is first checked to belong to the account, then used.
     expect(net.google("gmail.googleapis.com").map((c) => c.authorization)).toEqual([
       "Bearer conn-mail-token-1",
+      "Bearer conn-mail-token-1",
+      "Bearer conn-mail-token-2",
       "Bearer conn-mail-token-2",
       "Bearer conn-mail-token-2",
     ]);
@@ -328,6 +352,7 @@ describe("Google broker account resolution", () => {
       resolve(["gmail", "calendar", "drive", "contacts"], { account: ACCOUNT }),
     ).resolves.toEqual({
       accountId: ACCOUNT,
+      params: { contactsPerson: PERSON },
     });
     expect(net.google("gmail.googleapis.com")[0]!.authorization).toBe("Bearer conn-mail-token-1");
     const www = net.google("www.googleapis.com");
@@ -359,6 +384,7 @@ describe("Google broker account resolution", () => {
     await expect(resolve(["contacts"])).rejects.toThrow(/give the account's email address/);
     await expect(resolve(["contacts"], { account: " Maya.Reeves@Example.com " })).resolves.toEqual({
       accountId: ACCOUNT,
+      params: { contactsPerson: PERSON },
     });
     await expect(resolve(["contacts"], { account: "maya" })).rejects.toThrow(
       /not an email address/,
@@ -370,7 +396,7 @@ describe("Google broker account resolution", () => {
       google: (url) =>
         url.pathname === "/v1/people/me"
           ? {
-              resourceName: "people/104",
+              resourceName: PERSON,
               emailAddresses: [
                 { value: "maya@studio.example.com", metadata: { source: { type: "PROFILE" } } },
                 { value: ACCOUNT, metadata: { primary: true, source: { type: "ACCOUNT" } } },
@@ -378,7 +404,10 @@ describe("Google broker account resolution", () => {
             }
           : defaultGoogle(url),
     });
-    await expect(resolve(["contacts"])).resolves.toEqual({ accountId: ACCOUNT });
+    await expect(resolve(["contacts"])).resolves.toEqual({
+      accountId: ACCOUNT,
+      params: { contactsPerson: PERSON },
+    });
     await expect(resolve(["contacts"], { account: "maya@studio.example.com" })).rejects.toThrow(
       /link connections of one Google account/,
     );
@@ -391,6 +420,7 @@ describe("Google broker account resolution", () => {
     await expect(resolve(["gmail", "contacts"])).rejects.toThrow(/cannot say which Google account/);
     await expect(resolve(["gmail", "contacts"], { account: ACCOUNT })).resolves.toEqual({
       accountId: ACCOUNT,
+      params: { contactsPerson: PERSON },
     });
     await expect(
       resolve(["gmail", "contacts"], { account: "jamie.lopez@example.org" }),
@@ -420,5 +450,227 @@ describe("Google broker account resolution", () => {
     await expect(resolve(["gmail"])).rejects.toThrow(
       /which account the Gmail connection belongs to: .*Insufficient Permission/,
     );
+  });
+});
+
+describe("Google broker account resolution records what each sync re-checks", () => {
+  test("refuses a Contacts connection Google will not answer `people/me` for", async () => {
+    stubNetwork({
+      google: (url) =>
+        url.pathname === "/v1/people/me"
+          ? Response.json({ error: { code: 403, message: "Forbidden" } }, { status: 403 })
+          : defaultGoogle(url),
+    });
+    await expect(
+      definition.broker!.resolveAccount(
+        new BrokeredCredentials(binding("gmail", "contacts"), BROKER),
+        { account: ACCOUNT },
+      ),
+    ).rejects.toThrow(/Google will not say which account the linked Google Contacts connection/);
+  });
+});
+
+/** Google's answer for `url`, but `other` for requests made with `token`. */
+function ownedBy(token: string, other: Partial<Record<string, unknown>>) {
+  return (url: URL, authorization: string | null): unknown => {
+    const key = `${url.host}${url.pathname}`;
+    if (authorization === `Bearer ${token}` && key in other) return other[key];
+    return defaultGoogle(url);
+  };
+}
+
+const OTHER = "olu.bassey@example.com";
+
+describe("Google brokered connections are re-checked against the linked account", () => {
+  test("an unchanged account syncs, asking Google once per token who it belongs to", async () => {
+    const configDir = await brokeredConfigDir("gmail", "calendar", "drive", "contacts");
+    const net = stubNetwork();
+    const context = await brokeredContext(configDir);
+
+    for (const id of ["gmail", "google-contacts"]) {
+      const source = await createSource(id, configDir, context);
+      await source.sync(null);
+      await source.sync(null);
+    }
+    const api = google.gmail({ version: "v1", auth: context.provider.getAuth("gmail") });
+    for (let i = 0; i < 3; i++) await api.users.getProfile({ userId: "me" });
+
+    const profile = net
+      .google("gmail.googleapis.com")
+      .filter((c) => c.url.pathname === "/gmail/v1/users/me/profile");
+    // One check for the token, then the three calls made with it.
+    expect(profile.length).toBeGreaterThanOrEqual(4);
+    const peopleMe = net
+      .google("people.googleapis.com")
+      .filter((c) => c.url.pathname === "/v1/people/me");
+    expect(peopleMe).toHaveLength(1);
+    expect(net.broker()).toHaveLength(2);
+    expect(accountFiles(configDir)).toEqual(["broker.json"]);
+  });
+
+  test("Gmail signed in again as someone else stops with identity-changed before any mail is read", async () => {
+    const configDir = await brokeredConfigDir("gmail");
+    const net = stubNetwork({
+      google: ownedBy("conn-mail-token-1", {
+        "gmail.googleapis.com/gmail/v1/users/me/profile": { emailAddress: OTHER, historyId: "9" },
+      }),
+    });
+    const context = await brokeredContext(configDir);
+    const gmail = await createSource("gmail", configDir, context);
+
+    const failure = await gmail.sync(null).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toMatchObject({
+      name: "BrokerCredentialError",
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect(String((failure as Error).message)).not.toContain(OTHER);
+    expect(net.google("gmail.googleapis.com").map((c) => c.url.pathname)).toEqual([
+      "/gmail/v1/users/me/profile",
+    ]);
+    expect(accountFiles(configDir)).toEqual(["broker.json"]);
+  });
+
+  test("Calendar and Drive are each checked with their own token", async () => {
+    const configDir = await brokeredConfigDir("calendar", "drive");
+    const net = stubNetwork({
+      google: ownedBy("conn-drive-token-1", {
+        "www.googleapis.com/drive/v3/about": { user: { emailAddress: OTHER } },
+      }),
+    });
+    const context = await brokeredContext(configDir);
+
+    const calendar = google.calendar({ version: "v3", auth: context.provider.getAuth("calendar") });
+    await expect(calendar.calendarList.list()).resolves.toBeDefined();
+    const drive = google.drive({ version: "v3", auth: context.provider.getAuth("drive") });
+    await expect(drive.files.list()).rejects.toMatchObject({ reason: "identity-changed" });
+    expect(
+      net.google("www.googleapis.com").filter((c) => c.url.pathname === "/drive/v3/files"),
+    ).toHaveLength(0);
+  });
+
+  test("a token the broker rotates mid-run to another account is refused", async () => {
+    const configDir = await brokeredConfigDir("gmail");
+    const net = stubNetwork({
+      expiresInMs: (_id, n) => (n === 1 ? 60 * 1000 : 60 * 60 * 1000),
+      google: ownedBy("conn-mail-token-2", {
+        "gmail.googleapis.com/gmail/v1/users/me/profile": { emailAddress: OTHER },
+      }),
+    });
+    const context = await brokeredContext(configDir);
+    const api = google.gmail({ version: "v1", auth: context.provider.getAuth("gmail") });
+
+    await expect(api.users.messages.list({ userId: "me" })).resolves.toBeDefined();
+    await expect(api.users.messages.list({ userId: "me" })).rejects.toMatchObject({
+      reason: "identity-changed",
+    });
+    expect(
+      net
+        .google("gmail.googleapis.com")
+        .filter((c) => c.url.pathname === "/gmail/v1/users/me/messages")
+        .map((c) => c.authorization),
+    ).toEqual(["Bearer conn-mail-token-1"]);
+  });
+
+  test("Contacts is checked against the person id recorded at link time", async () => {
+    const configDir = await brokeredConfigDir("contacts");
+    const net = stubNetwork({
+      google: ownedBy("conn-contacts-token-1", {
+        "people.googleapis.com/v1/people/me": { resourceName: "people/207" },
+      }),
+    });
+    const context = await brokeredContext(configDir);
+    const contacts = await createSource("google-contacts", configDir, context);
+
+    await expect(contacts.sync(null)).rejects.toMatchObject({
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect(net.google("people.googleapis.com").map((c) => c.url.pathname)).toEqual([
+      "/v1/people/me",
+    ]);
+  });
+
+  test("a Contacts address Google attributes to another account is refused", async () => {
+    const configDir = await brokeredConfigDir("contacts");
+    stubNetwork({
+      google: ownedBy("conn-contacts-token-1", {
+        "people.googleapis.com/v1/people/me": {
+          resourceName: PERSON,
+          emailAddresses: [{ value: OTHER, metadata: { source: { type: "ACCOUNT" } } }],
+        },
+      }),
+    });
+    const context = await brokeredContext(configDir);
+    const contacts = await createSource("google-contacts", configDir, context);
+    await expect(contacts.sync(null)).rejects.toMatchObject({ reason: "identity-changed" });
+  });
+
+  test("a Contacts link with no recorded person id cannot be confirmed and is refused", async () => {
+    const configDir = await configDirWith(binding("contacts"));
+    const net = stubNetwork();
+    const context = await brokeredContext(configDir);
+    const contacts = await createSource("google-contacts", configDir, context);
+
+    await expect(contacts.sync(null)).rejects.toMatchObject({
+      reason: "identity-changed",
+      message: expect.stringContaining("cannot confirm"),
+    });
+    expect(
+      net.google("people.googleapis.com").filter((c) => c.url.pathname.endsWith("/connections")),
+    ).toHaveLength(0);
+  });
+
+  test("a probe Google fails is classified by Google's answer, never taken as a match", async () => {
+    const answers: Array<[unknown, Record<string, unknown>]> = [
+      [new TypeError("fetch failed", { cause: new Error("ECONNRESET") }), { kind: "network" }],
+      [
+        Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
+        { kind: "transient" },
+      ],
+      [
+        Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+        { kind: "auth" },
+      ],
+      [
+        Response.json({ error: { code: 429, message: "Rate Limit Exceeded" } }, { status: 429 }),
+        { kind: "rate-limit" },
+      ],
+    ];
+    for (const [failure, expected] of answers) {
+      const configDir = await brokeredConfigDir("gmail");
+      let failing = true;
+      const net = stubNetwork({
+        google: (url) =>
+          failing && url.pathname === "/gmail/v1/users/me/profile"
+            ? failure instanceof Response
+              ? failure.clone()
+              : failure
+            : defaultGoogle(url),
+      });
+      const context = await brokeredContext(configDir);
+      const api = google.gmail({ version: "v1", auth: context.provider.getAuth("gmail") });
+
+      const err = await api.users.messages.list({ userId: "me" }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toMatchObject({
+        ...expected,
+        message: expect.stringContaining("Could not confirm which Google account"),
+      });
+      expect(err).not.toMatchObject({ reason: "identity-changed" });
+      expect(
+        net.google("gmail.googleapis.com").filter((c) => c.url.pathname.endsWith("/messages")),
+      ).toHaveLength(0);
+
+      // Nothing was kept from the failed check: the next request asks again.
+      failing = false;
+      await expect(api.users.messages.list({ userId: "me" })).resolves.toBeDefined();
+      vi.unstubAllGlobals();
+    }
   });
 });

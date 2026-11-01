@@ -18,6 +18,7 @@ import {
   hasCredentials,
   loadApiKey,
   resolveBrokeredAccount,
+  verifyLunchflowIdentity,
 } from "./provider.js";
 import { lunchflowCredentialsSpec } from "./credentials-spec.js";
 import { lunchflowIcon } from "./icons.js";
@@ -99,6 +100,7 @@ export default defineProvider<LunchflowContext>({
     ],
     resolveAccount: (credentials, _params, ctx?: { configDir?: string }) =>
       resolveBrokeredAccount(credentials, ctx),
+    verify: (accountId, binding) => verifyLunchflowIdentity(accountId, () => binding),
   },
 
   // Resolve connected accounts offline; the collector derives accounts solely
@@ -129,7 +131,12 @@ export default defineProvider<LunchflowContext>({
     if (hasBrokerBinding("lunchflow", accountId, host?.configDir)) {
       // Asked of the broker per request and never written down: the binding
       // is all this account keeps on disk.
-      const credentials = await BrokeredCredentials.load("lunchflow", accountId, host?.configDir);
+      const credentials: BrokeredCredentials = await BrokeredCredentials.load(
+        "lunchflow",
+        accountId,
+        host?.configDir,
+        { verify: verifyLunchflowIdentity(accountId, () => credentials.binding) },
+      );
       client = new LunchflowClient({
         apiKey: () => credentials.token(),
         invalidateApiKey: () => credentials.invalidate(),

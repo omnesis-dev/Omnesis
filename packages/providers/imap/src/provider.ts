@@ -14,6 +14,7 @@ import {
   readProviderAccountCredentials,
   MissingCredentialsError,
   writeProviderAccountCredentials,
+  type BrokerCredentialResult,
 } from "@omnesis/core";
 import { AccountId, SyncError } from "@omnesis/types";
 import { AuthFailure, credentialsChallenge } from "@omnesis/source-sdk";
@@ -361,6 +362,24 @@ export async function loadBrokeredCredentials(
       }
       return { username: stored.username, password: stored.app_password };
     },
+  };
+}
+
+/**
+ * The account check a sync makes on a brokered login (the username, normalised
+ * as a paste is, must be the account), as a broker spec `verify` so
+ * `omnesis broker status` reports a login swapped at the broker.
+ */
+export function verifyImapLogin(
+  accountId: string,
+): (purpose: string, result: BrokerCredentialResult) => void {
+  return (_purpose, { credential }) => {
+    if (credential.type === "basic" && credential.username.trim().toLowerCase() !== accountId) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The broker's IMAP login no longer matches account ${accountId}; link the connection again`,
+      );
+    }
   };
 }
 

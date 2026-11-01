@@ -1728,7 +1728,8 @@
           grant for each; every connection must belong to the same Google account. Gmail, Calendar
           and Drive each report which account they belong to and are checked against each other.
           Contacts usually cannot, so linking it needs <code>--param account=&lt;address&gt;</code>,
-          which is checked against the others.
+          which is checked against the others, and records the id Google gives the account; a
+          Contacts connection Google will not identify at all cannot be linked.
         </p>
         <p>
           Run these on the machine whose collector syncs the account, as the collector's user: the
@@ -1768,7 +1769,9 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis sources add notion-pages</span>
             </p>
-            <p class="t-dim"># linked accounts, each credential checked against Nango</p>
+            <p class="t-dim">
+              # linked accounts, each credential checked against Nango and its account
+            </p>
             <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis broker status</span></p>
           </div>
         </div>
@@ -1787,6 +1790,22 @@
           account. A linked account counts as added once one of its sources is added on any device,
           enabled or paused. Once every linked account is added, connecting another account of the
           provider asks for its credentials as usual.
+        </p>
+        <p>
+          Each credential Nango hands out is checked again before Omnesis uses it, because a
+          connection can be signed in again in Nango as someone else, or its key replaced with
+          another person's. Notion checks the workspace, Strava the athlete, Outlook the mailbox and
+          IMAP the login. Each Google connection asks Google which account its token belongs to
+          (Contacts compares the account id recorded when it was linked), once per token. GitHub
+          compares the user id recorded when it was linked, so a renamed user still matches. A
+          Coinbase key other than the one linked must still be View-only and read the same
+          portfolio, and a Lunch Flow key other than the one linked must reach one of the bank
+          accounts it reached when it was linked. When the check fails, the source stops with an
+          error that says the connection now belongs to another account, and nothing from that
+          credential is indexed; link the connection again with
+          <code>omnesis broker link</code>, which names the account it now belongs to. When the
+          service cannot be reached to check, the sync fails and is retried like any other outage.
+          <code>omnesis broker status</code> runs the same check on every link.
         </p>
 
         <h3 id="day-to-day">Day-to-day tasks</h3>

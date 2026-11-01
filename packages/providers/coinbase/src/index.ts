@@ -9,7 +9,7 @@ import {
   readBrokerBinding,
   readProviderAccountOrLegacyCredentials,
 } from "@omnesis/core";
-import { brokeredCoinbaseClient, coinbaseBrokerSpec } from "./broker.js";
+import { brokeredCoinbaseClient, coinbaseBrokerSpec, verifyCoinbaseIdentity } from "./broker.js";
 import { CoinbaseClient } from "./client.js";
 import { coinbaseCredentialsSpec } from "./credentials-spec.js";
 import { coinbaseIcon } from "./icons.js";
@@ -146,10 +146,11 @@ export default defineProvider<CoinbaseContext>({
     // reading the stored key for it would adopt the pre-per-account shared
     // file into its directory.
     if (hasBrokerBinding(COINBASE_FILE_KEY, accountId, host?.configDir)) {
-      const brokered = await BrokeredCredentials.load(
+      const brokered: BrokeredCredentials = await BrokeredCredentials.load(
         COINBASE_FILE_KEY,
         accountId,
         host?.configDir,
+        { verify: verifyCoinbaseIdentity(accountId, () => brokered.binding) },
       );
       const client = brokeredCoinbaseClient(brokered);
       return { client, accountId, dataCutoff, configDir: host?.configDir };

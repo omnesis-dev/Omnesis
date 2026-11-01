@@ -10,6 +10,7 @@ import {
   hasBrokerBinding,
   listBrokeredAccountIds,
   readBrokerBinding,
+  type BrokerCredentialResult,
 } from "@omnesis/core";
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
 import {
@@ -36,6 +37,24 @@ export { notionCredentialsSpec } from "./credentials-spec.js";
 
 const log = createLogger("provider:notion");
 
+/**
+ * The token response names the workspace; one re-authorised at the broker for
+ * another workspace must not sync under this one's id.
+ */
+export function verifyNotionWorkspace(
+  accountId: string,
+): (purpose: string, result: BrokerCredentialResult) => void {
+  return (_purpose, { credential }) => {
+    const raw = credential.type === "oauth2" ? credential.raw : {};
+    if (typeof raw.workspace_id === "string" && raw.workspace_id !== accountId) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The broker's Notion connection now belongs to another workspace, not ${accountId}; link it again with \`omnesis broker link\``,
+      );
+    }
+  };
+}
+
 // ── Provider Definition ──────────────────────────────────────────────
 
 export default defineProvider<NotionContext>({
@@ -59,6 +78,7 @@ export default defineProvider<NotionContext>({
       const params: Record<string, string> = workspaceName ? { workspaceName } : {};
       return { accountId: workspaceId, params };
     },
+    verify: (accountId) => verifyNotionWorkspace(accountId),
   },
 
   async discover(ctx) {
@@ -90,17 +110,7 @@ export default defineProvider<NotionContext>({
     let client: NotionClient;
     if (hasBrokerBinding("notion", accountId, host?.configDir)) {
       const credentials = await BrokeredCredentials.load("notion", accountId, host?.configDir, {
-        // The token response names the workspace; one re-authorised at the
-        // broker for another workspace must not sync under this one's id.
-        verify: (_purpose, { credential }) => {
-          const raw = credential.type === "oauth2" ? credential.raw : {};
-          if (typeof raw.workspace_id === "string" && raw.workspace_id !== accountId) {
-            throw new BrokerCredentialError(
-              "identity-changed",
-              `The broker's Notion connection now belongs to another workspace, not ${accountId}; link it again with \`omnesis broker link\``,
-            );
-          }
-        },
+        verify: verifyNotionWorkspace(accountId),
       });
       client = new NotionClient(() => credentials.token());
     } else {

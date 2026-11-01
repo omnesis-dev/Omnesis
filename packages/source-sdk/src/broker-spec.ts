@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { BrokeredCredentials } from "@omnesis/core";
+import type { BrokerBinding, BrokerCredentialResult, BrokeredCredentials } from "@omnesis/core";
 
 /** One credential a provider can take from the credential broker. */
 export interface ProviderBrokerPurpose {
@@ -61,4 +61,17 @@ export interface ProviderBrokerSpec {
     params: Record<string, string>,
     ctx?: { configDir?: string },
   ): Promise<{ accountId: string; params?: Record<string, string> }>;
+  /**
+   * The check a linked account's credentials must pass before they are used:
+   * that each one the broker hands out still belongs to `accountId`, throwing
+   * a `BrokerCredentialError` with reason `identity-changed` when it does not.
+   * The same check the provider's `createContext` passes to
+   * `BrokeredCredentials.load`, so `omnesis broker status` reports a
+   * connection signed in again as someone else instead of calling it healthy.
+   * Read-only: it records nothing.
+   */
+  verify?(
+    accountId: string,
+    binding: BrokerBinding,
+  ): (purpose: string, result: BrokerCredentialResult) => void | Promise<void>;
 }

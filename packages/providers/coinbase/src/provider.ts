@@ -127,10 +127,9 @@ export async function authFlow(
     );
   }
 
-  // Confirm the key actually reads, and prefer the accounts-derived portfolio
-  // id (key_permissions may omit it).
+  // Confirm the key actually reads before naming the account after it.
   const accounts = await client.getAccounts(1);
-  const portfolioId = permissions.retail_portfolio_id ?? accounts.accounts[0]?.retail_portfolio_id;
+  const portfolioId = portfolioIdOf(permissions, accounts.accounts[0]);
   const derived = deriveAccountId(portfolioId, credentials.key_id);
 
   // A re-auth refreshes the account it was invoked for; a key for a different
@@ -323,6 +322,31 @@ async function connectWithKey(
 }
 
 /**
+ * The portfolio a key reads: the one `key_permissions` names, else the one its
+ * first account carries. Linking, a paste and the broker's identity re-check
+ * all derive the account id from this, so a key rotated within the same
+ * portfolio lands on the same account. The permissions' `portfolio_uuid` is
+ * deliberately not used: account ids have always been derived from
+ * `retail_portfolio_id`, and Coinbase does not document the two as the same
+ * value.
+ */
+export function portfolioIdOf(
+  permissions: { retail_portfolio_id?: string | null },
+  firstAccount?: { retail_portfolio_id?: string | null },
+): string | undefined {
+  return permissions.retail_portfolio_id ?? firstAccount?.retail_portfolio_id ?? undefined;
+}
+
+/** {@link portfolioIdOf}, reading the accounts only when the permissions do not name it. */
+export async function keyPortfolioId(
+  client: CoinbaseClient,
+  permissions: { retail_portfolio_id?: string | null },
+): Promise<string | undefined> {
+  if (permissions.retail_portfolio_id != null) return portfolioIdOf(permissions);
+  return portfolioIdOf(permissions, (await client.getAccounts(1)).accounts[0]);
+}
+
+/**
  * Which account a key reads, refusing one wider than View-only.
  *
  * Shared by a pasted key and one the credential broker holds, so a portfolio
@@ -337,10 +361,9 @@ export async function resolveKeyAccount(
   const permissions = await probe(() => client.getKeyPermissions());
   assertReadOnly(permissions);
 
-  // Confirm the key actually reads, and prefer the accounts-derived portfolio
-  // id (key_permissions may omit it).
+  // Confirm the key actually reads before naming the account after it.
   const accounts = await probe(() => client.getAccounts(1));
-  const portfolioId = permissions.retail_portfolio_id ?? accounts.accounts[0]?.retail_portfolio_id;
+  const portfolioId = portfolioIdOf(permissions, accounts.accounts[0]);
   return {
     accountId: deriveAccountId(portfolioId, keyId),
     fromIdentity: derivedFromIdentity(portfolioId),

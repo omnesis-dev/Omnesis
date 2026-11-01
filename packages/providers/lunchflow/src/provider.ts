@@ -3,6 +3,8 @@
 
 import { createHash } from "node:crypto";
 import {
+  brokerBearerToken,
+  BrokerCredentialError,
   BrokeredCredentials,
   clearProviderAccountAndLegacyCredentials,
   clearProviderAccountCredentials,
@@ -16,6 +18,8 @@ import {
   loadOrAdoptProviderAccountCredentials,
   MissingCredentialsError,
   writeProviderAccountCredentials,
+  type BrokerBinding,
+  type BrokerCredentialResult,
 } from "@omnesis/core";
 import { AccountId, SyncError } from "@omnesis/types";
 import { AuthFailure, credentialsChallenge } from "@omnesis/source-sdk";
@@ -195,12 +199,15 @@ export async function resolveBrokeredAccount(
   credentials: BrokeredCredentials,
   ctx?: { configDir?: string },
   deps: AuthFlowDeps = {},
-): Promise<{ accountId: string }> {
+): Promise<{ accountId: string; params: Record<string, string> }> {
   // Trimmed as a pasted key is, so the hash comes out the same.
   const apiKey = (await credentials.token()).trim();
   const client = new LunchflowClient({ apiKey, fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
   const accounts = await client.listAccounts();
   const accountId = String(deriveAccountId(apiKey));
+  const params = {
+    [LUNCHFLOW_BANK_ACCOUNTS_PARAM]: JSON.stringify(accounts.map((a) => String(a.id)).sort()),
+  };
   if (ctx) {
     const clash = await findOverlappingAccount(
       new Set(accounts.map((a) => String(a.id))),
@@ -215,7 +222,67 @@ export async function resolveBrokeredAccount(
       );
     }
   }
-  return { accountId };
+  return { accountId, params };
+}
+
+/** The binding parameter that records, at link time, the bank accounts the key reached. */
+export const LUNCHFLOW_BANK_ACCOUNTS_PARAM = "bankAccounts";
+
+function recordedBankAccounts(binding: BrokerBinding): Set<string> | undefined {
+  const raw = binding.params?.[LUNCHFLOW_BANK_ACCOUNTS_PARAM];
+  if (raw === undefined) return undefined;
+  try {
+    const ids: unknown = JSON.parse(raw);
+    if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) return new Set(ids);
+  } catch {
+    // An unreadable record vouches for nothing.
+  }
+  return undefined;
+}
+
+/**
+ * Check each key the broker hands out still belongs to the linked connection,
+ * for {@link BrokeredCredentials}' `verify` option.
+ *
+ * Lunch Flow names no user, so the key itself is the identity: the key the
+ * account id was derived from is accepted as it stands. Any other key — one
+ * rotated or swapped at the broker — must reach at least one of the bank
+ * accounts the key reached when it was linked, which are Lunch Flow's own ids
+ * and belong to one Lunch Flow user. A binding that recorded none (linked
+ * before they were) cannot vouch for a new key, so it must be linked again. A
+ * key that passes is kept, so it is not asked about again; a failed request
+ * keeps the client's classification and is not taken as a match.
+ */
+export function verifyLunchflowIdentity(
+  accountId: string,
+  binding: () => BrokerBinding,
+  deps: AuthFlowDeps = {},
+): (purpose: string, result: BrokerCredentialResult) => Promise<void> {
+  let verified: string | undefined;
+  return async (_purpose, { credential }) => {
+    const apiKey = brokerBearerToken(credential).trim();
+    if (String(deriveAccountId(apiKey)) === accountId || apiKey === verified) return;
+    const recorded = recordedBankAccounts(binding());
+    if (!recorded) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The broker now holds another Lunch Flow key for ${accountId}, and the link recorded no bank accounts to check it against; link it again with \`omnesis broker link\``,
+      );
+    }
+    const client = new LunchflowClient({
+      apiKey,
+      fetchImpl: deps.fetchImpl,
+      baseUrl: deps.baseUrl,
+    });
+    const reached = await client.listAccounts();
+    if (!reached.some((a) => recorded.has(String(a.id)))) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The Lunch Flow key the broker now holds for ${accountId} reaches none of the bank accounts it was linked with; link it again with \`omnesis broker link\``,
+      );
+    }
+    verified = apiKey;
+  };
 }
 
 /**

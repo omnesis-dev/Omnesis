@@ -7474,6 +7474,7 @@
       "value": "Google Contacts",
       "paths": [
         "packages/gateway/src/people.test.ts",
+        "packages/providers/google/src/broker.test.ts",
         "packages/providers/google/src/contacts.test.ts",
         "packages/providers/google/src/setup.test.ts"
       ],
@@ -7956,7 +7957,8 @@
       "paths": [
         "packages/collector/src/error-classifier.test.ts",
         "packages/collector/src/sync-engine.test.ts",
-        "packages/providers/google/src/api-error.test.ts"
+        "packages/providers/google/src/api-error.test.ts",
+        "packages/providers/google/src/broker.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -12547,6 +12549,16 @@
       "value": "Neither Strava",
       "paths": ["packages/providers/strava/src/broker.test.ts"],
       "reason": "Start of a test comment sentence, not a name."
+    },
+    {
+      "value": "Backend Error",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Google API error message text."
+    },
+    {
+      "value": "Rate Limit Exceeded",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Google API error message text."
     }
   ],
   "secretFixtures": [

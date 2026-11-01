@@ -44,14 +44,18 @@ function cdpKey(name: string) {
 
 const KEY = cdpKey("maya-reeves-view");
 
-async function brokeredConfigDir(): Promise<string> {
+/** A portfolio linked as linking now writes it: with the key name it was linked with. */
+async function brokeredConfigDir(
+  params: Record<string, string> | null = { keyName: KEY.keyId },
+  accountId = PORTFOLIO_ID,
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-coinbase-broker-"));
   tmpDirs.push(dir);
   await writeCredentialBrokerConfig(BROKER, dir);
   await writeBrokerBinding(
     "coinbase",
-    PORTFOLIO_ID,
-    { broker: "nango", connections: { default: REF } },
+    accountId,
+    { broker: "nango", connections: { default: REF }, ...(params ? { params } : {}) },
     dir,
   );
   return dir;
@@ -138,10 +142,13 @@ function stubNetwork(opts: {
   };
 }
 
-async function brokeredContext(configDir: string): Promise<CoinbaseContext> {
+async function brokeredContext(
+  configDir: string,
+  accountId = PORTFOLIO_ID,
+): Promise<CoinbaseContext> {
   return definition.createContext!({
-    accountId: PORTFOLIO_ID,
-    providerId: ProviderId(`coinbase:${PORTFOLIO_ID}`),
+    accountId,
+    providerId: ProviderId(`coinbase:${accountId}`),
     host: fakeProviderHost({ configDir }),
   });
 }
@@ -207,7 +214,13 @@ describe("Coinbase with a brokered CDP key", () => {
       null,
       null,
     ]);
-    expect(net.coinbase().map((c) => jwtKid(c.authorization))).toEqual([KEY.keyId, rotated.keyId]);
+    // The rotated key is not the one linked, so Coinbase is asked which
+    // portfolio it reads before the request is repeated with it.
+    expect(net.coinbase().map((c) => [new URL(c.url).pathname, jwtKid(c.authorization)])).toEqual([
+      ["/api/v3/brokerage/accounts", KEY.keyId],
+      ["/api/v3/brokerage/key_permissions", rotated.keyId],
+      ["/api/v3/brokerage/accounts", rotated.keyId],
+    ]);
   });
 
   test("does not repeat a refused request when the broker still holds the same key", async () => {
@@ -252,6 +265,7 @@ describe("linking a brokered CDP key", () => {
     const net = stubNetwork({ keys: [KEY] });
     await expect(definition.broker!.resolveAccount(credentialsFor(), {})).resolves.toEqual({
       accountId: PORTFOLIO_ID,
+      params: { keyName: KEY.keyId },
     });
     expect(net.coinbase().map((c) => new URL(c.url).pathname)).toEqual([
       "/api/v3/brokerage/key_permissions",
@@ -267,6 +281,7 @@ describe("linking a brokered CDP key", () => {
     });
     await expect(definition.broker!.resolveAccount(credentialsFor(), {})).resolves.toEqual({
       accountId: PORTFOLIO_ID,
+      params: { keyName: KEY.keyId },
     });
   });
 
@@ -277,6 +292,7 @@ describe("linking a brokered CDP key", () => {
     });
     await expect(definition.broker!.resolveAccount(credentialsFor(), {})).resolves.toEqual({
       accountId: String(deriveAccountId(undefined, KEY.keyId)),
+      params: { keyName: KEY.keyId },
     });
   });
 
@@ -296,5 +312,173 @@ describe("linking a brokered CDP key", () => {
       name: "BrokerCredentialError",
       reason: "unsupported",
     });
+  });
+});
+
+describe("a brokered CDP key is re-checked against the linked portfolio", () => {
+  const OTHER_PORTFOLIO = "99999999-8888-7777-6666-555555555555";
+
+  test("the key linked syncs without asking Coinbase who it is", async () => {
+    const configDir = await brokeredConfigDir();
+    const net = stubNetwork({ keys: [KEY] });
+    const context = await brokeredContext(configDir);
+    await context.client.getAccounts(1);
+    await context.client.getAccounts(1);
+    expect(net.coinbase().map((c) => new URL(c.url).pathname)).toEqual([
+      "/api/v3/brokerage/accounts",
+      "/api/v3/brokerage/accounts",
+    ]);
+  });
+
+  test("another key reading the same portfolio is accepted once and kept", async () => {
+    const configDir = await brokeredConfigDir({ keyName: "organizations/x/apiKeys/retired" });
+    const net = stubNetwork({ keys: [KEY] });
+    const context = await brokeredContext(configDir);
+    await context.client.getAccounts(1);
+    await context.client.getAccounts(1);
+    expect(net.coinbase().map((c) => new URL(c.url).pathname)).toEqual([
+      "/api/v3/brokerage/key_permissions",
+      "/api/v3/brokerage/accounts",
+      "/api/v3/brokerage/accounts",
+    ]);
+  });
+
+  test("a key rotated within the portfolio is accepted when key_permissions names it only by portfolio_uuid", async () => {
+    const configDir = await brokeredConfigDir({ keyName: "organizations/x/apiKeys/retired" });
+    const net = stubNetwork({
+      keys: [cdpKey("maya-reeves-rotated")],
+      permissions: {
+        can_view: true,
+        can_trade: false,
+        can_transfer: false,
+        portfolio_uuid: OTHER_PORTFOLIO,
+        portfolio_type: "DEFAULT",
+      },
+      accounts: [{ uuid: "a1", currency: "BTC", retail_portfolio_id: PORTFOLIO_ID }],
+    });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.getAccounts(1)).resolves.toBeDefined();
+    expect(net.coinbase().map((c) => new URL(c.url).pathname)).toEqual([
+      "/api/v3/brokerage/key_permissions",
+      "/api/v3/brokerage/accounts",
+      "/api/v3/brokerage/accounts",
+    ]);
+  });
+
+  test("the spec's verify is the check createContext runs", async () => {
+    stubNetwork({
+      keys: [KEY],
+      permissions: {
+        can_view: true,
+        can_trade: false,
+        can_transfer: false,
+        retail_portfolio_id: OTHER_PORTFOLIO,
+      },
+    });
+    const verify = definition.broker!.verify!(PORTFOLIO_ID, {
+      broker: "nango",
+      connections: { default: REF },
+      params: { keyName: "organizations/x/apiKeys/retired" },
+    });
+    await expect(
+      verify("default", {
+        credential: { type: "basic", username: KEY.keyId, password: KEY.pem },
+        connectionConfig: {},
+        metadata: {},
+      }),
+    ).rejects.toMatchObject({ reason: "identity-changed" });
+  });
+
+  test("a key swapped for one of another portfolio stops with identity-changed and reads nothing", async () => {
+    const configDir = await brokeredConfigDir();
+    const swapped = cdpKey("jamie-lopez-view");
+    const net = stubNetwork({
+      keys: [swapped],
+      permissions: {
+        can_view: true,
+        can_trade: false,
+        can_transfer: false,
+        retail_portfolio_id: OTHER_PORTFOLIO,
+      },
+    });
+    const context = await brokeredContext(configDir);
+    const failure = await context.client.getAccounts(1).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toMatchObject({
+      name: "BrokerCredentialError",
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect((failure as Error).message).not.toContain(OTHER_PORTFOLIO);
+    expect(net.coinbase().map((c) => new URL(c.url).pathname)).toEqual([
+      "/api/v3/brokerage/key_permissions",
+    ]);
+    expect(readdirSync(join(configDir, "coinbase", PORTFOLIO_ID))).toEqual(["broker.json"]);
+  });
+
+  test("a swapped key that can trade is refused even for the same portfolio", async () => {
+    const configDir = await brokeredConfigDir();
+    const net = stubNetwork({
+      keys: [cdpKey("maya-reeves-trade")],
+      permissions: {
+        can_view: true,
+        can_trade: true,
+        can_transfer: false,
+        retail_portfolio_id: PORTFOLIO_ID,
+      },
+    });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.getAccounts(1)).rejects.toMatchObject({
+      reason: "rejected",
+      kind: "auth",
+    });
+    expect(net.coinbase()).toHaveLength(1);
+  });
+
+  test("a key-derived account accepts only the key it was derived from", async () => {
+    const derived = String(deriveAccountId(undefined, KEY.keyId));
+    const configDir = await brokeredConfigDir(null, derived);
+    stubNetwork({
+      keys: [KEY],
+      permissions: { can_view: true, can_trade: false, can_transfer: false },
+    });
+    await expect(
+      (await brokeredContext(configDir, derived)).client.getAccounts(1),
+    ).resolves.toBeDefined();
+
+    stubNetwork({
+      keys: [cdpKey("jamie-lopez-view")],
+      permissions: { can_view: true, can_trade: false, can_transfer: false },
+    });
+    await expect(
+      (await brokeredContext(configDir, derived)).client.getAccounts(1),
+    ).rejects.toMatchObject({ reason: "identity-changed" });
+  });
+
+  test("a check Coinbase fails keeps its kind and is never taken as a match", async () => {
+    const configDir = await brokeredConfigDir({ keyName: "organizations/x/apiKeys/retired" });
+    const net = stubNetwork({ keys: [KEY], refused: [KEY.keyId] });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.getAccounts(1)).rejects.toMatchObject({ kind: "auth" });
+    expect(net.coinbase().map((c) => new URL(c.url).pathname)).not.toContain(
+      "/api/v3/brokerage/accounts",
+    );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).startsWith(BROKER.url)
+          ? Promise.resolve(
+              Response.json({
+                credentials: { type: "BASIC", username: KEY.keyId, password: KEY.pem },
+              }),
+            )
+          : Promise.reject(new TypeError("fetch failed")),
+      ),
+    );
+    const offline = await brokeredContext(configDir);
+    await expect(offline.client.getAccounts(1)).rejects.toMatchObject({ kind: "network" });
   });
 });

@@ -265,3 +265,29 @@ describe("linking a brokered IMAP login", () => {
     ).rejects.toMatchObject({ name: "BrokerCredentialError", reason: "unsupported" });
   });
 });
+
+describe("the IMAP spec's verify", () => {
+  const result = (username: string) => ({
+    credential: { type: "basic" as const, username, password: "fictional-password" },
+    connectionConfig: {},
+    metadata: {},
+  });
+
+  test("accepts the linked login, as a paste normalises it", () => {
+    const verify = definition.broker!.verify!("robin@example.com", {
+      broker: "nango",
+      connections: {},
+    });
+    expect(() => verify("default", result(" Robin@Example.com "))).not.toThrow();
+  });
+
+  test("refuses a login swapped at the broker, as a sync would", () => {
+    const verify = definition.broker!.verify!("robin@example.com", {
+      broker: "nango",
+      connections: {},
+    });
+    expect(() => verify("default", result("sky@example.com"))).toThrow(
+      expect.objectContaining({ reason: "identity-changed" }),
+    );
+  });
+});

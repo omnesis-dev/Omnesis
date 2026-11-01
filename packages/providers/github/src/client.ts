@@ -92,9 +92,9 @@ export class GithubClient {
   // -------------------------------------------------------------------------
 
   /** Liveness probe used by the auth flow: validates the token, returns identity. */
-  async getUser(): Promise<{ login: string; name?: string }> {
-    const user = await this.rest<{ login: string; name?: string | null }>("/user");
-    return { login: user.login, name: user.name ?? undefined };
+  async getUser(): Promise<{ login: string; id: number; name?: string }> {
+    const user = await this.rest<{ login: string; id: number; name?: string | null }>("/user");
+    return { login: user.login, id: user.id, name: user.name ?? undefined };
   }
 
   /** Every repository the token can access. Paginated to completion. */

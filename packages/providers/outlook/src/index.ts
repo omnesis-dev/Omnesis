@@ -9,6 +9,7 @@ import {
   hasBrokerBinding,
   listBrokeredAccountIds,
   resolveAttachmentConfig,
+  type BrokerCredentialResult,
 } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
 import {
@@ -70,6 +71,26 @@ interface MicrosoftContext {
 
 // ── Provider Definition ──────────────────────────────────────────────
 
+/**
+ * An ID token the broker kept names the mailbox; one re-authorised at the
+ * broker as another account must not sync under this id.
+ */
+export function verifyMicrosoftMailbox(
+  accountId: string,
+): (purpose: string, result: BrokerCredentialResult) => void {
+  return (_purpose, { credential }) => {
+    const named = idTokenUsername(
+      credential.type === "oauth2" ? credential.raw.id_token : undefined,
+    );
+    if (named && named.toLowerCase() !== accountId.toLowerCase()) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The broker's Microsoft connection now belongs to ${named}, not ${accountId}; link it again with \`omnesis broker link\``,
+      );
+    }
+  };
+}
+
 export default defineProvider<MicrosoftContext>({
   provider: { id: "microsoft", name: "Microsoft" },
   authType: "oauth",
@@ -95,6 +116,7 @@ export default defineProvider<MicrosoftContext>({
       },
     ],
     resolveAccount: (credentials) => resolveBrokeredAccount(credentials),
+    verify: (accountId) => verifyMicrosoftMailbox(accountId),
   },
 
   // Every account here is the address the sign-in resolved (`account.username`
@@ -138,19 +160,7 @@ export default defineProvider<MicrosoftContext>({
     // one — presenting as a failed sign-in rather than a missing directory.
     const broker = hasBrokerBinding("outlook", accountId, host?.configDir)
       ? await BrokeredCredentials.load("outlook", accountId, host?.configDir, {
-          // An ID token the broker kept names the mailbox; one re-authorised
-          // at the broker as another account must not sync under this id.
-          verify: (_purpose, { credential }) => {
-            const named = idTokenUsername(
-              credential.type === "oauth2" ? credential.raw.id_token : undefined,
-            );
-            if (named && named.toLowerCase() !== accountId.toLowerCase()) {
-              throw new BrokerCredentialError(
-                "identity-changed",
-                `The broker's Microsoft connection now belongs to ${named}, not ${accountId}; link it again with \`omnesis broker link\``,
-              );
-            }
-          },
+          verify: verifyMicrosoftMailbox(accountId),
         })
       : undefined;
     const provider = new MicrosoftProvider(accountId, host?.configDir, { broker });

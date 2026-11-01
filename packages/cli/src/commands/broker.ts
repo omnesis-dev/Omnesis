@@ -40,7 +40,7 @@ function configDir(): string {
   return process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 }
 
-interface BrokerProvider {
+export interface BrokerProvider {
   id: string;
   name: string;
   sourceIds: string[];
@@ -295,8 +295,70 @@ const setCommand = defineCommand({
   },
 });
 
+/** One brokered account as `omnesis broker status` reports it. */
+export interface BrokeredAccountStatus {
+  provider: string;
+  account: string;
+  connections: Array<{
+    purpose: string;
+    integration: string;
+    connection: string;
+    ok?: boolean;
+    error?: string;
+  }>;
+}
+
+/**
+ * Every brokered account, and, given a broker to ask, whether each of its
+ * connections still hands out a credential and that credential still belongs
+ * to the account: the provider's own `verify` runs on it, as it does before a
+ * sync uses it, so a connection signed in again as someone else is reported
+ * rather than shown as healthy.
+ */
+export async function checkBrokeredAccounts(
+  providers: BrokerProvider[],
+  dir: string,
+  config: CredentialBrokerConfig | null,
+): Promise<BrokeredAccountStatus[]> {
+  const accounts: BrokeredAccountStatus[] = [];
+  for (const provider of providers) {
+    for (const account of listBrokeredAccountIds(provider.spec.fileKey, dir)) {
+      const binding = await readBrokerBinding(provider.spec.fileKey, account, dir);
+      if (!binding) continue;
+      const credentials = config
+        ? new BrokeredCredentials(binding, config, {
+            verify: provider.spec.verify?.(account, binding),
+          })
+        : null;
+      const rows: BrokeredAccountStatus["connections"] = [];
+      for (const [purpose, ref] of Object.entries(binding.connections)) {
+        const row: BrokeredAccountStatus["connections"][number] = {
+          purpose,
+          integration: ref.providerConfigKey,
+          connection: ref.connectionId,
+        };
+        if (credentials) {
+          try {
+            await credentials.get(purpose);
+            row.ok = true;
+          } catch (err) {
+            row.ok = false;
+            row.error = err instanceof Error ? err.message : String(err);
+          }
+        }
+        rows.push(row);
+      }
+      accounts.push({ provider: provider.id, account, connections: rows });
+    }
+  }
+  return accounts;
+}
+
 const statusCommand = defineCommand({
-  meta: { name: "status", description: "List brokered accounts and check each credential" },
+  meta: {
+    name: "status",
+    description: "List brokered accounts and check each credential still belongs to its account",
+  },
   args: {
     offline: { type: "boolean", description: "Do not ask the broker; list bindings only" },
     json: { type: "boolean", description: "Machine-readable JSON output" },
@@ -304,45 +366,11 @@ const statusCommand = defineCommand({
   async run({ args }) {
     const dir = configDir();
     const config = await readCredentialBrokerConfig(dir).catch((err: unknown) => fail(err));
-    const providers = await loadBrokerProviders();
-    const accounts: Array<{
-      provider: string;
-      account: string;
-      connections: Array<{
-        purpose: string;
-        integration: string;
-        connection: string;
-        ok?: boolean;
-        error?: string;
-      }>;
-    }> = [];
-    for (const provider of providers) {
-      for (const account of listBrokeredAccountIds(provider.spec.fileKey, dir)) {
-        const binding = await readBrokerBinding(provider.spec.fileKey, account, dir);
-        if (!binding) continue;
-        const credentials =
-          config && !args.offline ? new BrokeredCredentials(binding, config) : null;
-        const rows = [];
-        for (const [purpose, ref] of Object.entries(binding.connections)) {
-          const row: (typeof accounts)[number]["connections"][number] = {
-            purpose,
-            integration: ref.providerConfigKey,
-            connection: ref.connectionId,
-          };
-          if (credentials) {
-            try {
-              await credentials.get(purpose);
-              row.ok = true;
-            } catch (err) {
-              row.ok = false;
-              row.error = err instanceof Error ? err.message : String(err);
-            }
-          }
-          rows.push(row);
-        }
-        accounts.push({ provider: provider.id, account, connections: rows });
-      }
-    }
+    const accounts = await checkBrokeredAccounts(
+      await loadBrokerProviders(),
+      dir,
+      config && !args.offline ? config : null,
+    );
     if (isJSON) {
       console.log(
         JSON.stringify({ broker: config ? { url: config.url } : null, accounts }, null, 2),

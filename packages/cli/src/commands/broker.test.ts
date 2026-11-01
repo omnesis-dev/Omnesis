@@ -4,13 +4,25 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
-import { listBrokeredAccountIds, readBrokerBinding } from "@omnesis/core";
-import { keyFromFile, linkBrokeredAccount, parseConnectionArgs, parseParamArgs } from "./broker.js";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  BrokerCredentialError,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  writeBrokerBinding,
+} from "@omnesis/core";
+import {
+  checkBrokeredAccounts,
+  keyFromFile,
+  linkBrokeredAccount,
+  parseConnectionArgs,
+  parseParamArgs,
+} from "./broker.js";
 import type { ProviderBrokerSpec } from "@omnesis/source-sdk";
 
 const created: string[] = [];
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const dir of created) rmSync(dir, { recursive: true, force: true });
   created.length = 0;
 });
@@ -162,5 +174,67 @@ describe("linkBrokeredAccount", () => {
       }),
     ).rejects.toThrow(/refused/);
     expect(listBrokeredAccountIds("example", dir)).toEqual([]);
+  });
+});
+
+describe("checkBrokeredAccounts", () => {
+  const config = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey: "k" };
+  const CHECKED: ProviderBrokerSpec = {
+    ...SINGLE,
+    verify:
+      (accountId) =>
+      (_purpose, { credential }) => {
+        if (credential.type === "api-key" && `acct-${credential.apiKey}` !== accountId) {
+          throw new BrokerCredentialError("identity-changed", `Not ${accountId}`);
+        }
+      },
+  };
+  const provider = { id: "example", name: "Example", sourceIds: ["example"], spec: CHECKED };
+
+  async function linkedDir(): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-broker-status-"));
+    created.push(dir);
+    await writeBrokerBinding(
+      "example",
+      "acct-maya",
+      {
+        broker: "nango",
+        connections: { default: { providerConfigKey: "example", connectionId: "c1" } },
+      },
+      dir,
+    );
+    return dir;
+  }
+
+  function brokerHolds(apiKey: string) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ credentials: { type: "API_KEY", apiKey } })),
+    );
+  }
+
+  test("a connection whose credential is still the account's reads as healthy", async () => {
+    const dir = await linkedDir();
+    brokerHolds("maya");
+    const [account] = await checkBrokeredAccounts([provider], dir, config);
+    expect(account!.connections).toEqual([
+      { purpose: "default", integration: "example", connection: "c1", ok: true },
+    ]);
+  });
+
+  test("a connection signed in again as someone else is reported, not shown as healthy", async () => {
+    const dir = await linkedDir();
+    brokerHolds("jamie");
+    const [account] = await checkBrokeredAccounts([provider], dir, config);
+    expect(account!.connections[0]).toMatchObject({ ok: false, error: "Not acct-maya" });
+  });
+
+  test("without a broker to ask, lists the bindings and checks nothing", async () => {
+    const dir = await linkedDir();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const [account] = await checkBrokeredAccounts([provider], dir, null);
+    expect(account!.connections[0]!.ok).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

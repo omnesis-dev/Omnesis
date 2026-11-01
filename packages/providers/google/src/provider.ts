@@ -36,6 +36,7 @@ import {
 import {
   brokeredGoogleClients,
   googleBrokerPurposeLabel,
+  verifyGoogleIdentity,
   type GoogleBrokerPurpose,
 } from "./broker.js";
 import type {
@@ -917,7 +918,12 @@ export class GoogleProvider implements Provider {
     // account, and neither is needed: the broker holds each grant and
     // refreshes it, and every client asks the broker for its token.
     if (hasBrokerBinding("google", this._accountId, this.configDir)) {
-      const credentials = await BrokeredCredentials.load("google", this._accountId, this.configDir);
+      const credentials: BrokeredCredentials = await BrokeredCredentials.load(
+        "google",
+        this._accountId,
+        this.configDir,
+        { verify: verifyGoogleIdentity(this._accountId, () => credentials.binding) },
+      );
       this.brokeredClients = brokeredGoogleClients(credentials);
       return;
     }

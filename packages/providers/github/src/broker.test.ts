@@ -15,6 +15,7 @@ import {
 import { ProviderId } from "@omnesis/types";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fakeProviderHost } from "@omnesis/source-sdk/testing";
+import { verifyGithubIdentity } from "./provider.js";
 import definition from "./index.js";
 
 const tmpDirs: string[] = [];
@@ -28,15 +29,23 @@ const BROKER = { kind: "nango" as const, url: "http://127.0.0.1:3999", secretKey
 const PAT_REF = { providerConfigKey: "github-pat", connectionId: "conn-github" };
 const OAUTH_REF = { providerConfigKey: "github", connectionId: "conn-github-oauth" };
 const ACCOUNT = "maya-reeves@acme-org";
+const MAYA_ID = 4101;
+const LINKED = {
+  broker: "nango" as const,
+  connections: { default: PAT_REF },
+  params: { accountLabel: "acme-org", userId: String(MAYA_ID) },
+};
 
-async function brokeredConfigDir(): Promise<string> {
+async function brokeredConfigDir(
+  params: Record<string, string> = { accountLabel: "acme-org", userId: String(MAYA_ID) },
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-github-broker-"));
   tmpDirs.push(dir);
   await writeCredentialBrokerConfig(BROKER, dir);
   await writeBrokerBinding(
     "github",
     ACCOUNT,
-    { broker: "nango", connections: { default: PAT_REF }, params: { accountLabel: "acme-org" } },
+    { broker: "nango", connections: { default: PAT_REF }, params },
     dir,
   );
   return dir;
@@ -46,7 +55,13 @@ async function brokeredConfigDir(): Promise<string> {
  * The broker hands out each of `keys` in turn (the last one thereafter), as an
  * API key or an OAuth token; GitHub accepts only `accepted`.
  */
-function stubNetwork(opts: { keys: string[]; accepted?: string; oauth?: boolean }) {
+function stubNetwork(opts: {
+  keys: string[];
+  accepted?: string;
+  oauth?: boolean;
+  /** The user GitHub reports for a token, when not Maya. */
+  users?: Record<string, { login: string; id: number }>;
+}) {
   const calls: Array<{ url: string; authorization: string | null }> = [];
   let served = 0;
   vi.stubGlobal(
@@ -66,10 +81,15 @@ function stubNetwork(opts: { keys: string[]; accepted?: string; oauth?: boolean 
         );
       }
       const accepted = opts.accepted ?? opts.keys[0];
-      if (authorization !== `Bearer ${accepted}`) {
+      if (!authorization || authorization !== `Bearer ${accepted}`) {
         return Promise.resolve(Response.json({ message: "Bad credentials" }, { status: 401 }));
       }
-      return Promise.resolve(Response.json({ login: "Maya-Reeves", name: "Maya Reeves" }));
+      const user = opts.users?.[authorization.slice("Bearer ".length)] ?? {
+        login: "Maya-Reeves",
+        id: MAYA_ID,
+      };
+      if (!url.endsWith("/user")) return Promise.resolve(Response.json([]));
+      return Promise.resolve(Response.json({ ...user, name: user.login }));
     }),
   );
   return calls;
@@ -112,14 +132,23 @@ describe("GitHub with a brokered credential", () => {
 
   test("asks the broker again once when GitHub rejects a token it rotated", async () => {
     const configDir = await brokeredConfigDir();
-    const calls = stubNetwork({
-      keys: ["github_pat_old", "github_pat_new"],
-      accepted: "github_pat_new",
-    });
+    const network = { keys: ["github_pat_old", "github_pat_new"], accepted: "github_pat_old" };
+    const calls = stubNetwork(network);
     const context = await brokeredContext(configDir);
     await expect(context.client.getUser()).resolves.toMatchObject({ login: "Maya-Reeves" });
+    network.accepted = "github_pat_new";
+    await expect(context.client.getUser()).resolves.toMatchObject({ login: "Maya-Reeves" });
     expect(calls.filter((c) => c.url.startsWith(BROKER.url))).toHaveLength(2);
-    expect(calls.filter((c) => c.url.startsWith("https://api.github.com"))).toHaveLength(2);
+    // Each token is checked once, then used; the rotated-away one is refused once.
+    expect(
+      calls.filter((c) => c.url.startsWith("https://api.github.com")).map((c) => c.authorization),
+    ).toEqual([
+      "Bearer github_pat_old",
+      "Bearer github_pat_old",
+      "Bearer github_pat_old",
+      "Bearer github_pat_new",
+      "Bearer github_pat_new",
+    ]);
   });
 
   test("still reports a token GitHub keeps rejecting as an auth failure", async () => {
@@ -158,12 +187,146 @@ describe("GitHub with a brokered credential", () => {
     );
     await expect(definition.broker!.resolveAccount(credentials, {})).resolves.toEqual({
       accountId: "maya-reeves",
+      params: { userId: String(MAYA_ID) },
     });
     await expect(
       definition.broker!.resolveAccount(credentials, { accountLabel: " Acme-Org " }),
-    ).resolves.toEqual({ accountId: ACCOUNT });
+    ).resolves.toEqual({ accountId: ACCOUNT, params: { userId: String(MAYA_ID) } });
     await expect(
       definition.broker!.resolveAccount(credentials, { accountLabel: "acme/org" }),
     ).rejects.toThrow(/not usable/);
+  });
+});
+
+describe("GitHub brokered connections are re-checked against the linked user", () => {
+  test("an unchanged login syncs, asking GitHub once per token who it is", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork({ keys: ["github_pat_brokered"] });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listAccessibleRepos()).resolves.toEqual([]);
+    await expect(context.client.listAccessibleRepos()).resolves.toEqual([]);
+    const github = calls.filter((c) => c.url.startsWith("https://api.github.com"));
+    expect(github.map((c) => new URL(c.url).pathname)).toEqual([
+      "/user",
+      "/user/repos",
+      "/user/repos",
+    ]);
+  });
+
+  test("a token that is now another user's stops with identity-changed before anything is read", async () => {
+    const configDir = await brokeredConfigDir();
+    const calls = stubNetwork({
+      keys: ["github_pat_swapped"],
+      users: { github_pat_swapped: { login: "jamie-lopez", id: 5202 } },
+    });
+    const context = await brokeredContext(configDir);
+    const failure = await context.client.listAccessibleRepos().then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toMatchObject({
+      name: "BrokerCredentialError",
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect((failure as Error).message).not.toContain("jamie-lopez");
+    expect(
+      calls
+        .filter((c) => c.url.startsWith("https://api.github.com"))
+        .map((c) => new URL(c.url).pathname),
+    ).toEqual(["/user"]);
+    expect(readdirSync(join(configDir, "github", ACCOUNT))).toEqual(["broker.json"]);
+  });
+
+  test("a login another user claimed after a rename is refused, by the id recorded at link", async () => {
+    const configDir = await brokeredConfigDir();
+    stubNetwork({
+      keys: ["github_pat_recycled"],
+      users: { github_pat_recycled: { login: "Maya-Reeves", id: 5202 } },
+    });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listAccessibleRepos()).rejects.toMatchObject({
+      reason: "identity-changed",
+      kind: "auth",
+    });
+  });
+
+  test("the linked user still syncs after renaming their login", async () => {
+    const configDir = await brokeredConfigDir();
+    stubNetwork({
+      keys: ["github_pat_renamed"],
+      users: { github_pat_renamed: { login: "maya-r", id: MAYA_ID } },
+    });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listAccessibleRepos()).resolves.toEqual([]);
+  });
+
+  test("a binding linked before the user id was recorded fails closed until linked again", async () => {
+    const configDir = await brokeredConfigDir({ accountLabel: "acme-org" });
+    const calls = stubNetwork({ keys: ["github_pat_brokered"] });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listAccessibleRepos()).rejects.toMatchObject({
+      reason: "identity-changed",
+      kind: "auth",
+    });
+    expect(calls.filter((c) => c.url.startsWith("https://api.github.com"))).toEqual([]);
+  });
+
+  test("the spec's verify is the check createContext runs", async () => {
+    const respond = vi.fn(() => Promise.resolve(Response.json({ login: "jamie-lopez", id: 5202 })));
+    vi.stubGlobal("fetch", respond);
+    const verify = definition.broker!.verify!(ACCOUNT, LINKED);
+    await expect(
+      verify("default", {
+        credential: { type: "api-key", apiKey: "github_pat_swapped" },
+        connectionConfig: {},
+        metadata: {},
+      }),
+    ).rejects.toMatchObject({ reason: "identity-changed" });
+  });
+
+  test("a failed check keeps its own kind and is never taken as a match", async () => {
+    const result = {
+      credential: { type: "api-key" as const, apiKey: "github_pat_brokered" },
+      connectionConfig: {},
+      metadata: {},
+    };
+    const failing = (respond: () => Promise<Response>) =>
+      verifyGithubIdentity(ACCOUNT, () => LINKED, {
+        fetchImpl: respond as typeof fetch,
+        sleep: async () => {},
+      });
+
+    await expect(
+      failing(() => Promise.reject(new TypeError("fetch failed")))("default", result),
+    ).rejects.toMatchObject({ kind: "network" });
+    await expect(
+      failing(() =>
+        Promise.resolve(Response.json({ message: "Bad credentials" }, { status: 401 })),
+      )("default", result),
+    ).rejects.toMatchObject({ kind: "auth" });
+    await expect(
+      failing(() => Promise.resolve(new Response("unavailable", { status: 503 })))(
+        "default",
+        result,
+      ),
+    ).rejects.not.toMatchObject({ reason: "identity-changed" });
+
+    // A verifier whose check failed asks again for the same token.
+    let up = false;
+    const fetchImpl = vi.fn(() =>
+      up
+        ? Promise.resolve(Response.json({ login: "maya-reeves", id: MAYA_ID }))
+        : Promise.reject(new TypeError("fetch failed")),
+    );
+    const verify = verifyGithubIdentity(ACCOUNT, () => LINKED, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    await expect(verify("default", result)).rejects.toMatchObject({ kind: "network" });
+    up = true;
+    await expect(verify("default", result)).resolves.toBeUndefined();
+    await expect(verify("default", result)).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 });
