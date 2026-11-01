@@ -75,11 +75,7 @@ extension CaptureView {
         saveError = nil
         var captured = isVoiceNote && voiceNote.hasRecording ? voiceNote.hiddenTranscript : text
         if isVoiceNote, voiceNote.hasRecording, preparedAudio == nil {
-            voiceNote.stopRun(at: Date())
-            preparedAudio = recording?.finish()
-            recording = nil
-            speech.audioSink = nil
-            if preparedAudio == nil { useTranscript(captured) }
+            finishUnifiedRecording(fallback: captured)
         }
         do {
             let pairing = store.pairing
@@ -131,6 +127,14 @@ extension CaptureView {
                 ? "Couldn’t choose Ask or Tell. Choose how to send, or try again later."
                 : "Couldn’t process the recording. Try again when your gateway is reachable, or discard it and type."
         }
+    }
+
+    private func finishUnifiedRecording(fallback: String) {
+        voiceNote.stopRun(at: Date())
+        preparedAudio = recording?.finish()
+        recording = nil
+        speech.audioSink = nil
+        if preparedAudio == nil { useTranscript(fallback) }
     }
 
     /// An unusable recording leaves the complete on-device transcript editable.
