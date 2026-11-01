@@ -234,7 +234,11 @@ it("keeps actual root wiki navigation after stripping claim tags, deduplicated a
   ]);
   expect(renderKnowledgeRootContext(db)).not.toContain("Unrelated page");
   expect(renderKnowledgeRootContext(db)).toContain(
-    "read the linked page (relatedPages and inline wiki: links) and the sources behind the claims you use",
+    "read the linked page (relatedPages and inline wiki: links) before answering",
+  );
+  expect(renderKnowledgeRootContext(db)).toContain("knowledgeContext.answerPolicy");
+  expect(renderKnowledgeRootContext(db)).toContain(
+    "source_checks requires supporting-source reads even if verifiedSupport is nonempty",
   );
   delete payload.relatedPages;
   const context = renderKnowledgeRootContext(db);
