@@ -29,7 +29,7 @@ describe("partnerState", () => {
     const jobs = [
       job("T1 tailnet gateway (ubuntu-24.04)", "in_progress"),
       job("T1 tailnet collector (macos-15)", "queued"),
-      job("T2 tailnet collector (macos-14)", "in_progress"),
+      job("T2 tailnet collector (macos-26)", "in_progress"),
     ];
     expect(partnerState(jobs, PARTNER)).toMatchObject({
       state: "waiting",
