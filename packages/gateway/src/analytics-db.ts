@@ -43,6 +43,7 @@ import {
   AnalyticsTemporalProjectionStore,
   type AnalyticsTemporalProjectionCoverageRow,
   type AnalyticsTemporalProjectionRow,
+  type TemporalProjectionMove,
 } from "./analytics/temporal-projection-store.js";
 import {
   AnalyticsAbsenceStore,
@@ -107,6 +108,7 @@ export class AnalyticsDb {
    * walker's hot path, so it must not re-query DuckDB per walk.
    */
   private boundDocCache: Map<string, BoundDocumentBinding[]> | null = null;
+  private projectionMoveListener: (() => void) | null = null;
 
   constructor(
     private dbPath: string,
@@ -168,7 +170,7 @@ export class AnalyticsDb {
   // ── Table manager ────────────────────────────────────────────────
 
   async ensureTable(schema: AnalyticsTableSchema, sourceId: string): Promise<void> {
-    await this.tables.ensureTable(schema, sourceId);
+    await this.noticingProjectionMoves(this.tables.ensureTable(schema, sourceId));
     // A schema change can add/remove/alter a boundDocument — drop the cache.
     this.boundDocCache = null;
   }
@@ -230,7 +232,7 @@ export class AnalyticsDb {
         ? { observedAt: Date.now(), backfill: this.watchBackfill(dataInput.sourceId) }
         : undefined;
     const dataResult = hasDataWork
-      ? await this.tables.ingestPage({ ...dataInput, watchCapture })
+      ? await this.noticingProjectionMoves(this.tables.ingestPage({ ...dataInput, watchCapture }))
       : { ingested: 0, deleted: 0, streamRekeyed: false };
     const { streamRekeyed, ...result } = dataResult;
     const absence =
@@ -251,6 +253,36 @@ export class AnalyticsDb {
     // addressed. Either way the bound-document bindings are stale.
     if (input.schema || streamRekeyed) this.boundDocCache = null;
     return { ...result, ...(absence ? { absence } : {}) };
+  }
+
+  /**
+   * Be told when a write changed temporal projection ids, after it settles.
+   * The moves themselves wait in the move ledger, so the listener only has to
+   * start draining it; see `nextTemporalProjectionMoves`.
+   */
+  onTemporalProjectionsMoved(listener: () => void): void {
+    this.projectionMoveListener = listener;
+  }
+
+  /** The oldest generation of projection id changes annotation links have not followed yet. */
+  nextTemporalProjectionMoves(): Promise<{
+    generation: number;
+    moves: TemporalProjectionMove[];
+  } | null> {
+    return this.temporalProjections.nextMoves();
+  }
+
+  /** Forget a generation of projection moves once the annotation links have followed it. */
+  settleTemporalProjectionMoves(generation: number): Promise<void> {
+    return this.temporalProjections.settleMoves(generation);
+  }
+
+  private async noticingProjectionMoves<T>(write: Promise<T>): Promise<T> {
+    try {
+      return await write;
+    } finally {
+      if (this.temporalProjections.takeMovesRecorded()) this.projectionMoveListener?.();
+    }
   }
 
   /** Enable durable analytics capture for the experimental Watch runtime. */
@@ -299,7 +331,7 @@ export class AnalyticsDb {
     sourceId: string,
     action: LegacyOwnershipAction,
   ): Promise<LegacyOwnershipTable[]> {
-    return this.tables.settleLegacyRows(sourceId, action);
+    return this.noticingProjectionMoves(this.tables.settleLegacyRows(sourceId, action));
   }
 
   /** Call under source-exclusive authority before deleting source config or other stores. */
@@ -354,7 +386,9 @@ export class AnalyticsDb {
   /** Adopt an exclusive source's analytics history into its owner's stream. */
   async adoptExclusiveToPartitioned(sourceId: string, ownerStreamId: string): Promise<string[]> {
     try {
-      return await this.tables.adoptExclusiveToPartitioned(sourceId, ownerStreamId);
+      return await this.noticingProjectionMoves(
+        this.tables.adoptExclusiveToPartitioned(sourceId, ownerStreamId),
+      );
     } finally {
       // Each table commits independently. A later table may fail after an
       // earlier catalog entry and all of its bound-document keys were rekeyed.

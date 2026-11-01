@@ -689,6 +689,31 @@ tombstones and replica verdicts, preserving timestamp precision and numeric
 representations without duplicating DuckDB's coercion rules in JavaScript.
 Structured or missing tuple-key values are rejected at the boundary.
 
+A table several accounts write needs a primary key that is unique across
+them. When upstream ids are only unique within one account — two linked
+accounts that both see a shared calendar list the same event under the same
+id — the account column joins the primary key, and `deleteKey` keeps naming a
+row by the upstream id, which is unique inside the account scope every delete
+and snapshot already runs in. A table created under the narrower key is rebuilt
+with the wider one when its source next registers the schema (`widenPrimaryKey`
+in the table manager): adding columns to a unique key keeps it unique, so every
+row survives, and its temporal projections are re-keyed in the same
+transaction. A key that would replace a column is never rebuilt. While a gained
+column is NULL on some row the widening waits — one warning, the old key kept,
+pages still landing with its meaning — and the next registration after those
+rows are claimed or dropped performs it. A producer that predates the widening,
+such as a rolled-back collector, declares a strict subset of the wider key; when
+it addresses rows by the same delete key, the table keeps its wider key and that
+producer's rows land under it.
+
+A projection's id is derived from its row key, so a rekey changes ids that
+temporal annotations in the main store link to. The analytics store cannot
+commit with the SQLite writer, so every id change is recorded in
+`_temporal_projection_moves` in the DuckDB transaction that makes it, and the
+gateway drains that ledger onto `temporal_annotation_projections` after the
+commit and again at boot. Replaying a generation is harmless, which is what
+covers a crash between the two commits.
+
 A producer that predates the declaration keeps working: a page naming a column
 for a table that declares no key adopts it as that table's key and records the
 adoption, after which a page naming a different column is refused. Keys left

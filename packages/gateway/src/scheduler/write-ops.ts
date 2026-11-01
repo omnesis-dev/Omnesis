@@ -544,6 +544,9 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // annotation sibling.
   { name: "temporalAnnotations.invalidateForDoc", priority: "background" },
   { name: "temporalAnnotations.refilePresented", priority: "background" },
+  // Carries annotation links across projection ids an analytics table rekey
+  // changed; replayed from the analytics move ledger, so never on a page path.
+  { name: "temporalAnnotations.relinkProjections", priority: "background" },
   // Observations and the morning brief: background steward writes.
   { name: "cognition.observationCreate", priority: "background" },
   { name: "cognition.observationTransition", priority: "background" },

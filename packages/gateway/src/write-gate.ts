@@ -316,7 +316,9 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
+  relinkTemporalAnnotationProjections,
   type CreateTemporalAnnotationInput,
+  type TemporalProjectionMove,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotation,
   type TemporalAnnotationInvalidationResult,
@@ -2016,6 +2018,11 @@ export interface WriteGate extends KnowledgeWriteGate {
    * lookup once that run completes.
    */
   markTemporalAnnotationsRefilePresented(ids: readonly string[], runId: string): Promise<void>;
+  /**
+   * Point annotation links at the ids their projections moved to; see
+   * `relinkTemporalAnnotationProjections`. Returns how many links moved.
+   */
+  relinkTemporalAnnotationProjections(moves: readonly TemporalProjectionMove[]): Promise<number>;
   /** Atomically create an observation and record its live annotation dependencies. */
   createObservation(
     input: CreateObservationInput,
@@ -2841,6 +2848,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markTemporalAnnotationsRefilePresented: async (ids, runId) => {
       await call("temporalAnnotations.refilePresented", [ids, runId]);
     },
+    relinkTemporalAnnotationProjections: (moves) =>
+      call("temporalAnnotations.relinkProjections", [[...moves]]),
     reviewBrainArtifactsForDeletedDocs: (deletedDocIds) =>
       call("cognition.sourceDeletionReview", [deletedDocIds]),
     createObservation: (input, dependencies, now) =>
@@ -3546,6 +3555,8 @@ export function directWriteGate(db: Db): WriteGate {
       invalidateTemporalAnnotationsForDoc(db, docId, now),
     markTemporalAnnotationsRefilePresented: async (ids, runId) =>
       markTemporalAnnotationsRefilePresented(db, ids, runId),
+    relinkTemporalAnnotationProjections: async (moves) =>
+      relinkTemporalAnnotationProjections(db, moves),
     createObservation: async (input, dependencies, now) =>
       mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
         createObservation(db, input, now),
