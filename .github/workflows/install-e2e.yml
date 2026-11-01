@@ -407,7 +407,7 @@ jobs:
             node: t2
             fixture: upgrade
             mode: upgrade
-            os: macos-14
+            os: macos-26
           - lane: T3
             node: t3
             fixture: fresh
