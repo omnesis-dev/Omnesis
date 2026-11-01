@@ -221,6 +221,8 @@ extension HomeView {
         guard let surface = pendingCaptureSurface else { return false }
         pendingCaptureSurface = nil
         captureSurface = surface
+        menuOpen = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         unifiedCapture = true
         return true
     }
