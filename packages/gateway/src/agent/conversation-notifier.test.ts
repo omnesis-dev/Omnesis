@@ -10,6 +10,41 @@ import {
 } from "./conversation-notifier.js";
 
 describe("ConversationNotifier", () => {
+  test("forwards a durable handoff key without changing its conversation route", async () => {
+    const publish = vi.fn(async () => []);
+    await new ConversationNotifier({ publish }).notify({
+      conversationId: "conversation-handoff",
+      title: "Omnesis needs your input",
+      body: "Which fictional crate should I use?",
+      idempotencyKey: "note-handoff:fictional-revision",
+    });
+    expect(publish).toHaveBeenCalledWith(
+      {
+        kind: "conversation",
+        title: "Omnesis needs your input",
+        body: "Which fictional crate should I use?",
+        data: { conversationId: "conversation-handoff" },
+        collapseId: "agent-answer:conversation-handoff",
+      },
+      undefined,
+      { idempotencyKey: "note-handoff:fictional-revision" },
+    );
+  });
+
+  test("lets a producer retry when the durable enqueue itself fails", async () => {
+    const publish = vi.fn(async () => {
+      throw new Error("fictional writer unavailable");
+    });
+    await expect(
+      new ConversationNotifier({ publish }).notify({
+        conversationId: "conversation-handoff",
+        title: "Omnesis",
+        body: "Which fictional crate?",
+        idempotencyKey: "note-handoff:fictional-revision",
+      }),
+    ).rejects.toThrow("fictional writer unavailable");
+  });
+
   test("publishes the conversation target and rendered banner once", async () => {
     const publish = vi.fn(async () => []);
     const notifier = new ConversationNotifier({ publish });

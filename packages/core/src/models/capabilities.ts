@@ -321,7 +321,7 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     role: "agent",
     title: "Agent",
     description:
-      "The conversational model that answers questions over your corpus via the portal and companion iOS or Android app. Also powers every step of Deep Research — the planner, the parallel readers, and the final cited report.",
+      "The model for chats and Tell Omnesis notes from the portal and companion apps. Also powers every step of Deep Research — the planner, the parallel readers, and the final cited report.",
     icon: "bot",
     section: "cognition",
   },
@@ -347,15 +347,16 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     icon: "scan-text",
     section: "core",
   },
-  // Powers the note agent and, in experimental mode, the Brain. Offers the
-  // same chat-capable models as the Agent capability; deliberately never
-  // auto-assigned — no model assigned means no background agent work.
+  // The internal key remains stable for existing Brain assignments. Never
+  // inherits the Agent assignment: choosing a chat model does not enable
+  // autonomous cognition or model-based people adjudication.
   "background-agent": {
     role: "background-agent",
-    title: "Background agent",
+    title: "Brain agent",
     description:
-      "The model for everything Omnesis does headlessly in the background: reading each Tell Omnesis note to add and update your tasks, the small judgement calls the people graph needs while matching contacts and, in experimental mode, the Brain. Same model choices as the Agent capability.",
+      "The model for autonomous Brain work and compiling Watches, including task suggestions, memory maintenance and model-based people judgements. Same model choices as the Agent capability.",
     icon: "bot",
+    experimental: true,
     section: "cognition",
   },
   // The precision pass over a Watch nomination (experimental). It is separate
@@ -399,7 +400,7 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     role: "decision",
     title: "Decision model",
     description:
-      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Uses TypeSafe Jev: the transcript or email excerpt is sent to TypeSafe. The Agent answers Ask requests; the Background agent processes saved notes.",
+      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Uses TypeSafe Jev: the transcript or email excerpt is sent to TypeSafe. The Agent answers Ask requests and processes saved Tell Omnesis notes.",
     experimentalDescription:
       "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to TypeSafe.",
     icon: "scale",

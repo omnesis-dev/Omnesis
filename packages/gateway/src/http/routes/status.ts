@@ -105,9 +105,11 @@ export interface StatusRoutesDeps {
  * Wire features every gateway of this version serves, advertised on both
  * `/health` and `/status` so a client shows an action only where it works.
  * `taskConversations`: `POST /tasks/:id/conversation` ("Chat about this").
+ * `taskNoteCapture`: text and voice captures accept their originating task ID.
  */
 const GENERAL_CAPABILITIES = {
   taskConversations: { min: 1, max: 1 },
+  taskNoteCapture: { min: 1, max: 1 },
 } as const;
 
 /**

@@ -113,6 +113,7 @@ fun HomeScaffold(
     val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
     val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
     val tasksAvailable by vm.tasksAvailable.collectAsStateWithLifecycle()
+    val noteAgent by vm.noteAgent.collectAsStateWithLifecycle()
     val tasksTodayCount by vm.tasksTodayCount.collectAsStateWithLifecycle()
     val privacyPending by vm.privacyPendingCount.collectAsStateWithLifecycle()
     val pendingApprovalToPresent by vm.pendingApprovalToPresent.collectAsStateWithLifecycle()
@@ -681,6 +682,8 @@ fun HomeScaffold(
             }
             composable("tasks") {
                 TasksScreen(
+                    noteProcessingNotice = noteAgent?.notice,
+                    onOpenAgentSettings = openModels,
                     onOpenMenu = { openDrawer() },
                     onOpenSettings = openSettings,
                     onOpenDocument = { nav.navigate("document/${Uri.encode(it)}") },
@@ -900,6 +903,11 @@ fun HomeScaffold(
                     onBack = { nav.popBackStack() },
                     onCapture = { openCapture(CaptureSurface.APP) },
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
+                    onOpenConversation = { id ->
+                        vm.resumeConversation(id)
+                        vm.refreshConversations()
+                        bringAgentForward()
+                    },
                     onOpenSettings = openSettings,
                 )
             }
@@ -913,7 +921,14 @@ fun HomeScaffold(
                 ),
             ) {
                 CaptureScreen(
+                    noteProcessingNotice = noteAgent?.notice,
+                    onOpenAgentSettings = openModels,
                     onClose = { nav.popBackStack() },
+                    onOpenConversation = { id ->
+                        vm.resumeConversation(id)
+                        vm.refreshConversations()
+                        bringAgentForward()
+                    },
                     onOpenSettings = openSettings,
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
                 )

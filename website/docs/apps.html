@@ -546,6 +546,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </li>
           <li><strong>Cancel task</strong>, for a task you no longer intend to do;</li>
           <li>
+            <strong>Tell Omnesis</strong>, to capture a note about this task. Its title is shown as
+            fixed context; type or dictate what you want to ask or change. Saving the note does not
+            itself reopen a completed task. This action requires matching app and gateway support;
+            older gateways do not offer it.
+          </li>
+          <li>
             <strong>Chat about this</strong>, to start a conversation with
             <a href="/docs/agent#chat-about-a-task">the agent</a> about the task, which needs an
             agent model assigned.
@@ -784,12 +790,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           your draft. Notes are listed newest-first; open one to read its full text, capture details
           and Omnesis's reply, edit the text, or delete it after confirmation. Refresh the list to
           see notes saved on another device. Notes still waiting in this phone's offline queue
-          appear in history after they sync. Editing a note does not repeat an agent turn that has
-          already finished. Deleting a note removes its saved text and reply; task changes the agent
-          already made remain until you undo them.
+          appear in history after they sync. Editing your captured note asks Agent to process the
+          correction, as described below. Deleting a note removes its saved text and reply; task
+          changes the agent already made remain until you undo them.
         </p>
         <p>
-          With a model assigned to the <code>background-agent</code> role (under
+          With a model assigned to <strong>Agent</strong> (under
           <strong>Settings → Models</strong>), Omnesis also reads each note you capture from your
           own clients: the portal, the apps and the CLI. Notes that external agents add through
           <a href="/docs/connect">MCP, OpenClaw or Hermes</a> are saved and searchable but never
@@ -803,18 +809,34 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         </p>
         <p>
           What the turn did appears under the note on the <strong>Tell Omnesis</strong> page as a
-          short receipt, with <strong>Undo</strong> beside each task change. Reading a note sends no
-          notification. Reading starts the first time a <code>background-agent</code> model is
-          assigned; notes captured before then are never read. If the model is later unassigned,
-          notes captured in the meantime are read once a model is assigned again.
+          short receipt, with <strong>Undo</strong> beside undoable task changes. Reading a note
+          normally sends no notification. If a clear request needs clarification, Omnesis keeps the
+          note, opens a conversation containing your request and its question, and notifies you.
+          Choose <strong>Continue in chat</strong> in the receipt to answer with the context kept.
+          Chat and notes use the same Agent model; no open chat is needed for direct actions.
+          Reading starts the first time an Agent model is assigned; notes captured before then are
+          never read. If the model is later unassigned, notes captured in the meantime are read once
+          a model is assigned again.
         </p>
         <p>
-          <strong>Act on Tell Omnesis notes</strong>, in the <code>background-agent</code> details
-          under <strong>Settings → Models</strong>, switches the note agent on or off (the
+          <strong>Act on Tell Omnesis notes</strong>, in the <strong>Agent</strong> details under
+          <strong>Settings → Models</strong>, switches the note agent on or off (the
           <code>agent.noteAgent</code> setting). While it is off, notes are only saved, and notes
           captured in that time are never read, even after it is switched back on. It is on by
           default. <code>GET /status</code> reports whether notes are read as
-          <code>tasks.noteAgent</code>, and the setting as <code>noteAgent</code>.
+          <code>tasks.noteAgent</code>, and the setting as <code>noteAgent</code>. If processing is
+          unavailable, the capture screen explains that the note is saved without being acted on.
+          Choose an available Agent model in Settings → Models to enable processing. Select Agent
+          explicitly; other role assignments are not used as a fallback.
+        </p>
+        <p>
+          Editing your captured note also asks Agent to act on the correction. It compares the
+          previous and current text with its prior result, so unchanged instructions are not a fresh
+          request. Relative dates in a correction use the day you edit the note, in its capture time
+          zone. Quick successive edits settle together; the edited note shows pending processing
+          until its new receipt is ready. If an earlier action has an uncertain result, Agent can
+          read back the state but asks you to review it before making a fresh, separate request.
+          Edits made while note processing is switched off are only saved.
         </p>
         <p>
           On the portal, notes are grouped by capture day, with a

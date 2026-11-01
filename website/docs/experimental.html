@@ -595,13 +595,17 @@
         <p>
           In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
           <strong>Suggested</strong> view in the portal and the apps. Loops Brain finds appear there
-          and nowhere else, and become yours only when you accept them. On the apps a suggestion
-          looks like any task: tapping its circle marks it <strong>already done</strong>, and a long
-          press offers <strong>Accept</strong>, <strong>Accept with note</strong>,
-          <strong>Accept for…</strong> a planned day, month or someday,
-          <strong>Mark as done</strong> and <strong>Ignore</strong>; the portal offers the same
-          actions on the suggestion's line. A note written while accepting is saved as a Tell
-          Omnesis note about that task, and the note agent applies it to the task.
+          and nowhere else, and become yours only when you accept them. Enabling Brain preserves
+          existing tasks and their document links; new supporting sources are added without
+          replacing links on tasks you already own. On the apps a suggestion looks like any task:
+          tapping its circle marks it <strong>already done</strong>, and a long press offers
+          <strong>Accept</strong>, <strong>Accept with note</strong>, <strong>Accept for…</strong> a
+          planned day, month or someday, <strong>Mark as done</strong> and <strong>Ignore</strong>;
+          the portal offers the same actions on the suggestion's line. A note written while
+          accepting is saved as a Tell Omnesis note about that task, and the note agent applies it
+          to the task. You can also ask Tell Omnesis or an interactive conversation to accept or
+          ignore a suggestion. The agent finds the suggested task and records the requested action
+          with an undoable receipt; it does not accept other suggestions on its own.
           <strong>Ignore</strong> only takes the suggestion out of Tasks: Brain keeps tracking the
           loop behind it and does not suggest it again. Each of these can be undone from its
           receipt. Accepting a suggestion is where you decide whether a task is worth tracking;
@@ -701,11 +705,14 @@
               <tr>
                 <td><code>background-agent</code></td>
                 <td>
-                  Runs every Brain agent run, and compiles natural-language watches. The same role
-                  reads Tell Omnesis notes (see
-                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>); that
-                  part does not depend on this mode, and its tokens appear as
-                  <strong>Note agent</strong> in the spend breakdown.
+                  Shown as <strong>Brain agent</strong> in Settings → Models. Runs every Brain agent
+                  run and compiles natural-language watches. Tell Omnesis uses the ordinary
+                  <strong>Agent</strong> model, independently of this assignment; its tokens appear
+                  as <strong>Note agent</strong> in the spend breakdown. The two assignments are
+                  separate and are never copied automatically. If an existing setup assigned only
+                  Brain agent, select Agent explicitly to process Tell Omnesis notes. Optional
+                  model-based identity classification also requires the Brain to be active; ordinary
+                  deterministic contact matching works without it.
                 </td>
                 <td>Brain does not run. Stored records stay readable.</td>
               </tr>
@@ -2051,7 +2058,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
           <code>background-agent</code> role, so it needs that role assigned even when Brain is not
           otherwise in use. The compiler reads your sources' declared fields and people and may
           search the corpus to resolve a name; it writes a definition, the validator checks it, and
-          validation errors go back to the compiler to fix.
+          validation errors go back to the compiler to fix. The compiler chooses the stored Watch
+          name. Tell Omnesis receipts use that saved name and the compiler’s interpretation, so a
+          later request can identify the same Watch.
         </p>
         <p>
           It then replays the candidate over the last 90 days of the journal and, if the watch would

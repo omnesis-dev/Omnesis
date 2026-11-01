@@ -46,6 +46,19 @@ class NotesClientTest {
     """.trimIndent()
 
     @Test
+    fun handoff_receipt_decodes_as_an_ordinary_done_note() {
+        val note = OmnesisJson.decodeFromString<NoteEntryDto>(
+            """{"id":"note_example","day":"2026-11-01","capturedAt":"2026-11-01T10:00:00Z",
+                "updatedAt":"2026-11-01T10:00:00Z","text":"Repair the telescope","taskId":"task_example",
+                "agent":{"state":"done","receipt":{"text":"Which part needs replacing?","changes":[],
+                "conversationId":"conversation_example"}}}""",
+        )
+        assertEquals("task_example", note.taskId)
+        assertEquals("done", note.agent?.state)
+        assertEquals("conversation_example", note.agent?.receipt?.conversationId)
+    }
+
+    @Test
     fun create_posts_full_body_and_decodes_created_entry() = runTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody(entryJson))
         val entry = client().create(

@@ -184,6 +184,8 @@ data class TasksUiState(
      * "Accept with note" on a suggestion.
      */
     val noting: TaskDto? = null,
+    val telling: TaskDto? = null,
+    val tellAvailable: Boolean = false,
     /** The gateway opens conversations about tasks, so a task's fan offers Chat about this. */
     val chatAvailable: Boolean = false,
     /** The task whose conversation is being created. */

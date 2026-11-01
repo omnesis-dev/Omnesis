@@ -15,13 +15,16 @@
  * eagerly.
  */
 
+import { renderNoteConversationContext } from "./note-context.js";
 import { join } from "node:path";
 import {
   AnthropicBackend,
   HttpAgentBackend,
   buildBuiltinTools,
   CitationReads,
+  selectNonCitationTools,
   createBuiltinSpecialistRegistry,
+  type ToolHandle,
   type ChatBackend,
 } from "@omnesis/agent";
 import {
@@ -41,9 +44,6 @@ import { directIndexWriteGate } from "../indexer/index-write-gate.js";
 import { bootOmnesisChat } from "../sources/omnesis-chat/index.js";
 import { listSources } from "../data/repositories/SourceRepository.js";
 import { retainOmnesisChatConversation } from "../sources/omnesis-chat/wiring.js";
-import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
-import { createGatewayTemporalPort } from "../enrichment/temporal/interactive-temporal-port.js";
-import { createGatewayEntityContextPort } from "../domain/cognitive-graph/interactive-entity-context-port.js";
 import { resolveSelfMemory } from "../brain/self-memory.js";
 import { AnswerService } from "../privacy/answer-service.js";
 import { PrivacyPolicyStore } from "../privacy/policy-store.js";
@@ -63,13 +63,9 @@ import {
 import {
   createGatewayDocumentByUrlPort,
   createGatewayDocumentPort,
-  createGatewayPersonPort,
-  createGatewayRecordPort,
   createGatewaySearchPort,
-  createGatewaySqlPort,
-  createGatewayTrailPort,
 } from "./ports.js";
-import { createGatewayWatchPort, type WatchFiringRecord } from "./watch-port.js";
+import { createGatewayAgentPorts } from "./tool-ports.js";
 import { AgentService, type AgentAnswerNotification, type AgentPromptContext } from "./service.js";
 import { StoredConversationReader } from "./conversation-reader.js";
 import {
@@ -77,7 +73,8 @@ import {
   renderSourceRestrictedAnswerSection,
   rendersTimeline,
 } from "./system-prompt.js";
-import { createGatewayMessageCountPort, type MessageCountGate } from "./message-count-port.js";
+import type { WatchFiringRecord } from "./watch-port.js";
+import type { MessageCountGate } from "./message-count-port.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { PreflightOutcome } from "../watch/preflight.js";
@@ -451,61 +448,7 @@ export function createAgentService(
   return new AgentService({
     backendFactory,
     namedPagesNote: (message) => namedPagesNote(db, message),
-    ports: {
-      // `db` is passed so the agent search port can attach the 1-hop
-      // breadcrumb to top hits when graph context is off.
-      search: createGatewaySearchPort(searchPipeline, syncStatus, db),
-      document: createGatewayDocumentPort(db, syncStatus, {
-        graphContext: searchPipeline.agentSearchV2Enabled,
-      }),
-      documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus),
-      // `trace_connections` surfaces `same-entity` bound rows as point-in-time
-      // records, so it needs the same analytics DB `cite_record` uses
-      // (for the bound-row resolver + the record-display contract).
-      trail: createGatewayTrailPort(db, analyticsDb, {
-        graphContext: searchPipeline.agentSearchV2Enabled,
-      }),
-      sql: createGatewaySqlPort(analyticsDb),
-      // `cite_record` persists a single analytics row as a record citation.
-      //Wired with the same analytics DB as `run_sql` (for the table
-      // contract) and the document store (to resolve a bound document id).
-      record: createGatewayRecordPort(db, analyticsDb),
-      person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
-      // Unscoped, like `temporal`, so the source-restricted answer scope below
-      // never gets it.
-      messageCounts: createGatewayMessageCountPort(db, {
-        ...(deps.messageCountGate ? { gate: deps.messageCountGate } : {}),
-      }),
-      watch: experimentalVisible()
-        ? createGatewayWatchPort({
-            getAuthoring: deps.getWatchAuthoring,
-            firings: deps.watchFirings,
-            firingCount: deps.watchFiringCount,
-            isApnsConfigured: () => deps.isApnsConfigured(),
-            ...(deps.watchPreflight ? { preflight: deps.watchPreflight } : {}),
-          })
-        : undefined,
-      // Read-only loop port (experimental): lets the interactive agent find and
-      // read the background Cognition Steward's tracked obligations — no mutation, no
-      // briefs. Wired only in experimental mode (the loop system exists only
-      // then); the registry additionally gates the two tools on experimental.
-      loopRead: experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
-      // Read-only temporal port: lets the interactive agent answer "what's
-      // coming up?" in one call — source-owned dated facts and date mentions,
-      // both produced on the ingest path whether or not the background agent
-      // runs, plus that agent's own selective interpretations when it does.
-      // Unscoped, so the source-restricted answer scope below never gets it.
-      // No write surface.
-      temporal: createGatewayTemporalPort(db, analyticsDb, undefined, {
-        ...(deps.mentionWorthGateActive
-          ? { hideUnworthyMentions: deps.mentionWorthGateActive }
-          : {}),
-      }),
-      // Read-only cognitive-context (reap) port (experimental): lets the
-      // interactive agent pull the whole neighbourhood the background agent
-      // linked around one entity in a single call — no write surface.
-      entityContext: experimentalVisible() ? createGatewayEntityContextPort(db) : undefined,
-    },
+    ports: createGatewayAgentPorts(deps),
     // Function form so today's date, the live analytics catalog, and the
     // configured-source list are all fresh on every session-create.
     // Source-specific knowledge (table schemas, available `source:`
@@ -566,8 +509,15 @@ export function createAgentService(
       ? (sessionId) => omnesisChatRuntime.ensureConversationEvidence(sessionId)
       : undefined,
     onSessionClose: omnesisChatRuntime?.onSessionClose,
-    onConversationDeleted: omnesisChatRuntime?.onConversationDeleted,
-    onConversationRetained: omnesisChatRuntime?.onConversationRetained,
+    noteContext: (origin) => renderNoteConversationContext(db, origin),
+    onConversationDeleted: async (id) => {
+      await writeGate.cancelNoteHandoff(id);
+      await omnesisChatRuntime?.onConversationDeleted(id);
+    },
+    onConversationRetained: async (id) => {
+      await writeGate.cancelNoteHandoff(id);
+      return (await omnesisChatRuntime?.onConversationRetained(id)) ?? true;
+    },
     // Slow-answer push (`notifyAfterMs`) — the composition root supplies the
     // APNs fan-out; absent in minimal wirings, where the option is inert.
     notifyAnswer: deps.notifyAgentAnswer,
@@ -695,6 +645,31 @@ export interface AgentLifecycleDeps {
  * written.
  */
 export class AgentLifecycle {
+  /** Isolated owner tools and child-agent lifetime for one captured note. */
+  buildNoteTools(
+    backendFactory: () => ChatBackend,
+    runId: string,
+    taskTools: readonly ToolHandle[],
+    evidenceTools: readonly ToolHandle[],
+  ): { tools: readonly ToolHandle[]; dispose: (sessionId: string) => Promise<void> } {
+    const service = this.makeAgentService(
+      backendFactory,
+      this.deps.configStore.get().agent?.maxToolIterations,
+    );
+    service.setInteractiveMemoryProfile(this.interactiveMemoryProfile);
+    service.setInteractiveWriteProfile(this.interactiveWriteProfile);
+    return {
+      tools: selectNonCitationTools(service.buildOwnerTools(runId, taskTools, evidenceTools)),
+      dispose: async (sessionId) => {
+        try {
+          await service.disposeOwnerTurn(sessionId);
+        } finally {
+          await service.dispose();
+        }
+      },
+    };
+  }
+
   /**
    * The Morning brief conversation's per-turn context. Held here (not only
    * on the AgentService) because an agent-model swap rebuilds the service,

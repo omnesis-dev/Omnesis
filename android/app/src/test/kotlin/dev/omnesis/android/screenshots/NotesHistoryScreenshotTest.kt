@@ -51,6 +51,13 @@ class NotesHistoryScreenshotTest {
             }
         }
     }
+    private fun handoff(dark: Boolean) = capture("notes_handoff_${if (dark) "dark" else "light"}", dark,
+        NotesHistoryState(listOf(note.copy(text = "About this task…\n\nI need help choosing the replacement part.",
+            agent = NoteAgentDto("done", NoteReceiptDto("Which part needs replacing?", conversationId = "conversation_example")))),
+            loading = false, selectedId = note.id))
+    @Test fun notes_handoff_light() = handoff(false)
+    @Test fun notes_handoff_dark() = handoff(true)
+
     @Test fun notes_history_light() = capture("notes_history_light", false, NotesHistoryState(entries, loading = false, cursor = "next"))
     @Test fun notes_history_dark() = capture("notes_history_dark", true, NotesHistoryState(entries, loading = false))
     @Test fun notes_detail_light() = capture("notes_detail_light", false, NotesHistoryState(entries, loading = false, selectedId = note.id))

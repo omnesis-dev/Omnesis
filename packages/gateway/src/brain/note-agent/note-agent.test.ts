@@ -2,23 +2,39 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, unlinkSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { createLogger, type AgentEvent } from "@omnesis/core";
+import { HttpChatBackend } from "@omnesis/agent";
+import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
+import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { enqueueNotification } from "../../push/queue.js";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
-import { insertNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
+import {
+  insertNoteEntry,
+  updateNoteEntryText,
+  applyNoteEntryTranscript,
+  getNoteEntry,
+  type NoteEntry,
+} from "../../sources/omnesis-notes/storage.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import { insertPendingVoiceNote } from "../../voice-notes/storage.js";
 import { createOpenLoop, getOpenLoop, listOpenLoops } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
 import { TaskService } from "../tasks/service.js";
+import { createInteractiveMemoryProfile } from "../interactive-memory.js";
+import { resolveBrainSettings } from "../config.js";
+import { resolveSelfMemory } from "../self-memory.js";
+import { listLivePersonAnnotationsForPerson } from "../storage/person-annotations.js";
 import {
   NOTE_AGENT_MAX_ATTEMPTS,
   NOTE_RUN_STALE_MS,
   NOTE_SETTLE_MS,
   NOTE_TRANSCRIPT_WAIT_MS,
+  admitNoteMutation,
+  settleNoteMutation,
+  createNoteAgentTables,
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
@@ -26,7 +42,21 @@ import {
   hasPendingNotes,
   skipNewNotes,
 } from "./storage.js";
-import { NOTE_AGENT_SYSTEM_PROMPT, NoteAgent, type NoteAgentDeps } from "./runner.js";
+import {
+  noteHandoffId,
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  cancelNoteHandoff,
+} from "./handoffs.js";
+import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
+import { renderNoteConversationContext } from "../../agent/note-context.js";
+import {
+  noteTextChange,
+  NOTE_AGENT_SYSTEM_PROMPT,
+  NOTE_AGENT_TURN_TIMEOUT_MS,
+  NoteAgent,
+  type NoteAgentDeps,
+} from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
 
@@ -37,10 +67,13 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
+  vi.stubEnv("OMNESIS_SYNTHETIC", "0");
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
     if (existsSync(path + suffix)) unlinkSync(path + suffix);
@@ -239,7 +272,7 @@ function toolCallingBackend(
         const result = await handle.invoke(call.args, { ...ids, toolCallId } as never);
         yield {
           type: "agent.tool.result",
-          payload: { ...ids, toolCallId, result, durationMs: 1 },
+          payload: { ...ids, toolCallId, tool: call.tool, result, durationMs: 1 },
         } as AgentEvent;
       }
       yield { type: "agent.text.delta", payload: { ...ids, delta: receipt } };
@@ -279,6 +312,657 @@ function queueNote(text: string, id = `n_${randomUUID()}`) {
 }
 
 describe("note agent turn", () => {
+  test("self-memory from a note and its edit is visible to a fresh owner profile with Brain off", async () => {
+    const original = "Remember that my fictional greenhouse test label is violet.";
+    const corrected = "Remember that my fictional greenhouse test label is amber.";
+    const id = queueNote(original);
+    const docId = "doc_note_memory";
+    db.prepare(
+      `INSERT INTO people (id,canonical_name,source,is_self,first_seen,last_seen,created_at,updated_at)
+       VALUES ('self','Fictional owner','test',1,?,?,?,?)`,
+    ).run(T0, T0, T0, T0);
+    db.prepare(
+      `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,
+        source_created_at,source_updated_at,ingested_at,updated_at)
+       VALUES (?,'test','test','note-memory','Owner note',?,?,?,?,?,?)`,
+    ).run(docId, original, createHash("sha256").update(original).digest("hex"), T0, T0, T0, T0);
+    let now = T0 + 60_000;
+    const memory = createInteractiveMemoryProfile({
+      db,
+      writeGate: directWriteGate(db),
+      getSettings: () => resolveBrainSettings({ annotations: { enabled: false } }),
+      getEntailmentVerifier: () => Promise.resolve(null),
+      clock: () => now,
+      log,
+    });
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend((input) => {
+      seen.push(input);
+      const quote = input.userMessage.includes("amber") ? corrected : original;
+      return [
+        { tool: "annotation_search", args: { personId: "self" } },
+        {
+          tool: "annotate_person",
+          args: {
+            personId: "self",
+            claimType: "test-preference",
+            claimText:
+              quote === corrected
+                ? "The user's test label is amber."
+                : "The user's test label is violet.",
+            evidenceDocId: docId,
+            evidenceQuote: quote,
+            claimBasis: "quoted",
+            confidence: 0.8,
+          },
+        },
+      ];
+    }, "Remembered your test label.");
+    const { runner } = agent(backend, {
+      clock: () => now,
+      dayDocumentId: () => docId,
+      buildTools: (runId, tasks, evidence) => ({
+        tools: [...tasks, ...evidence, ...memory.buildOwnTools(runId)],
+        dispose: async () => undefined,
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(resolveSelfMemory(db, true).selfMemory).toContain("violet");
+    expect(seen[0]?.systemPrompt).toContain('self person ID is "self"');
+    expect(seen[0]?.systemPrompt).toContain(
+      "Use annotate_person for a durable fact about one person",
+    );
+    expect(seen[0]?.systemPrompt).toContain(
+      "Use annotate_durable for context about one specific document",
+    );
+    now += 60_000;
+    updateNoteEntryText(db, id, corrected, new Date(now).toISOString(), {
+      owner: true,
+      enabled: true,
+    });
+    db.prepare("UPDATE documents SET content=?,content_hash=? WHERE id=?").run(
+      corrected,
+      createHash("sha256").update(corrected).digest("hex"),
+      docId,
+    );
+    // The production document-update cascade uses this same writer boundary,
+    // independently of autonomous annotation generation being switched off.
+    await directWriteGate(db).invalidatePersonAnnotationsForDoc(docId, now);
+    expect(listLivePersonAnnotationsForPerson(db, "self")).toEqual([]);
+    now += 60_000;
+    expect(await runner.drain()).toBe(1);
+    expect(await runner.drain()).toBe(0);
+    const current = resolveSelfMemory(db, true);
+    expect(current.selfMemory).toContain("amber");
+    expect(current.selfMemory).not.toContain("violet");
+    expect(listLivePersonAnnotationsForPerson(db, "self")).toHaveLength(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM doc_annotations").get()).toEqual({ n: 0 });
+    expect(seen[1]?.systemPrompt).toContain('self person ID is "self"');
+  });
+
+  test("a note with no established self identity receives an explicit self-memory refusal boundary", async () => {
+    const id = queueNote("Remember that I prefer violet workshop labels.");
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend((input) => {
+      seen.push(input);
+      return [];
+    }, "Saved the note. Your self identity needs to be set up before I can save this to your profile.");
+    const { runner } = agent(backend);
+    expect(await runner.drain()).toBe(1);
+    expect(seen[0]?.systemPrompt).toContain("self identity has not been established");
+    expect(seen[0]?.systemPrompt).toContain("Do not invent a person ID");
+    expect(resolveSelfMemory(db, true).selfPersonId).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM person_annotations").get()).toEqual({ n: 0 });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toContain("before I can save");
+  });
+
+  test("the Note handoff accepts plain questions, bounds quoted findings and freezes before reservation", async () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    const entry = getNoteEntry(db, id)!;
+    let frozen = false;
+    let captured: import("./handoffs.js").NoteHandoff | undefined;
+    const tool = buildContinueInChatTool({
+      entry,
+      row,
+      finished: () => false,
+      freeze: () => {
+        frozen = true;
+      },
+      changes: () => [{ text: "Added chart", taskId: "loop_chart_context", undoSeq: 1 }],
+      context: () => ({
+        actionOutcomes: [],
+        readFindings: ["x".repeat(50_000)],
+        truncated: false,
+        confirmedTaskChanges: [{ taskId: "loop_chart_context" }],
+        pendingMutations: 1,
+      }),
+      reserve: async (input) => {
+        expect(frozen).toBe(true);
+        captured = input;
+        return true;
+      },
+    });
+    const context = { sessionId: "test", messageId: "message" };
+    expect(
+      await tool.invoke(
+        { question: "Which dome?", choices: [{ label: "East" }, { label: "West" }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "invalid_args" });
+    expect(frozen).toBe(false);
+    expect(
+      await tool.invoke({ question: "Which dome?", context: "A target is needed." }, context),
+    ).toMatchObject({ kind: "structured", resultType: "note.clarification_queued" });
+    expect(Buffer.byteLength(captured!.context, "utf8")).toBeLessThanOrEqual(45_000);
+    expect(JSON.parse(captured!.context)).toMatchObject({
+      truncated: true,
+      confirmedTaskChanges: [{ taskId: "loop_chart_context" }],
+    });
+    expect(captured?.requiresReview).toBe(true);
+  });
+
+  test("handoff claims use the active partial index rather than scanning completed history", () => {
+    const details = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT entry_id,revision,payload_json,state,conversation_id FROM note_agent_handoffs WHERE state IN ('pending','publishing') ORDER BY rowid LIMIT 1",
+      )
+      .all() as Array<{ detail: string }>;
+    expect(details.map((row) => row.detail).join(" ")).toContain("idx_note_handoffs_active");
+  });
+
+  test("a clear action with an unidentified target broadens once and hands off instead of a not-found receipt", async () => {
+    expect(
+      applyTaskCommand(
+        db,
+        {
+          kind: "create",
+          surface: "tasks",
+          runId: "user:fixture",
+          id: "loop_poster_related",
+          origin: "user",
+          title: "Archive the astronomy club poster",
+        },
+        T0,
+      ).ok,
+    ).toBe(true);
+    const id = queueNote("Cancel the astronomy club leaflet task.");
+    const opened: import("./handoffs.js").NoteHandoff[] = [];
+    const results: ToolResult[] = [];
+    const inner = toolCallingBackend((input) => {
+      expect(input.systemPrompt).toContain("you must call continue_in_chat when available");
+      expect(input.systemPrompt).toContain("Never repeat an identical query with different views");
+      expect(input.systemPrompt).toContain(
+        "If a plausible match is uncertain or multiple tasks could match",
+      );
+      expect(input.systemPrompt).toContain("broaden it once to a short distinctive noun");
+      expect(input.systemPrompt).toContain(
+        "apply the blocked-action handoff rule instead of stopping with a not-found receipt",
+      );
+      return [
+        { tool: "task_list", args: { query: "astronomy club leaflet" } },
+        { tool: "task_list", args: { query: "astronomy" } },
+        {
+          tool: "continue_in_chat",
+          args: {
+            question: "Which astronomy club task should I cancel?",
+            context:
+              "A related poster task exists, but the note names a different item. No task has been changed.",
+          },
+        },
+      ];
+    }, "The question is in chat.");
+    const backend: ChatBackend = {
+      ...inner,
+      async *runTurn(input) {
+        for await (const event of inner.runTurn(input)) {
+          if (event.type === "agent.tool.result") results.push(event.payload.result);
+          yield event;
+        }
+      },
+    };
+    const { runner } = agent(backend, {
+      openClarification: async (input) => {
+        opened.push(input);
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(results[0]).toMatchObject({
+      kind: "structured",
+      resultType: "task.list",
+      data: { tasks: [] },
+    });
+    expect(results[1]).toMatchObject({
+      kind: "structured",
+      resultType: "task.list",
+      data: { tasks: [expect.objectContaining({ id: "loop_poster_related" })] },
+    });
+    expect(opened).toHaveLength(1);
+    expect(getOpenLoop(db, "loop_poster_related")?.state).toBe("open");
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { conversationId: opened[0]!.conversationId, changes: [] },
+    });
+  });
+
+  test("an untracked completed-work report stays a note without an unnecessary chat", async () => {
+    const id = queueNote("I cleaned my astronomy notebook.");
+    const opened = vi.fn();
+    const { runner } = agent(
+      toolCallingBackend((input) => {
+        expect(input.systemPrompt).toContain(
+          "A plain completed-work report with no relevant task and no explicit action request may remain a saved note without opening a chat",
+        );
+        return [{ tool: "task_list", args: { query: "astronomy" } }];
+      }, "Saved your note."),
+      { openClarification: opened },
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(opened).not.toHaveBeenCalled();
+    expect(listOpenLoops(db, {})).toEqual([]);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { text: "Saved your note.", changes: [] },
+    });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).not.toHaveProperty("conversationId");
+  });
+
+  test.each(["complete", "strike"] as const)(
+    "a verified already-fulfilled %s request needs no handoff",
+    async (action) => {
+      const taskId = "loop_finished_poster";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            kind: "create",
+            surface: "tasks",
+            runId: "user:fixture",
+            id: taskId,
+            origin: "user",
+            title: "Archive the astronomy club poster",
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      expect(
+        applyTaskCommand(
+          db,
+          { kind: action, surface: "tasks", runId: "user:fixture", id: taskId },
+          T0,
+        ).ok,
+      ).toBe(true);
+      const id = queueNote(
+        action === "complete"
+          ? "Mark the astronomy club poster task done."
+          : "Cancel the astronomy club poster task.",
+      );
+      const opened = vi.fn();
+      const { runner } = agent(
+        toolCallingBackend((input) => {
+          expect(input.systemPrompt).toContain(
+            "For an explicit task action, only treat the request as already fulfilled after verifying",
+          );
+          return [{ tool: "task_list", args: { view: "done" } }];
+        }, "The task is already finished as requested; nothing changed."),
+        { openClarification: opened },
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(opened).not.toHaveBeenCalled();
+      expect(getOpenLoop(db, taskId)?.state).toBe(action === "complete" ? "done" : "dismissed");
+      expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([]);
+    },
+  );
+
+  test("a blocked note hands off once, preserves work and refuses subsequent mutations", async () => {
+    const id = queueNote("Prepare the observatory chart and ask which dome needs a repair.");
+    const opened: import("./handoffs.js").NoteHandoff[] = [];
+    const seen: TurnInput[] = [];
+    const { runner } = agent(
+      toolCallingBackend(
+        (input) => {
+          expect(input.tools.map((t) => t.name)).toContain("continue_in_chat");
+          expect(input.tools.map((t) => t.name)).not.toContain("ask_clarification");
+          expect(input.tools.map((t) => t.name)).not.toContain("cite_record");
+          return [
+            { tool: "task_list", args: { query: "observatory" } },
+            { tool: "task_create", args: { title: "Prepare the observatory chart" } },
+            { tool: "task_update", args: { id: "loop_missing_target", action: "strike" } },
+            {
+              tool: "continue_in_chat",
+              args: {
+                question: "Which observatory dome needs a repair?",
+                context: "Two domes are mentioned; the chart task has already been added.",
+              },
+            },
+            { tool: "task_create", args: { title: "Unauthorized task after handoff" } },
+          ];
+        },
+        "I moved the question to chat.",
+        seen,
+      ),
+      {
+        openClarification: async (input) => {
+          opened.push(input);
+        },
+        buildTools: (_id, tasks, evidence) => ({
+          tools: [
+            ...tasks,
+            ...evidence,
+            {
+              name: "cite_record",
+              description: "Chat-only citation.",
+              schema: z.object({}),
+              mutates: true,
+              invoke: async () => ({ kind: "structured", resultType: "citation", data: {} }),
+            },
+          ],
+          dispose: async () => undefined,
+        }),
+      },
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(await runner.drain()).toBe(0);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      conversationId: noteHandoffId(id, 0),
+      noteId: id,
+      revision: 0,
+      text: expect.stringContaining("observatory"),
+      question: "Which observatory dome needs a repair?",
+    });
+    const tasks = listOpenLoops(db, {});
+    expect(tasks.map((task) => task.title)).toEqual(["Prepare the observatory chart"]);
+    expect(opened[0]?.context).toContain(tasks[0]!.id);
+    expect(opened[0]?.changes).toHaveLength(1);
+    const outcomes = (
+      JSON.parse(opened[0]!.context) as { actionOutcomes: string[] }
+    ).actionOutcomes.map((value) => JSON.parse(value) as { tool: string; applied: boolean });
+    expect(outcomes).toContainEqual(
+      expect.objectContaining({ tool: "task_create", applied: true }),
+    );
+    expect(outcomes).toContainEqual(
+      expect.objectContaining({ tool: "task_update", applied: false }),
+    );
+    expect(opened[0]?.requiresReview).toBe(false);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: {
+        conversationId: opened[0]!.conversationId,
+        changes: [expect.objectContaining({ taskId: tasks[0]!.id })],
+      },
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  test("handoff records an already admitted pending action for readback rather than replay", async () => {
+    queueNote("Prepare the dome checklist and clarify the repair target.");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const began = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let pending: Promise<ToolResult> | undefined;
+    let captured: import("./handoffs.js").NoteHandoff | undefined;
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        const args = { id: "loop_dome_checklist" };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "slow", tool: "slow_task", args },
+        } as AgentEvent;
+        pending = input.tools
+          .find((tool) => tool.name === "slow_task")!
+          .invoke(args, { ...ids, toolCallId: "slow" } as never);
+        await began;
+        const question = { question: "Which dome needs a repair?" };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "handoff", tool: "continue_in_chat", args: question },
+        } as AgentEvent;
+        try {
+          const result = await input.tools
+            .find((tool) => tool.name === "continue_in_chat")!
+            .invoke(question, { ...ids, toolCallId: "handoff" } as never);
+          yield {
+            type: "agent.tool.result",
+            payload: { ...ids, toolCallId: "handoff", result, durationMs: 1 },
+          };
+        } finally {
+          release();
+        }
+        await pending;
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const { runner } = agent(backend, {
+      openClarification: async (input) => {
+        captured = input;
+      },
+      buildTools: (_id, tasks, evidence) => ({
+        tools: [
+          ...tasks,
+          ...evidence,
+          {
+            name: "slow_task",
+            description: "Already admitted test write.",
+            schema: z.object({ id: z.string() }),
+            mutates: true,
+            invoke: async () => {
+              started();
+              await held;
+              const result = applyTaskCommand(
+                db,
+                {
+                  kind: "create",
+                  surface: "note",
+                  runId: "note_pending_fixture",
+                  id: "loop_dome_checklist",
+                  origin: "note",
+                  title: "Prepare the dome checklist",
+                },
+                T0,
+              );
+              expect(result.ok).toBe(true);
+              return {
+                kind: "structured",
+                resultType: "test.write",
+                data: { id: "loop_dome_checklist" },
+              };
+            },
+          },
+        ],
+        dispose: async () => {
+          await pending;
+        },
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    await pending;
+    expect(captured?.context).toContain('"pendingMutations":1');
+    expect(captured?.context).toContain("loop_dome_checklist");
+    expect(await runner.drain()).toBe(0);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+  });
+
+  test("handoff recovery opens the reserved question without rerunning the model or earlier writes", async () => {
+    const id = queueNote("Add a task to prepare a star chart, then clarify which dome to repair.");
+    let opens = 0;
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => [
+        { tool: "task_create", args: { title: "Prepare a star chart" } },
+        {
+          tool: "continue_in_chat",
+          args: {
+            question: "Which dome needs repair?",
+            context: "Fictional candidate evidence marker.",
+          },
+        },
+      ],
+      "Continue in chat.",
+      seen,
+    );
+    const { runner } = agent(backend, {
+      openClarification: async () => {
+        opens++;
+        if (opens === 1) throw new Error("Conversation storage is temporarily unavailable");
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "running", receipt: null });
+    const restarted = agent(backend, {
+      openClarification: async () => {
+        opens++;
+      },
+    }).runner;
+    expect(await restarted.drain()).toBe(0);
+    expect(opens).toBe(2);
+    expect(seen).toHaveLength(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { conversationId: noteHandoffId(id, 0) },
+    });
+    const conversationId = noteHandoffId(id, 0);
+    const payload = () =>
+      JSON.parse(
+        (
+          db
+            .prepare("SELECT payload_json FROM note_agent_handoffs WHERE conversation_id=?")
+            .get(conversationId) as { payload_json: string }
+        ).payload_json,
+      ) as { changes: unknown[] };
+    expect(Object.keys(payload())).toEqual(["changes"]);
+    expect(payload().changes).toHaveLength(1);
+    expect(JSON.stringify(payload())).not.toContain("Fictional candidate evidence marker");
+    const device = createDevice(db, { name: "Fictional handoff phone", kind: "ios" });
+    const queued = enqueueNotification(db, {
+      message: {
+        kind: "conversation",
+        title: "Repair question",
+        body: "Which dome needs repair?",
+        data: { conversationId },
+        collapseId: `conversation:${conversationId}`,
+      },
+      deviceIds: [device.id],
+      createdAt: T0,
+      expiresAt: T0 + 60_000,
+    })!;
+    enqueueNotification(db, {
+      message: {
+        kind: "conversation",
+        title: "Another question",
+        body: "A different thread.",
+        data: { conversationId: `${conversationId}_other` },
+        collapseId: `conversation:${conversationId}_other`,
+      },
+      deviceIds: [device.id],
+      createdAt: T0,
+      expiresAt: T0 + 60_000,
+    });
+    cancelNoteHandoff(db, conversationId);
+    expect(Object.keys(payload())).toEqual(["changes"]);
+    expect(payload().changes).toHaveLength(1);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS n FROM notification_deliveries WHERE notification_id=?")
+        .get(queued.notificationId),
+    ).toEqual({ n: 0 });
+    expect(db.prepare("SELECT target_id FROM notifications").all()).toEqual([
+      { target_id: `${conversationId}_other` },
+    ]);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).not.toHaveProperty("conversationId");
+    expect(await restarted.drain()).toBe(0);
+    expect(opens).toBe(2);
+  });
+
+  test("writer reservation rejects a superseded or external note and old pending handoffs do not block edits", () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    const input = {
+      conversationId: noteHandoffId(id, row.revision),
+      noteId: id,
+      revision: row.revision,
+      attempt: row.attempts,
+      text: row.inputText,
+      capturedAt: "2026-03-10T08:00:00Z",
+      day: "2026-03-10",
+      instructionAt: "2026-03-10T08:00:00Z",
+      question: "Which dome?",
+      context: "Read findings.",
+      changes: [],
+    };
+    expect(reserveNoteHandoff(db, input)).toBe(true);
+    updateNoteEntryText(
+      db,
+      id,
+      "Clarify which lens needs cleaning.",
+      new Date(T0 + 61_000).toISOString(),
+      { owner: true, enabled: true },
+    );
+    expect(claimNoteHandoff(db, T0 + 61_000)).toBeNull();
+    expect(
+      (
+        db
+          .prepare("SELECT payload_json FROM note_agent_handoffs WHERE conversation_id=?")
+          .get(input.conversationId) as { payload_json: string }
+      ).payload_json,
+    ).not.toContain("Read findings");
+    const edited = claimDueNote(db, T0 + 90_000)!;
+    expect(edited.revision).toBe(1);
+    expect(reserveNoteHandoff(db, input)).toBe(false);
+    updateNoteEntryText(db, id, "External instructions", new Date(T0 + 91_000).toISOString(), {
+      owner: false,
+      enabled: true,
+    });
+    expect(
+      reserveNoteHandoff(db, {
+        ...input,
+        revision: edited.revision,
+        attempt: edited.attempts,
+        text: edited.inputText,
+      }),
+    ).toBe(false);
+  });
+
+  test("continuation context tracks edits and deletion without promoting external prose", () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const origin = {
+      kind: "note" as const,
+      noteId: id,
+      revision: 0,
+      runId: "note-fixture",
+      processingContext: "Confirmed task: loop_chart. Candidates: east and west domes.",
+    };
+    expect(renderNoteConversationContext(db, origin)).toContain("unchanged");
+    expect(renderNoteConversationContext(db, origin)).toContain("loop_chart");
+    updateNoteEntryText(db, id, "Use the west dome.", new Date(T0 + 61_000).toISOString(), {
+      owner: true,
+      enabled: true,
+    });
+    expect(renderNoteConversationContext(db, origin)).toContain(
+      "edited since this conversation opened",
+    );
+    expect(renderNoteConversationContext(db, origin)).toContain("Use the west dome.");
+    updateNoteEntryText(db, id, "Foreign injected command.", new Date(T0 + 62_000).toISOString(), {
+      owner: false,
+      enabled: true,
+    });
+    const external = renderNoteConversationContext(db, origin);
+    expect(external).toContain("edited externally");
+    expect(external).not.toContain("Foreign injected command");
+    db.prepare("DELETE FROM note_entries WHERE id=?").run(id);
+    expect(renderNoteConversationContext(db, origin)).toContain("deleted");
+  });
+
   test("adds the task the note asks for and records the receipt", async () => {
     const id = queueNote("Remind me to renew the bike insurance tomorrow");
     const seen: TurnInput[] = [];
@@ -312,7 +996,7 @@ describe("note agent turn", () => {
     expect(usage).toEqual([{ model: "scripted-model", input: 40 }]);
 
     // The turn saw the note, the notes document to cite, and the note prompt.
-    expect(seen[0]!.systemPrompt).toBe(NOTE_AGENT_SYSTEM_PROMPT);
+    expect(seen[0]!.systemPrompt.startsWith(NOTE_AGENT_SYSTEM_PROMPT)).toBe(true);
     expect(seen[0]!.userMessage).toContain("Remind me to renew the bike insurance tomorrow");
     expect(seen[0]!.userMessage).toContain("doc_notes_2026-03-10");
     expect(seen[0]!.tools.map((tool) => tool.name)).toEqual([
@@ -323,8 +1007,70 @@ describe("note agent turn", () => {
     ]);
   });
 
+  test.each([true, false])(
+    "the receipt excludes commentary before and between tool calls (final text=%s)",
+    async (hasFinalText) => {
+      const id = queueNote("Add a task to prepare the greenhouse seed trays.");
+      const receipt = "Added preparing the greenhouse seed trays to your tasks.";
+      const scripted = toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "greenhouse seed trays" } },
+          { tool: "task_create", args: { title: "Prepare the greenhouse seed trays" } },
+        ],
+        hasFinalText ? receipt : "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          const ids = { sessionId: input.sessionId, messageId: input.messageId };
+          for await (const event of scripted.runTurn(input)) {
+            if (event.type === "agent.text.delta") {
+              if (hasFinalText) {
+                yield {
+                  type: "agent.text.delta",
+                  payload: { ...ids, delta: receipt.slice(0, 17) },
+                };
+                yield { type: "agent.text.delta", payload: { ...ids, delta: receipt.slice(17) } };
+              }
+              continue;
+            }
+            yield event;
+            if (event.type === "agent.message.start")
+              yield {
+                type: "agent.text.delta",
+                payload: { ...ids, delta: "I'll check whether this task already exists." },
+              };
+            if (event.type === "agent.tool.result" && event.payload.toolCallId === "call_0")
+              yield {
+                type: "agent.text.delta",
+                payload: { ...ids, delta: "No matching task exists; I'll add it now." },
+              };
+          }
+        },
+      };
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      const run = getNoteRuns(db, [id]).get(id)!;
+      expect(run).toMatchObject({
+        state: "done",
+        receipt: {
+          text: hasFinalText ? receipt : "Added: Prepare the greenhouse seed trays",
+          changes: [
+            { text: "Added: Prepare the greenhouse seed trays", undoSeq: expect.any(Number) },
+          ],
+        },
+      });
+      expect(listOpenLoops(db, {})).toEqual([
+        expect.objectContaining({ title: "Prepare the greenhouse seed trays", origin: "note" }),
+      ]);
+    },
+  );
+
   test("the turn is offered memory and read tools beside the task tools", async () => {
     const remembered: unknown[] = [];
+    let evidenceResult: unknown;
+    const disposed: string[] = [];
     const stub = (name: string, mutates: boolean) => ({
       name,
       description: name,
@@ -339,16 +1085,35 @@ describe("note agent turn", () => {
     const seen: TurnInput[] = [];
     const { runner } = agent(
       toolCallingBackend(
-        () => [{ tool: "annotate_person", args: { text: "vegetarian" } }],
+        () => [
+          { tool: "annotate_person", args: { text: "vegetarian" } },
+          { tool: "conversation_memory_evidence", args: {} },
+        ],
         "Remembered that you are vegetarian.",
         seen,
       ),
       {
-        buildMemoryTools: (runId) => {
+        buildTools: (runId, taskTools, evidenceTools) => {
           expect(runId).toMatch(/^note:/);
-          return [stub("annotate_person", true) as unknown as ToolHandle];
+          return {
+            tools: [
+              ...taskTools,
+              stub("annotate_person", true) as unknown as ToolHandle,
+              stub("search_many", false) as unknown as ToolHandle,
+              ...evidenceTools.map((tool) => ({
+                ...tool,
+                async invoke(...args: Parameters<ToolHandle["invoke"]>) {
+                  const result = await tool.invoke(...args);
+                  evidenceResult = result;
+                  return result;
+                },
+              })),
+            ],
+            dispose: async (sessionId) => {
+              disposed.push(sessionId);
+            },
+          };
         },
-        readTools: () => [stub("search_many", false) as unknown as ToolHandle],
       },
     );
     await runner.drain();
@@ -359,8 +1124,474 @@ describe("note agent turn", () => {
       "task_undo",
       "annotate_person",
       "search_many",
+      "conversation_memory_evidence",
     ]);
     expect(remembered).toEqual([{ text: "vegetarian" }]);
+    expect(seen[0]!.caller).toEqual({ kind: "operator" });
+    expect(seen[0]!.timeZone).toBe("Europe/London");
+    expect(disposed).toEqual([seen[0]!.sessionId]);
+    expect(evidenceResult).toMatchObject({
+      kind: "structured",
+      data: { documentId: "doc_notes_2026-03-10", userMessages: ["I'm vegetarian now"] },
+    });
+  });
+
+  test("a failed turn settles its isolated tool runtime", async () => {
+    const id = queueNote("Look up the garden plan");
+    let disposed = false;
+    const { runner } = agent(
+      {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          yield {
+            type: "agent.message.start",
+            payload: { sessionId: input.sessionId, messageId: input.messageId, role: "assistant" },
+          };
+          throw new Error("scripted outage");
+        },
+      },
+      {
+        buildTools: (_, taskTools) => ({
+          tools: taskTools,
+          dispose: async () => {
+            disposed = true;
+          },
+        }),
+      },
+    );
+    await runner.drain();
+    expect(disposed).toBe(true);
+    expect(getNoteRuns(db, [id]).get(id)?.state).toBe("pending");
+  });
+
+  test.each([true, false])(
+    "a watch call followed by a model outage retries only if the watch failed (applied=%s)",
+    async (applied) => {
+      const id = queueNote("Tell me when greenhouse supplies are ready.");
+      let now = T0 + 60_000;
+      let calls = 0;
+      const watches: string[] = [];
+      const watch: ToolHandle = {
+        name: "watch_create",
+        description: "Set up the requested watch.",
+        mutates: true,
+        schema: z.object({ request: z.string() }),
+        async invoke() {
+          calls += 1;
+          if (!applied)
+            return { kind: "error", code: "unavailable", message: "Watch compiler unavailable." };
+          watches.push("watch_greenhouse");
+          return {
+            kind: "watch.upserted",
+            watchId: "watch_greenhouse",
+            name: "Greenhouse supplies",
+            action: "created",
+            enabled: true,
+            summary: "Notify when greenhouse supplies are ready.",
+            interpretation: "Notify when greenhouse supplies are ready.",
+          };
+        },
+      };
+      const scripted = toolCallingBackend(
+        () => [{ tool: "watch_create", args: { request: "Greenhouse supplies are ready." } }],
+        "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          for await (const event of scripted.runTurn(input)) {
+            if (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+              yield event;
+          }
+          throw new Error("scripted outage after the watch call");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools) => ({
+          tools: [...taskTools, watch],
+          dispose: async () => {},
+        }),
+      });
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(1);
+      const run = getNoteRuns(db, [id]).get(id)!;
+      if (applied) {
+        expect(run).toMatchObject({
+          state: "done",
+          attempts: 1,
+          error: null,
+          receipt: {
+            text: "An action was applied before processing stopped. Review the result before asking again. Created watch “Greenhouse supplies”. Notify when greenhouse supplies are ready.",
+            changes: [],
+          },
+        });
+      } else {
+        expect(run).toMatchObject({ state: "pending", attempts: 1, receipt: null });
+        expect(run.error).toContain("scripted outage");
+      }
+
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(applied ? 0 : 1);
+      expect(calls).toBe(applied ? 1 : 2);
+      expect(watches).toEqual(applied ? ["watch_greenhouse"] : []);
+      expect(getNoteRuns(db, [id]).get(id)?.attempts).toBe(applied ? 1 : 2);
+    },
+  );
+
+  test.each(["watch_create", "watch_update"])(
+    "%s reporting an installed but unarmed watch is not replayed after a model failure",
+    async (toolName) => {
+      const id = queueNote("Notify me when the greenhouse seed trays are delivered.");
+      let now = T0 + 60_000;
+      let committedWrites = 0;
+      const watch: ToolHandle = {
+        name: toolName,
+        description: "Save the requested watch, then try to arm it.",
+        mutates: true,
+        schema: z.object({ request: z.string(), watchId: z.string().optional() }),
+        async invoke() {
+          committedWrites += 1;
+          return {
+            kind: "error",
+            code: "unarmed",
+            message: "The watch was written and installed, but could not be armed and is held.",
+          };
+        },
+      };
+      const scripted = toolCallingBackend(
+        () => [
+          {
+            tool: toolName,
+            args: { request: "Seed trays delivered", watchId: "watch_greenhouse" },
+          },
+        ],
+        "",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          for await (const event of scripted.runTurn(input))
+            if (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+              yield event;
+          throw new Error("scripted outage after the watch was stored");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools) => ({ tools: [...taskTools, watch], dispose: async () => {} }),
+      });
+      expect(await runner.drain()).toBe(1);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        error: null,
+        receipt: {
+          text: "An action was applied before processing stopped. Review the result before asking again.",
+          changes: [],
+        },
+      });
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(0);
+      expect(committedWrites).toBe(1);
+    },
+  );
+
+  test.each([true, false])(
+    "a throwing task write is not replayed when it may have committed (committed=%s)",
+    async (committed) => {
+      const id = queueNote("Add a task to label the greenhouse seed trays.");
+      let now = T0 + 60_000;
+      let writes = 0;
+      const service = new TaskService(db, directWriteGate(db), () => now);
+      const { runner } = agent(
+        toolCallingBackend(
+          () => [{ tool: "task_create", args: { title: "Label the greenhouse seed trays" } }],
+          "",
+        ),
+        {
+          clock: () => now,
+          tasks: {
+            async apply(command) {
+              writes += 1;
+              if (committed) await service.apply(command);
+              throw new Error(committed ? "mirror failed after commit" : "writer unavailable");
+            },
+          },
+        },
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        receipt: {
+          text: "An action may have been applied. Review the result before asking again.",
+          changes: [],
+        },
+      });
+      expect(listOpenLoops(db, {})).toHaveLength(committed ? 1 : 0);
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(0);
+      expect(writes).toBe(1);
+      expect(listOpenLoops(db, {})).toHaveLength(committed ? 1 : 0);
+    },
+  );
+
+  test("an uncertain write is disclosed even when the backend recovers and finishes", async () => {
+    const id = queueNote("Update the greenhouse supplies watch.");
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "call_watch", tool: "watch_update", args: {} },
+        };
+        try {
+          await input.tools.find((tool) => tool.name === "watch_update")!.invoke({}, ids);
+        } catch {
+          // A backend may handle a tool exception and still complete its response.
+        }
+        yield { type: "agent.text.delta", payload: { ...ids, delta: "Nothing was changed." } };
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const { runner } = agent(backend, {
+      buildTools: (_, taskTools) => ({
+        tools: [
+          ...taskTools,
+          {
+            name: "watch_update",
+            description: "Update the requested watch.",
+            mutates: true,
+            schema: z.object({}),
+            async invoke() {
+              throw new Error("unknown write outcome");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    await runner.drain();
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: {
+        text: "An action may have been applied. Review the result before asking again.",
+        changes: [],
+      },
+    });
+  });
+
+  test.each(["conversation_memory_evidence"])(
+    "throwing replayable bookkeeping %s keeps the note retryable",
+    async (name) => {
+      const id = queueNote("Remember the greenhouse seed delivery date.");
+      let now = T0 + 60_000;
+      let calls = 0;
+      const { runner } = agent(
+        toolCallingBackend(() => [{ tool: name, args: {} }], ""),
+        {
+          clock: () => now,
+          buildTools: (_, taskTools) => ({
+            tools: [
+              ...taskTools,
+              {
+                name,
+                description: "Prepare replayable evidence or citation bookkeeping.",
+                mutates: true,
+                schema: z.object({}),
+                async invoke() {
+                  calls += 1;
+                  throw new Error("bookkeeping unavailable");
+                },
+              },
+            ],
+            dispose: async () => {},
+          }),
+        },
+      );
+      await runner.drain();
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 1 });
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(2);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 2 });
+    },
+  );
+
+  type WatchUpsertedResult = Extract<ToolResult, { kind: "watch.upserted" }>;
+
+  function watchResult(overrides: Partial<WatchUpsertedResult> = {}): WatchUpsertedResult {
+    return {
+      kind: "watch.upserted",
+      watchId: "watch_greenhouse",
+      name: "greenhouse-seed-tray-delivery",
+      action: "created",
+      enabled: true,
+      interpretation: "Notify when the greenhouse seed trays are delivered.",
+      ...overrides,
+    };
+  }
+
+  async function watchReceipt(
+    results: ToolResult[],
+    options: { mixed?: boolean; fail?: boolean; uncertain?: boolean } = {},
+  ) {
+    const id = queueNote("Watch for the greenhouse delivery and carry out the requested updates.");
+    let index = 0;
+    const calls = results.map((result) => ({
+      tool:
+        result.kind === "watch.upserted"
+          ? result.action === "updated"
+            ? "watch_update"
+            : "watch_create"
+          : "watch_delete",
+      args: {},
+    }));
+    if (options.mixed) {
+      calls.push({ tool: "task_create", args: { title: "Prepare the seed trays" } });
+      calls.push({ tool: "annotate_person", args: {} });
+    }
+    if (options.uncertain) calls.push({ tool: "notes_append", args: {} });
+    const scripted = toolCallingBackend(
+      () => calls,
+      "Created the requested Greenhouse delivery reminder.",
+    );
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        for await (const event of scripted.runTurn(input))
+          if (
+            !options.fail ||
+            (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+          )
+            yield event;
+        if (options.fail) throw new Error("scripted outage after the watch call");
+      },
+    };
+    const { runner } = agent(backend, {
+      buildTools: (_, taskTools) => ({
+        tools: [
+          ...taskTools,
+          ...["watch_create", "watch_update", "watch_delete"].map((name): ToolHandle => ({
+            name,
+            description: "Persist the requested watch action.",
+            mutates: true,
+            schema: z.object({}),
+            invoke: async () => results[index++]!,
+          })),
+          {
+            name: "annotate_person",
+            description: "Remember the requested preference.",
+            mutates: true,
+            schema: z.object({}),
+            invoke: async () => ({
+              kind: "structured",
+              resultType: "person_annotation.created",
+              data: { id: "panno_preference" },
+            }),
+          },
+          {
+            name: "notes_append",
+            description: "Append requested memory.",
+            mutates: true,
+            schema: z.object({}),
+            async invoke() {
+              throw new Error("uncertain notes write");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    await runner.drain();
+    return getNoteRuns(db, [id]).get(id)!;
+  }
+
+  test("watch receipts use saved canonical names and interpretations instead of the model's invented label", async () => {
+    const run = await watchReceipt([watchResult({ summary: "A caption chosen by the model" })]);
+    expect(run.receipt?.text).toBe(
+      "Created watch “greenhouse-seed-tray-delivery”. Notify when the greenhouse seed trays are delivered.",
+    );
+    expect(run.receipt?.text).not.toContain("Greenhouse delivery reminder");
+    expect(run.receipt?.text).not.toContain("caption chosen");
+  });
+
+  test("a watch's latest update replaces its earlier name and interpretation in the receipt", async () => {
+    const run = await watchReceipt([
+      watchResult({ name: "old-seed-delivery", interpretation: "Old condition." }),
+      watchResult({
+        action: "updated",
+        name: "current-seed-delivery",
+        interpretation: "Current condition.",
+      }),
+    ]);
+    expect(run.receipt?.text).toBe("Updated watch “current-seed-delivery”. Current condition.");
+  });
+
+  test("a removed watch is not reported as still saved", async () => {
+    const run = await watchReceipt([
+      watchResult(),
+      { kind: "structured", resultType: "watch.removed", data: { watchId: "watch_greenhouse" } },
+    ]);
+    expect(run.receipt?.text).toBe("Removed watch “greenhouse-seed-tray-delivery”.");
+    expect(run.receipt?.text).not.toContain("Created");
+    const removal = await watchReceipt([
+      { kind: "structured", resultType: "watch.removed", data: { watchId: "watch_other" } },
+    ]);
+    expect(removal.receipt?.text).toBe("Removed the requested watch.");
+  });
+
+  test("a mixed watch, task and memory note reports grounded actions and advisory warnings", async () => {
+    const run = await watchReceipt(
+      [watchResult({ enabled: false, warnings: ["Push delivery is not configured."] })],
+      { mixed: true },
+    );
+    expect(run.receipt?.text).toBe(
+      "Created watch “greenhouse-seed-tray-delivery” (not enabled). Push delivery is not configured. Added: Prepare the seed trays Other changes were also applied. Notify when the greenhouse seed trays are delivered.",
+    );
+    expect(run.receipt?.changes).toEqual([
+      expect.objectContaining({
+        text: "Added: Prepare the seed trays",
+        undoSeq: expect.any(Number),
+      }),
+    ]);
+  });
+
+  test.each([false, true])(
+    "review warnings retain priority and canonical watch identity (uncertain=%s)",
+    async (uncertain) => {
+      const run = await watchReceipt(
+        [watchResult()],
+        uncertain ? { uncertain: true } : { fail: true },
+      );
+      expect(run.state).toBe("done");
+      expect(run.receipt?.text).toBe(
+        `${uncertain ? "An action may have been applied." : "An action was applied before processing stopped."} Review the result before asking again. Created watch “greenhouse-seed-tray-delivery”. Notify when the greenhouse seed trays are delivered.`,
+      );
+    },
+  );
+
+  test("a long interpretation cannot truncate the canonical name or delivery warning", async () => {
+    const run = await watchReceipt([
+      watchResult({
+        interpretation: "Detailed condition. ".repeat(150),
+        warnings: ["Push delivery is not configured."],
+      }),
+    ]);
+    expect(run.receipt?.text).toHaveLength(1000);
+    expect(
+      run.receipt?.text?.startsWith(
+        "Created watch “greenhouse-seed-tray-delivery”. Push delivery is not configured.",
+      ),
+    ).toBe(true);
   });
 
   test("completes an existing task the note reports done", async () => {
@@ -395,6 +1626,179 @@ describe("note agent turn", () => {
       completionNote: "paid this morning",
     });
   });
+
+  test.each([null, "2026-05-18"])(
+    "a first-person completion report looks up a matching task beyond today's list (schedule=%s)",
+    async (scheduledFor) => {
+      const id = "loop_astronomy";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            surface: "tasks",
+            runId: "user:tasks",
+            kind: "create",
+            id,
+            origin: "user",
+            title: "Archive the astronomy club poster",
+            scheduledFor,
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      const noteId = queueNote("I have archived the astronomy club poster.");
+      const seen: TurnInput[] = [];
+      const results: ToolResult[] = [];
+      const inner = toolCallingBackend(
+        (input) => {
+          expect(input.systemPrompt).toContain("task progress even without an explicit command");
+          expect(input.systemPrompt).toContain("short salient terms across task views");
+          expect(input.systemPrompt).toContain(
+            "Other information with no request and no task progress",
+          );
+          return [
+            { tool: "task_list", args: { query: "astronomy" } },
+            { tool: "task_update", args: { id, action: "complete" } },
+          ];
+        },
+        "Marked archiving the astronomy club poster done.",
+        seen,
+      );
+      const backend: ChatBackend = {
+        ...inner,
+        async *runTurn(input) {
+          for await (const event of inner.runTurn(input)) {
+            if (event.type === "agent.tool.result") results.push(event.payload.result);
+            yield event;
+          }
+        },
+      };
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      expect(results[0]).toMatchObject({
+        kind: "structured",
+        resultType: "task.list",
+        data: { tasks: [expect.objectContaining({ id })] },
+      });
+      expect(getOpenLoop(db, id)).toMatchObject({ state: "done", accepted: true });
+      expect(listOpenLoops(db, {})).toHaveLength(1);
+      expect(getNoteRuns(db, [noteId]).get(noteId)?.receipt?.changes).toEqual([
+        expect.objectContaining({ taskId: id, text: expect.stringContaining("Done") }),
+      ]);
+      expect(seen).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    ["partial", "I have started archiving the astronomy club poster.", 1],
+    ["negated", "I have not archived the astronomy club poster.", 1],
+    ["future", "I will archive the astronomy club poster tomorrow.", 1],
+    ["ambiguous", "I have archived the astronomy club poster.", 2],
+    ["unmatched", "I have archived the astronomy club poster.", 0],
+  ] as const)("%s reports leave tasks unchanged after lookup", async (_kind, text, matches) => {
+    for (let n = 0; n < matches; n++)
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            surface: "tasks",
+            runId: "user:tasks",
+            kind: "create",
+            id: `loop_astronomy_${n}`,
+            origin: "user",
+            title: `Archive the astronomy club poster ${n + 1}`,
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+    const noteId = queueNote(text);
+    const { runner } = agent(
+      toolCallingBackend((input) => {
+        expect(input.systemPrompt).toContain(
+          "Partial progress, negation and future intent do not mean completion",
+        );
+        expect(input.systemPrompt).toContain(
+          "If no task matches or the match is ambiguous, do not create or change a task",
+        );
+        return [{ tool: "task_list", args: { query: "astronomy" } }];
+      }, "Saved the note; no task was marked done."),
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(matches);
+    expect(listOpenLoops(db, {}).every((task) => task.state === "open")).toBe(true);
+    expect(getNoteRuns(db, [noteId]).get(noteId)?.receipt).toMatchObject({
+      text: "Saved the note; no task was marked done.",
+      changes: [],
+    });
+  });
+
+  test.each([false, true])(
+    "a task-linked capture reads its exact future/done task without implying acceptance or reopening (done=%s)",
+    async (done) => {
+      const taskId = "loop_scoped_dome";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            kind: "create",
+            surface: "tasks",
+            runId: "user:fixture",
+            id: taskId,
+            origin: "user",
+            title: "Clean the observatory lens",
+            scheduledFor: "2026-05-18",
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      if (done)
+        expect(
+          applyTaskCommand(
+            db,
+            { kind: "complete", surface: "tasks", runId: "user:fixture", id: taskId },
+            T0,
+          ).ok,
+        ).toBe(true);
+      enqueueNewNotes(db, T0);
+      note("scoped-note", done ? "Keep this reference." : "Move it to tomorrow.", T0 + 1000, {
+        taskId,
+      });
+      enqueueNewNotes(db, T0 + 1000);
+      const seen: TurnInput[] = [];
+      const { runner } = agent(
+        toolCallingBackend(
+          (input) => {
+            expect(input.userMessage).toContain(`"id":"${taskId}"`);
+            expect(input.userMessage).toContain('"title":"Clean the observatory lens"');
+            expect(input.userMessage).toContain('"scheduledFor":"2026-05-18"');
+            expect(input.userMessage).toContain(done ? '"state":"done"' : '"state":"open"');
+            expect(input.userMessage).toContain(
+              "does not request acceptance, reopening or any change",
+            );
+            expect(input.userMessage).not.toContain("while accepting");
+            return done
+              ? []
+              : [
+                  {
+                    tool: "task_update",
+                    args: { id: taskId, action: "migrate", to: "2026-03-11" },
+                  },
+                ];
+          },
+          done ? "Saved the reference; the task remains done." : "Moved the lens task to tomorrow.",
+          seen,
+        ),
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(getOpenLoop(db, taskId)).toMatchObject(
+        done
+          ? { state: "done", scheduledFor: "2026-05-18" }
+          : { state: "open", scheduledFor: "2026-03-11" },
+      );
+      expect(listOpenLoops(db, {})).toHaveLength(1);
+      expect(seen).toHaveLength(1);
+    },
+  );
 
   test("a note written while accepting a task is applied to that task", async () => {
     createOpenLoop(
@@ -440,12 +1844,86 @@ describe("note agent turn", () => {
     );
     await runner.drain();
     expect(seen[0]!.userMessage).toContain(
-      "The user wrote it while accepting their task loop_accepted",
+      'The user captured this note about task "loop_accepted"',
     );
     expect(getOpenLoop(db, "loop_accepted")?.description).toBe("The rear brake squeaks too.");
   });
 
-  test("never touches a Brain suggestion", async () => {
+  test("accepts and ignores only the suggestions the owner names, with undoable receipts", async () => {
+    for (const [id, title] of [
+      ["loop_accept", "Reserve the planetarium workshop"],
+      ["loop_ignore", "Renew the seed library membership"],
+      ["loop_untouched", "Check the pottery kiln booking"],
+    ] as const)
+      createOpenLoop(
+        db,
+        { id, title, createdByRun: "run_suggestions", confidence: 0.8, importance: 0.5 },
+        T0,
+      );
+    const untouched = getOpenLoop(db, "loop_untouched");
+    const id = queueNote(
+      "Accept the planetarium workshop suggestion for tomorrow and ignore the seed library membership suggestion; I handled that elsewhere.",
+    );
+    const { runner } = agent(
+      toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { view: "suggested" } },
+          {
+            tool: "task_update",
+            args: { id: "loop_accept", action: "accept", scheduledFor: "2026-03-11" },
+          },
+          {
+            tool: "task_update",
+            args: { id: "loop_ignore", action: "ignore", reason: "Handled elsewhere." },
+          },
+        ],
+        "Added the planetarium workshop for tomorrow and ignored the seed library suggestion.",
+      ),
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(getOpenLoop(db, "loop_accept")).toMatchObject({
+      state: "open",
+      accepted: true,
+      ignored: false,
+      scheduledFor: "2026-03-11",
+    });
+    expect(getOpenLoop(db, "loop_ignore")).toMatchObject({
+      state: "open",
+      accepted: false,
+      ignored: true,
+    });
+    expect(getOpenLoop(db, "loop_untouched")).toEqual(untouched);
+    const receipt = getNoteRuns(db, [id]).get(id)!.receipt!;
+    expect(receipt.changes).toEqual([
+      {
+        text: "Added to your tasks: Reserve the planetarium workshop",
+        taskId: "loop_accept",
+        undoSeq: expect.any(Number),
+      },
+      {
+        text: "Ignored: Renew the seed library membership",
+        taskId: "loop_ignore",
+        undoSeq: expect.any(Number),
+      },
+    ]);
+    for (const change of receipt.changes)
+      expect(
+        applyTaskCommand(
+          db,
+          { kind: "undo", surface: "tasks", runId: "user:tasks", seq: change.undoSeq! },
+          T0 + 120_000,
+        ).ok,
+      ).toBe(true);
+    expect(getOpenLoop(db, "loop_accept")).toMatchObject({
+      accepted: false,
+      ignored: false,
+      scheduledFor: null,
+    });
+    expect(getOpenLoop(db, "loop_ignore")).toMatchObject({ accepted: false, ignored: false });
+    expect(getOpenLoop(db, "loop_untouched")).toEqual(untouched);
+  });
+
+  test("a note can report that a suggested task is already done", async () => {
     createOpenLoop(
       db,
       {
@@ -457,16 +1935,55 @@ describe("note agent turn", () => {
       },
       T0,
     );
-    const id = queueNote("Jamie is sorted");
+    const id = queueNote("I have already replied to Jamie Lopez.");
     const { runner } = agent(
       toolCallingBackend(
-        () => [{ tool: "task_update", args: { id: "loop_brain", action: "complete" } }],
-        "Nothing to change.",
+        () => [
+          { tool: "task_list", args: { query: "Jamie Lopez" } },
+          { tool: "task_update", args: { id: "loop_brain", action: "complete" } },
+        ],
+        "Marked replying to Jamie as already done.",
       ),
     );
     await runner.drain();
-    expect(getOpenLoop(db, "loop_brain")?.state).toBe("open");
-    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([]);
+    expect(getOpenLoop(db, "loop_brain")).toMatchObject({ state: "done", accepted: true });
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([
+      expect.objectContaining({
+        taskId: "loop_brain",
+        text: "Done: Reply to Jamie Lopez",
+        undoSeq: expect.any(Number),
+      }),
+    ]);
+  });
+
+  test("deletes the duplicate task the owner explicitly asks to remove", async () => {
+    applyTaskCommand(
+      db,
+      {
+        kind: "create",
+        id: "loop_duplicate",
+        title: "Duplicate greenhouse booking",
+        origin: "user",
+        surface: "tasks",
+        runId: "user:tasks",
+      },
+      T0,
+    );
+    const id = queueNote("Delete the duplicate greenhouse booking task; it should not exist.");
+    const { runner } = agent(
+      toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "duplicate greenhouse" } },
+          { tool: "task_update", args: { id: "loop_duplicate", action: "delete" } },
+        ],
+        "Deleted the duplicate greenhouse booking task.",
+      ),
+    );
+    await runner.drain();
+    expect(getOpenLoop(db, "loop_duplicate")).toBeNull();
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toEqual([
+      { text: "Deleted: Duplicate greenhouse booking", taskId: null, undoSeq: null },
+    ]);
   });
 
   test("a note with no request changes nothing", async () => {
@@ -760,5 +2277,894 @@ test("unset, it is on whenever a model can run", async () => {
     enabled: true,
     modelAssigned: false,
     active: false,
+  });
+});
+
+describe("note agent retry after replayable bookkeeping", () => {
+  test.each(["conversation_memory_evidence"])(
+    "a successful %s call before an outage leaves the requested task retryable",
+    async (name) => {
+      const id = queueNote("Add a task to prepare the greenhouse seed trays.");
+      let now = T0 + 60_000;
+      let turns = 0;
+      let calls = 0;
+      const scripted = toolCallingBackend(
+        () => [
+          { tool: name, args: {} },
+          ...(turns > 1
+            ? [{ tool: "task_create", args: { title: "Prepare the greenhouse seed trays" } }]
+            : []),
+        ],
+        "Added preparing the greenhouse seed trays.",
+      );
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input) {
+          turns += 1;
+          for await (const event of scripted.runTurn(input)) {
+            if (
+              turns > 1 ||
+              (event.type !== "agent.message.end" && event.type !== "agent.text.delta")
+            )
+              yield event;
+          }
+          if (turns === 1) throw new Error("scripted outage after bookkeeping");
+        },
+      };
+      const { runner } = agent(backend, {
+        clock: () => now,
+        buildTools: (_, taskTools, evidenceTools) => {
+          const bookkeeping: ToolHandle =
+            name === "conversation_memory_evidence"
+              ? evidenceTools.find((tool) => tool.name === name)!
+              : {
+                  name,
+                  description: "Record an idempotent citation for this turn.",
+                  mutates: true,
+                  schema: z.object({}).strict(),
+                  invoke: async () => ({
+                    kind: "structured",
+                    resultType: "citation.recorded",
+                    data: {},
+                  }),
+                };
+          return {
+            tools: [
+              ...taskTools,
+              {
+                ...bookkeeping,
+                async invoke(args, context) {
+                  calls += 1;
+                  const result = await bookkeeping.invoke(args, context);
+                  expect(result.kind).not.toBe("error");
+                  return result;
+                },
+              },
+            ],
+            dispose: async () => {},
+          };
+        },
+      });
+
+      expect(await runner.drain()).toBe(1);
+      expect(calls).toBe(1);
+      expect(listOpenLoops(db, {})).toEqual([]);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "pending",
+        attempts: 1,
+        receipt: null,
+        error: expect.stringContaining("scripted outage after bookkeeping"),
+      });
+
+      now += 6 * 60_000;
+      expect(await runner.drain()).toBe(1);
+      expect(turns).toBe(2);
+      expect(calls).toBe(2);
+      expect(listOpenLoops(db, {})).toEqual([
+        expect.objectContaining({ title: "Prepare the greenhouse seed trays", origin: "note" }),
+      ]);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 2,
+        error: null,
+        receipt: {
+          changes: [
+            expect.objectContaining({
+              text: "Added: Prepare the greenhouse seed trays",
+              undoSeq: expect.any(Number),
+            }),
+          ],
+        },
+      });
+    },
+  );
+});
+
+describe("note agent pending action lifetime", () => {
+  test("an HTTP tool batch cancelled by read progress cannot replay a still-running write", async () => {
+    const id = queueNote("Watch for a greenhouse delivery update");
+    const abort = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutMock = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) => (ms === NOTE_AGENT_TURN_TIMEOUT_MS ? abort.signal : timeout(ms)));
+    const chunks = [
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: "write", function: { name: "watch_create", arguments: "{}" } },
+                { index: 1, id: "read", function: { name: "fetch_many", arguments: "{}" } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      "[DONE]",
+    ];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          chunks
+            .map(
+              (chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finished = false;
+    const writer: ToolHandle = {
+      name: "watch_create",
+      description: "A held scripted write.",
+      schema: z.object({}),
+      mutates: true,
+      async invoke() {
+        enter();
+        await held;
+        finished = true;
+        return { kind: "structured", resultType: "scripted.changed", data: {} };
+      },
+    };
+    const reader: ToolHandle = {
+      name: "fetch_many",
+      description: "A progress-producing scripted read.",
+      schema: z.object({}),
+      async invoke(_args, context) {
+        await entered;
+        abort.abort();
+        const result: ToolResult = { kind: "structured", resultType: "scripted.read", data: {} };
+        context.onChildResult?.({ index: 0, result });
+        return result;
+      },
+    };
+    const backend = new HttpChatBackend({ baseUrl: "http://127.0.0.1:9", model: "scripted" });
+    const { runner } = agent(backend, {
+      buildTools: () => ({ tools: [writer, reader], dispose: async () => {} }),
+    });
+    try {
+      expect(await runner.drain()).toBe(1);
+      expect(finished).toBe(false);
+      expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+        state: "done",
+        attempts: 1,
+        receipt: { text: expect.stringContaining("still running and may finish after this note") },
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      fetchMock.mockRestore();
+      timeoutMock.mockRestore();
+    }
+    expect(finished).toBe(true);
+    expect(await runner.drain()).toBe(0);
+  });
+
+  function pendingTurn(options: {
+    stop: "error" | "canceled" | "end_turn";
+    name?: string;
+    mutates?: boolean;
+    cleanupResult?: "applied" | "error";
+  }) {
+    const id = queueNote("Watch for a greenhouse delivery update");
+    let now = T0 + 60_000;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pending: Promise<ToolResult> | undefined;
+    let calls = 0;
+    let writes = 0;
+    const tool: ToolHandle = {
+      name: options.name ?? "watch_create",
+      description: "A held scripted operation.",
+      mutates: options.mutates ?? true,
+      schema: z.object({}).strict(),
+      async invoke() {
+        calls += 1;
+        await gate;
+        if (options.cleanupResult === "error")
+          return { kind: "error", code: "refused", message: "Nothing was written." };
+        writes += 1;
+        return { kind: "structured", resultType: "scripted.changed", data: {} };
+      },
+    };
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input) {
+        pending = input.tools
+          .find((handle) => handle.name === tool.name)!
+          .invoke(
+            {},
+            {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+            },
+          );
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: options.stop,
+          },
+        };
+      },
+    };
+    const { runner } = agent(backend, {
+      clock: () => now,
+      buildTools: () => ({
+        tools: [tool],
+        dispose: async () => {
+          if (options.cleanupResult) {
+            release();
+            await pending;
+          }
+        },
+      }),
+    });
+    return {
+      id,
+      runner,
+      calls: () => calls,
+      writes: () => writes,
+      advance: () => {
+        now += 6 * 60_000;
+      },
+      finish: async () => {
+        release();
+        await pending;
+      },
+    };
+  }
+
+  test.each(["error", "canceled", "end_turn"] as const)(
+    "%s with an admitted unfinished action is reviewable and never replayed",
+    async (stop) => {
+      const turn = pendingTurn({ stop });
+      try {
+        expect(await turn.runner.drain()).toBe(1);
+        expect(turn.writes()).toBe(0);
+        expect(getNoteRuns(db, [turn.id]).get(turn.id)).toMatchObject({
+          state: "done",
+          attempts: 1,
+          receipt: {
+            text: "An action is still running and may finish after this note. Review the result before asking again.",
+          },
+        });
+        await turn.finish();
+        expect(turn.writes()).toBe(1);
+        turn.advance();
+        expect(await turn.runner.drain()).toBe(0);
+        expect(turn.calls()).toBe(1);
+      } finally {
+        await turn.finish();
+      }
+    },
+  );
+
+  test.each(["error", "applied"] as const)(
+    "cleanup settles an action as %s before deciding whether to replay",
+    async (cleanupResult) => {
+      const turn = pendingTurn({ stop: "error", cleanupResult });
+      try {
+        await turn.runner.drain();
+        const row = getNoteRuns(db, [turn.id]).get(turn.id);
+        expect(row?.state).toBe(cleanupResult === "error" ? "pending" : "done");
+        expect(turn.writes()).toBe(cleanupResult === "error" ? 0 : 1);
+        if (cleanupResult === "applied")
+          expect(row?.receipt?.text).toBe(
+            "An action was applied before processing stopped. Review the result before asking again.",
+          );
+      } finally {
+        await turn.finish();
+      }
+    },
+  );
+
+  test.each([
+    { name: "conversation_memory_evidence", mutates: true },
+    { name: "cite_record", mutates: true },
+    { name: "search_many", mutates: false },
+  ])("pending $name does not block a safe retry", async ({ name, mutates }) => {
+    const turn = pendingTurn({ stop: "error", name, mutates });
+    try {
+      await turn.runner.drain();
+      expect(getNoteRuns(db, [turn.id]).get(turn.id)).toMatchObject({
+        state: "pending",
+        attempts: 1,
+        receipt: null,
+      });
+    } finally {
+      await turn.finish();
+    }
+  });
+});
+
+describe("note agent tool admission lifetime", () => {
+  test("retired task handles cannot write during cleanup or later, while a fresh note can", async () => {
+    queueNote("Save this note without a task");
+    let captured:
+      { handle: ToolHandle; context: { sessionId: string; messageId: string } } | undefined;
+    const cleanupResults: ToolResult[] = [];
+    const tasks = new TaskService(db, directWriteGate(db), () => T0 + 60_000);
+    const apply = vi.fn((command: Parameters<TaskService["apply"]>[0]) => tasks.apply(command));
+    const backend = toolCallingBackend((input) => {
+      captured = {
+        handle: input.tools.find((tool) => tool.name === "task_create")!,
+        context: { sessionId: input.sessionId, messageId: input.messageId },
+      };
+      return input.userMessage.includes("Add a fresh task")
+        ? [{ tool: "task_create", args: { title: "Plant a rooftop garden" } }]
+        : [];
+    }, "Saved.");
+    const { runner } = agent(backend, {
+      tasks: { apply },
+      buildTools: (_runId, taskTools) => ({
+        tools: taskTools,
+        dispose: async () => {
+          cleanupResults.push(
+            await captured!.handle.invoke({ title: "Late orphaned task" }, captured!.context),
+          );
+        },
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    const retired = captured!;
+    expect(cleanupResults).toEqual([
+      expect.objectContaining({ kind: "error", code: "note_finished" }),
+    ]);
+    expect(
+      await retired.handle.invoke({ title: "Another late task" }, retired.context),
+    ).toMatchObject({
+      kind: "error",
+      code: "note_finished",
+    });
+    expect(apply).not.toHaveBeenCalled();
+    expect(listOpenLoops(db, {})).toEqual([]);
+
+    queueNote("Add a fresh task");
+    expect(await runner.drain()).toBe(1);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(listOpenLoops(db, {})).toEqual([
+      expect.objectContaining({ title: "Plant a rooftop garden", origin: "note" }),
+    ]);
+    expect(cleanupResults).toHaveLength(2);
+    expect(cleanupResults[1]).toMatchObject({ kind: "error", code: "note_finished" });
+    expect(await retired.handle.invoke({ title: "Still retired" }, retired.context)).toMatchObject({
+      kind: "error",
+      code: "note_finished",
+    });
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("owner note edit revisions", () => {
+  function edit(id: string, text: string, at: number, owner = true, enabled = true) {
+    expect(updateNoteEntryText(db, id, text, new Date(at).toISOString(), { owner, enabled })).toBe(
+      true,
+    );
+  }
+  function finish(row: NonNullable<ReturnType<typeof claimDueNote>>, text = "Applied.") {
+    finishNoteRun(
+      db,
+      row.entryId,
+      row.attempts,
+      {
+        state: "done",
+        receipt: {
+          text,
+          changes: [{ text: "Added workshop", taskId: "loop_workshop", undoSeq: 1 }],
+        },
+      },
+      T0 + 60_000,
+    );
+  }
+  test("same-text edits create no turn; equal/backwards writer clocks still advance updatedAt", () => {
+    const id = queueNote("Prepare the robotics workshop");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    finish(row);
+    edit(id, row.inputText, T0 + 1_000);
+    expect(getNoteRuns(db, [id]).get(id)?.revision).toBe(0);
+    const first = getNoteEntry(db, id)!.updatedAt;
+    edit(id, "Prepare the robotics workshop Saturday", T0 + 1_000);
+    const second = getNoteEntry(db, id)!.updatedAt;
+    edit(id, "Prepare the robotics workshop Sunday", T0);
+    expect(Date.parse(second)).toBeGreaterThan(Date.parse(first));
+    expect(Date.parse(getNoteEntry(db, id)!.updatedAt)).toBeGreaterThan(Date.parse(second));
+    const current = claimDueNote(db, T0 + 120_000)!;
+    expect(current.inputText).toContain("Sunday");
+    expect(current.previousText).toBe(row.inputText);
+    expect(current.previousReceipt?.changes[0]?.taskId).toBe("loop_workshop");
+    expect(current.attempts).toBe(2);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+  });
+  test("rapid unclaimed edits coalesce without dropping the original unexecuted intent", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    edit(id, "Prepare a workshop Saturday", T0 + 2_000);
+    edit(id, "Prepare a workshop Sunday", T0 + 2_000);
+    const latest = claimDueNote(db, T0 + 60_000)!;
+    expect(latest.inputText).toContain("Sunday");
+    expect(latest.previousText).toBe("Prepare a workshop Saturday");
+    finish(latest);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+    expect(hasPendingNotes(db)).toBe(false);
+  });
+  test.each([false, true])(
+    "edits before first claim carry a system diff and fulfill all unexecuted requests once (rapid=%s)",
+    async (rapid) => {
+      const original = "Prepare the robotics workshop Friday. Also buy seed trays.";
+      const intermediate = "Prepare the robotics workshop Saturday. Also buy seed trays.";
+      const current = "Prepare the robotics workshop Sunday. Also buy seed trays.";
+      const id = queueNote(original);
+      if (rapid) edit(id, intermediate, T0 + 2_000);
+      edit(id, current, T0 + 2_000);
+      const seen: TurnInput[] = [];
+      const backend = toolCallingBackend(
+        () => [
+          { tool: "task_list", args: { query: "robotics workshop" } },
+          {
+            tool: "task_create",
+            args: { title: "Prepare the robotics workshop", scheduledFor: "2026-03-15" },
+          },
+          { tool: "task_list", args: { query: "seed trays" } },
+          { tool: "task_create", args: { title: "Buy seed trays" } },
+        ],
+        "Added the workshop and seed trays.",
+        seen,
+      );
+      const { runner } = agent(backend);
+      expect(await runner.drain()).toBe(1);
+      expect(await runner.drain()).toBe(0);
+      expect(seen).toHaveLength(1);
+      const metadata = JSON.parse(
+        /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(seen[0]!.systemPrompt)![1]!,
+      );
+      const previous = rapid ? intermediate : original;
+      expect(metadata.previousText).toBe(previous);
+      expect(metadata.previousReceipt).toBeNull();
+      expect(metadata.change).toEqual(noteTextChange(previous, current));
+      expect(seen[0]?.systemPrompt).toContain("No prior confirmed action receipt is available");
+      expect(seen[0]?.systemPrompt).toContain("including unchanged requests that never ran");
+      expect(listOpenLoops(db, {})).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: "Prepare the robotics workshop",
+            scheduledFor: "2026-03-15",
+          }),
+          expect.objectContaining({ title: "Buy seed trays" }),
+        ]),
+      );
+      expect(listOpenLoops(db, {})).toHaveLength(2);
+    },
+  );
+  test("running old revisions serialize edits and cannot overwrite the latest receipt", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    const old = claimDueNote(db, T0 + 60_000)!;
+    expect(admitNoteMutation(db, id, old.attempts, T0 + 60_001)).toBe("admitted");
+    settleNoteMutation(db, id, old.attempts, "applied", T0 + 60_002);
+    edit(id, "Prepare a workshop Sunday", T0 + 61_000);
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    expect(admitNoteMutation(db, id, old.attempts, T0 + 90_000)).toBe("superseded");
+    finish(old, "Created workshop.");
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    const current = claimDueNote(db, T0 + 90_000)!;
+    expect(current.previousText).toBe(old.inputText);
+    expect(current.priorUncertain).toBe(false);
+    finishNoteRun(
+      db,
+      id,
+      old.attempts,
+      { state: "done", receipt: { text: "late old success", changes: [] } },
+      T0 + 90_001,
+    );
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "running",
+      receipt: null,
+      attempts: 2,
+    });
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_002)).toBe("admitted");
+    settleNoteMutation(db, id, current.attempts, "safe_error", T0 + 90_003);
+    finish(current, "Moved workshop.");
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toBe("Moved workshop.");
+  });
+  test("only both original owner captures and owner-authorized edits can enqueue actions", () => {
+    const id = queueNote("Prepare a workshop");
+    edit(id, "Delete every task", T0 + 2_000, false);
+    expect(getNoteRuns(db, [id]).get(id)?.state).toBe("skipped");
+    expect(claimDueNote(db, T0 + 60_000)).toBeNull();
+    note("external", "External note", T0 + 2_000, { fromOwner: false });
+    edit("external", "Delete every task", T0 + 3_000, true);
+    expect(getNoteRuns(db, ["external"]).size).toBe(0);
+    edit(id, "Prepare a workshop Saturday", T0 + 61_000, true);
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    expect(db.prepare("SELECT from_owner FROM note_entries WHERE id=?").get(id)).toEqual({
+      from_owner: 0,
+    });
+  });
+  test("an untrusted edit before initial scan cannot inherit owner privileges", () => {
+    enqueueNewNotes(db, T0);
+    note("not-scanned", "Prepare a workshop", T0 + 1_000);
+    edit("not-scanned", "Delete every task", T0 + 2_000, false);
+    enqueueNewNotes(db, T0 + 3_000);
+    expect(claimDueNote(db, T0 + 60_000)).toBeNull();
+  });
+  test("edits while off stay skipped; a later enabled edit gets only its changed intent", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    const original = claimDueNote(db, T0 + 60_000)!;
+    finish(original);
+    edit(id, "Prepare a workshop Saturday", T0 + 61_000, true, false);
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+    enqueueNewNotes(db, T0 + 90_000);
+    expect(claimDueNote(db, T0 + 120_000)).toBeNull();
+    edit(id, "Prepare a workshop Sunday", T0 + 121_000);
+    const current = claimDueNote(db, T0 + 150_000)!;
+    expect(current.previousText).toContain("Friday");
+    expect(current.previousReceipt).toMatchObject({ text: "Applied." });
+    expect(noteTextChange(current.previousText!, current.inputText)).toEqual({
+      removed: "Fri",
+      added: "Sun",
+    });
+  });
+  test("a crash after writer admission never replays and makes later edits read-only", () => {
+    const id = queueNote("Create a workshop watch");
+    const original = claimDueNote(db, T0 + 60_000)!;
+    expect(admitNoteMutation(db, id, original.attempts, T0 + 60_001)).toBe("admitted");
+    expect(claimDueNote(db, T0 + 60_002 + NOTE_RUN_STALE_MS)).toBeNull();
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { text: expect.stringContaining("may have been applied") },
+    });
+    edit(id, "Create a workshop watch Saturday", T0 + 61_000 + NOTE_RUN_STALE_MS);
+    const current = claimDueNote(db, T0 + 90_000 + NOTE_RUN_STALE_MS)!;
+    expect(current.priorUncertain).toBe(true);
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_001 + NOTE_RUN_STALE_MS)).toBe(
+      "review_required",
+    );
+  });
+  test("safe errors and completed corrections do not consume a later revision's retries", () => {
+    const id = queueNote("Prepare a workshop Friday");
+    for (let n = 0; n < 5; n++) {
+      const current = claimDueNote(db, T0 + 60_000 + n * 60_000)!;
+      expect(current).not.toBeNull();
+      expect(admitNoteMutation(db, id, current.attempts, T0 + 60_001 + n * 60_000)).toBe(
+        "admitted",
+      );
+      settleNoteMutation(db, id, current.attempts, "safe_error", T0 + 60_002 + n * 60_000);
+      finish(current);
+      edit(id, `Prepare workshop revision ${n}`, T0 + 61_000 + n * 60_000);
+    }
+  });
+  test("upgrading the legacy queue preserves receipts and fences interrupted actions", () => {
+    const id = queueNote("Prepare a workshop");
+    db.exec(
+      "DROP TABLE note_agent_runs; CREATE TABLE note_agent_runs(entry_id TEXT PRIMARY KEY,state TEXT,attempts INTEGER,run_after INTEGER,receipt_json TEXT,error TEXT,created_at INTEGER,updated_at INTEGER)",
+    );
+    db.prepare("INSERT INTO note_agent_runs VALUES(?,'running',1,1,NULL,NULL,1,1)").run(id);
+    createNoteAgentTables(db);
+    createNoteAgentTables(db);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      revision: 0,
+      state: "done",
+      inputText: "Prepare a workshop",
+    });
+    expect(claimDueNote(db, T0 + 90_000)).toBeNull();
+  });
+  test.each([
+    ["An action may have been applied. Review it.", true],
+    ["An action is still running and may finish after this note. Review it.", true],
+    ["Created the requested workshop task.", false],
+  ] as const)("legacy completed receipts preserve action uncertainty: %s", (text, uncertain) => {
+    const id = queueNote("Prepare a robotics workshop Friday");
+    db.exec(
+      "DROP TABLE note_agent_runs; CREATE TABLE note_agent_runs(entry_id TEXT PRIMARY KEY,state TEXT,attempts INTEGER,run_after INTEGER,receipt_json TEXT,error TEXT,created_at INTEGER,updated_at INTEGER)",
+    );
+    const receipt = {
+      text,
+      changes: [{ text: "Created workshop", taskId: "loop_workshop", undoSeq: 1 }],
+    };
+    db.prepare("INSERT INTO note_agent_runs VALUES(?,'done',1,1,?,NULL,1,1)").run(
+      id,
+      JSON.stringify(receipt),
+    );
+    createNoteAgentTables(db);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).toEqual(receipt);
+    edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+    const current = claimDueNote(db, T0 + 90_000)!;
+    expect(current.priorUncertain).toBe(uncertain);
+    expect(admitNoteMutation(db, id, current.attempts, T0 + 90_001)).toBe(
+      uncertain ? "review_required" : "admitted",
+    );
+  });
+  test("text deltas preserve complete Unicode code points", () => {
+    expect(noteTextChange("Prepare 🪴 workshop", "Prepare 🌵 workshop")).toEqual({
+      removed: "🪴",
+      added: "🌵",
+    });
+    expect(noteTextChange("unchanged", "unchanged")).toEqual({ removed: "", added: "" });
+  });
+  test("voice transcript and pending input snapshot commit atomically", () => {
+    const id = queueNote("prepare robotic workshop fry day");
+    db.exec(
+      "CREATE TRIGGER reject_note_snapshot BEFORE UPDATE OF input_text ON note_agent_runs BEGIN SELECT RAISE(ABORT,'scripted snapshot failure'); END",
+    );
+    expect(() =>
+      applyNoteEntryTranscript(
+        db,
+        id,
+        "prepare robotic workshop fry day",
+        "Prepare a robotics workshop Friday",
+        new Date(T0 + 2_000).toISOString(),
+      ),
+    ).toThrow("scripted snapshot failure");
+    expect(getNoteEntry(db, id)?.text).toBe("prepare robotic workshop fry day");
+    expect(getNoteRuns(db, [id]).get(id)?.inputText).toBe("prepare robotic workshop fry day");
+    db.exec("DROP TRIGGER reject_note_snapshot");
+    expect(
+      applyNoteEntryTranscript(
+        db,
+        id,
+        "prepare robotic workshop fry day",
+        "Prepare a robotics workshop Friday",
+        new Date(T0 + 2_000).toISOString(),
+      ),
+    ).toMatchObject({ outcome: "replaced" });
+    expect(claimDueNote(db, T0 + 60_000)?.inputText).toBe("Prepare a robotics workshop Friday");
+  });
+  test("edited turns receive the exact delta and prior receipt, with fresh attribution", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Remind me to prepare a robotics workshop Friday");
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => {
+        const current = listOpenLoops(db, {})[0];
+        return current
+          ? [{ tool: "task_update", args: { id: current.id, action: "migrate", to: "2026-03-15" } }]
+          : [
+              {
+                tool: "task_create",
+                args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+              },
+            ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, { clock: () => now });
+    expect(await runner.drain()).toBe(1);
+    const first = getNoteRuns(db, [id]).get(id)!;
+    edit(id, "Remind me to prepare a robotics workshop Sunday", T0 + 61_000);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(seen[1]?.systemPrompt).toContain("note_edit_context");
+    expect(seen[1]?.systemPrompt).toContain(JSON.stringify(first.receipt));
+    expect(seen[1]?.systemPrompt).toContain('"removed":"Fri","added":"Sun"');
+    expect(seen[1]?.sessionId).not.toBe(seen[0]?.sessionId);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.changes).toHaveLength(1);
+  });
+  test("an edit committed while mutation admission waits prevents the stale write", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    const gate = directWriteGate(db);
+    let edited = false;
+    const backend = toolCallingBackend(
+      () => [{ tool: "task_create", args: { title: "Prepare a robotics workshop" } }],
+      "Created workshop.",
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      writeGate: {
+        ...gate,
+        admitNoteMutation: async (...args) => {
+          if (!edited) {
+            edited = true;
+            edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+          }
+          return gate.admitNoteMutation(...args);
+        },
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toEqual([]);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+  });
+  test("changed relative dates use the later edit day in the capture zone, across daylight saving", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    db.prepare(
+      "UPDATE note_entries SET captured_time_zone_id='America/Los_Angeles',captured_utc_offset_seconds=-28800 WHERE id=?",
+    ).run(id);
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      (input) => {
+        const task = listOpenLoops(db, {})[0];
+        if (!task)
+          return [
+            {
+              tool: "task_create",
+              args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+            },
+          ];
+        const metadata = JSON.parse(
+          /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(input.systemPrompt)![1]!,
+        );
+        const tomorrow = new Date(`${metadata.edit.day}T00:00:00Z`);
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+        return [
+          {
+            tool: "task_update",
+            args: { id: task.id, action: "migrate", to: tomorrow.toISOString().slice(0, 10) },
+          },
+        ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, { clock: () => now });
+    expect(await runner.drain()).toBe(1);
+    const at = Date.parse("2026-03-22T00:30:00Z");
+    edit(id, "Move the robotics workshop to tomorrow", at);
+    now = at + 60_000;
+    expect(await runner.drain()).toBe(1);
+    const metadata = JSON.parse(
+      /<note_edit_context>\n([\s\S]*?)\n<\/note_edit_context>/.exec(seen[1]!.systemPrompt)![1]!,
+    );
+    expect(metadata.edit).toEqual({
+      at: "2026-03-22T00:30:00.000Z",
+      day: "2026-03-21",
+      timeZone: "America/Los_Angeles",
+    });
+    expect(seen[1]?.systemPrompt).toContain("overrides the original-capture date rule");
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(listOpenLoops(db, {})[0]?.scheduledFor).toBe("2026-03-22");
+  });
+  test("an edit during an admitted committed action waits for its receipt then corrects the same task", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Prepare a robotics workshop Friday");
+    let entered!: () => void, release!: () => void;
+    const committed = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = new TaskService(db, directWriteGate(db), () => now);
+    let first = true;
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => {
+        const task = listOpenLoops(db, {})[0];
+        return task
+          ? [{ tool: "task_update", args: { id: task.id, action: "migrate", to: "2026-03-15" } }]
+          : [
+              {
+                tool: "task_create",
+                args: { title: "Prepare a robotics workshop", scheduledFor: "2026-03-13" },
+              },
+            ];
+      },
+      "Handled workshop.",
+      seen,
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      tasks: {
+        apply: async (...args) => {
+          const result = await service.apply(...args);
+          if (first) {
+            first = false;
+            entered();
+            await resume;
+          }
+          return result;
+        },
+      },
+    });
+    const running = runner.drain();
+    await committed;
+    const taskId = listOpenLoops(db, {})[0]!.id;
+    edit(id, "Prepare a robotics workshop Sunday", T0 + 61_000);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", receipt: null });
+    now = T0 + 62_000;
+    release();
+    expect(await running).toBe(1);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(listOpenLoops(db, {}).map((task) => task.id)).toEqual([taskId]);
+    expect(getOpenLoop(db, taskId)?.scheduledFor).toBe("2026-03-15");
+    expect(seen[1]?.systemPrompt).toContain(taskId);
+    expect(getNoteRuns(db, [id]).get(id)?.priorUncertain).toBe(false);
+  });
+  test("an uncertain action on an earlier revision allows investigation but refuses another write", async () => {
+    let now = T0 + 60_000;
+    const id = queueNote("Create a robotics workshop watch");
+    let writes = 0,
+      reads = 0;
+    const backend = toolCallingBackend(
+      () => [
+        { tool: "read_workshop", args: {} },
+        { tool: "watch_create", args: {} },
+      ],
+      "Handled.",
+    );
+    const { runner } = agent(backend, {
+      clock: () => now,
+      buildTools: () => ({
+        tools: [
+          {
+            name: "read_workshop",
+            description: "Read",
+            schema: z.object({}),
+            mutates: false,
+            async invoke() {
+              reads++;
+              return { kind: "structured" as const, resultType: "read", data: {} };
+            },
+          },
+          {
+            name: "watch_create",
+            description: "Create",
+            schema: z.object({}),
+            mutates: true,
+            async invoke() {
+              writes++;
+              throw new Error("write committed then transport failed");
+            },
+          },
+        ],
+        dispose: async () => {},
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    edit(id, "Create a robotics workshop watch Saturday", T0 + 61_000);
+    now = T0 + 90_000;
+    expect(await runner.drain()).toBe(1);
+    expect(reads).toBe(2);
+    expect(writes).toBe(1);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toContain("fresh separate request");
+    const fresh = queueNote("After review, create a separate robotics workshop watch");
+    now = T0 + 150_000;
+    expect(await runner.drain()).toBe(1);
+    expect(writes).toBe(2);
+    expect(getNoteRuns(db, [fresh]).get(fresh)?.priorUncertain).toBe(false);
   });
 });

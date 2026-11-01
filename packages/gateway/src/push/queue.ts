@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   claimedNotificationSchema,
   notificationMessageSchema,
@@ -26,6 +26,8 @@ export interface EnqueueNotificationInput {
   deviceIds: readonly DeviceId[];
   createdAt: number;
   expiresAt: number;
+  /** Stable producer operation; retries retain its original content, expiry and deliveries. */
+  idempotencyKey?: string;
 }
 
 export interface EnqueueNotificationResult {
@@ -87,6 +89,14 @@ export function validateEnqueueNotificationInput(input: EnqueueNotificationInput
   }
   if (input.expiresAt <= input.createdAt) {
     throw new Error("notification expiry must be after creation");
+  }
+  if (
+    input.idempotencyKey !== undefined &&
+    (typeof input.idempotencyKey !== "string" ||
+      input.idempotencyKey.trim().length === 0 ||
+      input.idempotencyKey.length > 200)
+  ) {
+    throw new Error("notification idempotency key must contain 1 to 200 characters");
   }
 }
 
@@ -276,6 +286,11 @@ export function enqueueNotification(
   const message = input.message;
   const deviceIds = [...new Set(input.deviceIds)];
   if (deviceIds.length === 0) return null;
+  const targetId = notificationTargetId(message);
+  const routeData = JSON.stringify(notificationRoute(message));
+  const notificationId = input.idempotencyKey
+    ? `producer_${createHash("sha256").update(input.idempotencyKey).digest("hex")}`
+    : randomUUID();
 
   const transaction = db.transaction((): EnqueueNotificationResult | null => {
     if (
@@ -289,7 +304,49 @@ export function enqueueNotification(
     const existingDeviceIds = deviceIds.filter((deviceId) => hasDevice.get(deviceId) !== undefined);
     if (existingDeviceIds.length === 0) return null;
 
-    const notificationId = randomUUID();
+    if (input.idempotencyKey) {
+      // The lookup shares the insertion transaction: competing producer retries
+      // must observe one operation, including after its deliveries were confirmed.
+      const prior = db
+        .prepare<
+          [string],
+          {
+            kind: string;
+            target_id: string;
+            route_data: string;
+            title: string;
+            body: string;
+            collapse_id: string;
+          }
+        >(
+          "SELECT kind, target_id, route_data, title, body, collapse_id FROM notifications WHERE id = ?",
+        )
+        .get(notificationId);
+      if (prior) {
+        if (
+          prior.kind !== message.kind ||
+          prior.target_id !== targetId ||
+          prior.route_data !== routeData ||
+          prior.title !== message.title ||
+          prior.body !== message.body ||
+          prior.collapse_id !== message.collapseId
+        ) {
+          throw new Error("notification idempotency key was reused for different content");
+        }
+        const rows = db
+          .prepare<[string], { id: string; device_id: string }>(
+            "SELECT id, device_id FROM notification_deliveries WHERE notification_id = ?",
+          )
+          .all(notificationId);
+        const byDevice = new Map(rows.map((row) => [row.device_id, row.id]));
+        const retained = existingDeviceIds.filter((id) => byDevice.has(id));
+        return {
+          notificationId,
+          deviceIds: retained,
+          deliveryIds: retained.map((id) => byDevice.get(id)!),
+        };
+      }
+    }
     db.prepare(
       `INSERT INTO notifications
          (id, kind, target_id, route_data, title, body, collapse_id, created_at, expires_at)
@@ -297,8 +354,8 @@ export function enqueueNotification(
     ).run(
       notificationId,
       message.kind,
-      notificationTargetId(message),
-      JSON.stringify(notificationRoute(message)),
+      targetId,
+      routeData,
       message.title,
       message.body,
       message.collapseId,

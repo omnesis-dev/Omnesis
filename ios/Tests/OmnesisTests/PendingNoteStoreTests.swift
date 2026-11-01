@@ -18,6 +18,16 @@ final class PendingNoteStoreTests: XCTestCase {
         super.tearDown()
     }
 
+    func testTaskContextSurvivesRestartAndRetryDiagnostics() async throws {
+        let store = PendingNoteStore(directory: directory)
+        let note = PendingNote(text: "Repair the telescope", surface: "ios-app", taskId: "task_example")
+        try await store.enqueue(note)
+        try await store.recordFailedRedelivery(id: note.id, failure: .init(kind: .unreachable), attemptedAt: Date())
+        let restarted = PendingNoteStore(directory: directory)
+        let loaded = await restarted.list()
+        XCTAssertEqual(loaded.first?.taskId, "task_example")
+    }
+
     func testEnqueueListRoundTripsFields() async throws {
         let store = PendingNoteStore(directory: directory)
         let capturedAt = Date(timeIntervalSince1970: 1_772_000_000)

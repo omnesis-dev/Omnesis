@@ -127,7 +127,8 @@ public final class NotesCoordinator {
         text: String,
         surface: NoteSurface,
         captureTime: NoteCaptureTime = .now(),
-        audio: NoteAudio? = nil
+        audio: NoteAudio? = nil,
+        taskId: String? = nil
     ) async
         -> NoteCaptureService.Outcome {
         // Best-effort location for this fresh capture. Resolved before the
@@ -144,7 +145,8 @@ public final class NotesCoordinator {
             store: store,
             captureTime: captureTime,
             location: location,
-            audio: audio
+            audio: audio,
+            taskId: taskId
         )
         switch outcome {
         case .saved:
@@ -241,7 +243,8 @@ public final class NotesCoordinator {
                             surface: note.surface,
                             deviceId: deviceId,
                             location: note.location,
-                            language: note.voice?.locale
+                            language: note.voice?.locale,
+                            taskId: note.taskId
                         ),
                         audio: store.audioFile(for: note.id),
                         client: client,
@@ -256,7 +259,8 @@ public final class NotesCoordinator {
                         capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
                         surface: note.surface,
                         deviceId: deviceId,
-                        location: note.location
+                        location: note.location,
+                        taskId: note.taskId
                     )
                 }
                 try await store.remove(id: note.id)

@@ -24,7 +24,7 @@ final class NotesHistoryModelTests: XCTestCase {
         (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
 
-    func testSuccessfulEditPreservesReceiptWithoutFollowupRead() async throws {
+    func testSuccessfulEditUsesGatewayReceiptWithoutFollowupRead() async throws {
         let session = Session()
         let note = try JSONDecoder().decode(NoteEntry.self, from: Data(noteJSON.utf8))
         session.respond = { request in
@@ -38,6 +38,82 @@ final class NotesHistoryModelTests: XCTestCase {
         XCTAssertEqual(saved.agent?.receipt?.text, "Added a task.")
         XCTAssertNil(saved.transcription)
         XCTAssertEqual(model.entries.first?.text, "Edited note")
+    }
+
+    func testEditedSettledNotePollsPendingRevisionUntilNewReceipt() async throws {
+        let session = Session()
+        let note = try JSONDecoder().decode(NoteEntry.self, from: Data(noteJSON.utf8))
+        let pendingJSON = """
+        {"id":"n1","day":"2026-06-12","capturedAt":"2026-06-12T10:00:00Z",
+         "updatedAt":"2026-06-12T10:01:00Z","text":"Move the workshop to Sunday",
+         "agent":{"state":"pending","receipt":null}}
+        """
+        let doneJSON = pendingJSON.replacingOccurrences(
+            of: #""agent":{"state":"pending","receipt":null}"#,
+            with: #""agent":{"state":"done","receipt":{"text":"Moved the workshop.","changes":[]}}"#
+        )
+        session.respond = { request in
+            if request.httpMethod == "PATCH" { return self.response(request, body: pendingJSON) }
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, note.day)
+            return self.response(request, body: "{\"entries\":[\(doneJSON)]}")
+        }
+        let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
+        let model = NotesHistoryModel(client: client, entries: [note])
+        let saved = try await model.edit(note, text: "Move the workshop to Sunday")
+        XCTAssertEqual(saved.agent?.state, "pending")
+        XCTAssertNil(saved.agent?.receipt)
+        XCTAssertTrue(saved.shouldRefreshReceipt())
+        XCTAssertEqual(model.entries.first?.agent?.state, "pending")
+        await model.refreshPending()
+        XCTAssertEqual(model.entries.first?.agent?.receipt?.text, "Moved the workshop.")
+        let settled = try XCTUnwrap(model.entries.first)
+        XCTAssertFalse(settled.shouldRefreshReceipt())
+    }
+
+    func testEditDoesNotInventReceiptWhenGatewayOmitsIt() async throws {
+        let session = Session()
+        let note = try JSONDecoder().decode(NoteEntry.self, from: Data(noteJSON.utf8))
+        session.respond = { request in
+            self.response(request, body: """
+            {"id":"n1","day":"2026-06-12","capturedAt":"2026-06-12T10:00:00Z",
+             "updatedAt":"2026-06-12T10:01:00Z","text":"Edited note"}
+            """)
+        }
+        let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
+        let model = NotesHistoryModel(client: client, entries: [note])
+        let saved = try await model.edit(note, text: "Edited note")
+        XCTAssertNil(saved.agent)
+        XCTAssertNil(model.entries.first?.agent)
+    }
+
+    func testReadStartedBeforeEditCannotRestoreOldReceipt() async throws {
+        let session = Session()
+        let note = try JSONDecoder().decode(NoteEntry.self, from: Data(noteJSON.utf8))
+        var resumeRead: CheckedContinuation<Void, Never>?
+        session.respond = { request in
+            if request.httpMethod == "PATCH" {
+                return self.response(request, body: """
+                {"id":"n1","day":"2026-06-12","capturedAt":"2026-06-12T10:00:00Z",
+                 "updatedAt":"2026-06-12T10:01:00Z","text":"Edited workshop",
+                 "agent":{"state":"pending","receipt":null}}
+                """)
+            }
+            await withCheckedContinuation { resumeRead = $0 }
+            return self.response(request, body: "{\"entries\":[\(self.noteJSON)],\"pageInfo\":{\"hasMore\":false}}")
+        }
+        let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
+        let model = NotesHistoryModel(client: client, entries: [note])
+        let read = Task { await model.load() }
+        while resumeRead == nil {
+            await Task.yield()
+        }
+        _ = try await model.edit(note, text: "Edited workshop")
+        resumeRead?.resume()
+        await read.value
+        XCTAssertEqual(model.entries.first?.text, "Edited workshop")
+        XCTAssertEqual(model.entries.first?.agent?.state, "pending")
+        XCTAssertNil(model.entries.first?.agent?.receipt)
     }
 
     func testReadStartedBeforeDeletionCannotRestoreNote() async throws {

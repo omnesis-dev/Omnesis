@@ -45,8 +45,62 @@ so its token benefit is downstream; the preflight discovery gate avoids whole ru
 
 The autonomous Brain is experimental and unstable. Enable
 `OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
-start it. Either alone leaves autonomous work inactive. Evidence invalidation
+start it. Either alone leaves autonomous work inactive. Settings labels this experimental role
+**Brain agent**; its internal key remains `background-agent`. Chat and Tell Omnesis
+notes instead share the ordinary `agent` assignment. Each note gets a separate
+bounded session and needs no open chat. Assignments are never copied or used as
+fallbacks for each other. Evidence invalidation
 and privacy cleanup continue when autonomous synthesis is stopped.
+
+## Owner note corrections
+
+Tell Omnesis uses `agent`, independently of the Brain gate. An admin-authorized
+text edit to an originally owner-captured note queues a durable revision. Identical
+text queues nothing. A ten-second settling period coalesces unclaimed rapid edits;
+a newer edit waits for the earlier claimed revision to settle. Each edit has its
+own `note:<id>:revision:<n>` run identity. The system prompt carries previous and
+current text, the exact changed span and the prior finished receipt as data, so
+unchanged instructions are not new permission to repeat work. The current text
+remains the owner's instruction. Changed relative dates use the trusted edit instant and
+local day in the original capture's validated IANA time zone, including daylight
+saving transitions; unchanged intent retains the original capture context.
+
+The public edited entry is pending with no receipt until that revision finishes;
+previous receipts remain internal context. Mutation admission checks the current
+text, revision and claim at the writer boundary. An admitted older mutation may
+still finish; superseded or retired handles cannot admit new work. If a prior
+consequential action is uncertain or still in flight, the correction can read but
+cannot perform consequential writes. Its receipt asks for review and a fresh,
+separate request. Evidence/citation bookkeeping remains available. This is not an
+exactly-once guarantee.
+
+A changed-text edit by a non-admin writer atomically revokes pending work and
+permanently clears the note's owner eligibility. A later admin edit cannot promote
+that externally changed text; a fresh owner note is required. A same-text external
+edit does not downgrade eligibility. Trusted edits while processing is disabled
+preserve the last finished baseline, but are saved without later replay. Explicitly
+editing an older owner note after enabling processing can act on the changed
+intent. Deleting the note cascades its revision history.
+
+Note turns share chat's memory-subject guidance and receive the current self-person
+identity. Personal facts belong on that self profile; document context belongs on
+the document. Without a self identity, the agent reports the fact as saved in the
+note rather than claiming profile memory. Existing annotations are not backfilled.
+
+## Note clarification conversations
+
+A clear owner request blocked by ambiguity or missing information can deliberately
+hand off to normal Agent chat with the Note-only `continue_in_chat` tool. It takes
+a plain question and context, without choice-button arguments. Note turns omit
+chat-only presentation tools and prompting; the subsequent reply uses the ordinary
+chat prompt and tools. The original note remains saved. The note turn creates a durable conversation with a `note` origin carrying the note ID, revision
+and run ID; the original request and assistant question remain visible. Only after
+the conversation is saved does the completed note receipt expose `conversationId`.
+The receipt links to the existing conversation route; clients never create a second
+thread. A proactive conversation notification brings the owner back. Their reply
+uses normal Agent tools with the preserved context. Ordinary actionable notes stay
+asynchronous. A Note turn never waits for an inline answer; the explicit handoff
+ends that turn, and any answer arrives as a later normal chat turn.
 
 ## Changes and maintenance
 

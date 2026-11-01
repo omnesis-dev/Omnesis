@@ -63,6 +63,10 @@ const WOUND_BACK = [
   191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204,
   // 205 indexes and compacts knowledge_changes, which undoKnowledge drops.
   205, 206,
+  // 207 rebuilds the note queue, which undoNoteAgent drops.
+  207,
+  // 208 handoff outbox is dropped with the note queue.
+  208,
 ];
 
 let dir: string;
@@ -173,6 +177,7 @@ function undoTaskSuggestions(db: Db): void {
 
 /** Undo migration 199: the note agent's queue did not exist yet. */
 function undoNoteAgent(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS note_agent_handoffs");
   db.exec("DROP TABLE IF EXISTS note_agent_runs");
   db.exec("DROP TABLE IF EXISTS note_agent_meta");
 }

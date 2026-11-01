@@ -10,11 +10,12 @@
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { navigate } from "../lib/router.js";
-import { createNote, deleteNoteEntry, getNotesHistory, getStatus, patchNoteEntry } from "../api.js";
+import { createNote, deleteNoteEntry, getNotesHistory, getNotesForDay, getStatus, patchNoteEntry } from "../api.js";
 import { NoteAgentReceipt } from "../components/note-agent-receipt.js";
 import {
   NOTE_AGENT_REFRESH_MS,
   noteAgentActive,
+  noteAgentNotice,
   noteAgentPending,
   noteRefreshChanged,
 } from "../lib/note-agent.js";
@@ -89,13 +90,15 @@ export function CaptureView({ day, experimental = false } = {}) {
   // text re-sends it unchanged, so its idempotency key holds.
   const pendingRef = useRef(null);
   // Whether the gateway's note agent reads what is told here.
-  const [agentActive, setAgentActive] = useState(false);
+  const [status, setStatus] = useState(null);
+  const agentActive = noteAgentActive(status);
+  const agentNotice = noteAgentNotice(status);
 
   useEffect(() => {
     textareaRef.current?.focus();
     let live = true;
     getStatus()
-      .then((status) => live && setAgentActive(noteAgentActive(status)))
+      .then((status) => live && setStatus(status))
       .catch(() => {
         // Without a status read the page simply omits the hint.
       });
@@ -148,9 +151,10 @@ export function CaptureView({ day, experimental = false } = {}) {
       <div class="capture-column">
         <p class="capture-lead">
           Say what Omnesis should remember — a thought, a fact, something to follow up on. It joins
-          your notes and becomes searchable${agentActive ? "." : "; nothing replies."}
+          your notes and becomes searchable.
         </p>
         ${agentActive && html`<p class="capture-agent-hint">Omnesis will act on what you tell it</p>`}
+        ${agentNotice && html`<p class="capture-agent-hint" role="status">${agentNotice} <a href="/portal/settings/models/agent">Open Agent settings</a></p>`}
         <form class="capture-composer" onSubmit=${tell}>
           <!-- Read-only rather than disabled while saving, so focus stays in the field for the next note. -->
           <textarea
@@ -447,6 +451,8 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
     selectItems: (payload) => payload?.entries ?? [],
     itemKey: (item) => item?.id,
   });
+  const currentItemsRef = useRef(page.items);
+  currentItemsRef.current = page.items;
   const boundary = cursorPageBoundaryState(page);
   const consumedCaptureRef = useRef(null);
   // Entries captured locally while a load is in flight, newest first. A
@@ -508,12 +514,8 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedDay, page.items, page.loading]);
 
-  // Notes the gateway is still working on — a voice note waiting on its
-  // transcript, or a note the note agent has yet to read: re-read the first
-  // page while any is shown and swap in the newer copy, so the text and the
-  // receipt change in place without a reload. Pending notes are fresh
-  // captures, so the first page holds them. The agent settles in seconds,
-  // so its wait polls faster than a transcript's.
+  // Captures usually appear at the head; edited notes can remain on any
+  // loaded page. Refresh missing pending IDs through their existing day read.
   const pendingItems = page.items.filter(
     (item) => item?.transcription === "pending" || noteAgentPending(item?.agent),
   );
@@ -522,11 +524,26 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
   useVisiblePoll(
     async () => {
       if (pendingIds.length === 0) return;
+      const requested = new Map(pendingItems.map((item) => [item.id, item]));
       try {
         const payload = await getNotesHistory({ limit: NOTES_HISTORY_PAGE_SIZE, day: seedDay });
-        const current = new Map(page.items.map((item) => [item?.id, item]));
-        for (const entry of payload?.entries ?? []) {
-          if (pendingIds.includes(entry.id) && noteRefreshChanged(current.get(entry.id), entry)) {
+        const entries = [...(payload?.entries ?? [])];
+        const found = new Set(entries.map((entry) => entry.id));
+        const days = [...new Set(pendingItems.filter((item) => !found.has(item.id)).map((item) => item.day))];
+        const settledDays = await Promise.allSettled(days.map((day) => getNotesForDay(day)));
+        for (const result of settledDays) {
+          if (result.status === "fulfilled") entries.push(...(result.value?.entries ?? []));
+        }
+        // Consult the latest rendered revision after every awaited response,
+        // so a poll started before an edit cannot restore its old receipt.
+        const current = new Map(currentItemsRef.current.map((item) => [item?.id, item]));
+        for (const entry of entries) {
+          const before = requested.get(entry.id);
+          const latest = current.get(entry.id);
+          if (!before || !latest || latest.updatedAt !== before.updatedAt || latest.text !== before.text) continue;
+          if (!noteAgentPending(latest.agent) && latest.transcription !== "pending") continue;
+          if (noteRefreshChanged(latest, entry)) {
+            currentItemsRef.current = currentItemsRef.current.map((item) => item.id === entry.id ? entry : item);
             page.replaceItem(entry.id, entry);
           }
         }
@@ -578,6 +595,7 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
                     key=${entry.id}
                     entry=${entry}
                     onChanged=${(updated) => {
+                      currentItemsRef.current = currentItemsRef.current.map((item) => item.id === updated.id ? updated : item);
                       // A successful save is the newest known version of this
                       // entry: pin it so a stale in-flight snapshot cannot
                       // revert the corrected text (missing-ID and older-copy

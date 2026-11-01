@@ -13,6 +13,7 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.capture.TaskNoteContext
 import dev.omnesis.android.ui.capture.TaskNoteKind
 import dev.omnesis.android.ui.capture.VoiceNoteUi
 import org.junit.Test
@@ -35,6 +36,14 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class CaptureScreenshotTest {
 
+    private fun taskTell(dark: Boolean) = capture("capture_task_tell_${if (dark) "dark" else "light"}", dark) {
+        CaptureContent(CaptureUiState(text = "About this task…\n\n", speech = SpeechState.IDLE,
+            taskContext = TaskNoteContext("task_example", "Repair the telescope")),
+            {}, {}, {}, {}, {}, onHistory = {})
+    }
+    @Test fun capture_task_tell_light() = taskTell(false)
+    @Test fun capture_task_tell_dark() = taskTell(true)
+
     private fun capture(name: String, dark: Boolean, content: @Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
             CompositionLocalProvider(LocalInspectionMode provides true) {
@@ -53,6 +62,42 @@ class CaptureScreenshotTest {
             onCancel = {},
             onDismissError = {},
         )
+    }
+
+    @Test
+    fun capture_agent_missing_dark() = capture("capture_agent_missing_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(),
+            noteProcessingNotice = "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+            onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+        )
+    }
+
+    @Test
+    fun capture_processing_off_light() = capture("capture_processing_off_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(),
+            noteProcessingNotice = "Note processing is off. Notes are saved, but won't create or update tasks.",
+            onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+        )
+    }
+
+    @Test
+    fun capture_notice_theme_counterparts() {
+        capture("capture_agent_missing_light", dark = false) {
+            CaptureContent(
+                state = CaptureUiState(),
+                noteProcessingNotice = "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+                onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+            )
+        }
+        capture("capture_processing_off_dark", dark = true) {
+            CaptureContent(
+                state = CaptureUiState(),
+                noteProcessingNotice = "Note processing is off. Notes are saved, but won't create or update tasks.",
+                onMicTap = {}, onTextChange = {}, onSave = {}, onCancel = {}, onDismissError = {},
+            )
+        }
     }
 
     // --- empty (just opened, mic idle) ---

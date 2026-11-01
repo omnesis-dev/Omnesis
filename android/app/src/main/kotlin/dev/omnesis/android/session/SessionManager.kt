@@ -42,6 +42,7 @@ import dev.omnesis.android.transport.client.SearchClient
 import dev.omnesis.android.transport.client.TasksClient
 import dev.omnesis.android.transport.client.WatchesClient
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
+import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -334,8 +335,15 @@ class SessionManager @Inject constructor(
      * Whether the gateway opens a conversation about a task ("Chat about this"), from the same
      * `/status` probe. Cleared on every rebuild like [tasksAvailable].
      */
+    private val _taskNoteCaptureAvailable = MutableStateFlow(false)
+    val taskNoteCaptureAvailable: StateFlow<Boolean> = _taskNoteCaptureAvailable.asStateFlow()
+
     private val _taskConversationsAvailable = MutableStateFlow(false)
     val taskConversationsAvailable: StateFlow<Boolean> = _taskConversationsAvailable.asStateFlow()
+
+    /** Independent note-processing verdict; null until known and reset on re-pair. */
+    private val _noteAgent = MutableStateFlow<NoteAgentStatusDto?>(null)
+    val noteAgent = _noteAgent.asStateFlow()
 
     /**
      * The gateway-dictation gate from the same `/status` probe; null until it lands and
@@ -499,8 +507,10 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _developerEnabled.value = false
         _tasksAvailable.value = false
+        _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
         _dictation.value = null
+        _noteAgent.value = null
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
         _pushRegistrationFailed.value = false
@@ -826,8 +836,10 @@ class SessionManager @Inject constructor(
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _tasksAvailable.value = status.tasks?.available == true
+            _taskNoteCaptureAvailable.value = status.taskNoteCapture
             _taskConversationsAvailable.value = status.taskConversations
             _dictation.value = status.dictation
+            _noteAgent.value = status.noteAgent
             this.current()?.let { childScope ->
                 speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)
             }

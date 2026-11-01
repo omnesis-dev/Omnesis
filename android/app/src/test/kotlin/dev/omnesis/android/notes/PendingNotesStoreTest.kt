@@ -252,5 +252,6 @@ class PendingNotesStoreTest {
         assertEquals(2, upgraded.retryCount)
         assertNull(upgraded.audio)
         assertNull(upgraded.language)
+        assertNull(upgraded.taskId)
     }
 }

@@ -26,6 +26,7 @@ class NotesHistoryViewModelTest {
         var failure: Throwable? = null
         var gate: CompletableDeferred<Unit>? = null
         var editGate: CompletableDeferred<Unit>? = null
+        var editedAgent: NoteAgentDto? = null
         var dayReads = 0
         var headPage: NotesHistoryDto? = null
         var pages: Map<String, NotesHistoryDto> = emptyMap()
@@ -42,7 +43,7 @@ class NotesHistoryViewModelTest {
         override suspend fun edit(id: String, text: String): NoteEntryDto {
             editGate?.await()
             failure?.let { throw it }
-            return note.copy(text = text, agent = null, transcription = null)
+            return note.copy(text = text, agent = editedAgent, transcription = null)
         }
         override suspend fun delete(id: String) { failure?.let { throw it } }
         override suspend fun undo(seq: Long) { failure?.let { throw it } }
@@ -50,14 +51,48 @@ class NotesHistoryViewModelTest {
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @After fun teardown() { Dispatchers.resetMain() }
 
-    @Test fun edit_keeps_historical_receipt_but_supersedes_pending_transcript() = runTest {
+    @Test fun edit_uses_gateway_receipt_and_supersedes_pending_transcript() = runTest {
         val gateway = Gateway()
         val vm = NotesHistoryViewModel(gateway)
         vm.select(note.id)
         vm.edit("Updated note")
         assertEquals("Updated note", vm.state.value.selected?.text)
-        assertEquals(note.agent, vm.state.value.selected?.agent)
+        assertNull(vm.state.value.selected?.agent)
         assertNull(vm.state.value.selected?.transcription)
+    }
+
+    @Test fun edited_settled_note_polls_pending_revision_until_new_receipt() = runTest {
+        val gateway = Gateway()
+        gateway.entries = listOf(note.copy(transcription = null,
+            agent = NoteAgentDto("done", NoteReceiptDto("Added the workshop."))))
+        gateway.editedAgent = NoteAgentDto("pending")
+        val vm = NotesHistoryViewModel(gateway)
+        vm.select(note.id)
+        vm.edit("Move the workshop to Sunday")
+        assertEquals("pending", vm.state.value.selected?.agent?.state)
+        assertNull(vm.state.value.selected?.agent?.receipt)
+        assertTrue(noteNeedsRefresh(vm.state.value.selected!!))
+        gateway.entries = listOf(note.copy(text = "Move the workshop to Sunday", transcription = null,
+            agent = NoteAgentDto("done", NoteReceiptDto("Moved the workshop."))))
+        vm.refresh(quietly = true)
+        assertEquals("Moved the workshop.", vm.state.value.selected?.agent?.receipt?.text)
+        assertFalse(noteNeedsRefresh(vm.state.value.selected!!))
+    }
+
+    @Test fun read_started_before_edit_cannot_restore_old_receipt() = runTest {
+        val gateway = Gateway()
+        gateway.entries = listOf(note.copy(transcription = null,
+            agent = NoteAgentDto("done", NoteReceiptDto("Added the workshop."))))
+        gateway.editedAgent = NoteAgentDto("pending")
+        val vm = NotesHistoryViewModel(gateway)
+        vm.select(note.id)
+        gateway.gate = CompletableDeferred()
+        vm.refresh()
+        vm.edit("Edited workshop")
+        gateway.gate!!.complete(Unit)
+        assertEquals("Edited workshop", vm.state.value.selected?.text)
+        assertEquals("pending", vm.state.value.selected?.agent?.state)
+        assertNull(vm.state.value.selected?.agent?.receipt)
     }
 
     @Test fun already_deleted_note_converges_without_error() = runTest {

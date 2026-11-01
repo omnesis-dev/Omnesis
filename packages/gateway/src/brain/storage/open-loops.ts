@@ -257,6 +257,7 @@ export function taskSnapshot(loop: OpenLoopRow): TaskSnapshot {
     description: loop.description,
     deadline: loop.deadline,
     scheduledFor: loop.scheduledFor,
+    docs: loop.docs,
     accepted: loop.accepted,
     ignored: loop.ignored,
     completionNote: loop.completionNote,

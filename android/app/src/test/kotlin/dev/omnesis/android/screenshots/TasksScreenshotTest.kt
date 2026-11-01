@@ -127,6 +127,7 @@ class TasksScreenshotTest {
     )
 
     private val todayState = TasksUiState(
+        tellAvailable = true,
         day = "2026-10-12",
         loading = false,
         tasks = listOf(carried, proposed, planned, due, done, struck),
@@ -135,6 +136,30 @@ class TasksScreenshotTest {
             suggested = 2, proposals = 1, carried = 1,
         ),
     )
+
+    @Test
+    fun tasks_agent_missing_dark() = capture("tasks_agent_missing_dark", dark = true) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
+            androidx.compose.foundation.layout.Column {
+                dev.omnesis.android.ui.tasks.NoteProcessingNotice(
+                    "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+                )
+                TasksContent(state = todayState, today = today)
+            }
+        }
+    }
+
+    @Test
+    fun tasks_agent_missing_light() = capture("tasks_agent_missing_light", dark = false) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
+            androidx.compose.foundation.layout.Column {
+                dev.omnesis.android.ui.tasks.NoteProcessingNotice(
+                    "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.",
+                )
+                TasksContent(state = todayState, today = today)
+            }
+        }
+    }
 
     @Composable
     private fun Screen(state: TasksUiState, experimental: Boolean = false) {
@@ -257,6 +282,7 @@ class TasksScreenshotTest {
     }
 
     private val suggestedState = TasksUiState(
+        tellAvailable = true,
         segment = TaskSegment.SUGGESTED,
         day = "2026-10-12",
         loading = false,

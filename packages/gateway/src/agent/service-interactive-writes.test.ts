@@ -17,12 +17,17 @@
  * Fixture data is invented — no corpus content.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ChatBackend,
   type DocumentPort,
   type SearchPort,
   type ToolHandle,
+  type ToolPorts,
+  type WatchPort,
   type TurnInput,
 } from "@omnesis/agent";
 import Database from "better-sqlite3";
@@ -33,6 +38,7 @@ import { createKnowledgeTables } from "../brain/knowledge/storage.js";
 import { buildKnowledgeTools } from "../brain/knowledge/tools.js";
 import { directKnowledgeGate } from "../brain/knowledge/writer.js";
 import { AgentService, type InteractiveWriteProfile } from "./service.js";
+import { FsConversationStore } from "./conversation-store.js";
 
 const stubSearch: SearchPort = {
   async search(input) {
@@ -74,12 +80,12 @@ function makeProfile(): { profile: InteractiveWriteProfile; seenRunIds: string[]
   return { profile, seenRunIds };
 }
 
-function makeService() {
+function makeService(ports: Partial<ToolPorts> = {}) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
   const service = new AgentService({
     backendFactory: (_role: CapabilityRole) => backend,
-    ports: { search: stubSearch, document: stubDocument },
+    ports: { search: stubSearch, document: stubDocument, ...ports },
     systemPrompt: "test",
     broadcastEvent: (e) => captured.push(e),
     sessionIdGen: () => "S_top",
@@ -228,6 +234,241 @@ describe("stable interactive memory", () => {
     } finally {
       if (previous === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
       else process.env.OMNESIS_EXPERIMENTAL = previous;
+    }
+  });
+});
+
+describe("shared owner-directed tools", () => {
+  let previousExperimental: string | undefined;
+  let previousSynthetic: string | undefined;
+  beforeEach(() => {
+    previousExperimental = process.env.OMNESIS_EXPERIMENTAL;
+    previousSynthetic = process.env.OMNESIS_SYNTHETIC;
+    process.env.OMNESIS_SYNTHETIC = "0";
+  });
+  afterEach(() => {
+    if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+    else process.env.OMNESIS_EXPERIMENTAL = previousExperimental;
+    if (previousSynthetic === undefined) delete process.env.OMNESIS_SYNTHETIC;
+    else process.env.OMNESIS_SYNTHETIC = previousSynthetic;
+  });
+
+  function profileTool(name: string, runId: string, profile: string, mutates = true): ToolHandle {
+    return {
+      name,
+      description: name,
+      mutates,
+      schema: undefined as never,
+      invoke: async () => ({
+        kind: "structured",
+        resultType: "profile.write",
+        data: { runId, profile },
+      }),
+    };
+  }
+
+  it.each([false, true])(
+    "offers the same owner capabilities to chat and standalone notes (experimental=%s)",
+    async (experimental) => {
+      process.env.OMNESIS_EXPERIMENTAL = experimental ? "1" : "0";
+      const { service, backend } = makeService();
+      service.setInteractiveMemoryProfile({
+        buildOwnTools: (runId) => [profileTool("annotate_durable", runId, "memory")],
+      });
+      service.setInteractiveWriteProfile({
+        buildOwnTools: (runId) => [
+          profileTool("annotate_durable", runId, "cognition"),
+          profileTool("observation_note", runId, "cognition"),
+          profileTool("knowledge_list", runId, "cognition", false),
+          profileTool("knowledge_save", runId, "cognition"),
+          profileTool("knowledge_edit", runId, "cognition"),
+          profileTool("open_loop_create", runId, "cognition"),
+          profileTool("open_loop_update", runId, "cognition"),
+          profileTool("open_loop_delete", runId, "cognition"),
+          profileTool("open_loop_ledger_append", runId, "cognition"),
+        ],
+      });
+      const taskTools = [profileTool("task_update", "note:seed", "tasks")];
+      service.setTaskToolsProvider(() => taskTools);
+      try {
+        const noteTools = service.buildOwnerTools("note:seed", taskTools);
+        const names = noteTools.map((tool) => tool.name);
+        const { sessionId } = await service.createSession("device:A");
+        service.sendMessage("device:A", sessionId, "Remember the greenhouse project.");
+        await settle();
+
+        expect(backend.sawTools).toContain("ask_clarification");
+        expect([...names].sort()).toEqual(
+          backend.sawTools.filter((name) => name !== "ask_clarification").sort(),
+        );
+        expect(names).toContain("task_update");
+        expect(names.filter((name) => name === "annotate_durable")).toHaveLength(1);
+        expect(names.includes("observation_note")).toBe(experimental);
+        expect(names.includes("knowledge_list")).toBe(experimental);
+        for (const excluded of [
+          "knowledge_save",
+          "knowledge_edit",
+          "open_loop_create",
+          "open_loop_update",
+          "open_loop_delete",
+          "open_loop_ledger_append",
+        ])
+          expect(names).not.toContain(excluded);
+
+        const result = await noteTools
+          .find((tool) => tool.name === "annotate_durable")!
+          .invoke(
+            {},
+            {
+              sessionId: "note-agent-seed",
+              messageId: "message_seed",
+              caller: { kind: "operator" },
+            },
+          );
+        expect(result).toEqual({
+          kind: "structured",
+          resultType: "profile.write",
+          data: { runId: "note:seed", profile: experimental ? "cognition" : "memory" },
+        });
+        expect(service.listTools().map((tool) => tool.name)).not.toContain("annotate_durable");
+        expect(service.listTools().map((tool) => tool.name)).not.toContain("task_update");
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
+  it("keeps watch mutations gated and passes the standalone owner's identity to the watch port", async () => {
+    const created = {
+      action: "created" as const,
+      watchId: "watch_greenhouse",
+      name: "Greenhouse supplies",
+      enabled: true,
+      interpretation: "Notify when greenhouse supplies are ready.",
+      warnings: [],
+    };
+    const create = vi.fn<WatchPort["create"]>(async () => created);
+    const watch: WatchPort = {
+      create,
+      update: async () => ({ ...created, action: "updated" }),
+      remove: async () => {},
+      list: async () => [],
+      get: async () => null,
+      probe: async () => ({
+        events: 0,
+        from: null,
+        to: null,
+        nodes: [],
+        firings: 0,
+        judgeGated: false,
+      }),
+    };
+    process.env.OMNESIS_EXPERIMENTAL = "0";
+    const stable = makeService({ watch }).service;
+    try {
+      expect(stable.buildOwnerTools("note:stable", []).map((tool) => tool.name)).not.toContain(
+        "watch_create",
+      );
+    } finally {
+      await stable.dispose();
+    }
+
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    const experimental = makeService({ watch }).service;
+    try {
+      const tools = experimental.buildOwnerTools("note:watch", []);
+      const result = await tools
+        .find((tool) => tool.name === "watch_create")!
+        .invoke(
+          { request: "Notify when greenhouse supplies are ready." },
+          {
+            sessionId: "note-agent-watch",
+            messageId: "message_watch",
+            caller: { kind: "operator" },
+          },
+        );
+      expect(create).toHaveBeenCalledWith(
+        { kind: "operator" },
+        { request: "Notify when greenhouse supplies are ready." },
+      );
+      expect(result).toMatchObject({
+        kind: "watch.upserted",
+        watchId: "watch_greenhouse",
+        action: "created",
+      });
+    } finally {
+      await experimental.dispose();
+    }
+  });
+});
+
+describe("task creation conversation reference", () => {
+  it("supplies a refusing reference resolver when conversation persistence is unavailable", async () => {
+    const { service } = makeService();
+    let resolve: (() => Promise<string | null>) | undefined;
+    service.setTaskToolsProvider((_id, context) => {
+      resolve = context.creationReference;
+      return [];
+    });
+    try {
+      await service.createSession("device:owner");
+      expect(resolve).toBeTypeOf("function");
+      expect(await resolve!()).toBeNull();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("publishes the live owner message before resolving its reference with interactive memory disabled", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-task-reference-"));
+    const store = new FsConversationStore(dir);
+    let reference: string | null | undefined;
+    const ensure = vi.fn(async (id: string) => {
+      const record = await store.load(id);
+      expect(JSON.stringify(record?.messages)).toContain("Remind me to polish the telescope");
+      return {
+        documentId: "doc_current_chat",
+        userMessages: ["Remind me to polish the telescope"],
+        truncated: false,
+      };
+    });
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        await input.tools.find((tool) => tool.name === "task_create")!.invoke({}, ids as never);
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+      store,
+      ensureConversationEvidence: ensure,
+    });
+    service.setTaskToolsProvider((_id, context) => [
+      {
+        name: "task_create",
+        description: "test",
+        mutates: true,
+        schema: undefined as never,
+        invoke: async () => {
+          reference = await context.creationReference?.();
+          return { kind: "structured", resultType: "noop", data: {} };
+        },
+      },
+    ]);
+    try {
+      const { sessionId } = await service.createSession("device:owner");
+      service.sendMessage("device:owner", sessionId, "Remind me to polish the telescope");
+      await vi.waitFor(() => expect(reference).toBe("doc_current_chat"));
+      expect(ensure).toHaveBeenCalledWith(sessionId);
+    } finally {
+      await service.dispose();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

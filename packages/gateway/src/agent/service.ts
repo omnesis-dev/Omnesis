@@ -21,6 +21,8 @@
  * unit-testable without the server.
  */
 
+import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
+import type { NoteConversationOrigin } from "./conversation-store.js";
 import {
   createVoiceSession,
   voiceTranscriptModelNote,
@@ -334,6 +336,7 @@ export interface AgentServiceDeps {
    * is removed so a failed durable corpus/index cascade leaves the transcript
    * available for retry. Awaited; failures reject the deletion.
    */
+  noteContext?: (origin: NoteConversationOrigin) => string;
   onConversationDeleted?: (sessionId: string) => Promise<unknown>;
   /**
    * Bounded retention cascade. False means downstream cleanup made progress
@@ -523,6 +526,8 @@ export type TaskToolsProvider = (
   context: {
     /** The conversation's origin kind (`daily_brief`, …); undefined for a plain conversation. */
     originKind?: string;
+    /** Publish this turn before resolving the canonical conversation reference. */
+    creationReference?: () => Promise<string | null>;
   },
 ) => ToolHandle[];
 
@@ -927,6 +932,7 @@ export class AgentService {
   private readonly onSessionClose: ((sessionId: string) => void | Promise<void>) | undefined;
   private readonly onConversationDeleted: ((sessionId: string) => Promise<unknown>) | undefined;
   private readonly onConversationRetained: ((sessionId: string) => Promise<boolean>) | undefined;
+  private readonly noteContext: AgentServiceDeps["noteContext"];
   private readonly notifyAnswer:
     ((notification: AgentAnswerNotification) => void | Promise<void>) | undefined;
   private readonly readState: ConversationReadStatePort | undefined;
@@ -1169,6 +1175,7 @@ export class AgentService {
     this.onSessionClose = deps.onSessionClose;
     this.onConversationDeleted = deps.onConversationDeleted;
     this.onConversationRetained = deps.onConversationRetained;
+    this.noteContext = deps.noteContext;
     this.notifyAnswer = deps.notifyAnswer;
     this.readState = deps.readState;
     this.notifyConversation = deps.notifyConversation;
@@ -1557,6 +1564,28 @@ export class AgentService {
    */
   private originPromptSection(sessionId: string): string {
     const origin = this.sessions.get(sessionId)?.meta.origin;
+    if (origin?.kind === "note") {
+      try {
+        const note =
+          this.noteContext?.(origin) ??
+          "The current note context is unavailable. Treat earlier note instructions as historical; confirm the owner's current intent before acting.";
+        let task = "";
+        if (origin.taskId && this.taskContext) {
+          try {
+            task = this.taskContext({ kind: "task", runId: origin.runId, taskId: origin.taskId });
+          } catch {
+            task =
+              "The original task context is unavailable. Read its current state before changing it.";
+          }
+        }
+        return note + task;
+      } catch (err) {
+        log.warn(
+          `Note continuation context could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return "The current note context is unavailable. Do not replay earlier instructions; confirm the owner's current intent before acting.";
+      }
+    }
     if (origin?.kind !== "task" || !this.taskContext) return "";
     try {
       return this.taskContext(origin);
@@ -1602,26 +1631,58 @@ export class AgentService {
   }
 
   /**
-   * Tool set for a top-level interactive (or voice) session. Such a session
-   * (never a sub-agent) gains the Cognition Steward's own
-   * annotation tools in every mode and broader MUTATING tools in experimental
-   * mode, so facts the user provides
-   * mid-conversation are written straight into the substrate. The handles are
-   * stamped with an interactive-origin run id so the audit trail says where a
-   * write came from. this.tools already
-   * carries the read registry (search/fetch/people/sql/loop-read/…), so
-   * buildOwnTools returns only the write surface — no read-tool duplication.
-   * Sub-agents are built from this.tools via selectSubagentTools, never this
-   * per-session array, so they never see these write tools.
+   * Shared owner-directed capabilities for chat, voice and captured notes.
+   * Each surface supplies its provenance and evidence context. Experimental
+   * gates and maintained-page write exclusions apply identically; child
+   * agents continue to receive only their restricted read registry.
    */
+  buildOwnerTools(
+    runId: string,
+    taskTools: readonly ToolHandle[],
+    evidenceTools: readonly ToolHandle[] = [],
+  ): readonly ToolHandle[] {
+    const memory = this.interactiveMemoryProfile?.buildOwnTools(runId) ?? [];
+    const experimental =
+      this.interactiveWriteProfile && experimentalVisible()
+        ? adaptInteractiveKnowledgeReads(
+            this.interactiveWriteProfile
+              .buildOwnTools(runId)
+              .filter(
+                (tool) =>
+                  !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
+                  !(tool.name.startsWith("knowledge_") && tool.mutates === true),
+              ),
+            this.tools,
+            this.documentPort.supportsKnowledgeAliases === true,
+            this.documentPort.knowledgePageRef?.bind(this.documentPort),
+          )
+        : [];
+    // The broader profile tracks annotation consumption alongside its writes.
+    const experimentalNames = new Set(experimental.map((tool) => tool.name));
+    return withTodaysTasks([
+      ...this.tools,
+      ...evidenceTools,
+      ...memory.filter((tool) => !experimentalNames.has(tool.name)),
+      ...experimental,
+      ...taskTools,
+    ]);
+  }
+
+  /** Settle this standalone owner's delegated work before releasing its runtime. */
+  async disposeOwnerTurn(sessionId: string): Promise<void> {
+    await this.subagentService?.disposeTree(sessionId);
+    this.evictChildren(sessionId);
+    this.planStore.forgetSession(sessionId);
+  }
+
   private buildInteractiveTools(
     sessionId: string,
     profile: "interactive" | "voice",
     originKind?: string,
   ): readonly ToolHandle[] {
-    const memory = this.interactiveMemoryProfile?.buildOwnTools(`interactive_${sessionId}`) ?? [];
+    const evidenceTools: ToolHandle[] = [];
     if (this.interactiveMemoryProfile && this.ensureConversationEvidence && this.store) {
-      memory.push(
+      evidenceTools.push(
         buildConversationMemoryEvidenceTool(async () => {
           const live = this.sessions.get(sessionId);
           // A watch-firing thread opens on a hidden briefing, which is not
@@ -1632,32 +1693,20 @@ export class AgentService {
         }),
       );
     }
-    const experimental =
-      this.interactiveWriteProfile && experimentalVisible()
-        ? adaptInteractiveKnowledgeReads(
-            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`).filter(
-              (tool) =>
-                !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
-                // Conversations read maintained pages; only the Brain writes them.
-                !(tool.name.startsWith("knowledge_") && tool.mutates === true),
-            ),
-            this.tools,
-            this.documentPort.supportsKnowledgeAliases === true,
-            this.documentPort.knowledgePageRef?.bind(this.documentPort),
-          )
-        : [];
     const taskTools =
-      this.taskTools?.(sessionId, originKind === undefined ? {} : { originKind }) ?? [];
-    // The broader profile shares annotation consumption with loop/brief writes.
-    // Preserve those handles so their provenance tracker sees every memory read.
-    const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = withTodaysTasks([
-      ...this.tools,
+      this.taskTools?.(sessionId, {
+        ...(originKind === undefined ? {} : { originKind }),
+        creationReference: async () => {
+          const live = this.sessions.get(sessionId);
+          if (!live || !this.store || !this.ensureConversationEvidence) return null;
+          await this.persistConversation(sessionId, live.callerId, live.meta, undefined, false);
+          return (await this.ensureConversationEvidence(sessionId))?.documentId ?? null;
+        },
+      }) ?? [];
+    const base = [
+      ...this.buildOwnerTools(`interactive_${sessionId}`, taskTools, evidenceTools),
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
-      ...memory.filter((tool) => !experimentalNames.has(tool.name)),
-      ...experimental,
-      ...taskTools,
-    ]);
+    ];
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
@@ -2277,6 +2326,88 @@ export class AgentService {
       { role: "user", parts: [{ kind: "text", text: `(This morning's brief, ${latest.day}.)` }] },
       ...history.slice(start),
     ];
+  }
+
+  /** Seed one durable owner-note clarification without invoking a model. */
+  async openNoteClarification(input: NoteHandoff): Promise<void> {
+    const store = this.store;
+    if (!store) throw new AgentError("agent_unconfigured", "No conversation store is configured.");
+    const id = input.conversationId;
+    await this.enqueueConversationMutation(id, async () => {
+      if (this.conversationDeletionTombstones.has(id))
+        throw new AgentError("session_busy", "This clarification conversation was deleted.");
+      const existing = await store.load(id);
+      if (existing) {
+        if (
+          existing.origin?.kind !== "note" ||
+          existing.origin.noteId !== input.noteId ||
+          existing.origin.revision !== input.revision
+        )
+          throw new AgentError(
+            "session_busy",
+            "The clarification conversation has a different origin.",
+          );
+      } else {
+        const backend = this.backendFactory("agent");
+        if (!backend) throw new AgentError("agent_unconfigured", "No Agent model is assigned.");
+        const now = new Date().toISOString();
+        const origin: NoteConversationOrigin = {
+          kind: "note",
+          noteId: input.noteId,
+          revision: input.revision,
+          runId:
+            input.revision === 0
+              ? `note:${input.noteId}`
+              : `note:${input.noteId}:revision:${input.revision}`,
+          seedMessageCount: 0,
+          processingContext: input.context,
+          capturedAt: input.capturedAt,
+          day: input.day,
+          instructionAt: input.instructionAt,
+          ...(input.timeZone ? { timeZone: input.timeZone } : {}),
+          ...(input.taskId ? { taskId: input.taskId } : {}),
+        };
+        const record: ConversationRecord = {
+          id,
+          callerId: "owner-note",
+          model: backend.model,
+          backend: backend.name,
+          createdAt: now,
+          updatedAt: now,
+          title: clipTitle(input.question),
+          pinned: false,
+          origin,
+          messages: [
+            { role: "user", parts: [{ kind: "text", text: input.text }] },
+            {
+              role: "assistant",
+              parts: [
+                {
+                  kind: "text",
+                  text: input.question,
+                },
+              ],
+            },
+          ],
+        };
+        await store.save(record);
+      }
+      const initial = existing ?? (await store.load(id));
+      if (!initial || initial.messages.length !== 2) return;
+      const arrival = !existing
+        ? await this.readState?.agentContentArrived(id, {
+            messageId: `note-${input.noteId}-r${input.revision}`,
+          })
+        : undefined;
+      if (arrival?.notify || this.readState?.unreadAmong([id]).has(id)) {
+        await this.notifyConversation?.({
+          conversationId: id,
+          title: clipTitle(input.question),
+          body: input.question,
+          idempotencyKey: `note-handoff:${id}`,
+        });
+      }
+    });
   }
 
   /**
@@ -3521,6 +3652,7 @@ export class AgentService {
       ],
       systemPrompt: finalPrompt,
       timeZone: parentZone,
+      caller: parent?.session.caller,
     });
     let terminal: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     const pendingEvents: AgentEvent[] = [];

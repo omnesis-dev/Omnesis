@@ -28,7 +28,6 @@ import {
 } from "@omnesis/core";
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
-import { selectSubagentTools } from "@omnesis/agent";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -79,7 +78,10 @@ import {
 } from "./enrichment/dates/config.js";
 import { countPendingDateExtraction } from "./enrichment/dates/storage.js";
 import { resolveBriefsVirtualClock } from "./brain/virtual-clock.js";
-import { backgroundAgentBackendResolver } from "./brain/backend-resolver.js";
+import {
+  backgroundAgentBackendResolver,
+  loadBrainCompletionProvider,
+} from "./brain/backend-resolver.js";
 import { CognitionRunActivity } from "./brain/run-activity.js";
 import { FsCognitionTranscriptStore, cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { drainTranscriptEvictions } from "./brain/transcript-eviction.js";
@@ -111,7 +113,7 @@ import { updateCollectorDeclarationPresence } from "./domain/LinkDeclarationServ
 import { BackupService, DEFAULT_PRE_UPDATE_BACKUP_COUNT } from "./http/services/BackupService.js";
 import { ExportService } from "./http/services/ExportService.js";
 import { FsConversationStore } from "./agent/conversation-store.js";
-import { AgentLifecycle } from "./agent/agent-lifecycle.js";
+import { AgentLifecycle, resolveRoleBackend } from "./agent/agent-lifecycle.js";
 import { TemporalQueryService } from "./enrichment/temporal/temporal-query-service.js";
 import { sendAgentAnswerPush } from "./agent/answer-push.js";
 import { ConfigChangeOrchestrator } from "./http/services/ConfigChangeOrchestrator.js";
@@ -1516,8 +1518,8 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
   }
 };
 
-// Shared background-agent resolver. Subscription compilation and the Loop
-// Agent use the same live model assignment.
+// The Brain and Watch compilation use the independent Brain model assignment.
+// Owner-triggered Tell Omnesis turns use the interactive Agent assignment.
 const resolveBackgroundAgentBackend = backgroundAgentBackendResolver({
   inferenceRegistry,
   configDir,
@@ -1527,6 +1529,18 @@ const resolveBackgroundAgentBackend = backgroundAgentBackendResolver({
   codexRuntimeService,
   claudeCodeService,
 });
+// Resolve fresh for each bounded Tell Omnesis runtime. Preserve existing model
+// assignments without copying or falling back between owner and Brain roles.
+const resolveOwnerAgentBackend = () =>
+  resolveRoleBackend("agent", {
+    inferenceRegistry,
+    configDir,
+    db,
+    maxToolIterations: configStore.get().agent?.maxToolIterations,
+    log,
+    codexRuntimeService,
+    claudeCodeService,
+  });
 /**
  * The one way a watch reaches a phone. Holds the live APNs client so a
  * `gateway.apns` change takes without a restart, and hands out the current
@@ -2681,19 +2695,30 @@ const interactiveMemoryProfile = createInteractiveMemoryProfile({
 agentLifecycle.setInteractiveMemoryProfile(interactiveMemoryProfile);
 agentLifecycle.setDailyBriefContextProvider((latest) => renderDailyBriefContext(db, latest));
 agentLifecycle.setDailyBriefDetailReader((brief) => readDailyBriefDetail(db, brief));
-// The note agent: one bounded background-agent turn per Tell Omnesis note.
-// On whenever a background-agent model is runnable, unless the owner switched
+// The note agent: one bounded Agent turn per Tell Omnesis note.
+// On whenever the Agent model is runnable, unless the owner switched
 // it off (`agent.noteAgent`); no experimental gate.
 const noteAgent = new NoteAgent({
   db,
   tasks: taskService,
   writeGate,
-  resolveBackend: resolveBackgroundAgentBackend,
+  resolveBackend: resolveOwnerAgentBackend,
   getSetting: () => configStore.get().agent?.noteAgent,
-  buildMemoryTools: (runId) => interactiveMemoryProfile.buildOwnTools(runId),
-  readTools: () => {
+  buildTools: (runId, taskTools, evidenceTools) =>
+    agentLifecycle.buildNoteTools(
+      () => {
+        const backend = resolveOwnerAgentBackend();
+        if (!backend) throw new Error("No Agent model is runnable.");
+        return backend;
+      },
+      runId,
+      taskTools,
+      evidenceTools,
+    ),
+  openClarification: async (input) => {
     const service = agentLifecycle.routeDeps.agentService;
-    return service ? selectSubagentTools(service.listTools()) : [];
+    if (!service) throw new Error("No Agent conversation service is available.");
+    await service.openNoteClarification(input);
   },
   dayDocumentId: (day) => notesDayDocumentId(db, day),
   recordUsage: (usage, modelId) =>
@@ -2786,6 +2811,7 @@ agentLifecycle.setTaskToolsProvider((conversationId, context) =>
       conversationId,
     },
     observations: experimentalVisible(),
+    ...(context.creationReference ? { creationReference: context.creationReference } : {}),
     // Only the Morning brief conversation records what the owner says they
     // care about; elsewhere their words are not feedback on a brief.
     ...(context.originKind === "daily_brief" ? { interest: interestEngine } : {}),
@@ -3123,13 +3149,12 @@ const backfillBundle = createBackfillTasks(
     log: log.child("backfill"),
     ...backfillOptsFromRuntime(runtime),
     getNearDupConfig: () => resolveNearDupConfig(configStore.get().nearDuplicates),
-    // Token classification is one of the background agent's headless runs, so
-    // it uses that assignment. Never auto-assigned, so this is null on an
-    // install with no background agent and the pass simply skips. Resolved per
-    // sweep — ConfigChangeOrchestrator keeps the registry current, so a
-    // reassignment lands without a restart. The task owns what this returns.
+    // Optional model-based people judgements belong to the Brain. Deterministic
+    // people matching remains available without it. Recheck the actual live
+    // gate before constructing a provider, so a hidden Brain assignment cannot
+    // buy automatic completions while the Brain is off.
     getCompletionProvider: () => {
-      const provider = loadCompletionFromResolved(inferenceRegistry.resolve("background-agent"), {
+      const provider = loadBrainCompletionProvider(inferenceRegistry, chatRoleReadinessDeps, {
         health: inferenceRegistry.health,
         configDir,
         codexRuntimeService,

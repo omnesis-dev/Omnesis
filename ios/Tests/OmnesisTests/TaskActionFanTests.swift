@@ -31,6 +31,7 @@ final class TaskActionFanTests: XCTestCase {
             bounds: bounds,
             today: today,
             kind: kind,
+            offersTell: true,
             schedule: schedule,
             mode: mode,
             tracking: tracking
@@ -41,24 +42,35 @@ final class TaskActionFanTests: XCTestCase {
         try XCTUnwrap(fan.targets.first { $0.action == action }).center
     }
 
+    func testTellReturnsAnActionWithoutChangingTheTask() {
+        var fan = session(tracking: false)
+        XCTAssertEqual(fan.tap(.tell), .perform(.tell))
+        XCTAssertFalse(TaskFanAction.tell.isNavigation)
+    }
+
+    func testOlderGatewayDoesNotOfferTaskTell() {
+        let fan = TaskFanSession(anchor: press, bounds: bounds, today: "2026-11-01")
+        XCTAssertFalse(fan.targets.contains { $0.action == .tell })
+    }
+
     // MARK: - Layout
 
     func testMainFanKeepsItsOrderAndLabels() {
         let fan = session()
-        XCTAssertEqual(fan.targets.map(\.action), [.done, .doneWithNote, .tomorrow, .nextMonth, .otherMonth, .cancelTask])
+        XCTAssertEqual(fan.targets.map(\.action), [.done, .doneWithNote, .tomorrow, .nextMonth, .otherMonth, .cancelTask, .tell])
         XCTAssertEqual(
             fan.targets.map(\.label),
-            ["Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task"]
+            ["Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task", "Tell Omnesis"]
         )
     }
 
     /// A suggestion's fan offers to take it on, not to plan or cancel it.
     func testSuggestionFanOffersAcceptMarkDoneAndIgnore() {
         let fan = session(kind: .suggestion)
-        XCTAssertEqual(fan.targets.map(\.action), [.accept, .acceptWithNote, .acceptFor, .done, .ignore])
+        XCTAssertEqual(fan.targets.map(\.action), [.accept, .acceptWithNote, .acceptFor, .done, .ignore, .tell])
         XCTAssertEqual(
             fan.targets.map(\.label),
-            ["Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"]
+            ["Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore", "Tell Omnesis"]
         )
     }
 

@@ -54,6 +54,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.omnesis.android.ui.notes.NotesHistoryScreen
@@ -97,7 +99,17 @@ fun CaptureScreen(
     onOpenTask: (String) -> Unit = {},
     /** Set when the capture completes a task with its note rather than saving a note. */
     completion: TaskCompletionCapture? = null,
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
+    taskContext: TaskNoteContext? = null,
+    onOpenConversation: (String) -> Unit = {},
 ) {
+    if (taskContext != null) {
+        DisposableEffect(vm, taskContext) {
+            vm.beginTaskNote(taskContext)
+            onDispose { vm.endTaskNote() }
+        }
+    }
     if (completion != null) {
         // Before the permission effect below starts listening, so this visit starts afresh.
         DisposableEffect(vm) {
@@ -143,6 +155,8 @@ fun CaptureScreen(
     }
 
     CaptureContent(
+        noteProcessingNotice = noteProcessingNotice.takeIf { completion == null },
+        onOpenAgentSettings = onOpenAgentSettings,
         state = state,
         onMicTap = {
             when (state.speech) {
@@ -169,6 +183,7 @@ fun CaptureScreen(
         NotesHistoryScreen(onBack = vm::closeHistory, onCapture = vm::closeHistory,
             captureLabel = "Back to capture",
             onOpenTask = { id -> vm.closeHistory(); onOpenTask(id) },
+            onOpenConversation = { id -> vm.closeHistory(); onClose(); onOpenConversation(id) },
             onOpenSettings = onOpenSettings)
     }
 }
@@ -188,6 +203,8 @@ fun CaptureContent(
     completionSubject: String? = null,
     /** What the note does to that subject, which words the screen. */
     completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
+    noteProcessingNotice: String? = null,
+    onOpenAgentSettings: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -207,13 +224,15 @@ fun CaptureContent(
                     }
                 },
                 title = {
-                    if (completionSubject == null) {
+                    val contextSubject = completionSubject ?: state.taskContext?.title
+                    if (contextSubject == null) {
                         Text("Tell Omnesis")
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(completionKind.heading)
+                            Text(if (completionSubject == null) "Tell Omnesis" else completionKind.heading)
                             Text(
-                                completionSubject,
+                                contextSubject,
+                                modifier = Modifier.semantics { contentDescription = "Task context: $contextSubject" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.textSecondary,
                                 maxLines = 1,
@@ -234,6 +253,8 @@ fun CaptureContent(
             when (val save = state.save) {
                 is SaveState.Done -> SavedConfirmation(queued = save.queued)
                 else -> CaptureForm(
+                    noteProcessingNotice = noteProcessingNotice,
+                    onOpenAgentSettings = onOpenAgentSettings,
                     state = state,
                     completing = completionKind.takeIf { completionSubject != null },
                     saving = save is SaveState.Saving,
@@ -252,6 +273,8 @@ fun CaptureContent(
 
 @Composable
 private fun CaptureForm(
+    noteProcessingNotice: String?,
+    onOpenAgentSettings: () -> Unit,
     state: CaptureUiState,
     /** What the note does to its subject, when it has one. */
     completing: TaskNoteKind?,
@@ -273,6 +296,7 @@ private fun CaptureForm(
             .padding(OmSpacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        dev.omnesis.android.ui.tasks.NoteProcessingNotice(noteProcessingNotice, onOpenAgentSettings)
         Spacer(Modifier.height(OmSpacing.lg))
         MicVisual(speech = state.speech, hasVoiceNote = voiceNote != null, onTap = onMicTap)
         Spacer(Modifier.height(OmSpacing.md))
@@ -362,7 +386,7 @@ private fun CaptureForm(
                 onClick = onSave,
                 modifier = Modifier.weight(2f),
                 // A voice note is saved as recorded: its text comes from the gateway.
-                enabled = (state.textWithPartial().isNotBlank() || voiceNote != null) && !saving,
+                enabled = ((state.taskContext?.hasInstruction(state.textWithPartial()) ?: state.textWithPartial().isNotBlank()) || voiceNote != null) && !saving,
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) {
                 if (saving) {

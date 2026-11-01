@@ -12,6 +12,8 @@ public enum TaskFanAction: Hashable, Sendable {
     case done
     /// Opens a note composer; saving completes the task with the note.
     case doneWithNote
+    /// Opens an ordinary Tell Omnesis note linked to this task.
+    case tell
     case today
     case tomorrow
     case thisMonth
@@ -149,6 +151,7 @@ public struct TaskFanSession: Sendable {
     public let today: String
     public let kind: Kind
     /// Whether a task's main fan offers Chat about this.
+    public let offersTell: Bool
     public let offersChat: Bool
     private let schedule: TaskSchedule
 
@@ -180,6 +183,7 @@ public struct TaskFanSession: Sendable {
         today: String,
         kind: Kind = .task,
         offersChat: Bool = false,
+        offersTell: Bool = false,
         schedule: TaskSchedule = TaskSchedule(),
         metrics: Metrics = Metrics(),
         mode: Mode = .main,
@@ -190,6 +194,7 @@ public struct TaskFanSession: Sendable {
         self.today = today
         self.kind = kind
         self.offersChat = offersChat
+        self.offersTell = offersTell
         self.schedule = schedule
         self.metrics = metrics
         self.tracking = tracking
@@ -340,6 +345,7 @@ public struct TaskFanSession: Sendable {
         (.nextMonth, "Next month"),
         (.otherMonth, "Other month…"),
         (.cancelTask, "Cancel task"),
+        (.tell, "Tell Omnesis"),
     ]
 
     /// The target a task's main fan ends with when the gateway can start a
@@ -354,6 +360,7 @@ public struct TaskFanSession: Sendable {
         (.acceptFor, "Accept for…"),
         (.done, "Mark as done"),
         (.ignore, "Ignore"),
+        (.tell, "Tell Omnesis"),
     ]
 
     /// When to accept a suggestion for: Back nearest the finger, then the
@@ -419,7 +426,8 @@ public struct TaskFanSession: Sendable {
         hoverSince = nil
         let labelled: [(TaskFanAction, String)] = switch mode {
         case .main:
-            kind == .suggestion ? Self.suggestionActions : Self.mainActions + (offersChat ? [Self.chatAction] : [])
+            (kind == .suggestion ? Self.suggestionActions : Self.mainActions + (offersChat ? [Self.chatAction] : []))
+                .filter { offersTell || $0.0 != .tell }
         case .when: Self.whenActions
         case .months(let page):
             Self.monthActions(page: page, today: today, schedule: schedule, perPage: metrics.monthsPerPage)

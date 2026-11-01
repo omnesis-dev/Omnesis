@@ -314,6 +314,31 @@ describe("validateConfig — happy paths", () => {
     }
   });
 
+  test("preserves owner and Brain assignments without enabling the other role", () => {
+    for (const role of ["agent", "background-agent"] as const) {
+      const result = validateConfig({
+        inference: { assignments: { [role]: "codex/fictional-model" } },
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok)
+        expect(result.config.inference?.assignments).toEqual({ [role]: "codex/fictional-model" });
+    }
+    const result = validateConfig({
+      agent: { noteAgent: false },
+      inference: {
+        assignments: { agent: "codex/owner-model", "background-agent": "codex/brain-model" },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.agent?.noteAgent).toBe(false);
+      expect(result.config.inference?.assignments).toEqual({
+        agent: "codex/owner-model",
+        "background-agent": "codex/brain-model",
+      });
+    }
+  });
+
   test("accepts an independent Watch judge inference assignment", () => {
     const res = validateConfig({
       inference: {

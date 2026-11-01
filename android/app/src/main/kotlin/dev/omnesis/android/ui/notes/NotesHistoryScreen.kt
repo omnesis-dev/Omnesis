@@ -59,6 +59,7 @@ fun NotesHistoryScreen(
     onOpenTask: (String) -> Unit = {},
     vm: NotesHistoryViewModel = hiltViewModel(),
     captureLabel: String = "Tell",
+    onOpenConversation: (String) -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current
@@ -75,7 +76,7 @@ fun NotesHistoryScreen(
     }
     BackHandler(state.selected != null) { vm.select(null) }
     NotesHistoryContent(state, onBack, onCapture, onOpenSettings, vm::select, { vm.refresh() }, vm::loadMore,
-        vm::edit, vm::delete, vm::undo, onOpenTask, captureLabel)
+        vm::edit, vm::delete, vm::undo, onOpenTask, captureLabel, onOpenConversation)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,6 +94,7 @@ fun NotesHistoryContent(
     onUndo: (Long) -> Unit,
     onOpenTask: (String) -> Unit = {},
     captureLabel: String = "Tell",
+    onOpenConversation: (String) -> Unit = {},
 ) {
     val c = OmTheme.colors
     val selected = state.selected
@@ -127,7 +129,7 @@ fun NotesHistoryContent(
         },
     ) { padding ->
         when {
-            selected != null -> NoteDetail(state, selected, onEdit, onDelete, onUndo, onOpenTask, Modifier.padding(padding))
+            selected != null -> NoteDetail(state, selected, onEdit, onDelete, onUndo, onOpenTask, onOpenConversation, Modifier.padding(padding))
             state.loading -> Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) { OmSpinner() }
             state.entries.isEmpty() && state.error != null -> Box(Modifier.padding(padding)) {
                 GatewayErrorView("load notes", state.error, onRefresh, onOpenSettings)
@@ -219,6 +221,7 @@ private fun NoteDetail(
     onDelete: () -> Unit,
     onUndo: (Long) -> Unit,
     onOpenTask: (String) -> Unit,
+    onOpenConversation: (String) -> Unit,
     modifier: Modifier,
 ) {
     val c = OmTheme.colors
@@ -285,7 +288,7 @@ private fun NoteDetail(
                 }
             }
         }
-        NoteAgentPanel(state, note, onUndo, onOpenTask)
+        NoteAgentPanel(state, note, onUndo, onOpenTask, onOpenConversation)
         Spacer(Modifier.height(16.dp))
     }
     if (confirming) AlertDialog(
@@ -299,11 +302,11 @@ private fun NoteDetail(
 }
 
 @Composable
-private fun NoteAgentPanel(state: NotesHistoryState, note: NoteEntryDto, onUndo: (Long) -> Unit, onOpenTask: (String) -> Unit) {
+private fun NoteAgentPanel(state: NotesHistoryState, note: NoteEntryDto, onUndo: (Long) -> Unit, onOpenTask: (String) -> Unit, onOpenConversation: (String) -> Unit) {
     val c = OmTheme.colors
     val agent = note.agent ?: return
     if (agent.state == "skipped") return
-    if (agent.state == "done" && agent.receipt?.text.isNullOrBlank() && agent.receipt?.changes.isNullOrEmpty()) return
+    if (agent.state == "done" && agent.receipt?.text.isNullOrBlank() && agent.receipt?.changes.isNullOrEmpty() && agent.receipt?.conversationId == null) return
     val shape = RoundedCornerShape(14.dp)
     Column(Modifier.fillMaxWidth().clip(shape).background(c.bgSecondary).border(1.dp, c.borderLight, shape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -320,6 +323,9 @@ private fun NoteAgentPanel(state: NotesHistoryState, note: NoteEntryDto, onUndo:
             "done" -> agent.receipt?.let { receipt ->
                 if (receipt.text.isNotBlank()) SelectionContainer {
                     Text(receipt.text, fontSize = 15.sp, lineHeight = 24.sp, color = c.textPrimary)
+                }
+                receipt.conversationId?.let { id ->
+                    TextButton(onClick = { onOpenConversation(id) }) { Text("Open chat") }
                 }
                 receipt.changes.forEach { change ->
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(c.bgPrimary).padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),

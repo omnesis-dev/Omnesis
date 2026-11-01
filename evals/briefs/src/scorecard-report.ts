@@ -29,7 +29,8 @@ import type {
  * stay at or below the threshold; `min` = at or above. `observations_per_day`,
  * `tokens_per_day`, `scheduled_runs`, and `malformed_tool_call_rate_raw`
  * (all failed mutating calls, self-corrected ones included — the gated
- * `malformed_tool_call_rate` counts only uncorrected failures) are
+ * `malformed_tool_call_rate` counts only uncorrected failures after excluding
+ * verified ownership handoffs whose work completed in a successor batch) are
  * informational and never gate (deliberately not in this registry).
  */
 const GATEABLE_METRICS: Record<string, "max" | "min"> = {

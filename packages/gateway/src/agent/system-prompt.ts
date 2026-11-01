@@ -723,19 +723,21 @@ Use this selectively. Ordinary names, dates, amounts and explanatory sentences d
 Copy formatting changes presentation only: preserve the grounded value's spelling, punctuation, spacing and leading zeros. Never invent, complete or correct a value to make it copyable. Inline code normalizes line breaks and edge spaces, so use a fenced block when those are significant. Do not promise that a particular client has a copy button; older clients display ordinary Markdown.
 `;
 
+export const MEMORY_SUBJECT_GUIDANCE = `Use annotate_person for a durable fact about one person. Facts about the user belong on the self person identified below; a relationship belongs on the other person. Use annotate_durable for context about one specific document. Read annotation_search for that subject before writing; use revise, supersede, or retract to correct or forget existing memory instead of duplicating it.`;
+
 const MEMORY_WRITE_GUIDANCE = `
 # Durable memory
 
 You can remember important facts the user shares, independently of background cognition. These tools write Omnesis annotations; they do not edit source documents.
 
-Use annotate_person for a durable fact about one person. Facts about the user belong on the self person identified below; a relationship belongs on the other person. Use annotate_durable for context about one specific document. Read annotation_search for that subject before writing; use revise, supersede, or retract to correct or forget existing memory instead of duplicating it.
+${MEMORY_SUBJECT_GUIDANCE}
 
 For facts learned in this chat, first call conversation_memory_evidence({}). It persists the conversation and returns its documentId plus actual user messages. Use that ID as evidenceDocId and a verbatim span of one returned user message as evidenceQuote. Never use your own reply as user testimony, invent a quote, or claim a third party's statement is something the user said. If evidence is unavailable, explain that the memory could not be saved. Document-derived memory still requires an exact quote from its source document.
 
 Preserve what the evidence says: a preference is not a restriction, a plan is not a completed action, and a user's report about someone else is a report. Record user testimony as such in claimText when attribution matters. Keep remembered facts concise and useful across conversations; avoid passing details and speculative deductions. An explicit “remember” request should be saved when grounded; volunteered durable preferences or context may also be remembered with a brief acknowledgment. Acknowledge saving, correction, or forgetting only after the corresponding tool succeeds. Retraction removes the annotation, not its source conversation; do not recreate forgotten memory unless the user asks to remember it again.
 `;
 
-function renderSelfIdentity(selfPersonId: string | null | undefined): string {
+export function renderSelfIdentity(selfPersonId: string | null | undefined): string {
   const identity = selfPersonId
     ? `The user's self person ID is ${JSON.stringify(selfPersonId)}. Use it for facts about the user.`
     : "The user's self identity has not been established. Do not invent a person ID or attach their facts to another person; explain that their self identity needs to be set up before saving self-memory.";

@@ -2,6 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  completeNoteHandoff,
+  cancelNoteHandoff,
+  type NoteHandoff,
+} from "../brain/note-agent/handoffs.js";
+import {
   type SyncIssue,
   type SyncIssueAssessment,
   DeviceId,
@@ -68,6 +75,8 @@ import {
   type NewInterestSignal,
 } from "../brain/storage/interest.js";
 import {
+  admitNoteMutation,
+  settleNoteMutation,
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
@@ -1820,7 +1829,21 @@ export const writerHandlers = {
   "noteAgent.skip": (db: Db, now: number) => skipNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
     clearMorningBriefMessageItems(db, messageId),
+  "noteAgent.handoffReserve": (db: Db, input: NoteHandoff) => reserveNoteHandoff(db, input),
+  "noteAgent.handoffClaim": (db: Db, now: number) => claimNoteHandoff(db, now),
+  "noteAgent.handoffComplete": (db: Db, input: NoteHandoff, now: number) =>
+    completeNoteHandoff(db, input, now),
+  "noteAgent.handoffCancel": (db: Db, id: string) => cancelNoteHandoff(db, id),
   "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
+  "noteAgent.admitMutation": (db: Db, entryId: string, attempt: number, now: number) =>
+    admitNoteMutation(db, entryId, attempt, now),
+  "noteAgent.settleMutation": (
+    db: Db,
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof settleNoteMutation>[3],
+    now: number,
+  ) => settleNoteMutation(db, entryId, attempt, outcome, now),
   "noteAgent.finish": (
     db: Db,
     entryId: string,
@@ -1916,8 +1939,13 @@ export const writerHandlers = {
     audit?: McpToolInvocationAuditInput,
     browserAuthority?: BrowserNoteAuthority,
   ): boolean => insertNoteEntry(db, entry, audit, browserAuthority),
-  "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
-    updateNoteEntryText(db, id, text, nowIso),
+  "notes.updateEntry": (
+    db: Db,
+    id: string,
+    text: string,
+    nowIso: string,
+    authority?: Parameters<typeof updateNoteEntryText>[4],
+  ): boolean => updateNoteEntryText(db, id, text, nowIso, authority),
   "notes.updateBrowserEntry": (db: Db, input: BrowserNoteEditInput) =>
     updateBrowserNoteEntry(db, input),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),

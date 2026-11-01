@@ -81,6 +81,7 @@ data class CaptureUiState(
      * completion is in flight. Null otherwise.
      */
     val completionNote: String? = null,
+    val taskContext: TaskNoteContext? = null,
 )
 
 /** A voice note being recorded, or recorded and ready to save. */
@@ -92,3 +93,9 @@ data class VoiceNoteUi(
     /** 0–1 microphone level while recording, for the meter. */
     val level: Float = 0f,
 )
+
+/** A task-linked ordinary note; its save does not immediately complete the task. */
+data class TaskNoteContext(val id: String, val title: String) {
+    val initialText: String get() = "About this task…\n\n"
+    fun hasInstruction(text: String): Boolean = text.isNotBlank() && text.trim() != initialText.trim()
+}

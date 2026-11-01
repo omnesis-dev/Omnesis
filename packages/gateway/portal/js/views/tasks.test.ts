@@ -16,6 +16,7 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
+  getStatus: vi.fn(),
   listTasks: vi.fn(),
   getTask: vi.fn(),
   taskAction: vi.fn(),
@@ -54,6 +55,7 @@ let win: Window;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.getStatus.mockResolvedValue({});
   const dom = parseHTML("<html><body><main></main></body></html>");
   vi.stubGlobal("document", dom.document);
   vi.stubGlobal("window", dom.window);
@@ -111,7 +113,7 @@ it("points at the capture view instead of offering a text field", async () => {
   await mount();
   expect(host.querySelector(".tasks-add-input, form.tasks-add")).toBeNull();
   const hint = host.querySelector(".tasks-add-hint");
-  expect(hint?.textContent?.replace(/\s+/g, " ").trim()).toBe(["Use", "Tell", "Omnesis", "to add tasks."].join(" "));
+  expect(hint?.textContent?.replace(/\s+/g, " ").trim()).toBe(["Use", "Tell", "Omnesis", "to request a task or save a note."].join(" "));
   const link = hint?.querySelector("a");
   expect(link?.getAttribute("href")).toBe("/portal/capture");
   await act(async () => click(link ?? null));
@@ -354,4 +356,13 @@ describe("Chat about this", () => {
     );
     expect(chatButton()?.hasAttribute("disabled")).toBe(false);
   });
+});
+
+it("keeps task actions and capture available while explaining inactive note processing", async () => {
+  api.getStatus.mockResolvedValue({ noteAgent: { enabled: true, modelAssigned: false, active: false } });
+  await mount();
+  expect(host.textContent).toContain("Agent model is missing or unavailable");
+  expect(host.querySelector('a[href="/portal/settings/models/agent"]')).not.toBeNull();
+  expect(host.querySelector('a[href="/portal/capture"]')).not.toBeNull();
+  expect(host.querySelector(".tasks-row")).not.toBeNull();
 });

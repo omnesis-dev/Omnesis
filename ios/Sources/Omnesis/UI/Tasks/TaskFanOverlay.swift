@@ -32,6 +32,7 @@ final class TaskFanController {
     @ObservationIgnored var metrics = TaskFanSession.Metrics()
     /// Whether a task's fan offers Chat about this.
     @ObservationIgnored var offersChat = false
+    @ObservationIgnored var offersTell = false
     /// Runs a chosen action on its task.
     @ObservationIgnored var perform: (TaskFanAction, TaskRecord) -> Void = { _, _ in }
     @ObservationIgnored private var dwellTask: Task<Void, Never>?
@@ -66,6 +67,7 @@ final class TaskFanController {
                 today: today,
                 kind: task.isSuggestion ? .suggestion : .task,
                 offersChat: offersChat,
+                offersTell: offersTell,
                 metrics: metrics,
                 mode: mode,
                 tracking: tracking
@@ -310,6 +312,7 @@ private struct TaskFanTargetButton: View {
         case .someday: "tray"
         case .otherMonth, .acceptFor: "calendar.badge.clock"
         case .cancelTask: "xmark"
+        case .tell: "mic"
         case .chat: "bubble.left.and.bubble.right"
         case .accept: "plus.circle"
         case .ignore: "eye.slash"

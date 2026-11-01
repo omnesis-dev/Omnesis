@@ -78,6 +78,15 @@ export function NoteAgentReceipt({ agent }) {
         </li>`;
       })}
     </ul>`}
+    ${display.conversationHref && html`<a
+      class="note-agent-conversation"
+      href=${display.conversationHref}
+      onClick=${(event) => {
+        if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigate(display.conversationHref);
+      }}
+    >Continue in chat</a>`}
     ${error && html`<div class="note-agent-error" role="alert">${error}</div>`}
     ${toast && html`<div class="toast" role="status" aria-live="polite">${toast}</div>`}
   </div>`;

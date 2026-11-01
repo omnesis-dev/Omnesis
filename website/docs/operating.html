@@ -547,8 +547,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           Choose a capability under <strong>Settings → Models</strong> to read its purpose and
           assign a model. Assignments are independent: choosing a decision model does not assign the
-          agent that answers questions or the background agent that processes notes. You can assign
-          the same compatible model to several roles.
+          Agent that answers questions and processes Tell Omnesis notes. You can assign the same
+          compatible model to several roles.
         </p>
         <div class="table-wrap">
           <table>
@@ -570,20 +570,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><code>agent</code></td>
                 <td>
                   Powers <a href="/docs/agent">the agent</a> in the portal and mobile apps, and the
-                  agent that prepares Answer results for external agents. Also handles Ask requests
-                  from Apple Watch and every stage of Deep Research.
-                </td>
-              </tr>
-              <tr>
-                <td><code>background-agent</code></td>
-                <td>
-                  Reads each note you capture with Tell Omnesis from the portal, the apps or the CLI
-                  and acts on it: adds or updates tasks, remembers stated facts, answers a question
-                  (see <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>).
-                  Also handles model-assisted contact matching. It takes the same chat models as
-                  <code>agent</code> and is never assigned automatically. Without it, or with
-                  <code>agent.noteAgent</code> set to <code>false</code>, notes are saved and
-                  indexed but not acted on.
+                  agent that prepares Answer results for external agents. It also handles Apple
+                  Watch Ask requests and every stage of Deep Research, and reads and acts on notes
+                  you capture with Tell Omnesis from the portal, apps or CLI: task changes, document
+                  research, memory and questions. No open chat is needed. With no Agent model
+                  available, or with <code>agent.noteAgent</code> set to <code>false</code>, notes
+                  are saved and indexed but not acted on. See
+                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
                 </td>
               </tr>
               <tr>
@@ -625,8 +618,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <h3 id="decision-model">Decision model</h3>
         <p>
           The <code>decision</code> role answers a bounded question: yes or no, a score, or one
-          choice. It selects a route or judges significance; the <code>agent</code> and
-          <code>background-agent</code> roles handle the work that follows.
+          choice. It selects a route or judges significance; the <code>agent</code> role handles the
+          requested work that follows.
         </p>
         <ul>
           <li>
@@ -687,9 +680,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <code>omnesis codex login</code> or the portal's Codex backend settings, where you can
             copy the one-time login code with the copy button beside it.
             <code>omnesis codex status</code> shows the runtime and sign-in state. Codex serves the
-            <code>agent</code>, <code>background-agent</code>, <code>privacy-reviewer</code> and
-            image-capable <code>ocr</code> roles from one login; it has no embedding or
-            transcription models.
+            <code>agent</code>, <code>privacy-reviewer</code> and image-capable
+            <code>ocr</code> roles from one login; it has no embedding or transcription models.
           </li>
           <li>
             <strong>Claude Code</strong>, assigned as <code>claude-code/&lt;model&gt;</code>, which
@@ -702,9 +694,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             before it is listed), or with <code>omnesis claude-code refresh</code>.
             <code>omnesis claude-code status</code> shows the installation, sign-in state and the
             models the CLI offers. Claude Code serves the <code>agent</code>,
-            <code>background-agent</code>, <code>privacy-reviewer</code> and image-capable
-            <code>ocr</code> roles from one login; it has no embedding or transcription models.
-            Sign-in and isolation are covered in
+            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
+            it has no embedding or transcription models. Sign-in and isolation are covered in
             <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
           </li>
         </ul>

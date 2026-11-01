@@ -65,6 +65,7 @@ public struct PendingNoteVoice: Codable, Equatable, Sendable {
 /// Carries the original capture time so a note drained hours (or days)
 /// later still lands in the day it was actually spoken.
 public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
+    public let taskId: String?
     public let id: String
     /// Client-generated UUID sent as the `id` on `POST /notes` — the
     /// idempotency key that makes drain retries safe (same key → same
@@ -99,7 +100,8 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
         surface: String,
         location: NoteLocation? = nil,
         deliveryDiagnostics: PendingNoteDeliveryDiagnostics? = nil,
-        voice: PendingNoteVoice? = nil
+        voice: PendingNoteVoice? = nil,
+        taskId: String? = nil
     ) {
         self.id = id
         self.noteId = noteId
@@ -111,6 +113,7 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
         self.location = location
         self.deliveryDiagnostics = deliveryDiagnostics
         self.voice = voice
+        self.taskId = taskId
     }
 
     /// Five minutes avoids alarming on a normal short connectivity flap.
@@ -141,7 +144,8 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
             surface: surface,
             location: location,
             deliveryDiagnostics: diagnostics,
-            voice: voice
+            voice: voice,
+            taskId: taskId
         )
     }
 

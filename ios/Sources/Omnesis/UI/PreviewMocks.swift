@@ -1208,6 +1208,16 @@ enum PreviewMocks {
         tasks: TasksStatus(available: true, noteAgent: true)
     )
 
+    static let noteProcessingMissingAgent = NoteAgentStatus(enabled: true, modelAssigned: false, active: false)
+    static let noteProcessingOff = NoteAgentStatus(enabled: false, modelAssigned: true, active: false)
+    static let statusSnapshotMissingAgent = StatusSnapshot(
+        documents: statusSnapshotTasks.documents,
+        dbSizeBytes: statusSnapshotTasks.dbSizeBytes,
+        latestActivityBySource: nil,
+        tasks: statusSnapshotTasks.tasks,
+        noteAgent: noteProcessingMissingAgent
+    )
+
     // MARK: - Tasks
 
     /// The fixed "now" every Tasks preview reads its day from, so relative

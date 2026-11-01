@@ -272,4 +272,93 @@ describe("InferenceHealth", () => {
     await run();
     expect(health.snapshot().warnings).toEqual([]);
   });
+
+  it("counts each provider turn once through nested same-role health observers", async () => {
+    const health = new InferenceHealth(() => selection);
+    const agent: ResolvedAssignment = { role: "agent", kind: "replay" };
+    let failed = true;
+    let disposed = 0;
+    const backend: ChatBackend = {
+      name: "fixture",
+      model: "example-model",
+      async *runTurn() {
+        yield {
+          type: "agent.message.end",
+          payload: { sessionId: "s", messageId: "m", stopReason: failed ? "error" : "end_turn" },
+        };
+      },
+      async dispose() {
+        expect(this).toBe(backend);
+        disposed++;
+      },
+    };
+    const observed = health.observeBackend(agent, backend);
+    const nested = health.observeBackend(agent, health.observeBackend(agent, observed));
+    const run = async () => {
+      for await (const event of nested.runTurn({} as TurnInput)) {
+        if (event.type === "agent.message.end") break;
+      }
+    };
+    await run();
+    await run();
+    expect(health.snapshot().warnings).toEqual([]);
+    await run();
+    expect(health.snapshot().warnings).toEqual([
+      expect.objectContaining({ role: "agent", consecutiveFailures: 3 }),
+    ]);
+    failed = false;
+    await run();
+    expect(health.snapshot().warnings).toEqual([]);
+    await nested.dispose?.();
+    expect(disposed).toBe(1);
+  });
+
+  it("keeps observer generations and roles separate across reassignment", async () => {
+    let current = { ...selection };
+    const health = new InferenceHealth(() => current);
+    const agent: ResolvedAssignment = { role: "agent", kind: "replay" };
+    let failed = true;
+    const backend: ChatBackend = {
+      name: "fixture",
+      model: "example-model",
+      async *runTurn() {
+        yield {
+          type: "agent.message.end",
+          payload: { sessionId: "s", messageId: "m", stopReason: failed ? "error" : "end_turn" },
+        };
+      },
+    };
+    const run = async (target: ChatBackend) => {
+      for await (const event of target.runTurn({} as TurnInput)) {
+        if (event.type === "agent.message.end") break;
+      }
+    };
+    const old = health.observeBackend(agent, backend);
+    const oldNested = health.observeBackend(agent, old);
+    current = {
+      identity: "generation-two",
+      fingerprint: "config-two",
+      assignment: "example/second-model",
+    };
+    for (let i = 0; i < 3; i++) await run(oldNested);
+    expect(health.snapshot().warnings).toEqual([]);
+    const next = health.observeBackend(agent, oldNested);
+    expect(next).not.toBe(oldNested);
+    const nextNested = health.observeBackend(agent, next);
+    await run(nextNested);
+    await run(nextNested);
+    expect(health.snapshot().warnings).toEqual([]);
+    await run(nextNested);
+    expect(health.snapshot().warnings[0]?.consecutiveFailures).toBe(3);
+    failed = false;
+    await run(oldNested);
+    expect(health.snapshot().warnings[0]?.consecutiveFailures).toBe(3);
+    const reviewer = health.observeBackend(
+      { role: "privacy-reviewer", kind: "replay" },
+      nextNested,
+    );
+    expect(reviewer).not.toBe(nextNested);
+    await run(nextNested);
+    expect(health.snapshot().warnings).toEqual([]);
+  });
 });

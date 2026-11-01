@@ -61,6 +61,10 @@ function warningFor(role: CapabilityRole, state: State): ModelHealthWarning | un
  */
 export class InferenceHealth {
   private readonly states = new Map<CapabilityRole, State>();
+  private readonly observedBackends = new WeakMap<
+    ChatBackend,
+    { role: CapabilityRole; identity: string }
+  >();
   private sequence = 0;
 
   private restored = false;
@@ -183,6 +187,8 @@ export class InferenceHealth {
 
   observeBackend(resolved: ResolvedAssignment, backend: ChatBackend): ChatBackend {
     const selected = this.selection(resolved.role);
+    const observed = this.observedBackends.get(backend);
+    if (observed?.role === resolved.role && observed.identity === selected.identity) return backend;
     const health = this;
     const runTurn: ChatBackend["runTurn"] = async function* (input, signal) {
       const call = health.begin(resolved.role, selected);
@@ -216,13 +222,15 @@ export class InferenceHealth {
         throw error;
       }
     };
-    return new Proxy(backend, {
+    const wrapper = new Proxy(backend, {
       get: (target, key) => {
         if (key === "runTurn") return runTurn;
         const value: unknown = Reflect.get(target, key, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
+    this.observedBackends.set(wrapper, { role: resolved.role, identity: selected.identity });
+    return wrapper;
   }
 
   /** Observe an inference operation managed outside a capability object. */

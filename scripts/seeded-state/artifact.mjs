@@ -54,6 +54,8 @@ const REBUILT_TABLES = new Set([
 // These tables contain bearer material or active delivery claims and may never
 // cross the seeded-state boundary, even when a caller mistakenly allowlists one.
 const FORBIDDEN_TABLES = new Set([
+  // A queued conversation handoff is active delivery work, not seed data.
+  "note_agent_handoffs",
   // Exact unfinished source output is live write authority, never a seed.
   "pending_source_pages",
   "pending_source_page_observations",

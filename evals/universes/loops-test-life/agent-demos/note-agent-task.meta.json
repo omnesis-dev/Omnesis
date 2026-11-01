@@ -1,4 +1,7 @@
 {
   "triggers": ["<note>\nRemind me to renew the bike insurance"],
-  "role": "background-agent"
+  "role": "agent",
+  "placeholders": {
+    "docExternalIds": ["bench-cassette-insurance"]
+  }
 }

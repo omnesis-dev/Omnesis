@@ -118,6 +118,7 @@ export class VoiceNoteService {
       capturedUtcOffsetSeconds: input.capturedUtcOffsetSeconds,
       surface: input.surface,
       deviceId: input.deviceId,
+      taskId: input.taskId,
       latitude: input.latitude,
       longitude: input.longitude,
       placeName: input.placeName,

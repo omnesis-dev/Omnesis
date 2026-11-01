@@ -6,10 +6,11 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { createNote, deleteNoteEntry, getNotesHistory, getNotesProvenance, getStatus, patchNoteEntry, undoTask } = vi.hoisted(() => ({
+const { createNote, deleteNoteEntry, getNotesHistory, getNotesForDay, getNotesProvenance, getStatus, patchNoteEntry, undoTask } = vi.hoisted(() => ({
   createNote: vi.fn(),
   deleteNoteEntry: vi.fn(),
   getNotesHistory: vi.fn(),
+  getNotesForDay: vi.fn(),
   getNotesProvenance: vi.fn(),
   getStatus: vi.fn(),
   patchNoteEntry: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("../api.js", () => ({
   createNote,
   deleteNoteEntry,
   getNotesHistory,
+  getNotesForDay,
   getNotesProvenance,
   getStatus,
   patchNoteEntry,
@@ -81,6 +83,7 @@ beforeEach(async () => {
   deleteNoteEntry.mockReset();
   patchNoteEntry.mockReset();
   getNotesHistory.mockReset();
+  getNotesForDay.mockReset().mockResolvedValue({ entries: [] });
   getNotesProvenance.mockReset();
   getStatus.mockReset();
   getStatus.mockResolvedValue({ tasks: { available: true, noteAgent: false } });
@@ -824,6 +827,61 @@ describe("the note agent's receipts", () => {
     expect(rows[1].querySelector(".note-agent")).toBeNull();
   });
 
+  async function editTo(text: string) {
+    await clickRowAction("Edit", noteItems().at(-1)!);
+    await act(async () => {
+      const editor = host.querySelector('[aria-label="Edit note"]') as HTMLTextAreaElement;
+      editor.value = text;
+      editor.dispatchEvent(new parsed.window.Event("input", { bubbles: true }));
+    });
+    await click("Save");
+  }
+
+  test("an edited older loaded note clears its old receipt and refreshes outside the head page", async () => {
+    vi.useFakeTimers();
+    const old = noteEntry({ id: "older", day: "2026-08-10", capturedAt: "2026-08-10T10:00:00.000Z", updatedAt: "2026-08-10T10:00:00.000Z", text: "Plan the greenhouse", agent: { state: "done", receipt: { text: "Added the greenhouse task.", changes: [] } } });
+    const head = noteEntry({ id: "newer", text: "A newer note" });
+    getNotesHistory.mockImplementation(async ({ cursor }: { cursor?: string }) => cursor
+      ? { entries: [old], pageInfo: { hasMore: false } }
+      : { entries: [head], pageInfo: { hasMore: true, nextCursor: "older-page" } });
+    await act(async () => { render(null, host); render(h(CaptureView, {}), host); });
+    await act(async () => {});
+    await click("Show more");
+    expect(host.textContent).toContain("Added the greenhouse task.");
+    const updated = { ...old, text: "Move the greenhouse task to Friday", updatedAt: "2026-09-12T10:00:00.000Z", agent: { state: "pending", receipt: null } };
+    patchNoteEntry.mockResolvedValueOnce(updated);
+    await editTo(updated.text);
+    expect(host.textContent).not.toContain("Added the greenhouse task.");
+    expect(host.querySelector(".note-agent-reading")).not.toBeNull();
+    getNotesForDay.mockResolvedValue({ entries: [{ ...updated, agent: { state: "done", receipt: { text: "Moved the greenhouse task to Friday.", changes: [] } } }] });
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await act(async () => {});
+    expect(getNotesForDay).toHaveBeenCalledExactlyOnceWith("2026-08-10");
+    expect(host.textContent).toContain("Moved the greenhouse task to Friday.");
+    expect(host.querySelector(".note-agent-reading")).toBeNull();
+  });
+
+  test("a poll started before an edit cannot restore the old revision's success", async () => {
+    vi.useFakeTimers();
+    const reading = noteEntry({ id: "note-done", agent: { state: "running", receipt: null } });
+    await mountWith([reading]);
+    let release!: (value: unknown) => void;
+    getNotesHistory.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    const updated = { ...reading, text: "Plan the greenhouse on Friday", updatedAt: "2026-09-12T10:00:00.000Z", agent: { state: "pending", receipt: null } };
+    patchNoteEntry.mockResolvedValueOnce(updated);
+    await editTo(updated.text);
+    await act(async () => { release({ entries: [doneNote], pageInfo: { hasMore: false } }); });
+    await act(async () => {});
+    expect(host.textContent).not.toContain("Added a task for Friday.");
+    expect(host.querySelector(".note-agent-reading")).not.toBeNull();
+    expect(noteTexts()).toEqual([updated.text]);
+    getNotesHistory.mockResolvedValue({ entries: [{ ...updated, agent: { state: "done", receipt: { text: "Planned the greenhouse for Friday.", changes: [] } } }], pageInfo: { hasMore: false } });
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await act(async () => {});
+    expect(host.textContent).toContain("Planned the greenhouse for Friday.");
+  });
+
   test("a note being read refreshes every five seconds until its receipt arrives", async () => {
     vi.useFakeTimers();
     const reading = noteEntry({ id: "note-done", agent: { state: "running", receipt: null } });
@@ -841,5 +899,22 @@ describe("the note agent's receipts", () => {
       vi.advanceTimersByTime(30_000);
     });
     expect(getNotesHistory.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("inactive note processing notice", () => {
+  test("saves notes while showing the Agent model remedy", async () => {
+    render(null, host);
+    getStatus.mockResolvedValue({ noteAgent: { enabled: true, modelAssigned: false, active: false } });
+    await act(async () => { render(h(CaptureView, {}), host); });
+    await act(async () => {});
+    expect(host.textContent).toContain("Agent model is missing or unavailable");
+    expect(host.querySelector('a[href="/portal/settings/models/agent"]')).not.toBeNull();
+    expect(host.querySelector("textarea")).not.toBeNull();
+    createNote.mockResolvedValueOnce({ id: "saved-warning", day: "2026-09-11", text: "Plan a greenhouse", capturedAt: "2026-09-11T10:00:00Z" });
+    await type("Plan a greenhouse");
+    await submit();
+    expect(createNote).toHaveBeenCalledOnce();
+    expect(host.querySelector(".capture-told")).not.toBeNull();
   });
 });

@@ -31,6 +31,7 @@ struct TasksView: View {
         TasksScreen(
             model: TasksModel(service: store.tasks),
             experimental: store.experimentalEnabled,
+            offersTell: store.statusSnapshot?.capabilities.supportsTaskNoteCapture ?? false,
             menuOpen: $menuOpen,
             focus: focus,
             openConversation: store.taskConversationsEnabled ? openAgentConversation : nil,
@@ -70,6 +71,7 @@ struct TasksScreen: View {
     /// Opens a conversation by id in the Agent section. Nil when the
     /// gateway cannot start a chat about a task, which keeps Chat about this
     /// off every task.
+    var offersTell = false
     var openConversation: ((String) -> Void)?
     /// Hears every fresh set of counts, so the menu's Tasks entry follows a
     /// change made here without a read of its own.
@@ -78,6 +80,7 @@ struct TasksScreen: View {
     init(
         model: TasksModel,
         experimental: Bool,
+        offersTell: Bool = false,
         menuOpen: Binding<Bool>,
         focus: TaskFocusRequest? = nil,
         openConversation: ((String) -> Void)? = nil,
@@ -85,6 +88,7 @@ struct TasksScreen: View {
     ) {
         self._model = State(initialValue: model)
         self.experimental = experimental
+        self.offersTell = offersTell
         self._menuOpen = menuOpen
         self.focus = focus
         self.openConversation = openConversation
@@ -93,15 +97,19 @@ struct TasksScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TasksContent(
-                model: model,
-                experimental: experimental,
-                onOpen: { details = $0 },
-                onDocument: { path.append(.document(id: $0.id, title: $0.title)) },
-                onChat: openConversation.map { open in
-                    { (task: TaskRecord) in chat(about: task, then: open) }
-                }
-            )
+            VStack(spacing: 0) {
+                NoteProcessingNotice()
+                TasksContent(
+                    model: model,
+                    experimental: experimental,
+                    offersTell: offersTell,
+                    onOpen: { details = $0 },
+                    onDocument: { path.append(.document(id: $0.id, title: $0.title)) },
+                    onChat: openConversation.map { open in
+                        { (task: TaskRecord) in chat(about: task, then: open) }
+                    }
+                )
+            }
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { TasksToolbar(menuOpen: $menuOpen) }
@@ -199,6 +207,7 @@ struct TellOmnesisToolbarButton: View {
 struct TasksContent: View {
     let model: TasksModel
     var experimental = false
+    var offersTell = false
     /// Opens a task's details.
     var onOpen: (TaskRecord) -> Void = { _ in }
     var onDocument: (TaskDocument) -> Void = { _ in }
@@ -259,7 +268,10 @@ struct TasksContent: View {
         .animation(.easeOut(duration: 0.2), value: model.toast)
         // A note about a task is written on the Tell Omnesis screen.
         .fullScreenCover(item: $noting) { noting in
-            CaptureView(completion: capture(for: noting))
+            CaptureView(
+                completion: capture(for: noting),
+                taskContext: noting.purpose == .tell ? TaskNoteContext(id: noting.task.id, title: noting.task.title) : nil
+            )
         }
     }
 
@@ -270,6 +282,7 @@ struct TasksContent: View {
                     model: model,
                     view: view,
                     experimental: experimental,
+                    offersTell: offersTell,
                     onOpen: onOpen,
                     onDocument: onDocument,
                     onNote: { noting = $0 },
@@ -285,9 +298,10 @@ struct TasksContent: View {
     /// The composer's wording and call for a note about `noting`'s task. The
     /// note's id is fixed while the composer is open, so saving again after
     /// a failure is a replay rather than a second note.
-    private func capture(for noting: TaskNoting) -> NoteCaptureCompletion {
+    private func capture(for noting: TaskNoting) -> NoteCaptureCompletion? {
         let task = noting.task
         switch noting.purpose {
+        case .tell: return nil
         case .complete:
             return .completing(task.title) { note in
                 await model.perform(.complete(note: note), on: task)
@@ -391,7 +405,7 @@ struct TaskSegmentBar: View {
 /// A note composer open for a task, with the id its note is saved under.
 @available(iOS 17.0, *)
 struct TaskNoting: Identifiable {
-    enum Purpose { case complete, accept }
+    enum Purpose { case complete, accept, tell }
 
     let id = UUID()
     let task: TaskRecord

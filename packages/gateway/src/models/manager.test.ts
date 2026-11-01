@@ -132,8 +132,8 @@ describe("ModelManager", () => {
       expect(roles).toContain("privacy-reviewer");
       // The decision model serves the mention worth gate, a stable feature.
       expect(roles).toContain("decision");
-      // The background agent serves the note agent, a stable feature.
-      expect(roles).toContain("background-agent");
+      // Owner-triggered notes use Agent; the independent Brain role is gated.
+      expect(roles).not.toContain("background-agent");
       expect(roles).not.toContain("speech-to-speech");
       expect(roles).not.toContain("watch-judge");
       expect(roles).not.toContain("entailment-verifier");
@@ -161,6 +161,10 @@ describe("ModelManager", () => {
       const mgr = new ModelManager({ modelsDir: dir });
       const roles = mgr.getOverview(fakeInference).capabilities.map((c) => c.role);
       expect(roles).toContain("background-agent");
+      expect(
+        mgr.getOverview(fakeInference).capabilities.find((c) => c.role === "background-agent")
+          ?.title,
+      ).toBe("Brain agent");
       expect(roles).toContain("speech-to-speech");
       expect(roles).toContain("watch-judge");
       expect(roles).toContain("entailment-verifier");

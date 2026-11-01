@@ -120,7 +120,8 @@ classification passes that ask a model one bounded question. It is what
 the assigned backend is an OpenAI-compatible HTTP server, so it serves the
 `entailment-verifier` role (the annotation write gate's firewall) and the
 token-identity classification pass, which runs during backfill on the
-`background-agent` assignment.
+`background-agent` assignment only while the experimental Brain is active.
+Deterministic contact matching remains available without the Brain.
 
 - `POST <base><apiPathPrefix>/chat/completions`, **non-streaming**, body
   `{ model, messages: [{ role: "user", content }], max_tokens: 150,
@@ -140,6 +141,13 @@ temperature: 0.3, stop? }`. Reads `choices[0].message.content`, with inline
   backend can echo the submitted prompt back in its error body.
 
 ### Agent — `HttpAgentBackend`
+
+Chat and Tell Omnesis share the `agent` assignment, not an identical presentation
+context. Notes use a bounded non-interactive prompt and omit chat-only citation
+and choice tools. A Note-only `continue_in_chat` can deliberately save a normal
+conversation when a clear request needs clarification; it does not wait for a
+reply inside the note turn. The next user reply uses the ordinary chat prompt and
+tools. Neither path requires the experimental Brain.
 
 `packages/agent/src/http-agent-backend.ts` routes each turn to one of two
 OpenAI-compatible wire protocols, with no per-provider branching:

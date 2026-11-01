@@ -29,7 +29,7 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getTask, listTasks, openTaskConversation, taskAction, undoTask } from "../api.js";
+import { getStatus, getTask, listTasks, openTaskConversation, taskAction, undoTask } from "../api.js";
 import { navigate } from "../lib/router.js";
 import { docHref, sourceIcon, sourceLabel } from "../lib/format.js";
 import {
@@ -60,6 +60,8 @@ import {
 } from "../lib/tasks-model.js";
 import { publishTaskCounts } from "../lib/task-counts.js";
 
+import { noteAgentNotice } from "../lib/note-agent.js";
+
 const TOAST_MS = 8000;
 
 function errorText(err) {
@@ -68,6 +70,13 @@ function errorText(err) {
 
 export function TasksView({ taskView = "today", focusTaskId = null, experimental = false, chatAvailable = false }) {
   const view = resolveTaskView(taskView, experimental);
+  const [status, setStatus] = useState(null);
+  const notice = noteAgentNotice(status);
+  useEffect(() => {
+    let live = true;
+    getStatus().then((value) => { if (live) setStatus(value); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   const [today, setToday] = useState(() => localDay());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -209,6 +218,8 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
         <span class="tasks-header-day">${shortDayLabel(today)} ${today.slice(0, 4)}</span>
       </header>
 
+      ${notice && html`<p class="tasks-add-hint" role="status">${notice} <a href="/portal/settings/models/agent">Open Agent settings</a></p>`}
+
       <nav class="tasks-tabs" aria-label="Task views">
         ${visibleTaskViews(experimental).map((v) => {
           const active = v.key === view;
@@ -237,7 +248,7 @@ ${countLabel(v.label, count)}</a>`;
             e.preventDefault();
             navigate("/portal/capture");
           }}
-        >Tell Omnesis</a> to add tasks.
+        >Tell Omnesis</a>${notice ? " to save a note." : " to request a task or save a note."}
       </p>`}
 
       ${proposals > 0 && view !== "suggested" && html`

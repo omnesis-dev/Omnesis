@@ -77,6 +77,18 @@ class NotesRepositoryTest {
     )
 
     @Test
+    fun task_context_survives_offline_queue_and_redelivery() = runTest {
+        val outcome = unpairedRepo().capture("About this task: Repair the telescope", "android-app", taskId = "task_example")
+        assertTrue(outcome is CaptureOutcome.Queued)
+        assertEquals("task_example", store.readAll().single().taskId)
+        server.enqueue(entryResponse())
+        reachableRepo().drain()
+        val body = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("task_example", body["taskId"]?.jsonPrimitive?.content)
+        assertTrue(store.readAll().isEmpty())
+    }
+
+    @Test
     fun capture_posts_online_with_surface_and_device_id() = runTest {
         server.enqueue(entryResponse())
         val outcome = reachableRepo().capture("  Book the dentist  ", "android-assistant")
