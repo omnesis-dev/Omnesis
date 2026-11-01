@@ -162,7 +162,12 @@ struct TaskWidgetView: View {
         HStack(alignment: .top, spacing: 6) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
-                    Image(systemName: "circle.hexagongrid.fill").font(.system(size: 9, weight: .semibold))
+                    Image("OmnesisMark")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 12, height: 12)
+                        .accessibilityHidden(true)
                     Text("OMNESIS")
                         .font(.system(size: 9, weight: .bold))
                         .tracking(1.5)
