@@ -174,8 +174,8 @@ it.each([true, false])(
           return { kind: "structured", resultType: "task.list", data: loopSentinel };
         },
       },
-      ...["task_create", "task_update", "task_undo"].map(
-        (name): ToolHandle => ({
+      ...["task_create", "task_update", "task_undo"].map((name): ToolHandle => {
+        return {
           name,
           description: "Task journal command",
           mutates: true,
@@ -185,8 +185,8 @@ it.each([true, false])(
             resultType: "task.changed",
             data: loopSentinel,
           }),
-        }),
-      ),
+        };
+      }),
     ]);
     try {
       const { sessionId } = await service.createSession("token:test", {});
