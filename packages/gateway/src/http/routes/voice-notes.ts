@@ -116,6 +116,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
       surface: note.surface,
       deviceId: note.deviceId,
+      taskId: note.taskId,
       latitude: note.latitude,
       longitude: note.longitude,
       placeName: note.placeName,

@@ -148,6 +148,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
       capturedUtcOffsetSeconds: body.capturedUtcOffsetSeconds,
       surface: body.surface,
       deviceId: body.deviceId,
+      taskId: body.taskId,
       latitude: body.latitude,
       longitude: body.longitude,
       placeName: body.placeName,

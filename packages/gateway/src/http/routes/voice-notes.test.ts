@@ -134,13 +134,15 @@ afterEach(async () => {
 describe("POST /notes/voice", () => {
   test("saves the note at once and replaces its text with the gateway's transcript", async () => {
     const id = randomUUID();
+    const taskId = "loop_fictional_fern_watering";
     const res = await post(
-      voiceNoteForm({ id, text: "water the ferns", language: "en-GB", surface: "ios-app" }),
+      voiceNoteForm({ id, text: "water the ferns", language: "en-GB", surface: "ios-app", taskId }),
     );
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ id, transcription: "pending" });
 
     await vi.waitFor(() => expect(noteText(id)).toBe("water the ferns on sunday"));
+    expect(notesRuntime!.listDay().find((entry) => entry.id === id)?.taskId).toBe(taskId);
     expect(languages).toEqual(["en"]);
   });
 
