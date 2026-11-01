@@ -11,7 +11,7 @@ vi.mock("../utils.js", async (importOriginal) => {
 
 import { gw, EXIT_AUTH, EXIT_GATEWAY_ERROR, EXIT_USER_ERROR } from "../utils.js";
 import { searchCommand } from "./search.js";
-import { renderAgentSearch, type AgentSearchResult } from "./search-agent-context.js";
+import { renderAgentSearch, resultCount, type AgentSearchResult } from "./search-agent-context.js";
 
 const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const run = searchCommand.run as (context: { args: Record<string, unknown> }) => Promise<void>;
@@ -173,6 +173,13 @@ describe("agent context terminal rendering", () => {
     expect(output).toContain("Context truncated: hub");
     expect(output).not.toContain("NaN");
     expect(output).not.toContain("undefined");
+  });
+
+  test("the closing tally agrees with the number of results", () => {
+    expect(resultCount(0)).toBe("0 results");
+    expect(resultCount(1)).toBe("1 result");
+    expect(resultCount(2)).toBe("2 results");
+    expect(renderAgentSearch(agent, false, fx).at(-1)).toBe("1 result in 8ms");
   });
 
   test("verbose mode shows canonical timing/candidate fields and missing snippets are valid", () => {

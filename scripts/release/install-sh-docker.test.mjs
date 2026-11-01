@@ -2142,7 +2142,12 @@ describe.skipIf(!HAS_PTY)("install.sh --docker: the questions it asks", () => {
       [""],
     );
     expect(run.status, run.output).toBe(0);
+    // Said once before the choice, by the question itself, not again by a
+    // line printed above it.
+    const beforeChoice = run.output.slice(0, run.output.indexOf("Choice [2]: "));
+    expect(beforeChoice.split("no OS keyring").length - 1).toBe(1);
     expect(run.output).toContain("A container has no OS keyring");
+    expect(run.output).not.toContain("Checking OS keyring");
     expect(run.output).toContain("Encrypt at rest with a generated passphrase file (recommended)");
     expect(run.output).toContain(`${run.configDir}/keyring.pass, readable only by you`);
     expect(run.output).toContain("Choice [2]: ");

@@ -3731,11 +3731,10 @@ seals_secrets() { [ "$CLIENT_ONLY_FLAG" = 0 ]; }
 
 setup_keyring_init() {
   [ "$WANT_KEYRING" = 1 ] || { warn "Skipping keyring setup (--no-keyring) — no encryption at rest. Arm it later with: omnesis secure"; return 0; }
-  if [ "$DOCKER" = 1 ]; then
-    # A container has no OS keyring to open, so there is nothing to probe:
-    # encryption at rest here is the passphrase backend or nothing.
-    info "A container has no OS keyring — encryption at rest uses the passphrase backend."
-  else
+  # A container has no OS keyring to open, so there is nothing to probe:
+  # encryption at rest there is the passphrase backend or nothing, which the
+  # question below says in its own words.
+  if [ "$DOCKER" != 1 ]; then
     info "Checking OS keyring availability..."
     if keyring_available; then
       if "$OMNESIS_BIN" keyring init; then
@@ -3824,8 +3823,8 @@ setup_keyring_init() {
 # the same thing here.
 docker_keyring_question() {
   echo "" >/dev/tty
-  printf 'Encryption at rest in a container uses a passphrase file, because a\n' >/dev/tty
-  printf 'container has no OS keyring. How would you like to proceed?\n' >/dev/tty
+  printf 'A container has no OS keyring, so encryption at rest uses a passphrase\n' >/dev/tty
+  printf 'file. How would you like to proceed?\n' >/dev/tty
   printf '\n' >/dev/tty
   printf '   1) Continue without encryption at rest (arm it later: omnesis secure)\n' >/dev/tty
   printf '   2) Encrypt at rest with a generated passphrase file (recommended):\n' >/dev/tty
