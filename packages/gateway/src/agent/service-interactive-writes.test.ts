@@ -17,6 +17,9 @@
  * Fixture data is invented — no corpus content.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ChatBackend,
@@ -35,6 +38,7 @@ import { createKnowledgeTables } from "../brain/knowledge/storage.js";
 import { buildKnowledgeTools } from "../brain/knowledge/tools.js";
 import { directKnowledgeGate } from "../brain/knowledge/writer.js";
 import { AgentService, type InteractiveWriteProfile } from "./service.js";
+import { FsConversationStore } from "./conversation-store.js";
 
 const stubSearch: SearchPort = {
   async search(input) {
@@ -394,6 +398,77 @@ describe("shared owner-directed tools", () => {
       });
     } finally {
       await experimental.dispose();
+    }
+  });
+});
+
+describe("task creation conversation reference", () => {
+  it("supplies a refusing reference resolver when conversation persistence is unavailable", async () => {
+    const { service } = makeService();
+    let resolve: (() => Promise<string | null>) | undefined;
+    service.setTaskToolsProvider((_id, context) => {
+      resolve = context.creationReference;
+      return [];
+    });
+    try {
+      await service.createSession("device:owner");
+      expect(resolve).toBeTypeOf("function");
+      expect(await resolve!()).toBeNull();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("publishes the live owner message before resolving its reference with interactive memory disabled", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-task-reference-"));
+    const store = new FsConversationStore(dir);
+    let reference: string | null | undefined;
+    const ensure = vi.fn(async (id: string) => {
+      const record = await store.load(id);
+      expect(JSON.stringify(record?.messages)).toContain("Remind me to polish the telescope");
+      return {
+        documentId: "doc_current_chat",
+        userMessages: ["Remind me to polish the telescope"],
+        truncated: false,
+      };
+    });
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        await input.tools.find((tool) => tool.name === "task_create")!.invoke({}, ids as never);
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+      store,
+      ensureConversationEvidence: ensure,
+    });
+    service.setTaskToolsProvider((_id, context) => [
+      {
+        name: "task_create",
+        description: "test",
+        mutates: true,
+        schema: undefined as never,
+        invoke: async () => {
+          reference = await context.creationReference?.();
+          return { kind: "structured", resultType: "noop", data: {} };
+        },
+      },
+    ]);
+    try {
+      const { sessionId } = await service.createSession("device:owner");
+      service.sendMessage("device:owner", sessionId, "Remind me to polish the telescope");
+      await vi.waitFor(() => expect(reference).toBe("doc_current_chat"));
+      expect(ensure).toHaveBeenCalledWith(sessionId);
+    } finally {
+      await service.dispose();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

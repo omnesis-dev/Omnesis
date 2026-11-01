@@ -35,6 +35,7 @@ afterEach(() => {
 let n = 0;
 function tools(
   opts: {
+    creationReference?: () => Promise<string | null>;
     observations?: boolean;
     interest?: Pick<InterestEngine, "record">;
   } = {},
@@ -338,6 +339,83 @@ describe("task tools", () => {
     ]);
     await call("task_update", { id: "loop_s", action: "confirm" });
     expect(getOpenLoop(db, "loop_s")?.state).toBe("done");
+  });
+
+  test("creation attaches the published origin without dropping explicit documents or duplicating it", async () => {
+    for (const id of ["doc_chat", "doc_blueprint"]) {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+        source_created_at, source_updated_at, ingested_at, updated_at)
+        VALUES (?, 'p', 's', ?, 'Observatory reference', 'body', 'h', ?, ?, ?, ?)`,
+      ).run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    }
+    const resolve = vi.fn(() => Promise.resolve("doc_chat"));
+    const { call } = tools({ creationReference: resolve });
+    const first = data(
+      await call("task_create", { title: "Check the telescope", docs: ["doc_blueprint"] }),
+    );
+    expect(getOpenLoop(db, first.task.id as string)?.docs).toEqual(["doc_blueprint", "doc_chat"]);
+    const second = data(
+      await call("task_create", { title: "Store the lenses", docs: ["doc_chat", "doc_chat"] }),
+    );
+    expect(getOpenLoop(db, second.task.id as string)?.docs).toEqual(["doc_chat"]);
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+
+  test("the 100-document boundary counts a repeated origin only once", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `doc_ref_${i}`);
+    const insert =
+      db.prepare(`INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+      source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES (?, 'p', 's', ?, 'Observatory reference', 'body', 'h', ?, ?, ?, ?)`);
+    for (const id of ids) insert.run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    const { call } = tools({ creationReference: () => Promise.resolve(ids[99]!) });
+    const first = data(
+      await call("task_create", { title: "Catalog the star maps", docs: ids.slice(0, 99) }),
+    );
+    expect(getOpenLoop(db, first.task.id as string)?.docs).toEqual([...ids].sort());
+    const second = data(await call("task_create", { title: "Review the catalog", docs: ids }));
+    expect(getOpenLoop(db, second.task.id as string)?.docs).toEqual([...ids].sort());
+    const third = data(await call("task_create", { title: "Check the observatory" }));
+    expect(getOpenLoop(db, third.task.id as string)?.docs).toEqual([ids[99]]);
+  });
+
+  test("creation refuses an unavailable origin and an overflowing merged reference list without writing", async () => {
+    const before = db.prepare("SELECT COUNT(*) AS n FROM open_loops").get();
+    expect(
+      await tools({ creationReference: () => Promise.resolve(null) }).call("task_create", {
+        title: "Missing origin",
+      }),
+    ).toMatchObject({ kind: "error", message: expect.stringContaining("No task was created") });
+    expect(
+      await tools({ creationReference: () => Promise.resolve("doc_chat") }).call("task_create", {
+        title: "Too many references",
+        docs: Array.from({ length: 100 }, (_, i) => `doc_${i}`),
+      }),
+    ).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("including its originating conversation"),
+    });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual(before);
+  });
+
+  test("cancellation while publishing the origin cannot create a task", async () => {
+    const abort = new AbortController();
+    const { handles } = tools({
+      creationReference: () => {
+        abort.abort();
+        return Promise.resolve("doc_chat");
+      },
+    });
+    const result = await handles
+      .find((tool) => tool.name === "task_create")!
+      .invoke({ title: "Canceled publication" }, {
+        sessionId: "s",
+        messageId: "m",
+        abortSignal: abort.signal,
+      } as never);
+    expect(result).toMatchObject({ kind: "error", code: "canceled" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual({ n: 0 });
   });
 
   test("tasks link found documents, expose them to later edits, and undo attachment changes", async () => {

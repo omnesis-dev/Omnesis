@@ -36,6 +36,8 @@ export interface TaskToolDeps {
   tasks: Pick<TaskService, "apply">;
   writeGate: Pick<WriteGate, "transitionObservation" | "setObservationUserAction">;
   origin: TaskCommandOrigin;
+  /** Resolve and publish the originating conversation before creating a task. */
+  creationReference?: () => Promise<string | null>;
   clock?: () => number;
   idGen?: () => string;
   /** Offer `observation_suppress` (the Morning brief is running). */
@@ -212,16 +214,33 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       const title = (args as { title?: unknown } | null)?.title;
       return typeof title === "string" ? title : "";
     },
-    async invoke(raw): Promise<ToolResult> {
+    async invoke(raw, ctx): Promise<ToolResult> {
       const parsed = createSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
+      let linkedDocs = parsed.data.docs;
+      if (deps.creationReference) {
+        const reference = await deps.creationReference();
+        if (ctx.abortSignal?.aborted)
+          return {
+            kind: "error",
+            code: "canceled",
+            message: "The request was canceled before the task was created.",
+          };
+        if (!reference)
+          return invalid("The conversation reference is unavailable. No task was created.");
+        linkedDocs = [...new Set([...(linkedDocs ?? []), reference])];
+        if (linkedDocs.length > 100)
+          return invalid(
+            "A task can link at most 100 documents including its originating conversation. Remove one explicit reference and retry; no task was created.",
+          );
+      }
       return apply({
         ...deps.origin,
         kind: "create",
         id: `loop_${idGen()}`,
         origin: deps.origin.surface === "note" ? "note" : "user",
         title: parsed.data.title,
-        ...(parsed.data.docs !== undefined ? { docs: parsed.data.docs } : {}),
+        ...(linkedDocs !== undefined ? { docs: linkedDocs } : {}),
         ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
         ...(parsed.data.scheduledFor !== undefined
           ? { scheduledFor: parsed.data.scheduledFor }

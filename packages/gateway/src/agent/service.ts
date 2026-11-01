@@ -526,6 +526,8 @@ export type TaskToolsProvider = (
   context: {
     /** The conversation's origin kind (`daily_brief`, …); undefined for a plain conversation. */
     originKind?: string;
+    /** Publish this turn before resolving the canonical conversation reference. */
+    creationReference?: () => Promise<string | null>;
   },
 ) => ToolHandle[];
 
@@ -1692,7 +1694,15 @@ export class AgentService {
       );
     }
     const taskTools =
-      this.taskTools?.(sessionId, originKind === undefined ? {} : { originKind }) ?? [];
+      this.taskTools?.(sessionId, {
+        ...(originKind === undefined ? {} : { originKind }),
+        creationReference: async () => {
+          const live = this.sessions.get(sessionId);
+          if (!live || !this.store || !this.ensureConversationEvidence) return null;
+          await this.persistConversation(sessionId, live.callerId, live.meta, undefined, false);
+          return (await this.ensureConversationEvidence(sessionId))?.documentId ?? null;
+        },
+      }) ?? [];
     const base = [
       ...this.buildOwnerTools(`interactive_${sessionId}`, taskTools, evidenceTools),
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),

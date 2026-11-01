@@ -2811,6 +2811,7 @@ agentLifecycle.setTaskToolsProvider((conversationId, context) =>
       conversationId,
     },
     observations: experimentalVisible(),
+    ...(context.creationReference ? { creationReference: context.creationReference } : {}),
     // Only the Morning brief conversation records what the owner says they
     // care about; elsewhere their words are not feedback on a brief.
     ...(context.originKind === "daily_brief" ? { interest: interestEngine } : {}),
