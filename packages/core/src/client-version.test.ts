@@ -9,6 +9,7 @@ import {
   compareProductVersions,
   parseProductVersion,
   computeClientVersionState,
+  hasVersionState,
   summarizeFleetVersions,
   formatFleetVersionSummary,
   type ClientVersionInput,
@@ -162,6 +163,22 @@ describe("summarizeFleetVersions", () => {
       unknown: 0,
       total: 0,
     });
+  });
+});
+
+describe("hasVersionState", () => {
+  it("leaves out only a CLI token that never reported a build", () => {
+    // Its plain HTTP requests carry no version: the installer's own token on
+    // a fresh install is not an unknown build.
+    expect(hasVersionState({ kind: "cli", versionState: "unknown" })).toBe(false);
+    expect(hasVersionState({ kind: "cli" })).toBe(false);
+  });
+
+  it("keeps whatever a CLI did report, and every other kind's silence", () => {
+    expect(hasVersionState({ kind: "cli", versionState: "current" })).toBe(true);
+    expect(hasVersionState({ kind: "cli", versionState: "unsupported" })).toBe(true);
+    expect(hasVersionState({ kind: "collector", versionState: "unknown" })).toBe(true);
+    expect(hasVersionState({ kind: "ios" })).toBe(true);
   });
 });
 

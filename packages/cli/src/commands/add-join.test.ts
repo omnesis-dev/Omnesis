@@ -96,7 +96,9 @@ function union(...descs: SerializedDescriptor[]): UnionDescriptor[] {
 function fakePrompts(overrides: Record<string, unknown> = {}) {
   return {
     confirm: vi.fn().mockResolvedValue(true),
-    multiselect: vi.fn(async ({ initialValues }: { initialValues: string[] }) => initialValues),
+    autocompleteMultiselect: vi.fn(
+      async ({ initialValues }: { initialValues: string[] }) => initialValues,
+    ),
     select: vi.fn(),
     isCancel: () => false,
     cancel: () => undefined,

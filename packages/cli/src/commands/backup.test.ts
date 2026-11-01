@@ -15,7 +15,7 @@ vi.mock("../utils.js", async (importOriginal) => ({
   isJSON: false,
 }));
 
-import { formatBackupProgress, runBackup } from "./backup.js";
+import { backupStartedLine, formatBackupProgress, runBackup } from "./backup.js";
 
 beforeEach(() => {
   mocks.gatewayFetch.mockReset();
@@ -24,6 +24,19 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("backupStartedLine", () => {
+  test("a backup without the search index says why nothing is lost", () => {
+    const line = backupStartedLine(false);
+    expect(line).toContain("without the search index (index.db)");
+    expect(line).toContain("rebuilds it from the documents");
+    expect(line).not.toContain("skipped");
+  });
+
+  test("a full backup just starts", () => {
+    expect(backupStartedLine(true)).toBe("Backup started…");
+  });
+});
 
 describe("runBackup", () => {
   test("sends the structured purpose and accepts an estimated size", async () => {

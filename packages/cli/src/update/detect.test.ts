@@ -12,6 +12,7 @@ import {
   activeSourceApplyState,
   assessSourceApplyEvidence,
   assessUpdate,
+  migrationBackupNote,
   channelToDistTag,
   CLI_PACKAGE,
   compareSemver,
@@ -1167,6 +1168,44 @@ describe("planHostUpdate", () => {
         : step.kind,
     );
 
+  describe("a container install's previous images", () => {
+    const both = roles({ gateway: supervised, collector: supervised });
+
+    test("are removed last, once every restart and the health wait are behind", () => {
+      const steps = planHostUpdate(both, { backup: true, previousImages: "0.7.2" });
+      expect(kinds(steps)).toEqual([
+        "backup",
+        "apply",
+        "restart:gateway",
+        "await-health",
+        "restart:collector",
+        "remove-previous-images",
+      ]);
+      expect(steps.at(-1)).toEqual({ kind: "remove-previous-images", previous: "0.7.2" });
+    });
+
+    test("are kept by a run that restarts nothing, which has not shown the target works", () => {
+      expect(
+        kinds(planHostUpdate(both, { backup: true, restart: false, previousImages: "0.7.2" })),
+      ).not.toContain("remove-previous-images");
+    });
+
+    test("are removed on a host that only collects, after its collector restarts", () => {
+      expect(
+        kinds(
+          planHostUpdate(roles({ collector: supervised }), {
+            backup: true,
+            previousImages: "0.7.2",
+          }),
+        ),
+      ).toEqual(["apply", "restart:collector", "remove-previous-images"]);
+    });
+
+    test("are no step at all without a previous tag to remove", () => {
+      expect(kinds(planHostUpdate(both, { backup: true }))).not.toContain("remove-previous-images");
+    });
+  });
+
   describe("on a host whose daemons run under units this command wrote", () => {
     const both = roles({ gateway: supervised, collector: supervised });
 
@@ -1684,13 +1723,16 @@ describe("apply plans", () => {
 
   test("a container install pulls the tag it recorded, both ways", () => {
     const plan = dockerApplyPlan("/cfg/docker-compose.yml", "/cfg", "0.4.2", "0.4.1");
+    expect(plan.installs).toBe("images");
     // The command is the same in both directions: what differs is the tag the
-    // flow records before running it.
+    // flow records before running it. Quiet — no line per layer — and with
+    // the update profile, so the updater the hand-over runs next is pulled
+    // here too, as the installer pulls it.
     expect(plan.apply.map(formatCommandSpec)).toEqual([
-      "docker compose -f /cfg/docker-compose.yml pull",
+      "docker compose -f /cfg/docker-compose.yml --profile update pull --quiet",
     ]);
     expect(plan.rollback.map(formatCommandSpec)).toEqual([
-      "docker compose -f /cfg/docker-compose.yml pull",
+      "docker compose -f /cfg/docker-compose.yml --profile update pull --quiet",
     ]);
     // A refused registry connection fails a pull without leaving anything to
     // undo, so each direction pulls once more before giving up.
@@ -1904,11 +1946,13 @@ describe("compareSemver", () => {
 });
 
 describe("assessUpdate", () => {
-  test("upgrade recommends a backup and does not require force", () => {
+  test("an upgrade does not require force, and leaves its backup advice to the plan", () => {
     const a = assessUpdate("0.2.0", "0.3.0");
     expect(a.direction).toBe("upgrade");
     expect(a.requiresForce).toBe(false);
-    expect(a.notes.join(" ")).toMatch(/back up/i);
+    // Whether to tell the operator to back up depends on whether the plan
+    // already does: that is migrationBackupNote's, read off the steps.
+    expect(a.notes).toEqual([]);
   });
 
   test("downgrade requires force and explains the source reset", () => {
@@ -1923,6 +1967,52 @@ describe("assessUpdate", () => {
     expect(a.direction).toBe("same");
     expect(a.requiresForce).toBe(false);
     expect(a.notes).toEqual([]);
+  });
+});
+
+describe("migrationBackupNote", () => {
+  const withBackup: UpdateStep[] = [{ kind: "backup" }, { kind: "apply" }];
+  const withoutBackup: UpdateStep[] = [{ kind: "apply" }];
+
+  test("a plan that backs up says it does, and where, instead of telling the operator to", () => {
+    const note = migrationBackupNote("upgrade", withBackup, "/home/maya/.config/omnesis/backups");
+    expect(note).toContain("forward-only schema migrations");
+    expect(note).toContain(
+      "The update backs up the gateway's databases before they run, into /home/maya/.config/omnesis/backups.",
+    );
+    expect(note).not.toMatch(/back up first|omnesis backup/i);
+  });
+
+  test("a deferred backup, after the apply, counts as the plan's own", () => {
+    const deferred: UpdateStep[] = [
+      { kind: "apply" },
+      { kind: "backup" },
+      { kind: "restart", component: "gateway" },
+    ];
+    expect(migrationBackupNote("upgrade", deferred)).toContain(
+      "into the gateway's backups folder.",
+    );
+  });
+
+  test("a plan without a backup still tells the operator to take one", () => {
+    expect(migrationBackupNote("upgrade", withoutBackup, "/somewhere/backups")).toBe(
+      "This upgrade runs forward-only schema migrations on the gateway's next boot, and there " +
+        "are no down-migrations. Back up first: omnesis backup --note pre-upgrade",
+    );
+  });
+
+  test("an unreleased build is warned about either way, and the advice follows the plan", () => {
+    expect(migrationBackupNote("unreleased", withoutBackup)).toMatch(
+      /^Edge can contain unreleased changes.*Back up before running it: omnesis backup --note pre-upgrade$/u,
+    );
+    const planned = migrationBackupNote("unreleased", withBackup, "/srv/omnesis/backups");
+    expect(planned).toContain("into /srv/omnesis/backups.");
+    expect(planned).not.toContain("omnesis backup");
+  });
+
+  test("nothing migrates forward on a downgrade or a same-version run", () => {
+    expect(migrationBackupNote("downgrade", withBackup)).toBeNull();
+    expect(migrationBackupNote("same", withoutBackup)).toBeNull();
   });
 });
 

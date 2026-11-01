@@ -165,6 +165,30 @@ export function computeClientVersionState(input: ClientVersionInput): ClientVers
   return "current";
 }
 
+/**
+ * Kinds for which never reporting a build is the normal state. A CLI token —
+ * the installer's bootstrap device among them — reaches the gateway in plain
+ * HTTP requests, which carry no version; only a CLI holding a socket open
+ * (`omnesis status --watch`) reports one.
+ */
+const VERSION_OPTIONAL_KINDS: ReadonlySet<string> = new Set<DeviceKind>(["cli"]);
+
+/**
+ * Whether a device has a version state worth showing and counting: every
+ * device except one of a kind that need not report and has not. Leaving such
+ * a device out keeps the fleet line about the builds that matter — a fresh
+ * install's own CLI token is not `1 unknown`. Anything it did report, or a
+ * protocol it was stranded on, still counts.
+ */
+export function hasVersionState(device: {
+  kind: string;
+  versionState?: ClientVersionState | null;
+}): boolean {
+  return !(
+    VERSION_OPTIONAL_KINDS.has(device.kind) && (device.versionState ?? "unknown") === "unknown"
+  );
+}
+
 /** Per-state device counts, in the order a summary line reads best. */
 export interface FleetVersionSummary {
   current: number;

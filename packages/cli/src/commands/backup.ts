@@ -101,6 +101,17 @@ export function formatBackupProgress(
   return `\r  ${current.files.length} file${current.files.length === 1 ? "" : "s"} done · ${formatSize(writtenBytes)} written${estimate} · ${working} [${elapsedSeconds}s]`;
 }
 
+/**
+ * The line a backup starts with. One that leaves the search index out says why
+ * that loses nothing: the index is derived from the documents, and a gateway
+ * restored without it indexes them again.
+ */
+export function backupStartedLine(includeIndex: boolean): string {
+  return includeIndex
+    ? "Backup started…"
+    : "Backup started, without the search index (index.db): the gateway rebuilds it from the documents after a restore…";
+}
+
 export async function runBackup(opts: {
   includeIndex: boolean;
   note?: string;
@@ -134,11 +145,7 @@ export async function runBackup(opts: {
     estimatedTotalBytes?: number;
   };
 
-  if (!isJSON) {
-    console.log(
-      `${c.dim}Backup started${opts.includeIndex ? "" : " (index.db skipped)"}…${c.reset}`,
-    );
-  }
+  if (!isJSON) console.log(`${c.dim}${backupStartedLine(opts.includeIndex)}${c.reset}`);
 
   const startMs = Date.now();
   let lastLine = "";

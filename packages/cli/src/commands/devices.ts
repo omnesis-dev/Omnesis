@@ -11,6 +11,7 @@ import {
   DEFAULT_CONFIG_DIR,
   discoverGatewayViaMdns,
   ensureGatewayTrust,
+  hasVersionState,
   isTlsCertError,
   localDeviceUpdateCommands,
   tlsErrorCode,
@@ -279,10 +280,17 @@ export const deviceVersionLabel = (d: { version?: string | null }): string => d.
  * revoked rows out for the same reason.
  */
 export function deviceVersionStateCell(d: {
+  kind?: string;
   versionState?: ClientVersionState;
   revokedAt?: number | null;
 }): { text: string; colored: string } {
-  if (d.revokedAt) return { text: "—", colored: `${c.gray}—${c.reset}` };
+  // A CLI token that never reported a build is not missing one: it talks in
+  // plain requests, which carry none. It has no state to show, like a revoked row.
+  if (
+    d.revokedAt ||
+    (d.kind !== undefined && !hasVersionState({ kind: d.kind, versionState: d.versionState }))
+  )
+    return { text: "—", colored: `${c.gray}—${c.reset}` };
   const text = d.versionState ?? "unknown";
   const color =
     text === "unsupported"
@@ -296,18 +304,9 @@ export function deviceVersionStateCell(d: {
 }
 
 /**
- * Pad a cell that may carry ANSI colour codes to `width` visible characters.
- * The escape sequences occupy no columns, so their length is added on top of
- * the intended width — without this every coloured cell short-changes the
- * column by however many bytes its colour cost.
- */
-/** Width of the STATUS column — sized for its longest value, `needs-pairing`. */
-const STATUS_WIDTH = 13;
-
-/**
  * The STATUS cell: `paired`, `revoked`, or the `needs-pairing` that separates
  * a revoked device still holding sources from one that was retired. Returned
- * as text plus colouring so `padCell` can align on the visible width.
+ * as text plus colouring so `alignColumns` can align on the visible width.
  */
 export function deviceStatusCell(d: { revokedAt?: number | null; needsPairing?: boolean }): {
   text: string;
@@ -392,8 +391,33 @@ export function deviceUpdateNoticeLine(d: {
   return null;
 }
 
-function padCell(cell: { text: string; colored: string }, width: number): string {
-  return cell.colored.padEnd(width + (cell.colored.length - cell.text.length));
+/** One table cell: what it reads as, and what it prints with its colour. */
+type TableCell = string | { text: string; colored: string };
+
+/**
+ * Lay rows out in columns sized to their widest cell, header included, so a
+ * long device name or hostname widens its column instead of pushing every
+ * later cell of its row out of line. Widths count what is visible: colour
+ * escapes occupy no columns. The last column is not padded.
+ */
+export function alignColumns(rows: readonly (readonly TableCell[])[]): string[] {
+  const text = (cell: TableCell): string => (typeof cell === "string" ? cell : cell.text);
+  const colored = (cell: TableCell): string => (typeof cell === "string" ? cell : cell.colored);
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, column) => {
+      widths[column] = Math.max(widths[column] ?? 0, [...text(cell)].length);
+    });
+  }
+  return rows.map((row) =>
+    row
+      .map((cell, column) =>
+        column === row.length - 1
+          ? colored(cell)
+          : colored(cell) + " ".repeat(widths[column]! - [...text(cell)].length),
+      )
+      .join(" "),
+  );
 }
 
 /** The DELETE path for one device: revoke by default, hard-delete on `forget`. */
@@ -471,23 +495,40 @@ const devicesListCommand = defineCommand({
     const levelNames = devices.some((d) => d.kind === "integration" && d.accessLevelId)
       ? await readAnswerLevelNames()
       : null;
+    const header = [
+      "NAME",
+      "KIND",
+      "HOSTNAME",
+      "VERSION",
+      "STATE",
+      "ID",
+      "STATUS",
+      "LIVE",
+      "LAST ACTIVITY",
+    ];
+    const lines = alignColumns([
+      header,
+      ...devices.map((d): TableCell[] => [
+        d.name,
+        d.kind,
+        d.capabilities?.hostname ?? "",
+        deviceVersionLabel(d),
+        deviceVersionStateCell(d),
+        d.id,
+        deviceStatusCell(d),
+        {
+          text: deviceLiveLabel(d.online),
+          colored: `${d.online ? c.green : c.gray}${deviceLiveLabel(d.online)}${c.reset}`,
+        },
+        fmtTime(d.lastSeenAt),
+      ]),
+    ]);
     console.log();
-    console.log(
-      `${c.bold}${"NAME".padEnd(28)} ${"KIND".padEnd(10)} ${"HOSTNAME".padEnd(20)} ${"VERSION".padEnd(9)} ${"STATE".padEnd(11)} ${"ID".padEnd(38)} ${"STATUS".padEnd(STATUS_WIDTH)} ${"LIVE".padEnd(8)} LAST ACTIVITY${c.reset}`,
-    );
+    console.log(`${c.bold}${lines[0]}${c.reset}`);
     let needsPairing = 0;
-    for (const d of devices) {
-      const live = {
-        text: deviceLiveLabel(d.online),
-        colored: `${d.online ? c.green : c.gray}${deviceLiveLabel(d.online)}${c.reset}`,
-      };
-      const status = deviceStatusCell(d);
-      if (status.text === "needs-pairing") needsPairing += 1;
-      const host = d.capabilities?.hostname ?? "";
-      const version = deviceVersionLabel(d);
-      console.log(
-        `${d.name.padEnd(28)} ${d.kind.padEnd(10)} ${host.padEnd(20)} ${version.padEnd(9)} ${padCell(deviceVersionStateCell(d), 11)} ${d.id.padEnd(38)} ${padCell(status, STATUS_WIDTH)} ${padCell(live, 8)} ${fmtTime(d.lastSeenAt)}`,
-      );
+    for (const [index, d] of devices.entries()) {
+      if (deviceStatusCell(d).text === "needs-pairing") needsPairing += 1;
+      console.log(lines[index + 1]);
       // Printed under the row rather than as a column, because it carries the
       // command that fixes it and a column cannot.
       if (d.agentAuthorization?.status === "needs-reauthorization") {

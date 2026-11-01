@@ -323,10 +323,16 @@ export async function bootBriefs(deps: {
     });
     deps.runQueue.scheduler.schedule(cleanup.task);
     deps.runQueue.backgroundJobs.registerAll([cleanup.job]);
+  }
+  if (!experimentalEnabled()) return status;
+  // The wiki's display identity, like the open loops', is the Brain's: seeded
+  // only where it runs, so a gateway with experimental mode off has no
+  // `brain-knowledge` row to list. A row an experimental run seeded stays,
+  // and keeps the icon of any wiki page left from it.
+  if (deps.runQueue) {
     const { seedKnowledgeSourceMeta } = await import("./knowledge/source-identity.js");
     await seedKnowledgeSourceMeta(deps.writeGate);
   }
-  if (!experimentalEnabled()) return status;
   await seedOpenLoopSourceMeta(deps.writeGate);
   deps.log.info(`Briefs runtime prepared — open-loops system source seeded`);
   if (deps.runQueue) {

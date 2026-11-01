@@ -15,6 +15,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { parseArgs } from "citty";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeEmail, normalizePhone } from "@omnesis/core";
@@ -49,6 +50,7 @@ import {
   deviceStatusLabel,
   deviceVersionLabel,
   deviceVersionStateCell,
+  alignColumns,
   pairingTlsFailure,
   revokedCollectorReRegisters,
   getOrCreateInstallId,
@@ -104,6 +106,14 @@ describe("device list version cells", () => {
 
   it("reads an absent state as unknown, so an older gateway degrades cleanly", () => {
     expect(deviceVersionStateCell({}).text).toBe("unknown");
+  });
+
+  it("reports no state for a CLI token that never reported a build, rather than unknown", () => {
+    expect(deviceVersionStateCell({ kind: "cli", versionState: "unknown" }).text).toBe("—");
+    expect(deviceVersionStateCell({ kind: "cli", versionState: "current" }).text).toBe("current");
+    expect(deviceVersionStateCell({ kind: "collector", versionState: "unknown" }).text).toBe(
+      "unknown",
+    );
   });
 
   it("reports no state for a revoked device, whose last reading means nothing", () => {
@@ -1767,6 +1777,26 @@ describe("device access levels in the list", () => {
   });
 });
 
+describe("alignColumns", () => {
+  it("pads each column to its widest cell, counting only visible characters", () => {
+    expect(
+      alignColumns([
+        ["NAME", "STATE", "LAST"],
+        [
+          "a-very-long-device-name",
+          { text: "current", colored: "\u001b[32mcurrent\u001b[0m" },
+          "now",
+        ],
+        ["b", "—", "never"],
+      ]).map((line) => stripVTControlCharacters(line)),
+    ).toEqual([
+      "NAME                    STATE   LAST",
+      "a-very-long-device-name current now",
+      "b                       —       never",
+    ]);
+  });
+});
+
 describe("devices list", () => {
   const device = (accessLevelId: string | null) => ({
     id: "device-voice",
@@ -1864,6 +1894,44 @@ describe("devices list", () => {
     expect(output).toContain(
       "pinned certificate — stops connecting when the gateway renews it on 2026-12-10T00:00:00.000Z. Update the app",
     );
+  });
+
+  it("sizes every column to its longest cell, so a long name or hostname shifts nothing", async () => {
+    const long = {
+      ...device(null),
+      id: "device-long",
+      name: "studio-northstar-air-collector",
+      kind: "collector",
+      capabilities: { hostname: "studio-northstar-air.local" },
+      version: "0.7.3",
+      versionState: "current",
+    };
+    const short = {
+      ...device(null),
+      id: "device-short",
+      name: "cli",
+      kind: "cli",
+      capabilities: { hostname: "box" },
+    };
+    const { output } = await runList([Response.json({ items: [long, short] })]);
+    const rows = stripVTControlCharacters(output)
+      .split("\n")
+      .filter((line) => /^(NAME|studio-northstar|cli )/u.test(line));
+    expect(rows).toHaveLength(3);
+    // Every column starts where its header does, on every row.
+    for (const [header, cells] of [
+      ["KIND", ["collector", "cli"]],
+      ["HOSTNAME", ["studio-northstar-air.local", "box"]],
+      ["STATE", ["current", "—"]],
+      ["ID", ["device-long", "device-short"]],
+      ["LIVE", ["no", "no"]],
+    ] as const) {
+      const column = rows[0]!.indexOf(header);
+      expect(rows[1]!.indexOf(cells[0], column - 1)).toBe(column);
+      expect(rows[2]!.indexOf(cells[1], column - 1)).toBe(column);
+    }
+    // The bootstrap-style CLI token reports no build, and its row says so plainly.
+    expect(rows[2]).not.toContain("unknown");
   });
 
   it("still lists every device when the access levels cannot be read", async () => {
