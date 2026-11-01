@@ -515,8 +515,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td><code>--build</code></td>
                 <td>
                   With <code>--docker</code>: build the images from the checkout this script came
-                  from instead of pulling published ones. The build needs about 25 GB free where
-                  Docker stores images; the installer checks before writing anything.
+                  from instead of pulling published ones. They are tagged with the checkout's own
+                  version and <code>-local</code> (for example <code>0.7.3-local</code>), never as a
+                  published release, so a later <code>omnesis update</code> moves the install onto
+                  the published images. <code>--version</code> may only repeat the checkout's
+                  version. The build needs about 25 GB free where Docker stores images; the
+                  installer checks before writing anything.
                 </td>
               </tr>
               <tr>
@@ -841,7 +845,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The
           installer uses release images only, so it refuses <code>--edge</code>;
           <code>--version X.Y.Z</code> selects an exact release. From a checkout,
-          <code>sh scripts/install.sh --docker --build</code> builds the images locally.
+          <code>sh scripts/install.sh --docker --build</code> builds the images locally, tagged
+          <code>&lt;version&gt;-local</code> after the checkout's version. The
+          <code>omnesis</code> command it writes finds Docker where Docker Desktop, OrbStack and
+          Colima put it even when <code>PATH</code> does not include it, as in a non-login
+          <code>ssh</code> session, cron or launchd.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1134,8 +1142,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
               </tr>
               <tr>
                 <td>Device</td>
-                <td>the container's collector</td>
-                <td>a device of its own, with its own token</td>
+                <td>the container's collector, <code>&lt;host&gt;-collector</code></td>
+                <td>
+                  a device of its own, with its own token:
+                  <code>&lt;host&gt;-mac-collector</code> on a Mac (<code
+                    >&lt;host&gt;-native-collector</code
+                  >
+                  on Linux)
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1147,6 +1161,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>omnesis</code> itself. Without a terminal, run
           <code>omnesis devices pair --kind collector</code> on the same machine and pass the code
           with <code>--code</code>.
+        </p>
+        <p>
+          <code>&lt;host&gt;</code> is the machine's short name, lowercased, without the
+          <code>.local</code> a Mac adds: <code>Maya-MacBook.local</code> pairs as
+          <code>maya-macbook-mac-collector</code>. A code minted with a name keeps that name, and a
+          collector paired before keeps the one it has. The installer prints the name the gateway
+          registered, which is what <code>--device</code> takes.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1161,7 +1182,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
-                >omnesis sources add apple-notes --device '&lt;this collector&gt;'</span
+                >omnesis sources add apple-notes --device 'maya-macbook-mac-collector'</span
               >
             </p>
             <p class="t-dim"># the native collector itself</p>
@@ -1181,12 +1202,19 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         <p>
           Sources, devices and status stay on <code>omnesis</code>, which holds the gateway's admin
           token; <code>omnesis-collector</code> manages the collector's own service, update and
-          removal. Each uninstall removes only its own install. The reverse order is refused: a
-          Docker install does not take over the <code>omnesis</code> command and config directory of
-          a native install whose service is still registered. Remove that one first (<code
-            >omnesis uninstall</code
-          >), install Docker, then the native collector beside it. The collector beside a Docker
-          install is installed from source; <code>--method package</code> is not available for it.
+          removal, talks to the gateway the collector is paired with, and names itself in every hint
+          it prints. Each uninstall removes only its own install.
+          <code>omnesis-collector uninstall</code> offers to revoke its device on this machine's
+          Docker gateway (yes by default; <code>--yes</code> accepts it): the sources it hosts stay,
+          with their data, but stop syncing until you move or detach them. With
+          <code>--purge</code> it also deletes <code>~/.config/omnesis-collector</code> and its keys
+          in the OS keyring, keeping the keyring's root key while another native install of yours
+          uses it; the Docker install keeps its own keys in its config directory. The reverse order
+          is refused: a Docker install does not take over the <code>omnesis</code> command and
+          config directory of a native install whose service is still registered. Remove that one
+          first (<code>omnesis uninstall</code>), install Docker, then the native collector beside
+          it. The collector beside a Docker install is installed from source;
+          <code>--method package</code> is not available for it.
         </p>
 
         <h3 id="docker-folders">Host folders</h3>
@@ -1613,15 +1641,17 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         </p>
         <p>
           <strong>Docker.</strong> On a Docker host, <code>omnesis uninstall</code> runs in the
-          launcher on the host, not in a container: it takes the containers and images down (<code
-            >docker compose … down --rmi all</code
-          >), removes the compose file, the launcher and the installer's PATH line (kept, and said,
-          when other programs live in <code>~/.local/bin</code>), and with <code>--purge</code> the
-          config directory. An install is removed as a whole. On a machine that only collects, it
-          ends by reminding you to remove its device on the gateway host, as a native collector's
-          does. A <a href="#docker-native-collector">native collector beside it</a> stays; remove
-          that one with <code>omnesis-collector uninstall</code>, which in turn never touches the
-          Docker install.
+          launcher on the host, not in a container: it takes the containers down and removes every
+          local image of the install's repositories (<code>omnesis-gateway</code>,
+          <code>omnesis-collector</code>, <code>omnesis-combined</code> and
+          <code>omnesis-updater</code> under its registry), older releases included, then removes
+          the compose file, the launcher and the installer's PATH line (kept, and said, when other
+          programs live in <code>~/.local/bin</code>), and with <code>--purge</code> the config
+          directory. An install is removed as a whole. On a machine that only collects, it ends by
+          reminding you to remove its device on the gateway host, as a native collector's does. A
+          <a href="#docker-native-collector">native collector beside it</a> stays; remove that one
+          with <code>omnesis-collector uninstall</code>, which in turn never touches the Docker
+          install.
         </p>
         <p>
           <strong>What only you can do.</strong> The command says which of these apply when it
@@ -1632,8 +1662,9 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
             On a second machine, remove its device from the gateway as well. For a collector, first
             move or detach the sources it hosts (see
             <a href="/docs/sources#managing-sources">Managing sources</a>); then, on the gateway
-            host, run <code>omnesis devices revoke &lt;device&gt; --forget</code>. Revoking a
-            harness machine's device also signs its agent out of its connection.
+            host, run <code>omnesis devices revoke &lt;device&gt; --forget</code>; the uninstall
+            prints the device's name. Revoking a harness machine's device also signs its agent out
+            of its connection.
           </li>
           <li>Restart OpenClaw or Hermes so the running harness stops loading the plugin.</li>
           <li>

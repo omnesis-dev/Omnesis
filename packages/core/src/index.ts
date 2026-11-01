@@ -1305,7 +1305,12 @@ export {
   servedCertificateCoversLocalhost,
 } from "./local-gateway-url.js";
 export { homebrewCliPaths, mkcertCliCandidates } from "./host-cli.js";
-export { COLLECTOR_HOSTNAME_ENV, collectorHostname } from "./collector-hostname.js";
+export {
+  COLLECTOR_HOSTNAME_ENV,
+  collectorHostname,
+  deviceNameHost,
+  hostNameStem,
+} from "./collector-hostname.js";
 export {
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
@@ -1320,3 +1325,4 @@ export type { BrowserUrlIdentitySpec } from "./url-normalize.js";
 export { oauthCallbackHost } from "./oauth-callback-host.js";
 
 export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";
+export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";

@@ -448,7 +448,8 @@ show_install_plan() {
     if [ -n "$PIN_VERSION" ]; then PLAN_RELEASE="release $PIN_VERSION"
     else PLAN_RELEASE="newest complete stable image release (resolved during install)"; fi
     if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
-      PLAN_DELIVERY="containers built from $DOCKER_BUILD_CONTEXT"
+      docker_build_tag
+      PLAN_DELIVERY="containers built from $DOCKER_BUILD_CONTEXT (version $BUILD_VERSION, image tag $IMAGE_TAG)"
     else
       PLAN_DELIVERY="published containers; $PLAN_RELEASE"
     fi
@@ -485,8 +486,11 @@ show_install_plan() {
       PLAN_DELIVERY="none; the CLI already installed here ($HARNESS_EXISTING_WHAT)"
       PLAN_TARGET="$OMNESIS_BIN"
     fi
-    if [ "$BESIDE_DOCKER" = 1 ]; then
-      PLAN_ROLE="$PLAN_ROLE, beside the Docker install in $BESIDE_DOCKER_DIR (command: $NATIVE_CMD, config: $CONFIG_DIR)"
+    if [ "$BESIDE_DOCKER" = 1 ] && [ "$BESIDE_DOCKER_GATEWAY" = 1 ]; then
+      # The gateway is right here, in the Docker install, not another machine.
+      PLAN_ROLE="collector for this machine's Docker gateway, installed beside it (Docker install: $BESIDE_DOCKER_DIR; command: $NATIVE_CMD, config: $CONFIG_DIR)"
+    elif [ "$BESIDE_DOCKER" = 1 ]; then
+      PLAN_ROLE="$PLAN_ROLE, installed beside this machine's Docker collector (Docker install: $BESIDE_DOCKER_DIR; command: $NATIVE_CMD, config: $CONFIG_DIR)"
     fi
   fi
 
@@ -2250,14 +2254,29 @@ plan_beside_docker() {
 # what this installer wrote, so it can only ever remove this collector.
 write_beside_docker_shim() {
   mkdir -p "$(dirname "$BESIDE_SHIM")"
+  # The directory of the node this install built with: a shell that is not a
+  # login shell (ssh running one command, cron) may have no node on PATH.
+  BESIDE_NODE="$(command -v node 2>/dev/null || true)"
+  case "$BESIDE_NODE" in /*) BESIDE_NODE_DIR="$(dirname "$BESIDE_NODE")" ;; *) BESIDE_NODE_DIR="" ;; esac
   BESIDE_TMP="$(mktemp "$(dirname "$BESIDE_SHIM")/.omnesis-collector.XXXXXX")" || fail "Could not create a private temporary launcher."
   {
     printf '#!/bin/sh\n%s\n' "$BESIDE_SHIM_MARKER"
     printf 'CONFIG_DIR=%s\n' "$(shell_single_quote "$CONFIG_DIR")"
     printf 'LAUNCHER=%s\n' "$(shell_single_quote "$NATIVE_LAUNCHER")"
     printf 'DOCKER_DIR=%s\n' "$(shell_single_quote "$BESIDE_DOCKER_DIR")"
+    printf 'NODE_DIR=%s\n' "$(shell_single_quote "$BESIDE_NODE_DIR")"
     cat <<'SHIM_EOF'
 set -eu
+# PATH first; the node this collector was built with when PATH has none.
+if ! command -v node >/dev/null 2>&1 && [ -n "$NODE_DIR" ] && [ -x "$NODE_DIR/node" ]; then
+  PATH="$PATH:$NODE_DIR"
+  export PATH
+fi
+# One string field of this collector's pairing record, which its daemon writes
+# as indented JSON (a field to a line).
+pairing_field() {
+  sed -n "s/^ *\"$1\" *: *\"\([^\"]*\)\".*/\1/p" "$CONFIG_DIR/collector-pairing-state.json" 2>/dev/null | head -n 1
+}
 if [ "${1:-}" = uninstall ]; then
   shift
   YES=0; PURGE=0; DRY=0
@@ -2269,7 +2288,7 @@ if [ "${1:-}" = uninstall ]; then
       -h|--help)
         printf '%s\n' "Usage: omnesis-collector uninstall [--purge] [--yes] [--dry-run]" \
           "Removes the native collector installed beside the Docker install: its service, checkout and command." \
-          "--purge also deletes its config directory: its token, keys and caches."
+          "--purge also deletes its config directory (its token, keys and caches) and its keys in the OS keyring."
         exit 0 ;;
       *) printf 'omnesis-collector uninstall: %s is not an option it takes.\n' "$ARG" >&2; exit 2 ;;
     esac
@@ -2277,26 +2296,55 @@ if [ "${1:-}" = uninstall ]; then
   ROOT="$(sed -n "s/^SOURCE_ROOT='\(.*\)'\$/\1/p" "$LAUNCHER" 2>/dev/null | head -n 1)"
   MANAGED=0
   if [ -n "$ROOT" ] && [ "$(git -C "$ROOT" config --local --get omnesis.install 2>/dev/null || true)" = managed ]; then MANAGED=1; fi
-  DEVICE="$(sed -n 's/.*"deviceName":"\([^"]*\)".*/\1/p' "$CONFIG_DIR/collector-pairing-state.json" 2>/dev/null | head -n 1)"
+  DEVICE="$(pairing_field deviceName)"
+  DEVICE_ID="$(pairing_field deviceId)"
   UNIT=""
   for CANDIDATE in "$HOME/Library/LaunchAgents/dev.omnesis.collector.plist" "$HOME/.config/systemd/user/omnesis-collector.service"; do
     [ ! -f "$CANDIDATE" ] || UNIT="$CANDIDATE"
   done
+  # The gateway is this machine's Docker install when that install runs one
+  # and its launcher is still here: the device can be revoked from here.
+  DOCKER_LAUNCHER="$HOME/.local/bin/omnesis"
+  LOCAL_GATEWAY=0
+  if [ -n "$DEVICE" ] && [ -x "$DOCKER_LAUNCHER" ] && grep -qx '  gateway:' "$DOCKER_DIR/docker-compose.yml" 2>/dev/null; then
+    LOCAL_GATEWAY=1
+  fi
+  REVOKE_TARGET="${DEVICE_ID:-$DEVICE}"
   printf '%s\n' "Omnesis uninstall — the native collector beside the Docker install in $DOCKER_DIR:"
   [ -z "$UNIT" ] || printf '  - %s\n' "Stop and remove its collector service"
   [ "$MANAGED" = 0 ] || printf '  - %s\n' "Remove its checkout $ROOT"
   printf '  - %s\n' "Remove $LAUNCHER and the omnesis-collector command"
-  if [ "$PURGE" = 1 ]; then printf '  - %s\n' "Delete its config directory $CONFIG_DIR (token, keys, caches)"
-  else printf '  - %s\n' "Keep its config directory $CONFIG_DIR"; fi
+  if [ "$PURGE" = 1 ]; then printf '  - %s\n' "Delete its config directory $CONFIG_DIR (token, keys, caches) and its keys in the OS keyring"
+  else printf '  - %s\n' "Keep its config directory $CONFIG_DIR and its keys in the OS keyring (--purge deletes them too)"; fi
   printf '  %s\n' "The Docker install, its omnesis command and its data are not touched."
+  # Whether the device is revoked on this machine's gateway as part of this
+  # run: asked on a terminal, yes by default, and taken as yes with --yes.
+  REVOKE=0
+  if [ "$LOCAL_GATEWAY" = 1 ]; then
+    printf '\n%s\n' "Its device, $DEVICE, is registered with this machine's Docker gateway. Revoking it ends its"
+    printf '%s\n' "access; the sources it hosts stay on the gateway with their data, but stop syncing until"
+    printf '%s\n' "you move them to another collector (omnesis sources move) or detach them (omnesis sources detach)."
+  fi
   follow_up() {
+    [ -n "$DEVICE" ] || {
+      printf '\n%s\n' "Afterwards"
+      printf '  %s\n' "On the gateway host, move or detach its sources, then remove its device (omnesis devices list names it): omnesis devices revoke <device> --forget"
+      return 0
+    }
     printf '\n%s\n' "Afterwards"
-    printf '  %s\n' "Remove its device from the gateway: omnesis devices revoke '${DEVICE:-<device>}' --forget"
+    if [ "$REVOKE" = 1 ]; then
+      printf '  %s\n' "Once its sources are moved or detached, remove the revoked device: omnesis devices revoke '$DEVICE' --forget"
+    else
+      printf '  %s\n' "On the gateway host, move or detach its sources, then remove its device: omnesis devices revoke '$DEVICE' --forget"
+    fi
   }
-  if [ "$DRY" = 1 ]; then follow_up; printf '\n%s\n' "Dry run: nothing was changed."; exit 0; fi
+  if [ "$DRY" = 1 ]; then
+    [ "$LOCAL_GATEWAY" = 0 ] || printf '%s\n' "This would ask whether to revoke it (yes by default)."
+    follow_up; printf '\n%s\n' "Dry run: nothing was changed."; exit 0
+  fi
   if [ "$YES" != 1 ]; then
     if [ -t 0 ] && [ -r /dev/tty ]; then
-      printf '%s' "Remove these? [y/N] "
+      printf '\n%s' "Remove these? [y/N] "
       IFS= read -r REPLY </dev/tty || REPLY=""
       case "$REPLY" in y|Y|yes|YES) ;; *) printf '%s\n' "Cancelled."; exit 130 ;; esac
     else
@@ -2304,11 +2352,26 @@ if [ "${1:-}" = uninstall ]; then
       exit 2
     fi
   fi
+  if [ "$LOCAL_GATEWAY" = 1 ]; then
+    if [ "$YES" = 1 ]; then
+      REVOKE=1
+    elif [ -t 0 ] && [ -r /dev/tty ]; then
+      printf '%s' "Revoke $DEVICE on this machine's gateway? [Y/n] "
+      IFS= read -r REPLY </dev/tty || REPLY=""
+      case "$REPLY" in ''|y|Y|yes|YES|Yes) REVOKE=1 ;; esac
+    fi
+  fi
   if [ -n "$UNIT" ] && [ -x "$LAUNCHER" ]; then
-    OMNESIS_CONFIG_DIR="$CONFIG_DIR" "$LAUNCHER" service uninstall collector || {
+    OMNESIS_CONFIG_DIR="$CONFIG_DIR" OMNESIS_CLI_COMMAND=omnesis-collector "$LAUNCHER" service uninstall collector || {
       printf '%s\n' "omnesis-collector uninstall: removing the collector service failed; nothing else was removed. Fix the error above and re-run." >&2
       exit 1
     }
+  fi
+  # The keys go before the program that removes them, and before the
+  # directory they open.
+  if [ "$PURGE" = 1 ] && [ -x "$LAUNCHER" ]; then
+    OMNESIS_CONFIG_DIR="$CONFIG_DIR" OMNESIS_CLI_COMMAND=omnesis-collector "$LAUNCHER" keyring purge --yes ||
+      printf '%s\n' "Its keys may still be in the OS keyring (service dev.omnesis); the message above says why." >&2
   fi
   if [ "$MANAGED" = 1 ] && [ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null || echo changed)" ]; then
     rm -rf "$ROOT"
@@ -2323,13 +2386,24 @@ if [ "${1:-}" = uninstall ]; then
     rm -rf "$CONFIG_DIR"
   fi
   rm -f "$0"
+  if [ "$REVOKE" = 1 ]; then
+    if env -u OMNESIS_CONFIG_DIR -u OMNESIS_CLI_COMMAND "$DOCKER_LAUNCHER" devices revoke "$REVOKE_TARGET" --yes; then
+      :
+    else
+      REVOKE=0
+      printf '%s\n' "Could not revoke $DEVICE on this machine's gateway; the message above says why." >&2
+    fi
+  fi
   follow_up
   printf '%s\n' "Removed the native collector."
   exit 0
 fi
 OMNESIS_CONFIG_DIR="$CONFIG_DIR"
 OMNESIS_LAUNCHER="$LAUNCHER"
-export OMNESIS_CONFIG_DIR OMNESIS_LAUNCHER
+# Hints this CLI prints about this collector name its own command: omnesis is
+# the Docker install's.
+OMNESIS_CLI_COMMAND=omnesis-collector
+export OMNESIS_CONFIG_DIR OMNESIS_LAUNCHER OMNESIS_CLI_COMMAND
 exec "$LAUNCHER" "$@"
 SHIM_EOF
   } > "$BESIDE_TMP" || fail "Could not write $BESIDE_SHIM."
@@ -3730,7 +3804,7 @@ process.stdin.on("end", () => {
 seals_secrets() { [ "$CLIENT_ONLY_FLAG" = 0 ]; }
 
 setup_keyring_init() {
-  [ "$WANT_KEYRING" = 1 ] || { warn "Skipping keyring setup (--no-keyring) — no encryption at rest. Arm it later with: omnesis secure"; return 0; }
+  [ "$WANT_KEYRING" = 1 ] || { warn "Skipping keyring setup (--no-keyring) — no encryption at rest. Arm it later with: $NATIVE_CMD secure"; return 0; }
   # A container has no OS keyring to open, so there is nothing to probe:
   # encryption at rest there is the passphrase backend or nothing, which the
   # question below says in its own words.
@@ -3984,16 +4058,16 @@ setup_keyring_migrate() {
   if [ "$KEYRING_BACKEND" = passphrase ]; then
     if cli_for_person env OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
          "$OMNESIS_BIN" keyring migrate --backend passphrase; then
-      info "Credential/token files migrated to keyring-wrapped storage."
+      info "Secret files are keyring-wrapped from here on."
     else
-      warn "Keyring migration failed. Retry later with: OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE=$KEYRING_CRED_FILE omnesis keyring migrate"
+      warn "Keyring migration failed. Retry later with: OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE=$KEYRING_CRED_FILE $NATIVE_CMD keyring migrate"
     fi
     return 0
   fi
   if "$OMNESIS_BIN" keyring migrate; then
-    info "Credential/token files migrated to keyring-wrapped storage."
+    info "Secret files are keyring-wrapped from here on."
   else
-    warn "Keyring migration failed. Existing files remain owner-only; retry later with: omnesis keyring migrate"
+    warn "Keyring migration failed. Existing files remain owner-only; retry later with: $NATIVE_CMD keyring migrate"
   fi
 }
 
@@ -4861,14 +4935,35 @@ mint_local_pairing_code() {
   info "Minted a single-use pairing code."
 }
 
+# The name this collector asks to pair as, used when the code was minted
+# without one: the machine's name as the Docker installer derives it for the
+# collector container it runs (host_name_stem — a Mac's Bonjour `.local` goes),
+# then what the collector is. Beside a Docker install on the same machine,
+# whose own collector is `<host>-collector`, the native one says it is the
+# Mac's (or, on Linux, the native) collector, so the two never share a name.
+# Empty when the hostname gives nothing; the CLI then suggests its own.
+collector_pair_name() {
+  PAIR_STEM="$(host_name_stem)"
+  [ -n "$PAIR_STEM" ] || return 0
+  if [ "$BESIDE_DOCKER" = 1 ] && [ "$PLATFORM" = darwin ]; then printf '%s-mac-collector' "$PAIR_STEM"
+  elif [ "$BESIDE_DOCKER" = 1 ]; then printf '%s-native-collector' "$PAIR_STEM"
+  else printf '%s-collector' "$PAIR_STEM"; fi
+}
+
 # Redeem the code and save the device token. The token file is what the
 # collector daemon authenticates with from here on.
 collector_pair() {
+  # A pairing record from an earlier install of this machine would satisfy the
+  # wait for the daemon below on its first poll; the redeem writes a fresh one
+  # (naming the device and its gateway) and the daemon completes it.
+  rm -f "$CONFIG_DIR/collector-pairing-state.json"
   set -- pair "$PAIR_CODE" --gateway-url "$PAIR_GATEWAY_URL"
   if [ -n "$PAIR_FINGERPRINT" ]; then
     set -- "$@" --trust-fingerprint "$PAIR_FINGERPRINT"
   fi
   set -- "$@" --save "$CONFIG_DIR/collector-token"
+  COLLECTOR_PAIR_NAME="$(collector_pair_name)"
+  [ -z "$COLLECTOR_PAIR_NAME" ] || set -- "$@" --name "$COLLECTOR_PAIR_NAME"
   info "Pairing with $PAIR_GATEWAY_URL..."
   # The redeem may have a question of its own: with no fingerprint to verify
   # against, it shows the certificate it was offered and asks. Under
@@ -4900,13 +4995,12 @@ collector_pair() {
 }
 
 collector_register_service() {
-  # A pairing record left by an earlier install of this machine would satisfy
-  # the wait below on its first poll, and would say "online" about a daemon
-  # this run never started. Only a record written after this point is evidence.
-  rm -f "$CONFIG_DIR/collector-pairing-state.json"
+  # The record collector_pair left (before any daemon ran) claims no
+  # authentication, so the wait below only ends on the one the daemon this run
+  # starts writes once the gateway accepts it.
   if [ "$WANT_SERVICE" != 1 ]; then
     warn "Skipping service registration (--no-service). Start the collector manually:"
-    warn "  OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL omnesis collector run"
+    warn "  OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
     return 0
   fi
   info "Registering the collector service..."
@@ -4915,7 +5009,7 @@ collector_register_service() {
   # and could settle on a different gateway than the one it is paired with.
   if ! service_install collector --env "OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL"; then
     warn "Service registration failed — start the collector manually:"
-    warn "  OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL omnesis collector run"
+    warn "  OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
     WANT_SERVICE=0
     COLLECTOR_SERVICE_REFUSED=1
   fi
@@ -4960,7 +5054,7 @@ setup_collector_storage_keys() {
   if [ "$STORAGE_KEYS_READY" = 1 ]; then
     info "Collector storage keys ready — provider stores are encrypted at rest."
   else
-    warn "Could not prepare the collector's storage keys; the daemon creates them at start once the root key is readable. Check: omnesis keyring status"
+    warn "Could not prepare the collector's storage keys; the daemon creates them at start once the root key is readable. Check: $NATIVE_CMD keyring status"
   fi
 }
 
@@ -5352,11 +5446,18 @@ DOCKER_PULL_RETRY_SECONDS="${OMNESIS_DOCKER_PULL_RETRY_SECONDS:-5}"
 
 # Docker Desktop installed for one user, and OrbStack, leave the CLI off the
 # default PATH and add its directory from ~/.zprofile, which a terminal opened
-# before the install has not read. Prints the CLI found in one of those places.
+# before the install has not read; and a shell that is not a login shell (ssh
+# running one command, cron, launchd) starts without /usr/local/bin or
+# Homebrew's bin, where Docker Desktop and Colima link it. Prints the CLI found
+# in one of those places. The launcher docker_render_wrapper writes looks in
+# the same places, so a command run from any of those shells finds it too.
 docker_cli_off_path() {
   for DOCKER_CANDIDATE in "$HOME/.docker/bin/docker" \
+                          "${OMNESIS_TEST_HOST_ROOT:-}/usr/local/bin/docker" \
+                          "${OMNESIS_TEST_HOST_ROOT:-}/opt/homebrew/bin/docker" \
                           "${OMNESIS_TEST_HOST_ROOT:-}/Applications/Docker.app/Contents/Resources/bin/docker" \
-                          "$HOME/.orbstack/bin/docker"; do
+                          "$HOME/.orbstack/bin/docker" \
+                          "$HOME/.rd/bin/docker"; do
     if [ -x "$DOCKER_CANDIDATE" ]; then
       printf '%s\n' "$DOCKER_CANDIDATE"
       return 0
@@ -5374,6 +5475,12 @@ ensure_docker() {
     export PATH
     warn "Docker is installed at $DOCKER_CLI_FOUND, but this terminal's PATH does not include $DOCKER_CLI_DIR yet; this install uses it from there. Open a new terminal before running omnesis commands, which run docker."
   fi
+  # Docker Desktop's CLI ends a failed command with a "What's next" hint, an
+  # advertisement for its assistant, which would land in the middle of this
+  # installer's own account of what failed.
+  DOCKER_CLI_HINTS=false
+  DOCKER_CLI_HOOKS=false
+  export DOCKER_CLI_HINTS DOCKER_CLI_HOOKS
   docker compose version >/dev/null 2>&1 || \
     fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
   docker_require_compose_version
@@ -5743,9 +5850,37 @@ docker_registry_list_tags() {
   [ -s "$REGISTRY_TAG_OUTPUT" ] || docker_registry_failure
 }
 
-# The image tag this install runs. A named --version is exact; otherwise the
-# registry being pulled from chooses the newest concrete stable release.
+# The version of the checkout --build builds: the product version its CLI
+# package carries (every package versions in lockstep). Empty when unreadable.
+docker_build_version() {
+  sed -n 's/^  "version": *"\([^"]*\)".*$/\1/p' "$DOCKER_BUILD_CONTEXT/packages/cli/package.json" 2>/dev/null | head -n 1
+}
+
+# The tag images built from a checkout carry: the checkout's own version, with
+# `-local`. Never the registry's newest release, which has nothing to do with
+# what was built — and never a published tag, even when the checkout is at a
+# released version: a semver pre-release of that version, it reads as older
+# than the published images, so a later `omnesis update` moves this install
+# onto them instead of calling a local build that release.
+docker_build_tag() {
+  BUILD_VERSION="$(docker_build_version)"
+  [ -n "$BUILD_VERSION" ] || \
+    fail "Could not read the version of the checkout to build ($DOCKER_BUILD_CONTEXT/packages/cli/package.json), which the images it builds are tagged with."
+  if [ -n "$PIN_VERSION" ] && [ "$PIN_VERSION" != "$BUILD_VERSION" ]; then
+    fail "--version $PIN_VERSION names a published release, and --build builds the checkout in $DOCKER_BUILD_CONTEXT, which is version $BUILD_VERSION. Drop --version to build the checkout, or drop --build to pull release $PIN_VERSION."
+  fi
+  IMAGE_TAG="$BUILD_VERSION-local"
+}
+
+# The image tag this install runs. A build is tagged from its checkout; a
+# named --version is exact; otherwise the registry being pulled from chooses
+# the newest concrete stable release.
 docker_resolve_tag() {
+  if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
+    docker_build_tag
+    info "Image tag: $IMAGE_TAG (built from the checkout, version $BUILD_VERSION)"
+    return 0
+  fi
   if [ -n "$PIN_VERSION" ]; then
     IMAGE_TAG="$PIN_VERSION"
     info "Image tag: $IMAGE_TAG"
@@ -6079,7 +6214,12 @@ docker_compose_oauth_ports() {
 # redeemed code falls back to, or `<name>-collector` when the collector pairs
 # itself. Without one, Docker names each container after its random id, so the
 # device got a meaningless name and a re-pair from a new container a new one.
-docker_collector_hostname() {
+docker_collector_hostname() { host_name_stem; }
+
+# This machine's name as a device name is built from: the short hostname,
+# lowercased, with anything but letters, digits and hyphens made a hyphen, at
+# most 63 characters (hostNameStem in @omnesis/core is the same rule).
+host_name_stem() {
   COLLECTOR_HOST="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
   printf '%s' "$COLLECTOR_HOST" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' \
     | sed 's/^-*//; s/-*$//' | cut -c1-63 | sed 's/-*$//'
@@ -6913,6 +7053,29 @@ EOF
   cat <<'WRAPPER_EOF'
 set -eu
 
+# Docker Desktop, OrbStack and Colima put the docker CLI where only a login
+# shell's profile adds it to PATH, and a shell that is not one — ssh running a
+# single command, cron, launchd — starts without it. So when PATH has no
+# docker, the places the installer looks for one are tried in turn, and the
+# directory found joins PATH, which the credential helpers beside the CLI need
+# too.
+if ! command -v docker >/dev/null 2>&1; then
+  for DOCKER_CANDIDATE in "$HOME/.docker/bin/docker" /usr/local/bin/docker /opt/homebrew/bin/docker \
+      /Applications/Docker.app/Contents/Resources/bin/docker "$HOME/.orbstack/bin/docker" "$HOME/.rd/bin/docker"; do
+    if [ -x "$DOCKER_CANDIDATE" ]; then
+      PATH="$PATH:${DOCKER_CANDIDATE%/docker}"
+      export PATH
+      break
+    fi
+  done
+fi
+# Docker Desktop's CLI ends every failed command with a "What's next" hint, an
+# advertisement for its assistant, after this command's own error. Its hooks
+# are off for every docker command this launcher runs.
+DOCKER_CLI_HINTS=false
+DOCKER_CLI_HOOKS=false
+export DOCKER_CLI_HINTS DOCKER_CLI_HOOKS
+
 # `uninstall` removes this install from the host — the containers and images,
 # the compose project, this launcher and the installer's PATH line — which no
 # container can do to the host it runs on, so it runs here, in the launcher.
@@ -6941,12 +7104,27 @@ if [ "${1:-}" = uninstall ]; then
   UNINSTALL_DIR="$(dirname "$COMPOSE_FILE")"
   UNINSTALL_BIN="$HOME/.local/bin"
   UNINSTALL_LAUNCHER="$UNINSTALL_BIN/omnesis"
+  # The image repositories this install pulls from, read from its compose file.
+  # `down --rmi all` removes the tag the compose file names; an update leaves
+  # the release before it behind under another tag, so every local tag of
+  # these repositories goes too — and nothing outside them.
+  UNINSTALL_REPOS=""
+  if [ -f "$COMPOSE_FILE" ]; then
+    for UNINSTALL_REPO in $(sed -n 's/^    image: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$COMPOSE_FILE" | sed 's/:[^:/]*$//' | sort -u); do
+      case "${UNINSTALL_REPO##*/}" in
+        omnesis-gateway|omnesis-collector|omnesis-combined|omnesis-updater) UNINSTALL_REPOS="$UNINSTALL_REPOS $UNINSTALL_REPO" ;;
+      esac
+    done
+  fi
   printf '%s\n' "Omnesis uninstall — this Docker install:"
-  printf '  - %s\n' "Stop and remove the containers and images of $COMPOSE_FILE"
+  printf '  - %s\n' "Stop and remove the containers of $COMPOSE_FILE"
+  for UNINSTALL_REPO in $UNINSTALL_REPOS; do
+    printf '  - %s\n' "Remove every local image of $UNINSTALL_REPO, older releases included"
+  done
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     printf '  - %s\n' "Delete the data, tokens and keys in $UNINSTALL_DIR"
   else
-    printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays)"
+    printf '  - %s\n' "Remove $COMPOSE_FILE and $UNINSTALL_DIR/install-method (the data in $UNINSTALL_DIR stays; --purge deletes it too)"
   fi
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
   # The host job that renews a Tailscale certificate goes with the install;
@@ -6977,8 +7155,14 @@ if [ "${1:-}" = uninstall ]; then
     fi
     [ "$SERVICE" = collector ] || return 0
     printf '\n%s\n' "Afterwards"
-    printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke <device> --forget"
+    if [ -n "$UNINSTALL_DEVICE" ]; then
+      printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke '$UNINSTALL_DEVICE' --forget"
+    else
+      printf '  %s\n' "On the gateway host, move or detach this collector's sources, then remove its device (omnesis devices list names it): omnesis devices revoke <device> --forget"
+    fi
   }
+  # The name the gateway gave this collector, from the record its daemon keeps.
+  UNINSTALL_DEVICE="$(sed -n 's/^ *"deviceName" *: *"\([^"]*\)".*/\1/p' "$UNINSTALL_DIR/collector/collector-pairing-state.json" 2>/dev/null | head -n 1)"
   if [ "$UNINSTALL_DRY_RUN" = 1 ]; then
     uninstall_follow_ups
     printf '\n%s\n' "Dry run: nothing was changed."
@@ -7003,6 +7187,13 @@ if [ "${1:-}" = uninstall ]; then
       exit 1
     }
   fi
+  # Untagging only: an image another container still uses is refused, and stays.
+  for UNINSTALL_REPO in $UNINSTALL_REPOS; do
+    docker image ls --format '{{.Repository}}:{{.Tag}}' "$UNINSTALL_REPO" 2>/dev/null | while IFS= read -r UNINSTALL_IMAGE; do
+      case "$UNINSTALL_IMAGE" in *':<none>') continue ;; "$UNINSTALL_REPO":?*) ;; *) continue ;; esac
+      docker image rm "$UNINSTALL_IMAGE" >/dev/null 2>&1 || true
+    done
+  done
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     case "$UNINSTALL_DIR" in
       /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
@@ -7332,7 +7523,9 @@ if [ "$SHARE_OFFER" = 1 ]; then
   done < "$SHARE_REQUEST"
   rm -f "$SHARE_REQUEST"
   case "$SHARE_PATH" in /*) ;; *) exit "$SHARE_STATUS" ;; esac
-  [ -e "$SHARE_PATH" ] || { printf '%s does not exist on this machine either.\n' "$SHARE_PATH" >&2; exit "$SHARE_STATUS"; }
+  # The CLI left the explanation to this launcher, so a folder that is not
+  # here either is said in full.
+  [ -e "$SHARE_PATH" ] || { printf '%s does not exist on this machine.\n' "$SHARE_PATH" >&2; exit "$SHARE_STATUS"; }
   printf '\n%s is a folder on this machine. The collector runs in a container\nthat sees only the folders shared with it.\n' "$SHARE_PATH" >/dev/tty
   printf 'Share %s with the collector, read-only? [Y/n] ' "$SHARE_PATH" >/dev/tty
   IFS= read -r SHARE_REPLY </dev/tty || SHARE_REPLY=n
@@ -7767,8 +7960,8 @@ docker_install() {
   docker_runtime_identity
   docker_registry_prepare
   docker_refuse_native_install
-  docker_resolve_tag
   docker_resolve_build_context
+  docker_resolve_tag
   docker_require_build_disk
   docker_preflight_images
   docker_validate_topology_transition

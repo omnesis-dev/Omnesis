@@ -352,6 +352,12 @@ afterEach(destroyFixture);
 
 /** The flags every non-interactive Docker run here shares. */
 const QUIET = ["--docker", "--no-model", "--no-keyring", "--version", "9.9.0"];
+/** QUIET for a build: a build is tagged with its checkout's version, so it names no release. */
+const BUILD = ["--docker", "--no-model", "--no-keyring", "--build"];
+/** The version of the checkout these tests build: the installer's own. */
+const CHECKOUT_VERSION = JSON.parse(
+  readFileSync(join(repoRoot, "packages", "cli", "package.json"), "utf8"),
+).version;
 
 describe("install.sh --docker: what it puts on this host", () => {
   test.each(["--combined", "--gateway-only"])(
@@ -454,7 +460,7 @@ describe("install.sh --docker: what it puts on this host", () => {
   });
 
   test("combined topology runs both daemons in the gateway service", () => {
-    const run = runInstaller("combined", [...QUIET, "--combined", "--build"]);
+    const run = runInstaller("combined", [...BUILD, "--combined"]);
     expect(run.status).toBe(0);
     const compose = parseYaml(composeAt(run));
     expect(Object.keys(compose.services)).toEqual(["gateway", "updater"]);
@@ -1279,7 +1285,7 @@ describe("install.sh --docker: what it puts on this host", () => {
   });
 
   test("--build builds the images from the checkout instead of pulling", () => {
-    const run = runInstaller("build", [...QUIET, "--build"]);
+    const run = runInstaller("build", [...BUILD]);
     expect(run.status).toBe(0);
     expect(run.docker.some((call) => call.includes("--profile update build"))).toBe(true);
     expect(run.docker.some((call) => call.includes("--profile update pull"))).toBe(false);
@@ -1288,10 +1294,38 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(composeAt(run)).toContain("target: updater");
   });
 
+  // A build is not a published release: its tag is the checkout's version,
+  // marked local, and no registry is asked what the newest release is.
+  test("--build tags the images with the checkout's version, marked as a local build", () => {
+    const run = runInstaller("build-tag", BUILD);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(
+      `Delivery:  containers built from ${repoRoot} (version ${CHECKOUT_VERSION}, image tag ${CHECKOUT_VERSION}-local)`,
+    );
+    expect(run.output).toContain(`Image tag: ${CHECKOUT_VERSION}-local`);
+    expect(run.output).not.toContain("Resolving the newest published release");
+    expect(readFileSync(join(run.configDir, ".env"), "utf8")).toContain(
+      `OMNESIS_IMAGE_TAG=${CHECKOUT_VERSION}-local`,
+    );
+    expect(run.output).toContain(`(image tag: ${CHECKOUT_VERSION}-local)`);
+  });
+
+  test("--build with the checkout's own --version builds it; another release is refused", () => {
+    const same = runInstaller("build-same-version", [...BUILD, "--version", CHECKOUT_VERSION]);
+    expect(same.status, same.output).toBe(0);
+    expect(same.output).toContain(`Image tag: ${CHECKOUT_VERSION}-local`);
+    const other = runInstaller("build-other-version", [...BUILD, "--version", "9.9.0"]);
+    expect(other.status).not.toBe(0);
+    expect(other.output).toContain(
+      `--version 9.9.0 names a published release, and --build builds the checkout`,
+    );
+    expect(other.docker.some((call) => call.includes(" build"))).toBe(false);
+  });
+
   test("--build is refused before any build when Docker's storage is short of space", () => {
     // The requirement is stated rather than the disk faked: the real df reads
     // this run's own directory, which can hold 1 GB and cannot hold a petabyte.
-    const short = runInstaller("build-disk-short", [...QUIET, "--build"], {
+    const short = runInstaller("build-disk-short", [...BUILD], {
       OMNESIS_TEST_DOCKER_ROOT: repoRoot,
       OMNESIS_DOCKER_BUILD_DISK_GB: "1000000",
     });
@@ -1301,7 +1335,7 @@ describe("install.sh --docker: what it puts on this host", () => {
     );
     expect(short.output).toContain("Nothing was built.");
     expect(short.docker.some((call) => call.includes("--profile update build"))).toBe(false);
-    const roomy = runInstaller("build-disk-roomy", [...QUIET, "--build"], {
+    const roomy = runInstaller("build-disk-roomy", [...BUILD], {
       OMNESIS_TEST_DOCKER_ROOT: repoRoot,
       OMNESIS_DOCKER_BUILD_DISK_GB: "1",
     });
@@ -1310,7 +1344,7 @@ describe("install.sh --docker: what it puts on this host", () => {
   });
 
   test("--dry-run --build names the checkout and performs no Docker work", () => {
-    const run = runInstaller("dry-build", [...QUIET, "--build", "--dry-run"]);
+    const run = runInstaller("dry-build", [...BUILD, "--dry-run"]);
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain(`Delivery:  containers built from ${repoRoot}`);
     expect(run.docker).toEqual([]);
@@ -3503,7 +3537,7 @@ describe("install.sh --docker: the keyring steps without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(callStartingWith(run.calls, "keyring init")).toBe("keyring init --backend passphrase");
     expect(run.output).toContain("Passphrase keyring armed — encryption at rest is on.");
-    expect(run.output).toContain("Credential/token files migrated to keyring-wrapped storage.");
+    expect(run.output).toContain("Secret files are keyring-wrapped from here on.");
     for (const leak of ['"keyName"', '"candidates"', "RCVR-FIXT-CODE-0001"]) {
       expect(run.output).not.toContain(leak);
     }

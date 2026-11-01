@@ -54,6 +54,8 @@ import {
   getOrCreateInstallId,
   pairCommand,
   parsePairingScopes,
+  recordRedeemedCollector,
+  redeemSuggestedName,
   parseRedeemedAgentIntegrationPairing,
   parseRedeemedPairing,
   parseSelfInfoField,
@@ -1874,5 +1876,61 @@ describe("devices list", () => {
     expect(output).toContain("Studio voice");
     expect(output).toContain("on access level level-voice");
     expect(output).not.toContain("questions refused");
+  });
+});
+
+describe("redeemSuggestedName: the name a redeem asks the gateway for", () => {
+  it("drops a Mac's mDNS suffix and capitals, the Docker installer's rule", () => {
+    expect(redeemSuggestedName(undefined, "Maya-MacBook-Air.local")).toBe("maya-macbook-air");
+  });
+
+  it("is the name asked for with --name, as given", () => {
+    expect(redeemSuggestedName(" field-station-mac-collector ", "Maya-MacBook-Air.local")).toBe(
+      "field-station-mac-collector",
+    );
+  });
+
+  it("falls back to the raw hostname when nothing of it survives", () => {
+    expect(redeemSuggestedName("", "...")).toBe("...");
+  });
+
+  it("is a flag of pair and devices redeem", () => {
+    expect(Object.keys(pairCommand.args ?? {})).toContain("name");
+  });
+});
+
+describe("recordRedeemedCollector: a collector's pairing, recorded as it is saved", () => {
+  const device = { id: "dev-42", name: "field-station-mac-collector", kind: "collector" };
+  const record = (savedPath: string, kind = "collector") => {
+    const writes: Array<{ dir: string; state: Record<string, unknown> }> = [];
+    const done = recordRedeemedCollector(
+      savedPath,
+      "https://studio.example.ts.net:7600",
+      { device: { ...device, kind } as never, token: "omn_token" },
+      (dir, state) => {
+        writes.push({ dir, state: state as unknown as Record<string, unknown> });
+        return true;
+      },
+    );
+    return { done, writes };
+  };
+
+  it("records the gateway's name, id and URL in the token's directory, claiming no login yet", () => {
+    const { done, writes } = record("/Users/maya/.config/omnesis-collector/collector-token");
+    expect(done).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.dir).toBe("/Users/maya/.config/omnesis-collector");
+    expect(writes[0]!.state).toMatchObject({
+      state: "paired",
+      deviceName: "field-station-mac-collector",
+      deviceId: "dev-42",
+      gatewayUrl: "https://studio.example.ts.net:7600",
+      lastAuthenticatedAt: null,
+    });
+  });
+
+  it("records nothing for another kind, or a token saved under another name", () => {
+    expect(record("/tmp/collector-token", "cli").done).toBe(false);
+    expect(record("/tmp/token.txt").done).toBe(false);
   });
 });

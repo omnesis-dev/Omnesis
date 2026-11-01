@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_CONFIG_DIR,
   localGatewayRequestUrl,
+  readCollectorPairingState,
   readPackageVersion,
   resolveSourcePatterns,
   resolvesToLoopback,
@@ -63,7 +64,35 @@ export type { CliFx, SourceMeta, SpinnerHandle } from "@omnesis/cli-shared";
 // and silently dropping flags.
 const rawArgv = process.argv.slice(2).filter((a) => a !== "--");
 
-export const GATEWAY_URL = process.env.OMNESIS_GATEWAY_URL ?? "https://localhost:7600";
+/**
+ * The gateway this CLI talks to when `OMNESIS_GATEWAY_URL` names none.
+ *
+ * A config directory that holds a collector's token and no admin token
+ * belongs to a collector paired with a gateway elsewhere — on another machine,
+ * or in this machine's Docker install — and that collector's pairing record
+ * names the gateway it is paired with, whose trust this directory holds. The
+ * CLI run against it (`omnesis-collector status`, a remote collector's
+ * `omnesis status`) talks to that gateway, never to a `localhost` where no
+ * gateway of this install listens. Anywhere else the default is this machine's
+ * own gateway.
+ */
+export function defaultGatewayUrl(
+  env: NodeJS.ProcessEnv = process.env,
+  configDir: string = env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+  exists: (path: string) => boolean = existsSync,
+  pairedUrl: (dir: string) => string | null = (dir) =>
+    readCollectorPairingState(dir)?.gatewayUrl ?? null,
+): string {
+  if (env.OMNESIS_GATEWAY_URL) return env.OMNESIS_GATEWAY_URL;
+  const collectorOnly =
+    exists(pathJoin(configDir, "collector-token")) && !exists(pathJoin(configDir, "token"));
+  const paired = collectorOnly ? pairedUrl(configDir) : null;
+  return paired && /^https?:\/\//u.test(paired)
+    ? paired.replace(/\/+$/u, "")
+    : "https://localhost:7600";
+}
+
+export const GATEWAY_URL = defaultGatewayUrl();
 
 /**
  * Where this CLI sends its requests. `GATEWAY_URL` is the address the install

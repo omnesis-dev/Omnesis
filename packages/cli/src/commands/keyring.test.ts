@@ -17,6 +17,8 @@ import {
   keyringCommand,
   migrateInlineConfigApiKeys,
   recoveryCodePurpose,
+  migrationSummaryLines,
+  restartHint,
 } from "./keyring.js";
 
 const dirs: string[] = [];
@@ -241,5 +243,70 @@ describe("recoveryCodePurpose", () => {
     for (const backend of ["auto", "macos-keychain", "secret-service"] as const) {
       expect(recoveryCodePurpose(backend, {}).join(" ")).toContain("lose the OS keyring");
     }
+  });
+});
+
+describe("restartHint: the restart storage-init asks for", () => {
+  const dir = "/home/maya/.config/omnesis-collector";
+  const has =
+    (...files: string[]) =>
+    (path: string) =>
+      files.some((file) => path === join(dir, file));
+  const collectorKeys = new Set<StorageKeyName>(["whatsapp-store"]);
+
+  // A fresh install mints the keys before it starts the collector for the
+  // first time: there is nothing to restart and nothing to migrate.
+  test("says nothing on a fresh install whose daemon has never run", () => {
+    expect(restartHint(["collector"], collectorKeys, dir, has())).toBeNull();
+    expect(restartHint(["gateway", "collector"], collectorKeys, dir, has())).toBeNull();
+  });
+
+  test("says nothing when every key already existed", () => {
+    expect(
+      restartHint(["collector"], new Set(), dir, has("collector-pairing-state.json")),
+    ).toBeNull();
+  });
+
+  test("asks a collector that has run to restart once its keys are new", () => {
+    expect(
+      restartHint(["collector"], collectorKeys, dir, has("collector-pairing-state.json")),
+    ).toBe("Restart the collector to migrate live stores into encrypted files.");
+  });
+
+  test("names only the process whose new key has stores behind it", () => {
+    expect(restartHint(["gateway", "collector"], collectorKeys, dir, has("omnesis.db"))).toBeNull();
+  });
+});
+
+describe("migrationSummaryLines", () => {
+  const nothing = {
+    candidates: 2,
+    present: 0,
+    encrypted: 0,
+    changed: 0,
+    plaintextRemaining: 0,
+    inlineConfigApiKeysMigrated: 0,
+    inlineConfigApiKeysRemoved: 0,
+  };
+
+  test("a fresh directory gets one line, not a table of zeros", () => {
+    const lines = migrationSummaryLines(nothing);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("No secret files to migrate yet");
+  });
+
+  test("a directory with secrets gets the counts", () => {
+    const text = migrationSummaryLines({ ...nothing, present: 2, encrypted: 2, changed: 2 }).join(
+      "\n",
+    );
+    expect(text).toContain("Omnesis keyring migration");
+    expect(text).toContain("encrypted now:       2");
+    expect(text).toContain("no longer readable with cat");
+  });
+
+  test("an inline config key moved into the keyring is reported too", () => {
+    expect(
+      migrationSummaryLines({ ...nothing, inlineConfigApiKeysRemoved: 1 }).join("\n"),
+    ).toContain("inline config keys:  1 removed");
   });
 });

@@ -4,10 +4,13 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
-import { join as pathJoin, resolve as pathResolve } from "node:path";
+import { basename, dirname, join as pathJoin, resolve as pathResolve } from "node:path";
 import { defineCommand } from "citty";
 import {
   collectorHostname,
+  hostNameStem,
+  tokenFingerprint,
+  writeCollectorPairingState,
   DEFAULT_CONFIG_DIR,
   discoverGatewayViaMdns,
   ensureGatewayTrust,
@@ -898,11 +901,24 @@ export function parseRedeemedAgentIntegrationPairing(
  * second connection cannot land somewhere the first one would have been
  * refused.
  */
+/**
+ * The name a redeem suggests for this device, which the gateway uses when the
+ * code was minted without one: the name asked for (`--name`), or the stem of
+ * this machine's hostname — a Mac's `Maya-MacBook.local` suggests
+ * `maya-macbook`, as the Docker installer names a container's collector.
+ */
+export function redeemSuggestedName(requested?: string, raw: string = osHostname()): string {
+  const asked = requested?.trim();
+  if (asked) return asked;
+  return hostNameStem(raw) || raw;
+}
+
 export async function redeemPairingCode(
   gatewayUrl: string,
   code: string,
   trustConfigDir = DEFAULT_CONFIG_DIR,
   expectedFingerprint?: string,
+  suggestedName: string = redeemSuggestedName(),
 ): Promise<RedeemedPairing> {
   // Trust is the join's FIRST network touch, and it sits outside the redeem's
   // own catch below. A connection that dies here therefore escaped this command
@@ -946,7 +962,7 @@ export async function redeemPairingCode(
     // `<kind>-<hex>` ghost every time.
     capabilities: {
       hostname: osHostname(),
-      suggestedName: osHostname(),
+      suggestedName,
       platform: process.platform,
       // The install being paired is this one, and every @omnesis/*
       // package on a host shares one lockstep version — so the CLI's
@@ -1219,6 +1235,35 @@ export async function redeemAgentIntegrationPairingCode(
   return parseRedeemedAgentIntegrationPairing(responsePayload, harness);
 }
 
+/**
+ * A collector's token saved as `collector-token` in a config directory is
+ * that collector's pairing: record it there, as the daemon records it, with
+ * the name and id the gateway gave the device. Until the daemon's first
+ * authenticated request this is the only place that says which gateway the
+ * directory's collector belongs to (the CLI run against it talks to that
+ * gateway) and what the device is called. It claims no authentication yet
+ * (`lastAuthenticatedAt` stays null), so nothing waiting for the daemon to
+ * come online mistakes it for that.
+ */
+export function recordRedeemedCollector(
+  savedPath: string,
+  gatewayUrl: string,
+  body: Pick<RedeemedPairing, "device" | "token">,
+  write: typeof writeCollectorPairingState = writeCollectorPairingState,
+): boolean {
+  if (body.device.kind !== "collector" || basename(savedPath) !== "collector-token") return false;
+  return write(dirname(savedPath), {
+    state: "paired",
+    deviceName: body.device.name,
+    deviceId: body.device.id,
+    gatewayUrl,
+    tokenFingerprint: tokenFingerprint(body.token),
+    lastAuthenticatedAt: null,
+    unauthorizedAt: null,
+    repairCommand: null,
+  });
+}
+
 const devicesRedeemCommand = defineCommand({
   meta: {
     name: "redeem",
@@ -1242,6 +1287,11 @@ const devicesRedeemCommand = defineCommand({
     save: {
       type: "string",
       description: "Write the token to this file (mode 0600) instead of printing it",
+    },
+    name: {
+      type: "string",
+      description:
+        "The device name to ask for when the code was minted without one (default: this machine's hostname, without its .local suffix)",
     },
     json: {
       type: "boolean",
@@ -1277,7 +1327,13 @@ const devicesRedeemCommand = defineCommand({
 
     let body: RedeemedPairing;
     try {
-      body = await redeemPairingCode(gatewayUrl, code, DEFAULT_CONFIG_DIR, fingerprintFlag);
+      body = await redeemPairingCode(
+        gatewayUrl,
+        code,
+        DEFAULT_CONFIG_DIR,
+        fingerprintFlag,
+        redeemSuggestedName(typeof ctx.args.name === "string" ? ctx.args.name : undefined),
+      );
     } catch (err) {
       // A certificate that fails its pin is the one failure an operator must
       // not be able to shrug past, so it leaves as a refusal carrying both
@@ -1295,6 +1351,7 @@ const devicesRedeemCommand = defineCommand({
       writeSecretTextFileSync(savedPath, `${body.token}\n`, {
         configDir: process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
       });
+      recordRedeemedCollector(savedPath, gatewayUrl, body);
     }
 
     if (ctx.args.json) {

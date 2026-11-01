@@ -17,7 +17,15 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -35,7 +43,10 @@ import {
 
 const MINTED_CODE = "M1NT3DC0DE";
 const TYPED_CODE = "K7QX2M9ZB4";
-const NATIVE_DEVICE = "field-station";
+const NATIVE_DEVICE = "field-station-mac-collector";
+const NATIVE_DEVICE_ID = "dev_0f1e2d3c";
+/** What the installer asks the native collector beside Docker to pair as, on Linux. */
+const PAIR_NAME = "field-station-native-collector";
 
 /**
  * The containers' side. Every call is logged to OMNESIS_TEST_DOCKER; a compose
@@ -44,9 +55,24 @@ const NATIVE_DEVICE = "field-station";
  */
 const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
+printf 'hints=%s hooks=%s\\n' "\${DOCKER_CLI_HINTS:-unset}" "\${DOCKER_CLI_HOOKS:-unset}" >> "$OMNESIS_TEST_DOCKER.env"
+# A docker CLI with hooks on ends a failed command with this unless they are off.
+hint() {
+  [ "\${DOCKER_CLI_HINTS:-}" = false ] || printf "\\nWhat's next:\\n    Debug this Compose error with Gordon\\n" >&2
+}
 case "$1" in
   info|context|manifest) exit 0 ;;
   compose) [ "$2" != version ] || exit 0 ;;
+  image)
+    # Local images: two releases of this install's repositories, and another
+    # program's image that must never be touched.
+    if [ "$2" = ls ]; then
+      for ARG in "$@"; do REPO="$ARG"; done
+      case "$REPO" in
+        */omnesis-*) printf '%s:9.8.0\\n%s:9.9.0\\n%s:<none>\\n' "$REPO" "$REPO" "$REPO" ;;
+      esac
+    fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 COMPOSE_DIR="$(dirname "$3")"
@@ -68,12 +94,14 @@ if [ "$SEEN" = 1 ]; then
       if [ "$2" = add ] && [ "$#" = 3 ] && [ -n "\${OMNESIS_TEST_SHARE_PATH:-}" ]; then
         printf 'path=%s\narg=sources\narg=add\narg=%s\narg=%s\narg=--device\narg=dev-1\n' \
           "$OMNESIS_TEST_SHARE_PATH" "$3" "$OMNESIS_TEST_SHARE_PATH" > "$COMPOSE_DIR/share-request"
+        hint
         exit 1
       fi ;;
     devices)
       if [ "$2 \${3:-} \${4:-} \${5:-}" = "pair --kind collector --json" ]; then
         printf '{"pairingCode":"${MINTED_CODE}","kind":"collector","scopes":["collector"],"expiresAt":1}\\n'
-      fi ;;
+      fi
+      if [ "$2" = add-fails ]; then hint; exit 1; fi ;;
   esac
   exit 0
 fi
@@ -95,6 +123,7 @@ const CLI_SHIM = `#!/bin/sh
 shift 2>/dev/null || true
 printf '%s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
 printf 'config-dir %s launcher %s\\n' "\${OMNESIS_CONFIG_DIR:-unset}" "\${OMNESIS_LAUNCHER:-unset}" >> "$OMNESIS_TEST_CALLS.env"
+printf '%s\\n' "\${OMNESIS_CLI_COMMAND:-unset}" >> "$OMNESIS_TEST_CALLS.command"
 CONFIG="\${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}"
 case "$1" in
   --version) echo "9.9.0" ;;
@@ -106,7 +135,8 @@ case "$1" in
   service)
     if [ "$2" = install ]; then
       mkdir -p "$CONFIG"
-      printf '{"state":"paired","deviceName":"${NATIVE_DEVICE}","gatewayUrl":"%s","tokenFingerprint":"0123456789abcdef","lastAuthenticatedAt":1,"unauthorizedAt":null,"repairCommand":null}\\n' \\
+      # Indented, as the daemon writes it.
+      printf '{\\n  "state": "paired",\\n  "deviceName": "${NATIVE_DEVICE}",\\n  "deviceId": "${NATIVE_DEVICE_ID}",\\n  "gatewayUrl": "%s",\\n  "tokenFingerprint": "0123456789abcdef",\\n  "lastAuthenticatedAt": 1,\\n  "unauthorizedAt": null,\\n  "repairCommand": null\\n}\\n' \\
         "$OMNESIS_TEST_GATEWAY_URL" > "$CONFIG/collector-pairing-state.json"
       case "$(uname -s)" in
         Darwin) mkdir -p "$HOME/Library/LaunchAgents"; : > "$HOME/Library/LaunchAgents/dev.omnesis.collector.plist" ;;
@@ -198,6 +228,11 @@ const read = (path) => readFileSync(path, "utf8");
 beforeEach(() => {
   createFixture({ name: "docker-native", versions: ["9.9.0"], cliShim: CLI_SHIM });
   writeExecutable(fixturePath("fake-bin", "docker"), DOCKER_SHIM);
+  // A Mac's names: the Bonjour one, and the short one `hostname -s` gives.
+  writeExecutable(
+    fixturePath("fake-bin", "hostname"),
+    '#!/bin/sh\ncase "${1:-}" in -s) echo Field-Station ;; *) echo Field-Station.local ;; esac\n',
+  );
 });
 
 afterEach(destroyFixture);
@@ -235,7 +270,7 @@ describe("a native collector after a Docker install on the same machine", () => 
     expect(callStartingWith(native.calls, "pair ")).toBe(
       `pair ${TYPED_CODE} --gateway-url ${LOCAL_GATEWAY} ` +
         `--trust-fingerprint ${callStartingWith(native.calls, "pair ").match(/sha256:[0-9a-f]{64}/u)[0]} ` +
-        `--save ${join(native.nativeDir, "collector-token")}`,
+        `--save ${join(native.nativeDir, "collector-token")} --name ${PAIR_NAME}`,
     );
     expect(callStartingWith(native.calls, "service install")).toBe(
       `service install collector --env OMNESIS_GATEWAY_URL=${LOCAL_GATEWAY} --exec ${native.shim}`,
@@ -247,7 +282,14 @@ describe("a native collector after a Docker install on the same machine", () => 
     }
 
     expect(native.output).toContain("beside the Docker install");
+    // The gateway is this machine's Docker install, not another machine's.
+    expect(native.output).toContain("Role:      collector for this machine's Docker gateway");
+    expect(native.output).not.toContain("collector for another gateway");
     expect(native.output).toContain("omnesis-collector service status|logs|restart");
+    // Every CLI call went through omnesis-collector, which names itself in hints.
+    for (const line of read(join(native.home, "cli-calls.log.command")).trim().split("\n")) {
+      expect(line).toBe("omnesis-collector");
+    }
     expect(native.output).toContain(`omnesis sources add --device '${NATIVE_DEVICE}'`);
     expect(native.output).toContain("omnesis-collector uninstall");
   });
@@ -297,7 +339,7 @@ describe("a native collector after a Docker install on the same machine", () => 
     );
     expect(native.status, native.output).toBe(0);
     expect(callStartingWith(native.calls, "pair ")).toBe(
-      `pair ${TYPED_CODE} --gateway-url ${url} --save ${join(native.nativeDir, "collector-token")}`,
+      `pair ${TYPED_CODE} --gateway-url ${url} --save ${join(native.nativeDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 
@@ -364,14 +406,35 @@ describe("removing one install leaves the other", () => {
     expect(dry.status, dry.stderr).toBe(0);
     expect(dry.stdout).toContain("its omnesis command and its data are not touched.");
     expect(dry.stdout).toContain(`omnesis devices revoke '${NATIVE_DEVICE}' --forget`);
+    expect(dry.stdout).not.toContain("<device>");
+    // The gateway is this machine's: the revoke is offered, with what it means
+    // for the sources the collector hosts, and --purge is named.
+    expect(dry.stdout).toContain(
+      `Its device, ${NATIVE_DEVICE}, is registered with this machine's Docker gateway.`,
+    );
+    expect(dry.stdout).toContain("stop syncing until");
+    expect(dry.stdout).toContain("--purge deletes them too");
     expect(existsSync(native.shim)).toBe(true);
 
     const refused = host(native, native.shim, ["uninstall"]);
     expect(refused.status).toBe(2);
 
+    writeFileSync(dockerLog(native.home), "");
     const done = host(native, native.shim, ["uninstall", "--yes", "--purge"]);
     expect(done.status, done.stderr).toBe(0);
-    expect(read(join(native.home, "cli-calls.log"))).toContain("service uninstall collector");
+    const calls = read(join(native.home, "cli-calls.log"));
+    expect(calls).toContain("service uninstall collector");
+    // Its keys leave the OS keyring before the directory they open goes.
+    expect(calls).toContain("keyring purge --yes");
+    expect(calls.indexOf("keyring purge --yes")).toBeGreaterThan(
+      calls.indexOf("service uninstall collector"),
+    );
+    // --yes accepts the revoke, by the id the pairing record carries, on the
+    // Docker gateway this machine runs.
+    expect(calls).toContain(`[docker] devices revoke ${NATIVE_DEVICE_ID} --yes`);
+    expect(done.stdout).toContain(
+      `remove the revoked device: omnesis devices revoke '${NATIVE_DEVICE}' --forget`,
+    );
     expect(existsSync(native.shim)).toBe(false);
     expect(existsSync(native.innerLauncher)).toBe(false);
     expect(existsSync(native.nativeDir)).toBe(false);
@@ -632,6 +695,15 @@ describe("host folders the collector's container reads", () => {
       });
       expect(proc.status, proc.stdout).toBe(0);
       expect(proc.stdout).toContain(`Share ${vault} with the collector, read-only? [Y/n]`);
+      // The explanation and the question, with nothing of Docker's before them.
+      // (The terminal echoes the answer fed to it ahead of everything.)
+      const offer = proc.stdout.slice(0, proc.stdout.indexOf("[Y/n]")).replace(/^y\r?\n/u, "");
+      expect(offer).not.toContain("What's next");
+      expect(offer.trim()).toBe(
+        `${vault} is a folder on this machine. The collector runs in a container\r\n` +
+          `that sees only the folders shared with it.\r\n` +
+          `Share ${vault} with the collector, read-only?`,
+      );
       expect(read(join(docker.dockerDir, "shared-folders"))).toBe(`${vault}\n`);
       expect(existsSync(join(docker.dockerDir, "share-request"))).toBe(false);
       const calls = read(join(docker.home, "cli-calls.log")).split("\n").filter(Boolean);
@@ -679,4 +751,101 @@ describe("host folders the collector's container reads", () => {
       expect(existsSync(join(docker.dockerDir, "shared-folders"))).toBe(false);
     },
   );
+});
+
+describe("the Docker launcher outside a login shell", () => {
+  // ssh running one command, cron and launchd start without the directories a
+  // login shell's profile adds, where the desktop apps keep docker.
+  test("finds docker where the installer looks for it when PATH has none", () => {
+    const docker = dockerGateway("launcher-path");
+    const elsewhere = join(docker.home, ".docker", "bin");
+    mkdirSync(elsewhere, { recursive: true });
+    writeExecutable(join(elsewhere, "docker"), DOCKER_SHIM);
+    writeFileSync(dockerLog(docker.home), "");
+    // The system's tools without any docker: a machine's own must not answer.
+    const bare = join(docker.home, "bare-path");
+    mkdirSync(bare, { recursive: true });
+    for (const dir of ["/usr/bin", "/bin"]) {
+      for (const name of readdirSync(dir)) {
+        if (name.startsWith("docker") || existsSync(join(bare, name))) continue;
+        symlinkSync(join(dir, name), join(bare, name));
+      }
+    }
+    const proc = host(docker, docker.launcher, ["status"], { PATH: bare });
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.stderr).not.toContain("docker: not found");
+    expect(read(dockerLog(docker.home))).toContain(
+      `compose -f ${join(docker.dockerDir, "docker-compose.yml")}`,
+    );
+    expect(read(join(docker.home, "cli-calls.log"))).toContain("[docker] status");
+  });
+
+  test("turns Docker's \"What's next\" hints off for every docker command it runs", () => {
+    const docker = dockerGateway("launcher-hints");
+    writeFileSync(`${dockerLog(docker.home)}.env`, "");
+    const proc = host(docker, docker.launcher, ["devices", "add-fails"]);
+    expect(proc.status).toBe(1);
+    expect(proc.stderr).not.toContain("What's next");
+    const seen = read(`${dockerLog(docker.home)}.env`)
+      .trim()
+      .split("\n");
+    expect(seen.length).toBeGreaterThan(0);
+    for (const line of seen) expect(line).toBe("hints=false hooks=false");
+  });
+});
+
+describe("omnesis uninstall of a Docker install", () => {
+  test("removes every local image of its repositories, older releases included, and nothing else", () => {
+    const docker = dockerGateway("uninstall-images");
+    writeFileSync(dockerLog(docker.home), "");
+    const dry = host(docker, docker.launcher, ["uninstall", "--dry-run"]);
+    expect(dry.status, dry.stderr).toBe(0);
+    expect(dry.stdout).toContain(
+      "Remove every local image of ghcr.io/omnesis-dev/omnesis-gateway, older releases included",
+    );
+    expect(dry.stdout).toContain("--purge deletes it too");
+
+    const done = host(docker, docker.launcher, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    const removed = read(dockerLog(docker.home))
+      .split("\n")
+      .filter((line) => line.startsWith("docker image rm "))
+      .map((line) => line.slice("docker image rm ".length))
+      .sort();
+    expect(removed).toEqual(
+      ["omnesis-collector", "omnesis-gateway", "omnesis-updater"]
+        .flatMap((image) => [
+          `ghcr.io/omnesis-dev/${image}:9.8.0`,
+          `ghcr.io/omnesis-dev/${image}:9.9.0`,
+        ])
+        .sort(),
+    );
+  });
+});
+
+describe("the native collector beside a Docker install, named and reachable", () => {
+  test("its front door finds the node it was built with when PATH has none", () => {
+    dockerGateway("shim-node");
+    const native = run("shim-node", ["--collector", "--no-keyring", "--code", TYPED_CODE]);
+    expect(native.status, native.output).toBe(0);
+    const shim = read(native.shim);
+    expect(shim).toMatch(/^NODE_DIR='\/[^']+'$/mu);
+    expect(shim).toContain('if ! command -v node >/dev/null 2>&1 && [ -n "$NODE_DIR" ]');
+  });
+
+  test("on a Mac it pairs as the host's Mac collector, beside the container's <host>-collector", () => {
+    writeExecutable(
+      fixturePath("fake-bin", "uname"),
+      '#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo Darwin ;; esac\n',
+    );
+    dockerGateway("mac-name");
+    const native = run("mac-name", ["--collector", "--no-keyring", "--code", TYPED_CODE]);
+    expect(native.status, native.output).toBe(0);
+    expect(callStartingWith(native.calls, "pair ")).toMatch(
+      / --name field-station-mac-collector$/u,
+    );
+    // What the banner prints is the name the gateway registered.
+    expect(native.output).toContain(`Collector ${NATIVE_DEVICE} is online.`);
+    expect(native.output).toContain(`omnesis sources add --device '${NATIVE_DEVICE}'`);
+  });
 });

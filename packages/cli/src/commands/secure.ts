@@ -84,6 +84,7 @@ import {
   type SecretStoreBackend,
   type SecretStoreStatus,
   type StorageKeyHost,
+  operatorCommand,
 } from "@omnesis/core";
 import {
   c,
@@ -588,7 +589,7 @@ export async function runVerify(
     fail(
       "root-key",
       "Install root key",
-      status.available ? "missing — run `omnesis secure`" : status.detail,
+      status.available ? `missing — run \`${operatorCommand()} secure\`` : status.detail,
     );
   }
 
@@ -601,7 +602,7 @@ export async function runVerify(
     fail(
       "migrate",
       "Secret files",
-      `${plaintext.length} still plaintext (${plaintext.join(", ")}) — run \`omnesis secure\``,
+      `${plaintext.length} still plaintext (${plaintext.join(", ")}) — run \`${operatorCommand()} secure\``,
     );
   }
 
@@ -613,7 +614,7 @@ export async function runVerify(
     if (states.every((s) => s.present && s.valid) && storageEncryptionRequired(configDir)) {
       plan("storage-keys", "Live-storage keys", "done", `ready for ${names.join(", ")}`);
     } else {
-      fail("storage-keys", "Live-storage keys", "missing — run `omnesis secure`");
+      fail("storage-keys", "Live-storage keys", `missing — run \`${operatorCommand()} secure\``);
     }
   }
 
@@ -754,14 +755,14 @@ async function restartCollectorStep(
       "collector-restart",
       "Collector restart",
       "action-required",
-      "no managed collector service found — restart the collector yourself (`omnesis collector run`, or your usual command); its sources encrypt their stores as they open them",
+      `no managed collector service found — restart the collector yourself (\`${operatorCommand()} collector run\`, or your usual command); its sources encrypt their stores as they open them`,
     );
   } else {
     plan(
       "collector-restart",
       "Collector restart",
       "action-required",
-      "the collector service did not restart — run `omnesis service restart collector` and check `omnesis service logs collector`",
+      `the collector service did not restart — run \`${operatorCommand()} service restart collector\` and check \`${operatorCommand()} service logs collector\``,
     );
   }
 }

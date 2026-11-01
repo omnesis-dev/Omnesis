@@ -28,8 +28,14 @@ export const COLLECTOR_PAIRING_STATE_FILE = "collector-pairing-state.json";
 
 export interface CollectorPairingState {
   state: "paired" | "needs-pairing";
-  /** The name this collector registers under, and the repair target. */
+  /**
+   * The name this collector registers under, and the repair target: the
+   * gateway's own name for the device once it has answered, which is what
+   * `--device`, `devices revoke` and the installer's banner must say.
+   */
   deviceName: string;
+  /** The gateway's id for the device, once it has said. */
+  deviceId?: string;
   /** Gateway the verdict is about — a collector may be re-pointed. */
   gatewayUrl: string;
   /** Truncated SHA-256 of the credential this verdict describes. */
@@ -74,6 +80,9 @@ export function readCollectorPairingState(configDir: string): CollectorPairingSt
     return {
       state: parsed.state,
       deviceName: parsed.deviceName,
+      ...(typeof parsed.deviceId === "string" && parsed.deviceId
+        ? { deviceId: parsed.deviceId }
+        : {}),
       gatewayUrl: parsed.gatewayUrl,
       tokenFingerprint: parsed.tokenFingerprint,
       lastAuthenticatedAt:
