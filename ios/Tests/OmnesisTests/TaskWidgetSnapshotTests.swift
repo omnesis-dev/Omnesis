@@ -9,6 +9,36 @@ import XCTest
 
 @MainActor
 final class TaskWidgetSnapshotTests: XCTestCase {
+    func testTodayNewestTasksLeadCompactWidgets() throws {
+        var entry = TaskWidgetFixtures.entry()
+        entry.snapshot = TaskWidgetSnapshot(
+            tasks: [
+                TaskWidgetTask(
+                    id: "older",
+                    title: "Inspect the storage shelves",
+                    scheduledFor: "2026-06-15",
+                    createdAt: "2026-06-15T08:00:00Z"
+                ),
+                TaskWidgetTask(
+                    id: "new-carried",
+                    title: "Review the exhibit plan",
+                    scheduledFor: "2026-06-14",
+                    createdAt: "2026-06-15T11:00:00Z"
+                ),
+                TaskWidgetTask(
+                    id: "current",
+                    title: "Prepare display labels",
+                    scheduledFor: "2026-06-15",
+                    createdAt: "2026-06-15T10:00:00Z"
+                ),
+            ],
+            updatedAt: entry.date
+        )
+        XCTAssertEqual(entry.tasks.map(\.id), ["new-carried", "current", "older"])
+        try render(entry, family: .systemSmall, size: CGSize(width: 170, height: 170), name: "today-newest")
+        try render(entry, family: .systemMedium, size: CGSize(width: 360, height: 170), name: "today-newest")
+    }
+
     func testTaskWidgetFamilies() throws {
         let families: [(WidgetFamily, CGSize)] = [
             (.systemSmall, CGSize(width: 170, height: 170)),

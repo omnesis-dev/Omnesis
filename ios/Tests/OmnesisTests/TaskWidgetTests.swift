@@ -43,6 +43,25 @@ final class TaskWidgetTests: XCTestCase {
         XCTAssertEqual(schedule(.day, "2026-10-14").tasks(from: tasks).map(\.id), ["carry"])
     }
 
+    func testTodaySortsEveryOpenTaskByCreationBeforeTruncation() {
+        let tasks: [TaskWidgetTask] = [
+            .init(id: "old", title: "Inspect the storage shelves", scheduledFor: "2026-10-14", createdAt: "2026-10-10T08:00:00Z"),
+            .init(id: "b-tie", title: "Prepare display labels", scheduledFor: "2026-10-14", createdAt: "2026-10-14T10:00:00Z"),
+            .init(id: "new-carried", title: "Review the exhibit plan", scheduledFor: "2026-10-12", createdAt: "2026-10-14T11:00:00Z"),
+            .init(
+                id: "a-tie",
+                title: "Check the lighting plan",
+                scheduledFor: "2026-11-01",
+                dueDay: "2026-10-14",
+                createdAt: "2026-10-14T10:00:00Z"
+            ),
+            .init(id: "undated", title: "Review the packing list", scheduledFor: "2026-10-10"),
+        ]
+        let result = schedule(.day, "2026-10-14").tasks(from: tasks)
+        XCTAssertEqual(result.map(\.id), ["new-carried", "a-tie", "b-tie", "old", "undated"])
+        XCTAssertEqual(Array(result.prefix(2)).map(\.id), ["new-carried", "a-tie"])
+    }
+
     func testSameDayTasksKeepCreationOrderWhenIdentifiersDisagree() {
         let tasks: [TaskWidgetTask] = [
             .init(

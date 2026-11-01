@@ -55,10 +55,29 @@ class TaskWidgetRepositoryTest {
         assertEquals(listOf("accepted", "future-state"), TaskWidgetSchedule.tasks(tasks, state(), today).map { it.id })
     }
 
-    @Test fun equal_scheduled_dates_preserve_creation_order_before_identifier() {
+    @Test fun today_sorts_all_open_tasks_by_creation_before_widget_paging() {
+        val tasks = listOf(
+            task("old", "2026-10-14").copy(createdAt = "2026-10-10T08:00:00Z"),
+            task("b-tie", "2026-10-14").copy(createdAt = "2026-10-14T10:00:00Z"),
+            task("new-carried", "2026-10-12").copy(createdAt = "2026-10-14T11:00:00Z"),
+            task("a-tie", "2026-11-01", "2026-10-14").copy(createdAt = "2026-10-14T10:00:00Z"),
+            task("undated", "2026-10-10"),
+        )
+        val result = TaskWidgetSchedule.tasks(tasks, state(), today)
+        assertEquals(listOf("new-carried", "a-tie", "b-tie", "old", "undated"), result.map { it.id })
+        assertEquals(listOf("new-carried", "a-tie"), result.take(2).map { it.id })
+    }
+
+    @Test fun future_days_keep_schedule_order_and_older_creation_first() {
+        val tasks = listOf(task("new", "2026-10-15").copy(createdAt = "2026-10-14T10:00:00Z"),
+            task("old", "2026-10-15").copy(createdAt = "2026-10-14T08:00:00Z"))
+        assertEquals(listOf("old", "new"), TaskWidgetSchedule.tasks(tasks, state(offset = 1), today).map { it.id })
+    }
+
+    @Test fun today_uses_newest_creation_before_identifier() {
         val tasks = listOf(task("a", "2026-10-14").copy(createdAt = "2026-10-10T09:00:00Z"),
             task("z", "2026-10-14").copy(createdAt = "2026-10-09T09:00:00Z"))
-        assertEquals(listOf("z", "a"), TaskWidgetSchedule.tasks(tasks, state(), today).map { it.id })
+        assertEquals(listOf("a", "z"), TaskWidgetSchedule.tasks(tasks, state(), today).map { it.id })
     }
 
     private class Cache : WidgetSnapshotStore {

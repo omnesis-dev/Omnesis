@@ -50,7 +50,7 @@ public struct TaskViewState {
 /// selected one are read ahead (`prefetch`) so a swipe draws in a filled
 /// page. Every change goes to the gateway and the selected view is re-read
 /// afterwards, because one command can move a task between sections or
-/// views (completing a carried task drops it from "Carried over" into "Done
+/// views (completing an open task drops it from "Today" into "Done
 /// today"); the other views are marked stale for the same reason. Only
 /// completing from the circle is applied before the gateway answers — it is
 /// the one gesture that has to feel instant.

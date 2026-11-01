@@ -102,7 +102,14 @@ class TasksStateTest {
     // --- Today's sections --------------------------------------------------------------
 
     @Test
-    fun today_reads_carried_then_planned_then_resolved_under_counted_headings() {
+    fun today_does_not_regroup_carried_rows_in_the_gateway_order() {
+        val tasks = listOf(task("new-carried", carried = true), task("current"), task("old-carried", carried = true))
+        assertEquals(tasks.map { "task:${it.id}" },
+            TasksReducer.entries(TaskSegment.TODAY, tasks).map { it.key })
+    }
+
+    @Test
+    fun today_preserves_gateway_open_order_then_resolved_under_counted_headings() {
         val entries = TasksReducer.entries(
             TaskSegment.TODAY,
             listOf(
@@ -114,13 +121,12 @@ class TasksStateTest {
         )
         assertEquals(
             listOf(
-                "heading:carried", "task:carried",
-                "heading:today", "task:planned",
+                "heading:today", "task:carried", "task:planned",
                 "heading:resolved", "task:done", "task:struck",
             ),
             entries.map { it.key },
         )
-        assertEquals(TaskJournalEntry.Heading("resolved", "Done today", 2), entries[4])
+        assertEquals(TaskJournalEntry.Heading("resolved", "Done today", 2), entries[3])
     }
 
     /** Today's own rows need no heading when nothing else shares the page. */
