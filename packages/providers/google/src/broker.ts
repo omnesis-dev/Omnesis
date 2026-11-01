@@ -246,7 +246,19 @@ export async function resolveGoogleBrokerAccount(
   // Every sync checks each connection still belongs to this account (see
   // `verifyGoogleIdentity`); one that can say nothing about its account
   // could be signed in again as someone else without anyone noticing.
-  const silent = answers.filter((a) => !a.email && !a.person).map((a) => a.label);
+  const ref = (id: string) => {
+    const c = credentials.binding.connections[id];
+    return c ? `${c.providerConfigKey}/${c.connectionId}` : undefined;
+  };
+  // A purpose linked to the same connection as one that names its account is
+  // the same grant and the same token, so that purpose's answer covers it;
+  // `verifyGoogleIdentity` asks the same question with its own token later.
+  const sharesNamed = (a: (typeof answers)[number]) =>
+    a.id === "contacts" &&
+    answers.some((b) => b.id !== a.id && b.email !== undefined && ref(b.id) === ref(a.id));
+  const silent = answers
+    .filter((a) => !a.email && !a.person && !sharesNamed(a))
+    .map((a) => a.label);
   if (silent.length > 0) {
     throw new Error(
       `Google will not say which account the linked ${silent.join(", ")} connection belongs to, ` +
@@ -276,7 +288,9 @@ export async function resolveGoogleBrokerAccount(
   // A connection that cannot name its account is not vouched for by the ones
   // that can: it may be another person's grant. It joins them only when the
   // operator states the account, which is then checked against the rest.
-  const unverified = answers.filter((a) => a.email === undefined).map((a) => a.label);
+  const unverified = answers
+    .filter((a) => a.email === undefined && !sharesNamed(a))
+    .map((a) => a.label);
   if (unverified.length > 0 && !supplied) {
     throw new Error(
       `The linked ${unverified.join(", ")} connection cannot say which Google account it belongs to; ` +
@@ -293,6 +307,83 @@ export async function resolveGoogleBrokerAccount(
     }
   }
   return { accountId: first.email, ...recorded };
+}
+
+/**
+ * The other purposes of `binding` linked to the same broker connection as
+ * `purpose`, among those that can name their account. The same connection
+ * hands out the same grant, so their probes asked with `purpose`'s own token
+ * say whose token it is when `purpose`'s own probe cannot (Contacts under
+ * `contacts.readonly`).
+ */
+function sharedConnectionPurposes(
+  binding: BrokerBinding,
+  purpose: GoogleBrokerPurpose,
+): GoogleBrokerPurpose[] {
+  const mine = binding.connections[purpose];
+  if (!mine) return [];
+  return (["gmail", "calendar", "drive"] as const).filter((id) => {
+    if (id === purpose) return false;
+    const other = binding.connections[id];
+    return (
+      other?.providerConfigKey === mine.providerConfigKey &&
+      other.connectionId === mine.connectionId
+    );
+  });
+}
+
+/**
+ * Ask Google, with `token` alone, who the account behind it is, using the
+ * `asked` purpose's question. A Contacts grant Google will not answer
+ * `people/me` for says nothing rather than failing, as at link time.
+ */
+async function askGoogle(
+  known: { id: GoogleBrokerPurpose; label: string },
+  asked: GoogleBrokerPurpose,
+  token: string,
+): Promise<GoogleAccountAnswer> {
+  try {
+    return await ACCOUNT_PROBES[asked](tokenClient(token));
+  } catch (err) {
+    if (asked === "contacts" && googleApiStatus(err) === 403) return {};
+    const mapped = mapGoogleApiError(err);
+    throw new SyncError(
+      mapped.kind,
+      `Could not confirm which Google account the broker's ${known.label} connection belongs to: ${mapped.message}`,
+      {
+        cause: err,
+        retryAfterMs: mapped.retryAfterMs,
+        scope: mapped.scope,
+        quota: mapped.quota,
+      },
+    );
+  }
+}
+
+/**
+ * The first answer naming an account from the purposes sharing `known`'s
+ * connection, each asked with `token`. One that fails is passed over for the
+ * next, so a Gmail limit or a Gmail switched off does not stop Contacts while
+ * Calendar or Drive on the same grant can answer; when none answers, the
+ * first failure is reported.
+ */
+async function askShared(
+  known: { id: GoogleBrokerPurpose; label: string },
+  siblings: GoogleBrokerPurpose[],
+  token: string,
+  fallback: GoogleAccountAnswer,
+): Promise<GoogleAccountAnswer> {
+  let failure: unknown;
+  for (const sibling of siblings) {
+    try {
+      const answer = await askGoogle(known, sibling, token);
+      if (answer.email) return answer;
+    } catch (err) {
+      failure ??= err;
+    }
+  }
+  if (failure) throw failure;
+  return fallback;
 }
 
 /**
@@ -333,24 +424,15 @@ export function verifyGoogleIdentity(
     const token = credential.accessToken;
     if (verified.get(purpose) === token) return;
 
-    let answer: GoogleAccountAnswer;
-    try {
-      answer = await ACCOUNT_PROBES[known.id](tokenClient(token));
-    } catch (err) {
-      const mapped = mapGoogleApiError(err);
-      throw new SyncError(
-        mapped.kind,
-        `Could not confirm which Google account the broker's ${known.label} connection belongs to: ${mapped.message}`,
-        {
-          cause: err,
-          retryAfterMs: mapped.retryAfterMs,
-          scope: mapped.scope,
-          quota: mapped.quota,
-        },
-      );
+    let answer = await askGoogle(known, known.id, token);
+    // Contacts cannot always name its account; on a connection it shares with
+    // Gmail, Calendar or Drive the token is that grant's, so their question
+    // asked with this same token answers for it.
+    const recordedPerson = binding().params?.[GOOGLE_CONTACTS_PERSON_PARAM];
+    if (known.id === "contacts" && !answer.email && !(answer.person && recordedPerson)) {
+      answer = await askShared(known, sharedConnectionPurposes(binding(), known.id), token, answer);
     }
 
-    const recordedPerson = binding().params?.[GOOGLE_CONTACTS_PERSON_PARAM];
     const checks: boolean[] = [];
     if (answer.email) checks.push(answer.email.toLowerCase() === accountId.toLowerCase());
     if (answer.person && recordedPerson) checks.push(answer.person === recordedPerson);

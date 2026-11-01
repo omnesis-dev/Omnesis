@@ -1796,13 +1796,14 @@
           connection can be signed in again in Nango as someone else, or its key replaced with
           another person's. Notion checks the workspace, Strava the athlete, Outlook the mailbox and
           IMAP the login. Each Google connection asks Google which account its token belongs to
-          (Contacts compares the account id recorded when it was linked), once per token. GitHub
-          compares the user id recorded when it was linked, so a renamed user still matches. A
-          Coinbase key other than the one linked must still be View-only and read the same
-          portfolio, and a Lunch Flow key other than the one linked must reach one of the bank
-          accounts it reached when it was linked. When the check fails, the source stops with an
-          error that says the connection now belongs to another account, and nothing from that
-          credential is indexed; link the connection again with
+          (Contacts compares the account id recorded when it was linked, or, on the same connection
+          as Gmail, asks Gmail with its token), once per token. GitHub compares the user id recorded
+          when it was linked, so a renamed user still matches. A Coinbase key other than the one
+          linked must still be View-only and read the same portfolio, and a Lunch Flow key other
+          than the one linked must reach one of the bank accounts it reached when it was linked.
+          When the check fails, the source stops with an error that says the connection now belongs
+          to another account, and nothing from that credential is indexed; link the connection again
+          with
           <code>omnesis broker link</code>, which names the account it now belongs to. When the
           service cannot be reached to check, the sync fails and is retried like any other outage.
           <code>omnesis broker status</code> runs the same check on every link.
