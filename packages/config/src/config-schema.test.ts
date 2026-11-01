@@ -1134,6 +1134,12 @@ describe("resolveSourceSettings", () => {
 });
 
 describe("validateConfig — agent", () => {
+  test("accepts an explicit maintained knowledge read switch and rejects non-booleans", () => {
+    for (const knowledgeReads of [true, false]) {
+      expect(validateConfig({ agent: { knowledgeReads } }).ok).toBe(true);
+    }
+    expect(validateConfig({ agent: { knowledgeReads: "false" } }).ok).toBe(false);
+  });
   test("accepts every documented tunable", () => {
     const res = validateConfig({
       agent: {

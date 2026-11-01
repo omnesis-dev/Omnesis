@@ -378,8 +378,13 @@ function renderedLeaves(node: ConfigNode, acc: ConfigLeafNode[] = []): ConfigLea
 }
 
 describe("describeConfigSchema", () => {
-  it("omits backend-only agent search settings without adding a portal group", () => {
+  it("omits backend-only retrieval settings without adding a portal group", () => {
     const descriptor = describeConfigSchema();
+    const agent = descriptor.children.find((node) => node.key === "agent");
+    expect(agent?.kind).toBe("object");
+    if (agent?.kind === "object") {
+      expect(agent.children.some((node) => node.key === "knowledgeReads")).toBe(false);
+    }
     const search = descriptor.children.find((node) => node.key === "search");
     expect(search?.kind).toBe("object");
     if (search?.kind === "object") {

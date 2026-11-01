@@ -34,6 +34,7 @@ import {
 
 export const CONFIG_DEFAULTS = {
   agent: {
+    knowledgeReads: true,
     // How long a client's "I am showing this conversation" mark is believed
     // without a refresh. Long enough that a client rendering a quiet
     // conversation is not constantly re-marking, short enough that one which

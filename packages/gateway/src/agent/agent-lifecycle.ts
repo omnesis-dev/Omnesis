@@ -152,6 +152,8 @@ export interface AgentServiceDeps {
    */
   getOperatorInstructions?: () => string;
   getKnowledgeRootMaxChars?: () => number;
+  /** Snapshot at service construction; restart after changing the config. */
+  knowledgeReads?: boolean;
 }
 
 /**
@@ -379,6 +381,7 @@ export function createAgentService(
   const { db, searchPipeline, syncStatus, analyticsDb, writeGate, wsServer, conversationStore } =
     deps;
   const omnesisChatRuntime = deps.getOmnesisChatRuntime();
+  const knowledgeReads = deps.knowledgeReads !== false;
   /** The configured source types a run may reach; every type when unscoped. */
   const permittedSourceTypes = (authorization?: CorpusAuthorization): string[] => [
     ...new Set(
@@ -408,9 +411,10 @@ export function createAgentService(
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
-    const root = restricted
-      ? { text: "", support: [] }
-      : captureKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.());
+    const root =
+      restricted || !knowledgeReads
+        ? { text: "", support: [] }
+        : captureKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.());
     const prompt = buildSystemPrompt({
       audience: options.audience,
       now: new Date(),
@@ -420,7 +424,9 @@ export function createAgentService(
       experimental,
       selfMemory,
       selfPersonId,
-      knowledgeRootContext: restricted ? root.text : root.text + renderKnowledgePageDirectory(db),
+      knowledgeRootContext:
+        restricted || !knowledgeReads ? root.text : root.text + renderKnowledgePageDirectory(db),
+      knowledgeReads,
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
       messageCounts: !restricted,
@@ -434,27 +440,30 @@ export function createAgentService(
   };
   return new AgentService({
     backendFactory,
-    namedPagesNote: (message) => namedPagesNote(db, message),
+    knowledgeReads,
+    namedPagesNote: knowledgeReads ? (message) => namedPagesNote(db, message) : undefined,
     ports: {
       // `db` is passed so the agent search port can attach the 1-hop
       // breadcrumb to top hits when graph context is off.
-      search: createGatewaySearchPort(searchPipeline, syncStatus, db),
+      search: createGatewaySearchPort(searchPipeline, syncStatus, db, undefined, knowledgeReads),
       document: createGatewayDocumentPort(db, syncStatus, {
         graphContext: searchPipeline.agentSearchV2Enabled,
+        knowledgeReads,
       }),
-      documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus),
+      documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, undefined, knowledgeReads),
       // `trace_connections` surfaces `same-entity` bound rows as point-in-time
       // records, so it needs the same analytics DB `cite_record` uses
       // (for the bound-row resolver + the record-display contract).
       trail: createGatewayTrailPort(db, analyticsDb, {
         graphContext: searchPipeline.agentSearchV2Enabled,
+        knowledgeReads,
       }),
       sql: createGatewaySqlPort(analyticsDb),
       // `cite_record` persists a single analytics row as a record citation.
       //Wired with the same analytics DB as `run_sql` (for the table
       // contract) and the document store (to resolve a bound document id).
       record: createGatewayRecordPort(db, analyticsDb),
-      person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
+      person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate, knowledgeReads }),
       // Unscoped, like `temporal`, so the source-restricted answer scope below
       // never gets it.
       messageCounts: createGatewayMessageCountPort(db, {
@@ -473,7 +482,7 @@ export function createAgentService(
       // read the background Cognition Steward's tracked obligations — no mutation, no
       // briefs. Wired only in experimental mode (the loop system exists only
       // then); the registry additionally gates the two tools on experimental.
-      loopRead: experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
+      loopRead: knowledgeReads && experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
       // Read-only temporal port: lets the interactive agent answer "what's
       // coming up?" in one call — source-owned dated facts and date mentions,
       // both produced on the ingest path whether or not the background agent
@@ -488,7 +497,8 @@ export function createAgentService(
       // Read-only cognitive-context (reap) port (experimental): lets the
       // interactive agent pull the whole neighbourhood the background agent
       // linked around one entity in a single call — no write surface.
-      entityContext: experimentalVisible() ? createGatewayEntityContextPort(db) : undefined,
+      entityContext:
+        knowledgeReads && experimentalVisible() ? createGatewayEntityContextPort(db) : undefined,
     },
     // Function form so today's date, the live analytics catalog, and the
     // configured-source list are all fresh on every session-create.
@@ -933,6 +943,7 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
+        knowledgeReads: this.deps.configStore.get().agent?.knowledgeReads !== false,
         getKnowledgeRootMaxChars: () =>
           this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,

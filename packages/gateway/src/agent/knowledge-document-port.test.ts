@@ -11,6 +11,8 @@ import {
   buildBuiltinTools,
   serializeToolResultForModel,
   type ToolContext,
+  type ChatBackend,
+  type TurnInput,
 } from "@omnesis/agent";
 import { createLogger, toolResultSchema } from "@omnesis/core";
 import { renderConversation } from "../sources/omnesis-chat/render.js";
@@ -33,8 +35,12 @@ import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
 import { createOpenLoop, updateOpenLoop } from "../brain/storage/open-loops.js";
 import { advanceKnowledgeOwnerSync } from "../brain/knowledge/owner-sync.js";
 import { convertKnowledgeOwner } from "../brain/knowledge/owner-adapters.js";
+import { SyncStatusRegistry } from "../sync-status.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
 import { createGatewayDocumentPort } from "./ports.js";
+import { createAgentService, type AgentServiceDeps } from "./agent-lifecycle.js";
+import { FsConversationStore } from "./conversation-store.js";
+import type { AgentEvent } from "@omnesis/core";
 import type Database from "better-sqlite3";
 
 let db: Database.Database;
@@ -158,6 +164,86 @@ it("resolves wiki aliases through real tools and preserves separated pointers in
   expect(await port.fetch("evidence")).not.toBeNull();
   const plain = createFetchDocumentTool({ port: { fetch: async () => null } });
   expect(plain.description).not.toContain("wiki:<pageId>");
+});
+
+it("withholds wiki aliases and mirror IDs while retaining original document reads", async () => {
+  page("overview");
+  const port = createGatewayDocumentPort(db, undefined, { knowledgeReads: false });
+  expect(port.supportsKnowledgeAliases).toBe(false);
+  expect(port.knowledgePageRef?.("projection-overview")).toBeNull();
+  expect(await port.fetch("wiki:overview")).toBeNull();
+  expect(await port.fetch("projection-overview")).toBeNull();
+  const original = await port.fetch("evidence");
+  expect(original?.document.content).toBe("The observatory opens Saturday.");
+  expect(original?.document.knowledgeContext).toBeUndefined();
+  // Turning reads off does not delete the stored page.
+  expect(await createGatewayDocumentPort(db).fetch("wiki:overview")).not.toBeNull();
+});
+
+it("omits root orientation, page directory and named-page notes from fresh answering sessions", async () => {
+  page("overview");
+  page(
+    "orientation",
+    '<claim id="opening" refs="source:evidence">Root orientation sentinel.</claim>',
+    "root",
+  );
+  for (const knowledgeReads of [true, false]) {
+    let prompt = "";
+    let finish!: () => void;
+    const ended = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const backend: ChatBackend = {
+      name: "recording",
+      model: "recording",
+      async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+        prompt = input.systemPrompt;
+        yield {
+          type: "agent.message.start",
+          payload: { sessionId: input.sessionId, messageId: input.messageId, role: "assistant" },
+        };
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: "end_turn",
+          },
+        };
+      },
+    };
+    const deps: AgentServiceDeps = {
+      db,
+      knowledgeReads,
+      searchPipeline: { agentSearchV2Enabled: false } as AgentServiceDeps["searchPipeline"],
+      syncStatus: new SyncStatusRegistry(),
+      analyticsDb: { getCatalog: async () => [] } as unknown as AgentServiceDeps["analyticsDb"],
+      writeGate: {
+        recordCognitionSpend: async () => {},
+      } as unknown as AgentServiceDeps["writeGate"],
+      wsServer: {
+        broadcast: (event: AgentEvent) => {
+          if (event.type === "agent.message.end") finish();
+        },
+      } as unknown as AgentServiceDeps["wsServer"],
+      conversationStore: new FsConversationStore(join(directory, knowledgeReads ? "on" : "off")),
+      isApnsConfigured: () => false,
+      getWatchAuthoring: () => null,
+      watchFirings: () => [],
+      watchFiringCount: () => 0,
+      getOmnesisChatRuntime: () => undefined,
+    };
+    const service = createAgentService(deps, () => backend, { depthCap: 2, concurrencyCap: 2 });
+    try {
+      const { sessionId } = await service.createSession("device:test");
+      service.sendMessage("device:test", sessionId, "What does overview say?");
+      await ended;
+      expect(prompt.includes("Root orientation sentinel")).toBe(knowledgeReads);
+      expect(prompt.includes("wiki:overview")).toBe(knowledgeReads);
+    } finally {
+      await service.dispose();
+    }
+  }
 });
 
 it("refuses missing, malformed, obsolete and privacy-hidden aliases just like document IDs", async () => {

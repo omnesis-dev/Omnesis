@@ -2278,6 +2278,12 @@ const agentReplay = z
 
 const agent = z
   .object({
+    knowledgeReads: z
+      .boolean()
+      .describe(
+        "Allow the interactive agent and its workers to read maintained wiki pages and tracked outcomes. Defaults to true. Set false for retrieval comparisons without those summaries; the Brain keeps running and stored knowledge is retained. Restart the gateway and use fresh conversations after changing this setting.",
+      )
+      .optional(),
     maxToolIterations: z
       .number()
       .int()

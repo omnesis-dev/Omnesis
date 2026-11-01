@@ -875,6 +875,16 @@
           helps orient an answer; decisive claims still require supporting source evidence.
         </p>
         <p>
+          To compare answers with and without maintained knowledge, set
+          <code>agent.knowledgeReads</code> to <code>false</code>, restart the gateway, and start
+          fresh conversations. The built-in answering agent and its delegated workers then receive
+          no wiki/root context or tracked-outcome read tools, and their document, search and graph
+          tools exclude those pages and outcomes. Original documents, analytics and grounded memory
+          remain available. The Brain continues maintaining its knowledge, and existing pages and
+          outcomes are retained. The default is <code>true</code>. Independent Direct connections
+          are unaffected; old conversations may still contain information read before the change.
+        </p>
+        <p>
           Debug groups the library, agent runs, maintenance batches, discovery controls, and
           confidence and feedback diagnostics under <strong>Cognition</strong>. Agent runs includes
           current execution health, full transcripts and tool calls, and token spending. Each

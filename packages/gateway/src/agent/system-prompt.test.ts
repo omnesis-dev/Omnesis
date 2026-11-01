@@ -103,6 +103,14 @@ describe("buildSystemPrompt — canonical retrieval composition", () => {
 });
 
 describe("buildSystemPrompt — read-only loop tools (experimental)", () => {
+  test("can withhold maintained knowledge guidance while keeping other experimental tools", () => {
+    const prompt = buildSystemPrompt({ experimental: true, knowledgeReads: false, temporal: true });
+    expect(prompt).not.toContain("search_loops");
+    expect(prompt).not.toContain("fetch_loop");
+    expect(prompt).not.toContain("entity_context");
+    expect(prompt).not.toContain("Maintained knowledge and tracked outcomes");
+    expect(prompt).toContain("temporal_query");
+  });
   test("omits the loop tools + loops section when experimental is off", () => {
     const prompt = buildSystemPrompt({ experimental: false });
     expect(prompt).not.toContain("search_loops");

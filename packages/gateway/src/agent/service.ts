@@ -73,6 +73,7 @@ import {
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
 import { withTodaysTasks } from "./temporal-with-tasks.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
@@ -216,6 +217,8 @@ export interface AgentServiceDeps {
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
+  /** Fixed for this service; changing the config requires a restart. */
+  knowledgeReads?: boolean;
   /**
    * A model-only note for a conversation turn whose message names maintained
    * pages, telling the agent to open them first; empty when none is named.
@@ -899,6 +902,7 @@ export class AgentService {
   private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  private readonly knowledgeReads: boolean;
   private readonly citationReads = new CitationReads();
   private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
   private readonly documentPort: DocumentPort;
@@ -1146,12 +1150,14 @@ export class AgentService {
       });
     }
     this.namedPagesNote = deps.namedPagesNote;
-    this.tools = buildBuiltinTools({
+    this.knowledgeReads = deps.knowledgeReads !== false;
+    const tools = buildBuiltinTools({
       citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
       planStore: this.planStore,
       experimental: experimentalVisible(),
     });
+    this.tools = this.knowledgeReads ? tools : withoutKnowledgeReadTools(tools);
     this.documentPort = deps.ports.document;
     this.searchRecordPort = deps.ports.record;
     this.systemPrompt = deps.systemPrompt;
@@ -1663,7 +1669,8 @@ export class AgentService {
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
     // reopening a voice conversation in the app shows no Timeline.
-    const tools = profile === "voice" ? selectNonCitationTools(base) : base;
+    const readable = this.knowledgeReads ? base : withoutKnowledgeReadTools(base);
+    const tools = profile === "voice" ? selectNonCitationTools(readable) : readable;
     return tools.map((handle) =>
       withVoiceMutationAdmission(handle, (ctx, invoke) => {
         const batch = this.voiceMutationBatches.get(sessionId);

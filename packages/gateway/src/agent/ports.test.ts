@@ -161,6 +161,89 @@ function seedMemoryDocument() {
   );
 }
 
+describe("maintained knowledge read boundary", () => {
+  function seed() {
+    seedMemoryDocument();
+    insertGatewayAuthoredDocument({
+      id: "wiki-mirror",
+      sourceId: "brain-knowledge",
+      content: "Derived plan",
+      sourceUrl: "https://example.org/wiki",
+    });
+    insertGatewayAuthoredDocument({
+      id: "loop-mirror",
+      sourceId: "open-loops",
+      content: "Tracked plan",
+    });
+    seedLink("doc-memory", "references", "wiki-mirror");
+    seedLink("doc-memory", "references", "loop-mirror");
+  }
+
+  test("search excludes projections before ranking and withholds loop overlays", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    try {
+      seed();
+      const search = vi.fn(async () => ({
+        timing: { totalMs: 1 },
+        results: [
+          {
+            documentId: "doc-memory",
+            sourceId: "files:test",
+            documentType: "file",
+            title: "Project notes",
+            chunkText: "Draft",
+            score: 1,
+          },
+          {
+            documentId: "wiki-mirror",
+            sourceId: "brain-knowledge",
+            documentType: "knowledge",
+            title: "Derived plan",
+            chunkText: "Plan",
+            score: 1,
+          },
+        ],
+      }));
+      const result = await createGatewaySearchPort(
+        { search } as unknown as SearchPipeline,
+        undefined,
+        db,
+        undefined,
+        false,
+      ).search({ query: "project" });
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({ cognitiveProjection: false }),
+        expect.objectContaining({ sourceIds: ["files:test"] }),
+        expect.anything(),
+      );
+      expect(result.results.map((item) => item.documentId)).toEqual(["doc-memory"]);
+      expect(result.results[0]?.openLoops).toBeUndefined();
+      expect(result.results[0]?.annotations).toHaveLength(1);
+      expect(result.results[0]?.breadcrumb).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("blocks loop documents, URL lookup and graph seeds while preserving source reads", async () => {
+    seed();
+    const docs = createGatewayDocumentPort(db, undefined, { knowledgeReads: false });
+    expect(await docs.fetch("loop-mirror")).toBeNull();
+    const source = await docs.fetch("doc-memory", { includeNeighbors: true });
+    expect(source?.document.content).toContain("draft project schedule");
+    expect(source?.neighbors).toBeUndefined();
+    const urls = createGatewayDocumentByUrlPort(db, undefined, undefined, false);
+    expect((await urls.lookup("https://example.org/wiki")).ref).toBeUndefined();
+    const trail = createGatewayTrailPort(db, noAnalytics, { knowledgeReads: false });
+    await expect(trail.build(["loop-mirror"])).rejects.toThrow(
+      "Maintained knowledge reads are disabled",
+    );
+    const result = await trail.build(["doc-memory"]);
+    expect(JSON.stringify(result)).not.toContain("wiki-mirror");
+    expect(JSON.stringify(result)).not.toContain("loop-mirror");
+  });
+});
+
 describe("createGatewayDocumentPort.fetch", () => {
   test("stable fetch surfaces memory while restricted fetch omits it", async () => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
