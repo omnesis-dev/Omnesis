@@ -86,11 +86,14 @@ export function acknowledgePendingSourcePage(
 
 /**
  * Discard a page the gateway refused as invalid, while its cursor is still
- * uncommitted. Nothing it carried has taken effect beyond row writes the next
- * fetch from the same cursor repeats: documents land only with the cursor, and
- * snapshot evidence counts only after it. So this is the same as the collector
- * stopping before it prepared the page. A committed page is never discarded:
- * its remaining work must finish exactly as recorded.
+ * uncommitted. What it already wrote is what the next fetch from the same
+ * cursor writes again: analytics rows and, for a page too large for one
+ * transaction, its earlier document chunks are upserts, and its tombstones
+ * reflect the source at fetch time. Snapshot evidence counts only after the
+ * cursor commits, so none of it is lost or forged. This makes the page
+ * at-least-once rather than exactly-once, the same as a collector stopping
+ * before it prepared the page. A committed page is never discarded: its
+ * remaining work must finish exactly as recorded.
  */
 export function abandonPendingSourcePage(
   db: Db,

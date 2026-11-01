@@ -467,12 +467,22 @@ test("a stored page the gateway now refuses as invalid is discarded once, and th
     const fetchPage = vi.fn(async () => fresh);
     const abandon = vi.spyOn(client, "abandonStructuredPage");
 
+    // A gateway that cannot discard the page leaves it in place, and the
+    // attempt still reports the refusal rather than the failed discard.
+    abandon.mockRejectedValueOnce(new Error("Gateway error 404: Not found"));
+    const undiscarded = collector(client, fetchPage, [schema(FIRST)]);
+    await undiscarded.run();
+    expect(undiscarded.status()?.state).toBe("error");
+    expect(undiscarded.status()?.lastError).toMatch(/VALIDATION_ERROR/);
+    expect((await client.getPendingStructuredPage(SOURCE))?.id).toBe(stored.id);
+
     const refused = collector(client, fetchPage, [schema(FIRST)]);
     await refused.run();
     expect(refused.status()?.state).toBe("error");
+    expect(refused.status()?.lastError).toMatch(/VALIDATION_ERROR/);
     expect(fetchPage).not.toHaveBeenCalled();
-    expect(abandon).toHaveBeenCalledTimes(1);
-    expect(await abandon.mock.results[0].value).toEqual({ abandoned: true });
+    expect(abandon).toHaveBeenCalledTimes(2);
+    expect(await abandon.mock.results[1].value).toEqual({ abandoned: true });
     expect(await client.getPendingStructuredPage(SOURCE)).toBeNull();
     expect((await client.getSyncState(SOURCE))?.cursor ?? null).toBeNull();
     expect(await client.getDocumentCount(SOURCE)).toBe(0);
@@ -481,7 +491,7 @@ test("a stored page the gateway now refuses as invalid is discarded once, and th
     await next.run();
     expect(next.status()?.state).toBe("idle");
     expect(fetchPage).toHaveBeenCalledTimes(1);
-    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(abandon).toHaveBeenCalledTimes(2);
     expect(await client.getPendingStructuredPage(SOURCE)).toBeNull();
     expect((await client.getSyncState(SOURCE))?.cursor).toEqual({ generation: 2 });
     expect(

@@ -639,6 +639,36 @@ export class SourceSyncRunner {
       let pendingStructuredPage = isStructuredSource
         ? await this.gateway.getPendingStructuredPage?.(source.id)
         : undefined;
+      // The stored page is replayed byte for byte, so a page the gateway
+      // refuses as invalid is refused on every retry and the source never
+      // moves again. While its cursor is uncommitted, dropping it is the same
+      // as stopping before it was prepared: the attempt still fails with the
+      // refusal, and the next one fetches the page again.
+      const discardRefusedPage = async (err: unknown, tableName: string) => {
+        const page = pendingStructuredPage;
+        if (
+          !page ||
+          page.cursorCommitted ||
+          wipeEpoch === undefined ||
+          !isGatewayValidationError(err) ||
+          !this.gateway.abandonStructuredPage
+        )
+          return;
+        try {
+          const { abandoned } = await this.gateway.abandonStructuredPage(source.id, {
+            id: page.id,
+            writeEpoch: wipeEpoch,
+          });
+          if (abandoned)
+            log.warn(
+              `${source.id}: the gateway refused stored page ${page.id} for ${tableName} as invalid; discarded it so the next sync fetches the page again`,
+            );
+        } catch (abandonErr) {
+          log.warn(
+            `${source.id}: could not discard refused page ${page.id}: ${toErrorMessage(abandonErr)}`,
+          );
+        }
+      };
       // Startup schema announcement is best-effort and can race this runner.
       // A journal replay needs ownership metadata before either data or snapshot
       // writes, without consuming the journal's ordered mutation receipts.
@@ -650,13 +680,19 @@ export class SourceSyncRunner {
         for (const schema of prerequisites) {
           if (signal.aborted || !this.registry.isCurrentSource(source) || stoppedOnLostLease())
             return;
-          const response = await this.gateway.ingestAnalyticsPage({
-            tableName: schema.tableName,
-            records: [],
-            schema,
-            sourceId: source.id,
-            writeEpoch: wipeEpoch,
-          });
+          let response;
+          try {
+            response = await this.gateway.ingestAnalyticsPage({
+              tableName: schema.tableName,
+              records: [],
+              schema,
+              sourceId: source.id,
+              writeEpoch: wipeEpoch,
+            });
+          } catch (err) {
+            await discardRefusedPage(err, schema.tableName);
+            throw err;
+          }
           if (isAnalyticsLeaseRejection(response)) {
             stopLeaseLost(response.holder);
             return;
@@ -800,26 +836,7 @@ export class SourceSyncRunner {
                 writeOrdinal: pendingStructuredPage ? writeOrdinal : undefined,
               });
             } catch (err) {
-              // The stored page is replayed byte for byte, so a page the
-              // gateway refuses as invalid is refused on every retry, and the
-              // source never moves again. Its cursor has not committed, so
-              // dropping it is the same as stopping before it was prepared:
-              // this attempt still fails, and the next fetches afresh.
-              if (
-                pendingStructuredPage &&
-                wipeEpoch !== undefined &&
-                isGatewayValidationError(err) &&
-                this.gateway.abandonStructuredPage
-              ) {
-                const { abandoned } = await this.gateway.abandonStructuredPage(source.id, {
-                  id: pendingStructuredPage.id,
-                  writeEpoch: wipeEpoch,
-                });
-                if (abandoned)
-                  log.warn(
-                    `${source.id}: the gateway refused stored page ${pendingStructuredPage.id} for ${write.tableName} as invalid; discarded it so the next sync fetches the page again`,
-                  );
-              }
+              await discardRefusedPage(err, write.tableName);
               throw err;
             }
             {

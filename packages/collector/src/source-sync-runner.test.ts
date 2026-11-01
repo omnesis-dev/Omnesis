@@ -3,7 +3,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { LogLevel, setLogLevel } from "@omnesis/core";
 import { SyncError, SourceId, type DocumentInput, type ProviderId } from "@omnesis/types";
-import { SourceSyncRunner } from "./source-sync-runner.js";
+import { SourceSyncRunner, isGatewayValidationError } from "./source-sync-runner.js";
 import { SourceRegistry } from "./source-registry.js";
 import { SyncScheduler } from "./sync-scheduler.js";
 import { FileWatcherManager } from "./file-watcher-manager.js";
@@ -3535,4 +3535,25 @@ describe("SourceSyncRunner — initial inventory provenance", () => {
       expect(gateway.getInitialSourceInventory).toHaveBeenCalledTimes(hasCursor ? 0 : 1);
     },
   );
+});
+
+describe("isGatewayValidationError", () => {
+  test("recognises only the gateway refusing a body as invalid", () => {
+    const refused = (status: number, body: string) => new Error(`Gateway error ${status}: ${body}`);
+    expect(
+      isGatewayValidationError(refused(400, JSON.stringify({ code: "VALIDATION_ERROR" }))),
+    ).toBe(true);
+    expect(isGatewayValidationError(refused(400, JSON.stringify({ code: "BAD_REQUEST" })))).toBe(
+      false,
+    );
+    expect(
+      isGatewayValidationError(refused(409, JSON.stringify({ code: "VALIDATION_ERROR" }))),
+    ).toBe(false);
+    expect(isGatewayValidationError(refused(500, JSON.stringify({ code: "INTERNAL_ERROR" })))).toBe(
+      false,
+    );
+    expect(isGatewayValidationError(refused(400, "not json"))).toBe(false);
+    expect(isGatewayValidationError(new Error("fetch failed"))).toBe(false);
+    expect(isGatewayValidationError("Gateway error 400: {}")).toBe(false);
+  });
 });
