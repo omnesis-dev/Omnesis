@@ -17,5 +17,7 @@ public struct TaskNoteContext: Equatable, Sendable {
         return !trimmed.isEmpty && trimmed != initialText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    public var initialText: String { "About this task…\n\n" }
+    public var initialText: String {
+        "About this task…\n\n"
+    }
 }

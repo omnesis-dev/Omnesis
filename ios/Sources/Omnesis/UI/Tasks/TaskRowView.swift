@@ -472,7 +472,6 @@ private struct ResolvedTaskMenu: ViewModifier {
     let tell: () -> Void
     let reopen: () -> Void
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         if resolved {
             content.contextMenu {

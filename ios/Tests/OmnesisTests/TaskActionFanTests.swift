@@ -42,7 +42,7 @@ final class TaskActionFanTests: XCTestCase {
         try XCTUnwrap(fan.targets.first { $0.action == action }).center
     }
 
-    func testTellReturnsAnActionWithoutChangingTheTask() throws {
+    func testTellReturnsAnActionWithoutChangingTheTask() {
         var fan = session(tracking: false)
         XCTAssertEqual(fan.tap(.tell), .perform(.tell))
         XCTAssertFalse(TaskFanAction.tell.isNavigation)

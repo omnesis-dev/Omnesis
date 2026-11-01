@@ -639,7 +639,13 @@ extension CaptureView {
         recording = nil
         speech.audioSink = nil
         withAnimation(.easeInOut(duration: 0.15)) { phase = .saving }
-        let outcome = await store.notes.save(text: noteText, surface: surface, captureTime: captureTime, audio: audio, taskId: taskContext?.id)
+        let outcome = await store.notes.save(
+            text: noteText,
+            surface: surface,
+            captureTime: captureTime,
+            audio: audio,
+            taskId: taskContext?.id
+        )
         if case .saved = outcome {} else if case .queued = outcome {} else {
             // The recording is gone either way; what remains is a typed note.
             voiceNote.discard()

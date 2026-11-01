@@ -54,7 +54,7 @@ final class PreviewSnapshotTests: XCTestCase {
         )
         let detail = NavigationStack { NoteHistoryDetail(note: note, model: NotesHistoryModel(client: nil)) }
             .environment(AppStore.preview())
-            .environment(\.openAgentConversation, { _ in })
+            .environment(\.openAgentConversation) { _ in }
         snapshot(detail, name: "note-handoff")
     }
 
@@ -2653,30 +2653,21 @@ final class PreviewSnapshotTests: XCTestCase {
     func testMarkdownKitchenSink() {
         let view = ScrollView {
             MarkdownView(text: """
-            # Top-level heading
-
-            A paragraph with **bold**, *italic*, and `inline code`. Also a [link](https://example.com).
-
-            ## Lists
-
+            # Top-level heading\n
+            A paragraph with **bold**, *italic*, and `inline code`. Also a [link](https://example.com).\n
+            ## Lists\n
             - First item
             - Second **bold** item
-            - Third with `code`
-
+            - Third with `code`\n
             1. Ordered one
-            2. Ordered two
-
-            ### Quote
-
-            > A wise person once said something quotable.
-
-            ## Code
-
+            2. Ordered two\n
+            ### Quote\n
+            > A wise person once said something quotable.\n
+            ## Code\n
             ```
             let x = 42
             print(x)
-            ```
-
+            ```\n
             End paragraph.
             """)
             .padding()
@@ -2689,15 +2680,13 @@ final class PreviewSnapshotTests: XCTestCase {
     /// stretching its column into one line, and the overflow scrolls inside
     /// the table's own bounds instead of clipping the page.
     private let markdownWideTable = """
-    ## Quarterly budget review
-
+    ## Quarterly budget review\n
     | Line item | Owner | Q3 actual | Notes |
     | --- | --- | --- | --- |
     | Venue hire | Maya Reeves | 4,200 | Deposit paid in July; balance due at the end of the quarter |
     | Catering | Jamie Lopez | 1,850 | Vegetarian option added after the survey |
     | Travel and accommodation for the visiting speakers and the two facilitators | David Lin | 6,300 | Booked through the agency |
-    | Printing | Sarah Mendez | 310 | — |
-
+    | Printing | Sarah Mendez | 310 | — |\n
     Totals are reconciled monthly.
     """
 

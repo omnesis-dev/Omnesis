@@ -30,7 +30,9 @@ public struct GatewayCapabilities: Decodable, Equatable, Sendable {
         taskConversations = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .taskConversations)
     }
 
-    public var supportsTaskNoteCapture: Bool { taskNoteCapture?.contains(1) ?? false }
+    public var supportsTaskNoteCapture: Bool {
+        taskNoteCapture?.contains(1) ?? false
+    }
 
     /// Whether this app can start a chat about a task on this gateway.
     public var supportsTaskConversations: Bool {
