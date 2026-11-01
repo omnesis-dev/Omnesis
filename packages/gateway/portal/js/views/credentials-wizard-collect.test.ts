@@ -20,7 +20,7 @@ import { describe, test, expect, vi } from "vitest";
 // @ts-expect-error — sibling .js modules, no .d.ts in the portal tree.
 import { deliverCredentialFields } from "./credentials-wizard.js";
 // @ts-expect-error — sibling .js modules, no .d.ts in the portal tree.
-import { shouldOpenCredentialsWizard } from "./add-source.js";
+import { isAccountRegistered, shouldOpenCredentialsWizard } from "./add-source.js";
 
 const ENTRY = { fileKey: "granola" };
 const FIELDS = { api_key: "gk_live_supersecret" };
@@ -129,10 +129,58 @@ describe("the gate that decides whether the wizard opens", () => {
     expect(shouldOpenCredentialsWizard(undefined, undefined, false)).toBe(false);
   });
 
-  test("an account the credential broker holds never opens it", () => {
+  test("a brokered account not added yet skips it", () => {
     const brokered = { configured: false, brokeredAccounts: ["workspace-1"] };
     expect(shouldOpenCredentialsWizard({ required: true }, brokered, false)).toBe(false);
     expect(shouldOpenCredentialsWizard({ perAccount: true }, brokered, false)).toBe(false);
+    const isAdded = (accountId: string) => accountId === "workspace-1";
+    const two = { configured: false, brokeredAccounts: ["workspace-1", "workspace-2"] };
+    expect(shouldOpenCredentialsWizard({ perAccount: true }, two, false, isAdded)).toBe(false);
+  });
+
+  test("once every brokered account is added, a new account opens it as usual", () => {
+    // The CLI's rule: a brokered account already added says nothing about the
+    // account being added now, which is signed in here.
+    const isAdded = () => true;
+    const perAccount = { configured: true, brokeredAccounts: ["workspace-1"] };
+    expect(shouldOpenCredentialsWizard({ perAccount: true }, perAccount, false, isAdded)).toBe(
+      true,
+    );
+    const shared = { configured: false, brokeredAccounts: ["workspace-1"] };
+    expect(shouldOpenCredentialsWizard({ required: true }, shared, false, isAdded)).toBe(true);
+    const sharedSet = { configured: true, brokeredAccounts: ["workspace-1"] };
+    expect(shouldOpenCredentialsWizard({ required: true }, sharedSet, false, isAdded)).toBe(false);
+  });
+
+  describe("an added brokered account is one the gateway lists, as the CLI counts it", () => {
+    const spec = { required: true };
+    const entry = { configured: false, brokeredAccounts: ["workspace-1"] };
+    const row = {
+      id: "notion-pages:workspace-1",
+      type: "notion-pages",
+      deviceId: "dev-other",
+      enabled: true,
+    };
+
+    test("registered on another device: the wizard opens", () => {
+      const isAdded = isAccountRegistered("notion-pages", [row]);
+      expect(isAdded("workspace-1")).toBe(true);
+      expect(shouldOpenCredentialsWizard(spec, entry, false, isAdded)).toBe(true);
+    });
+
+    test("registered but disabled: the wizard opens", () => {
+      const isAdded = isAccountRegistered("notion-pages", [{ ...row, enabled: false }]);
+      expect(isAdded("workspace-1")).toBe(true);
+      expect(shouldOpenCredentialsWizard(spec, entry, false, isAdded)).toBe(true);
+    });
+
+    test("not registered, or registered only as another type: the wizard is skipped", () => {
+      expect(shouldOpenCredentialsWizard(spec, entry, false, isAccountRegistered("notion-pages", []))).toBe(false);
+      const otherType = { ...row, id: "notion-databases:workspace-1", type: "notion-databases" };
+      const isAdded = isAccountRegistered("notion-pages", [otherType]);
+      expect(isAdded("workspace-1")).toBe(false);
+      expect(shouldOpenCredentialsWizard(spec, entry, false, isAdded)).toBe(false);
+    });
   });
 
   test("an unknown fileKey never opens it", () => {

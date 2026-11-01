@@ -1777,7 +1777,16 @@
           and stores the link under that account, so a link always names the account its sources
           sync. <code>omnesis broker unlink &lt;provider&gt; &lt;account&gt;</code> forgets a link
           and leaves the Nango connection in place. A link to a connection Nango no longer holds, or
-          can no longer refresh, shows as needing sign-in; sign it in again in Nango.
+          can no longer refresh, shows as needing sign-in, and its hint says so: sign the connection
+          in again in Nango, or unlink the account to sign it in through Omnesis instead. Omnesis
+          refuses to sign in an account while it is linked.
+        </p>
+        <p>
+          Adding a source, in the portal or with <code>omnesis sources add</code>, skips the
+          credential setup while a linked account of that provider is not added yet, and offers that
+          account. A linked account counts as added once one of its sources is added on any device,
+          enabled or paused. Once every linked account is added, connecting another account of the
+          provider asks for its credentials as usual.
         </p>
 
         <h3 id="day-to-day">Day-to-day tasks</h3>

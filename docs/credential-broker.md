@@ -129,12 +129,18 @@ below.
    `BrokeredCredentials.load`: Google per-purpose probe (cache the answer per token), GitHub `/user`, Coinbase key
    name recorded at link, Lunch Flow bank-account ids, Granola owner email. Fail with
    `BrokerCredentialError("identity-changed", ...)`.
-3. **Needs-sign-in hint for brokered accounts.** `buildReauthHint` (`packages/collector/src/sync-engine-types.ts`)
-   tells the operator to sign in again, which `auth.begin` refuses for a brokered account. It should say to sign the
-   connection in again at the broker, or `omnesis broker unlink`.
-4. **Portal wizard skip is too broad.** `shouldOpenCredentialsWizard` skips the wizard whenever any brokered account
-   exists; the CLI skips it only when a brokered account not yet added exists. Match the CLI (the fallback reopens the
-   wizard, so this costs a round trip, not a failure).
+3. **Needs-sign-in hint for brokered accounts. Done.** A provider account registered with a broker spec carries
+   `brokered()` on its `RegisteredProvider` (`source-instantiator.ts`), which checks for the binding file when it is
+   asked rather than at registration, since `omnesis broker unlink` drops it while the source stays registered.
+   `markNeedsAuth` passes it to `buildReauthHint`, which then says to sign the connection in again at the broker or
+   run `omnesis broker unlink <provider> <account>`, instead of `sources reauth` (which `auth.begin` refuses). The
+   gateway's needs-sign-in notice and the portal's reauth banner still offer a sign-in here; they cannot tell a
+   brokered account apart yet.
+4. **Portal wizard skip. Done.** `shouldOpenCredentialsWizard` now takes whether each account is already added, read
+   by `isAccountRegistered` from the gateway's source rows (`GET /admin/sources`) with the CLI's
+   `splitConfiguredAccounts` rule: an account counts as added when the gateway lists its source on any device,
+   enabled or not. The wizard is skipped only while a brokered account is not added yet; once every brokered account
+   is added, connecting another account opens the wizard as usual.
 5. **Narrower Nango key** (see above), and document it in `website/docs/sources.html`.
 6. **Before proposing upstream:** consider gating behind `OMNESIS_EXPERIMENTAL` per the repository's rules for new
    behaviour; add a `.changeset/` entry; split into reviewable commits (core + contract + CLI, then providers); rebase
