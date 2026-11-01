@@ -8751,6 +8751,26 @@ describe("POST /sql", () => {
 });
 
 describe("GET /status", () => {
+  test("phone capture requests require manual fallback while queued Watch captures retain Ask", async () => {
+    const phone = await req("/capture/route", {
+      method: "POST",
+      body: JSON.stringify({ text: "Where is the plant guide?" }),
+    });
+    expect(phone.status).toBe(503);
+    const watch = await req("/watch/capture/route", {
+      method: "POST",
+      body: JSON.stringify({ text: "Where is the plant guide?" }),
+    });
+    expect(watch.status).toBe(200);
+    expect(await watch.json()).toEqual({ route: "ask" });
+  });
+
+  test("advertises phone capture with manual actions when no decision model is assigned", async () => {
+    const body = await (await req("/status")).json();
+    expect(body.capture).toMatchObject({ supported: true, enabled: true, active: false });
+    expect(body.watchCapture).toMatchObject({ supported: true, enabled: true, active: false });
+  });
+
   test("advertises task conversations to authenticated clients", async () => {
     const body = await (await req("/status")).json();
     expect(body.capabilities).toEqual({ taskConversations: { min: 1, max: 1 } });

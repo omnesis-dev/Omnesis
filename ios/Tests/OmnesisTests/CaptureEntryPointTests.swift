@@ -76,19 +76,19 @@ final class CaptureEntryPointTests: XCTestCase {
         XCTAssertEqual(actionOffenders, [], "In-app capture action escaped the drawer, Tasks, and Notes history")
     }
 
-    func testExternalCaptureSurfaceIsControlOnly() throws {
+    func testExternalVoiceEntryUsesControlAndShortcut() throws {
         let widgetSource = try source(
             at: iosRoot.appendingPathComponent("Sources/OmnesisWidgets/OmnesisWidgets.swift")
         )
         XCTAssertTrue(widgetSource.contains("TellBrainControl"))
         XCTAssertFalse(widgetSource.contains("TellBrainWidget"))
-        XCTAssertTrue(widgetSource.contains("Tell Omnesis"))
+        XCTAssertTrue(widgetSource.contains("Label(\"Omnesis\", image: \"omnesis.mark\")"))
 
         let intentsSource = try source(
             at: iosRoot.appendingPathComponent("Sources/Omnesis/Intents/OmnesisAppIntents.swift")
         )
         XCTAssertTrue(intentsSource.contains("CaptureNoteIntent"))
-        XCTAssertFalse(intentsSource.contains("OpenCaptureIntent"))
+        XCTAssertTrue(intentsSource.contains("intent: SpeakToOmnesisIntent()"))
 
         for name in ["Info.plist", "Info-Demo.plist"] {
             XCTAssertFalse(

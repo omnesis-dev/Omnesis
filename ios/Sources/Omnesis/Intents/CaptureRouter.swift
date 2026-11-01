@@ -6,9 +6,8 @@ import Foundation
 import Observation
 #endif
 
-/// Process-wide funnel for the Lock Screen / Control Center "Tell the
-/// Brain" control. `HomeView` observes `requestCount` and presents
-/// `CaptureView`.
+/// Process-wide funnel for system voice controls and shortcuts.
+/// `HomeView` observes `requestCount` and presents unified dictation.
 ///
 /// A monotonically increasing counter (not a Bool) so back-to-back
 /// requests each produce an observable change, and so a request that

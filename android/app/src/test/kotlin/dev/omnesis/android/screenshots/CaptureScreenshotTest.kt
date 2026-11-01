@@ -55,6 +55,68 @@ class CaptureScreenshotTest {
         )
     }
 
+    @Test fun voice_entry_automatic_dark() = capture("voice_entry_automatic_dark", true) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, speech = SpeechState.LISTENING,
+            text = "Where is the example document?"))
+    }
+
+    @Test fun voice_entry_automatic_light() = capture("voice_entry_automatic_light", false) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, speech = SpeechState.LISTENING,
+            text = "Where is the example document?"))
+    }
+
+    @Test fun voice_entry_manual_dark() = capture("voice_entry_manual_dark", true) {
+        Screen(CaptureUiState(unified = true, speech = SpeechState.LISTENING,
+            text = "Remember to water the plants"))
+    }
+
+    @Test fun voice_entry_manual_light() = capture("voice_entry_manual_light", false) {
+        Screen(CaptureUiState(unified = true, speech = SpeechState.LISTENING,
+            text = "Remember to water the plants"))
+    }
+
+    @Test fun voice_entry_recording_dark() = capture("voice_entry_recording_dark", true) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, speech = SpeechState.RECORDING,
+            voiceNote = VoiceNoteUi(recording = true, elapsedMs = 3500)))
+    }
+
+    @Test fun voice_entry_recording_light() = capture("voice_entry_recording_light", false) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, speech = SpeechState.RECORDING,
+            voiceNote = VoiceNoteUi(recording = true, elapsedMs = 3500)))
+    }
+
+    @Test fun voice_entry_failed_dark() = capture("voice_entry_failed_dark", true) {
+        Screen(CaptureUiState(unified = true, text = "Remember to water the plants",
+            save = SaveState.Failed("Couldn’t prepare your words automatically. Try Ask again or choose Tell to save the note.")))
+    }
+
+    @Test fun voice_entry_failed_light() = capture("voice_entry_failed_light", false) {
+        Screen(CaptureUiState(unified = true, text = "Remember to water the plants",
+            save = SaveState.Failed("Couldn’t prepare your words automatically. Try Ask again or choose Tell to save the note.")))
+    }
+
+    @Test fun voice_entry_sending_dark() = capture("voice_entry_sending_dark", true) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, save = SaveState.Saving,
+            voiceNote = VoiceNoteUi(recording = false, canResume = false, elapsedMs = 3500)))
+    }
+
+    @Test fun voice_entry_sending_light() = capture("voice_entry_sending_light", false) {
+        Screen(CaptureUiState(unified = true, automaticRouting = true, save = SaveState.Saving,
+            voiceNote = VoiceNoteUi(recording = false, canResume = false, elapsedMs = 3500)))
+    }
+
+    @Test fun voice_entry_audio_failed_dark() = capture("voice_entry_audio_failed_dark", true) {
+        Screen(CaptureUiState(unified = true,
+            voiceNote = VoiceNoteUi(recording = false, canResume = false, elapsedMs = 3500),
+            save = SaveState.Failed("Couldn’t prepare your words automatically. Try Ask again or choose Tell to save the note.")))
+    }
+
+    @Test fun voice_entry_audio_failed_light() = capture("voice_entry_audio_failed_light", false) {
+        Screen(CaptureUiState(unified = true,
+            voiceNote = VoiceNoteUi(recording = false, canResume = false, elapsedMs = 3500),
+            save = SaveState.Failed("Couldn’t prepare your words automatically. Try Ask again or choose Tell to save the note.")))
+    }
+
     // --- empty (just opened, mic idle) ---
 
     @Test

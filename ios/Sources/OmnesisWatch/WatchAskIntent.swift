@@ -62,6 +62,22 @@ struct AskOmnesisIntent: AppIntent {
     }
 }
 
+/// Opens the unified recorder without asking Siri for a parameter first.
+/// A one-action shortcut can run this from the Action button on Apple Watch
+/// Ultra. Recording, routing, delivery and cancellation use the complication
+/// flow, including returning to the watch face after a cancelled capture.
+struct SpeakToOmnesisIntent: AppIntent {
+    static let title: LocalizedStringResource = "Speak to Omnesis"
+    static let description = IntentDescription("Start listening, then ask a question or save a note.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        await WatchComplicationCapture.shared.start(fromComplication: true)
+        return .result()
+    }
+}
+
 /// System-registered Siri phrases for the watch app. Mirrors the iPhone's
 /// "Ask Omnesis" phrase set (see `OmnesisAppShortcuts`) so the same
 /// utterance works on either device. The phrase can only run the intent
@@ -70,6 +86,12 @@ struct AskOmnesisIntent: AppIntent {
 /// initial utterance (an OS limitation, not ours).
 struct OmnesisWatchAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: SpeakToOmnesisIntent(),
+            phrases: ["Speak to \(.applicationName)", "Talk to \(.applicationName)"],
+            shortTitle: "Speak to Omnesis",
+            systemImageName: "mic.fill"
+        )
         AppShortcut(
             intent: AskOmnesisIntent(),
             phrases: [

@@ -5,6 +5,9 @@ package dev.omnesis.android.ui.home
 
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -75,6 +78,26 @@ class HomeScaffoldTasksCaptureTest {
         compose.onNodeWithContentDescription("Cancel").performClick()
         harness.waitUntil { harness.currentRoute == "tasks" }
         compose.onNodeWithTag("tasks.tellOmnesis").assertIsDisplayed()
+    }
+
+    @Test
+    fun externalLaunchStartsUnifiedCaptureAndKeepsTheInAppDraftUnderneath() {
+        harness.composeShell()
+        harness.waitUntil { "/status" in harness.gateway.requestPaths }
+        compose.runOnUiThread { harness.nav.navigate("capture?surface=android-app") }
+        harness.waitUntil { harness.currentRoute == CAPTURE_ROUTE }
+        compose.onNode(hasSetTextAction()).performTextInput("Keep this unfinished note")
+        val previousEntry = harness.nav.currentBackStackEntry!!.id
+
+        compose.runOnUiThread { harness.captureLaunchBus.post(dev.omnesis.android.ui.capture.CaptureSurface.TILE) }
+        harness.waitUntil { harness.nav.currentBackStackEntry?.id != previousEntry }
+        assertEquals("android-tile", harness.nav.currentBackStackEntry?.arguments?.getString("surface"))
+        assertTrue(compose.onAllNodes(hasText("Ask")).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodes(hasText("Tell")).fetchSemanticsNodes().isNotEmpty())
+
+        compose.onNodeWithContentDescription("Cancel").performClick()
+        harness.waitUntil { harness.nav.currentBackStackEntry?.id == previousEntry }
+        compose.onNode(hasSetTextAction()).assertTextContains("Keep this unfinished note")
     }
 
     private companion object {

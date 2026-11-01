@@ -46,6 +46,61 @@ class NotesClientTest {
     """.trimIndent()
 
     @Test
+    fun routeCapturePostsOnlyTextAndDecodesRoute() = runTest {
+        server.enqueue(MockResponse().setBody("""{"route":"ask"}"""))
+        assertEquals("ask", client().routeCapture("Where is the example document?").route)
+        val request = server.takeRequest()
+        assertEquals("/capture/route", request.path)
+        assertEquals("Bearer tok", request.getHeader("Authorization"))
+        assertEquals("""{"text":"Where is the example document?"}""", request.body.readUtf8())
+    }
+
+    @Test
+    fun transcribeCaptureSendsRawAudioWithoutCreatingNote() = runTest {
+        val audio = Files.createTempFile("capture", ".wav").toFile()
+        try {
+            audio.writeBytes(byteArrayOf(1, 2, 3))
+            server.enqueue(MockResponse().setBody("""{"available":true,"text":"Example question"}"""))
+            assertEquals("Example question", client().transcribeCapture(audio, "audio/wav"))
+            val request = server.takeRequest()
+            assertEquals("/capture/transcribe", request.path)
+            assertEquals("audio/wav", request.getHeader("Content-Type"))
+            assertTrue(byteArrayOf(1, 2, 3).contentEquals(request.body.readByteArray()))
+        } finally { audio.delete() }
+    }
+
+    @Test
+    fun olderGatewayUsesTheLegacyTranscriberOnlyAfterMissingCaptureRoute() = runTest {
+        val audio = Files.createTempFile("capture-legacy", ".wav").toFile()
+        try {
+            audio.writeBytes(byteArrayOf(1, 2, 3))
+            server.enqueue(MockResponse().setResponseCode(404).setBody("Not found"))
+            server.enqueue(MockResponse().setBody("""{"available":true,"text":"Example question"}"""))
+            assertEquals("Example question", client().transcribeCapture(audio, "audio/wav"))
+            assertEquals("/capture/transcribe", server.takeRequest().path)
+            val legacy = server.takeRequest()
+            assertEquals("/inference/transcribe", legacy.path)
+            assertEquals("Bearer tok", legacy.getHeader("Authorization"))
+            assertTrue(byteArrayOf(1, 2, 3).contentEquals(legacy.body.readByteArray()))
+        } finally { audio.delete() }
+    }
+
+    @Test
+    fun disabledTranscriptionNeverRetriesTheLegacyEndpoint() = runTest {
+        val audio = Files.createTempFile("capture-disabled", ".wav").toFile()
+        try {
+            audio.writeBytes(byteArrayOf(1, 2, 3))
+            server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"Dictation disabled"}"""))
+            try {
+                client().transcribeCapture(audio, "audio/wav")
+                fail("Expected disabled transcription refusal")
+            } catch (_: GatewayException) {
+                assertEquals(1, server.requestCount)
+            }
+        } finally { audio.delete() }
+    }
+
+    @Test
     fun create_posts_full_body_and_decodes_created_entry() = runTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody(entryJson))
         val entry = client().create(

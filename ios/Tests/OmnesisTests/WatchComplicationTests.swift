@@ -5,6 +5,38 @@
 import XCTest
 
 final class WatchComplicationTests: XCTestCase {
+    @MainActor
+    func testControlLaunchWaitsForItsSceneAndIsConsumedOnce() {
+        let router = WatchControlRouter()
+        XCTAssertFalse(router.consume())
+        router.requestCapture()
+        XCTAssertTrue(router.consume(), "A launch that precedes scene construction must not be lost")
+        XCTAssertFalse(router.consume(), "Re-rendering the scene must not start another recording")
+    }
+
+    @MainActor
+    func testRepeatedControlTapsCoalesceUntilTheSceneConsumesThem() {
+        let router = WatchControlRouter()
+        router.requestCapture()
+        router.requestCapture()
+        XCTAssertTrue(router.consume())
+        XCTAssertFalse(router.consume())
+        router.requestCapture()
+        XCTAssertTrue(router.consume(), "A later invocation must still open capture")
+    }
+
+    @MainActor
+    func testStaleControlLaunchIsDroppedAndANewPressCanOpenCapture() {
+        let router = WatchControlRouter()
+        let requested = Date(timeIntervalSince1970: 1_770_000_000)
+        router.requestCapture(at: requested)
+        XCTAssertFalse(router.consume(asOf: requested.addingTimeInterval(WatchControlRouter.freshnessWindow)))
+        XCTAssertFalse(router.consume(asOf: requested), "A consumed stale request cannot become actionable again")
+        let later = requested.addingTimeInterval(60)
+        router.requestCapture(at: later)
+        XCTAssertTrue(router.consume(asOf: later))
+    }
+
     func testEachComplicationHasItsOwnLink() {
         XCTAssertEqual(WatchComplication.ask.url.absoluteString, "omnesis-watch://ask")
         XCTAssertEqual(WatchComplication.note.url.absoluteString, "omnesis-watch://note")

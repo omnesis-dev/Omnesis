@@ -27,7 +27,7 @@ Code layout (`ios/Sources/Omnesis/`):
 `OmnesisDemo` (identical code, distinct identity — see below), and
 `OmnesisWatch` (the Apple Watch companion). `OmnesisWatch` is a single-target
 SwiftUI watchOS app (`WKApplication`) embedded in the production app; it holds no
-gateway pairing. Its two App Shortcuts relay a dictated utterance to the paired
+gateway pairing. Its Ask and note App Shortcuts relay a dictated utterance to the paired
 iPhone over WatchConnectivity: **"Ask Omnesis"** relays a question, which the
 phone answers via the shared `SiriAskRunner`; **"Omnesis note"** relays a note,
 which the phone saves via the shared `NoteCaptureService` (attaching the phone's
@@ -75,6 +75,18 @@ reported delivered — with the same retries, 7-day/50-note limit and dropped
 notice. The phone saves a note once by its ref, which is also its gateway
 note id. Questions keep their live relay.
 
+On watchOS 26 or later, the native **Omnesis** `ControlWidget` in
+`Sources/OmnesisWatchWidgets/OmnesisWatchWidgets.swift` opens the same recorder as
+the complication from watch Control Center, Smart Stack or the Apple Watch Ultra
+Action button. Its intent has dual target membership through
+`Sources/Omnesis/Intents/WatchComplication.swift`; the action runs on the watch,
+not the paired phone. Keep the watchOS 26 availability gate: the watch app and
+complication still support watchOS 10.
+
+The **Speak to Omnesis** App Shortcut opens the same recorder as the complication.
+It remains the Action button fallback for older watchOS versions: a one-action
+shortcut starts recording without Siri asking for a parameter.
+
 The watch ships one **Omnesis** logo complication. Its link enters
 `WatchComplicationCapture`, separate from `WatchDictation` and both Siri intents.
 The recorder starts immediately without system dictation or live text, then
@@ -82,8 +94,8 @@ Ask/Tell stop and durably enqueue the recording in one tap. The phone publishes
 unified-capture support and the gateway's decision-gate status in
 `WatchDictationGate`. With the decision gate active, Send replaces Ask/Tell.
 Legacy deep links enter the unified capture. Normal app launch shows a branded
-Tap to speak button that opens the same recorder; only the complication starts
-listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
+Tap to speak button that opens the same recorder; the complication, control and
+Speak to Omnesis action start listening immediately. A Siri relay or in-app dictation dismisses the capture UI.
 Cancel from a complication-launched capture discards its recording and returns
 to the watch face; home capture Cancel stays in the app, and follow-up Cancel
 returns to the previous answer.

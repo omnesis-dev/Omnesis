@@ -119,6 +119,23 @@ class AssistantAppActionsResourcesTest {
         assertEquals("Ask Omnesis", ask.featureValue)
     }
 
+    @Test
+    fun `unified voice shortcut opens foreground capture without changing Ask or Tell`() {
+        val shortcut = parseShortcuts().shortcuts.single { it.id == "voice_input" }
+        assertEquals(MainActivity.ACTION_VOICE_INPUT, shortcut.action)
+        assertEquals(MainActivity::class.java.name, shortcut.targetClass)
+    }
+
+    @Test
+    fun `Omnesis tile uses the logo and requires the system tile permission`() {
+        val service = context.packageManager.getServiceInfo(
+            ComponentName(context, dev.omnesis.android.tile.TellBrainTileService::class.java), 0,
+        )
+        assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", service.permission)
+        assertEquals(R.drawable.omnesis_logo, service.icon)
+        assertEquals("Omnesis", service.loadLabel(context.packageManager).toString())
+    }
+
     private fun Capability.assertPrimary(
         action: String,
         parameterName: String,

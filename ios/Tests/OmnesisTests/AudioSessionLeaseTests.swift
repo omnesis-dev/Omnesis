@@ -50,3 +50,36 @@ final class RealtimeCaptureReadinessTests: XCTestCase {
         XCTAssertFalse(readiness.receivePCMFrame(byteCount: silence.count))
     }
 }
+
+final class SpeechPermissionRequestTests: XCTestCase {
+    func testPermissionPromptCanStartItsCurrentCapture() {
+        var request = SpeechPermissionRequest()
+        let generation = request.begin()
+        XCTAssertTrue(request.owns(generation))
+    }
+
+    func testDismissalBeforeSpeechPermissionReplyPreventsRecording() {
+        var request = SpeechPermissionRequest()
+        let generation = request.begin()
+        request.cancel()
+        XCTAssertFalse(request.owns(generation))
+    }
+
+    func testDismissalBetweenSpeechAndMicrophoneRepliesPreventsRecording() {
+        var request = SpeechPermissionRequest()
+        let generation = request.begin()
+        XCTAssertTrue(request.owns(generation), "Speech authorization may request microphone access")
+        request.cancel()
+        XCTAssertFalse(request.owns(generation), "A late microphone grant must not start a dismissed capture")
+    }
+
+    func testNewCaptureCannotBeStartedOrDeniedByAnEarlierPrompt() {
+        var request = SpeechPermissionRequest()
+        let first = request.begin()
+        let second = request.begin()
+        XCTAssertFalse(request.owns(first))
+        XCTAssertTrue(request.owns(second))
+        request.cancel()
+        XCTAssertFalse(request.owns(second))
+    }
+}

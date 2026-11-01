@@ -14,6 +14,18 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <shortcut
+        android:shortcutId="voice_input"
+        android:enabled="true"
+        android:icon="@drawable/omnesis_logo"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="dev.omnesis.android.action.VOICE_INPUT"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.MainActivity" />
+    </shortcut>
+
     <!-- Locale-aware entry into either hands-free Omnesis feature. -->
     <capability android:name="actions.intent.OPEN_APP_FEATURE">
         <intent

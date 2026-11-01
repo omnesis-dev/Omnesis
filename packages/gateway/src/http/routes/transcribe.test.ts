@@ -185,9 +185,9 @@ describe("POST /inference/transcribe", () => {
   });
 });
 
-describe("POST /watch/capture/transcribe", () => {
+describe.each(["/watch/capture/transcribe", "/capture/transcribe"])("POST %s", (path) => {
   const capture = (token = ADMIN_TOKEN) =>
-    app.request("/watch/capture/transcribe", {
+    app.request(path, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "audio/mp4" },
       body: enc("Where is the bicycle?") as unknown as BodyInit,

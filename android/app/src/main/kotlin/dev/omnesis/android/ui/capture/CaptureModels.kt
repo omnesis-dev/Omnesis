@@ -9,6 +9,9 @@ import dev.omnesis.android.notes.QueueReason
 object CaptureSurface {
     const val APP = "android-app"
     const val TILE = "android-tile"
+    const val VOICE_SHORTCUT = "android-voice-shortcut"
+
+    fun unified(surface: String): Boolean = surface == TILE || surface == VOICE_SHORTCUT
 
     /** Capture launched by a Gemini or Google Assistant App Action. */
     const val ASSISTANT = "android-assistant"
@@ -64,6 +67,10 @@ sealed interface SaveState {
 
 /** Everything the capture screen renders. Pure data so screenshot tests can drive any state. */
 data class CaptureUiState(
+    val unified: Boolean = false,
+    val automaticRouting: Boolean = false,
+    /** Consumed by navigation, with the microphone stopped before handoff. */
+    val questionToAsk: String? = null,
     /** Committed (final + user-edited) text. */
     val text: String = "",
     /** In-flight partial recognition, displayed after [text] while listening. */
@@ -87,6 +94,8 @@ data class CaptureUiState(
 data class VoiceNoteUi(
     /** The microphone is open. */
     val recording: Boolean,
+    /** Finished audio retained after a routing failure cannot be extended. */
+    val canResume: Boolean = true,
     /** How much audio the note holds. */
     val elapsedMs: Long,
     /** 0–1 microphone level while recording, for the meter. */

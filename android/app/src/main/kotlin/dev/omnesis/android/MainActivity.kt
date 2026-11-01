@@ -206,8 +206,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The Quick Settings tile and the static app shortcut both launch this
-     * activity with [ACTION_TELL_BRAIN]; the carried surface slug rides through
+     * The Omnesis tile and shortcut launch [ACTION_VOICE_INPUT]; the explicit Tell
+     * shortcut uses [ACTION_TELL_BRAIN]. The carried surface slug rides through
      * the [CaptureLaunchBus] into the nav graph, which opens the capture route.
      *
      * The tile stamps each tap with [EXTRA_LAUNCH_STAMP]: a stamped intent is
@@ -220,12 +220,17 @@ class MainActivity : ComponentActivity() {
      * dropped (the user lands in the app, one tap from capture).
      */
     private fun maybeHandleCaptureIntent(launchIntent: Intent?, firstCreation: Boolean = true) {
-        if (launchIntent?.action != ACTION_TELL_BRAIN) return
+        if (launchIntent?.action != ACTION_TELL_BRAIN && launchIntent?.action != ACTION_VOICE_INPUT) return
         val stamp = launchIntent.getLongExtra(EXTRA_LAUNCH_STAMP, 0L)
         val shouldHandle = if (stamp != 0L) stamp != lastHandledLaunchStamp else firstCreation
         if (!shouldHandle) return
         lastHandledLaunchStamp = stamp
-        val surface = launchIntent.getStringExtra(EXTRA_SURFACE) ?: CaptureSurface.APP
+        val surface = if (launchIntent.action == ACTION_VOICE_INPUT) {
+            launchIntent.getStringExtra(EXTRA_SURFACE)?.takeIf { it == CaptureSurface.TILE }
+                ?: CaptureSurface.VOICE_SHORTCUT
+        } else {
+            launchIntent.getStringExtra(EXTRA_SURFACE) ?: CaptureSurface.APP
+        }
         captureLaunchBus.post(surface)
     }
 
@@ -348,6 +353,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_SEARCH = "dev.omnesis.android.action.SEARCH"
         const val EXTRA_SEARCH_QUERY = "query"
         /** Intent action the quick-capture entry points (QS tile, app shortcut) launch with. */
+        const val ACTION_VOICE_INPUT = "dev.omnesis.android.action.VOICE_INPUT"
         const val ACTION_TELL_BRAIN = "dev.omnesis.android.action.TELL_BRAIN"
 
         /** String extra naming the capture surface slug ("android-tile", "android-shortcut"). */

@@ -75,7 +75,7 @@ extension HomeView {
             accessAuthorization: accessAuthorizationPresentation != nil,
             privacyApproval: privacyApprovalPresentation != nil,
             privacyLookup: privacyApprovalLookupInFlight,
-            capture: showCapture,
+            capture: showCapture || unifiedCapture,
             relayConsent: store.relayPushConsentRequest != nil
         )
     }
@@ -156,6 +156,13 @@ extension HomeView {
     /// presentation has already gone ends first, so it cannot hold the queue,
     /// and a presenter that leaves nothing on screen hands the turn straight on.
     private func presentDeferred() {
+        // A system voice entry opens over an in-app note without taking its draft.
+        if pendingCaptureSurface != nil, showCapture, !unifiedCapture,
+           !screen.hasSheet, !store.phoneSetup.isGateActive {
+            store.phoneSetup.withdrawDeferredPresentation(.capture)
+            _ = presentPendingCapture()
+            return
+        }
         store.phoneSetup.settleDeferredPresentations(on: screen)
         while let presenter = store.phoneSetup.nextDeferredPresentation(screenIsFree: isScreenFree) {
             guard !present(presenter) else { return }
@@ -214,7 +221,9 @@ extension HomeView {
         guard let surface = pendingCaptureSurface else { return false }
         pendingCaptureSurface = nil
         captureSurface = surface
-        showCapture = true
+        menuOpen = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        unifiedCapture = true
         return true
     }
 
@@ -278,6 +287,7 @@ struct HomeView: View {
     /// system alert, Control Center or an incoming-call banner.
     @State private var sceneWasBackgrounded = false
     @State private var captureSurface: NoteSurface = .app
+    @State private var unifiedCapture = false
     /// `CaptureRouter.requestCount` values already turned into a
     /// presentation, so re-renders don't re-present.
     @State private var consumedCaptureRequests: Int = 0
@@ -310,6 +320,7 @@ struct HomeView: View {
     }
 
     private func closeCapture() {
+        unifiedCapture = false
         showCapture = false
     }
 
@@ -349,12 +360,32 @@ struct HomeView: View {
                 // the Cancel button. Inside the container it is a surface like
                 // any other.
                 if showCapture {
-                    CaptureView(surface: captureSurface, onClose: closeCapture)
+                    CaptureView(surface: .app, onClose: { showCapture = false }, suspended: unifiedCapture)
                         .environment(store)
+                        .opacity(unifiedCapture ? 0 : 1)
+                        .allowsHitTesting(!unifiedCapture)
+                        .accessibilityHidden(unifiedCapture)
                         .transition(.move(edge: .bottom))
+                }
+                if unifiedCapture {
+                    CaptureView(
+                        surface: captureSurface,
+                        onClose: { unifiedCapture = false },
+                        unified: true,
+                        onAsk: { text in
+                            store.agent.newConversation()
+                            store.agent.composerDraft = text
+                            selection = .agent
+                            closeCapture()
+                            Task { await store.agent.sendComposerDraft(text) }
+                        }
+                    )
+                    .environment(store)
+                    .transition(.move(edge: .bottom))
                 }
             }
             .animation(.easeInOut(duration: 0.28), value: showCapture)
+            .animation(.easeInOut(duration: 0.28), value: unifiedCapture)
         }
         // Lets a gateway-error placeholder deep within any section (e.g.
         // the agent's "no model assigned" first-run state) jump straight
@@ -436,6 +467,7 @@ struct HomeView: View {
         .environment(\.openCapture) {
             invalidateAutomaticForegroundWork()
             captureSurface = .app
+            unifiedCapture = false
             showCapture = true
         }
 
@@ -596,7 +628,7 @@ struct HomeView: View {
         guard let action = ForegroundNavigationArbiter.automaticAction(
             request.action,
             pushPending: router.pendingTarget != nil,
-            capturePending: showCapture || captureRouter.isFresh()
+            capturePending: showCapture || unifiedCapture || captureRouter.isFresh()
         ) else { return }
 
         switch action {
@@ -609,7 +641,7 @@ struct HomeView: View {
                 await Task.yield()
                 guard !Task.isCancelled,
                       router.pendingTarget == nil,
-                      !showCapture,
+                      !showCapture, !unifiedCapture,
                       !captureRouter.isFresh() else { return }
                 await store.agent.resumeConversation(id: id)
             }
@@ -629,7 +661,7 @@ struct HomeView: View {
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
-        guard captureRouter.isFresh() else { return }
+        guard !unifiedCapture, captureRouter.isFresh() else { return }
         pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
         requestDeferred(.capture)
     }
@@ -703,7 +735,7 @@ struct HomeView: View {
                     || store.phoneSetup.isGateActive,
                 pushPending: router.pendingTarget != nil,
                 pushRoutedMeanwhile: router.consumedSince(lookupStartedAt),
-                capturePending: showCapture || captureRouter.isFresh()
+                capturePending: showCapture || unifiedCapture || captureRouter.isFresh()
             )
         )
     }
@@ -712,6 +744,7 @@ struct HomeView: View {
     /// Screen / Control Center control's `OpenURLIntent` uses. Other
     /// URLs fall through untouched.
     private func handleCaptureURL(_ url: URL) {
+        guard !unifiedCapture else { return }
         guard url.host == "capture" || url.path == "/capture" else { return }
         invalidateAutomaticForegroundWork()
         let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?

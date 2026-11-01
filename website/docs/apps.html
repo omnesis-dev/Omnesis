@@ -876,9 +876,25 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           know. Say <strong>“Hey Siri, Omnesis note”</strong> or
           <strong>“Hey Siri, Omnesis capture”</strong> and Siri asks what to remember. Siri requires
           that follow-up because App Shortcut phrases cannot insert unrestricted dictated text into
-          the opening phrase. On iOS 18 or later, add the <strong>Tell Omnesis</strong> control from
-          the Control Center controls gallery; tapping it opens the capture screen and starts
-          listening.
+          the opening phrase.
+        </p>
+        <p>
+          On iOS 18 or later, add the <strong>Omnesis</strong> logo control from the Control Center
+          controls gallery or the Lock Screen controls picker. Tapping it opens voice capture and
+          starts listening immediately, with the same microphone animation as Tell Omnesis. With a
+          decision model available, tap <strong>Send</strong> and the gateway chooses whether to
+          open an agent conversation or save a note. Without an available decision model, or with
+          <code>inference.dictation.useDecisionGateForCapture</code> set to <code>false</code>,
+          choose <strong>Ask</strong> or <strong>Tell</strong> yourself. This applies only to the
+          control and voice shortcut; the app's chat and Tell Omnesis screens keep their separate
+          flows.
+        </p>
+        <p>
+          For the iPhone Action button, choose
+          <strong>Settings → Action Button → Controls</strong> and select <strong>Omnesis</strong>.
+          Alternatively, choose <strong>Shortcut</strong> and select
+          <strong>Speak to Omnesis</strong>. The action opens listening directly, without a Siri
+          question first. The system may require you to unlock before opening the app.
         </p>
         <p>
           The same Ask Omnesis and Omnesis note Siri shortcuts are available on the Apple Watch and
@@ -909,8 +925,22 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           restore Ask and Tell. The corresponding gateway setting is
           <code>inference.dictation.useDecisionGateForWatch</code>; it defaults on when a decision
           model is available. Older gateways and disabled or unavailable decision models show Ask
-          and Tell. If routing fails after Send, the recording is treated as Ask. Existing Siri
-          shortcuts and phone capture controls keep their separate flows.
+          and Tell. If routing fails after Send, the recording is treated as Ask. Existing Ask and
+          note Siri shortcuts keep their separate flows.
+        </p>
+        <p>
+          On watchOS 26 or later, add the <strong>Omnesis</strong> logo control to the watch's
+          Control Center or Smart Stack. On Apple Watch Ultra, choose
+          <strong>Settings → Action Button → Control</strong> and select <strong>Omnesis</strong>.
+          This control runs on the watch and opens the same recorder as the complication; it does
+          not open the iPhone app. Recording starts immediately, with Send or Ask and Tell following
+          the same decision setting as the complication.
+        </p>
+        <p>
+          The <strong>Speak to Omnesis</strong> shortcut also opens that recorder, including on
+          older watchOS versions. In Shortcuts on iPhone, create a shortcut containing that action
+          and enable <strong>Show on Apple Watch</strong> in its details. On Apple Watch Ultra,
+          choose <strong>Settings → Action Button → Shortcut</strong> and select it.
         </p>
         <p>
           Gateway transcription applies to both Ask and Tell from the complication. When it is
@@ -926,9 +956,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           On Android, Gemini or Google Assistant can invoke the installed App Actions for
           <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong>. The custom one-utterance
           phrases are English (United States) only. Long-press the Omnesis launcher icon for
-          matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts. For
-          one-tap capture from anywhere, open the expanded Quick Settings shade, choose Edit, and
-          add the <strong>Tell Omnesis</strong> tile.
+          matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts, or
+          choose <strong>Omnesis</strong> for unified voice capture. Drag that shortcut to the home
+          screen for one-tap access. In the expanded Quick Settings shade, choose Edit and add the
+          <strong>Omnesis</strong> tile for the same flow. Both start listening immediately and use
+          Send with a decision model, or Ask and Tell when routing is disabled or unavailable. They
+          share <code>inference.dictation.useDecisionGateForCapture</code> with the iPhone control.
+          A phone's configurable hardware button or gesture can use the shortcut if its manufacturer
+          supports app shortcuts; the available buttons and setup vary by device.
         </p>
         <div class="callout warn">
           <p>
@@ -952,14 +987,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
           recognizer. With gateway dictation on, they also send the recording with the note, and
           your gateway's <strong>Transcriber</strong> — the same model that transcribes voice notes
-          from your sources — transcribes it again and replaces the phone's text with its own. For
-          phone capture, it applies to Tell Omnesis:
+          from your sources — transcribes it again and replaces the phone's text with its own. This
+          applies to:
         </p>
         <ul>
-          <li>
-            Tell Omnesis in the app, including its Control Center control, Quick Settings tile and
-            app shortcut;
-          </li>
+          <li>Tell Omnesis in the app and the explicit Tell app shortcut;</li>
           <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
           <li>
             legacy Watch note capture. The unified Omnesis complication uses gateway transcription
@@ -967,8 +999,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </li>
         </ul>
         <p>
-          Agent conversations, Ask Omnesis, Siri, Shortcuts and assistant requests that already
-          carry their words keep the phone's or the system's recognition.
+          The unified phone control and voice shortcut use gateway transcription before routing or
+          opening chat when gateway dictation is active. Choosing Tell saves a voice note
+          immediately, including to the offline queue, as Tell Omnesis does in the app. With gateway
+          dictation off, these entry points use the phone's recognition. Existing agent
+          conversations, explicit Ask Omnesis, Siri and assistant requests that already carry their
+          words keep the phone's or the system's recognition.
         </p>
 
         <h3 id="gateway-dictation-turning-on">Turning it on and off</h3>

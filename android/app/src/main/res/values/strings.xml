@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Omnesis</string>
-    <string name="tile_tell_brain">Tell Omnesis</string>
+    <string name="tile_tell_brain">Omnesis</string>
+    <string name="shortcut_voice_short">Omnesis</string>
+    <string name="shortcut_voice_long">Speak to Omnesis</string>
     <string name="shortcut_tell_brain_short">Tell Omnesis</string>
     <string name="shortcut_tell_brain_long">Tell Omnesis something</string>
     <string name="shortcut_ask_omnesis_short">Ask Omnesis</string>

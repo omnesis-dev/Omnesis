@@ -84,6 +84,7 @@ class CaptureViewModelTest {
         gateway: () -> NotesGateway?,
         vararg voiceNotes: VoiceNoteSession,
         savedStateHandle: SavedStateHandle = SavedStateHandle(),
+        routing: CaptureRouting? = null,
     ): CaptureViewModel {
         val context = ApplicationProvider.getApplicationContext<Context>()
         transcriber = FakeTranscriber(context)
@@ -102,6 +103,7 @@ class CaptureViewModelTest {
                 sessions.removeFirstOrNull()
             },
             savedStateHandle = savedStateHandle,
+            routing = routing,
         )
     }
 
@@ -117,6 +119,136 @@ class CaptureViewModelTest {
     private fun awaitQueued(): PendingNote {
         assertEquals(SaveState.Done(queued = QueueReason.UNPAIRED), awaitSaveSettled(vm))
         return runBlocking { store.readAll().single() }
+    }
+
+    @Test fun externalCaptureListensAndManualAskPreservesPartialWordsWithoutSavingNote() {
+        vm = makeVm(gateway = { null }, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)))
+        assertTrue(vm.state.value.unified)
+        assertFalse(vm.state.value.automaticRouting)
+        vm.onMicPermission(true)
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
+        assertEquals(1, beginCount)
+        transcriber.listener!!.onPartial("What is on the schedule tomorrow?")
+        vm.ask()
+        assertEquals("What is on the schedule tomorrow?", vm.state.value.questionToAsk)
+        assertEquals(SpeechState.IDLE, vm.state.value.speech)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test fun automaticAskUsesClassifierAndDoesNotSaveNote() {
+        var classified: String? = null
+        vm = makeVm(gateway = { null }, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.VOICE_SHORTCUT)),
+            routing = CaptureRouting(active = { true }, route = { classified = it; "ask" }))
+        vm.onTextEdited("Where is the example document?")
+        vm.sendRouted()
+        assertEquals("Where is the example document?", classified)
+        assertEquals(classified, vm.state.value.questionToAsk)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test fun automaticNoteUsesDurableOfflineQueue() {
+        vm = makeVm(gateway = { null }, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { "note" }))
+        vm.onTextEdited("Remember to water the plants")
+        vm.sendRouted()
+        val note = awaitQueued()
+        assertEquals("Remember to water the plants", note.text)
+        assertNull(vm.state.value.questionToAsk)
+    }
+
+    @Test fun classifierFailureKeepsWordsAndOffersManualChoiceWithoutSaving() {
+        vm = makeVm(gateway = { null }, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { error("offline") }))
+        vm.onTextEdited("Keep these dictated words")
+        vm.sendRouted()
+        assertFalse(vm.state.value.automaticRouting)
+        assertEquals("Keep these dictated words", vm.state.value.text)
+        assertTrue(vm.state.value.save is SaveState.Failed)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+        vm.ask()
+        assertEquals("Keep these dictated words", vm.state.value.questionToAsk)
+    }
+
+    @Test fun recordedAskTranscribesBeforeOpeningChatAndDeletesFinishedAudio() {
+        val recording = recordingSession("external-ask.wav")
+        vm = makeVm({ null }, recording, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { false }, route = { error("manual Ask must not classify") },
+                transcribe = { "Where is the example document?" }))
+        vm.onMicPermission(true)
+        assertEquals(SpeechState.RECORDING, vm.state.value.speech)
+        vm.ask()
+        assertEquals("Where is the example document?", vm.state.value.questionToAsk)
+        assertNull(vm.state.value.voiceNote)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test fun automaticRecordedCaptureTranscribesBeforeClassifyingAndSubmitsOnce() {
+        val events = mutableListOf<String>()
+        val verdict = kotlinx.coroutines.CompletableDeferred<String>()
+        val recording = recordingSession("external-classify.wav")
+        vm = makeVm({ null }, recording, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { text ->
+                events += "route:$text"
+                verdict.await()
+            }, transcribe = { events += "transcribe"; "Where is the example document?" }))
+        vm.onMicPermission(true)
+        vm.sendRouted()
+        vm.sendRouted()
+        assertEquals(listOf("transcribe", "route:Where is the example document?"), events)
+        assertEquals(SaveState.Saving, vm.state.value.save)
+        verdict.complete("ask")
+        assertEquals("Where is the example document?", vm.state.value.questionToAsk)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test fun automaticRecordedNoteSavesTheAuthoritativeTranscriptWithoutRetranscribingAudio() {
+        val recording = recordingSession("external-note.wav")
+        var transcriptionCount = 0
+        vm = makeVm({ null }, recording, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { "note" },
+                transcribe = { transcriptionCount++; "Remember to water the plants" }))
+        vm.onMicPermission(true)
+        vm.sendRouted()
+        val note = awaitQueued()
+        assertEquals("Remember to water the plants", note.text)
+        assertNull(note.audio)
+        assertEquals(1, transcriptionCount)
+        assertNull(vm.state.value.voiceNote)
+    }
+
+    @Test fun failedTranscriptionKeepsAudioForManualTell() {
+        val recording = recordingSession("external-retry.wav")
+        vm = makeVm({ null }, recording, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { error("no words to classify") },
+                transcribe = { error("gateway offline") }))
+        vm.onMicPermission(true)
+        vm.sendRouted()
+        assertFalse(vm.state.value.automaticRouting)
+        assertTrue(vm.state.value.save is SaveState.Failed)
+        assertFalse(vm.state.value.voiceNote!!.recording)
+        vm.save()
+        val queued = awaitQueued()
+        assertTrue(queued.audio!!.file.exists())
+    }
+
+    @Test fun manualAskCanUsePhoneTranscriptAfterGatewayTranscriptionFailure() {
+        val recording = recordingSession("external-fallback.wav")
+        vm = makeVm({ null }, recording, savedStateHandle = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE)),
+            routing = CaptureRouting(active = { true }, route = { error("must not classify") },
+                transcribe = { error("transcriber unavailable") }))
+        vm.onMicPermission(true)
+        transcriber.listener!!.onFinal("Where is the example document?")
+        vm.sendRouted()
+        assertTrue(vm.state.value.save is SaveState.Failed)
+        vm.ask()
+        assertEquals("Where is the example document?", vm.state.value.questionToAsk)
+        assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test fun inAppCaptureDoesNotDiscoverAutomaticRouting() {
+        vm = makeVm(gateway = { null }, routing = CaptureRouting(active = { error("must not discover") }, route = { "ask" }))
+        assertFalse(vm.state.value.unified)
+        assertFalse(vm.state.value.automaticRouting)
     }
 
     // --- Voice notes: the gateway transcribes, the phone's words never show ---

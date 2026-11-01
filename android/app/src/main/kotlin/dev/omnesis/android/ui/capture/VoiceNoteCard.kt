@@ -51,6 +51,7 @@ fun VoiceNoteCard(
     onRecordMore: () -> Unit,
     onDiscard: () -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "Voice note",
 ) {
     val c = OmTheme.colors
     val shape = RoundedCornerShape(20.dp)
@@ -68,7 +69,7 @@ fun VoiceNoteCard(
             Modifier
                 .weight(1f)
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "Voice note, ${spokenDuration(note.elapsedMs)}"
+                    contentDescription = "$label, ${spokenDuration(note.elapsedMs)}"
                     stateDescription = if (note.recording) "Recording" else "Recorded"
                 },
             verticalAlignment = Alignment.CenterVertically,
@@ -80,12 +81,12 @@ fun VoiceNoteCard(
             }
             Spacer(Modifier.width(OmSpacing.md))
             Text(
-                "${if (note.recording) "Recording" else "Voice note"} · ${clockDuration(note.elapsedMs)}",
+                "${if (note.recording) "Recording" else label} · ${clockDuration(note.elapsedMs)}",
                 style = MaterialTheme.typography.bodyMedium.merge(TextStyle(fontFeatureSettings = "tnum")),
                 color = c.textPrimary,
             )
         }
-        if (!note.recording) {
+        if (!note.recording && note.canResume) {
             TextButton(onClick = onRecordMore, enabled = enabled) { Text("Record more", color = c.accent) }
         }
         TextButton(

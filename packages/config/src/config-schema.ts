@@ -3372,6 +3372,12 @@ const entailmentSettings = z
 // `dictation` on `GET /status`.
 const dictationSettings = z
   .object({
+    useDecisionGateForCapture: z
+      .boolean()
+      .describe(
+        "Use the decision model for phone controls and shortcuts: show Send and choose Ask or Tell. Enabled by default when a decision model is available; set false to show Ask and Tell buttons.",
+      )
+      .optional(),
     useDecisionGateForWatch: z
       .boolean()
       .describe(

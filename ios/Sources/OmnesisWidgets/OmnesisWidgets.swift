@@ -5,7 +5,7 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Tasks and quick capture, hosted in the app's WidgetKit extension.
+/// Tasks and voice capture, hosted in the app's WidgetKit extension.
 /// Task data uses a dedicated device-only shared Keychain group.
 @main
 struct OmnesisWidgetsBundle: WidgetBundle {
@@ -24,15 +24,15 @@ struct TellBrainControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "dev.omnesis.ios.widgets.tell-control") {
             ControlWidgetButton(action: OpenCaptureControlIntent()) {
-                // Custom monochrome symbol: the Omnesis mark with a
-                // microphone inside (`Resources/BrandSymbols.xcassets`).
+                // Custom monochrome symbol: the Omnesis logo.
                 // Control Center renders control glyphs as a tinted
                 // template, so this is the brand mark's silhouette, not
                 // the full-color logo.
-                Label("Tell Omnesis", image: "omnesis.mic")
+                Label("Omnesis", image: "omnesis.mark")
+                    .labelStyle(.iconOnly)
             }
         }
-        .displayName("Tell Omnesis")
-        .description("Open Omnesis quick capture, listening immediately.")
+        .displayName("Omnesis")
+        .description("Speak to Omnesis to ask a question or save a note.")
     }
 }
