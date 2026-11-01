@@ -20,7 +20,11 @@ import { formatSyncRemediation } from "@omnesis/types";
 import { aggregateDrivingMobilePermissionCapability } from "@omnesis/types/mobile-permission-health";
 import { assertNever } from "../utils.js";
 import { localDeviceUpdateCommands } from "../fleet-update.js";
-import { formatFleetVersionSummary, summarizeFleetVersions } from "../client-version.js";
+import {
+  formatFleetVersionSummary,
+  hasVersionState,
+  summarizeFleetVersions,
+} from "../client-version.js";
 import {
   compareStableReleaseVersions,
   isStableReleaseVersion,
@@ -306,7 +310,8 @@ function validReleaseCheckSnapshot(value: unknown): ReleaseCheckSnapshot | null 
  */
 function checkFleetVersions(d: DoctorData, ck: Checks): void {
   if (!d.devices) return;
-  const active = d.devices.filter((device) => !device.revokedAt);
+  // A CLI token that never reported a build is not part of the version story.
+  const active = d.devices.filter((device) => !device.revokedAt && hasVersionState(device));
   if (active.length === 0) return;
 
   const summary = summarizeFleetVersions(active.map((device) => device.versionState ?? "unknown"));

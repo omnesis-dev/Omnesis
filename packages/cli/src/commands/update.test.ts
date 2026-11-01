@@ -492,7 +492,8 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "" },
     ]);
     await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner));
-    expect(output()).toMatch(/back up first: omnesis backup --note pre-upgrade/);
+    // No gateway on this host, so the plan takes no backup of its own.
+    expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
   });
 
   test("downgrade is blocked without --force (no install, before confirm)", async () => {
@@ -647,10 +648,25 @@ describe("updateSourceCheckout", () => {
     expect(output()).toContain("Dry run");
   });
 
+  test("a checkout plan that backs up says so instead of asking for a backup", async () => {
+    const runner = fakeRunner([managed, clean, tags]);
+    await updateSourceCheckout(
+      { rootDir, edge: false, dryRun: true },
+      makeDeps(runner, {
+        roles: hostRoles({ gateway: supervised }),
+        backupsDir: "/home/maya/.config/omnesis/backups",
+      }),
+    );
+    expect(output()).toContain("back up the gateway's databases through its API");
+    expect(output()).toContain("into /home/maya/.config/omnesis/backups.");
+    expect(output()).not.toContain("Back up first");
+  });
+
   test("prints the forward-migration backup reminder", async () => {
     const runner = fakeRunner([managed, clean, tags]);
     await updateSourceCheckout({ rootDir, edge: false, dryRun: true }, makeDeps(runner));
-    expect(output()).toMatch(/back up first: omnesis backup --note pre-upgrade/);
+    // No gateway on this host, so the plan takes no backup of its own.
+    expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
   });
 
   test("fetches, checks out the newest stable tag, installs, and builds", async () => {
@@ -681,7 +697,8 @@ describe("updateSourceCheckout", () => {
     ]);
     expect(runner.calls.every((c) => c.spec.cwd === rootDir)).toBe(true);
     expect(prepareSourceLauncher).toHaveBeenCalledExactlyOnceWith(rootDir);
-    expect(output()).toContain("Updated to v0.10.0.");
+    expect(output()).toContain("Built v0.10.0.");
+    expect(logged.at(-1)).toContain("Updated to v0.10.0.");
   });
 
   /**
@@ -1723,6 +1740,27 @@ describe("executing a host's plan", () => {
       "collector",
     ]);
   });
+
+  test("a package plan that backs up says so instead of asking for a backup, and says done last", async () => {
+    const runner = fakeRunner([
+      { code: 0, stdout: "0.3.0\n" },
+      { code: 0, stdout: "" },
+    ]);
+    await updateNpmGlobal(
+      { channel: "stable", dryRun: false },
+      makeDeps(runner, {
+        roles: hostRoles({ gateway: supervised, collector: supervised }),
+        backupsDir: "/home/maya/.config/omnesis/backups",
+      }),
+    );
+    expect(output()).toContain(
+      "The update backs up the gateway's databases before they run, into /home/maya/.config/omnesis/backups.",
+    );
+    expect(output()).not.toContain("Back up first");
+    const line = (text: string): number => logged.findIndex((entry) => entry.includes(text));
+    expect(line("Installed 0.3.0.")).toBeLessThan(line("Gateway is serving again."));
+    expect(line("Updated to 0.3.0.")).toBe(logged.length - 1);
+  });
 });
 
 // ── updateDocker ────────────────────────────────────────────────────────
@@ -1830,7 +1868,7 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       "awaitHealth 0.4.2",
       `docker compose -f ${composeFile} up -d --no-deps collector`,
@@ -1841,6 +1879,133 @@ describe("updateDocker", () => {
     expect(readFileSync(envFile, "utf8")).toBe(
       "OMNESIS_GATEWAY_PORT=7600\nOMNESIS_IMAGE_TAG=0.4.2\n",
     );
+  });
+
+  describe("what it says, and when", () => {
+    /** Index of the first logged line containing `text`, failing when there is none. */
+    const at = (text: string): number => {
+      const index = logged.findIndex((line) => line.includes(text));
+      expect(index, `no line contains ${JSON.stringify(text)}`).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    const removePrevious = (events: string[]) =>
+      vi.fn((previous: string, target: string) => {
+        events.push(`remove ${previous} images, keeping ${target}`);
+        return Promise.resolve();
+      });
+
+    test("the pull says what it pulled; only the end of the run says the host is updated", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts(),
+        dockerDeps(events, runner, { removePreviousImages: removePrevious(events) }),
+      );
+
+      expect(at("Pulled the 0.4.2 images.")).toBeLessThan(at("Restarting the gateway"));
+      expect(at("Gateway is serving again.")).toBeLessThan(at("Updated to 0.4.2."));
+      expect(at("Restarting the collector")).toBeLessThan(at("Updated to 0.4.2."));
+      expect(logged.filter((line) => line.includes("Updated to"))).toHaveLength(1);
+      expect(logged.at(-1)).toContain("Updated to 0.4.2.");
+    });
+
+    test("the previous images go only once the containers run the new ones", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts(),
+        dockerDeps(events, runner, { removePreviousImages: removePrevious(events) }),
+      );
+      expect(events.slice(-3)).toEqual([
+        "awaitHealth 0.4.2",
+        `docker compose -f ${composeFile} up -d --no-deps collector`,
+        "remove 0.4.1 images, keeping 0.4.2",
+      ]);
+      expect(output()).toContain("remove the 0.4.1 images once 0.4.2 is running");
+    });
+
+    test("a gateway that never comes back keeps the previous images for its rollback", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const removePreviousImages = removePrevious(events);
+      await expect(
+        updateDocker(
+          opts(),
+          dockerDeps(events, runner, {
+            removePreviousImages,
+            awaitHealth: vi.fn(() => Promise.reject(new Error("timed out"))),
+          }),
+        ),
+      ).rejects.toMatchObject({ exitCode: EXIT_FAILURE });
+      expect(removePreviousImages).not.toHaveBeenCalled();
+      expect(output()).not.toContain("Updated to");
+    });
+
+    test("images that cannot be removed are a warning, never a failed update", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const landed = await updateDocker(
+        opts(),
+        dockerDeps(events, runner, {
+          removePreviousImages: vi.fn(() => Promise.reject(new Error("daemon went away"))),
+        }),
+      );
+      expect(landed).toBe("0.4.2");
+      expect(output()).toContain("! Could not remove the 0.4.1 images: daemon went away");
+      expect(logged.at(-1)).toContain("Updated to 0.4.2.");
+    });
+
+    test("a collector that did not restart may still run from the previous images, so they stay", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events, {
+        line: `docker compose -f ${composeFile} up -d --no-deps collector`,
+        nth: 1,
+      });
+      const removePreviousImages = removePrevious(events);
+      await updateDocker(opts(), dockerDeps(events, runner, { removePreviousImages }));
+      expect(removePreviousImages).not.toHaveBeenCalled();
+      expect(output()).toContain("Kept the 0.4.1 images: the collector may still run from them.");
+      expect(output()).not.toContain("Updated to");
+      expect(logged.at(-1)).toContain("Installed 0.4.2. Finish the update with the steps above.");
+    });
+
+    test("--no-restart neither removes the previous images nor claims the update is done", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      const removePreviousImages = removePrevious(events);
+      await updateDocker(
+        opts(),
+        dockerDeps(events, runner, { restart: false, removePreviousImages }),
+      );
+      expect(removePreviousImages).not.toHaveBeenCalled();
+      expect(output()).not.toContain("Updated to");
+      expect(logged.at(-1)).toContain("Installed 0.4.2. Finish the update with the steps above.");
+    });
+
+    test("a plan with its own backup says so, and where, instead of asking for one", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ dryRun: true }),
+        dockerDeps(events, runner, { backupsDir: "/home/maya/.config/omnesis/backups" }),
+      );
+      expect(output()).toContain("back up the gateway's databases through its API");
+      expect(output()).toContain(
+        "The update backs up the gateway's databases before they run, into /home/maya/.config/omnesis/backups.",
+      );
+      expect(output()).not.toContain("Back up first");
+    });
+
+    test("--no-backup is the one path still told to back up first", async () => {
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts({ dryRun: true, backup: false }),
+        dockerDeps(events, runner, { backupsDir: "/home/maya/.config/omnesis/backups" }),
+      );
+      expect(output()).not.toContain("back up the gateway's databases");
+      expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
+    });
   });
 
   /** The release this checkout's CLI is: the updater image's own. */
@@ -1916,7 +2081,7 @@ describe("updateDocker", () => {
   test("a pull a passing network fault broke is pulled once more, and the update lands", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events, {
-      line: `docker compose -f ${composeFile} pull`,
+      line: `docker compose -f ${composeFile} --profile update pull --quiet`,
       nth: 1,
     });
     const landed = await updateDocker(opts(), dockerDeps(events, runner));
@@ -1924,8 +2089,8 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       "awaitHealth 0.4.2",
       `docker compose -f ${composeFile} up -d --no-deps collector`,
@@ -1937,7 +2102,7 @@ describe("updateDocker", () => {
   test("a failed pull records the previous tag again and brings the gateway back", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events, {
-      line: `docker compose -f ${composeFile} pull`,
+      line: `docker compose -f ${composeFile} --profile update pull --quiet`,
       nth: [1, 2],
     });
     await expect(updateDocker(opts(), dockerDeps(events, runner))).rejects.toMatchObject({
@@ -1947,12 +2112,12 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       // Pulled twice: the second attempt rides out a refused connection.
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       // The way back is the same pull at the tag that was recorded before.
       "select 0.4.1",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       // The version demanded of the restored gateway is the tag being put
       // back, not the CLI version of the updater image running this command.
@@ -1967,7 +2132,7 @@ describe("updateDocker", () => {
   test("a pull that fails both ways says nothing changed", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events, {
-      line: `docker compose -f ${composeFile} pull`,
+      line: `docker compose -f ${composeFile} --profile update pull --quiet`,
       nth: [1, 2, 3, 4],
     });
     const applyState = fakeApplyState();
@@ -1979,7 +2144,9 @@ describe("updateDocker", () => {
     expect(failure).toBeInstanceOf(CliError);
     expect((failure as CliError).exitCode).toBe(EXIT_FAILURE);
     const message = (failure as CliError).message;
-    expect(message).toContain(`\`docker compose -f ${composeFile} pull\` failed (exit 1).`);
+    expect(message).toContain(
+      `\`docker compose -f ${composeFile} --profile update pull --quiet\` failed (exit 1).`,
+    );
     expect(message).toContain(
       "Nothing was changed: no container was recreated, and 0.4.1 is the recorded image tag " +
         "again, so this install still runs 0.4.1.",
@@ -1989,11 +2156,11 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       "select 0.4.1",
-      `docker compose -f ${composeFile} pull`,
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
     ]);
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
     // The record says what is true: the previous tag, complete.
@@ -2094,11 +2261,11 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       "awaitHealth 0.4.2",
       "select 0.4.1",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       "awaitHealth 0.4.1",
     ]);
@@ -2127,7 +2294,7 @@ describe("updateDocker", () => {
     expect(events).toEqual([]);
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
     expect(output()).toContain("Dry run");
-    expect(output()).toContain(`docker compose -f ${composeFile} pull`);
+    expect(output()).toContain(`docker compose -f ${composeFile} --profile update pull --quiet`);
   });
 
   describe("saving the gateway's settings for a later upgrade", () => {
@@ -2147,7 +2314,7 @@ describe("updateDocker", () => {
         "backup",
         "save settings 0.4.1",
         "select 0.4.0",
-        `docker compose -f ${composeFile} pull`,
+        `docker compose -f ${composeFile} --profile update pull --quiet`,
       ]);
     });
 
@@ -2169,7 +2336,9 @@ describe("updateDocker", () => {
         updateDocker(opts(), dockerDeps(events, runner, { saveNewerSettings: saving(events) })),
       ).rejects.toBeInstanceOf(CliError);
       const saved = events.indexOf("save settings 0.4.2 0.4.1");
-      expect(saved).toBeGreaterThan(events.indexOf(`docker compose -f ${composeFile} pull`));
+      expect(saved).toBeGreaterThan(
+        events.indexOf(`docker compose -f ${composeFile} --profile update pull --quiet`),
+      );
       expect(events[saved + 1]).toBe("select 0.4.1");
     });
 
@@ -2213,7 +2382,7 @@ describe("updateDocker", () => {
       dockerDeps(events, runner, { latestDockerVersion: () => Promise.resolve("0.4.1") }),
     );
     expect(landed).toBe("0.4.1");
-    expect(events).toContain(`docker compose -f ${composeFile} pull`);
+    expect(events).toContain(`docker compose -f ${composeFile} --profile update pull --quiet`);
     expect(output()).toContain("nothing proves the containers were recreated on it");
     expect(output()).not.toContain("Already up to date");
   });
@@ -2278,7 +2447,7 @@ describe("updateDocker", () => {
     expect(events.slice(0, 3)).toEqual([
       "backup",
       "select 0.4.2",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
     ]);
     // The baseline the health wait and a rollback use is the served tag, not the file's.
     expect(events).toContain("awaitHealth 0.4.2");
@@ -2293,7 +2462,7 @@ describe("updateDocker", () => {
     );
     const events: string[] = [];
     const runner = dockerRunner(events, {
-      line: `docker compose -f ${composeFile} pull`,
+      line: `docker compose -f ${composeFile} --profile update pull --quiet`,
       nth: [1, 2],
     });
     await expect(
@@ -2359,7 +2528,7 @@ describe("updateDocker", () => {
     );
     expect(exit).toHaveBeenCalledExactlyOnceWith(130);
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.2");
-    expect(events.filter((line) => line.endsWith(" pull"))).toHaveLength(1);
+    expect(events.filter((line) => line.endsWith(" pull --quiet"))).toHaveLength(1);
     expect(state.writes.map((value) => value.phase)).toEqual(["applying", "complete"]);
     expect(state.writes.at(-1)).toEqual(completedDockerApplyState(projectDir, "0.4.2"));
   });
@@ -2390,7 +2559,7 @@ describe("updateDocker", () => {
       const run: CommandRunner = (spec, mode) => {
         const line = [spec.command, ...spec.args].join(" ");
         events.push(line);
-        if (line.endsWith(" pull") && pulls++ === 0) router.dispatch(signal);
+        if (line.endsWith(" pull --quiet") && pulls++ === 0) router.dispatch(signal);
         return Promise.resolve({ code: 0, stdout: "" });
       };
       const runner = { run, calls: [] as RecordedCall[] };
@@ -2441,7 +2610,7 @@ describe("updateDocker", () => {
       message: expect.stringContaining("interrupted by SIGINT"),
     });
     expect(readFileSync(envFile, "utf8")).toContain("OMNESIS_IMAGE_TAG=0.4.1");
-    expect(events.filter((line) => line.endsWith(" pull"))).toHaveLength(2);
+    expect(events.filter((line) => line.endsWith(" pull --quiet"))).toHaveLength(2);
     expect(state.writes.map((value) => value.phase)).toEqual([
       "applying",
       "rolling-back",
@@ -2539,7 +2708,7 @@ describe("updateDocker", () => {
     expect(events).toEqual([
       "backup",
       "select 0.4.1",
-      `docker compose -f ${composeFile} pull`,
+      `docker compose -f ${composeFile} --profile update pull --quiet`,
       `docker compose -f ${composeFile} up -d --no-deps gateway`,
       "awaitHealth 0.4.1",
       `docker compose -f ${composeFile} up -d --no-deps collector`,
@@ -2639,7 +2808,7 @@ describe("updateDocker", () => {
       // and its API backup belongs to the build that follows.
       expect(events).toEqual([
         "select 0.5.0",
-        `docker compose -f ${composeFile} pull`,
+        `docker compose -f ${composeFile} --profile update pull --quiet`,
         "hand over (online backup)",
       ]);
       expect(continueAfterApply).toHaveBeenCalledWith(
@@ -2663,6 +2832,10 @@ describe("updateDocker", () => {
         activeDockerApplyState(projectDir, "applying", "0.5.0", "0.4.1"),
       ]);
       expect(landed).toBe("0.5.0");
+      // The pull is all this updater did: the build it hands to says when the
+      // update is done, so nothing here claims it.
+      expect(output()).toContain("Pulled the 0.5.0 images.");
+      expect(output()).not.toContain("Updated to");
     });
 
     test("an updater that does not take it leaves this one to back up and restart", async () => {
@@ -2678,7 +2851,7 @@ describe("updateDocker", () => {
       );
       expect(events).toEqual([
         "select 0.5.0",
-        `docker compose -f ${composeFile} pull`,
+        `docker compose -f ${composeFile} --profile update pull --quiet`,
         "hand over",
         "backup",
         `docker compose -f ${composeFile} up -d --no-deps gateway`,
@@ -5247,6 +5420,48 @@ describe("hand-over paths a single run never had", () => {
     deferredBackup: "online",
     restart: true,
     ...over,
+  });
+
+  test("the installed build says the update is done only after its gateway serves, then removes the old images", async () => {
+    const events: string[] = [];
+    const removePreviousImages = vi.fn((previous: string, target: string) => {
+      events.push(`remove ${previous} images, keeping ${target}`);
+      return Promise.resolve();
+    });
+    await runUpdateContinuation(
+      dockerOffer(),
+      makeDeps(fakeRunner([]), {
+        currentVersion: "0.4.10",
+        roles: hostRoles({ gateway: supervised, collector: supervised }),
+        backup: vi.fn(() => {
+          events.push("backup");
+          return Promise.resolve();
+        }),
+        restartService: vi.fn((component: ServiceComponent) => {
+          events.push(`restart ${component}`);
+          return Promise.resolve();
+        }),
+        awaitHealth: vi.fn(() => {
+          events.push("awaitHealth");
+          return Promise.resolve();
+        }),
+        removePreviousImages,
+      }),
+    );
+    expect(events).toEqual([
+      "backup",
+      "restart gateway",
+      "awaitHealth",
+      "restart collector",
+      "remove 0.4.10 images, keeping 0.5.0",
+    ]);
+    const line = (text: string): number => logged.findIndex((entry) => entry.includes(text));
+    expect(line("Continuing the update to")).toBe(0);
+    // The offering updater already said what it pulled.
+    expect(output()).not.toContain("Pulled the");
+    expect(line("Gateway is serving again.")).toBeGreaterThan(0);
+    expect(line("Updated to 0.5.0.")).toBe(logged.length - 1);
+    expect(logged.filter((entry) => entry.includes("Updated to"))).toHaveLength(1);
   });
 
   test("--no-restart in the installed build backs up and leaves a container record unfinished", async () => {

@@ -319,6 +319,7 @@ export {
   compareProductVersions,
   parseProductVersion,
   computeClientVersionState,
+  hasVersionState,
   summarizeFleetVersions,
   formatFleetVersionSummary,
   type ClientVersionState,

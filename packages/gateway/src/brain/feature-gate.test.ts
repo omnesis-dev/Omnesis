@@ -427,6 +427,22 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     };
   }
 
+  it("seeds the wiki's source identity only with experimental mode on", async () => {
+    const off = makeBootDeps(assignedResolver);
+    await bootBriefs(off.deps);
+    const seeded = (deps: typeof off.deps) =>
+      (deps.writeGate.setSourceMeta as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id);
+    // Off: no display row an operator would read as a source they have. The
+    // cleanup of wiki pages an earlier experimental run left still runs.
+    expect(seeded(off.deps)).not.toContain("brain-knowledge");
+    expect(off.schedule).toHaveBeenCalled();
+
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    const on = makeBootDeps(assignedResolver);
+    await bootBriefs(on.deps);
+    expect(seeded(on.deps)).toContain("brain-knowledge");
+  });
+
   it("converts brain.sweeps config overrides to files exactly once", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
     const configDir = mkdtempSync(join(tmpdir(), "omnesis-sweep-migrate-"));

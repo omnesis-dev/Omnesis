@@ -86,6 +86,7 @@ import {
   getSourceMemberConfigContract,
 } from "../../data/repositories/SourceMemberConfigContractRepository.js";
 import { cascadeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
+import { isHiddenBrainSource } from "../../brain/system-sources.js";
 import { deriveDisplayStatus } from "../../sync-status.js";
 import { buildSourceNotices } from "../../source-notices.js";
 import {
@@ -2704,6 +2705,9 @@ export class SourceService {
     for (const s of inMem) ids.add(s.sourceId);
     for (const p of persisted) ids.add(p.source_id);
     for (const r of registered) ids.add(r.id);
+    // The Brain's display rows are an experimental feature's; with the mode
+    // off they are not sources the operator has, even when a row persists.
+    for (const id of ids) if (isHiddenBrainSource(id)) ids.delete(id);
 
     // A persisted row with an unparseable source_id is skipped rather than
     // thrown on: this list backs both the sync-status view and the health

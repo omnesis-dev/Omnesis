@@ -20,6 +20,7 @@ import {
   upsertWithCursor,
   getDocumentCount,
   getWipeEpoch,
+  setSourceMeta,
 } from "../../db.js";
 import {
   addSourceMember,
@@ -1095,5 +1096,41 @@ describe("SourceService.resync", () => {
       deviceIds: [phone.id],
     });
     service.dispose();
+  });
+});
+
+describe("SourceService.listSyncStatuses — the Brain's display rows", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  function seedDisplayRows(): void {
+    // What a boot (or an earlier experimental run) leaves in sync_state.
+    setSourceMeta(db, "brain-knowledge", { label: "Wiki" });
+    setSourceMeta(db, "open-loops", { label: "Open loops" });
+    setSourceMeta(db, "omnesis-notes", { label: "Notes" });
+  }
+
+  test("are not listed while experimental mode is off, even when a row persists", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    vi.stubEnv("OMNESIS_SYNTHETIC", "0");
+    seedDisplayRows();
+    const statusCache = new StatusCache(db);
+    statusCache.refreshDb();
+    const ids = makeService({ statusCache })
+      .listSyncStatuses()
+      .map((status) => status.sourceId);
+    expect(ids).toContain("omnesis-notes");
+    expect(ids).not.toContain("brain-knowledge");
+    expect(ids).not.toContain("open-loops");
+  });
+
+  test("are listed with experimental mode on", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    seedDisplayRows();
+    const statusCache = new StatusCache(db);
+    statusCache.refreshDb();
+    const ids = makeService({ statusCache })
+      .listSyncStatuses()
+      .map((status) => status.sourceId);
+    expect(ids).toEqual(expect.arrayContaining(["brain-knowledge", "open-loops", "omnesis-notes"]));
   });
 });
