@@ -76,6 +76,7 @@ public final class TasksModel {
 
     @ObservationIgnored private let service: TasksService?
     @ObservationIgnored private let schedule: TaskSchedule
+    @ObservationIgnored private let onMutation: () -> Void
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var generations: [TaskViewKind: Int] = [:]
     @ObservationIgnored private var toastCounter = 0
@@ -85,10 +86,12 @@ public final class TasksModel {
     public init(
         service: TasksService?,
         schedule: TaskSchedule = TaskSchedule(),
+        onMutation: @escaping () -> Void = {},
         now: @escaping () -> Date = Date.init
     ) {
         self.service = service
         self.schedule = schedule
+        self.onMutation = onMutation
         self.now = now
     }
 
@@ -293,6 +296,7 @@ public final class TasksModel {
         var undone = false
         do {
             let mutation = try await service.undo(seq: seq)
+            onMutation()
             present(text: mutation.receipt.text, undoSeq: nil, isError: false)
             undone = true
         } catch {
@@ -338,6 +342,7 @@ public final class TasksModel {
         defer { busyIds.remove(id) }
         do {
             let mutation = try await service.perform(action, on: id)
+            onMutation()
             // The row shows the task as the gateway now holds it straight
             // away — an accepted suggestion loses its Accept — and the views
             // are re-read to move it wherever it now belongs.

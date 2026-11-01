@@ -29,7 +29,7 @@ struct TasksView: View {
         // One model per paired client: a re-pair starts the screen afresh
         // rather than carrying rows read from another gateway.
         TasksScreen(
-            model: TasksModel(service: store.tasks),
+            model: TasksModel(service: store.tasks, onMutation: { TaskWidgetAppBridge.reload() }),
             experimental: store.experimentalEnabled,
             menuOpen: $menuOpen,
             focus: focus,

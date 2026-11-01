@@ -405,6 +405,35 @@ final class TasksModelTests: XCTestCase {
         XCTAssertEqual(model.selected, .today)
     }
 
+    func testConfirmedEditsAndUndoNotifyWidgetsWithUnchangedCountsInEitherDateContext() async {
+        for futureContext in [false, true] {
+            let service = FakeService()
+            var refreshes = 0
+            let model = TasksModel(service: service, onMutation: { refreshes += 1 }, now: { [now] in now })
+            if futureContext {
+                model.openJournal(TaskWidgetDeepLink(view: .month, day: "2027-01-01"))
+            }
+            await model.load()
+            let counts = model.counts
+            let task = TaskRecord(id: "sketchbook", title: "Choose a sketchbook")
+            let edit = TaskAction.edit(
+                title: "Choose a travel sketchbook", description: nil, scheduledFor: .unchanged, deadline: .unchanged
+            )
+            let edited = await model.perform(edit, on: task)
+            XCTAssertTrue(edited)
+            XCTAssertEqual(model.counts, counts)
+            XCTAssertEqual(refreshes, 1, "a title-only edit must refresh widgets even on a future page")
+            let undone = await model.undo(seq: 7)
+            XCTAssertTrue(undone)
+            XCTAssertEqual(model.counts, counts)
+            XCTAssertEqual(refreshes, 2)
+            await service.setFailNext(URLError(.notConnectedToInternet))
+            let rejected = await model.perform(edit, on: task)
+            XCTAssertFalse(rejected)
+            XCTAssertEqual(refreshes, 2, "a failed mutation must not publish a widget refresh")
+        }
+    }
+
     func testBulletCompletesThenShowsUndoableReceipt() async {
         let service = FakeService()
         let task = TaskRecord(id: "t", title: "Pay the invoice")
