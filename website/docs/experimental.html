@@ -368,9 +368,10 @@
         <p>
           The Brain never checks or rewrites what the agent says to you. Conversations in the portal
           and apps, and answers given to external agents, are exactly what the agent wrote; its
-          instructions tell it to read the relevant wiki page and follow the claims it uses back to
-          their source documents before answering. Answers to external agents still pass your
-          privacy review.
+          instructions tell it to read the relevant wiki page and use the engine's answer policy.
+          Individually verified claims whose supporting evidence is still current can answer the
+          question without reopening that evidence. Other claims require source checks. Answers to
+          external agents still pass your privacy review.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -872,18 +873,27 @@
           separate claim evidence pointers from navigation links and mark truncated lists. Root
           edits explicitly acknowledge removal of readable wiki navigation; this prevents silent
           loss during factual repair without requiring every page to appear in the root. Synthesis
-          helps orient an answer; decisive claims still require supporting source evidence.
+          helps orient an answer. A page or loop read identifies the exact verified claims that can
+          be used without reopening their sources, preserving their attribution, conditions and time
+          scope. The agent cites the page it read; a page's links do not authorize citations of
+          unread original documents. Other prose, unsupported claims and changed evidence require
+          source checks. The page's current status alone is insufficient: it means linked evidence
+          has not changed, rather than certifying every sentence or ruling out newer contradictory
+          records. Questions about the latest state still require checking for newer evidence.
         </p>
         <p>
-          To compare answers with and without maintained knowledge, set
-          <code>agent.knowledgeReads</code> to <code>false</code>, restart the gateway, and start
-          fresh conversations. The built-in answering agent and its delegated workers then receive
-          no wiki/root context or tracked-outcome read tools, and their document, search and graph
-          tools exclude those pages and outcomes. The loop-backed Task journal tools, automatic
-          Tasks overlay on today's time queries, and injected task-conversation context are also
-          unavailable to the answering agent in this comparison mode. Original documents, analytics
-          and grounded memory remain available. The Brain continues maintaining its knowledge, and
-          existing pages and outcomes are retained. The default is <code>true</code>. Independent
+          <code>agent.useBrainKnowledgeMode</code> controls how the built-in answering agent and its
+          delegated workers use maintained knowledge. The default, <code>check_stale_claims</code>,
+          permits answers from the exact current verified claims returned by a page or loop read;
+          other claims and current-status questions still need evidence checks.
+          <code>check_all_sources</code> uses maintained knowledge for navigation but always checks
+          supporting sources. <code>off</code> removes wiki/root context and tracked-outcome read
+          tools; document, search and graph tools then exclude those pages and outcomes. The
+          loop-backed Task journal tools, automatic Tasks overlay on today's time queries, and
+          injected task-conversation context are also unavailable in <code>off</code>
+          mode. Original documents, analytics and grounded memory remain available in every mode.
+          The Brain continues maintaining its knowledge, and stored pages and outcomes are retained.
+          Restart the gateway and start fresh conversations after changing the mode. Independent
           Direct connections are unaffected; old conversations may still contain information read
           before the change.
         </p>

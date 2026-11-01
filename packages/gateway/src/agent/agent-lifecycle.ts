@@ -32,7 +32,7 @@ import {
   type CapabilityRole,
   type Logger,
 } from "@omnesis/core";
-import { CONFIG_DEFAULTS } from "@omnesis/config";
+import { CONFIG_DEFAULTS, type AgentKnowledgeMode } from "@omnesis/config";
 import { SCOPE_ADMIN } from "@omnesis/types";
 
 import { resolveAnthropicApiKey } from "../model-credentials.js";
@@ -153,7 +153,7 @@ export interface AgentServiceDeps {
   getOperatorInstructions?: () => string;
   getKnowledgeRootMaxChars?: () => number;
   /** Snapshot at service construction; restart after changing the config. */
-  knowledgeReads?: boolean;
+  useBrainKnowledgeMode?: AgentKnowledgeMode;
 }
 
 /**
@@ -381,7 +381,9 @@ export function createAgentService(
   const { db, searchPipeline, syncStatus, analyticsDb, writeGate, wsServer, conversationStore } =
     deps;
   const omnesisChatRuntime = deps.getOmnesisChatRuntime();
-  const knowledgeReads = deps.knowledgeReads !== false;
+  const useBrainKnowledgeMode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+  const knowledgeReads = useBrainKnowledgeMode !== "off";
+  const allowVerifiedAnswers = useBrainKnowledgeMode === "check_stale_claims";
   /** The configured source types a run may reach; every type when unscoped. */
   const permittedSourceTypes = (authorization?: CorpusAuthorization): string[] => [
     ...new Set(
@@ -440,7 +442,7 @@ export function createAgentService(
   };
   return new AgentService({
     backendFactory,
-    knowledgeReads,
+    useBrainKnowledgeMode,
     namedPagesNote: knowledgeReads ? (message) => namedPagesNote(db, message) : undefined,
     ports: {
       // `db` is passed so the agent search port can attach the 1-hop
@@ -449,6 +451,7 @@ export function createAgentService(
       document: createGatewayDocumentPort(db, syncStatus, {
         graphContext: searchPipeline.agentSearchV2Enabled,
         knowledgeReads,
+        allowVerifiedAnswers,
       }),
       documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, undefined, knowledgeReads),
       // `trace_connections` surfaces `same-entity` bound rows as point-in-time
@@ -482,7 +485,10 @@ export function createAgentService(
       // read the background Cognition Steward's tracked obligations — no mutation, no
       // briefs. Wired only in experimental mode (the loop system exists only
       // then); the registry additionally gates the two tools on experimental.
-      loopRead: knowledgeReads && experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
+      loopRead:
+        knowledgeReads && experimentalVisible()
+          ? createGatewayLoopReadPort(db, undefined, { allowVerifiedAnswers })
+          : undefined,
       // Read-only temporal port: lets the interactive agent answer "what's
       // coming up?" in one call — source-owned dated facts and date mentions,
       // both produced on the ingest path whether or not the background agent
@@ -525,14 +531,30 @@ export function createAgentService(
         "annotate_many",
       ]);
       const citationReads = new CitationReads();
-      const document = createGatewayDocumentPort(db, syncStatus, undefined, authorization);
+      const document = createGatewayDocumentPort(
+        db,
+        syncStatus,
+        { knowledgeReads, allowVerifiedAnswers },
+        authorization,
+      );
       const tools = buildBuiltinTools({
         citationReads,
         experimental: false,
         ports: {
-          search: createGatewaySearchPort(searchPipeline, syncStatus, db, authorization),
+          search: createGatewaySearchPort(
+            searchPipeline,
+            syncStatus,
+            db,
+            authorization,
+            knowledgeReads,
+          ),
           document,
-          documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, authorization),
+          documentByUrl: createGatewayDocumentByUrlPort(
+            db,
+            syncStatus,
+            authorization,
+            knowledgeReads,
+          ),
         },
       }).filter((tool) => safeNames.has(tool.name));
       const base = await buildLiveSystemPrompt(
@@ -943,7 +965,8 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
-        knowledgeReads: this.deps.configStore.get().agent?.knowledgeReads !== false,
+        useBrainKnowledgeMode:
+          this.deps.configStore.get().agent?.useBrainKnowledgeMode ?? "check_stale_claims",
         getKnowledgeRootMaxChars: () =>
           this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,

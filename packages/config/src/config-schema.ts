@@ -2276,12 +2276,14 @@ const agentReplay = z
   })
   .strict();
 
+export const agentKnowledgeModeSchema = z.enum(["off", "check_all_sources", "check_stale_claims"]);
+export type AgentKnowledgeMode = z.infer<typeof agentKnowledgeModeSchema>;
+
 const agent = z
   .object({
-    knowledgeReads: z
-      .boolean()
+    useBrainKnowledgeMode: agentKnowledgeModeSchema
       .describe(
-        "Allow the interactive agent and its workers to read maintained wiki pages and tracked outcomes. Defaults to true. Set false for retrieval comparisons without those summaries or the loop-backed Task journal tools; the Brain keeps running and stored knowledge is retained. Restart the gateway and use fresh conversations after changing this setting.",
+        "How the interactive agent and its workers use maintained knowledge. check_stale_claims (default) allows exact current verified claims without reopening their sources; other claims and current-status questions still require evidence checks. check_all_sources uses maintained knowledge but always checks supporting sources. off removes maintained knowledge and loop-backed Task journal reads. The Brain keeps running and stored knowledge is retained. Restart the gateway and use fresh conversations after changing this setting.",
       )
       .optional(),
     maxToolIterations: z

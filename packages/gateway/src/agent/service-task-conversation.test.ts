@@ -54,7 +54,7 @@ function makeService(knowledgeReads = true) {
   const seen: TurnInput[] = [];
   let n = 0;
   const service = new AgentService({
-    knowledgeReads,
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: () => capturingBackend(seen),
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "default chat prompt",

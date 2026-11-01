@@ -78,7 +78,7 @@ function makeService(knowledgeReads = true) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
   const service = new AgentService({
-    knowledgeReads,
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: (_role: CapabilityRole) => backend,
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "test",

@@ -238,3 +238,15 @@ it("passes explicit snapshot purpose and turn identity while defaulting to navig
   });
   expect(seen).toHaveLength(2);
 });
+
+it("bounds qualified loop answers and requires fetching the maintained projection for citation", () => {
+  const description = createFetchLoopTool({ port: makePort() }).description;
+  expect(description).toContain("knowledgeContext.answerPolicy");
+  expect(description).toContain("only exact returned");
+  expect(description).toContain("Missing policy or source_checks");
+  expect(description).toContain("source checks even when verifiedSupport is nonempty");
+  expect(description).toContain("current-status questions and conflicts");
+  expect(description).toContain("fetch knowledgeContext.documentId with fetch_many first");
+  expect(description).toContain("loop: is not a document alias");
+  expect(description).toContain("never unread original sources");
+});

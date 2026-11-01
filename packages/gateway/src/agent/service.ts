@@ -130,6 +130,7 @@ import {
   watchFiringThreadTitle,
   type OpenWatchFiringThreadInput,
 } from "./watch-firing-thread.js";
+import type { AgentKnowledgeMode } from "@omnesis/config";
 import type { ConversationReadStatePort } from "./conversation-read-state-service.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
@@ -218,7 +219,7 @@ export interface AgentServiceDeps {
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
   /** Fixed for this service; changing the config requires a restart. */
-  knowledgeReads?: boolean;
+  useBrainKnowledgeMode?: AgentKnowledgeMode;
   /**
    * A model-only note for a conversation turn whose message names maintained
    * pages, telling the agent to open them first; empty when none is named.
@@ -902,6 +903,7 @@ export class AgentService {
   private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  readonly useBrainKnowledgeMode: AgentKnowledgeMode;
   private readonly knowledgeReads: boolean;
   private readonly citationReads = new CitationReads();
   private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
@@ -1150,7 +1152,8 @@ export class AgentService {
       });
     }
     this.namedPagesNote = deps.namedPagesNote;
-    this.knowledgeReads = deps.knowledgeReads !== false;
+    this.useBrainKnowledgeMode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+    this.knowledgeReads = this.useBrainKnowledgeMode !== "off";
     const tools = buildBuiltinTools({
       citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },

@@ -452,6 +452,8 @@ export function createGatewayDocumentPort(
     graphContext?: boolean;
     /** Withhold maintained pages, loop mirrors and their read overlays. */
     knowledgeReads?: boolean;
+    /** Permit exact returned qualified claims without reopening their sources. */
+    allowVerifiedAnswers?: boolean;
     /**
      * Refuse a citation of a document this turn has not fetched. Background
      * Brain runs only: a conversation cites what it found without re-reading.
@@ -556,8 +558,12 @@ export function createGatewayDocumentPort(
         const knowledgeContext =
           !authorization?.restricted && options?.knowledgeReads !== false
             ? freshProjection
-              ? readFreshKnowledgeDocumentContext(db, freshProjection)
-              : readKnowledgeDocumentContext(db, row.id)
+              ? readFreshKnowledgeDocumentContext(db, freshProjection, {
+                  allowVerifiedAnswers: options?.allowVerifiedAnswers,
+                })
+              : readKnowledgeDocumentContext(db, row.id, {
+                  allowVerifiedAnswers: options?.allowVerifiedAnswers,
+                })
             : undefined;
         const result: DocumentPortResult = {
           ref,

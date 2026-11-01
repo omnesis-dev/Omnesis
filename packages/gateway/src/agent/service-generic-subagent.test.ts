@@ -265,7 +265,7 @@ function makeService(
   const child = new RecordingChildBackend();
   let parentMade = false;
   const service = new AgentService({
-    knowledgeReads,
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     // Parent and sub-agents now share the "agent" role (Deep Research runs on
     // the agent model), so the role no longer distinguishes them. The service
     // builds the parent session's backend first and the spawned child next —

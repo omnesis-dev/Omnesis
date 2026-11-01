@@ -22,6 +22,7 @@ import { createDatabase } from "../db.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
+import { readKnowledgeDocumentContext } from "../brain/knowledge/document-context.js";
 import { getKnowledgeNode } from "../brain/knowledge/storage-read.js";
 import { saveKnowledgeNode } from "../brain/knowledge/storage.js";
 import { CONTEXTUAL_VERIFIER } from "../brain/knowledge/claim-context.js";
@@ -180,15 +181,26 @@ it("withholds wiki aliases and mirror IDs while retaining original document read
   expect(await createGatewayDocumentPort(db).fetch("wiki:overview")).not.toBeNull();
 });
 
-it("omits root orientation, page directory and named-page notes from fresh answering sessions", async () => {
+it("snapshots each knowledge mode into production session orientation and qualified read policy", async () => {
   page("overview");
+  db.prepare(
+    "UPDATE knowledge_claims SET verification='verified',verifier=? WHERE node_id='overview'",
+  ).run(CONTEXTUAL_VERIFIER);
   page(
     "orientation",
     '<claim id="opening" refs="source:evidence">Root orientation sentinel.</claim>',
     "root",
   );
-  for (const knowledgeReads of [true, false]) {
+  for (const useBrainKnowledgeMode of [
+    undefined,
+    "check_stale_claims",
+    "check_all_sources",
+    "off",
+  ] as const) {
+    const expectedMode = useBrainKnowledgeMode ?? "check_stale_claims";
     let prompt = "";
+    let read: unknown;
+    let toolNames: string[] = [];
     let finish!: () => void;
     const ended = new Promise<void>((resolve) => {
       finish = resolve;
@@ -198,6 +210,13 @@ it("omits root orientation, page directory and named-page notes from fresh answe
       model: "recording",
       async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
         prompt = input.systemPrompt;
+        toolNames = input.tools.map((tool) => tool.name);
+        read = await input.tools
+          .find((tool) => tool.name === "fetch_many")!
+          .invoke(
+            { documents: [{ documentId: "wiki:overview" }] },
+            { sessionId: input.sessionId, messageId: input.messageId },
+          );
         yield {
           type: "agent.message.start",
           payload: { sessionId: input.sessionId, messageId: input.messageId, role: "assistant" },
@@ -214,7 +233,7 @@ it("omits root orientation, page directory and named-page notes from fresh answe
     };
     const deps: AgentServiceDeps = {
       db,
-      knowledgeReads,
+      useBrainKnowledgeMode,
       searchPipeline: { agentSearchV2Enabled: false } as AgentServiceDeps["searchPipeline"],
       syncStatus: new SyncStatusRegistry(),
       analyticsDb: { getCatalog: async () => [] } as unknown as AgentServiceDeps["analyticsDb"],
@@ -226,7 +245,9 @@ it("omits root orientation, page directory and named-page notes from fresh answe
           if (event.type === "agent.message.end") finish();
         },
       } as unknown as AgentServiceDeps["wsServer"],
-      conversationStore: new FsConversationStore(join(directory, knowledgeReads ? "on" : "off")),
+      conversationStore: new FsConversationStore(
+        join(directory, useBrainKnowledgeMode ?? "default"),
+      ),
       isApnsConfigured: () => false,
       getWatchAuthoring: () => null,
       watchFirings: () => [],
@@ -234,12 +255,41 @@ it("omits root orientation, page directory and named-page notes from fresh answe
       getOmnesisChatRuntime: () => undefined,
     };
     const service = createAgentService(deps, () => backend, { depthCap: 2, concurrencyCap: 2 });
+    // A running service keeps the configuration it was constructed with.
+    deps.useBrainKnowledgeMode = expectedMode === "off" ? "check_stale_claims" : "off";
     try {
+      expect(service.useBrainKnowledgeMode).toBe(expectedMode);
       const { sessionId } = await service.createSession("device:test");
       service.sendMessage("device:test", sessionId, "What does overview say?");
       await ended;
-      expect(prompt.includes("Root orientation sentinel")).toBe(knowledgeReads);
-      expect(prompt.includes("wiki:overview")).toBe(knowledgeReads);
+      expect(prompt.includes("Root orientation sentinel")).toBe(expectedMode !== "off");
+      expect(prompt.includes("wiki:overview")).toBe(expectedMode !== "off");
+      if (expectedMode === "off") {
+        expect(read).toMatchObject({ kind: "document.batch", items: [{ kind: "error" }] });
+        expect(JSON.stringify(read)).not.toContain('"knowledgeContext"');
+        expect(toolNames).not.toContain("fetch_loop");
+        expect(toolNames).not.toContain("knowledge_fetch");
+      } else {
+        expect(read).toMatchObject({
+          kind: "document.batch",
+          items: [
+            {
+              kind: "document",
+              document: {
+                knowledgeContext: {
+                  answerPolicy: {
+                    mode:
+                      expectedMode === "check_stale_claims" ? "verified_support" : "source_checks",
+                  },
+                  verifiedSupport: [
+                    expect.objectContaining({ ref: "wiki:overview#claim:opening" }),
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      }
     } finally {
       await service.dispose();
     }
@@ -451,9 +501,12 @@ it("omits loop provenance when its projection is missing or obsolete and refuses
   db.prepare(
     "UPDATE documents SET metadata=json_set(metadata,'$.extra.knowledgeRevision',0) WHERE id='projection-visit'",
   ).run();
-  expect((await port.fetch("visit"))?.knowledgeContext).toBeUndefined();
+  const obsolete = (await port.fetch("visit"))?.knowledgeContext;
+  expect(obsolete).toMatchObject({ answerPolicy: { mode: "source_checks" }, verifiedSupport: [] });
+  expect(obsolete).not.toHaveProperty("provenance");
+  expect(obsolete).not.toHaveProperty("documentId");
   db.prepare("DELETE FROM documents WHERE id='projection-visit'").run();
-  expect((await port.fetch("visit"))?.knowledgeContext).toBeUndefined();
+  expect((await port.fetch("visit"))?.knowledgeContext).toEqual(obsolete);
   // A deleted source leaves the loop readable for review; erasing the owner hides it.
   db.prepare("UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='evidence'").run();
   expect(await port.fetch("visit")).not.toBeNull();
@@ -591,6 +644,10 @@ it("exports complete qualified current support without promoting unverified ance
     }
   ).knowledgeContext;
   expect(context.guidance).toContain("This is a summary Omnesis wrote, not a source.");
+  expect(context).toMatchObject({ answerPolicy: { mode: "verified_support" } });
+  expect(context.guidance).toContain("without reopening their sources merely to verify them again");
+  expect(context.guidance).toContain("only those statements, not other prose or omitted claims");
+  expect(context.guidance).toContain("Keep the normal citation requirements");
   expect(context.guidance).toContain(
     "provenance.items gives the documentId (with matching claimId) each rests on; read those with fetch_many",
   );
@@ -603,6 +660,27 @@ it("exports complete qualified current support without promoting unverified ance
   expect(context.guidance).toContain("not that every statement still describes today");
   expect(context.guidance).not.toContain("Source dates describe source events");
   const child = context.verifiedSupport.find((item) => item.ref.endsWith("#claim:child"));
+  const checkedContext = readKnowledgeDocumentContext(db, "projection-qualified", {
+    allowVerifiedAnswers: false,
+  });
+  expect(checkedContext).toMatchObject({
+    answerPolicy: { mode: "source_checks" },
+    verifiedSupport: context.verifiedSupport,
+  });
+  expect(checkedContext!.guidance).toContain(
+    "requires source checks even when verifiedSupport contains qualified statements",
+  );
+  expect(checkedContext!.guidance).not.toContain("no qualified statements are available");
+  expect(checkedContext!.guidance).not.toContain("you may answer directly");
+  const checkedRead = await createGatewayDocumentPort(db, undefined, {
+    allowVerifiedAnswers: false,
+  }).fetch("wiki:qualified");
+  expect(checkedRead!.document).toMatchObject({
+    knowledgeContext: {
+      answerPolicy: { mode: "source_checks" },
+      verifiedSupport: context.verifiedSupport,
+    },
+  });
   expect(JSON.parse(JSON.parse(child!.text).statement)).toMatchObject({
     claim: "It opens Saturday.",
     context: { pageTitle: "qualified", sectionPaths: [["Instrument calibration"]] },
@@ -617,6 +695,9 @@ it("exports complete qualified current support without promoting unverified ance
     (second!.document as { knowledgeContext: { verifiedSupport: unknown[] } }).knowledgeContext
       .verifiedSupport,
   ).toEqual([]);
+  expect(second!.document).toMatchObject({
+    knowledgeContext: { answerPolicy: { mode: "source_checks" } },
+  });
 });
 
 it.each([
@@ -664,7 +745,11 @@ it.each([
   if (result.kind !== "document.batch" || result.items[0]?.kind !== "document")
     throw new Error("Expected an authorized projection read");
   expect(result.items[0].document).toMatchObject({
-    knowledgeContext: { verifiedSupport: [] },
+    knowledgeContext: {
+      validity: "current",
+      verifiedSupport: [],
+      answerPolicy: { mode: "source_checks" },
+    },
   });
   const annotate = tools.find((tool) => tool.name === "annotate_many")!;
   expect(
@@ -798,6 +883,16 @@ it("retains only independent current claims in a readable stale page and root", 
   const lagged = await port.fetch("wiki:partial-root");
   expect((lagged!.document as { content: string }).content).toContain("revision 1; stale.");
   expect(lagged!.readSnapshot!.fullPageAuthorityVersion).toBeUndefined();
+  const checkedLagged = await createGatewayDocumentPort(db, undefined, {
+    allowVerifiedAnswers: false,
+  }).fetch("wiki:partial-root");
+  expect(checkedLagged?.document).toMatchObject({
+    knowledgeContext: {
+      answerPolicy: { mode: "source_checks" },
+      verifiedSupport: [expect.objectContaining({ ref: "wiki:partial-root#claim:steady" })],
+      supportCoverage: { partial: true },
+    },
+  });
   expect(await port.fetch("partial-mirror")).toEqual(lagged);
   const stale = buildKnowledgeDocumentInput(getKnowledgeNode(db, node.id)!);
   db.prepare(
@@ -814,8 +909,16 @@ it("retains only independent current claims in a readable stale page and root", 
     }
   ).knowledgeContext;
   expect(overlay.validity).toBe("stale");
+  expect(overlay).toMatchObject({ answerPolicy: { mode: "verified_support" } });
   expect(overlay.verifiedSupport.map((x) => x.ref)).toEqual(["wiki:partial-root#claim:steady"]);
   expect(overlay.supportCoverage.partial).toBe(true);
+  expect(
+    readKnowledgeDocumentContext(db, "partial-mirror", { allowVerifiedAnswers: false }),
+  ).toMatchObject({
+    answerPolicy: { mode: "source_checks" },
+    verifiedSupport: overlay.verifiedSupport,
+    supportCoverage: { partial: true },
+  });
   expect(after!.readSnapshot!.version).not.toBe(before!.readSnapshot!.version);
   expect(after!.readSnapshot!.fullPageAuthorityVersion).toBeUndefined();
   const captured = captureKnowledgeRootContext(db);
@@ -849,6 +952,7 @@ it("bounds partial qualified support and never upgrades an obsolete contextual p
     }
   ).knowledgeContext;
   expect(data.verifiedSupport).toHaveLength(16);
+  expect(data).toMatchObject({ answerPolicy: { mode: "verified_support" } });
   expect(data.supportCoverage.truncated).toBe(true);
   db.prepare(
     "UPDATE knowledge_claims SET verifier='contextual-entailment-verifier-v1' WHERE node_id='bounded'",
@@ -858,6 +962,9 @@ it("bounds partial qualified support and never upgrades an obsolete contextual p
     (next!.document as { knowledgeContext: { verifiedSupport: unknown[] } }).knowledgeContext
       .verifiedSupport,
   ).toEqual([]);
+  expect(next!.document).toMatchObject({
+    knowledgeContext: { answerPolicy: { mode: "source_checks" } },
+  });
   expect(next!.readSnapshot!.version).not.toBe(first!.readSnapshot!.version);
 });
 
@@ -1018,17 +1125,24 @@ it("exposes qualified loop assertions through the real fetch tool without promot
   db.prepare(
     "UPDATE knowledge_claims SET verification='verified',verifier=?,modality='observation',attribution='Observatory notice',valid_from=10,valid_until=20 WHERE node_id=?",
   ).run(CONTEXTUAL_VERIFIER, "qualified-loop");
-  const tool = buildBuiltinTools({
+  const reads = new CitationReads();
+  const tools = buildBuiltinTools({
+    citationReads: reads,
     experimental: true,
     ports: {
       loopRead: createGatewayLoopReadPort(db),
       search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
       document: createGatewayDocumentPort(db),
     },
-  }).find((entry) => entry.name === "fetch_loop")!;
+  });
+  const tool = tools.find((entry) => entry.name === "fetch_loop")!;
   const result = toolResultSchema.parse(await tool.invoke({ loopId: "qualified-loop" }, context));
   const serialized = JSON.parse(serializeToolResultForModel(result));
   const support = serialized.loop.knowledgeContext.verifiedSupport;
+  expect(serialized.loop.knowledgeContext).toMatchObject({
+    answerPolicy: { mode: "verified_support" },
+    documentId: "projection-qualified-loop",
+  });
   expect(support).toHaveLength(1);
   expect(support[0].ref).toBe("loop:qualified-loop#claim:legacy");
   expect(JSON.parse(support[0].text)).toEqual({
@@ -1048,6 +1162,26 @@ it("exposes qualified loop assertions through the real fetch tool without promot
   expect(support[0].text).not.toContain('"state":"open"');
   expect(support[0].text).not.toContain("Prepare observatory visit");
   expect(serialized.loop.state).toBe("open");
+  const checkedLoop = await createGatewayLoopReadPort(db, undefined, {
+    allowVerifiedAnswers: false,
+  }).fetch("qualified-loop");
+  expect(checkedLoop?.knowledgeContext).toMatchObject({
+    answerPolicy: { mode: "source_checks" },
+    verifiedSupport: support,
+    documentId: "projection-qualified-loop",
+  });
+  expect(checkedLoop?.knowledgeContext?.guidance).toContain("Always read the supporting source");
+  expect(reads.snapshot(context)).toEqual([]);
+  const fetched = await tools
+    .find((entry) => entry.name === "fetch_many")!
+    .invoke({ documents: [{ documentId: serialized.loop.knowledgeContext.documentId }] }, context);
+  expect(fetched).toMatchObject({
+    kind: "document.batch",
+    items: [{ kind: "document", ref: { documentId: "projection-qualified-loop" } }],
+  });
+  expect(reads.snapshot(context).map((read) => read.documentId)).toEqual([
+    "projection-qualified-loop",
+  ]);
 });
 
 it.each([
@@ -1089,6 +1223,23 @@ it.each([
     ).run();
   const result = await createGatewayLoopReadPort(db).fetch("excluded-loop");
   expect(result?.knowledgeContext?.verifiedSupport ?? []).toEqual([]);
+  if (result)
+    expect(result.knowledgeContext).toMatchObject({ answerPolicy: { mode: "source_checks" } });
+});
+
+it("requires source checks for unmirrored loops without exposing unavailable projection pointers", async () => {
+  projectedLoop("unmirrored-loop", ["evidence"], true);
+  db.prepare("DELETE FROM documents WHERE external_id=? AND source_id=?").run(
+    "unmirrored-loop",
+    KNOWLEDGE_SOURCE_ID,
+  );
+  const result = await createGatewayLoopReadPort(db).fetch("unmirrored-loop");
+  expect(result?.knowledgeContext).toMatchObject({
+    answerPolicy: { mode: "source_checks" },
+    verifiedSupport: [],
+  });
+  expect(result?.knowledgeContext?.guidance).toContain("Check source documents");
+  expect(result?.knowledgeContext).not.toHaveProperty("documentId");
 });
 
 // A puppet of the interactive agent answering "when does the observatory

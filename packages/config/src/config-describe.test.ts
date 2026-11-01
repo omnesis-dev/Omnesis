@@ -383,7 +383,8 @@ describe("describeConfigSchema", () => {
     const agent = descriptor.children.find((node) => node.key === "agent");
     expect(agent?.kind).toBe("object");
     if (agent?.kind === "object") {
-      expect(agent.children.some((node) => node.key === "knowledgeReads")).toBe(false);
+      expect(agent.children.some((node) => node.key === "useBrainKnowledgeMode")).toBe(false);
+      expect(configDefaultAt(["agent", "useBrainKnowledgeMode"])).toBe("check_stale_claims");
     }
     const search = descriptor.children.find((node) => node.key === "search");
     expect(search?.kind).toBe("object");

@@ -140,7 +140,7 @@ it.each([true, false])(
     };
     const document: DocumentPort = { fetch: async () => null };
     const service = new AgentService({
-      knowledgeReads,
+      useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
       backendFactory: () => backend,
       ports: {
         search,

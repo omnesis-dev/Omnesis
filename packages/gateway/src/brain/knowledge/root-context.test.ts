@@ -251,3 +251,13 @@ it("keeps captured support when a dependency the root dropped before capture is 
   );
   expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(true);
 });
+
+it("keeps injected root context as orientation and delegates authority to the fetched page policy", () => {
+  const captured = captureKnowledgeRootContext(db);
+  expect(captured.text).toContain("read the linked page");
+  expect(captured.text).toContain("knowledgeContext.answerPolicy");
+  expect(captured.text).toContain("Only answerPolicy.mode=verified_support");
+  expect(captured.text).toContain("not its unread sources");
+  expect(captured.text).toContain("check newer evidence for current-status questions or conflicts");
+  expect(captured.text).toContain("this count alone is not answer authority");
+});

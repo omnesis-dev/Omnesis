@@ -146,7 +146,7 @@ export const CONFIG_PATHS_BACKEND_ONLY: readonly {
   reason: string;
 }[] = [
   {
-    path: ["agent", "knowledgeReads"],
+    path: ["agent", "useBrainKnowledgeMode"],
     reason:
       "Maintained knowledge retrieval comparisons are configured through the CLI or config file.",
   },

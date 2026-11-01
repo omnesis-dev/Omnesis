@@ -38,6 +38,7 @@ function setup(available = true, aliases = true) {
               content: "The prism is green.",
               knowledgeContext: {
                 validity: "current",
+                answerPolicy: { mode: "verified_support" },
                 verifiedSupport: [
                   { ref: "wiki:page#claim:color", revision: 1, text: "The prism is green." },
                 ],
@@ -63,7 +64,20 @@ it.each(["page", "wiki:page"])(
     const result = await f.tool.invoke({ id }, identity);
     expect(result).toMatchObject({
       kind: "document.batch",
-      items: [{ kind: "document", ref: { documentId: "projection" } }],
+      items: [
+        {
+          kind: "document",
+          ref: { documentId: "projection" },
+          document: {
+            knowledgeContext: {
+              answerPolicy: { mode: "verified_support" },
+              verifiedSupport: [
+                { ref: "wiki:page#claim:color", revision: 1, text: "The prism is green." },
+              ],
+            },
+          },
+        },
+      ],
     });
     expect(f.raw).not.toHaveBeenCalled();
     expect(f.reads.snapshot(identity)).toEqual([
@@ -140,4 +154,14 @@ it("keeps the page-title summary the canonical read gives its call", () => {
   const titled: ToolHandle = { ...canonical, summarize: () => "Experiment" };
   const [tool] = adaptInteractiveKnowledgeReads([titled], [], true);
   expect(tool!.summarize?.({ id: "page" })).toBe("Experiment");
+});
+
+it("describes the qualified-support exception without granting original-source citation reads", () => {
+  const f = setup();
+  expect(f.tool.description).toContain("mode=verified_support");
+  expect(f.tool.description).toContain("only from exact returned verifiedSupport");
+  expect(f.tool.description).toContain("not unread originals");
+  expect(f.tool.description).toContain("mode=source_checks");
+  expect(f.tool.description).toContain("even when verifiedSupport is nonempty");
+  expect(f.tool.description).toContain("current-status questions and conflicts");
 });
