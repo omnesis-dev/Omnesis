@@ -88,6 +88,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
@@ -138,6 +142,17 @@ fun TasksScreen(
     vm: TasksViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, vm) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { vm.collectWidgetRequests() }
+    }
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.load(quietly = true)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(state.openConversation) {
         val conversationId = state.openConversation ?: return@LaunchedEffect
         vm.conversationOpened()
@@ -156,7 +171,7 @@ fun TasksScreen(
         TasksContent(
             state = state,
             experimental = experimental,
-            today = remember(state.day) { LocalDate.parse(state.day) },
+            today = vm.localDay,
             actions = taskRowActions(vm, onOpenDocument),
             iconFor = vm::iconFor,
             onSelect = vm::select,
@@ -165,6 +180,7 @@ fun TasksScreen(
             onOpenSettings = onOpenSettings,
             onUndo = vm::undo,
             onReceiptExpired = vm::dismissReceipt,
+            onReturnToToday = vm::returnToToday,
         )
     }
 
@@ -353,6 +369,7 @@ fun TasksContent(
     onUndo: (TaskReceipt) -> Unit = {},
     onReceiptExpired: (TaskReceipt) -> Unit = {},
     initialFan: TaskFanPreview? = null,
+    onReturnToToday: () -> Unit = {},
 ) {
     val fan = rememberTaskFanController()
     fan.perform = actions.onFanAction
@@ -361,10 +378,26 @@ fun TasksContent(
     LaunchedEffect(state.segment) { fan.dismiss() }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            state.referenceDay?.let { day ->
+                Row(
+                    Modifier.fillMaxWidth().background(OmTheme.colors.bgSecondary)
+                        .padding(horizontal = OmSpacing.lg).testTag("tasks.dateContext"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Viewing ${TaskDates.describe(day, today) ?: day}",
+                        color = OmTheme.colors.textSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onReturnToToday) { Text("Back to today") }
+                }
+            }
             SegmentStrip(
                 segments = TaskSegment.visible(experimental),
                 selected = state.segment,
                 counts = state.counts,
+                dateContext = state.referenceDay != null,
                 onSelect = onSelect,
             )
             HorizontalDivider(thickness = Dp.Hairline, color = OmTheme.colors.borderLight)
@@ -470,7 +503,7 @@ private fun TaskList(
                 item(key = "suggestions") { SuggestionsBanner(text, onOpenSuggested) }
             }
         }
-        TaskPageHeading.of(state.segment, today, state.tasks)?.let { heading ->
+        TaskPageHeading.of(state.segment, state.referenceDay?.let(LocalDate::parse) ?: today, state.tasks)?.let { heading ->
             item(key = "page-heading") { PageHeading(heading) }
         }
         if (state.segment == TaskSegment.SUGGESTED && entries.isNotEmpty()) {
@@ -557,6 +590,7 @@ private fun SegmentStrip(
     segments: List<TaskSegment>,
     selected: TaskSegment,
     counts: TaskCountsDto,
+    dateContext: Boolean = false,
     onSelect: (TaskSegment) -> Unit,
 ) {
     // The segments do not fit a phone's width, so the strip scrolls and keeps the selected
@@ -575,8 +609,8 @@ private fun SegmentStrip(
     ) {
         items(segments, key = { it.name }) { segment ->
             SegmentChip(
-                label = segment.tabLabel(counts),
-                spoken = segment.spokenLabel(counts),
+                label = segment.tabLabel(counts).let { if (dateContext && segment == TaskSegment.TODAY) it.replaceFirst("Today", "Day") else it },
+                spoken = segment.spokenLabel(counts).let { if (dateContext && segment == TaskSegment.TODAY) it.replaceFirst("Today", "Day") else it },
                 selected = segment == selected,
                 badge = if (segment == TaskSegment.SUGGESTED) counts.suggested else 0,
                 onClick = { onSelect(segment) },

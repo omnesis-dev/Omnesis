@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tasks_widget_name">Tasks</string>
+    <string name="tasks_widget_description">Browse your tasks and mark them done.</string>
+    <color name="tasks_widget_background_start">#E7F0FE</color>
+    <color name="tasks_widget_background_end">#FFFFFF</color>
+    <color name="tasks_widget_accent">#0969DA</color>
+    <color name="tasks_widget_ink">#1F2328</color>
+    <color name="tasks_widget_secondary">#59636E</color>
+    <color name="tasks_widget_divider">#E4E8EC</color>
+    <color name="tasks_widget_selected">#180969DA</color>
+    <color name="tasks_widget_danger">#CF222E</color>
+</resources>

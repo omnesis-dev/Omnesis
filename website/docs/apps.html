@@ -329,7 +329,8 @@
               <span class="t-cmd">omnesis devices pair --kind ios</span>
             </p>
             <pre class="wrap t-dim">
-Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:activity-segments, write:photos, write:core-location-visits</pre>
+Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:activity-segments, write:photos, write:core-location-visits</pre
+            >
             <p>Scan this QR with the Omnesis app on your iPhone:</p>
             <p class="t-dim"># … QR code rendered in the terminal …</p>
             <p class="t-dim">
@@ -589,6 +590,27 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           Widgets refresh when iOS allows and after task actions; if the gateway is unreachable, a
           Home Screen widget labels its saved list as offline. Completion requires a connection and
           a failed action leaves the task open.
+        </p>
+
+        <h3 id="android-task-widgets">Android task widgets</h3>
+        <p>
+          Add <strong>Omnesis → Tasks</strong> from your launcher's Home Screen widget picker.
+          Resize it horizontally and vertically for a compact list, a larger task list, or a wide
+          tablet layout. Each widget keeps its own date range and page.
+        </p>
+        <p>
+          Use <strong>Day</strong>, <strong>Week</strong> and <strong>Month</strong> to choose the
+          date range, the arrows to browse earlier or later periods, and the date to return to the
+          current period. The page control shows more tasks. Tap a circle to complete a task, or its
+          title to open it in the app. Future periods show their plans and deadlines; only the
+          current period includes today's outstanding tasks. Month-only plans appear in the month
+          view. Tasks without a plan or deadline stay in Anytime in the app.
+        </p>
+        <p>
+          Widgets follow the device's light or dark theme. A saved list remains available while the
+          gateway is unreachable, labelled offline; completing a task requires a connection. Android
+          schedules background refreshes, and opening the app or changing a task requests a refresh.
+          Removing or changing the pairing clears the widget's saved list.
         </p>
 
         <h2 id="phone-only-sources">Phone-only sources</h2>
@@ -965,7 +987,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
             <pre>
 "inference": {
   "dictation": { "transcribeOnGateway": false }
-}</pre>
+}</pre
+            >
           </div>
         </div>
         <p>
