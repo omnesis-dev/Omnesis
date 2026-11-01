@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  completeNoteHandoff,
+  cancelNoteHandoff,
+  type NoteHandoff,
+} from "./brain/note-agent/handoffs.js";
 import { finalizeSubscriptionCompletionEgress } from "./subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "./realtime/live-voice-usage.js";
 import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
@@ -2075,6 +2082,10 @@ export interface WriteGate extends KnowledgeWriteGate {
   skipNewNotes(now: number): Promise<number>;
   /** Claim the next settled note for the note agent, or null. */
   claimDueNote(now: number): Promise<NoteAgentRow | null>;
+  reserveNoteHandoff(input: NoteHandoff): Promise<boolean>;
+  claimNoteHandoff(now: number): Promise<NoteHandoff | null>;
+  completeNoteHandoff(input: NoteHandoff, now: number): Promise<void>;
+  cancelNoteHandoff(conversationId: string): Promise<void>;
   admitNoteMutation(
     entryId: string,
     attempt: number,
@@ -2847,6 +2858,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     clearMorningBriefMessageItems: (messageId) =>
       call("cognition.morningBriefItemsClear", [messageId]),
     claimDueNote: (now) => call("noteAgent.claim", [now]),
+    reserveNoteHandoff: (input) => call("noteAgent.handoffReserve", [input]),
+    claimNoteHandoff: (now) => call("noteAgent.handoffClaim", [now]),
+    completeNoteHandoff: (input, now) => call("noteAgent.handoffComplete", [input, now]),
+    cancelNoteHandoff: (id) => call("noteAgent.handoffCancel", [id]),
     admitNoteMutation: (...args) => call("noteAgent.admitMutation", args),
     settleNoteMutation: (...args) => call("noteAgent.settleMutation", args),
     finishNoteRun: (entryId, attempt, outcome, now) =>
@@ -3548,6 +3563,10 @@ export function directWriteGate(db: Db): WriteGate {
     clearMorningBriefMessageItems: async (messageId) =>
       clearMorningBriefMessageItems(db, messageId),
     claimDueNote: async (now) => claimDueNote(db, now),
+    reserveNoteHandoff: async (input) => reserveNoteHandoff(db, input),
+    claimNoteHandoff: async (now) => claimNoteHandoff(db, now),
+    completeNoteHandoff: async (input, now) => completeNoteHandoff(db, input, now),
+    cancelNoteHandoff: async (id) => cancelNoteHandoff(db, id),
     admitNoteMutation: async (...args) => admitNoteMutation(db, ...args),
     settleNoteMutation: async (...args) => settleNoteMutation(db, ...args),
     finishNoteRun: async (entryId, attempt, outcome, now) =>

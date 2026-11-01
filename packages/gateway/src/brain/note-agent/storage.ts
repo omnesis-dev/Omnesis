@@ -15,6 +15,7 @@
  * note deletes its row.
  */
 
+import { createNoteHandoffTables } from "./handoffs.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -25,6 +26,7 @@ export type NoteAgentState = "pending" | "running" | "done" | "failed" | "skippe
 export interface NoteAgentReceipt {
   /** One or two sentences: what was done, or why nothing was. */
   text: string;
+  conversationId?: string;
   /** Task changes made, each undoable by its ledger sequence. */
   changes: Array<{ text: string; taskId: string | null; undoSeq: number | null }>;
 }
@@ -46,6 +48,7 @@ export interface NoteAgentRow {
 }
 
 export function createNoteAgentTables(db: Db): void {
+  createNoteHandoffTables(db);
   const noteColumns = db
     .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
     .all()
@@ -225,12 +228,12 @@ export function claimDueNote(db: Db, now: number): NoteAgentRow | null {
     db.prepare(
       `UPDATE note_agent_runs SET state='done',baseline=1,uncertain_mutations=1,
       receipt_json='{"text":"An earlier action may have been applied or may still be running. Review its result before making a fresh separate request.","changes":[]}',updated_at=?
-      WHERE state='running' AND updated_at<? AND (pending_mutations>0 OR applied_mutations>0 OR uncertain_mutations>0)`,
+      WHERE state='running' AND NOT EXISTS(SELECT 1 FROM note_agent_handoffs h WHERE h.entry_id=note_agent_runs.entry_id AND h.revision=note_agent_runs.revision) AND updated_at<? AND (pending_mutations>0 OR applied_mutations>0 OR uncertain_mutations>0)`,
     ).run(now, now - NOTE_RUN_STALE_MS);
     db.prepare(
       `UPDATE note_agent_runs SET state=CASE WHEN revision_attempts>=? THEN 'failed' ELSE 'pending' END,
       error=CASE WHEN revision_attempts>=? THEN 'the turn did not finish' ELSE error END,updated_at=?
-      WHERE state='running' AND updated_at<?`,
+      WHERE state='running' AND NOT EXISTS(SELECT 1 FROM note_agent_handoffs h WHERE h.entry_id=note_agent_runs.entry_id AND h.revision=note_agent_runs.revision) AND updated_at<?`,
     ).run(NOTE_AGENT_MAX_ATTEMPTS, NOTE_AGENT_MAX_ATTEMPTS, now, now - NOTE_RUN_STALE_MS);
     db.prepare(
       "UPDATE note_agent_runs SET state='skipped',baseline=0 WHERE state='pending' AND EXISTS(SELECT 1 FROM note_agent_runs newer WHERE newer.entry_id=note_agent_runs.entry_id AND newer.revision>note_agent_runs.revision)",
@@ -242,6 +245,7 @@ export function claimDueNote(db: Db, now: number): NoteAgentRow | null {
         `SELECT r.* FROM note_agent_runs r
            JOIN note_entries n ON n.id = r.entry_id
           WHERE r.state = 'pending' AND r.run_after <= ?
+            AND NOT EXISTS(SELECT 1 FROM note_agent_handoffs h WHERE h.entry_id=r.entry_id AND h.revision=r.revision)
             AND NOT EXISTS (SELECT 1 FROM note_agent_runs busy WHERE busy.entry_id=r.entry_id AND busy.state='running')
             AND NOT EXISTS (SELECT 1 FROM note_agent_runs newer WHERE newer.entry_id=r.entry_id AND newer.revision>r.revision)
             AND (n.updated_at<=? OR (n.updated_at>? AND r.created_at<=?))

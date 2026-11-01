@@ -15,12 +15,14 @@
  * eagerly.
  */
 
+import { renderNoteConversationContext } from "./note-context.js";
 import { join } from "node:path";
 import {
   AnthropicBackend,
   HttpAgentBackend,
   buildBuiltinTools,
   CitationReads,
+  selectNonCitationTools,
   createBuiltinSpecialistRegistry,
   type ToolHandle,
   type ChatBackend,
@@ -507,8 +509,15 @@ export function createAgentService(
       ? (sessionId) => omnesisChatRuntime.ensureConversationEvidence(sessionId)
       : undefined,
     onSessionClose: omnesisChatRuntime?.onSessionClose,
-    onConversationDeleted: omnesisChatRuntime?.onConversationDeleted,
-    onConversationRetained: omnesisChatRuntime?.onConversationRetained,
+    noteContext: (origin) => renderNoteConversationContext(db, origin),
+    onConversationDeleted: async (id) => {
+      await writeGate.cancelNoteHandoff(id);
+      await omnesisChatRuntime?.onConversationDeleted(id);
+    },
+    onConversationRetained: async (id) => {
+      await writeGate.cancelNoteHandoff(id);
+      return (await omnesisChatRuntime?.onConversationRetained(id)) ?? true;
+    },
     // Slow-answer push (`notifyAfterMs`) — the composition root supplies the
     // APNs fan-out; absent in minimal wirings, where the option is inert.
     notifyAnswer: deps.notifyAgentAnswer,
@@ -650,7 +659,7 @@ export class AgentLifecycle {
     service.setInteractiveMemoryProfile(this.interactiveMemoryProfile);
     service.setInteractiveWriteProfile(this.interactiveWriteProfile);
     return {
-      tools: service.buildOwnerTools(runId, taskTools, evidenceTools),
+      tools: selectNonCitationTools(service.buildOwnerTools(runId, taskTools, evidenceTools)),
       dispose: async (sessionId) => {
         try {
           await service.disposeOwnerTurn(sessionId);

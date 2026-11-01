@@ -2,6 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  completeNoteHandoff,
+  cancelNoteHandoff,
+  type NoteHandoff,
+} from "../brain/note-agent/handoffs.js";
+import {
   type SyncIssue,
   type SyncIssueAssessment,
   DeviceId,
@@ -1822,6 +1829,11 @@ export const writerHandlers = {
   "noteAgent.skip": (db: Db, now: number) => skipNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
     clearMorningBriefMessageItems(db, messageId),
+  "noteAgent.handoffReserve": (db: Db, input: NoteHandoff) => reserveNoteHandoff(db, input),
+  "noteAgent.handoffClaim": (db: Db, now: number) => claimNoteHandoff(db, now),
+  "noteAgent.handoffComplete": (db: Db, input: NoteHandoff, now: number) =>
+    completeNoteHandoff(db, input, now),
+  "noteAgent.handoffCancel": (db: Db, id: string) => cancelNoteHandoff(db, id),
   "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
   "noteAgent.admitMutation": (db: Db, entryId: string, attempt: number, now: number) =>
     admitNoteMutation(db, entryId, attempt, now),

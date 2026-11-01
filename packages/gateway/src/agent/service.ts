@@ -21,6 +21,8 @@
  * unit-testable without the server.
  */
 
+import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
+import type { NoteConversationOrigin } from "./conversation-store.js";
 import {
   createVoiceSession,
   voiceTranscriptModelNote,
@@ -334,6 +336,7 @@ export interface AgentServiceDeps {
    * is removed so a failed durable corpus/index cascade leaves the transcript
    * available for retry. Awaited; failures reject the deletion.
    */
+  noteContext?: (origin: NoteConversationOrigin) => string;
   onConversationDeleted?: (sessionId: string) => Promise<unknown>;
   /**
    * Bounded retention cascade. False means downstream cleanup made progress
@@ -927,6 +930,7 @@ export class AgentService {
   private readonly onSessionClose: ((sessionId: string) => void | Promise<void>) | undefined;
   private readonly onConversationDeleted: ((sessionId: string) => Promise<unknown>) | undefined;
   private readonly onConversationRetained: ((sessionId: string) => Promise<boolean>) | undefined;
+  private readonly noteContext: AgentServiceDeps["noteContext"];
   private readonly notifyAnswer:
     ((notification: AgentAnswerNotification) => void | Promise<void>) | undefined;
   private readonly readState: ConversationReadStatePort | undefined;
@@ -1169,6 +1173,7 @@ export class AgentService {
     this.onSessionClose = deps.onSessionClose;
     this.onConversationDeleted = deps.onConversationDeleted;
     this.onConversationRetained = deps.onConversationRetained;
+    this.noteContext = deps.noteContext;
     this.notifyAnswer = deps.notifyAnswer;
     this.readState = deps.readState;
     this.notifyConversation = deps.notifyConversation;
@@ -1557,6 +1562,28 @@ export class AgentService {
    */
   private originPromptSection(sessionId: string): string {
     const origin = this.sessions.get(sessionId)?.meta.origin;
+    if (origin?.kind === "note") {
+      try {
+        const note =
+          this.noteContext?.(origin) ??
+          "The current note context is unavailable. Treat earlier note instructions as historical; confirm the owner's current intent before acting.";
+        let task = "";
+        if (origin.taskId && this.taskContext) {
+          try {
+            task = this.taskContext({ kind: "task", runId: origin.runId, taskId: origin.taskId });
+          } catch {
+            task =
+              "The original task context is unavailable. Read its current state before changing it.";
+          }
+        }
+        return note + task;
+      } catch (err) {
+        log.warn(
+          `Note continuation context could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return "The current note context is unavailable. Do not replay earlier instructions; confirm the owner's current intent before acting.";
+      }
+    }
     if (origin?.kind !== "task" || !this.taskContext) return "";
     try {
       return this.taskContext(origin);
@@ -2298,6 +2325,88 @@ export class AgentService {
    * zone. The title is the task's; the origin carries the task snapshot the
    * client's context card draws. Every call opens a new conversation.
    */
+  /** Seed one durable owner-note clarification without invoking a model. */
+  async openNoteClarification(input: NoteHandoff): Promise<void> {
+    const store = this.store;
+    if (!store) throw new AgentError("agent_unconfigured", "No conversation store is configured.");
+    const id = input.conversationId;
+    await this.enqueueConversationMutation(id, async () => {
+      if (this.conversationDeletionTombstones.has(id))
+        throw new AgentError("session_busy", "This clarification conversation was deleted.");
+      const existing = await store.load(id);
+      if (existing) {
+        if (
+          existing.origin?.kind !== "note" ||
+          existing.origin.noteId !== input.noteId ||
+          existing.origin.revision !== input.revision
+        )
+          throw new AgentError(
+            "session_busy",
+            "The clarification conversation has a different origin.",
+          );
+      } else {
+        const backend = this.backendFactory("agent");
+        if (!backend) throw new AgentError("agent_unconfigured", "No Agent model is assigned.");
+        const now = new Date().toISOString();
+        const origin: NoteConversationOrigin = {
+          kind: "note",
+          noteId: input.noteId,
+          revision: input.revision,
+          runId:
+            input.revision === 0
+              ? `note:${input.noteId}`
+              : `note:${input.noteId}:revision:${input.revision}`,
+          seedMessageCount: 0,
+          processingContext: input.context,
+          capturedAt: input.capturedAt,
+          day: input.day,
+          instructionAt: input.instructionAt,
+          ...(input.timeZone ? { timeZone: input.timeZone } : {}),
+          ...(input.taskId ? { taskId: input.taskId } : {}),
+        };
+        const record: ConversationRecord = {
+          id,
+          callerId: "owner-note",
+          model: backend.model,
+          backend: backend.name,
+          createdAt: now,
+          updatedAt: now,
+          title: clipTitle(input.question),
+          pinned: false,
+          origin,
+          messages: [
+            { role: "user", parts: [{ kind: "text", text: input.text }] },
+            {
+              role: "assistant",
+              parts: [
+                {
+                  kind: "text",
+                  text: input.question,
+                },
+              ],
+            },
+          ],
+        };
+        await store.save(record);
+      }
+      const initial = existing ?? (await store.load(id));
+      if (!initial || initial.messages.length !== 2) return;
+      const arrival = !existing
+        ? await this.readState?.agentContentArrived(id, {
+            messageId: `note-${input.noteId}-r${input.revision}`,
+          })
+        : undefined;
+      if (arrival?.notify || this.readState?.unreadAmong([id]).has(id)) {
+        await this.notifyConversation?.({
+          conversationId: id,
+          title: clipTitle(input.question),
+          body: input.question,
+          idempotencyKey: `note-handoff:${id}`,
+        });
+      }
+    });
+  }
+
   async openTaskConversation(
     callerId: CallerId,
     input: { taskId: string; snapshot: TaskConversationOriginSnapshot },

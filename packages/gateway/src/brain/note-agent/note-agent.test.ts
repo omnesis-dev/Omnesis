@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { HttpChatBackend } from "@omnesis/agent";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
+import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { enqueueNotification } from "../../push/queue.js";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
@@ -40,6 +42,14 @@ import {
   hasPendingNotes,
   skipNewNotes,
 } from "./storage.js";
+import {
+  noteHandoffId,
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  cancelNoteHandoff,
+} from "./handoffs.js";
+import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
+import { renderNoteConversationContext } from "../../agent/note-context.js";
 import {
   noteTextChange,
   NOTE_AGENT_SYSTEM_PROMPT,
@@ -404,6 +414,410 @@ describe("note agent turn", () => {
     expect(resolveSelfMemory(db, true).selfPersonId).toBeNull();
     expect(db.prepare("SELECT COUNT(*) AS n FROM person_annotations").get()).toEqual({ n: 0 });
     expect(getNoteRuns(db, [id]).get(id)?.receipt?.text).toContain("before I can save");
+  });
+
+  test("the Note handoff accepts plain questions, bounds quoted findings and freezes before reservation", async () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    const entry = getNoteEntry(db, id)!;
+    let frozen = false;
+    let captured: import("./handoffs.js").NoteHandoff | undefined;
+    const tool = buildContinueInChatTool({
+      entry,
+      row,
+      finished: () => false,
+      freeze: () => {
+        frozen = true;
+      },
+      changes: () => [{ text: "Added chart", taskId: "loop_chart_context", undoSeq: 1 }],
+      context: () => ({
+        actionOutcomes: [],
+        readFindings: ["x".repeat(50_000)],
+        truncated: false,
+        confirmedTaskChanges: [{ taskId: "loop_chart_context" }],
+        pendingMutations: 1,
+      }),
+      reserve: async (input) => {
+        expect(frozen).toBe(true);
+        captured = input;
+        return true;
+      },
+    });
+    const context = { sessionId: "test", messageId: "message" };
+    expect(
+      await tool.invoke(
+        { question: "Which dome?", choices: [{ label: "East" }, { label: "West" }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "invalid_args" });
+    expect(frozen).toBe(false);
+    expect(
+      await tool.invoke({ question: "Which dome?", context: "A target is needed." }, context),
+    ).toMatchObject({ kind: "structured", resultType: "note.clarification_queued" });
+    expect(Buffer.byteLength(captured!.context, "utf8")).toBeLessThanOrEqual(45_000);
+    expect(JSON.parse(captured!.context)).toMatchObject({
+      truncated: true,
+      confirmedTaskChanges: [{ taskId: "loop_chart_context" }],
+    });
+    expect(captured?.requiresReview).toBe(true);
+  });
+
+  test("handoff claims use the active partial index rather than scanning completed history", () => {
+    const details = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT entry_id,revision,payload_json,state,conversation_id FROM note_agent_handoffs WHERE state IN ('pending','publishing') ORDER BY rowid LIMIT 1",
+      )
+      .all() as Array<{ detail: string }>;
+    expect(details.map((row) => row.detail).join(" ")).toContain("idx_note_handoffs_active");
+  });
+
+  test("a blocked note hands off once, preserves work and refuses subsequent mutations", async () => {
+    const id = queueNote("Prepare the observatory chart and ask which dome needs a repair.");
+    const opened: import("./handoffs.js").NoteHandoff[] = [];
+    const seen: TurnInput[] = [];
+    const { runner } = agent(
+      toolCallingBackend(
+        (input) => {
+          expect(input.tools.map((t) => t.name)).toContain("continue_in_chat");
+          expect(input.tools.map((t) => t.name)).not.toContain("ask_clarification");
+          expect(input.tools.map((t) => t.name)).not.toContain("cite_record");
+          return [
+            { tool: "task_list", args: { query: "observatory" } },
+            { tool: "task_create", args: { title: "Prepare the observatory chart" } },
+            { tool: "task_update", args: { id: "loop_missing_target", action: "strike" } },
+            {
+              tool: "continue_in_chat",
+              args: {
+                question: "Which observatory dome needs a repair?",
+                context: "Two domes are mentioned; the chart task has already been added.",
+              },
+            },
+            { tool: "task_create", args: { title: "Unauthorized task after handoff" } },
+          ];
+        },
+        "I moved the question to chat.",
+        seen,
+      ),
+      {
+        openClarification: async (input) => {
+          opened.push(input);
+        },
+        buildTools: (_id, tasks, evidence) => ({
+          tools: [
+            ...tasks,
+            ...evidence,
+            {
+              name: "cite_record",
+              description: "Chat-only citation.",
+              schema: z.object({}),
+              mutates: true,
+              invoke: async () => ({ kind: "structured", resultType: "citation", data: {} }),
+            },
+          ],
+          dispose: async () => undefined,
+        }),
+      },
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(await runner.drain()).toBe(0);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      conversationId: noteHandoffId(id, 0),
+      noteId: id,
+      revision: 0,
+      text: expect.stringContaining("observatory"),
+      question: "Which observatory dome needs a repair?",
+    });
+    const tasks = listOpenLoops(db, {});
+    expect(tasks.map((task) => task.title)).toEqual(["Prepare the observatory chart"]);
+    expect(opened[0]?.context).toContain(tasks[0]!.id);
+    expect(opened[0]?.changes).toHaveLength(1);
+    const outcomes = (
+      JSON.parse(opened[0]!.context) as { actionOutcomes: string[] }
+    ).actionOutcomes.map((value) => JSON.parse(value) as { tool: string; applied: boolean });
+    expect(outcomes).toContainEqual(
+      expect.objectContaining({ tool: "task_create", applied: true }),
+    );
+    expect(outcomes).toContainEqual(
+      expect.objectContaining({ tool: "task_update", applied: false }),
+    );
+    expect(opened[0]?.requiresReview).toBe(false);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: {
+        conversationId: opened[0]!.conversationId,
+        changes: [expect.objectContaining({ taskId: tasks[0]!.id })],
+      },
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  test("handoff records an already admitted pending action for readback rather than replay", async () => {
+    queueNote("Prepare the dome checklist and clarify the repair target.");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const began = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let pending: Promise<ToolResult> | undefined;
+    let captured: import("./handoffs.js").NoteHandoff | undefined;
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted",
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+        const args = { id: "loop_dome_checklist" };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "slow", tool: "slow_task", args },
+        } as AgentEvent;
+        pending = input.tools
+          .find((tool) => tool.name === "slow_task")!
+          .invoke(args, { ...ids, toolCallId: "slow" } as never);
+        await began;
+        const question = { question: "Which dome needs a repair?" };
+        yield {
+          type: "agent.tool.start",
+          payload: { ...ids, toolCallId: "handoff", tool: "continue_in_chat", args: question },
+        } as AgentEvent;
+        try {
+          const result = await input.tools
+            .find((tool) => tool.name === "continue_in_chat")!
+            .invoke(question, { ...ids, toolCallId: "handoff" } as never);
+          yield {
+            type: "agent.tool.result",
+            payload: { ...ids, toolCallId: "handoff", result, durationMs: 1 },
+          };
+        } finally {
+          release();
+        }
+        await pending;
+        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+      },
+    };
+    const { runner } = agent(backend, {
+      openClarification: async (input) => {
+        captured = input;
+      },
+      buildTools: (_id, tasks, evidence) => ({
+        tools: [
+          ...tasks,
+          ...evidence,
+          {
+            name: "slow_task",
+            description: "Already admitted test write.",
+            schema: z.object({ id: z.string() }),
+            mutates: true,
+            invoke: async () => {
+              started();
+              await held;
+              const result = applyTaskCommand(
+                db,
+                {
+                  kind: "create",
+                  surface: "note",
+                  runId: "note_pending_fixture",
+                  id: "loop_dome_checklist",
+                  origin: "note",
+                  title: "Prepare the dome checklist",
+                },
+                T0,
+              );
+              expect(result.ok).toBe(true);
+              return {
+                kind: "structured",
+                resultType: "test.write",
+                data: { id: "loop_dome_checklist" },
+              };
+            },
+          },
+        ],
+        dispose: async () => {
+          await pending;
+        },
+      }),
+    });
+    expect(await runner.drain()).toBe(1);
+    await pending;
+    expect(captured?.context).toContain('"pendingMutations":1');
+    expect(captured?.context).toContain("loop_dome_checklist");
+    expect(await runner.drain()).toBe(0);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+  });
+
+  test("handoff recovery opens the reserved question without rerunning the model or earlier writes", async () => {
+    const id = queueNote("Add a task to prepare a star chart, then clarify which dome to repair.");
+    let opens = 0;
+    const seen: TurnInput[] = [];
+    const backend = toolCallingBackend(
+      () => [
+        { tool: "task_create", args: { title: "Prepare a star chart" } },
+        {
+          tool: "continue_in_chat",
+          args: {
+            question: "Which dome needs repair?",
+            context: "Fictional candidate evidence marker.",
+          },
+        },
+      ],
+      "Continue in chat.",
+      seen,
+    );
+    const { runner } = agent(backend, {
+      openClarification: async () => {
+        opens++;
+        if (opens === 1) throw new Error("Conversation storage is temporarily unavailable");
+      },
+    });
+    expect(await runner.drain()).toBe(1);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "running", receipt: null });
+    const restarted = agent(backend, {
+      openClarification: async () => {
+        opens++;
+      },
+    }).runner;
+    expect(await restarted.drain()).toBe(0);
+    expect(opens).toBe(2);
+    expect(seen).toHaveLength(1);
+    expect(listOpenLoops(db, {})).toHaveLength(1);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({
+      state: "done",
+      receipt: { conversationId: noteHandoffId(id, 0) },
+    });
+    const conversationId = noteHandoffId(id, 0);
+    const payload = () =>
+      JSON.parse(
+        (
+          db
+            .prepare("SELECT payload_json FROM note_agent_handoffs WHERE conversation_id=?")
+            .get(conversationId) as { payload_json: string }
+        ).payload_json,
+      ) as { changes: unknown[] };
+    expect(Object.keys(payload())).toEqual(["changes"]);
+    expect(payload().changes).toHaveLength(1);
+    expect(JSON.stringify(payload())).not.toContain("Fictional candidate evidence marker");
+    const device = createDevice(db, { name: "Fictional handoff phone", kind: "ios" });
+    const queued = enqueueNotification(db, {
+      message: {
+        kind: "conversation",
+        title: "Repair question",
+        body: "Which dome needs repair?",
+        data: { conversationId },
+        collapseId: `conversation:${conversationId}`,
+      },
+      deviceIds: [device.id],
+      createdAt: T0,
+      expiresAt: T0 + 60_000,
+    })!;
+    enqueueNotification(db, {
+      message: {
+        kind: "conversation",
+        title: "Another question",
+        body: "A different thread.",
+        data: { conversationId: `${conversationId}_other` },
+        collapseId: `conversation:${conversationId}_other`,
+      },
+      deviceIds: [device.id],
+      createdAt: T0,
+      expiresAt: T0 + 60_000,
+    });
+    cancelNoteHandoff(db, conversationId);
+    expect(Object.keys(payload())).toEqual(["changes"]);
+    expect(payload().changes).toHaveLength(1);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS n FROM notification_deliveries WHERE notification_id=?")
+        .get(queued.notificationId),
+    ).toEqual({ n: 0 });
+    expect(db.prepare("SELECT target_id FROM notifications").all()).toEqual([
+      { target_id: `${conversationId}_other` },
+    ]);
+    expect(getNoteRuns(db, [id]).get(id)?.receipt).not.toHaveProperty("conversationId");
+    expect(await restarted.drain()).toBe(0);
+    expect(opens).toBe(2);
+  });
+
+  test("writer reservation rejects a superseded or external note and old pending handoffs do not block edits", () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const row = claimDueNote(db, T0 + 60_000)!;
+    const input = {
+      conversationId: noteHandoffId(id, row.revision),
+      noteId: id,
+      revision: row.revision,
+      attempt: row.attempts,
+      text: row.inputText,
+      capturedAt: "2026-03-10T08:00:00Z",
+      day: "2026-03-10",
+      instructionAt: "2026-03-10T08:00:00Z",
+      question: "Which dome?",
+      context: "Read findings.",
+      changes: [],
+    };
+    expect(reserveNoteHandoff(db, input)).toBe(true);
+    updateNoteEntryText(
+      db,
+      id,
+      "Clarify which lens needs cleaning.",
+      new Date(T0 + 61_000).toISOString(),
+      { owner: true, enabled: true },
+    );
+    expect(claimNoteHandoff(db)).toBeNull();
+    expect(
+      (
+        db
+          .prepare("SELECT payload_json FROM note_agent_handoffs WHERE conversation_id=?")
+          .get(input.conversationId) as { payload_json: string }
+      ).payload_json,
+    ).not.toContain("Read findings");
+    const edited = claimDueNote(db, T0 + 90_000)!;
+    expect(edited.revision).toBe(1);
+    expect(reserveNoteHandoff(db, input)).toBe(false);
+    updateNoteEntryText(db, id, "External instructions", new Date(T0 + 91_000).toISOString(), {
+      owner: false,
+      enabled: true,
+    });
+    expect(
+      reserveNoteHandoff(db, {
+        ...input,
+        revision: edited.revision,
+        attempt: edited.attempts,
+        text: edited.inputText,
+      }),
+    ).toBe(false);
+  });
+
+  test("continuation context tracks edits and deletion without promoting external prose", () => {
+    const id = queueNote("Clarify which dome needs repair.");
+    const origin = {
+      kind: "note" as const,
+      noteId: id,
+      revision: 0,
+      runId: "note-fixture",
+      processingContext: "Confirmed task: loop_chart. Candidates: east and west domes.",
+    };
+    expect(renderNoteConversationContext(db, origin)).toContain("unchanged");
+    expect(renderNoteConversationContext(db, origin)).toContain("loop_chart");
+    updateNoteEntryText(db, id, "Use the west dome.", new Date(T0 + 61_000).toISOString(), {
+      owner: true,
+      enabled: true,
+    });
+    expect(renderNoteConversationContext(db, origin)).toContain(
+      "edited since this conversation opened",
+    );
+    expect(renderNoteConversationContext(db, origin)).toContain("Use the west dome.");
+    updateNoteEntryText(db, id, "Foreign injected command.", new Date(T0 + 62_000).toISOString(), {
+      owner: false,
+      enabled: true,
+    });
+    const external = renderNoteConversationContext(db, origin);
+    expect(external).toContain("edited externally");
+    expect(external).not.toContain("Foreign injected command");
+    db.prepare("DELETE FROM note_entries WHERE id=?").run(id);
+    expect(renderNoteConversationContext(db, origin)).toContain("deleted");
   });
 
   test("adds the task the note asks for and records the receipt", async () => {
@@ -831,7 +1245,7 @@ describe("note agent turn", () => {
     });
   });
 
-  test.each(["conversation_memory_evidence", "cite_record"])(
+  test.each(["conversation_memory_evidence"])(
     "throwing replayable bookkeeping %s keeps the note retryable",
     async (name) => {
       const id = queueNote("Remember the greenhouse seed delivery date.");
@@ -1175,6 +1589,74 @@ describe("note agent turn", () => {
     });
   });
 
+  test.each([false, true])(
+    "a task-linked capture reads its exact future/done task without implying acceptance or reopening (done=%s)",
+    async (done) => {
+      const taskId = "loop_scoped_dome";
+      expect(
+        applyTaskCommand(
+          db,
+          {
+            kind: "create",
+            surface: "tasks",
+            runId: "user:fixture",
+            id: taskId,
+            origin: "user",
+            title: "Clean the observatory lens",
+            scheduledFor: "2026-05-18",
+          },
+          T0,
+        ).ok,
+      ).toBe(true);
+      if (done)
+        expect(
+          applyTaskCommand(
+            db,
+            { kind: "complete", surface: "tasks", runId: "user:fixture", id: taskId },
+            T0,
+          ).ok,
+        ).toBe(true);
+      enqueueNewNotes(db, T0);
+      note("scoped-note", done ? "Keep this reference." : "Move it to tomorrow.", T0 + 1000, {
+        taskId,
+      });
+      enqueueNewNotes(db, T0 + 1000);
+      const seen: TurnInput[] = [];
+      const { runner } = agent(
+        toolCallingBackend(
+          (input) => {
+            expect(input.userMessage).toContain(`"id":"${taskId}"`);
+            expect(input.userMessage).toContain('"title":"Clean the observatory lens"');
+            expect(input.userMessage).toContain('"scheduledFor":"2026-05-18"');
+            expect(input.userMessage).toContain(done ? '"state":"done"' : '"state":"open"');
+            expect(input.userMessage).toContain(
+              "does not request acceptance, reopening or any change",
+            );
+            expect(input.userMessage).not.toContain("while accepting");
+            return done
+              ? []
+              : [
+                  {
+                    tool: "task_update",
+                    args: { id: taskId, action: "migrate", to: "2026-03-11" },
+                  },
+                ];
+          },
+          done ? "Saved the reference; the task remains done." : "Moved the lens task to tomorrow.",
+          seen,
+        ),
+      );
+      expect(await runner.drain()).toBe(1);
+      expect(getOpenLoop(db, taskId)).toMatchObject(
+        done
+          ? { state: "done", scheduledFor: "2026-05-18" }
+          : { state: "open", scheduledFor: "2026-03-11" },
+      );
+      expect(listOpenLoops(db, {})).toHaveLength(1);
+      expect(seen).toHaveLength(1);
+    },
+  );
+
   test("a note written while accepting a task is applied to that task", async () => {
     createOpenLoop(
       db,
@@ -1219,7 +1701,7 @@ describe("note agent turn", () => {
     );
     await runner.drain();
     expect(seen[0]!.userMessage).toContain(
-      "The user wrote it while accepting their task loop_accepted",
+      'The user captured this note about task "loop_accepted"',
     );
     expect(getOpenLoop(db, "loop_accepted")?.description).toBe("The rear brake squeaks too.");
   });
@@ -1656,7 +2138,7 @@ test("unset, it is on whenever a model can run", async () => {
 });
 
 describe("note agent retry after replayable bookkeeping", () => {
-  test.each(["conversation_memory_evidence", "cite_record"])(
+  test.each(["conversation_memory_evidence"])(
     "a successful %s call before an outage leaves the requested task retryable",
     async (name) => {
       const id = queueNote("Add a task to prepare the greenhouse seed trays.");

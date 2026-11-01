@@ -2715,6 +2715,11 @@ const noteAgent = new NoteAgent({
       taskTools,
       evidenceTools,
     ),
+  openClarification: async (input) => {
+    const service = agentLifecycle.routeDeps.agentService;
+    if (!service) throw new Error("No Agent conversation service is available.");
+    await service.openNoteClarification(input);
+  },
   dayDocumentId: (day) => notesDayDocumentId(db, day),
   recordUsage: (usage, modelId) =>
     writeGate.recordCognitionSpend(

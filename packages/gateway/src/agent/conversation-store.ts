@@ -123,7 +123,10 @@ export interface ConversationRecord {
  * on the main session profile.
  */
 export type ConversationOrigin =
-  WatchFiringConversationOrigin | DailyBriefConversationOrigin | TaskConversationOrigin;
+  | WatchFiringConversationOrigin
+  | DailyBriefConversationOrigin
+  | TaskConversationOrigin
+  | NoteConversationOrigin;
 
 /**
  * The standing Morning brief conversation: one per gateway, pinned and
@@ -226,6 +229,21 @@ export type WatchFiringOriginSnapshot = {
  * and there is no hidden seed. Every turn's system prompt carries the task as
  * it currently stands (see `TaskContextProvider` in `service.ts`).
  */
+export type NoteConversationOrigin = {
+  kind: "note";
+  /** Agent-produced tool findings and confirmed outcomes; never user testimony. */
+  processingContext?: string;
+  capturedAt?: string;
+  day?: string;
+  instructionAt?: string;
+  timeZone?: string;
+  runId: string;
+  noteId: string;
+  revision: number;
+  taskId?: string;
+  seedMessageCount?: number;
+};
+
 export type TaskConversationOrigin = {
   kind: "task";
   /** The task (open loop) the conversation is about. */
@@ -745,6 +763,14 @@ export function originAnchor(origin: ConversationOrigin): ConversationOrigin {
         runId: origin.runId,
         watchId: origin.watchId,
       };
+    case "note":
+      return {
+        kind: "note",
+        runId: origin.runId,
+        noteId: origin.noteId,
+        revision: origin.revision,
+        ...(origin.taskId ? { taskId: origin.taskId } : {}),
+      };
     case "task":
       return { kind: "task", taskId: origin.taskId, runId: origin.runId };
     default:
@@ -806,6 +832,30 @@ function parseOrigin(value: unknown): ConversationOrigin | undefined {
       watchId: o.watchId,
       ...(watch ? { watch } : {}),
       ...(seedMessageCount !== undefined ? { seedMessageCount } : {}),
+    };
+  }
+  if (
+    o.kind === "note" &&
+    typeof o.noteId === "string" &&
+    o.noteId.length > 0 &&
+    typeof o.revision === "number" &&
+    Number.isSafeInteger(o.revision) &&
+    o.revision >= 0
+  ) {
+    return {
+      kind: "note",
+      runId: o.runId,
+      noteId: o.noteId,
+      ...(typeof o.capturedAt === "string" ? { capturedAt: o.capturedAt } : {}),
+      ...(typeof o.day === "string" ? { day: o.day } : {}),
+      ...(typeof o.instructionAt === "string" ? { instructionAt: o.instructionAt } : {}),
+      ...(typeof o.timeZone === "string" ? { timeZone: o.timeZone } : {}),
+      ...(typeof o.processingContext === "string" && o.processingContext.length <= 50_000
+        ? { processingContext: o.processingContext }
+        : {}),
+      revision: o.revision,
+      ...(typeof o.taskId === "string" ? { taskId: o.taskId } : {}),
+      seedMessageCount: 0,
     };
   }
   if (o.kind === "task" && typeof o.taskId === "string" && o.taskId.length > 0) {

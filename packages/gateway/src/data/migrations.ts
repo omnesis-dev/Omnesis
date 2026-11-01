@@ -155,6 +155,7 @@ import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js"
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
+import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4886,6 +4887,7 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "process owner note edits as fenced revisions",
     up: createNoteAgentTables,
   },
+  { version: 208, description: "durable Note clarification handoffs", up: createNoteHandoffTables },
 ];
 
 /**
