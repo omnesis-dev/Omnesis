@@ -1083,6 +1083,14 @@ enum PreviewMocks {
         )
     }
 
+    static let voiceEntryText = "Where did I leave the spare bicycle key?"
+    static let voiceEntryLongText = String(repeating: "Remember to check the greenhouse after the weekend. ", count: 12)
+    static let voiceEntryAutomaticStatus = StatusSnapshot(
+        documents: .init(total: 0, bySource: [:], unitCountBySource: nil),
+        dbSizeBytes: nil, latestActivityBySource: nil,
+        capture: .init(supported: true, enabled: true, active: true)
+    )
+
     static let statusSnapshot = StatusSnapshot(
         documents: StatusSnapshot.Documents(
             total: 165_135,

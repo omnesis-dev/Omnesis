@@ -261,7 +261,10 @@ fun HomeScaffold(
 
     fun openCapture(surface: String) {
         closeDrawer()
-        nav.navigate("capture?surface=$surface") { launchSingleTop = true }
+        nav.navigate("capture?surface=$surface") {
+            // External launches own a fresh listening session; keep an existing draft underneath.
+            launchSingleTop = !CaptureSurface.unified(surface)
+        }
     }
 
     // Central app lifecycle policy. This lives above the nav graph rather than in AgentScreen:
@@ -914,6 +917,11 @@ fun HomeScaffold(
             ) {
                 CaptureScreen(
                     onClose = { nav.popBackStack() },
+                    onAsk = { text ->
+                        vm.askFromCapture(text)
+                        nav.popBackStack()
+                        nav.navigate("agent") { launchSingleTop = true }
+                    },
                     onOpenSettings = openSettings,
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },
                 )

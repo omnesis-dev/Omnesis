@@ -44,7 +44,7 @@ extension EnvironmentValues {
 /// a voice note.
 @available(iOS 17.0, *)
 struct CaptureView: View {
-    @Environment(AppStore.self) private var store
+    @Environment(AppStore.self) var store
     @Environment(\.dismiss) private var dismiss
 
     /// Attribution slug for the entry point that opened the surface.
@@ -60,10 +60,17 @@ struct CaptureView: View {
 
     /// Set when the words are about something rather than a note on their own.
     let completion: NoteCaptureCompletion?
+    /// Only system controls and shortcuts opt into Ask/Tell routing.
+    let unified: Bool
+    var suspended: Bool
+    var onAsk: ((String) -> Void)?
+    @State var routingFailed = false
+    @State var submissionTask: Task<Void, Never>?
+    @State var preparedAudio: URL?
 
-    @State private var speech: SpeechRecognizer
-    @State private var text: String = ""
-    @State private var phase: Phase
+    @State var speech: SpeechRecognizer
+    @State var text: String = ""
+    @State var phase: Phase
     /// Text committed before the current dictation run. The recognizer
     /// resets its transcript on every (re)start, so live partials
     /// render `dictationBase + partial` — stopping and resuming the mic
@@ -76,7 +83,7 @@ struct CaptureView: View {
     @State private var textAtStop: String?
     /// Deterministic save rejection (over-long note, gateway 400/413/
     /// 422) shown inline; the text stays in the editor for fixing.
-    @State private var saveError: String?
+    @State var saveError: String?
     @State private var confirmDiscard = false
     @State private var showNoteHistory = false
     #if DEBUG
@@ -84,11 +91,11 @@ struct CaptureView: View {
     #endif
     /// The gateway's byte limit when this capture is a voice note — read
     /// once, when it opens; nil for the on-device transcript.
-    @State private var voiceNoteLimit: Int?
-    @State private var voiceNote = VoiceNoteCaptureState()
+    @State var voiceNoteLimit: Int?
+    @State var voiceNote = VoiceNoteCaptureState()
     /// The voice note's recording, set up when its first run starts.
-    @State private var recording: DictationAudioRecorder?
-    @FocusState private var keyboardFocused: Bool
+    @State var recording: DictationAudioRecorder?
+    @FocusState var keyboardFocused: Bool
 
     enum Phase: Equatable {
         /// Capturing (listening, or stopped with editable text).
@@ -103,26 +110,34 @@ struct CaptureView: View {
         surface: NoteSurface = .app,
         onClose: (() -> Void)? = nil,
         completion: NoteCaptureCompletion? = nil,
+        unified: Bool = false,
+        suspended: Bool = false,
+        onAsk: ((String) -> Void)? = nil,
         speech: SpeechRecognizer = SpeechRecognizer(),
         previewText: String = "",
         previewPhase: Phase = .capturing,
         previewSaveError: String? = nil,
+        previewRoutingFailed: Bool = false,
         previewVoiceNote: VoiceNoteCaptureState? = nil
     ) {
         self.surface = surface
         self.onClose = onClose
         self.completion = completion
+        self.unified = unified
+        self.suspended = suspended
+        self.onAsk = onAsk
         self._speech = State(initialValue: speech)
         self._text = State(initialValue: previewText)
         self._phase = State(initialValue: previewPhase)
         self._saveError = State(initialValue: previewSaveError)
+        self._routingFailed = State(initialValue: previewRoutingFailed)
         if let previewVoiceNote {
             self._voiceNoteLimit = State(initialValue: 25 * 1024 * 1024)
             self._voiceNote = State(initialValue: previewVoiceNote)
         }
     }
 
-    private var isVoiceNote: Bool {
+    var isVoiceNote: Bool {
         voiceNoteLimit != nil
     }
 
@@ -146,18 +161,14 @@ struct CaptureView: View {
                 transcriptArea
             }
             saveErrorLine
-            doneButton
+            if unified { unifiedButtons } else { doneButton }
         }
         .padding(.horizontal, Theme.Spacing.lg)
         .padding(.bottom, Theme.Spacing.lg)
         // Recede behind the confirmation card once the note is on its way.
         .opacity(phase == .capturing || phase == .saving ? 1 : 0.35)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Background as a modifier (not a ZStack sibling): a
-        // `Color.ignoresSafeArea()` laid out INSIDE a fixed-size
-        // container inflates it past its frame and shoves the bottom
-        // row off-screen.
-        //
+        // Keep the backdrop outside layout so it cannot push actions offscreen.
         // The same wash the agent landing screen sits on, with the halo
         // centred on the mic — this surface is its sibling: one calm screen
         // with a single glowing subject in the middle.
@@ -179,7 +190,7 @@ struct CaptureView: View {
                 }
         )
         .confirmationDialog(
-            "Discard this note?",
+            unified ? "Discard this input?" : "Discard this note?",
             isPresented: $confirmDiscard,
             titleVisibility: .visible
         ) {
@@ -201,14 +212,22 @@ struct CaptureView: View {
         .onAppear {
             if voiceNoteLimit == nil, completion == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
             // Listen immediately, requesting permission on the first capture.
-            if phase == .capturing, speech.state == .idle, text.isEmpty, !voiceNote.hasRecording {
+            if !suspended, phase == .capturing, speech.state == .idle, text.isEmpty, !voiceNote.hasRecording {
                 prepareRecording()
                 speech.requestPermissionsAndStart()
             }
         }
+        .onChange(of: suspended) { _, value in
+            if value {
+                showNoteHistory = false
+                confirmDiscard = false
+                suspendCapture()
+            }
+        }
         .onDisappear {
+            submissionTask?.cancel()
             // A dismissed capture must release its audio session.
-            if speech.isListening { speech.cancel() }
+            speech.cancel()
             discardRecording()
         }
         .onChange(of: text) {
@@ -297,22 +316,10 @@ struct CaptureView: View {
         }
     }
 
-    private var stateCopy: String {
-        if isVoiceNote, speech.state != .unavailable {
-            return voiceNoteCopy
-        }
-        return switch speech.state {
-        case .listening: "Listening — tap Done when you're finished"
-        case .finishing: "Finishing up…"
-        case .unavailable: "Speech recognition isn't available — type your note instead"
-        case .idle: text.isEmpty ? "Tap the mic to talk, or just type" : "Tap the mic to keep talking"
-        }
-    }
-
     static let transcriptShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
     private var placeholder: String {
-        completion?.placeholder ?? "What should the brain remember?"
+        unified ? "Ask a question or share a thought" : (completion?.placeholder ?? "What should the brain remember?")
     }
 
     /// Live transcript / manual entry. Editable whenever speech is
@@ -378,32 +385,10 @@ struct CaptureView: View {
         }
     }
 
-    private var canSave: Bool {
+    var canSave: Bool {
         guard phase == .capturing else { return false }
         if isVoiceNote, voiceNote.hasRecording { return true }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var doneButton: some View {
-        Button {
-            Task { await save() }
-        } label: {
-            HStack(spacing: 8) {
-                if phase == .saving {
-                    ProgressView().tint(.white)
-                }
-                Text("Done")
-                    .font(.system(size: 17, weight: .semibold))
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                Capsule().fill(canSave ? Theme.accent : Theme.accent.opacity(0.35))
-            )
-        }
-        .disabled(!canSave)
-        .accessibilityIdentifier("captureDoneButton")
     }
 
     private func confirmationOverlay(_ outcome: NoteCaptureService.Outcome) -> some View {
@@ -481,12 +466,13 @@ struct CaptureView: View {
     /// Stop the recognizer, remembering the on-screen text so a user
     /// edit made during the finishing window beats the late final
     /// transcript (see the `speech.state` onChange).
-    private func stopDictation() {
+    func stopDictation() {
         textAtStop = text
         speech.stopListening()
     }
 
     private func cancel() {
+        guard phase != .saving else { return }
         let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || voiceNote.hasRecording
         guard hasContent, phase == .capturing else {
             speech.cancel()
@@ -526,7 +512,7 @@ struct CaptureView: View {
         await settle(outcome)
     }
 
-    private func settle(_ outcome: NoteCaptureService.Outcome) async {
+    func settle(_ outcome: NoteCaptureService.Outcome) async {
         switch outcome {
         case .rejected(let reason):
             // Deterministic refusal — keep the text in the editor for
@@ -546,6 +532,7 @@ struct CaptureView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             withAnimation(.easeInOut(duration: 0.2)) { phase = .done(outcome) }
             try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
             close()
         }
     }
@@ -555,18 +542,32 @@ struct CaptureView: View {
 
 @available(iOS 17.0, *)
 extension CaptureView {
+    private var stateCopy: String {
+        if isVoiceNote, speech.state != .unavailable {
+            return voiceNoteCopy
+        }
+        return switch speech.state {
+        case .listening: unified ? "Listening — send when you’re finished" : "Listening — tap Done when you're finished"
+        case .finishing: "Finishing up…"
+        case .unavailable:
+            unified ? "Speech recognition isn’t available — type instead" : "Speech recognition isn't available — type your note instead"
+        case .idle: text.isEmpty ? "Tap the mic to talk, or just type" : "Tap the mic to keep talking"
+        }
+    }
+
     private var header: some View {
         HStack {
             Button("Cancel") { cancel() }
+                .disabled(phase == .saving)
                 .font(.system(size: 16))
                 .foregroundStyle(Theme.textSecondary)
                 .accessibilityLabel("Cancel capture")
             Spacer()
-            Text(completion?.heading ?? "Tell Omnesis")
+            Text(unified ? "Omnesis" : (completion?.heading ?? "Tell Omnesis"))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
-            if completion == nil {
+            if completion == nil, !unified {
                 Button {
                     keyboardFocused = false
                     if speech.isListening { stopDictation() }
@@ -585,27 +586,44 @@ extension CaptureView {
         .padding(.top, Theme.Spacing.sm)
     }
 
-    /// A voice-note capture already holding typed text stays a typed note.
-    fileprivate var typedNoteBlocksRecording: Bool {
-        isVoiceNote && !voiceNote.hasRecording && !text.isEmpty
+    private var doneButton: some View {
+        Button {
+            Task { await save() }
+        } label: {
+            HStack(spacing: 8) {
+                if phase == .saving {
+                    ProgressView().tint(.white)
+                }
+                Text("Done")
+                    .font(.system(size: 17, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                Capsule().fill(canSave ? Theme.accent : Theme.accent.opacity(0.35))
+            )
+        }
+        .disabled(!canSave)
+        .accessibilityIdentifier("captureDoneButton")
     }
 
-    fileprivate var micAccessibilityLabel: String {
-        guard isVoiceNote else { return speech.isListening ? "Stop listening" : "Start listening" }
-        if speech.isListening { return "Stop recording" }
-        return voiceNote.hasRecording ? "Record more" : "Start recording"
+    /// A voice-note capture already holding typed text stays a typed note.
+    fileprivate var typedNoteBlocksRecording: Bool {
+        preparedAudio != nil || (isVoiceNote && !voiceNote.hasRecording && !text.isEmpty)
     }
 
     fileprivate var voiceNoteCopy: String {
         if speech.isListening || speech.state == .finishing {
-            return "Recording — your gateway will transcribe this note"
+            return unified ? "Recording — send when you’re finished" : "Recording — your gateway will transcribe this note"
         }
+        if preparedAudio != nil { return "Retry sending, or discard the recording to start again" }
         if voiceNote.hasRecording { return "Tap the mic to record more" }
         return text.isEmpty ? "Tap the mic to record, or just type" : "Typing a note — clear it to record instead"
     }
 
     fileprivate var voiceNoteCard: some View {
-        CaptureVoiceNoteCard(state: voiceNote, discardDisabled: phase != .capturing) {
+        CaptureVoiceNoteCard(state: voiceNote, discardDisabled: phase != .capturing, unified: unified) {
             discardVoiceNote()
         }
     }
@@ -614,7 +632,7 @@ extension CaptureView {
     /// capture is a voice note and has no typed text. Every later run adds
     /// to the same recording.
     fileprivate func prepareRecording() {
-        guard recording == nil, let voiceNoteLimit, text.isEmpty else { return }
+        guard recording == nil, preparedAudio == nil, let voiceNoteLimit, text.isEmpty else { return }
         let recording = DictationAudioRecorder(maxAudioBytes: voiceNoteLimit)
         self.recording = recording
         speech.audioSink = recording
@@ -628,7 +646,9 @@ extension CaptureView {
         keyboardFocused = true
     }
 
-    fileprivate func discardRecording() {
+    func discardRecording() {
+        if let preparedAudio { try? FileManager.default.removeItem(at: preparedAudio) }
+        preparedAudio = nil
         recording?.discard()
         recording = nil
         speech.audioSink = nil
@@ -639,7 +659,7 @@ extension CaptureView {
     /// gateway transcribes it, the phone's hidden transcript. Nothing waits
     /// for the gateway. A recording that could not be kept whole leaves the
     /// transcript as a plain note.
-    fileprivate func saveVoiceNote() async {
+    func saveVoiceNote() async {
         let captureTime = NoteCaptureTime.now()
         if speech.isListening { speech.stopListening() }
         voiceNote.stopRun(at: Date())
@@ -658,26 +678,6 @@ extension CaptureView {
 }
 
 #if DEBUG
-extension VoiceNoteCaptureState {
-    /// A voice note recording for `seconds` so far, for previews.
-    static func previewRecording(seconds: TimeInterval) -> VoiceNoteCaptureState {
-        var state = VoiceNoteCaptureState()
-        state.startRun(at: Date().addingTimeInterval(-seconds))
-        state.heard("Not shown on screen")
-        return state
-    }
-
-    /// A stopped voice note `seconds` long, for previews.
-    static func previewRecorded(seconds: TimeInterval) -> VoiceNoteCaptureState {
-        var state = VoiceNoteCaptureState()
-        let start = Date().addingTimeInterval(-seconds - 5)
-        state.startRun(at: start)
-        state.heard("Not shown on screen")
-        state.stopRun(at: start.addingTimeInterval(seconds))
-        return state
-    }
-}
-
 @available(iOS 17.0, *)
 #Preview("Capture — listening") {
     CaptureView(

@@ -12,7 +12,17 @@ import SwiftUI
 struct CaptureVoiceNoteCard: View {
     let state: VoiceNoteCaptureState
     var discardDisabled = false
+    var unified = false
     let onDiscard: () -> Void
+
+    private var title: String {
+        unified ? "Voice input" : "Voice note"
+    }
+
+    private var spokenTitle: String {
+        if state.isRecording { return unified ? "Recording voice input" : "Recording" }
+        return title
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -24,7 +34,7 @@ struct CaptureVoiceNoteCard: View {
                     .symbolEffect(.variableColor.iterative, isActive: state.isRecording)
                     .frame(width: 34)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Voice note · \(VoiceNoteCaptureState.clock(duration))")
+                    Text("\(title) · \(VoiceNoteCaptureState.clock(duration))")
                         .font(.system(size: 17, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
@@ -34,7 +44,7 @@ struct CaptureVoiceNoteCard: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    "\(state.isRecording ? "Recording" : "Voice note"), "
+                    "\(spokenTitle), "
                         + VoiceNoteCaptureState.spokenDuration(duration)
                         + ". Your gateway will transcribe it."
                 )
@@ -49,7 +59,7 @@ struct CaptureVoiceNoteCard: View {
                 .buttonStyle(.plain)
                 .disabled(discardDisabled)
                 .accessibilityLabel("Discard recording")
-                .accessibilityHint("Type the note instead")
+                .accessibilityHint(unified ? "Type instead" : "Type the note instead")
                 .accessibilityIdentifier("captureDiscardRecording")
             }
             .padding(.leading, Theme.Spacing.md + 4)
@@ -73,6 +83,20 @@ struct CaptureVoiceNoteCard: View {
 }
 
 #if DEBUG
+@available(iOS 17.0, *)
+#Preview("Voice input card — recording") {
+    CaptureVoiceNoteCard(state: .previewRecording(seconds: 12), unified: true) {}
+        .padding()
+        .background(Theme.bgPrimary)
+}
+
+@available(iOS 17.0, *)
+#Preview("Voice input card — recorded") {
+    CaptureVoiceNoteCard(state: .previewRecorded(seconds: 72), unified: true) {}
+        .padding()
+        .background(Theme.bgPrimary)
+}
+
 @available(iOS 17.0, *)
 #Preview("Voice note card — recording") {
     CaptureVoiceNoteCard(state: .previewRecording(seconds: 12)) {}

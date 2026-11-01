@@ -338,6 +338,11 @@ class HomeViewModel @Inject constructor(
 
     fun newConversation() = coordinator.newConversation()
 
+    fun askFromCapture(text: String) {
+        coordinator.newConversation()
+        coordinator.send(text)
+    }
+
     fun resumeConversation(id: String) = coordinator.resumeConversation(id)
 
     fun deleteConversation(id: String) = coordinator.deleteConversation(id)

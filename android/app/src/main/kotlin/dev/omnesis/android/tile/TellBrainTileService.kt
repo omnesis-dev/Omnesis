@@ -12,7 +12,7 @@ import dev.omnesis.android.MainActivity
 import dev.omnesis.android.ui.capture.CaptureSurface
 
 /**
- * "Tell Omnesis" Quick Settings tile: one tap from anywhere straight into
+ * Omnesis Quick Settings tile: one tap from anywhere straight into
  * the capture screen. On a locked device, [TileService.unlockAndRun] prompts
  * for the keyguard first and launches only after a successful unlock — notes
  * are personal data, so there is no capture-while-locked path.
@@ -26,7 +26,7 @@ class TellBrainTileService : TileService() {
 
     private fun launchCapture() {
         val intent = Intent(this, MainActivity::class.java)
-            .setAction(MainActivity.ACTION_TELL_BRAIN)
+            .setAction(MainActivity.ACTION_VOICE_INPUT)
             .putExtra(MainActivity.EXTRA_SURFACE, CaptureSurface.TILE)
             // Per-tap stamp so MainActivity can tell a fresh tile tap from the
             // same intent re-delivered on a process-death relaunch. Requires

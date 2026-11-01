@@ -308,7 +308,7 @@ targets:
         excludes:
           - PrivacyInfo.xcprivacy
       - path: Sources/OmnesisWidgets/PrivacyInfo.xcprivacy
-      # Shared brand symbols (the "omnesis.mic" custom symbol the Control
+      # Shared brand symbols (the "omnesis.mark" custom symbol the Control
       # Center button uses). Included in both the app and this extension
       # so each bundle carries its own copy — extensions can't read the
       # host app's asset catalog at runtime.

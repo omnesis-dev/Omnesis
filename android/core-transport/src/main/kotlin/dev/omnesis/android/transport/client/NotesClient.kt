@@ -32,6 +32,21 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 class NotesClient(private val http: GatewayHttp) {
 
+    /** Classifies an utterance without saving a note or submitting a question. */
+    suspend fun routeCapture(text: String): CaptureRouteResponse =
+        http.postJson("capture/route", CaptureRouteBody(text))
+
+    /** Transcribes foreground voice capture without creating a note. */
+    suspend fun transcribeCapture(audio: File, mimeType: String): String? {
+        val response: CaptureTranscriptResponse = try {
+            http.postBody("capture/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
+        } catch (_: dev.omnesis.android.transport.GatewayException.NotFound) {
+            // Gateways predating phone capture expose the same authenticated transcriber here.
+            http.postBody("inference/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
+        }
+        return response.text?.takeIf { response.available }
+    }
+
     /** `POST /notes` — capture one note; returns the stored entry (201). */
     suspend fun create(body: CreateNoteBody): NoteEntryDto =
         http.postJson("notes", body)
@@ -76,3 +91,12 @@ class NotesClient(private val http: GatewayHttp) {
                 .build()
     }
 }
+
+@kotlinx.serialization.Serializable
+private data class CaptureRouteBody(val text: String)
+
+@kotlinx.serialization.Serializable
+data class CaptureRouteResponse(val route: String)
+
+@kotlinx.serialization.Serializable
+private data class CaptureTranscriptResponse(val available: Boolean, val text: String? = null)

@@ -27,7 +27,7 @@ Code layout (`ios/Sources/Omnesis/`):
 `OmnesisDemo` (identical code, distinct identity — see below), and
 `OmnesisWatch` (the Apple Watch companion). `OmnesisWatch` is a single-target
 SwiftUI watchOS app (`WKApplication`) embedded in the production app; it holds no
-gateway pairing. Its two App Shortcuts relay a dictated utterance to the paired
+gateway pairing. Its Ask and note App Shortcuts relay a dictated utterance to the paired
 iPhone over WatchConnectivity: **"Ask Omnesis"** relays a question, which the
 phone answers via the shared `SiriAskRunner`; **"Omnesis note"** relays a note,
 which the phone saves via the shared `NoteCaptureService` (attaching the phone's
@@ -74,6 +74,10 @@ and leaves the outbox only on the phone's reply or a queued transfer
 reported delivered — with the same retries, 7-day/50-note limit and dropped
 notice. The phone saves a note once by its ref, which is also its gateway
 note id. Questions keep their live relay.
+
+The **Speak to Omnesis** App Shortcut opens the same recorder as the complication,
+so a one-action shortcut assigned to the Apple Watch Ultra Action button starts
+recording without Siri asking for a parameter.
 
 The watch ships one **Omnesis** logo complication. Its link enters
 `WatchComplicationCapture`, separate from `WatchDictation` and both Siri intents.

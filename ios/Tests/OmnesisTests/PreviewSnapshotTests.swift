@@ -7465,6 +7465,62 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Quick capture ("Tell Omnesis")
 
+    func testUnifiedCaptureStates() {
+        let automatic = AppStore.preview(statusSnapshot: PreviewMocks.voiceEntryAutomaticStatus)
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .listening), previewText: PreviewMocks.voiceEntryText)
+                .environment(automatic),
+            name: "unified-capture-automatic",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .listening)).environment(AppStore.preview()),
+            name: "unified-capture-manual",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .unavailable)).environment(AppStore.preview()),
+            name: "unified-capture-unavailable",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .idle),
+                previewText: PreviewMocks.voiceEntryText,
+                previewSaveError: "Couldn’t choose Ask or Tell. Choose how to send, or try again later.",
+                previewRoutingFailed: true
+            ).environment(automatic),
+            name: "unified-capture-route-failed",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .idle),
+                previewText: PreviewMocks.voiceEntryText,
+                previewPhase: .saving
+            ).environment(automatic),
+            name: "unified-capture-sending",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .listening),
+                previewVoiceNote: .previewRecording(seconds: 12)
+            ).environment(automatic),
+            name: "unified-capture-recording",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .idle), previewText: PreviewMocks.voiceEntryLongText)
+                .environment(AppStore.preview()).dynamicTypeSize(.accessibility3),
+            name: "unified-capture-long-large",
+            ignoresSafeArea: true
+        )
+    }
+
     func testCaptureListeningEmpty() {
         let view = CaptureView(speech: .preview(state: .listening))
             .environment(AppStore.preview())

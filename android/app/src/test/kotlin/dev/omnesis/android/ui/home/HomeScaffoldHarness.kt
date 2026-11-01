@@ -138,6 +138,7 @@ object HomeScaffoldTestModule {
 @InstallIn(SingletonComponent::class)
 interface HomeScaffoldHarnessEntryPoint {
     fun pairingService(): PairingService
+    fun captureLaunchBus(): dev.omnesis.android.ui.capture.CaptureLaunchBus
     fun notificationLaunchBus(): NotificationLaunchBus
     fun sessionManager(): SessionManager
 }
@@ -291,6 +292,7 @@ class HomeScaffoldHarness(
         )
 
     val launchBus: NotificationLaunchBus get() = entryPoint.notificationLaunchBus()
+    val captureLaunchBus get() = entryPoint.captureLaunchBus()
     val session: SessionManager get() = entryPoint.sessionManager()
 
     /** Pairs the graph's in-memory store to the mock gateway through the real exchange. */

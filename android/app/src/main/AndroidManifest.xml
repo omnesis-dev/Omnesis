@@ -62,6 +62,7 @@
             <!-- QS tile / app shortcut land here with the surface slug as an extra. -->
             <intent-filter>
                 <action android:name="dev.omnesis.android.action.TELL_BRAIN" />
+                <action android:name="dev.omnesis.android.action.VOICE_INPUT" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data
@@ -87,12 +88,12 @@
             </intent-filter>
         </service>
 
-        <!-- "Tell Omnesis" Quick Settings tile: opens the capture screen directly
+        <!-- Omnesis Quick Settings tile: opens the capture screen directly
              (after a keyguard unlock on a locked device — see TellBrainTileService). -->
         <service
             android:name=".tile.TellBrainTileService"
             android:exported="true"
-            android:icon="@drawable/ic_mic"
+            android:icon="@drawable/omnesis_logo"
             android:label="@string/tile_tell_brain"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

@@ -8,10 +8,16 @@ struct WatchCaptureClient: Sendable {
     let baseURL: URL
     let token: String
     var session: URLSessionLike = OmnesisURLSession.shared
+    /// Phone controls share the classifier and transcriber with the Watch.
+    var phoneCapture = false
 
     func route(_ text: String) async throws -> WatchCaptureRoute {
         struct Response: Decodable { let route: WatchCaptureRoute }
-        let data = try await post(path: "/watch/capture/route", body: JSONEncoder().encode(["text": text]), contentType: "application/json")
+        let data = try await post(
+            path: phoneCapture ? "/capture/route" : "/watch/capture/route",
+            body: JSONEncoder().encode(["text": text]),
+            contentType: "application/json"
+        )
         let route = try JSONDecoder().decode(Response.self, from: data).route
         guard route != .automatic else { throw GatewayClient.Error.invalidResponse }
         return route
@@ -23,7 +29,7 @@ struct WatchCaptureClient: Sendable {
         }
         let language = locale?.split(whereSeparator: { $0 == "_" || $0 == "-" }).first.map(String.init) ?? ""
         let suffix = language.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let endpoint = legacyGateway ? "/inference/transcribe" : "/watch/capture/transcribe"
+        let endpoint = legacyGateway ? "/inference/transcribe" : (phoneCapture ? "/capture/transcribe" : "/watch/capture/transcribe")
         let data = try await post(
             path: "\(endpoint)?language=\(suffix)",
             body: Data(contentsOf: file),
@@ -44,7 +50,7 @@ struct WatchCaptureClient: Sendable {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw GatewayClient.Error.invalidResponse }
         guard (200 ... 299).contains(http.statusCode) else {
-            throw GatewayClient.Error.serverError(status: http.statusCode, body: "Watch capture request failed")
+            throw GatewayClient.Error.serverError(status: http.statusCode, body: "Voice capture request failed")
         }
         return data
     }

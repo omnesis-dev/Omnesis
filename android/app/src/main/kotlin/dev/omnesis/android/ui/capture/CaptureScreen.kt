@@ -69,6 +69,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.withResumed
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmRadius
@@ -97,6 +101,7 @@ fun CaptureScreen(
     onOpenTask: (String) -> Unit = {},
     /** Set when the capture completes a task with its note rather than saving a note. */
     completion: TaskCompletionCapture? = null,
+    onAsk: (String) -> Unit = {},
 ) {
     if (completion != null) {
         // Before the permission effect below starts listening, so this visit starts afresh.
@@ -107,8 +112,22 @@ fun CaptureScreen(
     }
     val historyOpen by vm.historyOpen.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.questionToAsk) {
+        state.questionToAsk?.let(onAsk)
+    }
     val context = LocalContext.current
-    DisposableEffect(vm) { onDispose { vm.stopListening() } }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(vm, lifecycle) {
+        // A navigation transition pauses the old entry before the new one may take the mic.
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) vm.stopListening()
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            vm.stopListening()
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -122,8 +141,11 @@ fun CaptureScreen(
     // Dictation starts as soon as the screen opens; the runtime prompt fires
     // first when the permission hasn't been granted yet.
     LaunchedEffect(Unit) {
-        if (historyOpen) return@LaunchedEffect
-        if (micGranted()) vm.onMicPermission(true) else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        lifecycle.withResumed {
+            if (!historyOpen) {
+                if (micGranted()) vm.onMicPermission(true) else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
     }
 
     // A completion's note goes to the task; the Tasks screen says what happened, with Undo.
@@ -156,11 +178,12 @@ fun CaptureScreen(
             }
         },
         onTextChange = vm::onTextEdited,
-        onSave = vm::save,
+        onSave = if (state.unified && state.automaticRouting) vm::sendRouted else vm::save,
+        onAsk = vm::ask,
         onCancel = onClose,
         onDismissError = vm::dismissError,
         onDiscardVoiceNote = vm::discardVoiceNote,
-        onHistory = if (completion == null) vm::openHistory else null,
+        onHistory = if (completion == null && !state.unified) vm::openHistory else null,
         completionSubject = completion?.subject,
         completionKind = completion?.kind ?: TaskNoteKind.COMPLETE,
     )
@@ -188,6 +211,7 @@ fun CaptureContent(
     completionSubject: String? = null,
     /** What the note does to that subject, which words the screen. */
     completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
+    onAsk: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -208,7 +232,7 @@ fun CaptureContent(
                 },
                 title = {
                     if (completionSubject == null) {
-                        Text("Tell Omnesis")
+                        Text(if (state.unified) "Omnesis" else "Tell Omnesis")
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(completionKind.heading)
@@ -240,6 +264,7 @@ fun CaptureContent(
                     onMicTap = onMicTap,
                     onTextChange = onTextChange,
                     onSave = onSave,
+                    onAsk = onAsk,
                     onCancel = onCancel,
                     onDismissError = onDismissError,
                     onDiscardVoiceNote = onDiscardVoiceNote,
@@ -262,6 +287,7 @@ private fun CaptureForm(
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
     onDiscardVoiceNote: () -> Unit,
+    onAsk: () -> Unit,
 ) {
     val c = OmTheme.colors
     val voiceNote = state.voiceNote
@@ -277,7 +303,14 @@ private fun CaptureForm(
         MicVisual(speech = state.speech, hasVoiceNote = voiceNote != null, onTap = onMicTap)
         Spacer(Modifier.height(OmSpacing.md))
         Text(
-            if (voiceNote != null) voiceNoteStatusLine(voiceNote) else statusLine(state.speech),
+            if (voiceNote != null && state.unified) {
+                when {
+                    saving -> "Sending…"
+                    voiceNote.recording -> "Listening…"
+                    state.automaticRouting -> "Ready to send"
+                    else -> "Choose Ask or Tell when you’re ready"
+                }
+            } else if (voiceNote != null) voiceNoteStatusLine(voiceNote) else statusLine(state.speech),
             style = MaterialTheme.typography.bodySmall,
             color = when (state.speech) {
                 SpeechState.LISTENING, SpeechState.RECORDING -> c.accent
@@ -294,6 +327,7 @@ private fun CaptureForm(
         if (voiceNote != null) {
             VoiceNoteCard(
                 note = voiceNote,
+                label = if (state.unified) "Voice input" else "Voice note",
                 enabled = !saving,
                 onRecordMore = onMicTap,
                 onDiscard = onDiscardVoiceNote,
@@ -303,7 +337,7 @@ private fun CaptureForm(
             onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
             placeholder = {
-                Text(completing?.prompt ?: "What should Omnesis remember?", color = c.textMuted)
+                Text(completing?.prompt ?: if (state.unified) "Ask a question or tell Omnesis something" else "What should Omnesis remember?", color = c.textMuted)
             },
             enabled = !saving,
             shape = RoundedCornerShape(20.dp),
@@ -355,22 +389,31 @@ private fun CaptureForm(
         Spacer(Modifier.height(OmSpacing.lg))
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
-            TextButton(onClick = onCancel, modifier = Modifier.weight(1f), enabled = !saving) {
-                Text("Cancel", color = c.textSecondary)
+            if (state.unified && !state.automaticRouting) {
+                Button(
+                    onClick = onAsk,
+                    modifier = Modifier.weight(1f),
+                    enabled = (state.textWithPartial().isNotBlank() || voiceNote != null) && !saving,
+                    colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
+                ) { Text("Ask") }
+            } else {
+                TextButton(onClick = onCancel, modifier = Modifier.weight(1f), enabled = !saving) {
+                    Text("Cancel", color = c.textSecondary)
+                }
             }
             Button(
                 onClick = onSave,
-                modifier = Modifier.weight(2f),
+                modifier = Modifier.weight(if (state.unified && !state.automaticRouting) 1f else 2f),
                 // A voice note is saved as recorded: its text comes from the gateway.
                 enabled = (state.textWithPartial().isNotBlank() || voiceNote != null) && !saving,
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) {
                 if (saving) {
-                    OmSpinner(modifier = Modifier.size(16.dp), color = Color.White)
+                    OmSpinner(modifier = Modifier.size(16.dp), color = if (state.unified) c.accent else Color.White)
                     Spacer(Modifier.width(8.dp))
-                    Text("Saving…")
+                    Text(if (state.unified) "Sending…" else "Saving…")
                 } else {
-                    Text(completing?.confirm ?: "Tell Omnesis")
+                    Text(completing?.confirm ?: if (state.unified) { if (state.automaticRouting) "Send" else "Tell" } else "Tell Omnesis")
                 }
             }
         }

@@ -73,11 +73,13 @@ export interface StatusRoutesDeps {
    * inactive.
    */
   getBriefsStatus?: () => BriefsFeatureStatus;
+  /** Decision routing for phone controls and shortcuts, independent of Watch. */
+  getCaptureStatus?: () => { supported: boolean; enabled: boolean; active: boolean };
+  getWatchCaptureStatus?: () => { supported: boolean; enabled: boolean; active: boolean };
   /**
    * Gateway dictation gate. When omitted, `/status` advertises
    * the feature inactive, so clients keep on-device dictation.
    */
-  getWatchCaptureStatus?: () => { supported: boolean; enabled: boolean; active: boolean };
   getDictationStatus?: () => DictationFeatureStatus;
   /** Whether a Tell Omnesis note runs an agent turn that can change tasks, and why not. */
   getNoteAgentStatus?: () => NoteAgentStatus;
@@ -548,16 +550,22 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // Apps that predate the Morning brief open a Briefs screen when this
       // reads enabled or active; that screen's routes are gone, so it always reads off.
       briefs: { ...brainGate, enabled: false, visible: false, active: false },
-      // Tell Omnesis voice notes: whether the setting may show,
-      // whether the operator switched it on, whether a runnable transcriber is
-      // assigned, and whether the mobile apps should send a voice note's audio
-      // to `POST /notes/voice`. A client that finds no field, or finds it
-      // inactive, saves the phone's own transcript as a plain note.
+      // External phone capture and Watch complication routing are independent.
+      capture: deps.getCaptureStatus?.() ?? {
+        supported: false,
+        enabled: false,
+        active: false,
+      },
       watchCapture: deps.getWatchCaptureStatus?.() ?? {
         supported: false,
         enabled: false,
         active: false,
       },
+      // Tell Omnesis voice notes: whether the setting may show,
+      // whether the operator switched it on, whether a runnable transcriber is
+      // assigned, and whether the mobile apps should send a voice note's audio
+      // to `POST /notes/voice`. A client that finds no field, or finds it
+      // inactive, saves the phone's own transcript as a plain note.
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
       // Tasks are available on every install; `noteAgent` says whether a Tell
       // Omnesis note is read by an agent that can add and change them.

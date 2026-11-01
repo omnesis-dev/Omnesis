@@ -58,8 +58,9 @@ import { cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
+import { CaptureRoutingService } from "./dictation/capture-routing.js";
 import { WatchRoutingService } from "./dictation/watch-routing.js";
-import { mountWatchCaptureRoutes } from "./http/routes/watch-capture.js";
+import { mountCaptureRoutes, mountWatchCaptureRoutes } from "./http/routes/watch-capture.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
 import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-vocabulary.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
@@ -303,6 +304,7 @@ export function createServer(
     watchV2Routes?: import("./http/routes/watch.js").WatchV2RoutesDeps;
     searchPipeline?: SearchPipeline;
     getDecision?: () => import("@omnesis/core").DecisionCapability | null;
+    recordCaptureDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
     recordWatchDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
     recordFindDecisionSpend?: (modelId: string, inputTokens: number) => Promise<void>;
     /** Read-worker gate for the Direct MCP `lookup_people` port. */
@@ -1271,6 +1273,12 @@ export function createServer(
     recordSpend: opts?.recordWatchDecisionSpend,
   });
   mountWatchCaptureRoutes(app, watchRouting);
+  const captureRouting = new CaptureRoutingService({
+    getConfig: () => opts?.configStore?.get() ?? opts?.config,
+    getDecision: opts?.getDecision ?? (() => null),
+    recordSpend: opts?.recordCaptureDecisionSpend,
+  });
+  mountCaptureRoutes(app, captureRouting);
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
@@ -1288,6 +1296,7 @@ export function createServer(
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
     getWatchCaptureStatus: () => watchRouting.status(),
+    getCaptureStatus: () => captureRouting.status(),
     getNoteAgentStatus: opts?.getNoteAgentStatus,
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,

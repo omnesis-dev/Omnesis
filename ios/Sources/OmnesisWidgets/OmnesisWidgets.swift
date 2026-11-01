@@ -5,8 +5,7 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Widget extension for the Control Center / Lock Screen "Tell the
-/// Brain" control. Its button fires the shared
+/// Widget extension for the Omnesis voice control. Its button fires the shared
 /// `OpenCaptureControlIntent` (compiled into both the app and this
 /// extension — see `ios/project.yml`).
 ///
@@ -29,15 +28,15 @@ struct TellBrainControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "dev.omnesis.ios.widgets.tell-control") {
             ControlWidgetButton(action: OpenCaptureControlIntent()) {
-                // Custom monochrome symbol: the Omnesis mark with a
-                // microphone inside (`Resources/BrandSymbols.xcassets`).
+                // Custom monochrome symbol: the Omnesis logo.
                 // Control Center renders control glyphs as a tinted
                 // template, so this is the brand mark's silhouette, not
                 // the full-color logo.
-                Label("Tell Omnesis", image: "omnesis.mic")
+                Label("Omnesis", image: "omnesis.mark")
+                    .labelStyle(.iconOnly)
             }
         }
-        .displayName("Tell Omnesis")
-        .description("Open Omnesis quick capture, listening immediately.")
+        .displayName("Omnesis")
+        .description("Speak to Omnesis to ask a question or save a note.")
     }
 }

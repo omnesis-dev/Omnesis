@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 #if os(watchOS)
+import AppIntents
 import Observation
 import SwiftUI
 import WatchKit
@@ -18,6 +19,7 @@ struct OmnesisWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        OmnesisWatchAppShortcuts.updateAppShortcutParameters()
         WatchLink.shared.activate()
     }
 

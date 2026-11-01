@@ -15,6 +15,7 @@ import dev.omnesis.android.ui.common.classifyGatewayError
 import dev.omnesis.android.voice.VoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSessions
 import dev.omnesis.android.voice.audioLevel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,11 +45,12 @@ class CaptureViewModel @Inject constructor(
     private val repository: NotesRepository,
     private val voiceNotes: VoiceNoteSessions,
     private val savedStateHandle: SavedStateHandle,
+    private val routing: CaptureRouting? = null,
 ) : ViewModel() {
 
     private val surface: String = savedStateHandle.get<String>("surface") ?: CaptureSurface.APP
 
-    private val _state = MutableStateFlow(CaptureUiState())
+    private val _state = MutableStateFlow(CaptureUiState(unified = CaptureSurface.unified(surface)))
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     /** Presentation survives Activity recreation, so browsing never restarts capture. */
@@ -61,6 +63,21 @@ class CaptureViewModel @Inject constructor(
 
     fun closeHistory() {
         savedStateHandle["historyOpen"] = false
+    }
+
+    init {
+        if (CaptureSurface.unified(surface)) {
+            viewModelScope.launch {
+                val active = try {
+                    routing?.active?.invoke() == true
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    false
+                }
+                _state.update { it.copy(automaticRouting = active) }
+            }
+        }
     }
 
     /** True while the user wants the mic hot — recognition sessions auto-restart until this drops. */
@@ -76,6 +93,9 @@ class CaptureViewModel @Inject constructor(
 
     /** The recording of the voice note this capture is, if it is one. */
     private var voiceNote: VoiceNoteSession? = null
+
+    /** Finished external capture stays owned here until Ask succeeds or Tell takes it. */
+    private var pendingAudio: VoiceNoteAudio? = null
 
     /** The recognizer's transcript of the voice note: sent with it, never shown. */
     private var hiddenTranscript = ""
@@ -137,6 +157,7 @@ class CaptureViewModel @Inject constructor(
     fun startListening() {
         transcriber.setPurpose("dictation")
         if (_state.value.save !is SaveState.Idle) return
+        if (pendingAudio != null) return
         val existing = voiceNote
         if (existing != null) {
             recordMore(existing)
@@ -185,6 +206,13 @@ class CaptureViewModel @Inject constructor(
      * hidden transcript are deleted with it.
      */
     fun discardVoiceNote() {
+        val pending = pendingAudio
+        if (pending != null) {
+            pending.file.delete()
+            pendingAudio = null
+            _state.update { it.copy(text = "", partialText = "", speech = SpeechState.IDLE, voiceNote = null) }
+            return
+        }
         val recording = voiceNote ?: return
         wantListening = false
         transcriber.cancel()
@@ -208,6 +236,13 @@ class CaptureViewModel @Inject constructor(
     fun save() {
         val current = _state.value
         if (current.save is SaveState.Saving) return
+        val pending = pendingAudio
+        if (pending != null) {
+            pendingAudio = null
+            _state.update { it.copy(save = SaveState.Saving) }
+            send(current.textWithPartial().trim(), pending)
+            return
+        }
         val recording = voiceNote
         if (recording != null) {
             saveVoiceNote(recording)
@@ -233,6 +268,92 @@ class CaptureViewModel @Inject constructor(
         if (!completingTask) send(text, null)
     }
 
+    /** A manual Ask always hands off to a fresh ordinary chat, preserving the dictated words. */
+    fun ask() {
+        val current = _state.value
+        if (current.save is SaveState.Saving || current.questionToAsk != null) return
+        if (voiceNote == null && pendingAudio == null) {
+            val text = current.textWithPartial().trim()
+            if (text.isEmpty()) return
+            wantListening = false
+            transcriber.cancel()
+            _state.update { it.copy(text = text, partialText = "", speech = SpeechState.IDLE, questionToAsk = text) }
+        } else routeOrAsk(automatic = false)
+    }
+
+    /** Automatic routing is advisory: an unavailable classifier returns control to Ask/Tell. */
+    fun sendRouted() {
+        if (!_state.value.automaticRouting) return
+        routeOrAsk(automatic = true)
+    }
+
+    private fun routeOrAsk(automatic: Boolean) {
+        val current = _state.value
+        if (current.save is SaveState.Saving) return
+        if (voiceNote == null && pendingAudio == null && current.textWithPartial().isBlank()) return
+        wantListening = false
+        transcriber.cancel()
+        voiceNote?.let { recording ->
+            pendingAudio = recording.finish()
+            voiceNote = null
+            val fallback = joinUtterances(hiddenTranscript, hiddenPartial).trim()
+            resetHiddenTranscript()
+            _state.update {
+                it.copy(
+                    text = fallback,
+                    partialText = "",
+                    voiceNote = it.voiceNote?.copy(recording = false, canResume = false, level = 0f)
+                        ?.takeIf { pendingAudio != null },
+                )
+            }
+        }
+        _state.update {
+            it.copy(text = it.textWithPartial(), partialText = "", speech = SpeechState.IDLE, save = SaveState.Saving)
+        }
+        viewModelScope.launch {
+            try {
+                val audio = pendingAudio
+                val transcript = if (audio != null) {
+                    try {
+                        routing?.transcribe?.invoke(audio)?.trim()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        // An explicit Ask may use the phone's stand-in words if gateway dictation is down.
+                        if (automatic || _state.value.text.isBlank()) throw error
+                        null
+                    }
+                } else null
+                val text = (transcript?.takeIf { it.isNotBlank() } ?: _state.value.text).trim()
+                check(text.isNotBlank()) { "No transcript available" }
+                _state.update { it.copy(text = text) }
+                when (if (automatic) routing?.route?.invoke(text) else "ask") {
+                    "ask" -> {
+                        pendingAudio?.file?.delete()
+                        pendingAudio = null
+                        _state.update { it.copy(save = SaveState.Idle, voiceNote = null, questionToAsk = text) }
+                    }
+                    "note" -> {
+                        // The gateway already transcribed this recording; save that text once.
+                        pendingAudio?.file?.delete()
+                        pendingAudio = null
+                        _state.update { it.copy(save = SaveState.Idle, voiceNote = null) }
+                        save()
+                    }
+                    else -> error("Unknown capture route")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update {
+                    it.copy(automaticRouting = false, save = SaveState.Failed(
+                        "Couldn’t prepare your words automatically. Try Ask again or choose Tell to save the note.",
+                    ))
+                }
+            }
+        }
+    }
+
     /** Clears a failed save so the note can be edited and retried. */
     fun dismissError() {
         _state.update { it.copy(save = SaveState.Idle) }
@@ -245,6 +366,8 @@ class CaptureViewModel @Inject constructor(
         transcriber.cancel()
         voiceNote?.discard()
         voiceNote = null
+        pendingAudio?.file?.delete()
+        pendingAudio = null
         resetHiddenTranscript()
     }
 
