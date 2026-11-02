@@ -46,6 +46,7 @@ import type {
 import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { Scheduler } from "./scheduler.js";
+import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type { MessageCountsQuery } from "../domain/message-counts.js";
 import type { MessageCountsBody } from "@omnesis/agent";
 import type { Priority, Task } from "./types.js";
@@ -109,6 +110,9 @@ export interface IoGate {
     notBefore: string,
     excludedSources?: readonly string[],
   ): Promise<import("../brain/knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
+  knowledgeOrganizationAdmissions: KnowledgeSelectionReads["knowledgeOrganizationAdmissions"];
+  knowledgeOrganizationCohort: KnowledgeSelectionReads["knowledgeOrganizationCohort"];
+  knowledgeDueReviews: KnowledgeSelectionReads["knowledgeDueReviews"];
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,
@@ -467,6 +471,18 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     priority: "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
+  // The knowledge engine's tick selections scan the knowledge ledgers.
+  {
+    name: "io.knowledgeOrganizationAdmissions",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
+  {
+    name: "io.knowledgeOrganizationCohort",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
+  { name: "io.knowledgeDueReviews", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.bootstrapCorpusByMonth",
@@ -597,6 +613,10 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     bootstrapBacklog: (recencyFloor) => call("io.bootstrapBacklog", [recencyFloor]),
     knowledgeDiscoveryByMonth: (notBefore, excludedSources = []) =>
       call("io.knowledgeDiscoveryByMonth", [notBefore, [...excludedSources]]),
+    knowledgeOrganizationAdmissions: (options) =>
+      call("io.knowledgeOrganizationAdmissions", [options]),
+    knowledgeOrganizationCohort: (options) => call("io.knowledgeOrganizationCohort", [options]),
+    knowledgeDueReviews: (options) => call("io.knowledgeDueReviews", [options]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>
