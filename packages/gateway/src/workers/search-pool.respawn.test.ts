@@ -385,3 +385,25 @@ describe("leastLoaded", () => {
     expect(picks).toEqual(["a", "b", "a", "b"]);
   });
 });
+
+describe("SearchWorkerPool inflight ceiling", () => {
+  const opts = {
+    indexDbPath: "/nonexistent/index.db",
+    configDir: "/nonexistent",
+    concurrency: 1,
+    workerUrl: SEARCH_WORKER.url,
+  };
+
+  test("without a configured ceiling, no inflight count sends a search to the main thread", () => {
+    expect(new SearchWorkerPool(opts).maxInflightBeforeFallback).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  test("a configured ceiling is kept, at least one", () => {
+    expect(
+      new SearchWorkerPool({ ...opts, maxInflightBeforeFallback: 4 }).maxInflightBeforeFallback,
+    ).toBe(4);
+    expect(
+      new SearchWorkerPool({ ...opts, maxInflightBeforeFallback: 0 }).maxInflightBeforeFallback,
+    ).toBe(1);
+  });
+});

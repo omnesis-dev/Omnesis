@@ -115,9 +115,8 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     // searchWorker knobs are hand-copied between CONFIG_DEFAULTS and the runtime
     // DEFAULTS (config can't import from gateway); pin the two together.
     expect(defAt("/gateway/searchWorker/concurrency")).toBe(rt.searchWorkerConcurrency);
-    expect(defAt("/gateway/searchWorker/maxInflightBeforeFallback")).toBe(
-      rt.searchWorkerMaxInflight,
-    );
+    expect(defAt("/gateway/searchWorker/maxInflightBeforeFallback")).toBeUndefined();
+    expect(rt.searchWorkerMaxInflight).toBeUndefined();
     expect(defAt("/gateway/searchWorker/cacheSizeBytes")).toBe(rt.searchWorkerCacheSizeBytes);
 
     // indexer scalars

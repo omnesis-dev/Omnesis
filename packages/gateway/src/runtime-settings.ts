@@ -87,11 +87,12 @@ export interface ResolvedRuntimeSettings {
   /**
    * Dedicated search-worker pool (Slice 3B). `searchWorkerConcurrency` worker
    * threads run candidate generation off the main event loop; 0 disables the
-   * pool (pure main-thread candidate-gen). Above `searchWorkerMaxInflight`
-   * concurrent calls the pipeline runs inline on main rather than queueing.
+   * pool (pure main-thread candidate-gen). Calls beyond the workers' capacity
+   * queue on them; only when `searchWorkerMaxInflight` is set do calls past it
+   * run inline on main instead.
    */
   searchWorkerConcurrency: number;
-  searchWorkerMaxInflight: number;
+  searchWorkerMaxInflight: number | undefined;
   /** Page-cache budget (bytes) for each search-worker read handle. */
   searchWorkerCacheSizeBytes: number;
   /**
@@ -239,9 +240,9 @@ const DEFAULTS = {
   // reasoning step) runs concurrently off the main loop instead of serializing
   // through one worker or spilling onto the event loop via the inline fallback.
   searchWorkerConcurrency: 3,
-  // Keep a burst on the pool (3 running + up to 3 queued) before the inline
-  // main-thread fallback engages as a last-resort safety valve.
-  searchWorkerMaxInflight: 6,
+  // No saturation fallback: a burst queues on the workers, because a query run
+  // inline would block the main event loop for its whole duration.
+  searchWorkerMaxInflight: undefined,
   searchWorkerCacheSizeBytes: 64 * 1024 * 1024,
   // Keep 1 of the io pool's workers free of background compute (see
   // gateway.ioReservedUserSlots) so an interactive read always has a worker to

@@ -15,10 +15,14 @@
  * `inflightCount`/`maxInflightBeforeFallback` for the pipeline's delegate-or-
  * fallback gate, and the pipeline holds it directly.
  *
- * On any worker problem (init failure, crash, exit, rejected call, saturation)
- * the pipeline degrades to running the IDENTICAL `runCandidateGen` inline on
- * the main thread — search is never failed by a worker fault; it just loses the
- * event-loop de-blocking for that query.
+ * Calls beyond the workers' capacity queue on them: candidate generation holds
+ * its thread for the whole query, and on the main thread that would stall every
+ * request and WebSocket the gateway serves. On a worker problem (init failure,
+ * crash, exit, rejected call) the pipeline degrades to running the IDENTICAL
+ * `runCandidateGen` inline on the main thread — search is never failed by a
+ * worker fault; it just loses the event-loop de-blocking for that query. An
+ * operator can also opt into a saturation fallback with
+ * `maxInflightBeforeFallback`.
  *
  * A slot whose worker has reported ready at least once is respawned whenever
  * that worker dies — by exit or by error, and whether or not `start()` has
@@ -52,11 +56,10 @@ export interface SearchWorkerPoolOptions {
   /** Number of worker threads. Must be >= 1 (0 disables the pool at the call site). */
   concurrency: number;
   /**
-   * When the inflight call count reaches this, the pipeline runs inline on main
-   * instead of queueing behind a slow query on the single-worker FIFO — bounds
-   * worst-case per-request latency.
+   * When set and the inflight call count reaches it, the pipeline runs inline
+   * on main instead of queueing on the workers. Unset, calls always queue.
    */
-  maxInflightBeforeFallback: number;
+  maxInflightBeforeFallback?: number;
   heartbeatIntervalMs?: number;
   heartbeatWarnGapMs?: number;
   backgroundWorkerNice?: number;
@@ -147,7 +150,10 @@ export class SearchWorkerPool {
 
   constructor(opts: SearchWorkerPoolOptions) {
     this.concurrency = Math.max(1, opts.concurrency);
-    this.maxInflightBeforeFallback = Math.max(1, opts.maxInflightBeforeFallback);
+    this.maxInflightBeforeFallback =
+      opts.maxInflightBeforeFallback === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(1, opts.maxInflightBeforeFallback);
     this.opts = {
       indexDbPath: opts.indexDbPath,
       indexDbKeyHex: opts.indexDbKeyHex,
