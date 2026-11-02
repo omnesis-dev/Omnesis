@@ -1026,8 +1026,11 @@ describe("AgentService", () => {
       ],
     });
 
+    const listed = vi.spyOn(store, "list");
     const second = await service.listConversationPage({ limit: 1, cursor: first.nextCursor! });
     expect(second.conversations.map((c) => c.id)).toEqual(["S_old"]);
+    // A later page reads its snapshot; it never lists the store again.
+    expect(listed).not.toHaveBeenCalled();
     service.dispose();
   });
 

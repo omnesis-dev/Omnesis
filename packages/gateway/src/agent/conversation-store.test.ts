@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { copyFile, readFile, readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
 import { originIsPermanent } from "./conversation-retention.js";
@@ -385,12 +385,21 @@ describe("FsConversationStore", () => {
     ).toBe(false);
   });
 
-  it("retention deletion journals an O(1) index tombstone and list remains accurate", async () => {
+  it("retention deletion leaves the list accurate without rewriting the index", async () => {
     const s = fresh();
     await s.save(rec({ id: "old" }));
     await s.save(rec({ id: "keep", updatedAt: "2026-02-01T00:00:00.000Z" }));
+    const dir = (s as unknown as { dir: string }).dir;
+    const indexBefore = await readFile(join(dir, ".summary-index.v4"), "utf8");
     expect(await s.deleteForRetention("old")).toBe(true);
+    expect(await readFile(join(dir, ".summary-index.v4"), "utf8")).toBe(indexBefore);
     expect((await s.list()).map((summary) => summary.id)).toEqual(["keep"]);
+    // A restart reads the index that still names the deleted conversation
+    // and drops it because its file is gone, reading no transcript.
+    const restarted = new FsConversationStore(dir);
+    const reads = spyIndexReads(restarted);
+    expect((await restarted.list()).map((summary) => summary.id)).toEqual(["keep"]);
+    expect(reads).toEqual([]);
   });
 
   it("load returns null for an unknown id", async () => {
@@ -454,6 +463,295 @@ describe("FsConversationStore", () => {
     expect(loaded!.pinned).toBe(false);
     const summary = (await s.list()).find((c) => c.id === "legacy");
     expect(summary!.pinned).toBe(false);
+  });
+});
+
+/**
+ * Record every transcript the store reads to refresh its summary index, so a
+ * test can assert which files a listing reread.
+ */
+function spyIndexReads(store: FsConversationStore): string[] {
+  const reads: string[] = [];
+  const target = store as unknown as { readForIndex(id: string): Promise<unknown> };
+  const original = target.readForIndex.bind(target);
+  vi.spyOn(target, "readForIndex").mockImplementation((id: string) => {
+    reads.push(id);
+    return original(id);
+  });
+  return reads;
+}
+
+describe("FsConversationStore summary index", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  function dirFor(): string {
+    const root = mkdtempSync(join(tmpdir(), "omnesis-conv-index-"));
+    roots.push(root);
+    return join(root, "conversations");
+  }
+
+  function record(id: string, over: Partial<ConversationRecord> = {}): ConversationRecord {
+    return {
+      id,
+      callerId: "token:A",
+      model: "test-model",
+      backend: "test",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z",
+      title: `About ${id}`,
+      pinned: false,
+      messages: [
+        { role: "user", parts: [{ kind: "text", text: `About ${id}` }] },
+        { role: "assistant", parts: [{ kind: "text", text: "Sure." }] },
+      ],
+      ...over,
+    };
+  }
+
+  /** The listing a store with no index computes by reading every file. */
+  async function rebuiltList(dir: string) {
+    const scratch = mkdtempSync(join(tmpdir(), "omnesis-conv-rebuilt-"));
+    roots.push(scratch);
+    for (const name of await readdir(dir)) {
+      if (name.endsWith(".json")) await copyFile(join(dir, name), join(scratch, name));
+    }
+    return new FsConversationStore(scratch).list();
+  }
+
+  it("lists exactly what a full rebuild lists across every kind of change", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    const steps: Array<[string, () => Promise<unknown>]> = [
+      ["create", () => s.save(record("s_a", { updatedAt: "2026-01-02T00:00:00.000Z" }))],
+      ["create another", () => s.save(record("s_b", { updatedAt: "2026-01-03T00:00:00.000Z" }))],
+      [
+        "create a Morning brief",
+        () =>
+          s.save(
+            record("s_brief", {
+              title: "Morning brief",
+              pinned: true,
+              origin: {
+                kind: "daily_brief",
+                runId: "run_1",
+                briefs: [{ day: "2026-01-04", messageIndex: 1, messageId: "msg_1" }],
+              },
+            }),
+          ),
+      ],
+      [
+        "append a turn",
+        () =>
+          s.save(
+            record("s_a", {
+              updatedAt: "2026-01-05T00:00:00.000Z",
+              messages: [
+                ...record("s_a").messages,
+                { role: "user", parts: [{ kind: "text", text: "And then?" }] },
+              ],
+            }),
+          ),
+      ],
+      ["retitle", () => s.save(record("s_b", { title: "Quarterly budget review" }))],
+      ["pin", () => s.setPinned("s_b", true)],
+      ["unpin", () => s.setPinned("s_b", false)],
+      ["delete", () => s.delete("s_a")],
+      ["create after delete", () => s.save(record("s_c"))],
+      ["retention delete", () => s.deleteForRetention("s_c")],
+      [
+        "hand-added file",
+        () => writeFile(join(dir, "s_manual.json"), JSON.stringify(record("s_manual")), "utf8"),
+      ],
+      [
+        "hand-edited file",
+        () =>
+          writeFile(
+            join(dir, "s_b.json"),
+            JSON.stringify(record("s_b", { title: "Edited by hand" })),
+            "utf8",
+          ),
+      ],
+      ["hand-removed file", () => unlink(join(dir, "s_manual.json"))],
+      ["corrupt file", () => writeFile(join(dir, "s_broken.json"), "{not json", "utf8")],
+    ];
+    for (const [step, run] of steps) {
+      await run();
+      expect(await s.list(), step).toEqual(await rebuiltList(dir));
+      // A restart over the persisted index lists the same.
+      expect(await new FsConversationStore(dir).list(), step).toEqual(await rebuiltList(dir));
+    }
+    expect((await s.list()).map((c) => [c.id, c.title, c.pinned])).toEqual([
+      ["s_brief", "Morning brief", true],
+      ["s_b", "Edited by hand", false],
+    ]);
+  });
+
+  it("keeps the index valid across its own writes, reading no transcript to list", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    for (let i = 0; i < 20; i++) await s.save(record(`s_${i}`));
+    await s.list();
+    const reads = spyIndexReads(s);
+
+    await s.save(record("s_3", { updatedAt: "2026-02-01T00:00:00.000Z", title: "Updated" }));
+    await s.save(record("s_new"));
+    await s.setPinned("s_7", true);
+    await s.delete("s_9");
+    const listed = await s.list();
+
+    expect(reads).toEqual([]);
+    expect(listed.slice(0, 2).map((c) => [c.id, c.title])).toEqual([
+      ["s_7", "About s_7"],
+      ["s_3", "Updated"],
+    ]);
+    expect(listed).toHaveLength(20);
+    // The persisted index is as current as the in-memory one.
+    const restarted = new FsConversationStore(dir);
+    const restartReads = spyIndexReads(restarted);
+    expect(await restarted.list()).toEqual(listed);
+    expect(restartReads).toEqual([]);
+  });
+
+  it("repairs a stale index by reading only the files that changed", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    for (let i = 0; i < 20; i++) await s.save(record(`s_${i}`));
+    await s.list();
+
+    // Changes this store did not make: one same-size rewrite, one new file,
+    // one removed file.
+    const same = await readFile(join(dir, "s_4.json"), "utf8");
+    const edited = same.replace("About s_4", "Abuot s_4");
+    expect(Buffer.byteLength(edited)).toBe(Buffer.byteLength(same));
+    await writeFile(join(dir, "s_4.json"), edited, "utf8");
+    await writeFile(join(dir, "s_extra.json"), JSON.stringify(record("s_extra")), "utf8");
+    await unlink(join(dir, "s_11.json"));
+
+    for (const store of [s, new FsConversationStore(dir)]) {
+      const reads = spyIndexReads(store);
+      const listed = await store.list();
+      expect(reads.sort()).toEqual(store === s ? ["s_4", "s_extra"] : []);
+      expect(listed).toEqual(await rebuiltList(dir));
+      expect(listed.find((c) => c.id === "s_4")?.title).toBe("Abuot s_4");
+      expect(listed.some((c) => c.id === "s_11")).toBe(false);
+    }
+  });
+
+  it("reads a corrupt transcript once, not on every listing", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    await s.save(record("s_ok"));
+    await writeFile(join(dir, "s_broken.json"), "{not json", "utf8");
+    const reads = spyIndexReads(s);
+    expect((await s.list()).map((c) => c.id)).toEqual(["s_ok"]);
+    expect((await s.list()).map((c) => c.id)).toEqual(["s_ok"]);
+    expect(reads).toEqual(["s_broken"]);
+  });
+
+  it("rereads a transcript replaced while the listing was reading it", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    await s.save(record("s_race"));
+    await writeFile(
+      join(dir, "s_race.json"),
+      JSON.stringify(record("s_race", { title: "Second" })),
+      "utf8",
+    );
+    const target = s as unknown as { readForIndex(id: string): Promise<unknown> };
+    const original = target.readForIndex.bind(target);
+    let replaced = false;
+    const reads = vi.spyOn(target, "readForIndex").mockImplementation(async (id: string) => {
+      // The file changes after the listing took its identity and before the
+      // read, so the read sees content newer than the identity it records.
+      if (!replaced) {
+        replaced = true;
+        await writeFile(
+          join(dir, "s_race.json"),
+          JSON.stringify(record("s_race", { title: "Third, a little longer" })),
+          "utf8",
+        );
+      }
+      return original(id);
+    });
+
+    expect((await s.list())[0]?.title).toBe("Third, a little longer");
+    // The recorded identity predates the content, so the next listing does
+    // not trust it and reads the file again.
+    expect((await s.list())[0]?.title).toBe("Third, a little longer");
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect((await s.list())[0]?.title).toBe("Third, a little longer");
+    expect(reads).toHaveBeenCalledTimes(2);
+  });
+
+  it("stays consistent when saves and listings run concurrently", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    for (let i = 0; i < 10; i++) await s.save(record(`s_${i}`));
+    await s.list();
+
+    const work: Promise<unknown>[] = [];
+    const observed: string[][] = [];
+    for (let round = 0; round < 5; round++) {
+      for (let i = 0; i < 10; i++) {
+        work.push(
+          s.save(
+            record(`s_${i}`, {
+              updatedAt: new Date(Date.UTC(2026, 1, 1, round, i)).toISOString(),
+              title: `Round ${round}`,
+            }),
+          ),
+        );
+      }
+      work.push(s.save(record(`s_round_${round}`)));
+      work.push(s.list().then((listed) => observed.push(listed.map((c) => c.id))));
+    }
+    await Promise.all(work);
+
+    // Every listing saw every conversation that existed before it started.
+    for (const ids of observed) {
+      for (let i = 0; i < 10; i++) expect(ids).toContain(`s_${i}`);
+    }
+    const reads = spyIndexReads(s);
+    const listed = await s.list();
+    expect(reads).toEqual([]);
+    expect(listed).toEqual(await rebuiltList(dir));
+    expect(listed.filter((c) => c.title === "Round 4")).toHaveLength(10);
+    expect(await new FsConversationStore(dir).list()).toEqual(listed);
+  });
+
+  it("serves a save to the very next listing", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    await s.save(record("s_one"));
+    const [, listed] = await Promise.all([s.save(record("s_one", { title: "Renamed" })), s.list()]);
+    expect(listed.map((c) => c.title)).toEqual(["Renamed"]);
+  });
+
+  it("replaces an index written by an earlier version and removes its files", async () => {
+    const dir = dirFor();
+    const s = new FsConversationStore(dir);
+    await s.save(record("s_one"));
+    // A previous format is never trusted, however it reads.
+    await writeFile(
+      join(dir, ".summary-index.v3"),
+      JSON.stringify({ version: 3, conversations: [] }),
+      "utf8",
+    );
+    await writeFile(join(dir, ".summary-index.deleted"), "s_one\n", "utf8");
+    await writeFile(join(dir, ".summary-index.v4"), "{not json", "utf8");
+
+    const restarted = new FsConversationStore(dir);
+    const reads = spyIndexReads(restarted);
+    expect((await restarted.list()).map((c) => c.id)).toEqual(["s_one"]);
+    expect(reads).toEqual(["s_one"]);
+    const names = await readdir(dir);
+    expect(names).not.toContain(".summary-index.v3");
+    expect(names).not.toContain(".summary-index.deleted");
+    expect(JSON.parse(await readFile(join(dir, ".summary-index.v4"), "utf8")).version).toBe(4);
   });
 });
 
