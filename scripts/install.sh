@@ -5543,8 +5543,18 @@ ensure_docker() {
   docker compose version >/dev/null 2>&1 || \
     fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
   docker_require_compose_version
-  docker info >/dev/null 2>&1 || \
-    fail "The Docker daemon is not reachable. Start Docker and re-run."
+  DOCKER_INFO_ERROR="$(docker info 2>&1 >/dev/null)" || docker_daemon_failure "$DOCKER_INFO_ERROR"
+}
+
+# Why `docker info` failed, said as what to do. An account outside the docker
+# group reaches a running daemon and is refused on its socket; telling it to
+# start Docker sends it after a daemon that is already up.
+docker_daemon_failure() {
+  case "$1" in
+    *"permission denied"*|*"Permission denied"*)
+      fail "This account ($(id -un 2>/dev/null || echo you)) may not use the Docker daemon: its socket refused the connection (permission denied). Add the account to the docker group — sudo usermod -aG docker $(id -un 2>/dev/null || echo "\$USER") — then log out and back in, or run newgrp docker, and re-run. Nothing was changed." ;;
+  esac
+  fail "The Docker daemon is not reachable. Start Docker and re-run. Nothing was changed."
 }
 
 # Refuse a Compose older than DOCKER_COMPOSE_MIN before anything is written.
