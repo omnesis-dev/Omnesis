@@ -398,8 +398,8 @@ flag. Three checks hold it instead.
   records every CLI process those runs start, including the ones whose output
   the installer discards, and each is checked against the installed release's
   command tree. Its `docker` job installs the newest published images with
-  `--docker`, drives the launcher it wrote, and re-runs the installer on a
-  terminal through the released updater image.
+  `--docker` with no terminal, drives the launcher it wrote, and re-runs the
+  installer over that install on a terminal.
 - **The lockstep guard.** `released-cli-surface.json` carries the version it
   was read from, and `check-product-version.mjs` refuses a tree whose file
   names another version than the product's — so the release commit has to

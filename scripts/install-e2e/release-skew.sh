@@ -27,8 +27,8 @@
 #   1. install.sh --docker with no terminal, encrypted at rest.
 #   2. The launcher it wrote, running each command the installer and its banner
 #      lead an operator to.
-#   3. install.sh --docker re-run on a pseudo-terminal, which hands off to
-#      `omnesis update` in the released updater image.
+#   3. install.sh --docker re-run on a pseudo-terminal over that install, the
+#      way an operator re-runs the one-liner.
 #   The CLI runs inside the images there, so its output is what is checked.
 #
 # Runs on a disposable CI machine: it installs into $HOME and registers real
@@ -96,6 +96,16 @@ native)
   FINGERPRINT="$(skew fingerprint "$CONFIG_DIR/tls/cert.pem")"
   endgroup
 
+  # Each collector is another machine: its own HOME, and its own host name,
+  # which names the device it pairs as. Two collectors named after this
+  # runner would collide with the gateway host's own collector.
+  as_machine() {
+    local home="$1" name="$2"
+    mkdir -p "$home/.release-skew-bin"
+    printf '#!/bin/sh\necho %s\n' "$name" >"$home/.release-skew-bin/hostname"
+    chmod +x "$home/.release-skew-bin/hostname"
+  }
+
   # Sets CODE. Not for use inside $(…): the mask has to reach the runner.
   mint_code() {
     CODE="$("$OMNESIS" devices pair --kind collector --json </dev/null | node -e '
@@ -108,9 +118,9 @@ native)
   group "Collector, no terminal"
   mint_code
   HOME_A="$E2E_WORK/home-collector"
-  mkdir -p "$HOME_A"
+  as_machine "$HOME_A" release-skew-headless
   set +e
-  installer "$HOME_A" --collector --gateway-url "$GATEWAY_URL" --code "$CODE" \
+  PATH="$HOME_A/.release-skew-bin:$PATH" installer "$HOME_A" --collector --gateway-url "$GATEWAY_URL" --code "$CODE" \
     --trust-fingerprint "$FINGERPRINT" --source-dir "$HOME_A/omnesis" --no-service \
     --no-modify-path --keyring-passphrase-file "$PASSPHRASE_FILE" </dev/null 2>&1 |
     tee "$E2E_WORK/collector-install.log" | redact
@@ -123,12 +133,12 @@ native)
   group "Collector on a terminal"
   mint_code
   HOME_B="$E2E_WORK/home-collector-tty"
-  mkdir -p "$HOME_B"
+  as_machine "$HOME_B" release-skew-terminal
   # Choice 2 arms the generated passphrase keyring: what an operator on a
   # headless box picks, and the path with the most keyring calls.
   set +e
   RELEASE_SKEW_PAIR_CODE="$CODE" RELEASE_SKEW_KEYRING_CHOICE=2 \
-    HOME="$HOME_B" NPM_CONFIG_CACHE="$NPM_CACHE" OMNESIS_REPO_URL="file://$REMOTE" \
+    PATH="$HOME_B/.release-skew-bin:$PATH" HOME="$HOME_B" NPM_CONFIG_CACHE="$NPM_CACHE" OMNESIS_REPO_URL="file://$REMOTE" \
     OMNESIS_CLI_TRACE="$TRACE" NODE_OPTIONS="--require=$E2E_DIR/cli-trace.cjs" \
     node "$SKEW" tty --log "$E2E_WORK/collector-tty.log" -- \
     sh "$E2E_ROOT/scripts/install.sh" --collector --gateway-url "$GATEWAY_URL" \
@@ -192,7 +202,7 @@ docker)
     die "the launcher could not mint a pairing code: $(redact <"$E2E_WORK/launcher-pair.log" | tail -n 5)"
   endgroup
 
-  group "install.sh --docker again, on a terminal (hands off to omnesis update)"
+  group "install.sh --docker again, on a terminal, over the install"
   set +e
   skew tty --log "$E2E_WORK/docker-tty.log" -- sh "$E2E_ROOT/scripts/install.sh" --docker --no-model \
     </dev/null | redact
