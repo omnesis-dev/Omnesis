@@ -430,13 +430,23 @@ TS_RENEW_KIND=""
 PORTAL_LOGIN_URL=""
 PORTAL_LOGIN_MINUTES=10
 
-info()  { printf '\033[0;32m[omnesis]\033[0m %s\n' "$*"; }
-warn()  { printf '\033[1;33m[omnesis]\033[0m %s\n' "$*" >&2; }
-fail()  { printf '\033[0;31m[omnesis]\033[0m %s\n' "$*" >&2; exit 1; }
+# Colour only on a terminal that wants it: a log, a pipe or an agent reading
+# the output gets plain text.
+if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  C_RESET="$(printf '\033[0m')"; C_BOLD="$(printf '\033[1m')"
+  C_GREEN="$(printf '\033[0;32m')"; C_YELLOW="$(printf '\033[0;33m')"; C_RED="$(printf '\033[0;31m')"
+  C_BOLD_YELLOW="$(printf '\033[1;33m')"; C_BOLD_RED="$(printf '\033[1;31m')"
+else
+  C_RESET=""; C_BOLD=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_BOLD_YELLOW=""; C_BOLD_RED=""
+fi
+
+info()  { printf ''"$C_GREEN"'[omnesis]'"$C_RESET"' %s\n' "$*"; }
+warn()  { printf ''"$C_BOLD_YELLOW"'[omnesis]'"$C_RESET"' %s\n' "$*" >&2; }
+fail()  { printf ''"$C_RED"'[omnesis]'"$C_RESET"' %s\n' "$*" >&2; exit 1; }
 
 stage() {
   echo ""
-  printf '\033[1m%s\033[0m\n' "$1"
+  printf ''"$C_BOLD"'%s'"$C_RESET"'\n' "$1"
 }
 
 show_install_plan() {
@@ -633,6 +643,9 @@ SOURCE_CHECKOUT_TMP=""
 NPM_TRUST_DIR=""
 
 cleanup_temp_files() {
+  CLEANUP_STATUS=$?
+  # Set only inside docker_install, so the function exists whenever it is.
+  [ "$CLEANUP_STATUS" = 0 ] || [ "${DOCKER_UNDO:-0}" != 1 ] || docker_undo_fresh_install
   if [ -n "${NODESOURCE_TMP_DIR:-}" ] && [ -d "$NODESOURCE_TMP_DIR" ]; then
     rm -rf "$NODESOURCE_TMP_DIR"
   fi
@@ -2960,11 +2973,6 @@ json_node() {
 
 # Refuse a run that has a model to choose and no way to ask. Named flags only:
 # a silent default here is a corpus indexed by a model the operator never chose.
-no_embedder_terminal() {
-  if is_promptable; then return 0; fi
-  fail "No terminal to ask which embedding model to install. Re-run with --embedder <id> (or OMNESIS_EMBEDDER_ID=<id>) to name one, or --no-model to install none."
-}
-
 # Ask which embedding model to install. Called twice: once up front, and again
 # once the CLI exists, because a first install has no catalog to offer until
 # then. The second call passes "final" — there will be no third chance, so a
@@ -2982,10 +2990,8 @@ choose_embedder() {
   fi
   resolve_existing_cli
   if ! read_embedder_catalog; then
-    # No CLI yet, or one too old to know the command. Refuse a run that could
-    # never answer now, before it spends minutes cloning and building; ask
-    # again once the CLI exists.
-    no_embedder_terminal
+    # No CLI yet, or one too old to know the command: ask again once the CLI
+    # exists.
     [ "${1:-}" = final ] || return 0
     EMBEDDER_CHOSEN=1
     warn "Could not read the model catalog from $EXISTING_CLI — installing the default embedding model $EMBEDDER_ID."
@@ -3010,7 +3016,13 @@ choose_embedder() {
     return 0
   fi
 
-  no_embedder_terminal
+  # Without a terminal the answer is the one Enter gives: the default.
+  if ! is_promptable; then
+    EMBEDDER_ID="$EMBEDDER_DEFAULT"
+    EMBEDDER_CHOSEN=1
+    info "Embedding model: $EMBEDDER_ID, the default (no terminal to ask; --embedder <id> names another, --no-model installs none)."
+    return 0
+  fi
 
   echo "" >/dev/tty
   printf 'Which embedding model should power semantic search?\n' >/dev/tty
@@ -3220,7 +3232,7 @@ print_port_move_lines() {
   MOVE_URL="$(banner_gateway_url)"
   MOVE_FP="$(cert_fingerprint "$(banner_cert_path)" || true)"
   echo ""
-  printf '\033[1;33mPoint paired devices at port %s\033[0m — they still dial port %s:\n' "$GATEWAY_PORT" "$PORT_MOVE_FROM"
+  printf ''"$C_BOLD_YELLOW"'Point paired devices at port %s'"$C_RESET"' — they still dial port %s:\n' "$GATEWAY_PORT" "$PORT_MOVE_FROM"
   if [ "$PORT_MOVE_DEVICES_READ" = 0 ]; then
     echo ""
     echo "  The device list could not be read. See it with: omnesis devices list"
@@ -3850,6 +3862,14 @@ setup_keyring_init() {
     return 0
   fi
 
+  # A container's answer is offered by default, so a run without a terminal
+  # takes it, as Enter would.
+  if [ "$DOCKER" = 1 ] && ! is_promptable; then
+    info "Encrypting at rest with a generated passphrase file (no terminal to ask; --no-keyring installs without, and arms it later with: omnesis secure)."
+    arm_generated_passphrase_keyring
+    return 0
+  fi
+
   if ! is_promptable; then
     # --keyring-passphrase-file is refused by every role that seals nothing, so
     # such a run is only ever offered the flag it can actually accept.
@@ -4044,9 +4064,25 @@ print_recovery_code() {
   if is_promptable; then
     OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
       "$OMNESIS_BIN" keyring export-recovery --backend passphrase </dev/tty >/dev/tty && { RECOVERY_CODE_SHOWN=1; return 0; }
-  elif OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
-         "$OMNESIS_BIN" keyring export-recovery --backend passphrase; then
-    return 0
+  # Without a terminal the CLI answers in JSON, meant for a program: read the
+  # code from it and say what it is, as the CLI does on a terminal.
+  elif RECOVERY_JSON="$(OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$KEYRING_CRED_FILE" \
+         "$OMNESIS_BIN" keyring export-recovery --backend passphrase --json)"; then
+    RECOVERY_CODE="$(printf '%s\n' "$RECOVERY_JSON" | sed -n 's/.*"recoveryCode": *"\([^"]*\)".*/\1/p' | head -n 1)"
+    RECOVERY_ENVELOPE="$(printf '%s\n' "$RECOVERY_JSON" | sed -n 's/.*"envelopePath": *"\([^"]*\)".*/\1/p' | head -n 1)"
+    if [ -n "$RECOVERY_CODE" ]; then
+      echo ""
+      echo "Omnesis recovery code"
+      echo ""
+      echo "    $RECOVERY_CODE"
+      echo ""
+      echo "Write this down and keep it offline — it is shown only once."
+      echo "It is the only way to recover your encrypted data if the passphrase file that seals it"
+      echo "($KEYRING_CRED_FILE) is lost: a reinstall, a dead disk, or a config directory restored without it."
+      [ -z "$RECOVERY_ENVELOPE" ] || echo "Recovery envelope written to $RECOVERY_ENVELOPE — safe to keep with your backups."
+      RECOVERY_CODE_SHOWN=1
+      return 0
+    fi
   fi
   warn "Could not write a recovery envelope. Create one later with: omnesis keyring export-recovery"
 }
@@ -5112,28 +5148,28 @@ print_collector_encryption_line() {
 print_collector_banner() {
   echo ""
   if [ "$COLLECTOR_ONLINE" = 1 ]; then
-    printf '\033[1m\033[0;32mCollector %s is online.\033[0m\n' "$COLLECTOR_DEVICE_NAME"
+    printf ''"$C_BOLD"''"$C_GREEN"'Collector %s is online.'"$C_RESET"'\n' "$COLLECTOR_DEVICE_NAME"
     echo ""
     if [ "$BESIDE_DOCKER_GATEWAY" = 1 ]; then
-      printf '\033[1mAdd a source\033[0m — in this terminal (omnesis is this machine'"'"'s Docker gateway), or in the portal:\n'
+      printf ''"$C_BOLD"'Add a source'"$C_RESET"' — in this terminal (omnesis is this machine'"'"'s Docker gateway), or in the portal:\n'
     else
-      printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal:\n'
+      printf ''"$C_BOLD"'Add a source'"$C_RESET"' — on the gateway host, or in the portal:\n'
     fi
     echo ""
     # Quoted: a device name is a hostname plus a suffix, and a hostname with a
     # space in it would otherwise print a command that cannot be pasted.
     echo "    omnesis sources add --device '$COLLECTOR_DEVICE_NAME'"
   elif [ "$WANT_SERVICE" = 1 ]; then
-    printf '\033[1m\033[0;33mCollector is paired\033[0m (the service is registered but has not reached the gateway yet):\n'
+    printf ''"$C_BOLD"''"$C_YELLOW"'Collector is paired'"$C_RESET"' (the service is registered but has not reached the gateway yet):\n'
     echo ""
     echo "    $NATIVE_CMD service status collector"
     echo "    $NATIVE_CMD service logs collector"
   elif [ "$COLLECTOR_SERVICE_REFUSED" = 1 ]; then
-    printf '\033[1m\033[0;33mCollector is paired\033[0m (this machine refused the service — start the daemon yourself):\n'
+    printf ''"$C_BOLD"''"$C_YELLOW"'Collector is paired'"$C_RESET"' (this machine refused the service — start the daemon yourself):\n'
     echo ""
     echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
   else
-    printf '\033[1m\033[0;32mCollector is paired\033[0m (no service registered — start the daemon yourself):\n'
+    printf ''"$C_BOLD"''"$C_GREEN"'Collector is paired'"$C_RESET"' (no service registered — start the daemon yourself):\n'
     echo ""
     echo "    OMNESIS_GATEWAY_URL=$PAIR_GATEWAY_URL $NATIVE_CMD collector run"
   fi
@@ -5410,9 +5446,9 @@ harness_on_existing_install() {
 print_harness_banner() {
   echo ""
   if [ "$HARNESS_REFRESH" = 1 ]; then
-    printf '\033[1m\033[0;32m%s is refreshed.\033[0m\n' "$(harness_label "$HARNESS")"
+    printf ''"$C_BOLD"''"$C_GREEN"'%s is refreshed.'"$C_RESET"'\n' "$(harness_label "$HARNESS")"
   else
-    printf '\033[1m\033[0;32m%s is connected to Omnesis.\033[0m\n' "$(harness_label "$HARNESS")"
+    printf ''"$C_BOLD"''"$C_GREEN"'%s is connected to Omnesis.'"$C_RESET"'\n' "$(harness_label "$HARNESS")"
   fi
   echo ""
   echo "  Connect said above whether $(harness_label "$HARNESS") restarted with its plugin"
@@ -5495,7 +5531,8 @@ ensure_docker() {
     DOCKER_CLI_DIR="${DOCKER_CLI_FOUND%/docker}"
     PATH="$PATH:$DOCKER_CLI_DIR"
     export PATH
-    warn "Docker is installed at $DOCKER_CLI_FOUND, but this terminal's PATH does not include $DOCKER_CLI_DIR yet; this install uses it from there. Open a new terminal before running omnesis commands, which run docker."
+    # The omnesis command finds it there too; only docker typed by hand needs PATH.
+    info "Using the Docker CLI at $DOCKER_CLI_FOUND, which this shell's PATH does not include. The omnesis command finds it there; to run docker yourself, open a new terminal or add $DOCKER_CLI_DIR to PATH."
   fi
   # Docker Desktop's CLI ends a failed command with a "What's next" hint, an
   # advertisement for its assistant, which would land in the middle of this
@@ -5939,6 +5976,26 @@ docker_diagnostic_is_missing() {
   grep -Eiq 'manifest unknown|no such manifest|manifest[^:]*: not found' "$1"
 }
 
+# A pull that ran out of room says so in Docker's own words; retrying cannot
+# help, and the network is not what to check.
+docker_diagnostic_is_disk() {
+  grep -Eiq 'no space left on device|disk quota exceeded' "$1"
+}
+
+docker_disk_free_gb() {
+  DISK_FREE_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [ -n "$DISK_FREE_ROOT" ] && [ -d "$DISK_FREE_ROOT" ] || return 1
+  DISK_FREE_KB="$(df -Pk "$DISK_FREE_ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  case "$DISK_FREE_KB" in ''|*[!0-9]*) return 1 ;; esac
+  DISK_FREE_GB=$((DISK_FREE_KB / 1048576))
+}
+
+docker_disk_failure() {
+  DISK_WHERE="where Docker stores them"
+  if docker_disk_free_gb; then DISK_WHERE="$DISK_WHERE ($DISK_FREE_ROOT, ${DISK_FREE_GB} GB free now)"; fi
+  fail "Pulling the $IMAGE_TAG images ran out of disk space $DISK_WHERE. They need about $DOCKER_PULL_DISK_GB GB. Free space (docker system prune removes unused images and build cache) or grow that disk, then re-run. Nothing was started."
+}
+
 docker_image_missing_failure() {
   REGISTRY_MISSING_TARGET="${1:-$IMAGE_REPO/$REGISTRY_IMAGE:$IMAGE_TAG}"
   fail "Could not find $REGISTRY_MISSING_TARGET. Check that the tag exists for every required image."
@@ -6020,6 +6077,23 @@ docker_runtime_identity() {
     DOCKER_DAEMON_UID=10001
     DOCKER_DAEMON_GID=10001
   fi
+}
+
+# Where this run writes, checked before anything is written: the config
+# directory and the directory the omnesis command goes in. An account whose home
+# it cannot write, or a config directory an earlier `sudo` run left to root,
+# would otherwise stop the install halfway on a bare shell error. Root writes
+# everywhere, so this only ever stops a login account.
+docker_require_writable_dirs() {
+  for WRITE_TARGET in "$CONFIG_DIR" "$CONFIG_DIR/tls" "$CONFIG_DIR/collector" "$HOME/.local/bin"; do
+    WRITE_PROBE="$WRITE_TARGET"
+    while [ ! -e "$WRITE_PROBE" ] && [ "$WRITE_PROBE" != / ]; do WRITE_PROBE="$(dirname "$WRITE_PROBE")"; done
+    [ -d "$WRITE_PROBE" ] && [ -w "$WRITE_PROBE" ] && [ -x "$WRITE_PROBE" ] && continue
+    WRITE_ACCOUNT="$(id -un 2>/dev/null || echo "this account")"
+    if [ "$WRITE_PROBE" = "$WRITE_TARGET" ]; then WRITE_WHAT="$WRITE_TARGET is"
+    else WRITE_WHAT="$WRITE_TARGET does not exist, and $WRITE_PROBE, where it would be created, is"; fi
+    fail "This install writes to $WRITE_TARGET, but $WRITE_WHAT not writable by $WRITE_ACCOUNT. Give it back to this account (sudo chown -R $WRITE_ACCOUNT '$WRITE_PROBE'), or run the installer as an account whose home it can write, then re-run. Nothing was changed."
+  done
 }
 
 docker_prepare_dirs() {
@@ -7594,6 +7668,30 @@ docker_require_build_disk() {
   fail "Building the images needs about ${DOCKER_BUILD_DISK_GB} GB free where Docker stores them ($BUILD_DISK_ROOT), and it has ${BUILD_DISK_FREE_GB} GB. Free space (\`docker builder prune\` removes build cache) or grow the disk, then re-run. Nothing was built. OMNESIS_DOCKER_BUILD_DISK_GB=0 skips this check."
 }
 
+# Pulling a release's images needs about this much free where Docker keeps
+# them: the images take about 2 GB unpacked, and the downloads and the
+# databases the gateway then creates need room beside them. Measured: a host
+# with 400 MB free failed extracting the first layer, with a containerd mount
+# error. OMNESIS_DOCKER_PULL_DISK_GB states another requirement, 0 to skip it.
+DOCKER_PULL_DISK_GB="${OMNESIS_DOCKER_PULL_DISK_GB:-4}"
+
+# Refuse a pull Docker's storage cannot hold, before anything is written. A
+# host that already has every image at this tag pulls nothing, and a daemon
+# whose storage this shell cannot see (Docker Desktop's VM, a remote context)
+# is not checked.
+docker_require_pull_disk() {
+  [ "$DOCKER_BUILD_FLAG" = 0 ] || return 0
+  case "$DOCKER_PULL_DISK_GB" in ''|*[!0-9]*|0) return 0 ;; esac
+  PULL_DISK_MISSING=0
+  for PULL_DISK_SERVICE in $(docker_pull_services); do
+    docker image inspect "$IMAGE_REPO/$(docker_service_image "$PULL_DISK_SERVICE"):$IMAGE_TAG" >/dev/null 2>&1 || PULL_DISK_MISSING=1
+  done
+  [ "$PULL_DISK_MISSING" = 1 ] || return 0
+  docker_disk_free_gb || return 0
+  [ "$DISK_FREE_GB" -lt "$DOCKER_PULL_DISK_GB" ] || return 0
+  fail "Pulling the $IMAGE_TAG images needs about ${DOCKER_PULL_DISK_GB} GB free where Docker stores them ($DISK_FREE_ROOT), and it has ${DISK_FREE_GB} GB. Free space (docker system prune removes unused images and build cache) or grow that disk, then re-run. Nothing was changed. OMNESIS_DOCKER_PULL_DISK_GB=0 skips this check."
+}
+
 # Bring the images onto this host. Pulling is the normal path — they are built
 # and published per release, so nothing here compiles anything. A pull the
 # registry refuses stops the install and names `--build`, rather than silently
@@ -7617,6 +7715,7 @@ docker_fetch_images() {
     docker_pull_images_once && return 0
     docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
     docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    docker_diagnostic_is_disk "$REGISTRY_DIAGNOSTIC" && docker_disk_failure
     [ "$REGISTRY_PULL_ATTEMPT" -lt "$DOCKER_PULL_ATTEMPTS" ] || break
     REGISTRY_PULL_WAIT=$((REGISTRY_PULL_ATTEMPT * DOCKER_PULL_RETRY_SECONDS))
     warn "Pulling the images failed (attempt $REGISTRY_PULL_ATTEMPT of $DOCKER_PULL_ATTEMPTS); retrying in ${REGISTRY_PULL_WAIT}s with the layers already downloaded."
@@ -7740,14 +7839,14 @@ docker_propagate_keyring() {
 # collector token alone, so sources and status are run where the gateway is.
 print_docker_collector_banner() {
   echo ""
-  printf '\033[1m\033[0;32mCollector container is running.\033[0m\n'
+  printf ''"$C_BOLD"''"$C_GREEN"'Collector container is running.'"$C_RESET"'\n'
   echo ""
   echo "  Gateway:  $PAIR_GATEWAY_URL"
   [ -z "$DOCKER_DEVICE_NAME" ] || echo "  Device:   $DOCKER_DEVICE_NAME"
   echo "  Token:    $CONFIG_DIR/collector/collector-token"
   print_collector_encryption_line
   echo ""
-  printf '\033[1mAdd a source\033[0m — on the gateway host, or in the portal at %s/portal/:\n' "$PAIR_GATEWAY_URL"
+  printf ''"$C_BOLD"'Add a source'"$C_RESET"' — on the gateway host, or in the portal at %s/portal/:\n' "$PAIR_GATEWAY_URL"
   echo ""
   if [ -n "$DOCKER_DEVICE_NAME" ]; then
     echo "    omnesis sources add --device '$DOCKER_DEVICE_NAME'"
@@ -7763,7 +7862,7 @@ print_docker_collector_banner() {
   echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
   echo "  Update later:  omnesis update"
   echo ""
-  printf '\033[1mWhat a container cannot do:\033[0m\n'
+  printf ''"$C_BOLD"'What a container cannot do:'"$C_RESET"'\n'
   echo ""
   echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
   echo "    that do not exist in a Linux container. Run a native collector on the Mac"
@@ -7795,7 +7894,7 @@ print_docker_banner() {
     return 0
   fi
   echo ""
-  printf '\033[1m\033[0;32mOmnesis is running in Docker.\033[0m\n'
+  printf ''"$C_BOLD"''"$C_GREEN"'Omnesis is running in Docker.'"$C_RESET"'\n'
   echo ""
   print_portal_lines "https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
   if [ -n "$TLS_CERT_PATH" ]; then
@@ -7816,11 +7915,11 @@ print_docker_banner() {
   # The host's omnesis is the wrapper docker_write_wrapper wrote: each command
   # runs in the gateway container, so nothing is to be entered by hand.
   if [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
-    printf '\033[1mPair a collector\033[0m — in this terminal, as usual:\n'
+    printf ''"$C_BOLD"'Pair a collector'"$C_RESET"' — in this terminal, as usual:\n'
     echo ""
     echo "    omnesis devices pair --kind collector"
   else
-    printf '\033[1mAdd your first source\033[0m — in this terminal, as usual:\n'
+    printf ''"$C_BOLD"'Add your first source'"$C_RESET"' — in this terminal, as usual:\n'
     echo ""
     echo "    omnesis sources add gmail"
   fi
@@ -7841,7 +7940,7 @@ print_docker_banner() {
   echo "  Logs:          docker compose -f $COMPOSE_FILE logs -f"
   echo "  Update later:  omnesis update"
   echo ""
-  printf '\033[1mWhat a container cannot do:\033[0m\n'
+  printf ''"$C_BOLD"'What a container cannot do:'"$C_RESET"'\n'
   echo ""
   echo "  - The Apple sources (Notes, Messages, Calendar, ...) read macOS databases"
   echo "    that do not exist in a Linux container. Run a native collector on the Mac"
@@ -7934,42 +8033,59 @@ docker_prepare_topology_transition() {
   fi
 }
 
-# Whether choose_embedder will have a question to ask: a model is wanted, none
-# is named, and no assignment from elsewhere already answers it.
-embedder_question_pending() {
-  [ "$WANT_MODEL" = 1 ] && [ "$EMBEDDER_EXPLICIT" = 0 ] || return 1
-  resolve_existing_cli
-  read_embedder_catalog || return 0
-  PENDING_ASSIGNED="$(printf '%s\n' "$EMBEDDER_MENU" | sed -n '2p')"
-  [ -n "$PENDING_ASSIGNED" ] || return 0
-  printf '%s\n' "$EMBEDDER_MENU" | sed -n '3,$p' | cut -d'|' -f1 | grep -qxF -- "$PENDING_ASSIGNED"
-}
-
 # Without a terminal, a Docker run reaches its first question only once every
-# image is pulled. Each question has a flag, so all of them are checked here,
-# before anything is pulled or written, and every missing one is named in a
-# single refusal: one re-run then gets through.
+# image is pulled. A question with a default takes it, as Enter would; one
+# without (a collector's pairing code) is checked here, before anything is
+# pulled or written, so the refusal names its flag and changes nothing.
 docker_require_unattended_answers() {
   is_promptable && return 0
-  # A re-run can read the catalog from the images an earlier run pulled.
-  DOCKER_NODE_TAG="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
-  DOCKER_UNANSWERED=""
-  if embedder_question_pending; then
-    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
-    --embedder <id>   the embedding model to install ($EMBEDDER_ID is the default), or --no-model for none"
-  fi
-  # A container has no OS keyring, so this question is always asked.
-  if [ "$WANT_KEYRING" = 1 ] && [ -z "$KEYRING_PASSPHRASE_FILE" ]; then
-    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
-    --keyring-passphrase-file $CONFIG_DIR/keyring.pass   an owner-only passphrase file you created there, to encrypt at rest; or --no-keyring, and encrypt later with: omnesis secure"
-  fi
   if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
-    DOCKER_UNANSWERED="$DOCKER_UNANSWERED
-    --code <code>   a pairing code minted on the gateway host with: omnesis devices pair --kind collector"
+    fail "No terminal to ask for this collector's pairing code, so nothing was pulled or changed. Re-run with --code <code>, minted on the gateway host with: omnesis devices pair --kind collector"
   fi
-  DOCKER_NODE_TAG=""
-  [ -n "$DOCKER_UNANSWERED" ] || return 0
-  fail "No terminal to ask what this install needs to know, so nothing was pulled or changed. Re-run with:$DOCKER_UNANSWERED"
+}
+
+# A first Docker install that stops before anything runs — the images would
+# not pull, the pairing code was refused — leaves nothing it wrote behind: no
+# compose file, launcher or install marker that would tell the next install
+# (or a native one) that Docker runs Omnesis here. The .env goes too unless
+# this run armed a keyring, whose wiring it records; keys, certificates and a
+# passphrase file stay, and the images already pulled stay to make the re-run
+# fast. An install that existed before this run is never undone, and once a
+# container is started the run is past undoing: its logs are what to read.
+DOCKER_UNDO=0
+docker_arm_undo() {
+  DOCKER_UNDO=0
+  [ ! -f "$CONFIG_DIR/docker-compose.yml" ] || return 0
+  DOCKER_UNDO=1
+  DOCKER_UNDO_ENV=0; [ -e "$CONFIG_DIR/.env" ] || DOCKER_UNDO_ENV=1
+  DOCKER_UNDO_COLLECTOR_ENV=0; [ -e "$CONFIG_DIR/collector/.env" ] || DOCKER_UNDO_COLLECTOR_ENV=1
+  DOCKER_UNDO_LAUNCHER=0; [ -e "$HOME/.local/bin/omnesis" ] || DOCKER_UNDO_LAUNCHER=1
+  DOCKER_UNDO_TLS_DIR=0; [ -e "$CONFIG_DIR/tls" ] || DOCKER_UNDO_TLS_DIR=1
+}
+
+docker_undo_fresh_install() {
+  [ "${DOCKER_UNDO:-0}" = 1 ] || return 0
+  DOCKER_UNDO=0
+  DOCKER_UNDONE=""
+  for UNDO_PATH in "$CONFIG_DIR/docker-compose.yml" "$CONFIG_DIR/install-method"; do
+    [ -e "$UNDO_PATH" ] || continue
+    rm -f "$UNDO_PATH" && DOCKER_UNDONE="$DOCKER_UNDONE $UNDO_PATH"
+  done
+  if [ "$DOCKER_UNDO_LAUNCHER" = 1 ] && [ -e "$HOME/.local/bin/omnesis" ]; then
+    rm -f "$HOME/.local/bin/omnesis" && DOCKER_UNDONE="$DOCKER_UNDONE $HOME/.local/bin/omnesis"
+  fi
+  if [ "${KEYRING_READY:-0}" != 1 ]; then
+    if [ "$DOCKER_UNDO_ENV" = 1 ] && [ -e "$CONFIG_DIR/.env" ]; then
+      rm -f "$CONFIG_DIR/.env" && DOCKER_UNDONE="$DOCKER_UNDONE $CONFIG_DIR/.env"
+    fi
+    if [ "$DOCKER_UNDO_COLLECTOR_ENV" = 1 ] && [ -e "$CONFIG_DIR/collector/.env" ]; then
+      rm -f "$CONFIG_DIR/collector/.env" && DOCKER_UNDONE="$DOCKER_UNDONE $CONFIG_DIR/collector/.env"
+    fi
+  fi
+  # Directories this run made and left empty.
+  [ "$DOCKER_UNDO_TLS_DIR" = 0 ] || rmdir "$CONFIG_DIR/tls" 2>/dev/null || true
+  [ -n "$DOCKER_UNDONE" ] || return 0
+  printf '\033[1;33m[omnesis]\033[0m %s\n' "This first install did not finish, so what it wrote is removed again:$DOCKER_UNDONE. Re-run the installer once the problem above is fixed." >&2
 }
 
 docker_install() {
@@ -7977,6 +8093,7 @@ docker_install() {
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_require_writable_dirs
   docker_recorded_passphrase_file
   docker_require_unattended_answers
   docker_runtime_identity
@@ -7985,8 +8102,10 @@ docker_install() {
   docker_resolve_build_context
   docker_resolve_tag
   docker_require_build_disk
+  docker_require_pull_disk
   docker_preflight_images
   docker_validate_topology_transition
+  docker_arm_undo
   docker_prepare_dirs
   docker_tls_tailscale
   docker_tls_adopt
@@ -8018,10 +8137,12 @@ docker_install() {
     setup_collector_storage_keys
     read_pairing_code collector
     docker_collector_pair
+    DOCKER_UNDO=0
     docker_up collector
     print_docker_banner
     return 0
   fi
+  DOCKER_UNDO=0
   docker_up gateway
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
@@ -8221,7 +8342,7 @@ hardened_install() {
 # machine.
 print_hardened_banner() {
   echo ""
-  printf '\033[1m\033[0;33mOmnesis is installed\033[0m (the dedicated gateway waits for the root command above):\n'
+  printf ''"$C_BOLD"''"$C_YELLOW"'Omnesis is installed'"$C_RESET"' (the dedicated gateway waits for the root command above):\n'
   echo ""
   echo "  1. Run the command printed above. As root, it fetches this release from the"
   echo "     repository, builds it as a throwaway account, installs it under"
@@ -8262,9 +8383,9 @@ print_banner() {
   PORTAL_URL="https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
   echo ""
   if [ "$WANT_SERVICE" = 1 ]; then
-    printf '\033[1m\033[0;32mOmnesis is running.\033[0m\n'
+    printf ''"$C_BOLD"''"$C_GREEN"'Omnesis is running.'"$C_RESET"'\n'
   else
-    printf '\033[1m\033[0;32mOmnesis is installed\033[0m (services not registered — start the daemons yourself):\n'
+    printf ''"$C_BOLD"''"$C_GREEN"'Omnesis is installed'"$C_RESET"' (services not registered — start the daemons yourself):\n'
     echo ""
     echo "    omnesis gateway serve    # terminal 1"
     echo "    omnesis collector run    # terminal 2"
@@ -8273,7 +8394,7 @@ print_banner() {
   print_portal_lines "$PORTAL_URL"
   echo ""
   print_trust_warning
-  printf '\033[1mAdd your first source:\033[0m\n'
+  printf ''"$C_BOLD"'Add your first source:'"$C_RESET"'\n'
   echo ""
   echo "    omnesis sources add gmail"
   echo ""
@@ -8294,7 +8415,7 @@ print_banner() {
 # Google credentials: an official app wakes through the hosted relay once its
 # owner approves that on the phone, and only a self-built app needs its own.
 print_phone_lines() {
-  printf '\033[1mPair a phone (optional):\033[0m\n'
+  printf ''"$C_BOLD"'Pair a phone (optional):'"$C_RESET"'\n'
   echo ""
   echo "    omnesis devices pair --kind ios       # or --kind android; scan the code in the app"
   echo ""
@@ -8315,7 +8436,7 @@ print_browser_lines() {
     # Pairing steps that cannot work are not presented as if they would: the
     # extension's service worker cannot click through a certificate warning,
     # so it fails before the gateway answers.
-    printf '\033[1mConnect your browser (optional)\033[0m — not yet: it needs a trusted certificate first.\n'
+    printf ''"$C_BOLD"'Connect your browser (optional)'"$C_RESET"' — not yet: it needs a trusted certificate first.\n'
     echo ""
     echo "  The Chrome extension cannot connect to this gateway while it serves a self-signed"
     echo "  certificate (see the warning above). Once it has a trusted one, install Omnesis"
@@ -8326,7 +8447,7 @@ print_browser_lines() {
     echo ""
     return 0
   fi
-  printf '\033[1mConnect your browser (optional):\033[0m\n'
+  printf ''"$C_BOLD"'Connect your browser (optional):'"$C_RESET"'\n'
   echo ""
   echo "    Install Omnesis Browser Capture from the Chrome Web Store:"
   echo "    $CHROME_WEB_STORE_URL"
@@ -8386,10 +8507,10 @@ mint_portal_login_link() {
 print_trust_warning() {
   browser_trusted_certificate && return 0
   TRUST_FIX="$(tls_fix_command)"
-  printf '\033[1;31m%s\033[0m\n' "================================================================================"
-  printf '\033[1;31m%s\033[0m\n' " WARNING: no trusted HTTPS certificate — browsers and the Chrome extension"
-  printf '\033[1;31m%s\033[0m\n' " cannot connect to this gateway."
-  printf '\033[1;31m%s\033[0m\n' "================================================================================"
+  printf ''"$C_BOLD_RED"'%s'"$C_RESET"'\n' "================================================================================"
+  printf ''"$C_BOLD_RED"'%s'"$C_RESET"'\n' " WARNING: no trusted HTTPS certificate — browsers and the Chrome extension"
+  printf ''"$C_BOLD_RED"'%s'"$C_RESET"'\n' " cannot connect to this gateway."
+  printf ''"$C_BOLD_RED"'%s'"$C_RESET"'\n' "================================================================================"
   echo ""
   echo "  It serves its own self-signed certificate. Browsers warn on every device, and the"
   echo "  Chrome extension and Claude Code cannot connect at all (\"The connection to the"
@@ -8433,7 +8554,7 @@ print_trust_warning() {
 print_agent_certificate_lines() {
   AGENT_CERT="$(dotenv_value OMNESIS_TLS_CERT 2>/dev/null || true)"
   if [ -z "$AGENT_CERT" ]; then
-    printf '\033[1m\033[0;33mConnecting AI agents — this gateway has no Tailscale certificate:\033[0m\n'
+    printf ''"$C_BOLD"''"$C_YELLOW"'Connecting AI agents — this gateway has no Tailscale certificate:'"$C_RESET"'\n'
     echo ""
     echo "  It serves its own self-signed certificate. Without a Tailscale certificate (or a"
     echo "  domain of your own), Claude Code, ChatGPT and the Claude apps cannot connect."
@@ -8446,7 +8567,7 @@ print_agent_certificate_lines() {
     echo "  domain of your own): https://omnesis.dev/docs/connect#bring-your-own-agent"
     echo ""
   elif [ "$AGENT_CERT" = "$CONFIG_DIR/tls/mkcert.crt" ]; then
-    printf '\033[1m\033[0;33mConnecting AI agents — this gateway serves a mkcert certificate:\033[0m\n'
+    printf ''"$C_BOLD"''"$C_YELLOW"'Connecting AI agents — this gateway serves a mkcert certificate:'"$C_RESET"'\n'
     echo ""
     echo "  Only this machine trusts it. Claude Code and Codex need a one-time trust setting"
     echo "  first, shown in the portal under Settings → Access → Connect an agent. OpenClaw,"
@@ -8476,7 +8597,7 @@ print_second_machine_lines() {
   SECOND_URL="$(banner_gateway_url)"
   SECOND_FP="$(cert_fingerprint "$(banner_cert_path)" || true)"
   echo ""
-  printf '\033[1mAdd another machine\033[0m — one line there, one code minted here:\n'
+  printf ''"$C_BOLD"'Add another machine'"$C_RESET"' — one line there, one code minted here:\n'
   echo ""
   echo "  A collector, to sync that machine's sources:"
   echo ""
@@ -8586,7 +8707,7 @@ banner_cert_path() {
 
 print_client_banner() {
   echo ""
-  printf '\033[1m\033[0;32mOmnesis client is installed.\033[0m\n'
+  printf ''"$C_BOLD"''"$C_GREEN"'Omnesis client is installed.'"$C_RESET"'\n'
   echo ""
   echo "  This machine will not run a gateway, collector, or embedding model."
   echo "  Omnesis executable: $OMNESIS_BIN"
@@ -8762,7 +8883,7 @@ run_machine_update() {
 
 print_update_banner() {
   echo ""
-  printf '\033[1m\033[0;32mOmnesis is up to date.\033[0m\n'
+  printf ''"$C_BOLD"''"$C_GREEN"'Omnesis is up to date.'"$C_RESET"'\n'
   echo ""
   echo "  Version:   $("$OMNESIS_BIN" --version 2>/dev/null || echo '(unavailable)')"
   echo "  Checkout:  $SOURCE_DIR"
@@ -9000,7 +9121,7 @@ main() {
       fail "--no-service skips registering a daemon; $ROLE_FLAG registers none. The harness runs its own."
   fi
   echo ""
-  printf '\033[1mOmnesis installer\033[0m — fully local, fully private.\n'
+  printf ''"$C_BOLD"'Omnesis installer'"$C_RESET"' — fully local, fully private.\n'
   echo ""
   detect_platform
   plan_beside_docker

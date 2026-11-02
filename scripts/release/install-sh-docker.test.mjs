@@ -17,6 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -63,6 +64,7 @@ printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
   info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
+  image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -1201,6 +1203,26 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.docker.some((call) => call.includes(" build"))).toBe(false);
   });
 
+  test("a first install whose pull fails leaves no compose file, launcher or marker", () => {
+    const run = runInstaller("pull-fails-fresh", QUIET, { OMNESIS_TEST_PULL_FAIL: "1" });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("what it wrote is removed again");
+    for (const path of ["docker-compose.yml", "install-method", ".env"]) {
+      expect(existsSync(join(run.configDir, path)), path).toBe(false);
+    }
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("a re-run whose pull fails keeps the install it found", () => {
+    expect(runInstaller("pull-fails-rerun", QUIET).status).toBe(0);
+    const run = runInstaller("pull-fails-rerun", QUIET, { OMNESIS_TEST_PULL_FAIL: "1" });
+    expect(run.status).not.toBe(0);
+    expect(run.output).not.toContain("removed again");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(true);
+    expect(existsSync(join(run.configDir, "install-method"))).toBe(true);
+    expect(existsSync(run.wrapper)).toBe(true);
+  });
+
   test("a pull a refused connection broke is tried again, keeping what it downloaded", () => {
     const run = runInstaller("pull-transient", QUIET, { OMNESIS_TEST_PULL_FAIL_TIMES: "2" });
     expect(run.status, run.output).toBe(0);
@@ -1343,6 +1365,47 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(roomy.docker.some((call) => call.includes("--profile update build"))).toBe(true);
   });
 
+  test("a pull is refused before anything is written when Docker's storage is short of space", () => {
+    // As for --build, the requirement is stated rather than the disk faked.
+    const short = runInstaller("pull-disk-short", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_TEST_IMAGES_ABSENT: "1",
+      OMNESIS_DOCKER_PULL_DISK_GB: "1000000",
+    });
+    expect(short.status).toBe(1);
+    expect(short.output).toContain(
+      `Pulling the 9.9.0 images needs about 1000000 GB free where Docker stores them (${repoRoot})`,
+    );
+    expect(short.output).toContain("Nothing was changed.");
+    expect(short.docker.some((call) => call.includes("--profile update pull"))).toBe(false);
+    expect(existsSync(join(short.configDir, "docker-compose.yml"))).toBe(false);
+    expect(existsSync(short.wrapper)).toBe(false);
+    // A host that already holds every image pulls nothing, so it is not asked for room.
+    const present = runInstaller("pull-disk-present", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_PULL_DISK_GB: "1000000",
+    });
+    expect(present.status, present.output).toBe(0);
+  });
+
+  test("a pull that runs out of disk says so at once, not the network", () => {
+    const run = runInstaller("pull-enospc", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_TEST_PULL_FAIL: "1",
+      OMNESIS_TEST_PULL_ERROR:
+        "failed to extract layer (application/vnd.docker.image.rootfs.diff.tar.gzip sha256:b6c6) to overlayfs: " +
+        "write /var/lib/containerd/tmpmounts/containerd-mount1/usr/lib/x.pl: no space left on device",
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      `Pulling the 9.9.0 images ran out of disk space where Docker stores them (${repoRoot}`,
+    );
+    expect(run.output).toContain("docker system prune");
+    expect(run.output).not.toContain("network connection");
+    expect(run.output).not.toContain("attempt 1 of");
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(1);
+  });
+
   test("--dry-run --build names the checkout and performs no Docker work", () => {
     const run = runInstaller("dry-build", [...BUILD, "--dry-run"]);
     expect(run.status, run.output).toBe(0);
@@ -1440,13 +1503,15 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).not.toContain("omnesis tls provision");
     // The extension's pairing steps come after the caveat, not as if they work.
     expect(run.output).toContain(
-      "Connect your browser (optional)\u001b[0m — not yet: it needs a trusted certificate first.",
+      "Connect your browser (optional) — not yet: it needs a trusted certificate first.",
     );
     expect(
       run.output.indexOf("cannot connect to this gateway while it serves a self-signed"),
     ).toBeLessThan(run.output.indexOf("omnesis devices pair --kind browser"));
     // The CLI is the host's own command, not something to run in a container.
-    expect(run.output).toContain("Add your first source\u001b[0m — in this terminal, as usual:");
+    expect(run.output).toContain("Add your first source — in this terminal, as usual:");
+    // Not a terminal, so plain text: a log or an agent reads no escape codes.
+    expect(run.output).not.toContain("\u001b[");
     expect(run.output).toContain("there is no container to open or enter");
     expect(run.output).not.toContain("The CLI runs in the containers");
     // No terminal: no login code is minted, and the hint says where to run it.
@@ -1713,11 +1778,43 @@ describe("install.sh --docker --collector", () => {
     expect(run.docker.some((call) => call.includes("up -d gateway"))).toBe(false);
   });
 
-  test("a failed pairing starts nothing", () => {
+  test("a failed pairing starts nothing, and a first install leaves nothing it wrote", () => {
     const run = runInstaller("pair-fails", CODED, { OMNESIS_TEST_PAIR_FAIL: "1" });
     expect(run.status).not.toBe(0);
     expect(run.output).toContain("Pairing failed");
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
+    // Nothing that says Docker runs Omnesis here, so the re-run with a fresh
+    // code (or a native install) starts clean.
+    expect(run.output).toContain(
+      "This first install did not finish, so what it wrote is removed again",
+    );
+    for (const path of ["docker-compose.yml", "install-method", ".env", "collector/.env"]) {
+      expect(existsSync(join(run.configDir, path)), path).toBe(false);
+    }
+    expect(existsSync(run.wrapper)).toBe(false);
+    const again = runInstaller("pair-fails", CODED);
+    expect(again.status, again.output).toBe(0);
+    expect(existsSync(join(again.configDir, "docker-compose.yml"))).toBe(true);
+  });
+
+  test("a failed pairing that armed a keyring keeps the keyring's wiring", () => {
+    const home = prepareHome("pair-fails-keyring");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    const passphrase = join(configDir, "keyring.pass");
+    writeFileSync(passphrase, "fictional-passphrase-for-a-test\n", { mode: 0o600 });
+    const run = runInstaller(
+      "pair-fails-keyring",
+      [...CODED.filter((flag) => flag !== "--no-keyring"), "--keyring-passphrase-file", passphrase],
+      { OMNESIS_TEST_PAIR_FAIL: "1" },
+    );
+    expect(run.status).not.toBe(0);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+    expect(readFileSync(join(run.configDir, ".env"), "utf8")).toContain(
+      "OMNESIS_SECRET_STORE=passphrase",
+    );
+    expect(existsSync(passphrase)).toBe(true);
   });
 
   test("an unreachable gateway is not blamed on the pairing code", () => {
@@ -1744,7 +1841,7 @@ describe("install.sh --docker --collector", () => {
     ]);
     expect(run.status).not.toBe(0);
     // Refused before the pull, with the flag that supplies one.
-    expect(run.output).toContain("No terminal to ask what this install needs to know");
+    expect(run.output).toContain("No terminal to ask for this collector's pairing code");
     expect(run.output).toContain("--code <code>");
     expect(run.calls.some((call) => call.startsWith("pair"))).toBe(false);
     expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
@@ -2654,7 +2751,7 @@ function pathWithoutDocker() {
 }
 
 describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
-  test("a CLI in ~/.docker/bin is used, and the operator told to open a new terminal", () => {
+  test("a CLI in ~/.docker/bin is used, and only docker typed by hand needs PATH", () => {
     const home = prepareHome("docker-off-path");
     const dockerDir = join(home, ".docker", "bin");
     mkdirSync(dockerDir, { recursive: true });
@@ -2662,8 +2759,10 @@ describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
     const tools = pathWithoutDocker();
     const run = runInstaller("docker-off-path", QUIET, { PATH: tools });
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain(`Docker is installed at ${join(dockerDir, "docker")}`);
-    expect(run.output).toContain("Open a new terminal");
+    expect(run.output).toContain(`CLI at ${join(dockerDir, "docker")}, which this shell`);
+    // The omnesis command finds it on its own, so it is not told to wait for a new terminal.
+    expect(run.output).toContain("The omnesis command finds it there");
+    expect(run.output).not.toContain("before running omnesis commands");
     expect(run.docker.some((call) => call.includes("--profile update pull"))).toBe(true);
   });
 
@@ -2677,16 +2776,27 @@ describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
 });
 
 describe("install.sh --docker: without a terminal", () => {
-  test("every unanswered question is named before anything is pulled", () => {
-    const run = runInstaller("unattended-missing", ["--docker", "--version", "9.9.0"]);
-    expect(run.status).toBe(1);
-    expect(run.output).toContain("No terminal to ask what this install needs to know");
-    expect(run.output).toContain("--embedder <id>");
-    expect(run.output).toContain("--no-model");
-    expect(run.output).toContain(`--keyring-passphrase-file ${run.configDir}/keyring.pass`);
-    expect(run.output).toContain("--no-keyring");
-    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
-    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  test("every question with a default takes it, as Enter would, and says so", () => {
+    const run = runInstaller("unattended-defaults", ["--docker", "--version", "9.9.0"]);
+    expect(run.status, run.output).toBe(0);
+    // The model: the catalog's default, with the flags that choose otherwise.
+    expect(run.output).toMatch(/Embedding model: \S+, the default \(no terminal to ask/u);
+    expect(run.output).toContain("--embedder <id> names another, --no-model installs none");
+    // Encryption at rest, the answer the question recommends, from a generated file.
+    expect(run.output).toContain(
+      "Encrypting at rest with a generated passphrase file (no terminal to ask",
+    );
+    expect(run.output).toContain("--no-keyring installs without");
+    expect(existsSync(join(run.configDir, "keyring.pass"))).toBe(true);
+    expect(readFileSync(join(run.configDir, ".env"), "utf8")).toContain(
+      "OMNESIS_SECRET_STORE=passphrase",
+    );
+    expect(run.output).not.toContain("No terminal to ask what this install needs to know");
+    // The recovery code is said in words, as on a terminal, not as the CLI's JSON.
+    expect(run.output).toContain("Omnesis recovery code");
+    expect(run.output).toContain("    RCVR-FIXT-CODE-0001");
+    expect(run.output).toContain("it is shown only once");
+    expect(run.output).not.toContain('"recoveryCode"');
   });
 
   test("a collector-only host is also asked for its pairing code up front", () => {
@@ -2699,10 +2809,9 @@ describe("install.sh --docker: without a terminal", () => {
       "9.9.0",
     ]);
     expect(run.status).toBe(1);
+    // The pairing code is the one answer with no default.
+    expect(run.output).toContain("No terminal to ask for this collector's pairing code");
     expect(run.output).toContain("--code <code>");
-    expect(run.output).toContain("--no-keyring");
-    // A collector installs no model, so there is nothing to choose there.
-    expect(run.output).not.toContain("--embedder <id>");
     expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 
@@ -2742,6 +2851,36 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("local-http/embed-large is already assigned");
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+// Root writes everywhere, so these only mean something run as a login account.
+describe.skipIf(process.getuid?.() === 0)("install.sh --docker: a home it cannot write", () => {
+  test("a config directory it cannot create is named before anything is written", () => {
+    const home = prepareHome("unwritable-config");
+    mkdirSync(join(home, ".config"), { mode: 0o555 });
+    const run = runInstaller("unwritable-config", QUIET);
+    chmodSync(join(home, ".config"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      `This install writes to ${run.configDir}, but ${run.configDir} does not exist, and ${join(home, ".config")}, where it would be created, is not writable by`,
+    );
+    expect(run.output).toContain("sudo chown -R");
+    expect(run.output).toContain("Nothing was changed.");
+    expect(run.output).not.toMatch(/^mkdir: /m);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("a directory for the omnesis command it cannot create stops it before the compose file", () => {
+    const home = prepareHome("unwritable-bin");
+    mkdirSync(join(home, ".local"), { mode: 0o555 });
+    const run = runInstaller("unwritable-bin", QUIET);
+    chmodSync(join(home, ".local"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(`This install writes to ${join(home, ".local", "bin")}`);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 });
 

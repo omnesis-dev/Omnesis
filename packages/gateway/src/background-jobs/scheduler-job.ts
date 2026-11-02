@@ -40,7 +40,7 @@ export interface SchedulerBackedJobOpts {
   tracker: ProgressTracker;
   /**
    * Window over which to compute ticksLastHour / avgTickMs / p99TickMs
-   * via `Scheduler.snapshot(window)`. Default 3600 (1 hour).
+   * via `Scheduler.taskStats(name, window)`. Default 3600 (1 hour).
    */
   windowSeconds?: number;
   /**
@@ -118,8 +118,7 @@ function makeJob(
     category: opts.category,
     cadence,
     observe(): JobObservation {
-      const snap = opts.scheduler.snapshot(windowSeconds);
-      const stats = snap.perTask.find((t) => t.name === id);
+      const stats = opts.scheduler.taskStats(id, windowSeconds);
       const tickCount = stats?.count ?? 0;
       const errorCount = stats?.errorCount ?? 0;
       const avgTickMs =

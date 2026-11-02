@@ -63,10 +63,12 @@ const WOUND_BACK = [
   191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204,
   // 205 indexes and compacts knowledge_changes, which undoKnowledge drops.
   205, 206,
-  // 207 rebuilds the note queue, which undoNoteAgent drops.
+  // 207 compacts knowledge_revision_dependencies, which undoKnowledge drops.
   207,
-  // 208 handoff outbox is dropped with the note queue.
+  // 208 rebuilds the note queue, which undoNoteAgent drops.
   208,
+  // 209 handoff outbox is dropped with the note queue.
+  209,
 ];
 
 let dir: string;
@@ -1032,6 +1034,144 @@ describe("an install several versions behind, upgrading", () => {
       ).toBe(TAIL_VERSIONS.length);
     } finally {
       (db as unknown as Database.Database).close();
+    }
+  });
+});
+
+describe("Note schema upgrades alongside knowledge history compaction", () => {
+  test.each([206, 207])(
+    "upgrades the canonical schema %i without losing saved notes or tasks",
+    (version) => {
+      const old = upgrade();
+      try {
+        undoNoteAgent(old);
+        old.exec(
+          `DELETE FROM schema_migrations WHERE version > ${version}; PRAGMA user_version = ${version}`,
+        );
+        old.exec(`INSERT INTO note_entries (id,day,captured_at,updated_at,text)
+        VALUES ('retained-note','2030-01-01','2030-01-01T09:00:00Z','2030-01-01T09:00:00Z','Check the observatory supplies');
+        INSERT INTO open_loops(id,created_by_run,confidence,importance,title,created_at,last_update,accepted)
+        VALUES ('retained-task','example-run',1,0.5,'Check the observatory supplies',1000,1000,1)`);
+      } finally {
+        old.close();
+      }
+      const db = upgrade();
+      try {
+        expect(db.prepare("PRAGMA user_version").get()).toEqual({
+          user_version: LATEST_SCHEMA_VERSION,
+        });
+        expect(db.prepare("SELECT text FROM note_entries WHERE id='retained-note'").get()).toEqual({
+          text: "Check the observatory supplies",
+        });
+        expect(
+          db.prepare("SELECT accepted FROM open_loops WHERE id='retained-task'").get(),
+        ).toEqual({ accepted: 1 });
+        expect(
+          db
+            .prepare("SELECT name FROM pragma_table_info('note_agent_runs') WHERE name='revision'")
+            .get(),
+        ).toEqual({ name: "revision" });
+        expect(
+          db.prepare("SELECT name FROM sqlite_master WHERE name='idx_note_handoffs_active'").get(),
+        ).toEqual({ name: "idx_note_handoffs_active" });
+        expect(
+          db.prepare("SELECT description FROM schema_migrations WHERE version=207").get(),
+        ).toEqual({ description: "keep each target a knowledge node's history cites once" });
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+  test("repairs the earlier Note version lineage while preserving revisions and handoffs", () => {
+    const old = upgrade();
+    const receipt = JSON.stringify({
+      text: "Continue in chat.",
+      changes: [],
+      conversationId: "example-chat",
+    });
+    const payload = JSON.stringify({ question: "Which supplies?", changes: [] });
+    try {
+      old.exec(`DELETE FROM schema_migrations WHERE version > 208; PRAGMA user_version = 208;
+        UPDATE schema_migrations SET description='process owner note edits as fenced revisions' WHERE version=207;
+        UPDATE schema_migrations SET description='durable Note clarification handoffs' WHERE version=208;
+        INSERT INTO note_entries(id,day,captured_at,updated_at,text,from_owner)
+          VALUES ('retained-note','2030-01-01','2030-01-01T09:00:00Z','2030-01-01T09:00:00Z','Check the observatory supplies',1);
+        INSERT INTO open_loops(id,created_by_run,confidence,importance,title,created_at,last_update,accepted)
+          VALUES ('retained-task','example-run',1,0.5,'Check the observatory supplies',1000,1000,1);
+        INSERT INTO knowledge_nodes(id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+          VALUES ('example-page','wiki','Observatory supplies','','',2,1,'example-hash','current','{}','{}',1000,1000);
+        INSERT INTO knowledge_revisions(node_id,revision,previous_revision,title,markdown,plain_text,fields_json,validity,claims_json,diff_json,created_at)
+          VALUES ('example-page',1,0,'Observatory supplies','','','{}','current','[]','{}',1000),
+                 ('example-page',2,1,'Observatory supplies','','','{}','current','[]','{}',2000);
+        INSERT INTO knowledge_revision_dependencies VALUES
+          ('example-page',1,'source','example-document'),('example-page',2,'source','example-document')`);
+      old
+        .prepare(
+          `INSERT INTO note_agent_runs(entry_id,revision,input_text,state,attempts,run_after,receipt_json,created_at,updated_at)
+        VALUES ('retained-note',3,'Check the observatory supplies','done',4,1000,?,1000,2000)`,
+        )
+        .run(receipt);
+      old
+        .prepare(
+          `INSERT INTO note_agent_handoffs(entry_id,revision,conversation_id,state,payload_json)
+        VALUES ('retained-note',3,'example-chat','ready',?)`,
+        )
+        .run(payload);
+    } finally {
+      old.close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
+      expect(
+        db
+          .prepare(
+            "SELECT revision,state,attempts,receipt_json FROM note_agent_runs WHERE entry_id='retained-note'",
+          )
+          .get(),
+      ).toEqual({ revision: 3, state: "done", attempts: 4, receipt_json: receipt });
+      expect(
+        db
+          .prepare(
+            "SELECT state,payload_json FROM note_agent_handoffs WHERE conversation_id='example-chat'",
+          )
+          .get(),
+      ).toEqual({ state: "ready", payload_json: payload });
+      expect(
+        db.prepare("SELECT from_owner,text FROM note_entries WHERE id='retained-note'").get(),
+      ).toEqual({ from_owner: 1, text: "Check the observatory supplies" });
+      expect(db.prepare("SELECT accepted FROM open_loops WHERE id='retained-task'").get()).toEqual({
+        accepted: 1,
+      });
+      expect(
+        db
+          .prepare(
+            "SELECT revision,target_id FROM knowledge_revision_dependencies WHERE node_id='example-page'",
+          )
+          .all(),
+      ).toEqual([{ revision: 1, target_id: "example-document" }]);
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS n FROM knowledge_revisions WHERE node_id='example-page'")
+          .get(),
+      ).toEqual({ n: 2 });
+    } finally {
+      db.close();
+    }
+    const reopened = upgrade();
+    try {
+      expect(
+        reopened
+          .prepare(
+            "SELECT payload_json FROM note_agent_handoffs WHERE conversation_id='example-chat'",
+          )
+          .get(),
+      ).toEqual({ payload_json: payload });
+    } finally {
+      reopened.close();
     }
   });
 });

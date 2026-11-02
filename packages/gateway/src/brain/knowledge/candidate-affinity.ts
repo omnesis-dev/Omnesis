@@ -103,9 +103,35 @@ export function ownsCandidateTurn(db: Database.Database, batchId: string): boole
   return !owner || owner === batchId;
 }
 
-/** Per synchronous planning pass; shared components are traversed only once. */
-export function candidateCoordinationKeys(db: Database.Database): (workId: string) => string[] {
+/**
+ * Per synchronous planning pass; shared components are traversed only once.
+ * Work in `known` whose subject has no work attached to a pending candidate
+ * decision gets its empty keys from one read of those subjects, instead of a
+ * traversal per work item: its traversal would find no candidate.
+ */
+export function candidateCoordinationKeys(
+  db: Database.Database,
+  known: readonly { id: string; subjectKind: string; subjectId: string }[] = [],
+): (workId: string) => string[] {
   const cached = new Map<string, string[]>();
+  if (known.length) {
+    const attached = new Set(
+      db
+        .prepare<[], { kind: string; id: string }>(
+          `SELECT DISTINCT w.subject_kind AS kind,w.subject_id AS id
+           FROM knowledge_candidates c
+           JOIN knowledge_candidate_decision_work cw
+             ON cw.candidate_id=c.id AND cw.generation=c.decision_generation
+           JOIN knowledge_work w ON w.id=cw.work_id
+           WHERE c.decision_pending=1 AND c.status IN ('proposed','deferred')`,
+        )
+        .all()
+        .map((row) => JSON.stringify([row.kind, row.id])),
+    );
+    for (const item of known)
+      if (!attached.has(JSON.stringify([item.subjectKind, item.subjectId])))
+        cached.set(item.id, []);
+  }
   return (workId) => {
     const existing = cached.get(workId);
     if (existing) return existing;

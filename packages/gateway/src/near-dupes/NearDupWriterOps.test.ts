@@ -30,6 +30,7 @@ import {
   generationSweepStep,
   bumpNearDupAlgo,
   APPLY_CHUNK_SIZE,
+  BUCKET_DELETE_FOR_DOC_SQL,
   DF_APPLY_CHUNK_SIZE,
 } from "./NearDupWriterOps.js";
 import { buildInMemoryDfFromTable, ShingleDfAccumulator } from "./NearDupDfService.js";
@@ -401,6 +402,58 @@ describe("applyNearDupBatch", () => {
     expect(sigs.map((s) => s.doc_id)).toEqual(["alive"]);
     const edges = db.prepare<[], { n: number }>(`SELECT COUNT(*) AS n FROM near_dup_edges`).get();
     expect(edges?.n).toBe(0);
+  });
+
+  test("re-signing a document replaces its own bucket rows under its algo only", () => {
+    setActiveAlgoVersion(db, "v1");
+    seedDoc("a");
+    seedDoc("b");
+    const bucket = db.prepare(
+      `INSERT INTO near_dup_lsh_buckets (algo_version, band_idx, bucket_hash, doc_id) VALUES (?, ?, ?, ?)`,
+    );
+    bucket.run("v1", 0, 100, "a");
+    bucket.run("v1", 1, 101, "a");
+    bucket.run("v1", 0, 100, "b");
+    bucket.run("v0", 0, 100, "a");
+
+    const r = applyNearDupBatch(db, {
+      algoVersion: "v1",
+      processedInboxIds: [],
+      signatureDeletes: ["a"],
+      signatures: [{ docId: "a", algoVersion: "v1", signature: Buffer.from([1]), shingleCount: 1 }],
+      bucketRows: [{ algoVersion: "v1", bandIdx: 0, bucketHash: 200, docId: "a" }],
+      edgeUpserts: [],
+      edgeDeletes: [],
+    });
+    expect(r.remaining).toBeNull();
+    const rows = db
+      .prepare<[], { algo_version: string; band_idx: number; bucket_hash: number; doc_id: string }>(
+        `SELECT algo_version, band_idx, bucket_hash, doc_id FROM near_dup_lsh_buckets
+          ORDER BY doc_id, algo_version, band_idx`,
+      )
+      .all();
+    expect(rows).toEqual([
+      { algo_version: "v0", band_idx: 0, bucket_hash: 100, doc_id: "a" },
+      { algo_version: "v1", band_idx: 0, bucket_hash: 200, doc_id: "a" },
+      { algo_version: "v1", band_idx: 0, bucket_hash: 100, doc_id: "b" },
+    ]);
+  });
+
+  test("a document's bucket delete seeks its own rows, not every row of the algo", () => {
+    // The gateway keeps no planner statistics, and every live bucket row
+    // shares the active algo version: a plan keyed on `algo_version` reads
+    // the whole table once per applied document, under the write lock.
+    expect(
+      db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'").get(),
+    ).toBeUndefined();
+    const plan = (
+      db.prepare(`EXPLAIN QUERY PLAN ${BUCKET_DELETE_FOR_DOC_SQL}`).all("doc", "v1") as Array<{
+        detail: string;
+      }>
+    ).map((row) => row.detail);
+    expect(plan).toEqual([
+      "SEARCH near_dup_lsh_buckets USING INDEX idx_near_dup_lsh_doc (doc_id=?)",
+    ]);
   });
 });
 

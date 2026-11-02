@@ -89,6 +89,7 @@ import {
 import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
+import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -132,6 +133,7 @@ import { pruneInvalidEmailAliases } from "./prune-invalid-email-aliases.js";
 import { runSchemaSetup } from "./schema.js";
 import { compactKnowledgeJournal } from "./migration-205-knowledge-journal.js";
 import { addConversationAuthors } from "./migration-206-conversation-authors.js";
+import { compactKnowledgeHistoryTargets } from "./migration-207-knowledge-history-targets.js";
 import {
   createLegacyBriefClaimsTables,
   createLegacyBriefTables,
@@ -155,7 +157,6 @@ import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js"
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
-import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4884,10 +4885,30 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 207,
+    description: "keep each target a knowledge node's history cites once",
+    up: compactKnowledgeHistoryTargets,
+  },
+  {
+    version: 208,
     description: "process owner note edits as fenced revisions",
     up: createNoteAgentTables,
   },
-  { version: 208, description: "durable Note clarification handoffs", up: createNoteHandoffTables },
+  {
+    version: 209,
+    description: "durable Note clarification handoffs",
+    up(db) {
+      // An earlier Note schema used the history-compaction version. Repair
+      // that known lineage without repeating corpus work on ordinary upgrades.
+      const previous = db
+        .prepare<[], { description: string }>(
+          "SELECT description FROM schema_migrations WHERE version = 207",
+        )
+        .get();
+      if (previous?.description === "process owner note edits as fenced revisions")
+        compactKnowledgeHistoryTargets(db);
+      createNoteHandoffTables(db);
+    },
+  },
 ];
 
 /**

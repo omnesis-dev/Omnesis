@@ -24,6 +24,7 @@ import {
   isSameHostAsCollector,
   collectCredentialFields,
   runCredentialsWizard,
+  saveProviderCredentials,
 } from "../credentials-wizard.js";
 import {
   fetchUnionDescriptors,
@@ -62,6 +63,13 @@ import {
   type AdminSourceEntry,
   type TargetDevice,
 } from "./members.js";
+import {
+  collectFlagValues,
+  missingSettingsRefusal,
+  readSuppliedSettings,
+  setupKeys,
+  sortSuppliedSettings,
+} from "./add-settings.js";
 import type { ConfiguredSourcesSnapshot, SerializedDescriptor } from "../utils.js";
 import type { MultiDeviceMode } from "@omnesis/types";
 
@@ -111,8 +119,56 @@ export function pathValueForCollector(
   return resolveOperatorPath(value, env);
 }
 
-/** Seconds a re-run add waits for its collector to reconnect; set by the host launcher. */
+/**
+ * Seconds an add waits for its collector to reconnect. The host launcher sets
+ * it when it picks an add up again after sharing a folder; otherwise the
+ * default below applies.
+ */
 const ADD_WAIT_ENV = "OMNESIS_ADD_WAIT_SECONDS";
+
+/**
+ * How long an add waits for a paired collector that is not connected. A
+ * collector that has just restarted (a shared folder recreates its container,
+ * an update restarts it) reconnects once it has loaded its sources, which can
+ * take a couple of minutes on a large install; an add aimed at it can do
+ * nothing else in the meantime.
+ */
+export const DEFAULT_RECONNECT_WAIT_SECONDS = 120;
+
+/** The reconnect wait this run uses: the launcher's, or the default. */
+export function reconnectWaitMs(env: NodeJS.ProcessEnv = process.env): number {
+  const seconds = Number(env[ADD_WAIT_ENV] ?? "");
+  return (
+    (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_RECONNECT_WAIT_SECONDS) * 1000
+  );
+}
+
+/**
+ * Make sure the device an add names is connected, waiting for it when the
+ * gateway lists it but it is not online. A device that never connects in the
+ * window is refused by name rather than left to a later request's error.
+ */
+export async function ensureDeviceConnected(
+  device: { id: string; name: string },
+  timeoutMs: number,
+  deps: Parameters<typeof waitForDeviceOnline>[2] = undefined,
+): Promise<void> {
+  const listDevices =
+    deps?.listDevices ??
+    (async () => (await gatewayJson<{ items: AdminDeviceEntry[] }>("/admin/devices")).items);
+  const listed = (await listDevices()).find((d) => d.id === device.id);
+  // A listing without the device, or without `online`, is not this check's to judge.
+  if (!listed || listed.online !== false) return;
+  const online = await withSpinner(`Waiting for ${device.name} to connect`, () =>
+    waitForDeviceOnline(device.id, timeoutMs, deps),
+  );
+  if (online) return;
+  throw new CliError(
+    `${c.red}${device.name} is paired but has not connected to the gateway (waited ${Math.round(timeoutMs / 1000)} s).${c.reset}\n` +
+      `Start its collector, then add the source again. ${c.dim}omnesis devices list shows which devices are online.${c.reset}`,
+    EXIT_FAILURE,
+  );
+}
 
 /**
  * Wait until the device `input` names is online, or `timeoutMs` passes. A
@@ -194,7 +250,8 @@ export function containerFolderOutcome(input: {
 export const addCommand = defineCommand({
   meta: {
     name: "add",
-    description: "Add a data source (interactive)",
+    description:
+      "Add a data source. Asks for what it needs on a terminal; without one, give it as flags (see `omnesis sources describe <type>`)",
   },
   args: {
     source: {
@@ -206,6 +263,20 @@ export const addCommand = defineCommand({
       type: "string",
       description:
         "Target collector device (name or id) — required when multiple collectors host the source",
+    },
+    set: {
+      type: "string",
+      description:
+        "A setting or credential field the source asks for, as key=value (repeatable); `omnesis sources describe <type>` lists the keys",
+    },
+    config: {
+      type: "string",
+      description:
+        "The same keys as one JSON object: inline, @file, or - to read standard input (keeps secrets off the command line)",
+    },
+    account: {
+      type: "string",
+      description: "An account the collector found to add, when it finds several (repeatable)",
     },
     yes: {
       type: "boolean",
@@ -221,12 +292,21 @@ export const addCommand = defineCommand({
     const { resolve, join } = await import("node:path");
     const prompts = await import("@clack/prompts");
     const { parseSourceKey } = await import("@omnesis/core");
+    const interactive = isInteractive();
+    // Read before anything is asked of the gateway, so a malformed flag is
+    // refused without a round trip.
+    const supplied = readSuppliedSettings(ctx.rawArgs);
+    const accounts = collectFlagValues(ctx.rawArgs, "account").map((a) => a.trim());
     const deps: AddFlowDeps = {
       prompts,
       resolve,
       join,
       parseSourceKey,
-      joinConfirmation: joinConfirmationFor(ctx.args.yes === true, isInteractive()),
+      joinConfirmation: joinConfirmationFor(ctx.args.yes === true, interactive),
+      interactive,
+      supplied,
+      ...(accounts.length > 0 ? { accounts } : {}),
+      reconnectWaitMs: reconnectWaitMs(),
     };
 
     // Resolve the target collector device. When --device is supplied we
@@ -234,15 +314,23 @@ export const addCommand = defineCommand({
     // (across all online collectors) and pick a device per-descriptor
     // after the user selects a source.
     // The host launcher runs an add again once it has shared a folder with the
-    // collector's container, which it recreated to do so: wait for that
-    // collector to be back before asking it anything.
-    const reconnectWait = Number(process.env[ADD_WAIT_ENV] ?? "");
-    if (deviceFlag && Number.isFinite(reconnectWait) && reconnectWait > 0) {
+    // collector's container, which it recreated to do so — and the gateway with
+    // it, on a combined install: wait for that collector to be back before
+    // asking it anything, through a gateway that may not answer yet either.
+    const launcherWait = Number(process.env[ADD_WAIT_ENV] ?? "");
+    if (deviceFlag && Number.isFinite(launcherWait) && launcherWait > 0) {
       await withSpinner("Waiting for the collector to reconnect", () =>
-        waitForDeviceOnline(deviceFlag, reconnectWait * 1000),
+        waitForDeviceOnline(deviceFlag, launcherWait * 1000),
       );
     }
     const explicitDevice = deviceFlag ? await resolveDeviceFlag(deviceFlag) : null;
+    // A collector restarted moments ago (`omnesis folders share` recreates its
+    // container) is paired but not connected yet. After the launcher's wait
+    // above, one look is enough: it either came back or is refused by name.
+    if (explicitDevice) {
+      const alreadyWaited = Number.isFinite(launcherWait) && launcherWait > 0;
+      await ensureDeviceConnected(explicitDevice, alreadyWaited ? 0 : deps.reconnectWaitMs);
+    }
 
     // Descriptor fetch shape depends on whether the user pinned a device:
     // - --device set: scope to that device (the per-device endpoint
@@ -298,6 +386,91 @@ export interface AddFlowDeps {
   parseSourceKey: typeof import("@omnesis/core").parseSourceKey;
   /** How a join onto a source another device hosts is authorised. */
   joinConfirmation: JoinConfirmation;
+  /**
+   * Whether there is a terminal to ask. Without one nothing is prompted: an
+   * answer the command line did not give is refused by the flag that gives it.
+   */
+  interactive: boolean;
+  /** `--set` / `--config` values, by descriptor key, not yet checked against a descriptor. */
+  supplied: Readonly<Record<string, string>>;
+  /** `--account` values: the discovered accounts to add, instead of a picker. */
+  accounts?: readonly string[];
+  /** How long to wait for a paired collector that is not connected. */
+  reconnectWaitMs: number;
+}
+
+/**
+ * The refusal for a run that names no source and has no terminal for the
+ * picker. Lists what can be added, from the descriptors themselves.
+ */
+export function unnamedSourceRefusal(sourceIds: readonly string[]): string {
+  return (
+    `${c.red}Name the source to add: this run has no terminal for the source picker.${c.reset}\n` +
+    `  omnesis sources add <type> [--device <name>] [--set key=value ...]\n` +
+    `Sources: ${sourceIds.length > 0 ? sourceIds.join(", ") : "(no collector is online)"}\n` +
+    `${c.dim}What one asks for: omnesis sources describe <type>${c.reset}`
+  );
+}
+
+/** The refusal for a provider name that covers several sources, with no terminal to choose. */
+export function ambiguousProviderRefusal(provider: string, sourceIds: readonly string[]): string {
+  return (
+    `${c.red}${provider} offers several sources: ${sourceIds.join(", ")}.${c.reset}\n` +
+    `Name one: omnesis sources add <type>`
+  );
+}
+
+/**
+ * Narrow discovered accounts to the ones `--account` names. A name the
+ * collector did not find is refused with the ones it did, since adding an
+ * account it cannot see would only fail at its first sync.
+ */
+export function selectRequestedAccounts(
+  descriptorId: string,
+  discovered: readonly string[],
+  requested: readonly string[] | undefined,
+): string[] {
+  if (!requested) return [...discovered];
+  const unknown = requested.filter((a) => !discovered.includes(a));
+  if (unknown.length > 0) {
+    throw new CliError(
+      `${c.red}The collector found no ${descriptorId} account ${unknown.join(", ")}.${c.reset}\n` +
+        `It found: ${discovered.length > 0 ? discovered.join(", ") : "(none)"}`,
+      EXIT_USER_ERROR,
+    );
+  }
+  return discovered.filter((a) => requested.includes(a));
+}
+
+/**
+ * Which of the accounts an add found to take, when `--account` named none.
+ * A terminal is asked; without one, a single account is the unambiguous
+ * answer, and several are refused by the flag that chooses among them.
+ */
+async function chooseAccounts(
+  descriptorId: string,
+  fresh: string[],
+  deps: Pick<AddDeps, "prompts" | "interactive" | "accounts">,
+  ask: { message: string; initialValues: string[] },
+): Promise<string[]> {
+  if (deps.accounts) return fresh;
+  if (deps.interactive) {
+    return pickMany(deps.prompts, {
+      message: ask.message,
+      options: fresh.map((a) => ({ value: a, label: a })),
+      initialValues: ask.initialValues,
+    });
+  }
+  if (fresh.length === 1) {
+    console.log(`${c.dim}Found one ${descriptorId} account: ${fresh[0]}. Adding it.${c.reset}`);
+    return fresh;
+  }
+  throw new CliError(
+    `${c.red}The collector found ${fresh.length} ${descriptorId} accounts, and this run has no terminal to choose among them.${c.reset}\n` +
+      `Name the ones to add, one --account each:\n` +
+      fresh.map((a) => `  --account ${a}`).join("\n"),
+    EXIT_USER_ERROR,
+  );
 }
 
 /**
@@ -407,6 +580,59 @@ export async function pickMany(
   return selected as string[];
 }
 
+/** Union descriptors a positional names: by source type, else by provider. */
+function unionMatches(union: readonly UnionDescriptor[], name: string): UnionDescriptor[] {
+  const byId = union.filter((d) => d.id === name);
+  if (byId.length > 0) return byId;
+  return union.filter((d) => (d.provider as { id?: string } | undefined)?.id === name);
+}
+
+/**
+ * Wait for an offline collector to come back and offer `name`. Only a paired
+ * collector that is offline is waited for — nothing else could change the
+ * answer — and the wait ends as soon as a fresh union offers the source.
+ * Returns the last union read, which the caller refuses from as before.
+ */
+export async function awaitOfflineCollectors(
+  union: UnionDescriptor[],
+  listing: SourceListing,
+  name: string,
+  timeoutMs: number,
+  deps: {
+    fetchUnion: () => Promise<UnionDescriptor[]>;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+  } = {
+    fetchUnion: fetchUnionDescriptors,
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    now: () => Date.now(),
+  },
+): Promise<UnionDescriptor[]> {
+  const offline = listing.devices.filter(
+    (d) => d.kind === "collector" && d.online === false && !d.revokedAt,
+  );
+  if (offline.length === 0 || timeoutMs <= 0) return union;
+  const names = offline.map((d) => d.name).join(", ");
+  return withSpinner(
+    `${name} is offered by no connected collector; waiting for ${names}`,
+    async () => {
+      const deadline = deps.now() + timeoutMs;
+      let latest = union;
+      while (deps.now() < deadline) {
+        await deps.sleep(2000);
+        try {
+          latest = await deps.fetchUnion();
+        } catch {
+          // The gateway is not answering yet; keep waiting.
+          continue;
+        }
+        if (unionMatches(latest, name).length > 0) return latest;
+      }
+      return latest;
+    },
+  );
+}
+
 /**
  * Multi-collector add path: union descriptors → user picks a source (or
  * uses the positional arg) → device resolved from the descriptor's
@@ -426,15 +652,27 @@ export async function runMultiCollectorAddFlow(
   // `descriptorsByProvider` lookup. Provider matches with multiple sources
   // get a follow-up picker.
   if (sourceArg) {
+    // Named, but offered by no connected collector, while one that hosts
+    // sources is offline: it may be restarting (a shared folder recreates its
+    // container), so give it the same window an add aimed at it gets.
+    if (unionMatches(union, sourceArg).length === 0) {
+      union = await awaitOfflineCollectors(union, listing, sourceArg, deps.reconnectWaitMs);
+    }
     let desc = union.find((d) => d.id === sourceArg);
     if (!desc) {
-      const providerMatches = union.filter((d) => {
-        const provider = d.provider as { id?: string } | undefined;
-        return provider?.id === sourceArg;
-      });
+      const providerMatches = unionMatches(union, sourceArg);
       if (providerMatches.length === 1) {
         desc = providerMatches[0];
       } else if (providerMatches.length > 1) {
+        if (!deps.interactive) {
+          throw new CliError(
+            ambiguousProviderRefusal(
+              sourceArg,
+              providerMatches.map((d) => d.id),
+            ),
+            EXIT_USER_ERROR,
+          );
+        }
         const selected = await deps.prompts.select({
           message: `Which ${sourceArg} source would you like to add?`,
           options: providerMatches.map((d) => ({
@@ -480,6 +718,10 @@ export async function runMultiCollectorAddFlow(
     };
     await runAddFlow(addCtx, desc.id, extraPositional, deps);
     return;
+  }
+
+  if (!deps.interactive) {
+    throw new CliError(unnamedSourceRefusal(union.map((d) => d.id)), EXIT_USER_ERROR);
   }
 
   // Interactive picker: source first (deduped via the union), then per
@@ -569,6 +811,12 @@ async function runAddFlow(
 
   // No argument — show interactive multi-select source picker
   if (!sourceArg) {
+    if (!deps.interactive) {
+      throw new CliError(
+        unnamedSourceRefusal(addCtx.descriptors.map((d) => d.id)),
+        EXIT_USER_ERROR,
+      );
+    }
     prompts.intro(`${c.bold}Add data sources${c.reset}`);
 
     // Show currently configured sources
@@ -638,6 +886,9 @@ async function runAddFlow(
         descriptorsByProvider,
         extraPositional: undefined,
         joinConfirmation: deps.joinConfirmation,
+        interactive: deps.interactive,
+        supplied: deps.supplied,
+        accounts: deps.accounts,
       });
     }
 
@@ -653,6 +904,9 @@ async function runAddFlow(
     descriptorsByProvider,
     extraPositional,
     joinConfirmation: deps.joinConfirmation,
+    interactive: deps.interactive,
+    supplied: deps.supplied,
+    accounts: deps.accounts,
   });
 }
 
@@ -666,6 +920,12 @@ interface AddDeps {
   extraPositional: string | undefined;
   /** See `AddFlowDeps.joinConfirmation`. */
   joinConfirmation: JoinConfirmation;
+  /** See `AddFlowDeps.interactive`. */
+  interactive: boolean;
+  /** See `AddFlowDeps.supplied`. */
+  supplied: Readonly<Record<string, string>>;
+  /** See `AddFlowDeps.accounts`. */
+  accounts: readonly string[] | undefined;
 }
 
 /**
@@ -1002,6 +1262,8 @@ async function recoverFromMissingCredentials(
   ctx: AddContext,
   missing: { fileKey: string; providerName: string },
   flowOptions: { acceptsAuthCode?: boolean; credentials?: Record<string, string> },
+  interactive: boolean,
+  descriptorId: string,
 ): Promise<boolean> {
   console.log(
     `\n${c.yellow}${missing.providerName} needs credentials before we can authenticate.${c.reset}`,
@@ -1013,6 +1275,12 @@ async function recoverFromMissingCredentials(
     return false;
   }
   const sameHost = isSameHostAsCollector(status.hostname);
+  // Without a terminal nothing can be collected here. Fields already given
+  // fall through to the old-collector refusal below.
+  if (!interactive && !(entry.spec.perAccount && flowOptions.credentials)) {
+    console.error(credentialsRefusal(entry.providerName, entry.spec, descriptorId));
+    return false;
+  }
 
   if (entry.spec.perAccount) {
     // Already carrying fields the collector ignored. That means it predates the
@@ -1037,16 +1305,46 @@ async function recoverFromMissingCredentials(
 
   const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
   if (!ok) {
-    // Known bug: #100 — declining the wizard still exits 0.
     console.error(`${c.red}Aborting — credentials not set up.${c.reset}`);
     return false;
   }
   return true;
 }
 
+/**
+ * The refusal for credentials an add needs and this run has no terminal to
+ * collect: the keys that supply them, and — for a provider's application
+ * credential, which is set up once per collector — the command that does it
+ * on a terminal.
+ */
+function credentialsRefusal(
+  providerName: string,
+  spec: NonNullable<SerializedDescriptor["credentials"]>,
+  descriptorId: string,
+): string {
+  const keys = setupKeys({ params: [], credentials: spec, hasAuthFlow: true }).filter(
+    (k) => k.required,
+  );
+  const why = spec.perAccount
+    ? `${providerName} asks for the account's credentials, and this run has no terminal to ask for them`
+    : `the collector has no ${providerName} application credentials yet, and this run has no terminal to set them up`;
+  return (
+    missingSettingsRefusal(descriptorId, keys, why) +
+    (spec.perAccount
+      ? ""
+      : `\n${c.dim}Or set them up once on a terminal: omnesis creds set ${spec.fileKey}${c.reset}`)
+  );
+}
+
 async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps): Promise<void> {
-  const { prompts, findDescriptor, descriptorsByProvider, extraPositional, joinConfirmation } =
-    deps;
+  const {
+    prompts,
+    findDescriptor,
+    descriptorsByProvider,
+    extraPositional,
+    joinConfirmation,
+    interactive,
+  } = deps;
   // One report for the whole add: the accounts the gateway already lists are
   // settled wherever they turn up (discovery, a path, a sign-in), and what
   // they came to is stated once, next to what the add itself achieved.
@@ -1060,6 +1358,15 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
     if (providerDescs && providerDescs.length === 1) {
       descriptor = providerDescs[0];
     } else if (providerDescs && providerDescs.length > 1) {
+      if (!interactive) {
+        throw new CliError(
+          ambiguousProviderRefusal(
+            sourceArg,
+            providerDescs.map((d) => d.id),
+          ),
+          EXIT_USER_ERROR,
+        );
+      }
       const selected = await prompts.select({
         message: `Which ${providerDescs[0].provider.name} source would you like to add?`,
         options: providerDescs.map((d) => ({
@@ -1087,6 +1394,51 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
     );
   }
 
+  // What the command line supplied, checked against what this source declares
+  // before anything is sent: an unknown key, a choice outside the options or a
+  // malformed value never reaches the collector.
+  const supplied = sortSuppliedSettings(descriptor, deps.supplied);
+  const formParams = descriptor.params ?? [];
+  // CLI-arg form: `omnesis sources add obsidian-notes /path/to/vault` answers
+  // the one setting a single-setting source asks for.
+  const positionalParam =
+    extraPositional !== undefined && formParams.length === 1 ? formParams[0] : undefined;
+  if (positionalParam && Object.hasOwn(supplied.params, positionalParam.name)) {
+    if (supplied.params[positionalParam.name] !== extraPositional) {
+      throw new CliError(
+        `${c.red}${positionalParam.name} is given twice: as an argument and with --set.${c.reset}`,
+        EXIT_USER_ERROR,
+      );
+    }
+  }
+  const givenParam = (name: string): string | undefined =>
+    Object.hasOwn(supplied.params, name)
+      ? supplied.params[name]
+      : positionalParam?.name === name
+        ? extraPositional
+        : undefined;
+  if (deps.accounts && !descriptor.hasDiscover) {
+    throw new CliError(
+      `${c.red}${descriptor.id} does not look for accounts on the collector, so --account does not apply to it.${c.reset}`,
+      EXIT_USER_ERROR,
+    );
+  }
+
+  // Without a terminal, every required answer has to be on the command line.
+  // Say all of them at once, before the first is validated.
+  if (!interactive) {
+    const keys = setupKeys(descriptor);
+    const missing = keys.filter(
+      (k) =>
+        k.required &&
+        ((k.kind === "setting" && givenParam(k.key) === undefined) ||
+          (k.kind === "account-credential" && Object.keys(supplied.credentials).length === 0)),
+    );
+    if (missing.length > 0) {
+      throw new CliError(missingSettingsRefusal(descriptor.id, missing), EXIT_USER_ERROR);
+    }
+  }
+
   // Collect params
   const params: Record<string, string> = {};
   const settle = (configured: readonly AdminSourceEntry[]): Promise<void> =>
@@ -1102,8 +1454,9 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   // A refused path may be a host folder the collector's container cannot see.
   // The launcher can share it and pick the add up again: with the path as the
   // positional answer when the source asks for nothing else, otherwise by
-  // asking again from the start.
-  const reportParamError = (error: string, path: string | null): void => {
+  // asking again from the start. Either way the add has not happened, so the
+  // run fails.
+  const refuseParam = (error: string, path: string | null): never => {
     const outcome =
       path === null
         ? ({ kind: "none" } as const)
@@ -1119,7 +1472,10 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           });
     // Silent: the launcher explains and asks once this command exits.
     if (outcome.kind === "requested") throw new CliError("", EXIT_USER_ERROR);
-    console.error(outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`);
+    throw new CliError(
+      outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`,
+      EXIT_USER_ERROR,
+    );
   };
 
   // A prompt is one line, so the source's own explanation of the setting has
@@ -1128,73 +1484,64 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   const promptMessage = (p: { label: string; help?: string }) =>
     p.help ? `${p.label} — ${p.help}` : p.label;
 
-  if (descriptor.params) {
-    for (const param of descriptor.params) {
-      // CLI-arg form: `omnesis sources add obsidian-notes /path/to/vault`
-      const cliValue = extraPositional;
-      if (cliValue && descriptor.params.length === 1) {
-        let value = cliValue;
-        if (param.type === "path") {
-          value = pathValueForCollector(value, ctx.collectorHostname);
-        }
-        const err = await validateParam(ctx, descriptor.id, param.name, value);
-        if (err) {
-          reportParamError(err, param.type === "path" ? value : null);
-          return;
-        }
-        params[param.name] = value;
-        continue;
+  for (const param of formParams) {
+    const given = givenParam(param.name);
+    // Given on the command line — or, with no terminal, an optional setting
+    // nobody gave, which is answered the way pressing Enter answers it: blank,
+    // for the collector to say what blank means on its machine.
+    if (given !== undefined || !interactive) {
+      let value = given ?? "";
+      if (param.type === "path" && value !== "") {
+        value = pathValueForCollector(value, ctx.collectorHostname);
       }
+      const err = await validateParam(ctx, descriptor.id, param.name, value);
+      if (err) refuseParam(err, param.type === "path" && value !== "" ? value : null);
+      params[param.name] = value;
+      continue;
+    }
 
-      if (param.type === "path") {
-        const value = await pathInput({
-          message: promptMessage(param),
-          placeholder: param.placeholder,
-          resolvePath: collectorIsLocal,
-          // An optional path is answerable by pressing Enter: the source has
-          // said blank means something, and the host is about to say whether
-          // what it means is true on this machine.
-          allowEmpty: !param.required,
-          validate: (resolved) => {
-            if (param.required && !resolved) return `${param.label} is required`;
-            return undefined;
-          },
-        });
-        if (typeof value === "symbol") {
-          prompts.cancel("Cancelled.");
-          throw new CliError("", EXIT_CANCELLED);
-        }
-        const err = await validateParam(ctx, descriptor.id, param.name, value);
-        if (err) {
-          reportParamError(err, value);
-          return;
-        }
-        params[param.name] = value;
-      } else {
-        // A secret is not echoed. The same field can now reach a source's
-        // settings, not only an auth challenge, so the masking has to be here
-        // as well as there.
-        const ask = param.type === "secret" ? prompts.password : prompts.text;
-        const value = await ask({
-          message: promptMessage(param),
-          placeholder: param.placeholder,
-          validate: (val) => {
-            const v = val ?? "";
-            if (param.required && !v) return `${param.label} is required`;
-            return undefined;
-          },
-        });
-        if (prompts.isCancel(value)) {
-          prompts.cancel("Cancelled.");
-          throw new CliError("", EXIT_CANCELLED);
-        }
-        const err = await validateParam(ctx, descriptor.id, param.name, value as string);
-        if (err) {
-          console.error(`${c.red}${err}${c.reset}`);
-          return;
-        }
-        params[param.name] = value as string;
+    if (param.type === "path") {
+      const value = await pathInput({
+        message: promptMessage(param),
+        placeholder: param.placeholder,
+        resolvePath: collectorIsLocal,
+        // An optional path is answerable by pressing Enter: the source has
+        // said blank means something, and the host is about to say whether
+        // what it means is true on this machine.
+        allowEmpty: !param.required,
+        validate: (resolved) => {
+          if (param.required && !resolved) return `${param.label} is required`;
+          return undefined;
+        },
+      });
+      if (typeof value === "symbol") {
+        prompts.cancel("Cancelled.");
+        throw new CliError("", EXIT_CANCELLED);
       }
+      const err = await validateParam(ctx, descriptor.id, param.name, value);
+      if (err) refuseParam(err, value);
+      params[param.name] = value;
+    } else {
+      // A secret is not echoed. The same field can now reach a source's
+      // settings, not only an auth challenge, so the masking has to be here
+      // as well as there.
+      const ask = param.type === "secret" ? prompts.password : prompts.text;
+      const value = await ask({
+        message: promptMessage(param),
+        placeholder: param.placeholder,
+        validate: (val) => {
+          const v = val ?? "";
+          if (param.required && !v) return `${param.label} is required`;
+          return undefined;
+        },
+      });
+      if (prompts.isCancel(value)) {
+        prompts.cancel("Cancelled.");
+        throw new CliError("", EXIT_CANCELLED);
+      }
+      const err = await validateParam(ctx, descriptor.id, param.name, value as string);
+      if (err) refuseParam(err, null);
+      params[param.name] = value as string;
     }
   }
 
@@ -1209,6 +1556,10 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   //     collected every time and handed to the auth flow rather than saved.
   //     Skipping it when one is already on disk is what made a second account
   //     impossible: the flow just re-validated the first account's key.
+  //
+  // Either can come from the command line instead of the wizard.
+  const givenCredentials =
+    Object.keys(supplied.credentials).length > 0 ? supplied.credentials : undefined;
   let pastedCredentials: Record<string, string> | undefined;
   if (descriptor.hasAuthFlow && descriptor.credentials) {
     const spec = descriptor.credentials;
@@ -1216,28 +1567,49 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
     const entry = status.items.find((e) => e.fileKey === spec.fileKey);
     const sameHost = isSameHostAsCollector(status.hostname);
     if (entry && spec.perAccount) {
-      console.log(
-        `\n${c.yellow}${descriptor.provider.name} needs the credentials for the account you're connecting.${c.reset}`,
-      );
-      const fields = await collectCredentialFields(entry, { sameHost, perAccount: true });
-      if (!fields) {
-        console.error(
-          `${c.red}Aborting — ${descriptor.provider.name} credentials not provided.${c.reset}`,
+      if (givenCredentials) {
+        pastedCredentials = givenCredentials;
+      } else {
+        console.log(
+          `\n${c.yellow}${descriptor.provider.name} needs the credentials for the account you're connecting.${c.reset}`,
         );
-        return;
+        const fields = await collectCredentialFields(entry, { sameHost, perAccount: true });
+        if (!fields) {
+          throw new CliError(
+            `${c.red}Aborting — ${descriptor.provider.name} credentials not provided.${c.reset}`,
+            EXIT_CANCELLED,
+          );
+        }
+        pastedCredentials = fields;
       }
-      pastedCredentials = fields;
     } else if (entry && spec.required && !entry.configured) {
-      console.log(
-        `\n${c.yellow}${descriptor.provider.name} needs OAuth credentials before we can add this source.${c.reset}`,
-      );
-      const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
-      if (!ok) {
-        console.error(
-          `${c.red}Aborting — ${descriptor.provider.name} credentials not set up.${c.reset}`,
+      if (givenCredentials) {
+        const saved = await saveProviderCredentials(entry, ctx.deviceId, givenCredentials);
+        if (!saved) throw new CliError("", EXIT_FAILURE);
+      } else if (!interactive) {
+        throw new CliError(
+          credentialsRefusal(descriptor.provider.name, spec, descriptor.id),
+          EXIT_USER_ERROR,
         );
-        return;
+      } else {
+        console.log(
+          `\n${c.yellow}${descriptor.provider.name} needs OAuth credentials before we can add this source.${c.reset}`,
+        );
+        const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
+        if (!ok) {
+          throw new CliError(
+            `${c.red}Aborting — ${descriptor.provider.name} credentials not set up.${c.reset}`,
+            EXIT_USER_ERROR,
+          );
+        }
       }
+    } else if (givenCredentials) {
+      // Every account of the provider signs in with the application
+      // credential already saved; an add does not swap it for another.
+      console.log(
+        `${c.dim}${descriptor.provider.name} application credentials are already set up on this collector, so the ones given are not used. ` +
+          `Replace them with: omnesis creds set ${spec.fileKey}${c.reset}`,
+      );
     }
   }
 
@@ -1251,6 +1623,17 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         discovered = await discoverAccounts(ctx, descriptor.id);
       } catch {
         // Discovery failed — fall through to auth flow
+      }
+      if (deps.accounts) {
+        if (discovered === null) {
+          throw new CliError(
+            `${c.red}Could not list the ${descriptor.id} accounts on this collector, so --account cannot be matched.${c.reset}`,
+            EXIT_FAILURE,
+          );
+        }
+        // A named account must already be signed in on the collector: a new
+        // one is added by omitting --account and signing in.
+        discovered = selectRequestedAccounts(descriptor.id, discovered, deps.accounts);
       }
       if (discovered) {
         // An account the gateway already lists is settled here — joined,
@@ -1267,16 +1650,16 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           console.log(`\n${c.dim}Found existing credentials for ${fresh[0]}${c.reset}`);
           accountIds = fresh;
         } else if (fresh.length > 1) {
-          accountIds = await pickMany(prompts, {
+          accountIds = await chooseAccounts(descriptor.id, fresh, deps, {
             message: `Found ${fresh.length} accounts. Which would you like to add?`,
-            options: fresh.map((a) => ({ value: a, label: a })),
             initialValues: fresh,
           });
-        } else if (settledAnything(settled)) {
+        } else if (settledAnything(settled) || deps.accounts) {
           // Discovery turned up nothing the gateway does not already list, and
-          // at least one listed account was joined, declined or refused. That
-          // is what the operator asked about; signing a brand-new account in
-          // on top of it is not, so the run ends on the report.
+          // at least one listed account was joined, declined or refused — or
+          // the accounts named were all already listed. That is what the
+          // operator asked about; signing a brand-new account in on top of it
+          // is not, so the run ends on the report.
           reportSettled(settled, 0);
           return;
         } else if (configured.length > 0) {
@@ -1310,6 +1693,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       const flowOptions = {
         acceptsAuthCode: descriptor.acceptsAuthCode,
         credentials: pastedCredentials,
+        interactive,
       };
       let outcome = await runAuthFlowDetailed(ctx, descriptor.id, params, flowOptions);
       if (outcome.missingCredentials) {
@@ -1317,8 +1701,10 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           ctx,
           outcome.missingCredentials,
           flowOptions,
+          interactive,
+          descriptor.id,
         );
-        if (!recovered) return;
+        if (!recovered) throw new CliError("", EXIT_USER_ERROR);
         outcome = await runAuthFlowDetailed(ctx, descriptor.id, params, flowOptions);
       }
       if (!outcome.accountId && flowOptions.credentials) {
@@ -1330,7 +1716,8 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
             `Run the command again to retry.${c.reset}`,
         );
       }
-      if (!outcome.accountId) return;
+      // The flow has already said why it ended without an account.
+      if (!outcome.accountId) throw new CliError("", EXIT_FAILURE);
       accountIds = [outcome.accountId];
     }
   } else if (descriptor.authType === "local") {
@@ -1345,14 +1732,15 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       });
       accountIds = [resolved.accountId];
     } else if (descriptor.hasDiscover) {
-      const accounts = await discoverAccounts(ctx, descriptor.id);
-      if (accounts.length === 0) {
+      const found = await discoverAccounts(ctx, descriptor.id);
+      if (found.length === 0) {
         throw new CliError(
           `${c.red}${descriptor.name} not found on this system.${c.reset}\n` +
             `${c.dim}Make sure Full Disk Access is enabled for your terminal.${c.reset}`,
           EXIT_FAILURE,
         );
       }
+      const accounts = selectRequestedAccounts(descriptor.id, found, deps.accounts);
       // The accounts the gateway already lists are settled — joined, refused
       // or left alone — and only the rest are offered as an add.
       const { fresh, configured } = splitConfiguredAccounts(descriptor.id, accounts, ctx.sources);
@@ -1361,12 +1749,11 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         reportSettled(settled, 0);
         return;
       }
-      accountIds = await pickMany(prompts, {
+      accountIds = await chooseAccounts(descriptor.id, fresh, deps, {
         message:
           fresh.length === 1
             ? `Found 1 account. Add it?`
             : `Found ${fresh.length} accounts. Which would you like to add?`,
-        options: fresh.map((a) => ({ value: a, label: a })),
         initialValues: fresh.length === 1 ? fresh : [],
       });
     } else {
@@ -1377,8 +1764,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   }
 
   if (!accountIds || accountIds.length === 0) {
-    console.error(`${c.red}No accounts to add.${c.reset}`);
-    return;
+    throw new CliError(`${c.red}No accounts to add.${c.reset}`, EXIT_USER_ERROR);
   }
 
   // An account resolved by a sign-in or a path may already be a source on
@@ -1405,11 +1791,13 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       }),
     );
   } catch (err) {
-    console.error(
-      `${c.red}Failed to add source: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
+    // Nothing was added. Whatever else the run settled is said with it, and
+    // the run fails.
+    const refusals = settled.refused.map(({ reason }) => `\n\n${reason}`).join("");
+    throw new CliError(
+      `${c.red}Failed to add source: ${err instanceof Error ? err.message : String(err)}${c.reset}${refusals}`,
+      EXIT_FAILURE,
     );
-    reportSettled(settled, 0);
-    return;
   }
 
   console.log(`\n${c.green}${descriptor.name} added successfully!${c.reset}`);

@@ -172,3 +172,28 @@ describe("per-task priority counts", () => {
     expect(stats?.countByPriority).toEqual({ user: 1, realtime: 0, background: 0 });
   });
 });
+
+test("a single task's stats equal its row in the full snapshot", () => {
+  const collector = new MetricsCollector(1_000);
+  const outcomes = ["done", "yield", "error"] as const;
+  const priorities = ["user", "realtime", "background"] as const;
+  for (let i = 0; i < 300; i++) {
+    collector.record(
+      `task-${i % 7}`,
+      i % 3 === 0 ? 50 : undefined,
+      i % 2 === 0 ? "main" : "io",
+      i % 11,
+      (i * 37) % 900,
+      priorities[i % 3],
+      outcomes[i % 3],
+      i % 5 === 0 ? 1_000 + i : undefined,
+      i % 5 === 0 ? 200 : undefined,
+    );
+  }
+  const find = () => null;
+  const snapshot = collector.snapshot(3600, [], find, 0);
+  expect(snapshot.perTask).toHaveLength(7);
+  for (const row of snapshot.perTask)
+    expect(collector.taskSnapshot(row.name, 3600, find)).toEqual(row);
+  expect(collector.taskSnapshot("never-ran", 3600, find)).toBeNull();
+});

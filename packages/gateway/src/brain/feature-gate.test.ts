@@ -413,6 +413,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
         schedule,
         // Job observation reads (the `state` derivation in observe()).
         snapshot: () => ({ perTask: [] }),
+        taskStats: () => null,
         getLastTickInfo: () => undefined,
       } as never,
       backgroundJobs: { registerAll },
@@ -570,6 +571,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
         return { stop: vi.fn() };
       }),
       snapshot: () => ({ perTask: [] }),
+      taskStats: () => null,
       getLastTickInfo: () => undefined,
     } as never;
     const writeGate = directWriteGate(db);

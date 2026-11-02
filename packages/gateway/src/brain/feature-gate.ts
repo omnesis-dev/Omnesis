@@ -70,6 +70,7 @@ import type { AnalyticsDb } from "../analytics-db.js";
 import type { SearchPipeline } from "../search/pipeline.js";
 import type { SyncStatusRegistry } from "../sync-status.js";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
+import type { KnowledgeSelectionReads } from "./knowledge/selection-reads.js";
 import type { ResolvedBrainSettings } from "./config.js";
 import type { InterestLookup } from "./interest/engine.js";
 import type { SweepService } from "./sweeps/service.js";
@@ -238,6 +239,11 @@ export interface BriefsRunQueueBootDeps {
      * absent, it falls back to a synchronous main-thread read.
      */
     personLookupGate?: PersonLookupGate;
+    /**
+     * Read worker for the knowledge engine's per-tick selections. Absent, they
+     * run synchronously on the main handle.
+     */
+    knowledgeSelectionReads?: KnowledgeSelectionReads;
     /**
      * Entailment verifier resolver for the annotation firewall. Optional —
      * absent (or resolving to null) leaves the gate off and annotation
@@ -422,6 +428,9 @@ export async function bootBriefs(deps: {
         service,
         getSettings: rq.getSettings,
         ...(rq.contentPending ? { contentPending: rq.contentPending } : {}),
+        ...(rq.cognition.knowledgeSelectionReads
+          ? { selectionReads: rq.cognition.knowledgeSelectionReads }
+          : {}),
         activeDerivationStages: rq.activeDerivationStages ?? (() => DERIVATION_STAGES),
         ...(rq.activity
           ? { isRunActive: (runId: string) => rq.activity!.startedAtMs(runId) !== null }

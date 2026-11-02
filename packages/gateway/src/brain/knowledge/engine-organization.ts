@@ -2,11 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  selectOrganizationCohort,
   getOrganizationCohortForBatch,
   isOrganizationCohortCurrent,
   narrowOrganizationSelection,
-  newSubjectCohortTally,
   type OrganizationCohortSelection,
   type SubjectCohortTally,
 } from "./organization-cohorts.js";
@@ -16,6 +14,7 @@ import {
   type MaintenanceArc,
 } from "./planner.js";
 import { lowWorthOrganizationSources, type OrganizationWorthSource } from "./organization-worth.js";
+import { knowledgeSelectionReads } from "./selection-reads.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeFrontierInput } from "./work.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
@@ -74,16 +73,13 @@ export class KnowledgeOrganization {
   private async attempt(now: number, cfg: Settings): Promise<0 | 1 | "dropped"> {
     const { deps } = this.context;
     const skipped = (prefix: string) =>
-      new Set(
-        [...this.passedOver.keys()]
-          .filter((key) => key.startsWith(prefix))
-          .map((key) => key.slice(prefix.length)),
-      );
+      [...this.passedOver.keys()]
+        .filter((key) => key.startsWith(prefix))
+        .map((key) => key.slice(prefix.length));
     // Subjects are paced like soon work: an important matter without a page
     // should not wait behind the routine cadence of chronological cohorts.
     const subjectIntervalMs = Math.max(60000, cfg.soonDelayMs);
-    const tally = newSubjectCohortTally();
-    const selection = selectOrganizationCohort(deps.db, {
+    const { selection, tally } = await knowledgeSelectionReads(deps).knowledgeOrganizationCohort({
       now,
       limit: Math.min(8, cfg.maxSeeds),
       intervalMs: Math.max(60000, cfg.routineDelayMs),
@@ -92,7 +88,6 @@ export class KnowledgeOrganization {
       subjectIntervalMs,
       skipSubjects: skipped(SUBJECT_KEY),
       skipFingerprints: skipped(FINGERPRINT_KEY),
-      subjectTally: tally,
     });
     if (tally.evaluated && !selection?.subjectLoopId) this.reportSubjects(tally, now, cfg);
     if (!selection) return 0;

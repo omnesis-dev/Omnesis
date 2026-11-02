@@ -658,13 +658,17 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td>Which embedding model?</td>
                 <td>
                   Every gateway install except a hardened one, unless the model is served by an HTTP
-                  backend. Required.
+                  backend. Without a terminal, the default is installed.
                 </td>
                 <td><code>--embedder &lt;id&gt;</code> or <code>--no-model</code></td>
               </tr>
               <tr>
                 <td>What to do without a keyring?</td>
-                <td>Only when the machine has no usable OS keyring. Required.</td>
+                <td>
+                  Only when the machine has no usable OS keyring. Required, except under
+                  <code>--docker</code>, where a run without a terminal encrypts with a generated
+                  passphrase file.
+                </td>
                 <td>
                   <code>--keyring-passphrase-file &lt;path&gt;</code> or
                   <code>--no-keyring</code>
@@ -759,9 +763,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           mDNS.
         </p>
         <p>
-          Without a terminal (a container build, a provisioning script, a systemd unit), the
-          installer cannot ask the required questions and refuses rather than choosing for you. Pass
-          their flags and it runs unattended.
+          Without a terminal (a container build, a provisioning script, an AI agent running it for
+          you), the installer asks nothing. A question with a default takes it and says which flag
+          changes it; a required one refuses rather than choosing for you. Pass its flag and it runs
+          unattended.
         </p>
 
         <h3 id="open-the-portal">Open the portal</h3>
@@ -842,7 +847,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>omnesis-combined</code> for both in one container, with
           <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin at
           v2.24.0 or later (<code>docker compose version</code> prints it; the installer refuses an
-          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The
+          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. Pulling
+          the images needs about 4 GB free where Docker stores them; the installer checks before
+          writing anything (<code>OMNESIS_DOCKER_PULL_DISK_GB=0</code> skips the check). The
           installer uses release images only, so it refuses <code>--edge</code>;
           <code>--version X.Y.Z</code> selects an exact release. From a checkout,
           <code>sh scripts/install.sh --docker --build</code> builds the images locally, tagged
@@ -868,7 +875,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           pairs itself. The config directory is mounted into the containers
           <em>at the same absolute path</em>, so the data, the token, the certificate and the
           compose file are all readable on the host, and a path means the same thing inside and
-          outside the containers.
+          outside the containers. A first install that stops before its containers start (the images
+          will not pull, a pairing code is refused) removes the compose file, install marker and
+          <code>omnesis</code> command it wrote, so the re-run starts clean; the images it pulled
+          stay for that re-run, and a keyring it armed stays with its <code>.env</code>.
         </p>
         <p>
           <code>omnesis</code> on this host is a wrapper that runs the CLI inside the container: the
@@ -938,12 +948,30 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           runs that command or reads the token itself.
         </p>
         <p>
-          Without a terminal, as in a provisioning script, the installer asks nothing, so every
-          answer goes on the command line: the embedding model and the keyring passphrase file (or
-          <code>--no-model</code> and <code>--no-keyring</code>). A container has no OS keyring, so
-          the passphrase file is the only way to encrypt at rest; it must sit in the config
-          directory, readable only by you. The installer checks for these flags before it pulls
-          anything, and names every missing one:
+          Without a terminal, as in a provisioning script or an AI agent running it for you, the
+          installer asks nothing and takes the answer Enter would give: the default embedding model,
+          and encryption at rest from a passphrase file it generates in the config directory,
+          readable only by you. It prints each default with the flag that changes it, and the
+          recovery code. A Docker collector's pairing code has no default; the installer checks for
+          <code>--code</code> before it pulls anything.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          To answer otherwise, pass <code>--embedder &lt;id&gt;</code> or <code>--no-model</code>,
+          and <code>--no-keyring</code> or <code>--keyring-passphrase-file</code> naming a
+          passphrase file you created inside the config directory. A container has no OS keyring, so
+          a passphrase file is the only way to encrypt at rest, and the containers see only that
+          directory:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1245,9 +1273,30 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           <code>omnesis folders share &lt;path&gt;</code> and
           <code>omnesis folders unshare &lt;path&gt;</code>. The list is kept in
           <code>shared-folders</code> in the config directory; re-running the installer and
-          <code>omnesis update</code> keep every share. Without a terminal, the add names the
-          <code>omnesis folders share</code> command to run.
+          <code>omnesis update</code> keep every share.
         </p>
+        <p>
+          Without a terminal there is nobody to offer the share to: the add fails, naming the
+          <code>omnesis folders share</code> command to run. Share the folder first, then add the
+          source with its settings as flags (see
+          <a href="/docs/sources#adding-without-a-terminal">adding a source from a script</a>).
+          Sharing recreates the collector's container; the add waits for the collector to reconnect.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis folders share ~/Documents/Vault</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add obsidian-notes --set vaultPath=~/Documents/Vault</span
+              >
+            </p>
+          </div>
+        </div>
 
         <h3 id="docker-tls">TLS in Docker</h3>
         <p>

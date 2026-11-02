@@ -15,17 +15,19 @@ export type OrganizationAdmission =
   | { kind: "candidate"; id: string; revision: number }
   | { kind: "coverage"; id: string; inputRevision: string; reviewedAt: number };
 
+export interface OrganizationAdmissionOptions {
+  now: number;
+  limit: number;
+  retryMs: number;
+  initialDelayMs?: number;
+  /** Sources excluded from the Brain: evidence from them is never revisited. */
+  excludedSources?: readonly string[];
+}
+
 /** Revisit already authorized evidence; this does not expand historical consent. */
 export function listOrganizationAdmissions(
   db: Database.Database,
-  options: {
-    now: number;
-    limit: number;
-    retryMs: number;
-    initialDelayMs?: number;
-    /** Sources excluded from the Brain: evidence from them is never revisited. */
-    excludedSources?: readonly string[];
-  },
+  options: OrganizationAdmissionOptions,
 ): OrganizationAdmission[] {
   const limit = Math.max(1, Math.min(100, options.limit));
   // Filter unreadable evidence before LIMIT. Privacy cleanup can be deferred;
