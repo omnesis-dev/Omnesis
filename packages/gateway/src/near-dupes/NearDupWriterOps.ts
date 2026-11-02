@@ -84,6 +84,17 @@ export const APPLY_CHUNK_SIZE = 25;
  */
 export const DF_APPLY_CHUNK_SIZE = 5_000;
 
+/**
+ * Removes one doc's bucket rows, pinned to the doc index. The gateway keeps no
+ * planner statistics, and without them SQLite rates `algo_version = ?` on the
+ * primary key as selective as `doc_id = ?` on `idx_near_dup_lsh_doc`, prefers
+ * the key because it covers the row, and reads every bucket row of the active
+ * algorithm to delete one doc's few. The cost then grows with the signed
+ * corpus, per doc, inside the writer's transaction.
+ */
+export const BUCKET_DELETE_FOR_DOC_SQL = `DELETE FROM near_dup_lsh_buckets INDEXED BY idx_near_dup_lsh_doc
+  WHERE doc_id = ? AND algo_version = ?`;
+
 export function applyNearDupBatch(
   db: Db,
   batch: NearDupApplyBatch,
@@ -114,9 +125,7 @@ export function applyNearDupBatch(
     `DELETE FROM near_dup_signatures WHERE doc_id = ? AND algo_version = ?`,
   );
   // Known bug: #649 — without planner statistics this delete scans every bucket row.
-  const bucketDeleteForDoc = db.prepare(
-    `DELETE FROM near_dup_lsh_buckets WHERE doc_id = ? AND algo_version = ?`,
-  );
+  const bucketDeleteForDoc = db.prepare(BUCKET_DELETE_FOR_DOC_SQL);
   const edgeDeleteForDoc = db.prepare(
     `DELETE FROM near_dup_edges
       WHERE algo_version = ? AND (doc_a = ? OR doc_b = ?)`,

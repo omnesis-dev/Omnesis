@@ -31,6 +31,7 @@ import {
   bumpNearDupAlgo,
   APPLY_CHUNK_SIZE,
   DF_APPLY_CHUNK_SIZE,
+  BUCKET_DELETE_FOR_DOC_SQL,
 } from "./NearDupWriterOps.js";
 import { buildInMemoryDfFromTable, ShingleDfAccumulator } from "./NearDupDfService.js";
 import type { Db } from "../data/types.js";
@@ -102,6 +103,18 @@ function allRows(): number {
     ).n ?? 0
   );
 }
+
+test("deletes a doc's bucket rows through the doc index, not a scan of the algorithm's rows", () => {
+  const db = new Database(":memory:");
+  runSchemaSetup(db);
+  const plan = db
+    .prepare(`EXPLAIN QUERY PLAN ${BUCKET_DELETE_FOR_DOC_SQL}`)
+    .all("doc", "v1") as Array<{ detail: string }>;
+  expect(plan.map((row) => row.detail).join("\n")).toMatch(
+    /SEARCH near_dup_lsh_buckets USING INDEX idx_near_dup_lsh_doc \(doc_id=\?\)/,
+  );
+  db.close();
+});
 
 describe("applyNearDupBatch", () => {
   test("returns zero-result and remaining:null on an empty batch", () => {
