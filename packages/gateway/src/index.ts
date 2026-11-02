@@ -4,6 +4,7 @@
 // Load $OMNESIS_CONFIG_DIR/.env into process.env before any env reads.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hostname as osHostname } from "node:os";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { CONFIG_DEFAULTS, DEFAULT_PUSH_WAKE_RETRY_SETTINGS, scaffoldDotEnv } from "@omnesis/config";
@@ -272,6 +273,8 @@ import { getPersonNames, resolvePersonIdsFromQuery } from "./data/repositories/P
 import { getSelfPersonId } from "./data/repositories/DocumentPeopleRepository.js";
 import { getInboundRefCounts } from "./data/repositories/DocumentLinksRepository.js";
 import { ProcessVitalsCollector } from "./process-vitals.js";
+import { StallMonitor } from "./observability/stall-monitor.js";
+import { resolveStallSettings } from "./observability/stall-settings.js";
 import {
   UsearchReadRegistry,
   resolveActiveUsearchTarget,
@@ -1137,6 +1140,22 @@ setBusyRetryRecorder((op) => metrics.recordBusyRetry(op));
 
 const processVitals = new ProcessVitalsCollector();
 processVitals.start();
+// Names every main-thread stall from a watchdog thread, and profiles the
+// main thread when stalls recur (see observability/stall-monitor.ts).
+const stallMonitor = new StallMonitor({
+  settings: resolveStallSettings(config),
+  workerEntry: resolveWorkerEntry(
+    "./workers/stall-watchdog-worker.ts",
+    import.meta.url,
+    REGISTER_TSX,
+  ),
+  profileDir: join(configDir, "diagnostics", "stalls"),
+  // The checkout root, which stored profile paths are relative to (in an npm
+  // install, the node_modules directory the gateway is installed in).
+  codeRoot: fileURLToPath(new URL("../../../", import.meta.url)),
+  gcBetween: (startMs, endMs) => processVitals.gcBetween(startMs, endMs),
+});
+stallMonitor.start();
 const analyticsDbPath = process.env.OMNESIS_ANALYTICS_DB_PATH ?? join(configDir, "analytics.db");
 const backupsDir = join(configDir, "backups");
 const exportsDir = join(configDir, "exports");
@@ -2390,6 +2409,7 @@ const app = createServer(db, DB_PATH, {
   ioGate,
   metrics,
   processVitals,
+  stalls: stallMonitor,
   scheduler,
   tokenUsageBuffer,
   principalCredentialUsageBuffer,
@@ -3794,6 +3814,7 @@ const doShutdown = async (): Promise<void> => {
     );
   }
   processVitals.dispose();
+  await stallMonitor.dispose();
   // DB handles last — by this point no scheduled writer task is in
   // flight, so close() is safe. analyticsDb.close() is async — it
   // drains the writeQueue + readers before tearing down its DuckDB

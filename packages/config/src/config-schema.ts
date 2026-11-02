@@ -1294,6 +1294,73 @@ const snapshotAbsence = z
   })
   .strict();
 
+const gatewayStallsProfile = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Capture a CPU profile of the gateway's main thread when stalls exceed the budget below, and keep a summary of it (function names, files and lines only) under the config directory's diagnostics/stalls. Default true.",
+      )
+      .optional(),
+    minStall: positiveDuration
+      .describe(
+        "A stall counts toward the profiling budget when it lasts at least this long. Default 1s.",
+      )
+      .optional(),
+    stallCount: z
+      .number()
+      .int()
+      .positive()
+      .describe("Stalls of at least minStall within window that start a capture. Default 3.")
+      .optional(),
+    window: positiveDuration
+      .describe("Window the stallCount stalls must fall within. Default 2m.")
+      .optional(),
+    duration: positiveDuration
+      .describe("How long one capture profiles for. Default 60s, at most 10m.")
+      .optional(),
+    cooldown: positiveDuration
+      .describe("Least time between the starts of two captures. Default 15m.")
+      .optional(),
+    keep: z
+      .number()
+      .int()
+      .positive()
+      .max(50)
+      .describe("Profile summaries kept on disk; the oldest beyond this is deleted. Default 5.")
+      .optional(),
+  })
+  .strict();
+
+/**
+ * Main-thread stall detection. A watchdog thread watches a heartbeat the
+ * main thread writes and records every gap above `threshold`, naming the
+ * unit of work that was running.
+ */
+const gatewayStalls = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Watch the gateway's event loop from a separate thread and record every stall with the activity that caused it (GET /admin/stalls). Default true.",
+      )
+      .optional(),
+    threshold: positiveDuration
+      .describe(
+        "An event-loop gap at least this long is recorded as a stall. Default 250ms; values below 100ms are raised to 100ms.",
+      )
+      .optional(),
+    warn: positiveDuration
+      .describe(
+        "A stall at least this long is written to the log as a warning; shorter ones only at debug level. Default 1s.",
+      )
+      .optional(),
+    profile: gatewayStallsProfile
+      .describe("The stall flight recorder: CPU profiles captured when stalls recur.")
+      .optional(),
+  })
+  .strict();
+
 const gatewaySubscriptions = z
   .object({
     semanticMinimumScore: z
@@ -1831,6 +1898,11 @@ const gateway = z
      */
     snapshotAbsence: snapshotAbsence
       .describe("Corroboration a source snapshot's omission needs before it deletes a document.")
+      .optional(),
+    stalls: gatewayStalls
+      .describe(
+        "Main-thread stall detection, attribution and the stall flight recorder. Applied at gateway start.",
+      )
       .optional(),
     timings: gatewayTimings.describe("Gateway process timing budgets.").optional(),
     /**

@@ -83,6 +83,22 @@ const EVENT_LOOP_P95_WARN_MS = 250;
 export const PROCESS_VITALS_WINDOW_SECONDS = 60;
 
 /**
+ * The stalls check looks at the last hour of main-thread stalls of at least a
+ * second — long enough that an interactive request waiting behind one
+ * noticeably hangs. Exported because both callers must ask the gateway for
+ * the same window and floor.
+ */
+export const STALLS_WINDOW_MINUTES = 60;
+export const STALLS_MIN_MS = 1_000;
+
+/**
+ * Blocked time, summed over those stalls, at which the check warns. Every
+ * request, WebSocket frame and scheduler slot waits out a stall, so ten
+ * seconds an hour is already a gateway that visibly hangs now and then.
+ */
+const STALLS_WARN_TOTAL_MS = 10_000;
+
+/**
  * Heap pressure warning floor. When the V8 heap is this close to its
  * allocated total, GC churns and an OOM is plausible under load.
  */
@@ -1438,6 +1454,35 @@ function checkProcess(d: DoctorData, ck: Checks): void {
   }
 }
 
+function checkStalls(d: DoctorData, ck: Checks): void {
+  const s = d.stalls;
+  if (!s) return;
+  const window = s.windowMinutes === 60 ? "the last hour" : `the last ${s.windowMinutes} minutes`;
+  const floor = `${s.minMs / 1000}s`;
+  if (s.summary.totalMs < STALLS_WARN_TOTAL_MS) {
+    ck.pass(
+      "Process",
+      "process.stalls",
+      s.summary.count === 0
+        ? `No event-loop stalls of ${floor} or more in ${window}`
+        : `Event-loop stalls of ${floor} or more in ${window}: ${s.summary.count}, ${(s.summary.totalMs / 1000).toFixed(1)}s blocked`,
+    );
+    return;
+  }
+  const top = s.ranking[0];
+  const culprit = top
+    ? top.culprit
+      ? `; most of it in ${top.culprit} (${top.count}×, ${(top.totalMs / 1000).toFixed(1)}s, worst ${(top.maxMs / 1000).toFixed(1)}s)`
+      : `; most of it in work no activity was named for (${top.count}×, ${(top.totalMs / 1000).toFixed(1)}s)`
+    : "";
+  ck.warn(
+    "Process",
+    "process.stalls",
+    `The gateway's event loop was blocked ${(s.summary.totalMs / 1000).toFixed(1)}s in ${window} by ${s.summary.count} stalls of ${floor} or more${culprit}`,
+    "Every request waited while each stall lasted (warns at 10s an hour). `omnesis stalls` ranks the culprits and lists any CPU profile the gateway captured of them; include both when you report the problem.",
+  );
+}
+
 function checkSecurity(d: DoctorData, ck: Checks): void {
   const security = d.security;
   if (!security) {
@@ -1909,6 +1954,7 @@ export function evaluateDoctor(d: DoctorData): DoctorReport {
       checkConfig(d, ck);
       checkSweeps(d, ck);
       checkProcess(d, ck);
+      checkStalls(d, ck);
     }
   }
   checkSecurity(d, ck);

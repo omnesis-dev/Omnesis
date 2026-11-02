@@ -250,6 +250,22 @@ export const CONFIG_DEFAULTS = {
       maxMarksPerSnapshot: 200,
       deletionGrace: "5m",
     },
+    // Mirrors DEFAULT_STALL_SETTINGS in the gateway's observability/stall-settings
+    // (config can't import from gateway); the cross-check test pins the two together.
+    stalls: {
+      enabled: true,
+      threshold: "250ms",
+      warn: "1s",
+      profile: {
+        enabled: true,
+        minStall: "1s",
+        stallCount: 3,
+        window: "2m",
+        duration: "60s",
+        cooldown: "15m",
+        keep: 5,
+      },
+    },
     // Mirrors DEFAULT_BACKGROUND_WORKER_NICE in the gateway's worker-priority
     // module (config can't import from gateway); keep the two in sync.
     backgroundWorkerNice: 10,

@@ -4,6 +4,8 @@
 import { syntheticEnabled } from "@omnesis/core";
 import { scope } from "../../scope.js";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../../errors.js";
+import { stallsQuery } from "../../schemas/index.js";
+import { validateQuery } from "../../validate.js";
 import type { RouteApp } from "../types.js";
 import type { AdminRoutesDeps } from "./internals.js";
 
@@ -31,9 +33,10 @@ const SYNTHETIC_PERIODIC_TASKS = new Set([
  *   GET  /admin/metrics
  *   GET  /admin/scheduler-metrics
  *   GET  /admin/background-jobs
+ *   GET  /admin/stalls
  */
 export function mountObservabilityRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
-  const { metrics, processVitals, scheduler, backgroundJobs, searchSnapshot } = deps;
+  const { metrics, processVitals, stalls, scheduler, backgroundJobs, searchSnapshot } = deps;
 
   app.get("/admin/metrics", scope.admin(), (c) => {
     if (!metrics) {
@@ -60,6 +63,15 @@ export function mountObservabilityRoutes(app: RouteApp, deps: AdminRoutesDeps): 
     const windowStr = c.req.query("window");
     const windowSeconds = Math.max(10, Math.min(3600, Number(windowStr ?? 300) || 300));
     return c.json(processVitals.snapshot(windowSeconds));
+  });
+
+  // Main-thread stalls ranked by the activity that caused them, the newest
+  // ones individually, and the flight recorder's kept profile summaries.
+  app.get("/admin/stalls", scope.admin(), validateQuery(stallsQuery), async (c) => {
+    if (!stalls) {
+      throw new ServiceUnavailableError("stall monitor not configured");
+    }
+    return c.json(await stalls.report(c.req.valid("query")));
   });
 
   // Pause / resume dispatch of background-priority scheduler tasks.

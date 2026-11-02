@@ -1463,6 +1463,58 @@ describe("evaluateDoctor — index + storage + config + process thresholds", () 
     expect(report.ok).toBe(true);
   });
 
+  describe("event-loop stalls", () => {
+    const stalls = (
+      totalMs: number,
+      ranking: NonNullable<DoctorData["stalls"]>["ranking"] = [],
+    ): DoctorData["stalls"] => ({
+      windowMinutes: 60,
+      minMs: 1_000,
+      summary: { count: ranking.reduce((n, r) => n + r.count, 0), totalMs, maxMs: 0 },
+      ranking,
+    });
+
+    test("pass while the last hour's blocked time stays under the budget", () => {
+      const data = healthyData();
+      data.stalls = stalls(0);
+      expect(findCheck(evaluateDoctor(data).checks, "process.stalls")).toMatchObject({
+        status: "pass",
+        message: "No event-loop stalls of 1s or more in the last hour",
+      });
+      data.stalls = stalls(4_000, [{ culprit: "a", count: 2, totalMs: 4_000, maxMs: 2_000 }]);
+      expect(findCheck(evaluateDoctor(data).checks, "process.stalls")?.status).toBe("pass");
+    });
+
+    test("warn past the budget, naming the activity that blocked the loop most", () => {
+      const data = healthyData();
+      data.stalls = stalls(14_500, [
+        { culprit: "knowledge.maintenance", count: 4, totalMs: 12_000, maxMs: 4_000 },
+        { culprit: null, count: 1, totalMs: 2_500, maxMs: 2_500 },
+      ]);
+      const report = evaluateDoctor(data);
+      const check = findCheck(report.checks, "process.stalls");
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toContain("blocked 14.5s in the last hour by 5 stalls of 1s or more");
+      expect(check?.message).toContain("in knowledge.maintenance (4×, 12.0s, worst 4.0s)");
+      expect(check?.hint).toContain("omnesis stalls");
+      expect(report.ok).toBe(true);
+    });
+
+    test("say so when the worst offender could not be named", () => {
+      const data = healthyData();
+      data.stalls = stalls(20_000, [{ culprit: null, count: 3, totalMs: 20_000, maxMs: 9_000 }]);
+      expect(findCheck(evaluateDoctor(data).checks, "process.stalls")?.message).toContain(
+        "work no activity was named for",
+      );
+    });
+
+    test("are left out when the gateway serves no stall record", () => {
+      const data = healthyData();
+      data.stalls = null;
+      expect(findCheck(evaluateDoctor(data).checks, "process.stalls")).toBeUndefined();
+    });
+  });
+
   test("heap pressure warns", () => {
     const data = healthyData();
     data.processVitals!.memory = {

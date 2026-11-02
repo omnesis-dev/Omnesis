@@ -31,6 +31,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   status: () => import("./commands/status.js").then((m) => m.statusCommand),
   health: () => import("./commands/health.js").then((m) => m.healthCommand),
   doctor: () => import("./commands/doctor.js").then((m) => m.doctorCommand),
+  stalls: () => import("./commands/stalls.js").then((m) => m.stallsCommand),
   keyring: () => import("./commands/keyring.js").then((m) => m.keyringCommand),
   whoami: () => import("./commands/whoami.js").then((m) => m.whoamiCommand),
   // Developer annotations (gateway OMNESIS_DEV_MODE) — read/triage the
