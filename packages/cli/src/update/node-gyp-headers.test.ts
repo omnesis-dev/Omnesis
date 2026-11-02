@@ -303,10 +303,10 @@ describe("the installer's copies", () => {
     expect(copies).toBe(2);
     // Every `npm ci` the installer runs -- the install, its retry, and the
     // reinstall after a failed build -- comes straight after the check.
-    const installs = installer.match(/\( cd "\$SOURCE_DIR" && npm ci \)/g) ?? [];
+    const installs = installer.match(/\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g) ?? [];
     const checked =
       installer.match(
-        /prepare_node_gyp_headers "\$SOURCE_DIR"\n\s+(?:if ! )?\( cd "\$SOURCE_DIR" && npm ci \)/g,
+        /prepare_node_gyp_headers "\$SOURCE_DIR"\n\s+(?:if ! )?\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g,
       ) ?? [];
     expect(installs).toHaveLength(3);
     expect(checked).toHaveLength(installs.length);
