@@ -1,5 +1,12 @@
 # @omnesis/provider-health-connect-synth
 
+## 0.7.4
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.4
+  - @omnesis/source-sdk@0.7.4
+
 ## 0.7.3
 
 ### Patch Changes
