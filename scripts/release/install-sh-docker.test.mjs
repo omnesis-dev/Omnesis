@@ -1201,6 +1201,26 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.docker.some((call) => call.includes(" build"))).toBe(false);
   });
 
+  test("a first install whose pull fails leaves no compose file, launcher or marker", () => {
+    const run = runInstaller("pull-fails-fresh", QUIET, { OMNESIS_TEST_PULL_FAIL: "1" });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("what it wrote is removed again");
+    for (const path of ["docker-compose.yml", "install-method", ".env"]) {
+      expect(existsSync(join(run.configDir, path)), path).toBe(false);
+    }
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("a re-run whose pull fails keeps the install it found", () => {
+    expect(runInstaller("pull-fails-rerun", QUIET).status).toBe(0);
+    const run = runInstaller("pull-fails-rerun", QUIET, { OMNESIS_TEST_PULL_FAIL: "1" });
+    expect(run.status).not.toBe(0);
+    expect(run.output).not.toContain("removed again");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(true);
+    expect(existsSync(join(run.configDir, "install-method"))).toBe(true);
+    expect(existsSync(run.wrapper)).toBe(true);
+  });
+
   test("a pull a refused connection broke is tried again, keeping what it downloaded", () => {
     const run = runInstaller("pull-transient", QUIET, { OMNESIS_TEST_PULL_FAIL_TIMES: "2" });
     expect(run.status, run.output).toBe(0);
@@ -1713,11 +1733,43 @@ describe("install.sh --docker --collector", () => {
     expect(run.docker.some((call) => call.includes("up -d gateway"))).toBe(false);
   });
 
-  test("a failed pairing starts nothing", () => {
+  test("a failed pairing starts nothing, and a first install leaves nothing it wrote", () => {
     const run = runInstaller("pair-fails", CODED, { OMNESIS_TEST_PAIR_FAIL: "1" });
     expect(run.status).not.toBe(0);
     expect(run.output).toContain("Pairing failed");
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
+    // Nothing that says Docker runs Omnesis here, so the re-run with a fresh
+    // code (or a native install) starts clean.
+    expect(run.output).toContain(
+      "This first install did not finish, so what it wrote is removed again",
+    );
+    for (const path of ["docker-compose.yml", "install-method", ".env", "collector/.env"]) {
+      expect(existsSync(join(run.configDir, path)), path).toBe(false);
+    }
+    expect(existsSync(run.wrapper)).toBe(false);
+    const again = runInstaller("pair-fails", CODED);
+    expect(again.status, again.output).toBe(0);
+    expect(existsSync(join(again.configDir, "docker-compose.yml"))).toBe(true);
+  });
+
+  test("a failed pairing that armed a keyring keeps the keyring's wiring", () => {
+    const home = prepareHome("pair-fails-keyring");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    const passphrase = join(configDir, "keyring.pass");
+    writeFileSync(passphrase, "fictional-passphrase-for-a-test\n", { mode: 0o600 });
+    const run = runInstaller(
+      "pair-fails-keyring",
+      [...CODED.filter((flag) => flag !== "--no-keyring"), "--keyring-passphrase-file", passphrase],
+      { OMNESIS_TEST_PAIR_FAIL: "1" },
+    );
+    expect(run.status).not.toBe(0);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+    expect(readFileSync(join(run.configDir, ".env"), "utf8")).toContain(
+      "OMNESIS_SECRET_STORE=passphrase",
+    );
+    expect(existsSync(passphrase)).toBe(true);
   });
 
   test("an unreachable gateway is not blamed on the pairing code", () => {

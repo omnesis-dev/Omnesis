@@ -633,6 +633,9 @@ SOURCE_CHECKOUT_TMP=""
 NPM_TRUST_DIR=""
 
 cleanup_temp_files() {
+  CLEANUP_STATUS=$?
+  # Set only inside docker_install, so the function exists whenever it is.
+  [ "$CLEANUP_STATUS" = 0 ] || [ "${DOCKER_UNDO:-0}" != 1 ] || docker_undo_fresh_install
   if [ -n "${NODESOURCE_TMP_DIR:-}" ] && [ -d "$NODESOURCE_TMP_DIR" ]; then
     rm -rf "$NODESOURCE_TMP_DIR"
   fi
@@ -7972,6 +7975,50 @@ docker_require_unattended_answers() {
   fail "No terminal to ask what this install needs to know, so nothing was pulled or changed. Re-run with:$DOCKER_UNANSWERED"
 }
 
+# A first Docker install that stops before anything runs — the images would
+# not pull, the pairing code was refused — leaves nothing it wrote behind: no
+# compose file, launcher or install marker that would tell the next install
+# (or a native one) that Docker runs Omnesis here. The .env goes too unless
+# this run armed a keyring, whose wiring it records; keys, certificates and a
+# passphrase file stay, and the images already pulled stay to make the re-run
+# fast. An install that existed before this run is never undone, and once a
+# container is started the run is past undoing: its logs are what to read.
+DOCKER_UNDO=0
+docker_arm_undo() {
+  DOCKER_UNDO=0
+  [ ! -f "$CONFIG_DIR/docker-compose.yml" ] || return 0
+  DOCKER_UNDO=1
+  DOCKER_UNDO_ENV=0; [ -e "$CONFIG_DIR/.env" ] || DOCKER_UNDO_ENV=1
+  DOCKER_UNDO_COLLECTOR_ENV=0; [ -e "$CONFIG_DIR/collector/.env" ] || DOCKER_UNDO_COLLECTOR_ENV=1
+  DOCKER_UNDO_LAUNCHER=0; [ -e "$HOME/.local/bin/omnesis" ] || DOCKER_UNDO_LAUNCHER=1
+  DOCKER_UNDO_TLS_DIR=0; [ -e "$CONFIG_DIR/tls" ] || DOCKER_UNDO_TLS_DIR=1
+}
+
+docker_undo_fresh_install() {
+  [ "${DOCKER_UNDO:-0}" = 1 ] || return 0
+  DOCKER_UNDO=0
+  DOCKER_UNDONE=""
+  for UNDO_PATH in "$CONFIG_DIR/docker-compose.yml" "$CONFIG_DIR/install-method"; do
+    [ -e "$UNDO_PATH" ] || continue
+    rm -f "$UNDO_PATH" && DOCKER_UNDONE="$DOCKER_UNDONE $UNDO_PATH"
+  done
+  if [ "$DOCKER_UNDO_LAUNCHER" = 1 ] && [ -e "$HOME/.local/bin/omnesis" ]; then
+    rm -f "$HOME/.local/bin/omnesis" && DOCKER_UNDONE="$DOCKER_UNDONE $HOME/.local/bin/omnesis"
+  fi
+  if [ "${KEYRING_READY:-0}" != 1 ]; then
+    if [ "$DOCKER_UNDO_ENV" = 1 ] && [ -e "$CONFIG_DIR/.env" ]; then
+      rm -f "$CONFIG_DIR/.env" && DOCKER_UNDONE="$DOCKER_UNDONE $CONFIG_DIR/.env"
+    fi
+    if [ "$DOCKER_UNDO_COLLECTOR_ENV" = 1 ] && [ -e "$CONFIG_DIR/collector/.env" ]; then
+      rm -f "$CONFIG_DIR/collector/.env" && DOCKER_UNDONE="$DOCKER_UNDONE $CONFIG_DIR/collector/.env"
+    fi
+  fi
+  # Directories this run made and left empty.
+  [ "$DOCKER_UNDO_TLS_DIR" = 0 ] || rmdir "$CONFIG_DIR/tls" 2>/dev/null || true
+  [ -n "$DOCKER_UNDONE" ] || return 0
+  printf '\033[1;33m[omnesis]\033[0m %s\n' "This first install did not finish, so what it wrote is removed again:$DOCKER_UNDONE. Re-run the installer once the problem above is fixed." >&2
+}
+
 docker_install() {
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
@@ -7987,6 +8034,7 @@ docker_install() {
   docker_require_build_disk
   docker_preflight_images
   docker_validate_topology_transition
+  docker_arm_undo
   docker_prepare_dirs
   docker_tls_tailscale
   docker_tls_adopt
@@ -8018,10 +8066,12 @@ docker_install() {
     setup_collector_storage_keys
     read_pairing_code collector
     docker_collector_pair
+    DOCKER_UNDO=0
     docker_up collector
     print_docker_banner
     return 0
   fi
+  DOCKER_UNDO=0
   docker_up gateway
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
