@@ -20,8 +20,8 @@
  * The built arrays never change. Each {@link LexicalIndex} — one per thread —
  * follows the `chunks_fts_changes` log to stay current: a chunk inserted,
  * deleted or rewritten since the build is masked out of the arrays and, when it
- * still exists, re-tokenized into a small per-ranker delta. A query reads the
- * log at most once a second, so a ranker trails the writer by up to a second.
+ * still exists, re-tokenized into a small per-ranker delta. Every query first
+ * applies the changes committed before it, so it ranks what FTS5 would match.
  * Document frequencies count the arrays plus the delta, so a chunk changed
  * since the build still counts toward its old terms, and the length average
  * keeps its build-time value; both refresh at the next build. A chunk rewritten
@@ -30,13 +30,12 @@
  * only their latest text.
  *
  * Catching up costs a chunk read and a tokenization per change, so a query
- * spends at most a time budget on it. A ranker that is still behind after its
- * budget either declines, and the caller ranks with FTS5, or — when a
- * background loop keeps it current between queries ({@link LexicalIndex.follow},
- * see lexical-index-follower.ts) — ranks with the changes it has applied so
- * far, which that loop brings current within moments. A ranker past its delta
- * cap, or whose log was pruned past its position, always declines until the
- * next build.
+ * spends at most a time budget on it; a ranker still behind after its budget
+ * declines that query, and the caller ranks with FTS5. In a search worker a
+ * background loop ({@link LexicalIndex.follow}, see lexical-index-follower.ts)
+ * applies the log between queries, so a query rarely finds more than a moment
+ * of changes. A ranker past its delta cap, or whose log was pruned past its
+ * position, declines until the next build.
  *
  * Everything in {@link LexicalIndexData} is a typed array or a number, so the
  * arrays can live on `SharedArrayBuffer`s and serve several search workers
@@ -60,11 +59,9 @@ import { fts5Tokenizer } from "./lexical-tokenizer.js";
  * frequent first, so a one-letter prefix stays bounded.
  */
 const PREFIX_EXPANSIONS = 32;
-/** How often a ranker reads the change log; a query sees changes at most this old. */
-const CHANGES_REFRESH_MS = 1_000;
 /** Change-log entries applied per read; small enough that one read stays a few milliseconds. */
 const CHANGES_BATCH = 250;
-/** Time one query may spend catching up on changes before it declines, or ranks with what it has applied. */
+/** Time one query may spend catching up on changes before it declines instead. */
 const CHANGES_BUDGET_MS = 25;
 /** Past this many live delta postings a ranker declines until the next build — a memory bound. */
 const DELTA_MAX_POSTINGS = 2_000_000;
@@ -92,7 +89,6 @@ export class LexicalIndex implements LexicalRanker {
       changesBatch: limits.changesBatch ?? CHANGES_BATCH,
       changesBudgetMs: limits.changesBudgetMs ?? CHANGES_BUDGET_MS,
       maxDeltaPostings: limits.maxDeltaPostings ?? DELTA_MAX_POSTINGS,
-      rankWhileBehind: limits.rankWhileBehind ?? false,
       deltaCompactMinRetired: limits.deltaCompactMinRetired ?? DELTA_COMPACT_MIN_RETIRED,
     };
     this.termCount = data.termStart.length - 1;
@@ -101,7 +97,6 @@ export class LexicalIndex implements LexicalRanker {
     this.touched = new Uint32Array(data.docCount);
     this.live = {
       lastSeq: data.changeSeq,
-      checkedAt: 0,
       declined: false,
       masked: new Uint8Array(data.docCount),
       maskedCount: 0,
@@ -274,18 +269,13 @@ export class LexicalIndex implements LexicalRanker {
   }
 
   /**
-   * Bring the ranker up to date for a query: read the change log at most every
-   * {@link CHANGES_REFRESH_MS} and apply what it holds within the query's time
-   * budget. Returns false — the query should go to FTS5 — when the ranker has
-   * declined, or is still behind after its budget and does not rank while
-   * behind.
+   * Bring the ranker up to date for a query: apply the change log within the
+   * query's time budget. Returns false — the query should go to FTS5 — when the
+   * ranker has declined, or is still behind after its budget.
    */
   private syncChanges(db: Db): boolean {
-    const live = this.live;
-    if (live.declined) return false;
-    if (Date.now() - live.checkedAt < CHANGES_REFRESH_MS) return true;
-    const state = this.applyChanges(db, this.limits.changesBudgetMs);
-    return state === "current" || (state === "behind" && this.limits.rankWhileBehind);
+    if (this.live.declined) return false;
+    return this.applyChanges(db, this.limits.changesBudgetMs) === "current";
   }
 
   /**
@@ -307,17 +297,11 @@ export class LexicalIndex implements LexicalRanker {
     const { changesBatch, maxDeltaPostings, deltaCompactMinRetired } = this.limits;
     for (let batches = 0; ; batches++) {
       if (batches > 0 && Date.now() - started > budgetMs) {
-        // Still behind. A ranker that ranks while behind leaves the rest to its
-        // background loop, and its queries read the log again a second later;
-        // one that declines tries again on the next query.
-        live.checkedAt = this.limits.rankWhileBehind ? started : 0;
+        // Still behind: the next query or follow continues from here.
         return "behind";
       }
       const changes = read.all(live.lastSeq, changesBatch);
-      if (changes.length === 0) {
-        live.checkedAt = started;
-        return "current";
-      }
+      if (changes.length === 0) return "current";
       if (changes[0].seq > live.lastSeq + 1 && this.prunedPast(db, live.lastSeq)) {
         live.declined = true;
         return "declined";
@@ -334,10 +318,7 @@ export class LexicalIndex implements LexicalRanker {
       }
       const retired = delta.postingCount - delta.livePostings;
       if (retired > Math.max(deltaCompactMinRetired, delta.livePostings)) this.compactDelta();
-      if (changes.length < changesBatch) {
-        live.checkedAt = started;
-        return "current";
-      }
+      if (changes.length < changesBatch) return "current";
     }
   }
 
@@ -486,26 +467,18 @@ export class LexicalIndex implements LexicalRanker {
 export interface LexicalIndexLimits {
   /** Change-log entries applied per read. */
   changesBatch?: number;
-  /** Time one query may spend catching up before it declines, or ranks while behind. */
+  /** Time one query may spend catching up before it declines. */
   changesBudgetMs?: number;
   /** Live delta postings past which the ranker declines until the next build. */
   maxDeltaPostings?: number;
   /** Retired delta postings tolerated before a compaction, however few are live. */
   deltaCompactMinRetired?: number;
-  /**
-   * Rank with the changes applied so far when a query's budget runs out before
-   * the ranker has caught up, instead of declining. Only for a ranker that a
-   * background loop keeps current between queries.
-   */
-  rankWhileBehind?: boolean;
 }
 
 /** A ranker's view of changes since its arrays were built. */
 interface LiveChanges {
   /** Last change-log seq applied. */
   lastSeq: number;
-  /** When the log was last read (ms); 0 forces a read on the next query. */
-  checkedAt: number;
   /** The ranker can no longer follow the log; every query goes to FTS5 until a new build. */
   declined: boolean;
   /** dense doc → 1 when the chunk changed since the build. */

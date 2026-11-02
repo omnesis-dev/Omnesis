@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -225,19 +225,19 @@ describe("LexicalIndex", () => {
     expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
   });
 
-  test("reads the change log at most once a second", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
-      const index = LexicalIndex.build(db);
-      expect(index.rank(db, "zephyr", 10)).toEqual([]);
-      upsertChunks(db, [chunk({ id: "c2", documentId: "d2", content: "zephyr quokka" })]);
-      expect(index.rank(db, "zephyr", 10)).toEqual([]);
-      vi.advanceTimersByTime(1_000);
-      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
-    } finally {
-      vi.useRealTimers();
-    }
+  test("a query ranks every chunk written before it, however recently", () => {
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = LexicalIndex.build(db);
+    expect(index.rank(db, "zephyr", 10)).toEqual([]);
+    upsertChunks(db, [chunk({ id: "c2", documentId: "d2", content: "zephyr quokka" })]);
+    expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
+    upsertChunks(db, [chunk({ id: "c3", documentId: "d3", content: "zephyr sighting" })]);
+    expect(
+      index
+        .rank(db, "zephyr", 10)!
+        .map((r) => r.rowid)
+        .sort(),
+    ).toEqual([2, 3]);
   });
 
   test("declines once the change log was pruned past its position", () => {
@@ -277,45 +277,33 @@ describe("LexicalIndex", () => {
   });
 
   test("a chunk rewritten again after the ranker read its first rewrite drops the earlier text", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [
-        chunk({ id: "c1", documentId: "d1", content: "budget review" }),
-        chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
-      ]);
-      const index = LexicalIndex.build(db);
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
-      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
-      // c1 now lives in the delta; the next rewrite must retire that copy.
-      vi.advanceTimersByTime(1_000);
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "quokka final" })]);
-      expect(index.rank(db, "quokka", 10)!.map((r) => r.rowid)).toEqual([1]);
-      expect(index.rank(db, "zephyr", 10)).toEqual([]);
-      expect(index.rank(db, "zep", 10, { prefixLastToken: true })).toEqual([]);
-      expect(index.stats(db)!.chunkCount()).toBe(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    upsertChunks(db, [
+      chunk({ id: "c1", documentId: "d1", content: "budget review" }),
+      chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
+    ]);
+    const index = LexicalIndex.build(db);
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
+    expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
+    // c1 now lives in the delta; the next rewrite must retire that copy.
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "quokka final" })]);
+    expect(index.rank(db, "quokka", 10)!.map((r) => r.rowid)).toEqual([1]);
+    expect(index.rank(db, "zephyr", 10)).toEqual([]);
+    expect(index.rank(db, "zep", 10, { prefixLastToken: true })).toEqual([]);
+    expect(index.stats(db)!.chunkCount()).toBe(2);
   });
 
   test("a chunk deleted after the ranker read its rewrite stops matching", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [
-        chunk({ id: "c1", documentId: "d1", content: "budget review" }),
-        chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
-      ]);
-      const index = LexicalIndex.build(db);
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
-      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
-      vi.advanceTimersByTime(1_000);
-      db.prepare("DELETE FROM chunks WHERE id = 'c1'").run();
-      expect(index.rank(db, "zephyr", 10)).toEqual([]);
-      expect(index.rank(db, "budget", 10)).toEqual([]);
-      expect(index.stats(db)!.chunkCount()).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    upsertChunks(db, [
+      chunk({ id: "c1", documentId: "d1", content: "budget review" }),
+      chunk({ id: "c2", documentId: "d2", content: "marathon training" }),
+    ]);
+    const index = LexicalIndex.build(db);
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "zephyr draft" })]);
+    expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([1]);
+    db.prepare("DELETE FROM chunks WHERE id = 'c1'").run();
+    expect(index.rank(db, "zephyr", 10)).toEqual([]);
+    expect(index.rank(db, "budget", 10)).toEqual([]);
+    expect(index.stats(db)!.chunkCount()).toBe(1);
   });
 
   test("past its time budget it declines, then resumes where it stopped", () => {
@@ -344,107 +332,86 @@ describe("LexicalIndex", () => {
   });
 
   test("a chunk rewritten over and over holds only its latest text and never fills the delta", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
-      const index = new LexicalIndex(LexicalIndex.build(db).data, {
-        maxDeltaPostings: 10,
-        deltaCompactMinRetired: 0,
-      });
-      for (let i = 0; i < 50; i++) {
-        upsertChunks(db, [
-          chunk({ id: "c2", documentId: "d2", content: `zephyr quokka draft${i}` }),
-        ]);
-        vi.advanceTimersByTime(1_000);
-        expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
-      }
-      expect(index.rank(db, "draft49", 10)!.map((r) => r.rowid)).toEqual([2]);
-      expect(index.rank(db, "draft48", 10)).toEqual([]);
-      // Only the latest copy's three postings are held, plus at most as many retired.
-      const delta = (
-        index as unknown as { live: { delta: { postingCount: number; rowids: number[] } } }
-      ).live.delta;
-      expect(delta.postingCount).toBeLessThanOrEqual(6);
-      expect(delta.rowids.length).toBeLessThanOrEqual(2);
-    } finally {
-      vi.useRealTimers();
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      maxDeltaPostings: 10,
+      deltaCompactMinRetired: 0,
+    });
+    for (let i = 0; i < 50; i++) {
+      upsertChunks(db, [chunk({ id: "c2", documentId: "d2", content: `zephyr quokka draft${i}` })]);
+      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
     }
+    expect(index.rank(db, "draft49", 10)!.map((r) => r.rowid)).toEqual([2]);
+    expect(index.rank(db, "draft48", 10)).toEqual([]);
+    // Only the latest copy's three postings are held, plus at most as many retired.
+    const delta = (
+      index as unknown as { live: { delta: { postingCount: number; rowids: number[] } } }
+    ).live.delta;
+    expect(delta.postingCount).toBeLessThanOrEqual(6);
+    expect(delta.rowids.length).toBeLessThanOrEqual(2);
   });
 
   test("compacting the delta leaves every ranking and score unchanged", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      seedCorpus(80);
-      const data = LexicalIndex.build(db).data;
-      const compacting = new LexicalIndex(data, { deltaCompactMinRetired: 0 });
-      const keeping = new LexicalIndex(data, { deltaCompactMinRetired: Infinity });
-      let seed = 11;
-      const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
-      const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
-      for (let step = 0; step < 120; step++) {
-        const n = Math.floor(rnd() * 12);
-        if (rnd() < 0.2) {
-          db.prepare("DELETE FROM chunks WHERE id = ?").run(`c${n}`);
-        } else {
-          upsertChunks(db, [
-            chunk({
-              id: `c${n}`,
-              documentId: `d${n}`,
-              content: Array.from({ length: 1 + Math.floor(rnd() * 8) }, () => pick(WORDS)).join(
-                " ",
-              ),
-              title: pick(WORDS),
-            }),
-          ]);
-        }
-        if (step % 4 !== 3) continue;
-        vi.advanceTimersByTime(1_000);
-        for (const query of ["budget", "the budget review", "marathon training notes", "cafe"]) {
-          expect(compacting.rank(db, query, 50), `step ${step}, "${query}"`).toEqual(
-            keeping.rank(db, query, 50),
-          );
-        }
-        expect(compacting.rank(db, "ru", 50, { prefixLastToken: true })).toEqual(
-          keeping.rank(db, "ru", 50, { prefixLastToken: true }),
-        );
-        expect(compacting.stats(db)!.documentFrequency("budget")).toBe(
-          keeping.stats(db)!.documentFrequency("budget"),
+    seedCorpus(80);
+    const data = LexicalIndex.build(db).data;
+    const compacting = new LexicalIndex(data, { deltaCompactMinRetired: 0 });
+    const keeping = new LexicalIndex(data, { deltaCompactMinRetired: Infinity });
+    let seed = 11;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+    const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
+    for (let step = 0; step < 120; step++) {
+      const n = Math.floor(rnd() * 12);
+      if (rnd() < 0.2) {
+        db.prepare("DELETE FROM chunks WHERE id = ?").run(`c${n}`);
+      } else {
+        upsertChunks(db, [
+          chunk({
+            id: `c${n}`,
+            documentId: `d${n}`,
+            content: Array.from({ length: 1 + Math.floor(rnd() * 8) }, () => pick(WORDS)).join(" "),
+            title: pick(WORDS),
+          }),
+        ]);
+      }
+      if (step % 4 !== 3) continue;
+      for (const query of ["budget", "the budget review", "marathon training notes", "cafe"]) {
+        expect(compacting.rank(db, query, 50), `step ${step}, "${query}"`).toEqual(
+          keeping.rank(db, query, 50),
         );
       }
-    } finally {
-      vi.useRealTimers();
+      expect(compacting.rank(db, "ru", 50, { prefixLastToken: true })).toEqual(
+        keeping.rank(db, "ru", 50, { prefixLastToken: true }),
+      );
+      expect(compacting.stats(db)!.documentFrequency("budget")).toBe(
+        keeping.stats(db)!.documentFrequency("budget"),
+      );
     }
   });
 
-  test("a ranker that ranks while behind serves the changes it has applied, and follow catches it up", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
-      const index = new LexicalIndex(LexicalIndex.build(db).data, {
-        changesBatch: 1,
-        changesBudgetMs: -1,
-        rankWhileBehind: true,
-      });
-      upsertChunks(db, [
-        chunk({ id: "c2", documentId: "d2", content: "zephyr one" }),
-        chunk({ id: "c3", documentId: "d3", content: "zephyr two" }),
-        chunk({ id: "c4", documentId: "d4", content: "zephyr three" }),
-      ]);
-      // One change applied within the query's budget; the query ranks with it.
-      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
-      let follows = 0;
-      while (index.follow(db, -1) && follows < 10) follows++;
-      expect(follows).toBeGreaterThan(0);
-      expect(index.follow(db, -1)).toBe(false);
-      expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2, 3, 4]);
-    } finally {
-      vi.useRealTimers();
-    }
+  test("a ranker behind after its query budget declines, and follow catches it up between queries", () => {
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: -1,
+    });
+    upsertChunks(db, [
+      chunk({ id: "c2", documentId: "d2", content: "zephyr one" }),
+      chunk({ id: "c3", documentId: "d3", content: "zephyr two" }),
+      chunk({ id: "c4", documentId: "d4", content: "zephyr three" }),
+    ]);
+    // One change applied within the query's budget, two left: FTS5 answers.
+    expect(index.rank(db, "zephyr", 10)).toBeNull();
+    let follows = 0;
+    while (index.follow(db, -1) && follows < 10) follows++;
+    expect(follows).toBeGreaterThan(0);
+    expect(index.follow(db, -1)).toBe(false);
+    // Current as of this moment, so the query reads no log and ranks every change.
+    expect(index.rank(db, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2, 3, 4]);
   });
 
   test("follow stops at a pruned log and the ranker declines from then on", () => {
     upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
-    const index = new LexicalIndex(LexicalIndex.build(db).data, { rankWhileBehind: true });
+    const index = LexicalIndex.build(db);
     upsertChunks(db, [
       chunk({ id: "c2", documentId: "d2", content: "zephyr quokka" }),
       chunk({ id: "c3", documentId: "d3", content: "marathon training" }),
@@ -469,11 +436,8 @@ describe("LexicalIndex", () => {
       upsertChunks(db, [chunk({ id: "c2", documentId: "d2", content: "zephyr quokka" })]);
       expect(index.rank(reader, "zephyr", 10)).toEqual([]);
       reader.exec("COMMIT; BEGIN");
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.advanceTimersByTime(1_000);
       expect(index.rank(reader, "zephyr", 10)!.map((r) => r.rowid)).toEqual([2]);
     } finally {
-      vi.useRealTimers();
       reader.exec("COMMIT");
       reader.close();
     }
@@ -513,96 +477,88 @@ describe("LexicalIndex", () => {
   ])(
     "matches what FTS5 matches through a seeded stream of inserts, rewrites and deletes, compacting $compaction",
     ({ deltaCompactMinRetired }) => {
-      vi.useFakeTimers({ toFake: ["Date"] });
-      try {
-        const vocabulary = [
-          "budget",
-          "review",
-          "marathon",
-          "training",
-          "invoice",
-          "studio",
-          "northstar",
-          "zephyr",
-          "quokka",
-          "notes",
-        ];
-        let seed = 20_261_027;
-        const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
-        const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
-        const text = () =>
-          Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => pick(vocabulary));
-        const write = (n: number) =>
-          upsertChunks(db, [
-            chunk({
-              id: `c${n}`,
-              documentId: `d${n}`,
-              content: text().join(" "),
-              title: pick(vocabulary),
-            }),
-          ]);
-        const live: number[] = [];
-        let next = 0;
-        for (; next < 40; next++) {
+      const vocabulary = [
+        "budget",
+        "review",
+        "marathon",
+        "training",
+        "invoice",
+        "studio",
+        "northstar",
+        "zephyr",
+        "quokka",
+        "notes",
+      ];
+      let seed = 20_261_027;
+      const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+      const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)];
+      const text = () => Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => pick(vocabulary));
+      const write = (n: number) =>
+        upsertChunks(db, [
+          chunk({
+            id: `c${n}`,
+            documentId: `d${n}`,
+            content: text().join(" "),
+            title: pick(vocabulary),
+          }),
+        ]);
+      const live: number[] = [];
+      let next = 0;
+      for (; next < 40; next++) {
+        write(next);
+        live.push(next);
+      }
+      // Small batches, so one chunk's changes often straddle reads.
+      const index = new LexicalIndex(LexicalIndex.build(db).data, {
+        changesBatch: 3,
+        deltaCompactMinRetired,
+      });
+      const viaFts = (match: string) =>
+        db
+          .prepare<[string], { rowid: number }>(
+            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rowid",
+          )
+          .all(match)
+          .map((r) => r.rowid);
+      const viaMemory = (query: string, opts?: { prefixLastToken?: boolean }) =>
+        index
+          .rank(db, query, 1_000, opts)!
+          .map((r) => r.rowid)
+          .sort((a, b) => a - b);
+
+      for (let step = 0; step < 300; step++) {
+        const op = rnd();
+        if (op < 0.3 || live.length === 0) {
           write(next);
-          live.push(next);
+          live.push(next++);
+        } else if (op < 0.75) {
+          write(pick(live));
+        } else {
+          const [n] = live.splice(Math.floor(rnd() * live.length), 1);
+          db.prepare("DELETE FROM chunks WHERE id = ?").run(`c${n}`);
         }
-        // Small batches, so one chunk's changes often straddle reads.
-        const index = new LexicalIndex(LexicalIndex.build(db).data, {
-          changesBatch: 3,
-          deltaCompactMinRetired,
-        });
-        const viaFts = (match: string) =>
-          db
-            .prepare<[string], { rowid: number }>(
-              "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rowid",
-            )
-            .all(match)
-            .map((r) => r.rowid);
-        const viaMemory = (query: string, opts?: { prefixLastToken?: boolean }) =>
-          index
-            .rank(db, query, 1_000, opts)!
-            .map((r) => r.rowid)
-            .sort((a, b) => a - b);
+        if (step % 5 !== 4) continue;
+        for (const word of vocabulary) {
+          expect(viaMemory(word), `step ${step}, "${word}"`).toEqual(viaFts(`"${word}"`));
+        }
+        for (const prefix of ["mar", "qu", "st"]) {
+          expect(viaMemory(prefix, { prefixLastToken: true }), `step ${step}, ${prefix}*`).toEqual(
+            viaFts(`"${prefix}"*`),
+          );
+        }
+        expect(index.stats(db)!.chunkCount(), `step ${step}`).toBe(live.length);
+      }
 
-        for (let step = 0; step < 300; step++) {
-          const op = rnd();
-          if (op < 0.3 || live.length === 0) {
-            write(next);
-            live.push(next++);
-          } else if (op < 0.75) {
-            write(pick(live));
-          } else {
-            const [n] = live.splice(Math.floor(rnd() * live.length), 1);
-            db.prepare("DELETE FROM chunks WHERE id = ?").run(`c${n}`);
-          }
-          if (step % 5 !== 4) continue;
-          vi.advanceTimersByTime(1_000);
-          for (const word of vocabulary) {
-            expect(viaMemory(word), `step ${step}, "${word}"`).toEqual(viaFts(`"${word}"`));
-          }
-          for (const prefix of ["mar", "qu", "st"]) {
-            expect(
-              viaMemory(prefix, { prefixLastToken: true }),
-              `step ${step}, ${prefix}*`,
-            ).toEqual(viaFts(`"${prefix}"*`));
-          }
-          expect(index.stats(db)!.chunkCount(), `step ${step}`).toBe(live.length);
-        }
-
-        const rebuilt = LexicalIndex.build(db);
-        for (const query of ["budget", "zephyr quokka", "marathon training notes"]) {
-          const match = query
-            .split(" ")
-            .map((w) => `"${w}"`)
-            .join(" OR ");
-          const expected = ftsTop(match, 1_000);
-          const actual = rebuilt.rank(db, query, 1_000)!;
-          expect(actual.map((r) => r.rowid)).toEqual(expected.map((r) => r.rowid));
-          actual.forEach((r, i) => expect(r.score).toBeCloseTo(expected[i].score, 6));
-        }
-      } finally {
-        vi.useRealTimers();
+      const rebuilt = LexicalIndex.build(db);
+      for (const query of ["budget", "zephyr quokka", "marathon training notes"]) {
+        const match = query
+          .split(" ")
+          .map((w) => `"${w}"`)
+          .join(" OR ");
+        const expected = ftsTop(match, 1_000);
+        const actual = rebuilt.rank(db, query, 1_000)!;
+        expect(actual.map((r) => r.rowid)).toEqual(expected.map((r) => r.rowid));
+        actual.forEach((r, i) => expect(r.score).toBeCloseTo(expected[i].score, 6));
       }
     },
   );
@@ -776,41 +732,35 @@ describe("bm25Search — rank-first", () => {
   });
 
   test("the first query after writes drops common words by the counts it ranks with", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      upsertChunks(db, [
-        ...[0, 1, 2, 3].map((i) =>
-          chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
-        ),
-        chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
-        chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
-      ]);
-      const index = LexicalIndex.build(db);
-      const opts = { commonTokenThreshold: 0.5 };
-      // 6 chunks, cutoff 3: "budget" (4) is common, "quokka" (0) is not.
-      expect(
-        bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index }).droppedTokens,
-      ).toEqual(["budget"]);
+    upsertChunks(db, [
+      ...[0, 1, 2, 3].map((i) =>
+        chunk({ id: `b${i}`, documentId: `b${i}`, content: `budget review ${i}` }),
+      ),
+      chunk({ id: "m0", documentId: "m0", content: "marathon training" }),
+      chunk({ id: "m1", documentId: "m1", content: "studio invoice" }),
+    ]);
+    const index = LexicalIndex.build(db);
+    const opts = { commonTokenThreshold: 0.5 };
+    // 6 chunks, cutoff 3: "budget" (4) is common, "quokka" (0) is not.
+    expect(
+      bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index }).droppedTokens,
+    ).toEqual(["budget"]);
 
-      // 14 chunks, cutoff 7: now "quokka" (8) is the common word and "budget" (4) is not.
-      upsertChunks(
-        db,
-        [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
-          chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
-        ),
-      );
-      vi.advanceTimersByTime(1_000);
-      const viaMemory = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
-      const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
-      expect(viaMemory.ranker).toBe("memory");
-      expect(viaFts.droppedTokens).toEqual(["quokka"]);
-      expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
-      expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
-        viaFts.candidates.map((c) => c.chunkRowid),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    // 14 chunks, cutoff 7: now "quokka" (8) is the common word and "budget" (4) is not.
+    upsertChunks(
+      db,
+      [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+        chunk({ id: `q${i}`, documentId: `q${i}`, content: `quokka sighting ${i}` }),
+      ),
+    );
+    const viaMemory = bm25Search(db, "budget quokka", {}, 50, { ...opts, ranker: index });
+    const viaFts = bm25Search(db, "budget quokka", {}, 50, opts);
+    expect(viaMemory.ranker).toBe("memory");
+    expect(viaFts.droppedTokens).toEqual(["quokka"]);
+    expect(viaMemory.droppedTokens).toEqual(viaFts.droppedTokens);
+    expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+      viaFts.candidates.map((c) => c.chunkRowid),
+    );
   });
 
   test("a ranker that cannot catch up leaves the common-word filter to FTS5 too", () => {

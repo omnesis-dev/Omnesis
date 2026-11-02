@@ -56,33 +56,43 @@ function rowidOf(id: string): number {
 }
 
 describe("LexicalIndexFollower", () => {
-  test("catches the ranker up between queries, so a query finds no change log to apply", () => {
+  test("catches the ranker up between queries, with no query involved", () => {
     vi.useFakeTimers();
     write("a", "budget review");
     follower = new LexicalIndexFollower(db);
     follower.attach(buildLexicalIndexData(db));
     vi.advanceTimersByTime(0);
     for (let i = 0; i < 300; i++) write(`z${i}`, `zephyr sighting ${i}`);
-    // The loop's next slices apply the 300 changes with no query involved.
-    vi.advanceTimersByTime(1_000);
+    const head = db
+      .prepare<[], { seq: number }>("SELECT max(seq) AS seq FROM chunks_fts_changes")
+      .get()!.seq;
+    const applied = () =>
+      (follower!.ranker as unknown as { live: { lastSeq: number } }).live.lastSeq;
+    expect(applied()).toBeLessThan(head);
+    // The loop's next wake applies all 300 changes.
+    vi.advanceTimersByTime(250);
     vi.advanceTimersByTime(0);
-    const ranker = follower.ranker!;
-    expect(ranker.follow(db, 25)).toBe(false);
-    // Within the query path's read interval, the ranker reads no log, yet ranks every new chunk.
-    expect(bm25Search(db, "zephyr", {}, 500, { ranker }).candidates).toHaveLength(300);
+    expect(applied()).toBe(head);
+    expect(bm25Search(db, "zephyr", {}, 500, { ranker: follower.ranker }).candidates).toHaveLength(
+      300,
+    );
   });
 
-  test("a query ranks in memory with the changes applied so far when a burst outruns its budget", () => {
+  test("a query right after a burst of writes sees every written chunk, then ranks in memory", () => {
     write("a", "budget review");
     follower = new LexicalIndexFollower(db, { idleMs: 60_000 });
     follower.attach(buildLexicalIndexData(db));
     follower.step();
     for (let i = 0; i < 600; i++) write(`z${i}`, `zephyr sighting ${i}`);
-    const result = bm25Search(db, "zephyr budget", {}, 10, { ranker: follower.ranker });
-    expect(result.ranker).toBe("memory");
+    const viaFts = bm25Search(db, "zephyr budget", {}, 10_000, {});
+    expect(viaFts.candidates).toHaveLength(601);
+    // Whichever engine answers, nothing written before the query is missing.
+    const burst = bm25Search(db, "zephyr budget", {}, 10_000, { ranker: follower.ranker });
+    expect(burst.candidates.map((c) => c.chunkRowid)).toEqual(
+      viaFts.candidates.map((c) => c.chunkRowid),
+    );
     while (follower.step());
     const caughtUp = bm25Search(db, "zephyr budget", {}, 10_000, { ranker: follower.ranker });
-    const viaFts = bm25Search(db, "zephyr budget", {}, 10_000, {});
     expect(caughtUp.ranker).toBe("memory");
     expect(caughtUp.candidates.map((c) => c.chunkRowid)).toEqual(
       viaFts.candidates.map((c) => c.chunkRowid),
