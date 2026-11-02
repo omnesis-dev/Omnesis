@@ -10,9 +10,8 @@
 # keeps the two scenarios' subjects separate — and exercises the same
 # `--target-version` a gateway-commanded device is run with.
 #
-# `omnesis update` does what each host's roles need. On the gateway host that
-# starts with a backup taken through the gateway's own API, before anything
-# irreversible happens. Neither container has a user service manager, so
+# `omnesis update` does what each host's roles need without taking a backup
+# unless explicitly requested. Neither container has a user service manager, so
 # neither daemon is registered as a service and the updater reports the
 # restart it may not perform rather than guessing at one — the restarts here
 # are still done by hand, and the running gateway keeps serving the old build
@@ -39,13 +38,11 @@ backups_before="$(on gateway "~/.local/bin/omnesis backup --list | grep -c pre-u
 update_output="$(on gateway '~/.local/bin/omnesis update --yes --target-version 9.9.1 2>&1')"
 assert_eq "the gateway host moved to the newer tag" "9.9.1" "$(installed_version gateway)"
 
-# The backup is the only way back from forward-only migrations, so the update
-# takes it itself rather than recommending one.
-assert_contains "the gateway host planned its own backup" \
+assert_not_contains "the gateway host planned no backup by default" \
   "back up the gateway's databases" "$update_output"
 backups_after="$(on gateway "~/.local/bin/omnesis backup --list | grep -c pre-update || true")"
-assert_eq "the update left one more pre-update backup than it found" \
-  "$((backups_before + 1))" "$backups_after"
+assert_eq "the default update created no pre-update backup" \
+  "$backups_before" "$backups_after"
 
 # No service manager in a container, so the gateway role is present but not
 # supervised: the updater says what it cannot restart instead of restarting it.

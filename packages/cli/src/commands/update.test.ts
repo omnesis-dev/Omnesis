@@ -57,6 +57,7 @@ import {
   updateNpmGlobal,
   updateSourceCheckout,
   parseWaitForLockMinutes,
+  parseUpdateBackup,
   runUpdateContinuation,
   continueOffer,
 } from "./update.js";
@@ -345,6 +346,18 @@ const output = (): string => logged.join("\n");
 // ── updateNpmGlobal ─────────────────────────────────────────────────────
 
 describe("updateNpmGlobal", () => {
+  test("a gateway update takes no backup by default", async () => {
+    const runner = fakeRunner([
+      { code: 0, stdout: "0.3.0\n" },
+      { code: 0, stdout: "" },
+    ]);
+    const deps = makeDeps(runner, { roles: hostRoles({ gateway: supervised }) });
+    await updateNpmGlobal({ channel: "stable", dryRun: false }, deps);
+    expect(deps.backup).not.toHaveBeenCalled();
+    expect(executed(runner)).toContain("npm install -g omnesis@0.3.0");
+    expect(output()).not.toMatch(/Back up first|omnesis backup/);
+  });
+
   test("already up to date: prints version, never installs", async () => {
     const runner = fakeRunner([{ code: 0, stdout: "0.2.0\n" }]);
     await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner));
@@ -491,7 +504,7 @@ describe("updateNpmGlobal", () => {
       { code: 0, stdout: "0.3.0\n" },
       { code: 0, stdout: "" },
     ]);
-    await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner));
+    await updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, makeDeps(runner));
     // The migrations are the gateway's, and it runs on another machine.
     expect(output()).not.toContain("forward-only schema migrations");
     expect(output()).not.toContain("omnesis backup");
@@ -595,7 +608,10 @@ describe("updateSourceCheckout", () => {
         prepareSourceLauncher: vi.fn(),
       });
       await expect(
-        updateSourceCheckout({ rootDir, edge: false, dryRun: false, targetCommit: TARGET }, deps),
+        updateSourceCheckout(
+          { backup: true, rootDir, edge: false, dryRun: false, targetCommit: TARGET },
+          deps,
+        ),
       ).rejects.toThrow("rerun omnesis update");
       expect(executed(runner)).toEqual([`git fetch origin ${TARGET}`]);
       expect(deps.stopService).not.toHaveBeenCalled();
@@ -652,7 +668,7 @@ describe("updateSourceCheckout", () => {
   test("a checkout plan that backs up says so instead of asking for a backup", async () => {
     const runner = fakeRunner([managed, clean, tags]);
     await updateSourceCheckout(
-      { rootDir, edge: false, dryRun: true },
+      { backup: true, rootDir, edge: false, dryRun: true },
       makeDeps(runner, {
         roles: hostRoles({ gateway: supervised }),
         backupsDir: "/home/maya/.config/omnesis/backups",
@@ -665,7 +681,10 @@ describe("updateSourceCheckout", () => {
 
   test("asks for no backup with no gateway on this host", async () => {
     const runner = fakeRunner([managed, clean, tags]);
-    await updateSourceCheckout({ rootDir, edge: false, dryRun: true }, makeDeps(runner));
+    await updateSourceCheckout(
+      { backup: true, rootDir, edge: false, dryRun: true },
+      makeDeps(runner),
+    );
     // The migrations are the gateway's, and it runs on another machine.
     expect(output()).not.toContain("forward-only schema migrations");
     expect(output()).not.toContain("omnesis backup");
@@ -798,7 +817,7 @@ describe("updateSourceCheckout", () => {
       completedSourceApplyState(rootDir, head.stdout.trim()),
     );
     await updateSourceCheckout(
-      { rootDir, edge: false, dryRun: false },
+      { backup: true, rootDir, edge: false, dryRun: false },
       makeDeps(runner, {
         applyState: { read: () => completed, write: vi.fn() },
         roles: hostRoles({ gateway: supervised }),
@@ -877,7 +896,7 @@ describe("updateSourceCheckout", () => {
       ]);
 
       await updateSourceCheckout(
-        { rootDir, edge: false, dryRun: false },
+        { backup: true, rootDir, edge: false, dryRun: false },
         makeDeps(runner, { applyState: state.store }),
       );
 
@@ -1316,7 +1335,7 @@ describe("executing a host's plan", () => {
   ];
 
   const source = (deps: UpdateFlowDeps) =>
-    updateSourceCheckout({ rootDir, edge: false, dryRun: false }, deps);
+    updateSourceCheckout({ backup: true, rootDir, edge: false, dryRun: false }, deps);
 
   // The plan is what the operator reads before confirming, and the container
   // topology lane greps these same lines to tell one host's roles from
@@ -1324,7 +1343,7 @@ describe("executing a host's plan", () => {
   test("the plan names, in order, what this host is about to do", async () => {
     const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
     await updateSourceCheckout(
-      { rootDir, edge: false, dryRun: true },
+      { backup: true, rootDir, edge: false, dryRun: true },
       makeDeps(runner, { roles: hostRoles({ gateway: supervised, collector: supervised }) }),
     );
     const plan = logged.slice(logged.indexOf("This host will:") + 1, -3);
@@ -1380,14 +1399,23 @@ describe("executing a host's plan", () => {
       source(makeDeps(runner, { roles: hostRoles({ gateway: supervised }), backup })),
     ).rejects.toMatchObject({
       exitCode: EXIT_FAILURE,
-      message: expect.stringContaining("--no-backup"),
+      message: expect.stringContaining("without --backup"),
     });
     expect(executed(runner)).toEqual([
       "git fetch --no-tags origin refs/tags/v0.3.0:refs/tags/v0.3.0",
     ]);
   });
 
-  test("--no-backup skips it and still updates", async () => {
+  test("a gateway checkout update takes no backup by default", async () => {
+    const runner = fakeRunner(successfulUpdate);
+    const deps = makeDeps(runner, { roles: hostRoles({ gateway: supervised }) });
+    await updateSourceCheckout({ rootDir, edge: false, dryRun: false }, deps);
+    expect(deps.backup).not.toHaveBeenCalled();
+    expect(executed(runner)).toContain("npm run build");
+    expect(output()).not.toMatch(/Back up first|omnesis backup/);
+  });
+
+  test("an update without backup opt-in still updates", async () => {
     const runner = fakeRunner(successfulUpdate);
     const backup = vi.fn(() => Promise.resolve());
     await updateSourceCheckout(
@@ -1727,7 +1755,7 @@ describe("executing a host's plan", () => {
     const restartService = vi.fn((_component: ServiceComponent) => Promise.resolve());
     const awaitHealth = vi.fn(() => Promise.resolve());
     await updateNpmGlobal(
-      { channel: "stable", dryRun: false },
+      { backup: true, channel: "stable", dryRun: false },
       makeDeps(runner, {
         roles: hostRoles({ gateway: supervised, collector: supervised }),
         backup,
@@ -1749,7 +1777,7 @@ describe("executing a host's plan", () => {
       { code: 0, stdout: "" },
     ]);
     await updateNpmGlobal(
-      { channel: "stable", dryRun: false },
+      { backup: true, channel: "stable", dryRun: false },
       makeDeps(runner, {
         roles: hostRoles({ gateway: supervised, collector: supervised }),
         backupsDir: "/home/maya/.config/omnesis/backups",
@@ -1859,7 +1887,18 @@ describe("updateDocker", () => {
     composeFile,
     projectDir,
     dryRun: false,
+    backup: true,
     ...over,
+  });
+
+  test("a gateway container update takes no backup by default", async () => {
+    const events: string[] = [];
+    const runner = dockerRunner(events);
+    const deps = dockerDeps(events, runner);
+    await updateDocker({ composeFile, projectDir, dryRun: false }, deps);
+    expect(deps.backup).not.toHaveBeenCalled();
+    expect(events).toContain(`docker compose -f ${composeFile} up -d --no-deps gateway`);
+    expect(output()).not.toMatch(/Back up first|omnesis backup/);
   });
 
   test("the ordered plan: back up, record the tag, pull, gateway, health, collector", async () => {
@@ -1998,7 +2037,7 @@ describe("updateDocker", () => {
       expect(output()).not.toContain("Back up first");
     });
 
-    test("--no-backup is the one path still told to back up first", async () => {
+    test("a plan without backup opt-in gives no backup recommendation", async () => {
       const events: string[] = [];
       const runner = dockerRunner(events);
       await updateDocker(
@@ -2006,7 +2045,7 @@ describe("updateDocker", () => {
         dockerDeps(events, runner, { backupsDir: "/home/maya/.config/omnesis/backups" }),
       );
       expect(output()).not.toContain("back up the gateway's databases");
-      expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
+      expect(output()).not.toMatch(/Back up first|omnesis backup/);
     });
   });
 
@@ -3207,7 +3246,7 @@ describe("rolling back a failed update", () => {
   const rollback = [clean, clean, clean];
 
   const source = (deps: UpdateFlowDeps) =>
-    updateSourceCheckout({ rootDir, edge: false, dryRun: false }, deps);
+    updateSourceCheckout({ backup: true, rootDir, edge: false, dryRun: false }, deps);
 
   describe("a machine that cannot compile native modules", () => {
     // A release whose dependency set has no prebuilt binary for this platform
@@ -3509,7 +3548,7 @@ describe("rolling back a failed update", () => {
     test("the plan names the stopped collector and gateway, before the apply", async () => {
       const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
       await updateSourceCheckout(
-        { rootDir, edge: false, dryRun: true },
+        { backup: true, rootDir, edge: false, dryRun: true },
         makeDeps(runner, {
           roles: hostRoles({ gateway: supervised, collector: supervised }),
           buildMemoryTight: () => true,
@@ -4155,6 +4194,18 @@ describe("rolling back a failed update", () => {
 // ── Command surface ─────────────────────────────────────────────────────
 
 describe("updateCommand", () => {
+  test.each([
+    [[], false],
+    [["--no-backup"], false],
+    [["--backup"], true],
+    [["--backup", "--no-backup"], true],
+    [["--no-backup", "--backup"], true],
+    [["--backup=false"], false],
+    [["--", "--backup"], false],
+  ] as const)("backup opt-in for %j is %s", (rawArgs, expected) => {
+    expect(parseUpdateBackup([...rawArgs])).toBe(expected);
+  });
+
   test("binds migration health checks to the local gateway port", () => {
     expect(resolveLocalGatewayHealthUrl("0.0.0.0", 7600)).toBe("https://127.0.0.1:7600");
     expect(resolveLocalGatewayHealthUrl("::", 17600)).toBe("https://[::1]:17600");
@@ -4231,8 +4282,14 @@ describe("updateCommand", () => {
   // reads the real process.argv[1], so these drive it through the two paths
   // that never reach a flow: an unrecognized install and a rejected flag.
   const invoke = (args: Record<string, unknown>) =>
-    (updateCommand.run as (ctx: { args: Record<string, unknown> }) => Promise<void>)({
+    (
+      updateCommand.run as (ctx: {
+        args: Record<string, unknown>;
+        rawArgs: string[];
+      }) => Promise<void>
+    )({
       args: { "dry-run": false, yes: true, force: false, edge: false, channel: "stable", ...args },
+      rawArgs: [],
     });
 
   test("a rejected flag combination fails without running anything", async () => {
@@ -4411,7 +4468,12 @@ describe("the --fleet flag's own refusals", () => {
     ).rejects.toMatchObject({ exitCode: EXIT_USER_ERROR });
     await expect(
       updateSourceCheckout(
-        { rootDir: "/home/dev/omnesis", edge: false, dryRun: false, targetVersion: "--registry=x" },
+        {
+          rootDir: "/home/dev/omnesis",
+          edge: false,
+          dryRun: false,
+          targetVersion: "--registry=x",
+        },
         makeDeps(runner),
       ),
     ).rejects.toMatchObject({ exitCode: EXIT_USER_ERROR });
@@ -4491,7 +4553,7 @@ describe("applying the release's service definitions", () => {
   ];
   const both = hostRoles({ gateway: supervised, collector: supervised });
   const source = (deps: UpdateFlowDeps) =>
-    updateSourceCheckout({ rootDir, edge: false, dryRun: false }, deps);
+    updateSourceCheckout({ backup: true, rootDir, edge: false, dryRun: false }, deps);
 
   function fakeDefinitions(
     outcomes: Partial<Record<ServiceComponent, ServiceDefinitionOutcome | Error>> = {},
@@ -4511,7 +4573,7 @@ describe("applying the release's service definitions", () => {
   test("the plan names the step ahead of each restart", async () => {
     const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
     await updateSourceCheckout(
-      { rootDir, edge: false, dryRun: true },
+      { backup: true, rootDir, edge: false, dryRun: true },
       makeDeps(runner, { roles: both, serviceDefinitions: fakeDefinitions() }),
     );
     const plan = logged.slice(logged.indexOf("This host will:") + 1, -3);
@@ -4698,7 +4760,7 @@ describe("a gateway that is not running", () => {
   const stopped = { present: true, supervised: false, manualRestart: null, stopped: true };
   const backupPath = "/home/dev/.config/omnesis/backups/2026-03-14T09-12-05";
   const source = (deps: UpdateFlowDeps) =>
-    updateSourceCheckout({ rootDir, edge: false, dryRun: false }, deps);
+    updateSourceCheckout({ backup: true, rootDir, edge: false, dryRun: false }, deps);
 
   test("its closed databases are copied, and its collector restarts as on any host", async () => {
     const runner = fakeRunner(successfulUpdate);
@@ -4728,7 +4790,7 @@ describe("a gateway that is not running", () => {
   test("the plan says the backup is a copy and the gateway migrates when it next starts", async () => {
     const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
     await updateSourceCheckout(
-      { rootDir, edge: false, dryRun: true },
+      { backup: true, rootDir, edge: false, dryRun: true },
       makeDeps(runner, { roles: hostRoles({ gateway: stopped, collector: supervised }) }),
     );
     const plan = logged.slice(logged.indexOf("This host will:") + 1, -3);
@@ -4761,7 +4823,7 @@ describe("a gateway that is not running", () => {
     ).rejects.toMatchObject({
       exitCode: EXIT_FAILURE,
       message: expect.stringMatching(
-        /Could not copy the stopped gateway's databases into a backup before updating: Not enough free disk space[\s\S]*--no-backup/,
+        /Could not copy the stopped gateway's databases into a backup before updating: Not enough free disk space[\s\S]*without --backup/,
       ),
     });
     expect(executed(runner)).toEqual([
@@ -4790,7 +4852,7 @@ describe("a daemon on a host already on the target", () => {
   );
   const alreadyOnTarget = (runsInstalledBuild: UpdateFlowDeps["runsInstalledBuild"]) =>
     updateSourceCheckout(
-      { rootDir, edge: false, dryRun: false },
+      { backup: true, rootDir, edge: false, dryRun: false },
       makeDeps(fakeRunner([managed, clean, tags, clean, manifest, head, head, clean]), {
         applyState: { read: () => completed, write: vi.fn() },
         restart: false,
@@ -4854,7 +4916,7 @@ describe("a package install another update already moved to the target", () => {
     ]);
     const backup = vi.fn(() => Promise.resolve());
     await updateNpmGlobal(
-      { channel: "stable", dryRun: false, afterConcurrentUpdate: true },
+      { backup: true, channel: "stable", dryRun: false, afterConcurrentUpdate: true },
       makeDeps(runner, {
         restart: false,
         backup,
@@ -5012,9 +5074,9 @@ describe("handing the rest of an update to the build it installed", () => {
         return Promise.resolve(taken);
       });
 
-      await expect(updateNpmGlobal({ channel: "stable", dryRun: false }, deps)).resolves.toBe(
-        "0.5.0",
-      );
+      await expect(
+        updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, deps),
+      ).resolves.toBe("0.5.0");
 
       // The gateway runs from the package being replaced, so its API backup —
       // which loads a worker from that package — is taken before the install.
@@ -5035,7 +5097,11 @@ describe("handing the rest of an update to the build it installed", () => {
       const continueAfterApply = vi.fn((_offer: ContinuationOffer) => Promise.resolve(taken));
       const { deps } = recorded([view("0.5.0"), ok], { continueAfterApply, restart: false });
       await updateNpmGlobal(
-        { channel: "stable", dryRun: false, registry: "https://packages.example.org" },
+        {
+          channel: "stable",
+          dryRun: false,
+          registry: "https://packages.example.org",
+        },
         deps,
       );
       expect(continueAfterApply.mock.calls[0]![0]).toMatchObject({
@@ -5047,7 +5113,7 @@ describe("handing the rest of an update to the build it installed", () => {
     test("a release older than the hand-over is finished here", async () => {
       const continueAfterApply = vi.fn(() => Promise.resolve(taken));
       const { events, deps } = recorded([view("0.4.10"), ok], { continueAfterApply });
-      await updateNpmGlobal({ channel: "stable", dryRun: false }, deps);
+      await updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, deps);
       expect(continueAfterApply).not.toHaveBeenCalled();
       expect(events).toEqual([
         "backup",
@@ -5063,7 +5129,7 @@ describe("handing the rest of an update to the build it installed", () => {
         Promise.resolve({ accepted: false, code: 1, signal: null, detail: "it exited 1" }),
       );
       const { events, deps } = recorded([view("0.5.0"), ok], { continueAfterApply });
-      await updateNpmGlobal({ channel: "stable", dryRun: false }, deps);
+      await updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, deps);
       expect(events).toEqual([
         "backup",
         "npm install -g omnesis@0.5.0",
@@ -5087,7 +5153,7 @@ describe("handing the rest of an update to the build it installed", () => {
       );
       const { events, deps } = recorded([view("0.5.0"), ok], { continueAfterApply });
       await expect(
-        updateNpmGlobal({ channel: "stable", dryRun: false }, deps),
+        updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, deps),
       ).rejects.toMatchObject({ exitCode: EXIT_FAILURE });
       // Its rollback was its own; this process runs neither a second one nor
       // any restart.
@@ -5120,7 +5186,7 @@ describe("handing the rest of an update to the build it installed", () => {
         interruptions,
       });
       await expect(
-        updateNpmGlobal({ channel: "stable", dryRun: false }, deps),
+        updateNpmGlobal({ backup: true, channel: "stable", dryRun: false }, deps),
       ).rejects.toMatchObject({ exitCode: 130 });
       expect(deliver).toHaveBeenCalledWith("SIGINT");
       expect(events).toEqual([
@@ -5178,7 +5244,7 @@ describe("handing the rest of an update to the build it installed", () => {
         return Promise.resolve(taken);
       });
       await updateSourceCheckout(
-        { rootDir, edge: false, dryRun: false },
+        { backup: true, rootDir, edge: false, dryRun: false },
         sourceDeps(events, [...successfulUpdate, clean, clean, clean], { continueAfterApply }),
       );
       expect(events).toEqual([
@@ -5218,7 +5284,7 @@ describe("handing the rest of an update to the build it installed", () => {
         Promise.resolve({ accepted: false, code: 1, signal: null }),
       );
       await updateSourceCheckout(
-        { rootDir, edge: false, dryRun: false },
+        { backup: true, rootDir, edge: false, dryRun: false },
         sourceDeps(events, [...successfulUpdate, clean, clean, clean], { continueAfterApply }),
       );
       expect(events.slice(3)).toEqual(["npm run build", "copy", "restart collector"]);
@@ -5419,7 +5485,7 @@ describe("handing the rest of an update to the build it installed", () => {
       ).rejects.toMatchObject({
         exitCode: EXIT_FAILURE,
         message: expect.stringMatching(
-          /before restarting onto v0\.5\.0: Not enough free disk space[\s\S]*--no-backup[\s\S]*Rolled back/,
+          /before restarting onto v0\.5\.0: Not enough free disk space[\s\S]*without --backup[\s\S]*Rolled back/,
         ),
       });
       expect(executed(runner)).toEqual([
@@ -5628,7 +5694,7 @@ describe("hand-over paths a single run never had", () => {
       return runner.run(spec, mode, control);
     };
     await updateNpmGlobal(
-      { channel: "stable", dryRun: false },
+      { backup: true, channel: "stable", dryRun: false },
       makeDeps(
         { run, calls: runner.calls },
         {
@@ -5680,7 +5746,7 @@ describe("hand-over paths a single run never had", () => {
       Promise.resolve({ accepted: true, code: 0, signal: null }),
     );
     await updateSourceCheckout(
-      { rootDir, edge: true, dryRun: false },
+      { backup: true, rootDir, edge: true, dryRun: false },
       makeDeps(
         { run, calls: runner.calls },
         {

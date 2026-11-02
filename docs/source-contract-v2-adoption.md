@@ -36,8 +36,8 @@ Some safety choices deliberately retain data instead of guessing at deletion:
   collector diagnostic or authentication form on every client.
 
 The frozen old-gateway transport harness tests released HTTP and WebSocket
-shapes, not a second full release process. Operational mixed-version probes and
-upgrade backups remain necessary alongside these synthetic regression tests.
+shapes, not a second full release process. Operational mixed-version probes
+complement these synthetic regression tests.
 
 ## Mechanical prerequisites
 

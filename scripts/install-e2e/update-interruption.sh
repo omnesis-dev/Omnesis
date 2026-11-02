@@ -99,7 +99,7 @@ new_release() {
 retry() {
   local name="$1"
   snapshot "$name-before-retry" "$GATEWAY_URL"
-  redacted timeout --signal=TERM --kill-after=60s 1800 "$OMNESIS" update --yes || die "$name retry failed"
+  redacted timeout --signal=TERM --kill-after=60s 1800 "$OMNESIS" update --yes --backup || die "$name retry failed"
   node "$E2E_DIR/update-fault.mjs" verify-dependency "$SOURCE_DIR" "$E2E_WORK/interruption/damage.json" >/dev/null
   preserved "$name-repaired" "$TARGET"
   probe compare --before "$E2E_WORK/$name-before-retry.json" --after "$E2E_WORK/$name-repaired.json" \
@@ -196,7 +196,7 @@ sudo -n mount -t tmpfs -o "size=8m,mode=0700,uid=$(id -u),gid=$(id -g),nosuid,no
 MOUNTED=1
 node "$E2E_DIR/update-fault.mjs" fill "$CONFIG_DIR/backups" >"$E2E_WORK/disk-fault.json"
 set +e
-timeout --signal=TERM --kill-after=60s 600 "$OMNESIS" update --yes >"$E2E_WORK/disk.log" 2>&1
+timeout --signal=TERM --kill-after=60s 600 "$OMNESIS" update --yes --backup >"$E2E_WORK/disk.log" 2>&1
 status=$?
 set -e
 redact <"$E2E_WORK/disk.log"

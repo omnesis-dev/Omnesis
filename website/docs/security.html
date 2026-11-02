@@ -602,11 +602,11 @@ installing it takes one command as root:
           <code>omnesis update</code> updates your CLI and collector and prints the root command
           that moves the dedicated gateway to the same release.
           <code>sudo omnesis-gateway-admin update --version X.Y.Z</code> builds the new release
-          beside the running one, takes a backup through the gateway, switches to the new release,
-          restarts the service and waits for the new version to answer. If it does not, it switches
-          back and prints the commands that list and restore backups, in case the new release
-          already migrated the data. <code>--no-backup</code> switches without a backup. It refuses
-          a release older than the running one unless you pass <code>--force</code>.
+          beside the running one, switches to it, restarts the service and waits for the new version
+          to answer. If it does not, it switches back. Updates take no backup by default;
+          <code>--backup</code> requests one through the gateway before switching releases, and
+          <code>--no-backup</code> is accepted for compatibility with no effect. It refuses a
+          release older than the running one unless you pass <code>--force</code>.
         </p>
         <p>
           <code>sudo omnesis-gateway-admin rollback</code> switches back to the previous release,

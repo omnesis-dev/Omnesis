@@ -75,8 +75,8 @@ not advertise the required source-wire contract. Once a source adopts that
 contract, older collectors cannot read its cursor or write to it: upgrade every
 collector sharing that source, including replicated members. Other sources and
 phone-only streams remain eligible to sync. Gateway binary downgrade is not a
-rollback strategy: restore a coherent pre-upgrade backup instead. An older
-gateway may reset newer cursors and cannot enforce the adopted wire floor.
+rollback strategy. An older gateway may reset newer cursors and cannot enforce
+the adopted wire floor.
 
 Adding member-local configuration fields does not interrupt an existing member
 that still understands every pinned field, even while a sibling is offline.
