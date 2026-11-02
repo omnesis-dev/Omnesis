@@ -1,0 +1,115 @@
+name: Installer release skew
+
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates: on every push to main, and on a pull request that touches the
+# installer (and the launcher and shim templates inside it), the CLI's command
+# definitions, or this lane (scripts/nx/ci-scope.mjs, `installer_release_skew`).
+#
+# omnesis.dev serves main's install.sh, and that installer installs the newest
+# RELEASED CLI. So the question this lane answers is whether this revision's
+# installer works with the newest release, not with its own CLI:
+#
+#   contract  every CLI call in install.sh, the Docker launcher and the
+#             beside-Docker shim it writes, and every command it prints, is
+#             accepted by the newest release's command tree (read from that
+#             tag's own source) and by this tree's, unless a capability probe
+#             of the release's help guards it. Also holds
+#             scripts/release/released-cli-surface.json to that release.
+#   native    install.sh run for real against the newest release, built from
+#             its tag: a gateway host and a collector with no terminal, a
+#             collector on a pseudo-terminal, and the re-run that hands off to
+#             the release's own `omnesis update`; every CLI process recorded
+#             and checked against the installed release.
+#   docker    install.sh --docker against the newest published images, the
+#             launcher it writes, and the re-run on a terminal.
+#
+# See docs/releasing.md § Installer and release skew.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  contract:
+    name: install.sh calls against the newest release's CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      # Defining a command loads no native module, so neither tree needs its
+      # install scripts.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check install.sh against the newest release
+        run: node scripts/install-e2e/release-skew.mjs contract --work "$RUNNER_TEMP/release-skew"
+
+  native:
+    name: install.sh against the newest release (no terminal and a terminal)
+    # The single-host install lanes' runner: real systemd user units.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Gateway, collector with no terminal, collector on a terminal, re-run
+        run: E2E_WORK="$RUNNER_TEMP/release-skew" scripts/install-e2e/release-skew.sh native
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/release-skew" scripts/install-e2e/diagnostics.sh
+
+  docker:
+    name: install.sh --docker against the newest images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: install.sh --docker, the launcher, and the re-run on a terminal
+        run: E2E_WORK="$RUNNER_TEMP/release-skew" scripts/install-e2e/release-skew.sh docker

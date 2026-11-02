@@ -19,6 +19,13 @@ GitHub-hosted machines. They use invented data and never publish a release.
 | T3   | `ubuntu-24.04` Docker gateway, `macos-15` native collector | nightly, manual tailnet dispatch                                                                   | A locally built gateway image pairs with the actual Mac collector over verified HTTPS. A refused pin/code, fictional vault ingestion, native collector restart and container restart must preserve device, document and encrypted-state identity. No image is published.                                                                                                                                                                                                                             |
 | U1   | `ubuntu-24.04`, `macos-15`                                 | same as S1                                                                                         | The newest release's dependencies are installed, the candidate is checked out over them and `npm ci` runs again, as that release's own updater does (`scripts/install-e2e/lockfile-upgrade.mjs`, install scripts skipped). A lockfile npm cannot reconcile over the previous tree would strand every source install on that release.                                                                                                                                                                 |
 
+These lanes install the candidate's own CLI (T2 starts from the newest
+release's own `install.sh`). The opposite pairing — this branch's `install.sh`
+driving the newest released CLI, which is what omnesis.dev serves — is the
+release-skew lane in `full-validation`
+(`.github/workflows/installer-release-skew.yml`); see `docs/releasing.md`
+§ Installer and release skew.
+
 Every lane installs without an embedding model (`install.sh --no-model`);
 embedding models are not what this lane tests. The search check is the
 gateway's document search (`GET /documents/search`), which matches stored

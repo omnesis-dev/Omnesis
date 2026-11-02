@@ -74,6 +74,7 @@ jobs:
       docker_smoke: ${{ steps.scope.outputs.docker_smoke }}
       install_smoke: ${{ steps.scope.outputs.install_smoke }}
       installer_coverage: ${{ steps.scope.outputs.installer_coverage }}
+      installer_release_skew: ${{ steps.scope.outputs.installer_release_skew }}
       topology: ${{ steps.scope.outputs.topology }}
       docker_security: ${{ steps.scope.outputs.docker_security }}
       harness: ${{ steps.scope.outputs.harness }}
@@ -160,6 +161,15 @@ jobs:
     with:
       target_sha: ${{ github.sha }}
 
+  # omnesis.dev serves main's installer, which installs the newest release:
+  # every CLI call it makes has to be one that release accepts.
+  installer-release-skew:
+    needs: scope
+    if: ${{ needs.scope.outputs.installer_release_skew == 'true' }}
+    uses: ./.github/workflows/installer-release-skew.yml
+    with:
+      target_sha: ${{ github.sha }}
+
   topology:
     needs: scope
     if: ${{ needs.scope.outputs.topology == 'true' }}
@@ -217,6 +227,7 @@ jobs:
       - docker-smoke
       - install-smoke
       - installer-coverage
+      - installer-release-skew
       - topology
       - harness
       - docker-security
@@ -241,6 +252,7 @@ jobs:
               "docker-smoke": "docker_smoke",
               "install-smoke": "install_smoke",
               "installer-coverage": "installer_coverage",
+              "installer-release-skew": "installer_release_skew",
               topology: "topology",
               harness: "harness",
               "docker-security": "docker_security",

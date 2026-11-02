@@ -209,6 +209,13 @@ function commandVersion({ requestedVersion, dryRun }) {
   if (!settled) run("npm", ["install", "--package-lock-only"]);
   const written = writeNativeVersions(repoRoot, requestedVersion);
   for (const path of written) console.log(`  wrote ${requestedVersion} into ${path}`);
+  // The installer served from main installs this release once it is tagged,
+  // so its CLI surface becomes the one the installer's calls are held to.
+  run(process.execPath, [
+    join(repoRoot, "scripts", "release", "cli-surface.mjs"),
+    "--write",
+    join(repoRoot, "scripts", "release", "released-cli-surface.json"),
+  ]);
   checkProductVersion(repoRoot, `v${requestedVersion}`);
   console.log(`Product version ${requestedVersion} is consistent across the repository.`);
   if (settled) return 0;
