@@ -1037,7 +1037,6 @@ async function recoverFromMissingCredentials(
 
   const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
   if (!ok) {
-    // Known bug: #100 — declining the wizard still exits 0.
     console.error(`${c.red}Aborting — credentials not set up.${c.reset}`);
     return false;
   }
@@ -1103,7 +1102,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   // The launcher can share it and pick the add up again: with the path as the
   // positional answer when the source asks for nothing else, otherwise by
   // asking again from the start.
-  const reportParamError = (error: string, path: string | null): void => {
+  const reportParamError = (error: string, path: string | null): never => {
     const outcome =
       path === null
         ? ({ kind: "none" } as const)
@@ -1120,6 +1119,9 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
     // Silent: the launcher explains and asks once this command exits.
     if (outcome.kind === "requested") throw new CliError("", EXIT_USER_ERROR);
     console.error(outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`);
+    // Refused, so the exit says so: a script or an agent reads the status,
+    // not the message.
+    throw new CliError("", EXIT_USER_ERROR);
   };
 
   // A prompt is one line, so the source's own explanation of the setting has
@@ -1138,10 +1140,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           value = pathValueForCollector(value, ctx.collectorHostname);
         }
         const err = await validateParam(ctx, descriptor.id, param.name, value);
-        if (err) {
-          reportParamError(err, param.type === "path" ? value : null);
-          return;
-        }
+        if (err) reportParamError(err, param.type === "path" ? value : null);
         params[param.name] = value;
         continue;
       }
@@ -1165,10 +1164,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           throw new CliError("", EXIT_CANCELLED);
         }
         const err = await validateParam(ctx, descriptor.id, param.name, value);
-        if (err) {
-          reportParamError(err, value);
-          return;
-        }
+        if (err) reportParamError(err, value);
         params[param.name] = value;
       } else {
         // A secret is not echoed. The same field can now reach a source's
@@ -1191,7 +1187,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         const err = await validateParam(ctx, descriptor.id, param.name, value as string);
         if (err) {
           console.error(`${c.red}${err}${c.reset}`);
-          return;
+          throw new CliError("", EXIT_USER_ERROR);
         }
         params[param.name] = value as string;
       }
@@ -1224,7 +1220,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         console.error(
           `${c.red}Aborting — ${descriptor.provider.name} credentials not provided.${c.reset}`,
         );
-        return;
+        throw new CliError("", EXIT_USER_ERROR);
       }
       pastedCredentials = fields;
     } else if (entry && spec.required && !entry.configured) {
@@ -1236,7 +1232,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         console.error(
           `${c.red}Aborting — ${descriptor.provider.name} credentials not set up.${c.reset}`,
         );
-        return;
+        throw new CliError("", EXIT_USER_ERROR);
       }
     }
   }
@@ -1318,7 +1314,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           outcome.missingCredentials,
           flowOptions,
         );
-        if (!recovered) return;
+        if (!recovered) throw new CliError("", EXIT_USER_ERROR);
         outcome = await runAuthFlowDetailed(ctx, descriptor.id, params, flowOptions);
       }
       if (!outcome.accountId && flowOptions.credentials) {
@@ -1378,7 +1374,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
 
   if (!accountIds || accountIds.length === 0) {
     console.error(`${c.red}No accounts to add.${c.reset}`);
-    return;
+    throw new CliError("", EXIT_USER_ERROR);
   }
 
   // An account resolved by a sign-in or a path may already be a source on
@@ -1409,7 +1405,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       `${c.red}Failed to add source: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
     );
     reportSettled(settled, 0);
-    return;
+    throw new CliError("", EXIT_FAILURE);
   }
 
   console.log(`\n${c.green}${descriptor.name} added successfully!${c.reset}`);

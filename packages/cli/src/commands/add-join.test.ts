@@ -266,15 +266,18 @@ describe("sources add against a configured account", () => {
       throw new Error(`unexpected path ${path}`);
     });
 
-    await runAdd(
-      [localDescriptor],
-      [partitioned],
-      "notes-synth",
-      fakePrompts(),
-      "assume-yes",
-      devices,
-      "~/missing-on-target",
-    );
+    // Refused, and the exit status says so for a script or an agent.
+    await expect(
+      runAdd(
+        [localDescriptor],
+        [partitioned],
+        "notes-synth",
+        fakePrompts(),
+        "assume-yes",
+        devices,
+        "~/missing-on-target",
+      ),
+    ).rejects.toMatchObject({ name: "CliError", exitCode: 2 });
 
     expect(mocks.gatewayFetch).not.toHaveBeenCalled();
   });
