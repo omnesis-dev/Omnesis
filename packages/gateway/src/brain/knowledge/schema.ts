@@ -91,6 +91,12 @@ export function createKnowledgeTables(db: Database.Database): void {
       claims_json TEXT NOT NULL, diff_json TEXT NOT NULL, created_at INTEGER NOT NULL,
       PRIMARY KEY(node_id,revision)
     );
+    -- Everything a node's retained history ever cited, each target once, at
+    -- the earliest revision that cited it. It is a set per node, not a
+    -- per-revision snapshot: a target a later revision still cites has no
+    -- second row. Readers ask which targets a node's history reaches (privacy
+    -- closures) or whether any history cites a target; neither needs more.
+    -- Rows leave only with the whole node (purge).
     CREATE TABLE IF NOT EXISTS knowledge_revision_dependencies (
       node_id TEXT NOT NULL, revision INTEGER NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL,
       PRIMARY KEY(node_id,revision,target_kind,target_id),
