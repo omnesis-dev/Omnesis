@@ -28,6 +28,7 @@ function summaryAt(epochMs: number): ProfileSummary {
     reason: "test",
     stalls: [],
     profiledMs: 1_000,
+    hottestCode: null,
     busyMs: 500,
     longRunMs: 500,
     longRuns: [],
