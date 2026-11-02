@@ -73,6 +73,7 @@ import { canonicalizeDeclaredTemporals } from "./canonical-row.js";
 import { hashKey, primaryKeyOf, stableEventHash, stableRowHash, type RowKey } from "./row-hash.js";
 import { seenKey } from "./store.js";
 import type { AnalyticsTableSchema, DocumentEventProfile } from "@omnesis/source-sdk";
+import type Database from "better-sqlite3";
 import type { Db } from "../data/types.js";
 import type { MaterializerQueue, QueuedDocument, QueuedRow } from "./queue.js";
 import type { NewJournalEvent, WatchJournalStore } from "./store.js";
@@ -187,6 +188,11 @@ export class Materializer {
   private readonly batchSize: number;
   /** Set while the startup sweep still has pages to walk. */
   private recovering = true;
+  /** Prepared on first use: a drain asks it once per journalled document. */
+  private peopleStatement: Database.Statement<
+    [string],
+    { person_id: string; role: string; is_self: number }
+  > | null = null;
 
   constructor(private readonly deps: MaterializerDeps) {
     this.now = deps.now ?? Date.now;
@@ -336,16 +342,20 @@ export class Materializer {
       return true;
     }
 
+    // A row-value comparison: SQLite seeks to the checkpoint's timestamp in
+    // `idx_documents_updated_at_id` and walks only the rows tied with it. The
+    // equivalent `a > ? OR (a = ? AND b > ?)` walks that index from its start
+    // on every page.
     const rows = this.deps.db
-      .prepare<[string, string, string, number], DocumentRow>(
+      .prepare<[string, string, number], DocumentRow>(
         `SELECT id, source_id, provider_id, title, content_hash, metadata, source_created_at, updated_at,
                 people_resolved_at
            FROM documents
-          WHERE updated_at > ? OR (updated_at = ? AND id > ?)
+          WHERE (updated_at, id) > (?, ?)
           ORDER BY updated_at ASC, id ASC
           LIMIT ?`,
       )
-      .all(checkpoint.at, checkpoint.at, checkpoint.id, SWEEP_PAGE);
+      .all(checkpoint.at, checkpoint.id, SWEEP_PAGE);
     if (rows.length === 0) return true;
 
     let cursor = checkpoint;
@@ -392,6 +402,10 @@ export class Materializer {
       ...new Set(examinedQueue.map((q) => q.document.id)),
     ]);
     const deadline = this.now() - this.settlementMs;
+    const documentState = this.deps.db.prepare<
+      [string],
+      Pick<DocumentRow, "people_resolved_at" | "updated_at">
+    >("SELECT people_resolved_at, updated_at FROM documents WHERE id = ?");
     let newestJournaled: Checkpoint | null = null;
     let examined = 0;
 
@@ -406,11 +420,7 @@ export class Materializer {
       examined += 1;
 
       const projection = entry.document;
-      const row = this.deps.db
-        .prepare<[string], Pick<DocumentRow, "people_resolved_at" | "updated_at">>(
-          "SELECT people_resolved_at, updated_at FROM documents WHERE id = ?",
-        )
-        .get(projection.id);
+      const row = documentState.get(projection.id);
       // Gone between the commit and the drain: deleted, or a source removed.
       // Nothing to say about a document that no longer exists.
       if (!row) continue;
@@ -645,15 +655,19 @@ export class Materializer {
       return;
     }
 
+    // A row-value comparison: SQLite seeks to the cursor's timestamp in
+    // `idx_indexed_documents_event` and walks only the rows tied with it. The
+    // equivalent `a > ? OR (a = ? AND b > ?)` walks the index from its start,
+    // which on a drain every few seconds is every indexed document each time.
     const rows = indexDb
-      .prepare<[string, string, string, number], { document_id: string; indexed_at: string }>(
+      .prepare<[string, string, number], { document_id: string; indexed_at: string }>(
         `SELECT document_id, event_indexed_at AS indexed_at
            FROM indexed_documents
-          WHERE event_indexed_at > ? OR (event_indexed_at = ? AND document_id > ?)
+          WHERE (event_indexed_at, document_id) > (?, ?)
           ORDER BY event_indexed_at ASC, document_id ASC
           LIMIT ?`,
       )
-      .all(stored.at, stored.at, stored.id, SWEEP_PAGE);
+      .all(stored.at, stored.id, SWEEP_PAGE);
     if (rows.length === 0) return;
 
     let last = stored;
@@ -677,22 +691,23 @@ export class Materializer {
     role: string;
     isSelf: boolean;
   }[] {
-    return this.deps.db
-      .prepare<[string], { person_id: string; role: string; is_self: number }>(
-        `SELECT COALESCE(p.merged_into, p.id) AS person_id, dp.role,
-                COALESCE(canon.is_self, p.is_self) AS is_self
-           FROM document_people dp
-           JOIN people p ON p.id = dp.person_id
-           LEFT JOIN people canon ON canon.id = p.merged_into
-          WHERE dp.document_id = ?
-          ORDER BY dp.role, person_id`,
-      )
-      .all(docId)
-      .map((row) => ({
-        personId: row.person_id,
-        role: row.role,
-        isSelf: row.is_self === 1,
-      }));
+    this.peopleStatement ??= this.deps.db.prepare<
+      [string],
+      { person_id: string; role: string; is_self: number }
+    >(
+      `SELECT COALESCE(p.merged_into, p.id) AS person_id, dp.role,
+              COALESCE(canon.is_self, p.is_self) AS is_self
+         FROM document_people dp
+         JOIN people p ON p.id = dp.person_id
+         LEFT JOIN people canon ON canon.id = p.merged_into
+        WHERE dp.document_id = ?
+        ORDER BY dp.role, person_id`,
+    );
+    return this.peopleStatement.all(docId).map((row) => ({
+      personId: row.person_id,
+      role: row.role,
+      isSelf: row.is_self === 1,
+    }));
   }
 
   /**

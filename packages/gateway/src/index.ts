@@ -2041,6 +2041,7 @@ if (watchV2 && watchStores?.ok) {
     analyticsDb,
     indexDb,
     ontologyDb: db,
+    peopleDirectory: (knownHash) => ioGate.watchPeopleDirectory(knownHash),
     tunables: watchTunables,
     getEmbedder: () => getSemanticEmbedder(),
     getCompleter: () => {

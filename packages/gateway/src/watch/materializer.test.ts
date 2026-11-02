@@ -26,6 +26,7 @@ import Database from "better-sqlite3";
 
 import { ANALYTICS_STREAM_COLUMN } from "@omnesis/source-sdk";
 import { runSchemaSetup } from "../data/schema.js";
+import { createIndexDatabase } from "../indexer/db.js";
 import { Materializer, type JournalTableSchema } from "./materializer.js";
 import { capture, MaterializerQueue } from "./queue.js";
 import { WatchJournalStore } from "./store.js";
@@ -963,5 +964,120 @@ describe("the semantic clock", () => {
       (await materializer.drain()).indexed,
       "the cursor did not advance, so the sweep repeats itself",
     ).toBe(0);
+  });
+});
+
+describe("the keyset sweeps", () => {
+  const TIED = "2026-03-01T10:00:00.000Z";
+
+  /** The production `index.db` schema, so plans are the ones a gateway gets. */
+  function realIndex(): Db {
+    return createIndexDatabase(":memory:");
+  }
+
+  function indexRow(index: Db, id: string, at: string): void {
+    index
+      .prepare(
+        `INSERT INTO indexed_documents (document_id, content_hash, chunk_count, indexed_at, event_indexed_at)
+         VALUES (?, 'h', 1, ?, ?)`,
+      )
+      .run(id, at, at);
+  }
+
+  function withIndex(index: Db): Materializer {
+    return new Materializer({
+      db,
+      indexDb: index,
+      store,
+      queue,
+      tableSchema: () => Promise.resolve(null),
+      documentProfile: () => GMAIL_PROFILE,
+      now: () => clock,
+    });
+  }
+
+  /** The plan of every statement a handle prepares during `run`. */
+  async function plansDuring(handle: Db, run: () => Promise<unknown>): Promise<string[]> {
+    const original = handle.prepare.bind(handle);
+    const seen: string[] = [];
+    handle.prepare = ((sql: string) => {
+      seen.push(sql);
+      return original(sql);
+    }) as typeof handle.prepare;
+    try {
+      await run();
+    } finally {
+      handle.prepare = original;
+    }
+    return seen.map((sql) =>
+      original<string[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...(sql.match(/\?/g) ?? []).map(() => "x"))
+        .map((row) => row.detail)
+        .join(" | "),
+    );
+  }
+
+  it("pages the semantic clock through a tie group larger than a page", async () => {
+    // One index batch stamps many rows with one instant, so the cursor's
+    // tiebreak on document id is what carries a page boundary inside a group.
+    const index = realIndex();
+    indexRow(index, randomUUID(), "2026-02-01T00:00:00.000Z");
+    const materializer = withIndex(index);
+    await materializer.drain();
+
+    const tied = Array.from({ length: 250 }, () => randomUUID());
+    for (const id of tied) indexRow(index, id, TIED);
+
+    expect((await materializer.drain()).indexed).toBe(200);
+    expect((await materializer.drain()).indexed).toBe(50);
+    expect((await materializer.drain()).indexed).toBe(0);
+    const swept = store
+      .read(0, 1_000)
+      .flatMap((event) => (event.kind === "doc.indexed" ? [event.payload.docId] : []));
+    expect(swept.sort(), "a tied row was skipped or repeated").toEqual(tied.sort());
+  });
+
+  it("pages the recovery sweep through a tie group larger than a page", async () => {
+    insertDocument(projection(), true);
+    await build().drain();
+
+    const tied = Array.from({ length: 250 }, (_, i) => projection({ externalId: `tie-${i}` }));
+    for (const doc of tied) insertDocument(doc, true, TIED);
+
+    const materializer = build();
+    expect((await materializer.drain()).recovered).toBe(200);
+    expect((await materializer.drain()).recovered).toBe(50);
+    expect((await materializer.drain()).recovered).toBe(0);
+    const recovered = store
+      .read(0, 1_000)
+      .flatMap((event) => (event.kind === "doc.event" ? [event.payload.docId] : []));
+    expect(recovered.sort(), "a tied document was skipped or repeated").toEqual(
+      tied.map((doc) => doc.id).sort(),
+    );
+  });
+
+  it("seeks the semantic clock's cursor instead of walking the index to it", async () => {
+    const index = realIndex();
+    indexRow(index, randomUUID(), "2026-02-01T00:00:00.000Z");
+    const materializer = withIndex(index);
+    await materializer.drain();
+
+    const plans = await plansDuring(index, () => materializer.drain());
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatch(
+      /SEARCH indexed_documents USING COVERING INDEX idx_indexed_documents_event \(\(event_indexed_at,document_id\)>\(\?,\?\)\)/,
+    );
+  });
+
+  it("seeks the recovery sweep's checkpoint instead of walking the index to it", async () => {
+    insertDocument(projection(), true);
+    await build().drain();
+
+    const materializer = build();
+    const plans = await plansDuring(db, () => materializer.drain());
+    const sweep = plans.filter((plan) => plan.includes("documents") && plan.includes("updated_at"));
+    expect(sweep).toHaveLength(1);
+    expect(sweep[0]).toMatch(/SEARCH documents USING INDEX idx_documents_updated_at_id/);
+    expect(sweep[0]).not.toMatch(/TEMP B-TREE/);
   });
 });

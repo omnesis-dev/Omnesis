@@ -60,6 +60,7 @@ import { LiveRecall } from "./recall.js";
 import { WatchTraceStore } from "./traces.js";
 import type { WatchLayerHealth } from "./health.js";
 import type { OntologyCoverage } from "./ontology.js";
+import type { PeopleDirectoryReader } from "./people-directory.js";
 import type { AnalyticsDb } from "../analytics-db.js";
 import type { Db } from "../data/types.js";
 import type { WatchJournalStore } from "./store.js";
@@ -134,6 +135,11 @@ export interface WatchV2EngineOptions {
   readonly indexDb: Db | null;
   /** The documents/people store, for the ontology. */
   readonly ontologyDb: Db;
+  /**
+   * The ontology's per-pass person-directory read, off the main thread. Absent,
+   * it is read on `ontologyDb`.
+   */
+  readonly peopleDirectory?: PeopleDirectoryReader;
   readonly tunables?: WatchV2EngineTunables;
   readonly getEmbedder: () => { embedQuery(text: string): Promise<number[]> } | null;
   readonly getCompleter: () => CompleteCapability | null;
@@ -480,6 +486,7 @@ export function startWatchV2Engine(options: WatchV2EngineOptions): WatchV2Engine
       // Every source the gateway indexes is chunked and embedded; the indexer
       // does not pick and choose by source.
       semanticallyIndexed: () => true,
+      ...(options.peopleDirectory ? { peopleDirectory: options.peopleDirectory } : {}),
     },
     ...(options.tunables?.idleEvaluateIntervalMs === undefined
       ? {}
