@@ -4117,12 +4117,13 @@ print_recovery_code() {
 # own output. Under --docker it runs in a container, which gets a terminal only
 # when the launcher's input is one, and without a terminal the CLI answers in
 # JSON meant for a program. So a Docker run hands it the terminal when there
-# is one, and otherwise keeps that JSON out of the output: the line this
-# installer prints next says what the step did. Errors still show.
+# is one, for its output too (this run's own may be a pipe, `| tee log`), and
+# otherwise keeps that JSON out of the output: the line this installer prints
+# next says what the step did. Errors still show.
 cli_for_person() {
   if [ "$DOCKER" = 1 ]; then
     if is_promptable; then
-      "$@" </dev/tty
+      "$@" </dev/tty >/dev/tty
     else
       "$@" >/dev/null
     fi
