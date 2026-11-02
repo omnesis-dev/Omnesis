@@ -382,10 +382,22 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           machine's LAN addresses only. Give each gateway on one network its own name with
           <code>gateway.mdns.hostname</code>; two that announce the same name answer for each other.
           The machine's own <code>.local</code> name is not offered: on a host running Docker or
-          virtual machines its announcements can include addresses a phone cannot reach. A phone
-          paired by fingerprint on a gateway whose certificate renews, such as a Tailscale
-          certificate, stops connecting at the next renewal; the pairing screen gives the date, and
-          the Tailscale name avoids it.
+          virtual machines its announcements can include addresses a phone cannot reach.
+        </p>
+        <p>
+          A gateway in Docker's default bridge network sees only the container's own address and the
+          <code>.local</code> name it announces on Docker's network, and a phone reaches neither, so
+          the pairing screen lists them as not offered. It offers the host's addresses instead, at
+          the port Docker publishes: its LAN addresses, its Tailscale address, and its
+          <code>.local</code> name when the host answers mDNS (macOS does; Linux does with
+          <code>avahi-daemon</code> running). The <code>omnesis</code> command on the host records
+          them every time it runs, so after the router gives the host a new address, any
+          <code>omnesis</code> command updates what the next pairing offers. The phone verifies the
+          gateway by its pinned fingerprint at these addresses, whichever names the certificate
+          covers; with a Tailscale certificate, the Tailscale name is offered first and verified by
+          platform trust. A phone paired by fingerprint on a gateway whose certificate renews, such
+          as a Tailscale certificate, stops connecting at the next renewal; the pairing screen gives
+          the date, and the Tailscale name avoids it.
         </p>
         <p>
           <code>--gateway-url</code> states the address instead, and the CLI refuses one the phone

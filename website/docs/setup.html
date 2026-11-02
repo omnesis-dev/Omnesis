@@ -703,9 +703,11 @@ omnesis.example.com {
           carries everything the app needs, including how to trust the gateway's certificate; see
           <a href="/docs/apps#pairing">Mobile apps → Pairing</a>. The portal and the CLI offer only
           addresses that phone can use and say where each works. A gateway in Docker's default
-          bridge network sees only the container's own address, so it offers the host's names and
-          addresses from its certificate first, and the container's address last. If you want the
-          phone to work away from home, set up <a href="#away-from-home">Tailscale</a> before
+          bridge network sees only the container's own address and name, which no phone can reach,
+          so it never offers them: the <code>omnesis</code> command on the host records the host's
+          LAN and Tailscale addresses, its <code>.local</code> name when the host answers mDNS, and
+          the port Docker publishes, every time it runs, and the gateway offers those. If you want
+          the phone to work away from home, set up <a href="#away-from-home">Tailscale</a> before
           pairing. How to install the apps is on
           <a href="/docs/apps#getting-the-apps">Getting the apps</a>.
         </p>

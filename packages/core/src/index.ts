@@ -648,7 +648,16 @@ export {
 } from "./config-secret-materialization.js";
 
 export {
+  HOST_NETWORK_FILE,
+  hostNetworkFromText,
+  hostNetworkIdentities,
+  parseHostNetwork,
+  type HostNetwork,
+  type HostNetworkFacts,
+} from "./host-network.js";
+export {
   discoverNetworkIdentities,
+  interfaceIdentities,
   realLanIpv4s,
   safeNetworkInterfaces,
   networkInterfacesUsable,

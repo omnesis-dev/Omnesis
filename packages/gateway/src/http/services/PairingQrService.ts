@@ -14,6 +14,7 @@ import {
   pairingPlatformForKind,
   pairingReachRank,
   swapHost,
+  type HostNetwork,
   type NetworkIdentity,
   type PairingAddressOption,
   type PairingAddressContext,
@@ -71,6 +72,13 @@ export interface PairingQrServiceOptions {
    * discovers the container's own addresses, which phones cannot reach.
    */
   inContainer?: boolean;
+  /**
+   * The network of the host this container runs on, as the host's launcher
+   * last recorded it (`<config>/host-network`), or null when none is
+   * recorded. Read on every request, so a new address from the router is
+   * offered as soon as the launcher has seen it. Consulted only in a container.
+   */
+  hostNetwork?: () => HostNetwork | null;
 }
 
 const IDENTITY_LABELS: Record<NetworkIdentity["kind"], string> = {
@@ -91,9 +99,47 @@ const HOST_NAME_LABELS: Record<PairingHostClass, string> = {
   "public-name": "Public address",
 };
 
-const CONTAINER_ADDRESS_LABEL = "Docker container address";
-const CONTAINER_ADDRESS_SUMMARY =
-  "The container's address on Docker's own network, which phones usually can't reach.";
+/** The container's own addresses: phones never reach the network Docker gives a container. */
+const CONTAINER_ADDRESS = {
+  label: "Docker container address",
+  reason:
+    "This is the Docker container's own address, on a network that exists only inside Docker, so a phone can't reach it. Use one of this computer's addresses instead.",
+};
+const CONTAINER_NAME = {
+  label: "Docker container name",
+  reason:
+    "The gateway announces this name only on the Docker container's own network, so a phone can't find it. Use one of this computer's addresses instead.",
+};
+
+/**
+ * Where phones reach this gateway, as one request sees it: the host's
+ * identities and the port Docker publishes, or for a gateway on the host's
+ * own network what it discovers itself.
+ */
+interface NetworkView {
+  /** The host's identities a phone may be offered. */
+  identities: NetworkIdentity[];
+  /**
+   * Whether they are what the host's launcher recorded, rather than what the
+   * gateway discovered: then the host's `.local` name among them is the one
+   * the host itself answers for, and they come before the installer's names.
+   */
+  recorded: boolean;
+  /** The port a phone reaches those identities and the given host names on. */
+  port: string;
+  /** The host names the gateway was given that are worth offering. */
+  hostNames: string[];
+  /** The `.local` name the gateway advertises, when phones can find it. */
+  advertisedLocalName: string | null;
+  /**
+   * Behind a Docker bridge: the container's own addresses and names, which
+   * are refused, and the hosts that name the container to another container.
+   */
+  container: {
+    refused: Array<{ host: string; label: string; reason: string }>;
+    names: Set<string>;
+  } | null;
+}
 
 /**
  * Chooses and encodes pairing QR payloads. Every address is judged for the
@@ -161,7 +207,11 @@ export class PairingQrService {
 
   /** The host's network identities, those backed by platform trust first. */
   async networkIdentities(): Promise<NetworkIdentity[]> {
-    const identities = await this.options.discoverIdentities();
+    const discovered = await this.options.discoverIdentities();
+    const view = this.networkView(discovered, "");
+    // Behind a Docker bridge the host's identities stand in for what the
+    // container discovers; the host's `.local` name there is its real mDNS one.
+    const identities = view.container ? view.identities : discovered;
     const trustedHosts = new Set([
       ...[...this.allowlistedOrigins()].map((origin) => pairingHost(new URL(origin))),
       ...(this.options.publiclyTrustedHosts?.() ?? []).map(normalizeHost),
@@ -172,18 +222,77 @@ export class PairingQrService {
   }
 
   /**
+   * The host's view of the network for one request. A gateway in a container
+   * is behind a Docker bridge when its host's launcher recorded the host's
+   * network (`hostNetwork`), or, for an install whose launcher predates that,
+   * when it was given host names and discovers none of them. Behind a bridge
+   * every address and name the gateway discovers or advertises belongs to the
+   * container's own network, so they are refused; the host's recorded
+   * identities, at the port Docker publishes, are what phones reach.
+   */
+  private networkView(discovered: NetworkIdentity[], requestPort: string): NetworkView {
+    const listenPort = this.options.listenPort ? String(this.options.listenPort) : requestPort;
+    const hostNames = pairableHostNames(this.options.hostNames?.() ?? []);
+    const advertisedLocalName = this.options.advertisedLocalName?.() ?? null;
+    const inContainer = this.options.inContainer === true;
+    const host = inContainer ? (this.options.hostNetwork?.() ?? null) : null;
+    const givenHosts = new Set(hostNames);
+    const bridged =
+      host !== null ||
+      (inContainer &&
+        hostNames.length > 0 &&
+        !discovered.some((i) => i.kind === "lan" && givenHosts.has(normalizeHost(i.address))));
+    if (!bridged) {
+      return {
+        identities: discovered,
+        recorded: false,
+        port: listenPort,
+        hostNames,
+        advertisedLocalName,
+        container: null,
+      };
+    }
+    const refused = [
+      ...discovered
+        .filter((i) => i.kind === "lan")
+        .map((i) => ({ host: i.address, ...CONTAINER_ADDRESS })),
+      ...(advertisedLocalName ? [{ host: advertisedLocalName, ...CONTAINER_NAME }] : []),
+    ];
+    const names = new Set(
+      [
+        ...refused.map((r) => r.host),
+        ...discovered
+          .filter((i) => i.kind === "mdns")
+          .flatMap((i) => [i.address, i.address.replace(/\.local$/u, "")]),
+      ].map(normalizeHost),
+    );
+    return {
+      identities: host?.identities ?? [],
+      recorded: host !== null,
+      port: host?.port ? String(host.port) : listenPort,
+      // The recorded network is read fresh; an address the installer wrote
+      // into the environment may since have changed, so only names stay.
+      hostNames: host ? hostNames.filter((h) => !isIP(h)) : hostNames,
+      advertisedLocalName: null,
+      container: { refused, names },
+    };
+  }
+
+  /**
    * Every address the phone behind `pairingCode` can be given, judged for that
    * phone and ordered best first. Candidates are each allowlisted origin, the
-   * host names the gateway was given (`hostNames`), the host's network
-   * identities at the listen port (its own `.local` name replaced by the one
-   * the gateway advertises), and the host the caller reached the gateway by,
-   * at the port it used. A loopback address is left out: no phone reaches it
-   * (a simulator on this host can still be given one explicitly).
+   * host's network identities at the port phones reach them on (the host's
+   * own `.local` name replaced by the one the gateway advertises), the host
+   * names the gateway was given (`hostNames`), and the host the caller reached
+   * the gateway by, at the port it used. A loopback address is left out: no
+   * phone reaches it (a simulator on this host can still be given one
+   * explicitly).
    *
-   * A gateway in a container that discovers none of its host names is behind
-   * a Docker bridge: what it discovers, and the `.local` name it advertises
-   * there, belong to the container's own network. Those are listed after
-   * every other usable address, so they are never recommended over one.
+   * Behind a Docker bridge (`networkView`) the identities are the host's, its
+   * `.local` name included, at the port Docker publishes; the container's own
+   * addresses and the `.local` name it advertises on Docker's network are
+   * listed as refused, and a caller that reached the gateway from inside
+   * Docker does not add the address it used.
    */
   async pairingAddresses(input: {
     pairingCode: string;
@@ -192,73 +301,86 @@ export class PairingQrService {
   }): Promise<PairingAddressPlan> {
     const platform = this.platformFor(input.pairingCode);
     const context = this.judgeContext(platform);
-    const identities = await this.options.discoverIdentities();
+    const discovered = await this.options.discoverIdentities();
+    const view = this.networkView(discovered, input.requestPort);
+    const { identities, hostNames, container } = view;
     const labelFor = (host: string, otherwise: string) => {
       const identity = identities.find((i) => normalizeHost(i.address) === normalizeHost(host));
       if (identity) return IDENTITY_LABELS[identity.kind];
       return isTailnetName(host) ? IDENTITY_LABELS["tailscale-magicdns"] : otherwise;
     };
 
-    const hostNames = pairableHostNames(this.options.hostNames?.() ?? []);
-    const givenHosts = new Set(hostNames);
-    const bridged =
-      this.options.inContainer === true &&
-      hostNames.length > 0 &&
-      !identities.some((i) => i.kind === "lan" && givenHosts.has(normalizeHost(i.address)));
-    const containerUrls = new Set<string>();
-
     const candidates = new Map<string, string>();
     for (const origin of this.allowlistedOrigins()) {
       candidates.set(origin, labelFor(new URL(origin).hostname, "Public address"));
     }
-    const listenPort = this.options.listenPort
-      ? String(this.options.listenPort)
-      : input.requestPort;
-    for (const host of hostNames) {
-      const url = originAt(host, listenPort);
-      if (!candidates.has(url)) {
-        candidates.set(url, labelFor(host, HOST_NAME_LABELS[classifyPairingHost(host)]));
+    const hostCandidates = (): void => {
+      for (const host of hostNames) {
+        const url = originAt(host, view.port);
+        if (!candidates.has(url)) {
+          candidates.set(url, labelFor(host, HOST_NAME_LABELS[classifyPairingHost(host)]));
+        }
       }
-    }
+    };
+    // The names the gateway was given come before what it discovers, and
+    // after what the host's launcher recorded, which is read fresh.
+    if (!view.recorded) hostCandidates();
     for (const identity of identities) {
-      if (identity.kind === "mdns") continue;
-      const url = originAt(identity.address, listenPort);
-      if (bridged && identity.kind === "lan") containerUrls.add(url);
+      if (identity.kind === "mdns" && !view.recorded) continue;
+      const url = originAt(identity.address, view.port);
       if (!candidates.has(url)) candidates.set(url, IDENTITY_LABELS[identity.kind]);
     }
-    const localName = this.options.advertisedLocalName?.() ?? null;
-    if (localName) {
-      const url = originAt(localName, listenPort);
-      if (bridged) containerUrls.add(url);
+    if (view.recorded) hostCandidates();
+    if (view.advertisedLocalName) {
+      const url = originAt(view.advertisedLocalName, view.port);
       if (!candidates.has(url)) candidates.set(url, IDENTITY_LABELS.mdns);
     }
-    // The host's own `.local` name stays out even when the caller reached the
-    // gateway by it: a phone may resolve it to an address it cannot reach.
-    const requestedHostIsOwnLocalName = identities.some(
-      (i) => i.kind === "mdns" && normalizeHost(i.address) === normalizeHost(input.requestHost),
-    );
+    // Natively the host's own `.local` name stays out even when the caller
+    // reached the gateway by it: a phone may resolve it to an address it
+    // cannot reach. Behind a bridge, a caller on Docker's network (another
+    // container, or the CLI in this one) used an address only Docker knows.
+    const requestedHostIsOwnLocalName =
+      container === null &&
+      discovered.some(
+        (i) => i.kind === "mdns" && normalizeHost(i.address) === normalizeHost(input.requestHost),
+      );
+    const requestedFromDocker =
+      container !== null &&
+      (container.names.has(normalizeHost(input.requestHost)) ||
+        (this.options.listenPort !== undefined &&
+          input.requestPort === String(this.options.listenPort) &&
+          input.requestPort !== view.port));
     const requested = originAt(input.requestHost, input.requestPort);
-    if (!requestedHostIsOwnLocalName && !candidates.has(requested)) {
+    if (!requestedHostIsOwnLocalName && !requestedFromDocker && !candidates.has(requested)) {
       candidates.set(requested, labelFor(input.requestHost, "The address you're using now"));
     }
 
     const judged = [...candidates].flatMap(([gatewayUrl, label], index) => {
       const verdict = judgePairingAddress(gatewayUrl, context);
       if (verdict.usable && verdict.reach === "this-computer") return [];
-      const inContainerNetwork = verdict.usable && containerUrls.has(gatewayUrl);
       const option: PairingAddressOption = {
         gatewayUrl,
         host: pairingHost(new URL(gatewayUrl)),
         label,
         ...verdict,
-        ...(inContainerNetwork
-          ? { label: CONTAINER_ADDRESS_LABEL, summary: CONTAINER_ADDRESS_SUMMARY }
-          : {}),
       };
-      // After every other usable address; refused ones still sort last.
-      const rank = pairingReachRank(verdict) + (inContainerNetwork ? CONTAINER_RANK_PENALTY : 0);
-      return [{ option, rank, index }];
+      return [{ option, rank: pairingReachRank(verdict), index }];
     });
+    for (const refused of container?.refused ?? []) {
+      const gatewayUrl = originAt(refused.host, view.port);
+      if (candidates.has(gatewayUrl)) continue;
+      judged.push({
+        option: {
+          gatewayUrl,
+          host: pairingHost(new URL(gatewayUrl)),
+          label: refused.label,
+          usable: false,
+          reason: refused.reason,
+        },
+        rank: Number.POSITIVE_INFINITY,
+        index: judged.length,
+      });
+    }
     judged.sort((a, b) => a.rank - b.rank || a.index - b.index);
     const addresses = judged.map((j) => j.option);
     const reachesBeyondHome = addresses.some(
@@ -366,9 +488,6 @@ export class PairingQrService {
     return pairingPlatformForKind(kind);
   }
 }
-
-/** Larger than any usable reach rank, so a container's own address sorts after all of them. */
-const CONTAINER_RANK_PENALTY = 10;
 
 /**
  * The host names worth offering a phone, IPv4 addresses first, as discovery

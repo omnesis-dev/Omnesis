@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createLogger, WS_INVALID_INPUT } from "@omnesis/core";
+import { createLogger, WS_INVALID_INPUT, type HostNetwork } from "@omnesis/core";
 import { type DeviceId, type SourceId } from "@omnesis/types";
 import { BadGatewayError, ServiceUnavailableError, ValidationError } from "../../errors.js";
 import { clientAddress, isLoopbackClient, isLoopbackIp } from "../../client-ip.js";
@@ -132,6 +132,8 @@ export interface AdminRoutesDeps {
   pairingHostNames?: () => readonly string[];
   /** Whether the gateway runs inside a container. */
   inContainer?: boolean;
+  /** The Docker host's network as its launcher recorded it, or null; read per request. */
+  hostNetwork?: () => HostNetwork | null;
   resolveCollectorDeviceId: (requested?: string) => Promise<DeviceId | Response>;
   /**
    * Source-type-aware variant — filters online collectors to those

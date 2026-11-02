@@ -90,6 +90,7 @@ import { directIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
 import { generateSelfSigned, resolveTlsBundle, tlsExtraHostNames } from "./tls.js";
+import { readHostNetwork } from "./host-network.js";
 import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycle/addressing.js";
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
@@ -2642,6 +2643,9 @@ const app = createServer(db, DB_PATH, {
   // certificate kept from before a name was added does not.
   pairingHostNames: () => tlsLifecycle.coveredHosts(tlsExtraHosts),
   inContainer,
+  // Behind a Docker bridge the container sees only its own network; the
+  // host's launcher records the host's, which is where phones reach it.
+  hostNetwork: inContainer ? () => readHostNetwork(configDir) : undefined,
   systemTrustPairingOrigins: () => [
     ...(runtime.publicBaseUrl ? [runtime.publicBaseUrl] : []),
     ...runtime.pairingSystemTrustOrigins,
