@@ -29,6 +29,7 @@ function harness(ticks: (OwnershipRepairTick | Error)[]) {
   const info = vi.spyOn(log, "info").mockImplementation(() => {});
   const scheduler = {
     snapshot: () => ({ perTask: [] }),
+    taskStats: () => null,
     getLastTickInfo: () => undefined,
   } as unknown as Scheduler;
   const bundle = createOwnershipRepairTask(
