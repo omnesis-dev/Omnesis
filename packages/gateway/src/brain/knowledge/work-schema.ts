@@ -270,5 +270,12 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
   createKnowledgeRetryIndexes(db);
   createKnowledgeBatchReadIndexes(db);
   createKnowledgePendingReadIndexes(db);
+  // Intake asks whether a node revision was already propagated by a frontier
+  // item, and every tick releases the open batches whose run is over: both
+  // seek these instead of walking every frontier item or batch ever made.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS knowledge_frontier_result
+      ON knowledge_frontier(node_id,result_revision,status);
+    CREATE INDEX IF NOT EXISTS knowledge_batches_status ON knowledge_batches(status,created_at);`);
   installKnowledgeReconciliationTriggers(db);
 }

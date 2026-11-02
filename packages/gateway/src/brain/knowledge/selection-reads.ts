@@ -18,6 +18,8 @@ import {
   type DueKnowledgeReview,
   type DueKnowledgeReviewOptions,
 } from "./review-selection.js";
+import { hasKnowledgeWorkFromExcludedSources, listStaleKnowledgeWork } from "./work.js";
+import { readKnowledgeArcs, type KnowledgeArcRead } from "./engine-graph.js";
 import type Database from "better-sqlite3";
 
 /**
@@ -53,6 +55,12 @@ export interface KnowledgeSelectionReads {
     options: OrganizationCohortReadOptions,
   ): Promise<OrganizationCohortRead>;
   knowledgeDueReviews(options: DueKnowledgeReviewOptions): Promise<DueKnowledgeReview[]>;
+  /** Pending work the planner refreshes before planning; see `listStaleKnowledgeWork`. */
+  knowledgeStaleWork(limit: number): Promise<string[]>;
+  /** Whether pending source work belongs to a source excluded from the Brain. */
+  knowledgeHasExcludedWork(excludedSources: readonly string[]): Promise<boolean>;
+  /** The planner's graph read for a planning pass; see `readKnowledgeArcs`. */
+  knowledgeArcs(inputs: readonly string[], bound: number): Promise<KnowledgeArcRead>;
 }
 
 export function readOrganizationCohort(
@@ -77,6 +85,10 @@ export function directKnowledgeSelectionReads(db: Database.Database): KnowledgeS
       Promise.resolve(listOrganizationAdmissions(db, options)),
     knowledgeOrganizationCohort: (options) => Promise.resolve(readOrganizationCohort(db, options)),
     knowledgeDueReviews: (options) => Promise.resolve(listDueKnowledgeReviews(db, options)),
+    knowledgeStaleWork: (limit) => Promise.resolve(listStaleKnowledgeWork(db, limit)),
+    knowledgeHasExcludedWork: (excludedSources) =>
+      Promise.resolve(hasKnowledgeWorkFromExcludedSources(db, excludedSources)),
+    knowledgeArcs: (inputs, bound) => Promise.resolve(readKnowledgeArcs(db, inputs, bound)),
   };
 }
 

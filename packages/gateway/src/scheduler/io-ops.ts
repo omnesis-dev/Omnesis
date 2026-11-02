@@ -114,6 +114,9 @@ export interface IoGate {
   knowledgeOrganizationAdmissions: KnowledgeSelectionReads["knowledgeOrganizationAdmissions"];
   knowledgeOrganizationCohort: KnowledgeSelectionReads["knowledgeOrganizationCohort"];
   knowledgeDueReviews: KnowledgeSelectionReads["knowledgeDueReviews"];
+  knowledgeStaleWork: KnowledgeSelectionReads["knowledgeStaleWork"];
+  knowledgeHasExcludedWork: KnowledgeSelectionReads["knowledgeHasExcludedWork"];
+  knowledgeArcs: KnowledgeSelectionReads["knowledgeArcs"];
   watchPeopleDirectory: PeopleDirectoryReader;
   bootstrapCorpusByMonth(
     recencyFloor: string,
@@ -485,6 +488,13 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
   { name: "io.knowledgeDueReviews", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.knowledgeStaleWork", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  {
+    name: "io.knowledgeHasExcludedWork",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
+  { name: "io.knowledgeArcs", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   // The Watch ontology reads the whole people table on every evaluation pass.
   { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -621,6 +631,10 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.knowledgeOrganizationAdmissions", [options]),
     knowledgeOrganizationCohort: (options) => call("io.knowledgeOrganizationCohort", [options]),
     knowledgeDueReviews: (options) => call("io.knowledgeDueReviews", [options]),
+    knowledgeStaleWork: (limit) => call("io.knowledgeStaleWork", [limit]),
+    knowledgeHasExcludedWork: (excludedSources) =>
+      call("io.knowledgeHasExcludedWork", [[...excludedSources]]),
+    knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),

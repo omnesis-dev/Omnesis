@@ -22,6 +22,7 @@ import { directKnowledgeSelectionReads, type KnowledgeSelectionReads } from "./s
 import { readKnowledgeSourceRevision } from "./source-revision.js";
 import { saveKnowledgeNode } from "./storage.js";
 import { convertKnowledgeOwner } from "./owner-adapters.js";
+import { enqueueKnowledgeWork } from "./work.js";
 import type Database from "better-sqlite3";
 
 const WORKER_URL = new URL("../../workers/io-worker.ts", import.meta.url);
@@ -193,4 +194,50 @@ it("leaves a source excluded from the Brain out of every selection on the worker
   expect(await worker.knowledgeOrganizationCohort(cohort)).toEqual(
     await direct.knowledgeOrganizationCohort(cohort),
   );
+});
+
+function pendingSourceWork(id: string): void {
+  enqueueKnowledgeWork(
+    db,
+    {
+      id: `work-${id}`,
+      subjectId: id,
+      subjectKind: "source",
+      reason: "change",
+      inputRevision: readKnowledgeSourceRevision(db, id)!,
+      tier: "routine",
+      dueAt: 5,
+    },
+    1,
+  );
+}
+
+it("finds the same stale pending work on the worker as on the handle", async () => {
+  pendingSourceWork("capacity");
+  pendingSourceWork("roster");
+  db.prepare("UPDATE documents SET content_hash='body-v2' WHERE id='capacity'").run();
+  const expected = await direct.knowledgeStaleWork(512);
+  expect(expected).toEqual(["work-capacity"]);
+  expect(await worker.knowledgeStaleWork(512)).toEqual(expected);
+});
+
+it("finds pending work from an excluded source on the worker as on the handle", async () => {
+  pendingSourceWork("roster");
+  for (const excluded of [["fixture-notes"], ["fixture"], ["fixture-other"], []]) {
+    const expected = await direct.knowledgeHasExcludedWork(excluded);
+    expect(await worker.knowledgeHasExcludedWork(excluded), excluded.join()).toBe(expected);
+  }
+  expect(await worker.knowledgeHasExcludedWork(["fixture-notes"])).toBe(true);
+  expect(await worker.knowledgeHasExcludedWork(["fixture-other"])).toBe(false);
+});
+
+it("reads the same planning arcs on the worker as on the handle", async () => {
+  db.prepare("INSERT INTO knowledge_discovery_targets VALUES('roster',?,'page',1)").run(
+    readKnowledgeSourceRevision(db, "roster"),
+  );
+  const inputs = ["source:roster", "source:capacity", "page"];
+  const expected = await direct.knowledgeArcs(inputs, cfg.maxVisitedPerSeed);
+  expect(new Map(expected).get("source:roster")).toEqual(["page"]);
+  expect(await worker.knowledgeArcs(inputs, cfg.maxVisitedPerSeed)).toEqual(expected);
+  expect(await worker.knowledgeArcs(inputs, 0)).toEqual(await direct.knowledgeArcs(inputs, 0));
 });
