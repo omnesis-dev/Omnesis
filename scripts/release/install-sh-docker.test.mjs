@@ -1878,6 +1878,47 @@ describe("install.sh --docker --collector", () => {
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
   });
 
+  // The collector's token is this machine's device on the gateway: a re-run
+  // that redeemed a new code would make it a second device.
+  test("a re-run of a paired collector needs no code and keeps its device", () => {
+    expect(runInstaller("collector-rerun", CODED).status).toBe(0);
+    const collectorDir = join(prepareHome("collector-rerun"), ".config", "omnesis", "collector");
+    writeFileSync(join(collectorDir, "collector-token"), "fictional-device-token\n", {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(collectorDir, "collector-pairing-state.json"),
+      `${JSON.stringify({ state: "paired", deviceName: "studio-northstar", gatewayUrl: GATEWAY_URL, lastAuthenticatedAt: "2026-11-02T10:00:00.000Z" }, null, 2)}\n`,
+    );
+    const uncoded = CODED.filter(
+      (flag, index) => flag !== "--code" && CODED[index - 1] !== "--code",
+    );
+    const run = runInstaller("collector-rerun", uncoded);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("This collector is paired already");
+    expect(run.output).toContain("so it keeps that device (studio-northstar)");
+    expect(run.calls.some((call) => call.startsWith("pair "))).toBe(false);
+    expect(readFileSync(join(collectorDir, "collector-token"), "utf8")).toBe(
+      "fictional-device-token\n",
+    );
+    expect(run.docker.some((call) => call.includes("up -d collector"))).toBe(true);
+
+    // Another gateway is another pairing: the code is asked for again.
+    const elsewhere = runInstaller(
+      "collector-rerun",
+      uncoded.map((flag) =>
+        flag === GATEWAY_URL ? "https://other-gateway.example.com:7600" : flag,
+      ),
+    );
+    expect(elsewhere.status).toBe(1);
+    expect(elsewhere.output).toContain("--code <code>");
+
+    // A code given anyway pairs again.
+    const again = runInstaller("collector-rerun", CODED);
+    expect(again.status, again.output).toBe(0);
+    expect(again.calls.some((call) => call.startsWith("pair "))).toBe(true);
+  });
+
   test("refuses to pair without a code rather than sending an empty one", () => {
     const run = runInstaller("no-code", [
       "--docker",
