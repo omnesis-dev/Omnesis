@@ -27,6 +27,7 @@ import {
   getWatermark,
   getIndexGenerationStatus,
 } from "../../indexer/db.js";
+import { readScanProgressView } from "../../indexer/scan-progress.js";
 import { resolveSearchSettings } from "../../search/search-config.js";
 import { scope } from "../scope.js";
 import { readTestInstance } from "../services/test-instance.js";
@@ -457,7 +458,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // existing index regressing. Computed in the gateway; clients render the
       // neutral payload with no inference.
       const indexVersions = seg("idx.versions", () => getIndexGenerationStatus(indexDb));
-      index = { enabled: true, totalIndexed, totalChunks, watermark, indexVersions };
+      // The catch-up an operator watches: documents without an index row, and
+      // the scan in progress with its position, rate and pace.
+      const scan = seg("idx.scan", () => readScanProgressView(indexDb));
+      const backlog = Math.max(0, total - totalIndexed);
+      index = { enabled: true, totalIndexed, totalChunks, watermark, indexVersions, backlog, scan };
     }
 
     let dbSizeBytes: number | null = null;

@@ -669,6 +669,34 @@ const indexer = z
       .describe("Pause between consecutive pages in a backlogged cycle. Default 500ms.")
       .optional(),
     /**
+     * Catch-up pacing for a backlogged scan. `pageSize` and
+     * `betweenPageSleep` stay the pace whenever a user request is in flight
+     * or index.db's WAL is backing up; otherwise pages the hash check
+     * finishes quickly grow up to `maxPageSize`, the pause drops to
+     * `minBetweenPageSleep`, and the documents one page embeds adapt to keep
+     * each page near one second.
+     */
+    catchUp: z
+      .object({
+        enabled: z
+          .boolean()
+          .describe(
+            "Grow pages and shorten the pause while a backlog drains and nothing else needs the machine. Default true.",
+          )
+          .optional(),
+        maxPageSize: z
+          .number()
+          .int()
+          .positive()
+          .describe("Largest indexer scan page while catching up. Default 1000.")
+          .optional(),
+        minBetweenPageSleep: duration
+          .describe("Pause between pages while catching up. Default 10ms.")
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * Document chunker tunables. The chunker splits long content into
      * embedding-sized windows; these knobs balance recall vs. embedding
      * cost. Defaults match `DocumentChunker`'s built-in fallbacks

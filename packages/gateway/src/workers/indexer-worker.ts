@@ -51,6 +51,7 @@ import {
   getChunkCount,
   getUsearchBackfillCursor,
 } from "../indexer/db.js";
+import { readScanProgress, VERIFIED_WATERMARK_KEY } from "../indexer/scan-progress.js";
 import { invalidateSemanticIndex } from "../indexer/invalidate-semantic-index.js";
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
@@ -165,6 +166,8 @@ const PENDING_VECTOR_DELETE_BATCH = 512;
 const GRAPH_GUARD_INTERVAL_MS = 15_000;
 const PENDING_DOCUMENT_PURGE_BATCH = 1;
 const rateHistory: IndexRateSample[] = [];
+/** Latest user-activity signal from the gateway; see the `pressure` message. */
+let userActive = false;
 
 type StartupIndexResources = {
   indexDb: Db;
@@ -723,11 +726,25 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
     const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
     currentCutoffs = init.cutoffs;
+    const walProbe = indexDb.prepare<[], { log: number; checkpointed: number }>(
+      "PRAGMA wal_checkpoint(NOOP)",
+    );
     const indexer = new Indexer(indexDb, source, chunker, embedder, {
       getCutoff: (doc) => resolveCutoff(doc.sourceId),
       pageSize: init.indexerPageSize,
       betweenPageSleepMs: init.indexerBetweenPageSleepMs,
       dbWriteBatchSize: init.dbWriteBatchSize,
+      catchUp: init.indexerCatchUp,
+      getPressure: () => {
+        let walPendingFrames = 0;
+        try {
+          const wal = walProbe.get();
+          if (wal && wal.log > 0) walPendingFrames = wal.log - wal.checkpointed;
+        } catch {
+          walPendingFrames = 0;
+        }
+        return { userActive, walPendingFrames };
+      },
       indexWriteOptions: { usearch: usearchHandle },
     });
 
@@ -737,7 +754,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
       `starting: model=${init.modelPath}, indexInterval=${init.indexIntervalMs}ms, ` +
         `backlogInterval=${init.indexBacklogIntervalMs}ms, dbWriteBatch=${init.dbWriteBatchSize}, ` +
         `embedConcurrency=${init.embedConcurrency}, pageSize=${init.indexerPageSize}, ` +
-        `betweenPageSleepMs=${init.indexerBetweenPageSleepMs}, reindexMissingAtBoot=${init.reindexMissingAtBoot}, ` +
+        `betweenPageSleepMs=${init.indexerBetweenPageSleepMs}, ` +
+        `catchUp=${init.indexerCatchUp.enabled ? `on(maxPage=${init.indexerCatchUp.maxPageSize},minSleep=${init.indexerCatchUp.minSleepMs}ms)` : "off"}, ` +
+        `reindexMissingAtBoot=${init.reindexMissingAtBoot}, ` +
         `chunker={size=${init.chunkerChunkSize},overlap=${init.chunkerOverlap}}, ` +
         `embedder={ctx=${init.embedderContextSize},timeout=${init.embedderTimeoutMs}ms,maxInput=${init.embedderMaxInputChars}}`,
     );
@@ -842,12 +861,26 @@ async function handleInit(init: IndexerInit): Promise<void> {
       }
 
       // If the watermark is current but most docs are unindexed, reset it.
-      // This happens when a previous run was interrupted mid-backlog (crash,
-      // stall, embedder swap) — the watermark advanced past docs that never
-      // got indexed. Resetting lets `indexUpdated` rescan from the start;
-      // the two-phase hash check skips already-indexed docs cheaply.
+      // Earlier versions advanced the watermark when a scan was interrupted,
+      // past documents the scan never reached; resetting lets `indexUpdated`
+      // rescan from the start, and the two-phase hash check skips
+      // already-indexed docs cheaply. A watermark a complete scan published
+      // (VERIFIED_WATERMARK_KEY) covers everything before it however much is
+      // still to index, so it is kept. A scan in progress is never reset: it
+      // resumes from its durable position (scan-progress.ts), and a reset
+      // would throw away every page it has committed.
       const existingWatermark = getWatermark(indexDb, "last_updated_at");
-      if (existingWatermark) {
+      const scanInProgress = readScanProgress(indexDb);
+      const watermarkVerified =
+        existingWatermark !== null &&
+        getWatermark(indexDb, VERIFIED_WATERMARK_KEY) === existingWatermark;
+      if (scanInProgress) {
+        log(
+          "info",
+          "indexer-worker",
+          `resuming indexing scan begun ${scanInProgress.startedAt}: ${scanInProgress.scanned} scanned, ${scanInProgress.indexed} indexed, ${scanInProgress.resumes} earlier resume(s)`,
+        );
+      } else if (existingWatermark && !watermarkVerified) {
         const indexedCount = getIndexedDocumentCount(indexDb);
         const gatewayCount =
           (
@@ -1667,6 +1700,9 @@ parentPort.on("message", (msg: MainToIndexer) => {
       break;
     case "wake":
       handleWake();
+      break;
+    case "pressure":
+      userActive = msg.userActive;
       break;
     case "updateCutoffs":
       handleUpdateCutoffs(msg.cutoffs);

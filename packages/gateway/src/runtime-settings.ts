@@ -68,6 +68,8 @@ export interface ResolvedRuntimeSettings {
   indexerPageSize: number;
   /** Sleep between indexer pages under backlog, ms. */
   indexerBetweenPageSleepMs: number;
+  /** Catch-up pacing for a backlogged scan (`indexer.catchUp`). */
+  indexerCatchUp: { enabled: boolean; maxPageSize: number; minSleepMs: number };
   /** Whether to run `reindexMissing` at gateway boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, characters. */
@@ -277,6 +279,9 @@ const DEFAULTS = {
   analyticsStreamRekeyMaxRows: DEFAULT_ANALYTICS_STREAM_REKEY_MAX_ROWS,
   pageSize: 200,
   betweenPageSleep: "500ms",
+  catchUpEnabled: true,
+  catchUpMaxPageSize: 1000,
+  catchUpMinSleep: "10ms",
   reindexMissingAtBoot: false,
   // Gateway-process timing budgets — moved out of inline magic
   // numbers (ws.ts, auth-flows.ts, DeviceRepository.ts pairing,
@@ -566,6 +571,12 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
       indexer?.betweenPageSleep,
       DEFAULTS.betweenPageSleep,
     ),
+    indexerCatchUp: {
+      enabled:
+        envBool("OMNESIS_INDEXER_CATCH_UP") ?? indexer?.catchUp?.enabled ?? DEFAULTS.catchUpEnabled,
+      maxPageSize: indexer?.catchUp?.maxPageSize ?? DEFAULTS.catchUpMaxPageSize,
+      minSleepMs: parseDuration(indexer?.catchUp?.minBetweenPageSleep ?? DEFAULTS.catchUpMinSleep),
+    },
     reindexMissingAtBoot: indexer?.reindexMissingAtBoot ?? DEFAULTS.reindexMissingAtBoot,
     chunkerChunkSize: indexer?.chunker?.chunkSize ?? DEFAULTS.chunkerChunkSize,
     chunkerOverlap: indexer?.chunker?.overlap ?? DEFAULTS.chunkerOverlap,
@@ -727,6 +738,7 @@ export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
       `reindexMissing=${s.reindexMissingIntervalMs}ms, reindexMissingAtBoot=${s.reindexMissingAtBoot}, ` +
       `embedConcurrency=${s.embedConcurrency}, pageSize=${s.indexerPageSize}, ` +
       `betweenPageSleep=${s.indexerBetweenPageSleepMs}ms, ` +
+      `catchUp=${s.indexerCatchUp.enabled ? `on(maxPage=${s.indexerCatchUp.maxPageSize},minSleep=${s.indexerCatchUp.minSleepMs}ms)` : "off"}, ` +
       `chunker={size=${s.chunkerChunkSize},overlap=${s.chunkerOverlap}}, ` +
       `embedder={ctx=${s.embedderContextSize},timeout=${s.embedderTimeoutMs}ms,maxInput=${s.embedderMaxInputChars}}; ` +
       `timings: slowRequest=${s.slowRequestMs}ms, ` +

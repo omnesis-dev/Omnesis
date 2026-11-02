@@ -66,6 +66,15 @@ export function resolveIndexerCutoffMaxAge(
   return cutoffs.default;
 }
 
+/** Catch-up pacing settings, resolved from `indexer.catchUp`. */
+export interface IndexerCatchUpSettings {
+  enabled: boolean;
+  /** Largest scan page while catching up. */
+  maxPageSize: number;
+  /** Pause between pages while catching up, ms. */
+  minSleepMs: number;
+}
+
 export type IndexerInit = {
   type: "init";
   lexicalOnly?: boolean;
@@ -105,6 +114,8 @@ export type IndexerInit = {
   indexerPageSize: number;
   /** Sleep between indexer pages under backlog, ms. */
   indexerBetweenPageSleepMs: number;
+  /** Catch-up pacing for a backlogged scan. See `indexer.catchUp`. */
+  indexerCatchUp: IndexerCatchUpSettings;
   /** Whether to run the heavy reindexMissing scan once at boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, chars. See `indexer.chunker.chunkSize`. */
@@ -176,6 +187,10 @@ export type MainToIndexer =
   // so the indexer can pick them up without waiting for the next periodic
   // tick. Worker debounces bursts and coalesces while a cycle is in flight.
   | { type: "wake" }
+  // Backpressure from the gateway: true while a user request is in flight
+  // (the scheduler's admission control is engaged). Sent on change only. The
+  // scan returns to its configured pace while it is true.
+  | { type: "pressure"; userActive: boolean }
   // Hot-reload of per-source maxAge map. Sent on every config.changed where
   // dataRetention or sources.<id>.maxAge moved. Worker swaps the map atomically.
   | { type: "updateCutoffs"; cutoffs: IndexerCutoffMap }

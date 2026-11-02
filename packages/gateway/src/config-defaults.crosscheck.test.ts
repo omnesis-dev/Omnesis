@@ -163,6 +163,9 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defMs("/indexer/reconcileInterval")).toBe(rt.reconcileIntervalMs);
     expect(defMs("/indexer/reindexMissingInterval")).toBe(rt.reindexMissingIntervalMs);
     expect(defMs("/indexer/betweenPageSleep")).toBe(rt.indexerBetweenPageSleepMs);
+    expect(defAt("/indexer/catchUp/enabled")).toBe(rt.indexerCatchUp.enabled);
+    expect(defAt("/indexer/catchUp/maxPageSize")).toBe(rt.indexerCatchUp.maxPageSize);
+    expect(defMs("/indexer/catchUp/minBetweenPageSleep")).toBe(rt.indexerCatchUp.minSleepMs);
 
     // gateway timings
     expect(defMs("/gateway/timings/slowRequest")).toBe(rt.slowRequestMs);

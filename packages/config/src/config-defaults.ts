@@ -374,6 +374,11 @@ export const CONFIG_DEFAULTS = {
     embedConcurrency: 2,
     pageSize: 200,
     betweenPageSleep: "500ms",
+    catchUp: {
+      enabled: true,
+      maxPageSize: 1000,
+      minBetweenPageSleep: "10ms",
+    },
     chunker: {
       chunkSize: 2048,
       overlap: 512,

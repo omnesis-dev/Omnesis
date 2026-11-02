@@ -30,6 +30,7 @@ import {
   getIndexGenerationStatus,
 } from "./db.js";
 import { computeIndexingProgress } from "./indexing-progress.js";
+import { readScanProgressView, type ScanProgressView } from "./scan-progress.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { ConfigStore } from "../config-store.js";
@@ -85,6 +86,12 @@ export interface IndexStatsPayload {
   watermark?: string | null;
   indexRatePerSec?: number | null;
   etaSeconds?: number | null;
+  /**
+   * The indexing scan in progress, read from its durable record: where its
+   * cursor is, how fast the current run is going and what pace it is on.
+   * Null when no scan spans more than one page.
+   */
+  scan?: ScanProgressView | null;
   indexVersions?: ReturnType<typeof getIndexGenerationStatus>;
   semanticSearch?: SemanticSearchStatus;
   bySource?: Record<string, IndexSourceStats>;
@@ -244,7 +251,12 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   // remaining backlog into an ETA here so the portal renders it on
   // first load with no client-side warm-up. Both fields are null when
   // the rate is unknown or there's nothing left to index.
-  const indexRatePerSec = getIndexRate?.() ?? null;
+  // A scan in progress reports its own rate from its durable record, which
+  // exists from its first page; the cycle rate needs completed cycles, and a
+  // catch-up scan is one cycle that can run for hours, so the last cycle's
+  // rate would be stale or absent all that time.
+  const scan = readScanProgressView(indexDb);
+  const indexRatePerSec = scan?.indexedPerSec ?? getIndexRate?.() ?? null;
   const totalIndexErrors = Object.values(indexErrorCounts).reduce((a, b) => a + b, 0);
   // Errored docs are terminal, not backlog: fold them into "done" so the
   // overall percent reaches 100% and the ETA reaches zero once the indexer
@@ -271,6 +283,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     watermark,
     indexRatePerSec,
     etaSeconds,
+    scan,
     indexVersions: getIndexGenerationStatus(indexDb),
     ...(semanticSearch ? { semanticSearch } : {}),
     bySource: sources,

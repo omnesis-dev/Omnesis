@@ -24,6 +24,7 @@ import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { Embedder } from "../indexer/types.js";
 import type { MemoryBudget } from "../memory-budget.js";
 import type {
+  IndexerCatchUpSettings,
   IndexerCutoffMap,
   IndexerInit,
   IndexerJobUpdate,
@@ -33,6 +34,9 @@ import type {
 } from "./protocol.js";
 
 const log = createLogger("gateway:indexer-worker");
+
+/** How often the main thread samples user activity for the scan's backpressure. */
+const PRESSURE_POLL_MS = 250;
 
 /**
  * Build the worker's per-source cutoff map from an OmnesisConfig.
@@ -81,6 +85,13 @@ export interface IndexerWorkerOptions {
   embedConcurrency: number;
   indexerPageSize: number;
   indexerBetweenPageSleepMs: number;
+  indexerCatchUp: IndexerCatchUpSettings;
+  /**
+   * Whether a user request is in flight on the gateway. Polled on the main
+   * thread; a change is posted to the worker, whose scan returns to its
+   * configured pace while it is true.
+   */
+  isUserActive?: () => boolean;
   reindexMissingAtBoot: boolean;
   /** Chunker / embedder tunables. Resolved from `indexer.{chunker,embedder}.*`. */
   chunkerChunkSize: number;
@@ -224,6 +235,8 @@ export class IndexerWorkerProxy implements Embedder {
    * to serve a server-side ETA on first page load — no client warm-up.
    */
   private _indexRatePerSec: number | null = null;
+  private pressureCheck: ReturnType<typeof setInterval> | null = null;
+  private lastUserActive = false;
   private _vectorIndex: SemanticSearchStatus | null = null;
   private _bootProgress: {
     stage: "hnsw-backfill" | "loading-model" | "warmup" | "initial-cycle";
@@ -280,6 +293,7 @@ export class IndexerWorkerProxy implements Embedder {
       embedConcurrency: opts.embedConcurrency,
       indexerPageSize: opts.indexerPageSize,
       indexerBetweenPageSleepMs: opts.indexerBetweenPageSleepMs,
+      indexerCatchUp: opts.indexerCatchUp,
       reindexMissingAtBoot: opts.reindexMissingAtBoot,
       chunkerChunkSize: opts.chunkerChunkSize,
       chunkerOverlap: opts.chunkerOverlap,
@@ -321,6 +335,23 @@ export class IndexerWorkerProxy implements Embedder {
       Math.max(warnGap / 2, 5_000),
     );
     this.heartbeatCheck.unref?.();
+
+    const isUserActive = opts.isUserActive;
+    if (isUserActive) {
+      this.pressureCheck = setInterval(() => {
+        if (this.workerExited) return;
+        let active: boolean;
+        try {
+          active = isUserActive();
+        } catch {
+          active = false;
+        }
+        if (active === this.lastUserActive) return;
+        this.lastUserActive = active;
+        this.post({ type: "pressure", userActive: active });
+      }, PRESSURE_POLL_MS);
+      this.pressureCheck.unref?.();
+    }
   }
 
   /** Wait for the embedder to finish loading. */
@@ -549,6 +580,7 @@ export class IndexerWorkerProxy implements Embedder {
     }
     this.shutdownPromise = (async () => {
       if (this.heartbeatCheck) clearInterval(this.heartbeatCheck);
+      if (this.pressureCheck) clearInterval(this.pressureCheck);
       try {
         if (!this.workerExited) this.post({ type: "shutdown" });
       } catch {
