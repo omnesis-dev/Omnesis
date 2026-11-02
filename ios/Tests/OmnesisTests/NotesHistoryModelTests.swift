@@ -136,7 +136,9 @@ final class NotesHistoryModelTests: XCTestCase {
         let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
         let model = NotesHistoryModel(client: client, entries: [note])
         let poll = Task { try await model.refresh(note) }
-        while resumeRead == nil { await Task.yield() }
+        while resumeRead == nil {
+            await Task.yield()
+        }
         let edited = try await model.edit(note, text: "Edited workshop")
         poll.cancel()
         resumeRead?.resume()

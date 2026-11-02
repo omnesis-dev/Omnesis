@@ -123,8 +123,10 @@ final class NotesInteractionUITests: XCTestCase {
         save.tap()
         let edited = app.staticTexts[original + suffix]
         XCTAssertTrue(edited.waitForExistence(timeout: 5), "saved text did not replace the editor")
-        XCTAssertTrue(app.staticTexts["I updated the workshop task with the projector."].waitForExistence(timeout: 15),
-                      "the edited note never refreshed its new receipt without reopening")
+        XCTAssertTrue(
+            app.staticTexts["I updated the workshop task with the projector."].waitForExistence(timeout: 15),
+            "the edited note never refreshed its new receipt without reopening"
+        )
         XCTAssertFalse(app.staticTexts[reply].exists, "editing displayed the previous revision's receipt")
 
         let undo = app.buttons["Undo change"]

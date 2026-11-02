@@ -108,7 +108,7 @@ private actor NotesHistoryDemoSession: URLSessionLike {
             else { throw GatewayClient.Error.invalidResponse }
             fields["agent"] = ["state": "done", "receipt": [
                 "text": "I updated the workshop task with the projector.",
-                "changes": [["text": "Updated the workshop task", "taskId": "loop_workshop", "undoSeq": 43]]
+                "changes": [["text": "Updated the workshop task", "taskId": "loop_workshop", "undoSeq": 43]],
             ]]
             entries[index] = try JSONDecoder().decode(NoteEntry.self, from: JSONSerialization.data(withJSONObject: fields))
             editedReceiptReads.removeValue(forKey: id)

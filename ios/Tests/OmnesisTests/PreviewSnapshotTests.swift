@@ -8961,8 +8961,11 @@ final class PreviewSnapshotTests: XCTestCase {
         for scheme in [ColorScheme.dark, .light] {
             latestLayout = nil
             renderInWindow(
-                view, name: scheme == .dark ? name : "\(name)-light", scheme: scheme,
-                settle: 1.2, primeLayout: true
+                view,
+                name: scheme == .dark ? name : "\(name)-light",
+                scheme: scheme,
+                settle: 1.2,
+                primeLayout: true
             )
             guard let (session, viewport) = latestLayout, let session else {
                 XCTFail("The preview fan did not reopen after its viewport settled")
