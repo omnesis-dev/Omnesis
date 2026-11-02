@@ -368,7 +368,7 @@ sed -i.bak "s/^OMNESIS_IMAGE_TAG=.*/OMNESIS_IMAGE_TAG=$TAG_B/" "$CONFIG_DIR/.env
 printf '{"version":1,"method":"docker","projectDir":"%s","phase":"applying","targetTag":"%s","lastCompletedTag":"%s"}\n' \
   "$CONFIG_DIR" "$TAG_B" "$TAG_A" > "$CONFIG_DIR/update-state.json"
 [[ "$(served_version)" == "$TAG_A" ]] || die "the gateway should still serve $TAG_A before the re-run"
-"${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --no-backup --health-timeout 300 \
+"${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --health-timeout 300 \
   > "$WORK/rerun.out" 2>&1 || { cat "$WORK/rerun.out" >&2; die "the re-run after the killed update failed"; }
 grep -q "did not finish" "$WORK/rerun.out" || die "the re-run did not recognise the unfinished update: $(cat "$WORK/rerun.out")"
 grep -q "Already up to date" "$WORK/rerun.out" && die "the re-run trusted the tag on file"
@@ -419,7 +419,13 @@ ok "refused before any change, and the updater given group $SOCKET_GID"
 
 # ── the update ──────────────────────────────────────────────────────────────
 
-# The backup runs for real here: it is taken through the gateway's API from
+# The preceding default and compatibility-flag updates leave no backups.
+if ls "$CONFIG_DIR"/backups/* >/dev/null 2>&1; then
+  die "an update without --backup created a backup"
+fi
+ok "default and compatibility-flag updates created no backup"
+
+# An explicitly requested backup runs for real here through the gateway's API from
 # inside the updater container, which is the one step that proves that
 # container can authenticate against the gateway beside it.
 # The launcher on this host is the one part of the install no image carries,
@@ -430,7 +436,7 @@ step "omnesis update to $TAG_B"
 expected_launcher="$(sh "$REPO/scripts/install.sh" --print-docker-launcher "$COMPOSE_FILE" gateway)"
 [[ "$(cat "$OMNESIS")" == "$expected_launcher" ]] || die "the installer's launcher is not what it renders"
 printf '# left by an older release\n' >> "$OMNESIS"
-"${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --health-timeout 300 \
+"${omnesis_env[@]}" "$OMNESIS" update --yes --target-version "$TAG_B" --backup --health-timeout 300 \
   > "$WORK/update-b.out" 2>&1 || { cat "$WORK/update-b.out" >&2; die "the update to $TAG_B failed"; }
 cat "$WORK/update-b.out"
 [[ "$(cat "$OMNESIS")" == "$expected_launcher" ]] || die "the update did not refresh the launcher on this host"
