@@ -253,9 +253,19 @@ describe("resolveCollectorToken", () => {
   let realFetch: typeof globalThis.fetch;
   let savedEnvToken: string | undefined;
 
-  const answer = (routes: { config?: number; register?: Response | number }) =>
+  const answer = (routes: {
+    config?: number;
+    register?: Response | number;
+    whoami?: { deviceName?: string; deviceId?: string } | 404;
+  }) =>
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/whoami")) {
+        if (routes.whoami === 404) return new Response("not found", { status: 404 });
+        const status = routes.config ?? 200;
+        if (status !== 200) return new Response("nope", { status });
+        return Response.json({ tokenId: "tok-1", scopes: ["read"], ...routes.whoami });
+      }
       if (url.endsWith("/config")) return new Response("{}", { status: routes.config ?? 200 });
       if (url.endsWith("/admin/devices")) {
         void init;
@@ -310,6 +320,33 @@ describe("resolveCollectorToken", () => {
     expect(state?.state).toBe("paired");
     expect(state?.tokenFingerprint).toBe(tokenFingerprint("omn_saved"));
     expect(state?.lastAuthenticatedAt).toBeGreaterThan(0);
+  });
+
+  // A collector paired with a code registers under the name the code or the
+  // redeem gave it, not the `<host>-collector` it would derive: the record the
+  // installer's banner and the uninstall read must carry the gateway's name.
+  test("records the name and id the gateway knows the device by", async () => {
+    writeCollectorTokenFile("omn_saved", dir);
+    globalThis.fetch = answer({
+      whoami: { deviceName: "field-station-mac-collector", deviceId: "dev-42" },
+    });
+
+    await resolveCollectorToken(GATEWAY, dir);
+    const state = readCollectorPairingState(dir);
+    expect(state?.deviceName).toBe("field-station-mac-collector");
+    expect(state?.deviceId).toBe("dev-42");
+  });
+
+  test("a gateway without /whoami is probed through /config and keeps the derived name", async () => {
+    writeCollectorTokenFile("omn_saved", dir);
+    recordAuthenticated("omn_saved");
+    globalThis.fetch = answer({ whoami: 404, config: 200 });
+
+    expect(await resolveCollectorToken(GATEWAY, dir)).toEqual({
+      outcome: "token",
+      token: "omn_saved",
+    });
+    expect(readCollectorPairingState(dir)?.deviceName).toBe("host-collector");
   });
 
   // The gateway-host case: the collector's own token is dead, but the local

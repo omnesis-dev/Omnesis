@@ -153,8 +153,13 @@ export async function waitForDeviceOnline(
 export type ContainerFolderOutcome =
   /** Not a folder hidden by the container boundary: print the collector's error. */
   | { kind: "none" }
-  /** The launcher offers the share once this command exits. */
-  | { kind: "requested"; message: string }
+  /**
+   * The launcher offers the share once this command exits, and it says what
+   * the operator needs to know: the folder is on their machine and the
+   * collector's container does not see it. Nothing is printed here, so the
+   * explanation and the question are all they read.
+   */
+  | { kind: "requested" }
   /** No launcher to offer it: the error, and the command that shares the folder. */
   | { kind: "explain"; message: string };
 
@@ -178,12 +183,7 @@ export function containerFolderOutcome(input: {
   if (!input.collectorIsLocal || !folders || !isAbsolute(value)) return { kind: "none" };
   if (visibleInContainer(value, folders)) return { kind: "none" };
   const write = input.writeRequest ?? writeShareRequest;
-  if (folders.canRequest && write(folders, value, input.resume)) {
-    return {
-      kind: "requested",
-      message: `${c.red}${error}${c.reset}\n${value} is not among the folders this install's collector can see.`,
-    };
-  }
+  if (folders.canRequest && write(folders, value, input.resume)) return { kind: "requested" };
   const command = shareFolderCommand(value);
   const hint = error.includes(command)
     ? ""
@@ -1117,7 +1117,8 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
                 ? ["sources", "add", descriptor!.id, path, "--device", ctx.deviceId]
                 : process.argv.slice(2).filter((arg) => arg !== "--"),
           });
-    if (outcome.kind === "requested") throw new CliError(outcome.message, EXIT_USER_ERROR);
+    // Silent: the launcher explains and asks once this command exits.
+    if (outcome.kind === "requested") throw new CliError("", EXIT_USER_ERROR);
     console.error(outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`);
   };
 

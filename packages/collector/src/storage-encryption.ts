@@ -23,6 +23,7 @@ import {
   resolveStorageEncryptionReadiness,
   storageKeyNamesForHost,
   type StorageEncryptionReadiness,
+  operatorCommand,
 } from "@omnesis/core";
 
 const log = createLogger("collector:storage");
@@ -64,7 +65,7 @@ export function collectorStoragePosture(readiness: StorageEncryptionReadiness): 
     message:
       "Collector stores are UNENCRYPTED — no install root key is configured on this host, so " +
       "provider archives and caches are plaintext on disk (protected only by file permissions " +
-      "and full-disk encryption). Run `omnesis keyring init` on this host and restart the " +
+      `and full-disk encryption). Run \`${operatorCommand()} keyring init\` on this host and restart the ` +
       "collector to enable at-rest encryption.",
   };
 }

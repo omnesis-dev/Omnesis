@@ -152,8 +152,13 @@ describe("install.sh --hardened", () => {
         },
       );
       expect(collector.status, collector.output).toBe(0);
-      expect(collector.calls).toContain(
-        `pair K7QX2M9ZB4 --gateway-url https://localhost:7600 --trust-fingerprint ${fingerprint} --save ${join(collector.configDir, "collector-token")}`,
+      // The pairing asks for this machine's <host>-collector name, from its hostname.
+      const pair = collector.calls.find((call) => call.startsWith("pair "));
+      expect(pair).toMatch(
+        new RegExp(
+          `^${`pair K7QX2M9ZB4 --gateway-url https://localhost:7600 --trust-fingerprint ${fingerprint} --save ${join(collector.configDir, "collector-token")}`.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")} --name [a-z0-9-]+-collector$`,
+          "u",
+        ),
       );
       expect(collector.calls.some((call) => call.startsWith("service install collector"))).toBe(
         true,

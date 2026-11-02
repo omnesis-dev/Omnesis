@@ -28,6 +28,7 @@ import {
   installer,
   runInstaller as runInstallerRaw,
   runInstallerOnTty as runInstallerOnTtyRaw,
+  writeExecutable,
 } from "./installer-harness.mjs";
 
 /** A gateway on some other machine, and the certificate it serves. */
@@ -36,6 +37,11 @@ const GATEWAY_FP = "a".repeat(64);
 const PAIRING_CODE = "K7QX2M9ZB4";
 /** What the fake collector daemon reports its device is called. */
 const DEVICE_NAME = "field-station";
+/**
+ * The name the installer asks to pair as, from the machine's name — a Mac's,
+ * as `hostname` reports it, with the Bonjour `.local` the device name drops.
+ */
+const PAIR_NAME = "field-station-collector";
 
 /**
  * The recording CLI shim. Invoked as `<shim> <entry.ts> <cli args...>` through
@@ -116,6 +122,10 @@ function discoveryAnswer(name, body) {
 
 beforeEach(() => {
   createFixture({ name: "collector", versions: ["0.10.0"], cliShim: CLI_SHIM });
+  writeExecutable(
+    fixturePath("fake-bin", "hostname"),
+    '#!/bin/sh\ncase "${1:-}" in -s) echo Field-Station ;; *) echo Field-Station.local ;; esac\n',
+  );
 });
 
 afterEach(destroyFixture);
@@ -157,7 +167,7 @@ describe("install.sh --collector: the happy path", () => {
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
         `--trust-fingerprint sha256:${GATEWAY_FP} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
     // The unit carries the gateway URL, because a daemon starts with a minimal
     // environment and would otherwise browse for a gateway on every start.
@@ -179,7 +189,7 @@ describe("install.sh --collector: the happy path", () => {
     expect(run.status).toBe(0);
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 
@@ -265,7 +275,7 @@ describe("install.sh --collector: finding the gateway", () => {
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
         `--trust-fingerprint sha256:${GATEWAY_FP} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 
@@ -326,7 +336,7 @@ describe("install.sh --collector: finding the gateway", () => {
     expect(run.output).toContain("(none advertised)");
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 

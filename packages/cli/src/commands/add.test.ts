@@ -72,7 +72,9 @@ describe("containerFolderOutcome: a host folder the collector's container cannot
         return true;
       },
     });
-    expect(outcome.kind).toBe("requested");
+    // Nothing of the collector's error is printed: the launcher's explanation
+    // and question are the whole of what the operator reads.
+    expect(outcome).toEqual({ kind: "requested" });
     expect(requests).toEqual([{ path: "/Users/maya/Notes", resume }]);
   });
 

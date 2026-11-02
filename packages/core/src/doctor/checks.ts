@@ -19,6 +19,7 @@
 import { formatSyncRemediation } from "@omnesis/types";
 import { aggregateDrivingMobilePermissionCapability } from "@omnesis/types/mobile-permission-health";
 import { assertNever } from "../utils.js";
+import { operatorCommand } from "../operator-command.js";
 import { localDeviceUpdateCommands } from "../fleet-update.js";
 import {
   formatFleetVersionSummary,
@@ -1482,7 +1483,7 @@ function checkRecoveryEscrow(d: DoctorData, security: SecurityData, ck: Checks):
     // Re-exporting needs a readable root key; when the keyring is also lost the
     // escrow cannot be recreated, so point at recovery-from-backup instead.
     const hint = security.keyring.valid
-      ? `${escrow.detail} Re-export it with \`omnesis keyring export-recovery --force\` and store the new recovery code safely.`
+      ? `${escrow.detail} Re-export it with \`${operatorCommand()} keyring export-recovery --force\` and store the new recovery code safely.`
       : `${escrow.detail} The install root key is also unavailable, so this escrow cannot be recreated — recover the key from a backup or an escrow copy kept elsewhere.`;
     ck.fail(
       "Security",
@@ -1505,7 +1506,7 @@ function checkRecoveryEscrow(d: DoctorData, security: SecurityData, ck: Checks):
     "Security",
     "security.recovery-escrow",
     "No root-key recovery escrow has been exported",
-    `If the OS keyring is lost, ${atStake}. Run \`omnesis keyring export-recovery\`${hostSuffix(d)} and keep the printed recovery code somewhere safe. (An envelope exported to a custom \`--out\` location is not detected here.)`,
+    `If the OS keyring is lost, ${atStake}. Run \`${operatorCommand()} keyring export-recovery\`${hostSuffix(d)} and keep the printed recovery code somewhere safe. (An envelope exported to a custom \`--out\` location is not detected here.)`,
   );
 }
 
@@ -1583,7 +1584,7 @@ function checkDatabaseEncryption(d: DoctorData, security: SecurityData, ck: Chec
         "Security",
         "security.database-encryption",
         `${locked.length} encrypted store${locked.length === 1 ? "" : "s"} could not be verified: ${describe(locked)}`,
-        `${details(locked)} Check \`omnesis keyring status\`${hostSuffix(d)}; a store written under a key this host no longer holds needs that keyring material restored.`.trim(),
+        `${details(locked)} Check \`${operatorCommand()} keyring status\`${hostSuffix(d)}; a store written under a key this host no longer holds needs that keyring material restored.`.trim(),
       );
       return;
     }
@@ -1602,7 +1603,7 @@ function checkDatabaseEncryption(d: DoctorData, security: SecurityData, ck: Chec
       "Security",
       "security.database-encryption",
       `${subject} is partially configured`,
-      `${db.detail}${plaintextNote}${lockedNote} Run \`omnesis keyring storage-init\`${hostSuffix(d)} and ${restart} to complete it.`,
+      `${db.detail}${plaintextNote}${lockedNote} Run \`${operatorCommand()} keyring storage-init\`${hostSuffix(d)} and ${restart} to complete it.`,
     );
     return;
   }
@@ -1610,7 +1611,7 @@ function checkDatabaseEncryption(d: DoctorData, security: SecurityData, ck: Chec
     "Security",
     "security.database-encryption",
     `${subject} is not enabled`,
-    `${db.detail}${plaintextNote}${lockedNote} Run \`omnesis keyring init\`${hostSuffix(d)} and ${restart} to enable encrypted stores.`,
+    `${db.detail}${plaintextNote}${lockedNote} Run \`${operatorCommand()} keyring init\`${hostSuffix(d)} and ${restart} to enable encrypted stores.`,
   );
 }
 
@@ -1642,7 +1643,7 @@ function checkSecurityPermissions(d: DoctorData, security: SecurityData, ck: Che
       `${bad.length} Omnesis config entr${bad.length === 1 ? "y is" : "ies are"} not owner-only: ${shown}`,
       security.fixPermissions
         ? "Some permission repairs failed. Inspect the listed paths and rerun with sufficient privileges."
-        : `Run \`omnesis doctor --fix-permissions\`${hostSuffix(d)} to repair safe local modes.`,
+        : `Run \`${operatorCommand()} doctor --fix-permissions\`${hostSuffix(d)} to repair safe local modes.`,
     );
   }
 

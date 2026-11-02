@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { defineCommand, runCommand } from "citty";
 import {
@@ -37,9 +38,14 @@ import {
   type RecoveryEnvelopeV1,
   type SecretStoreBackend,
   type StorageKeyHost,
+  type StorageKeyName,
+  COLLECTOR_PAIRING_STATE_FILE,
+  GATEWAY_STORE_FILE,
+  operatorCommand,
 } from "@omnesis/core";
 import { validateConfig } from "@omnesis/config";
 import { c, CliError, EXIT_FAILURE, EXIT_USER_ERROR, isJSON } from "../utils.js";
+import { purgeConfigDirKeyring } from "../uninstall/keyring-purge.js";
 
 function configDir(): string {
   return process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
@@ -99,8 +105,29 @@ function storageHostsFromArg(raw: unknown, dir: string): StorageKeyHost[] {
   );
 }
 
-function restartHint(hosts: readonly StorageKeyHost[]): string {
-  const names = hosts.map((host) => (host === "gateway" ? "the gateway" : "the collector"));
+/**
+ * The restart that migrates live stores into encrypted files, or null when
+ * there is nothing to migrate: a key that already existed has had its stores
+ * encrypted by the daemon that boots with it, and a process that has never run
+ * here has no store yet — a fresh install is about to start it for the first
+ * time, and it encrypts from its first write. A gateway has run once its
+ * database exists; a collector, once it has recorded its pairing.
+ */
+export function restartHint(
+  hosts: readonly StorageKeyHost[],
+  created: ReadonlySet<StorageKeyName>,
+  dir: string,
+  exists: (path: string) => boolean = existsSync,
+): string | null {
+  const ran: Record<StorageKeyHost, boolean> = {
+    gateway: exists(join(dir, GATEWAY_STORE_FILE)),
+    collector: exists(join(dir, COLLECTOR_PAIRING_STATE_FILE)),
+  };
+  const stale = hosts.filter(
+    (host) => ran[host] && storageKeyNamesForHosts([host]).some((name) => created.has(name)),
+  );
+  if (stale.length === 0) return null;
+  const names = stale.map((host) => (host === "gateway" ? "the gateway" : "the collector"));
   return `Restart ${names.join(" and ")} to migrate live stores into encrypted files.`;
 }
 
@@ -138,7 +165,9 @@ const keyringStatusCommand = defineCommand({
     console.log(`${c.dim}${state.store.detail}${c.reset}`);
     if (!state.valid) {
       console.log();
-      console.log(`${c.dim}Run \`omnesis keyring init\` to create the install root key.${c.reset}`);
+      console.log(
+        `${c.dim}Run \`${operatorCommand()} keyring init\` to create the install root key.${c.reset}`,
+      );
     }
   },
 });
@@ -191,7 +220,7 @@ const keyringMigrateCommand = defineCommand({
     const state = await inspectInstallRootKey({ backend, configDir: dir });
     if (!state.valid) {
       throw new CliError(
-        "Omnesis install root key is not initialized. Run `omnesis keyring init` first.",
+        `Omnesis install root key is not initialized. Run \`${operatorCommand()} keyring init\` first.`,
         EXIT_USER_ERROR,
       );
     }
@@ -218,7 +247,7 @@ const keyringMigrateCommand = defineCommand({
       );
     }
 
-    const summary = {
+    const summary: MigrationSummary = {
       candidates: candidates.length,
       present,
       encrypted,
@@ -232,25 +261,50 @@ const keyringMigrateCommand = defineCommand({
       return;
     }
 
-    console.log(`\n${c.bold}Omnesis keyring migration${c.reset}\n`);
-    console.log(`  scanned:             ${summary.candidates}`);
-    console.log(`  existing secret files:${String(summary.present).padStart(2)}`);
-    console.log(`  encrypted now:       ${summary.changed}`);
-    console.log(`  encrypted total:     ${summary.encrypted}`);
-    console.log(`  inline config keys:  ${summary.inlineConfigApiKeysRemoved} removed`);
-    if (summary.plaintextRemaining > 0) {
-      console.log(`  plaintext remaining: ${c.yellow}${summary.plaintextRemaining}${c.reset}`);
-    } else {
-      console.log(`  plaintext remaining: ${c.green}0${c.reset}`);
-    }
-    if (summary.changed > 0) {
-      console.log();
-      console.log(
-        `${c.dim}Encrypted token files are no longer readable with cat; use \`omnesis devices pair\` or \`omnesis tokens create\` from this host when you need a fresh login token.${c.reset}`,
-      );
-    }
+    for (const line of migrationSummaryLines(summary)) console.log(line);
   },
 });
+
+/** What `keyring migrate` counted, as its JSON output reports it. */
+export interface MigrationSummary {
+  candidates: number;
+  present: number;
+  encrypted: number;
+  changed: number;
+  plaintextRemaining: number;
+  inlineConfigApiKeysMigrated: number;
+  inlineConfigApiKeysRemoved: number;
+}
+
+/**
+ * The human report of a migration. A directory with nothing to migrate — a
+ * fresh install arming its keyring before anything wrote a secret — gets one
+ * line rather than a table of zeros; the counts are for a migration that did
+ * something, or left something behind.
+ */
+export function migrationSummaryLines(summary: MigrationSummary): string[] {
+  if (summary.present === 0 && summary.inlineConfigApiKeysRemoved === 0) {
+    return [`${c.dim}No secret files to migrate yet; new ones are written encrypted.${c.reset}`];
+  }
+  const lines = [
+    `\n${c.bold}Omnesis keyring migration${c.reset}\n`,
+    `  scanned:             ${summary.candidates}`,
+    `  existing secret files:${String(summary.present).padStart(2)}`,
+    `  encrypted now:       ${summary.changed}`,
+    `  encrypted total:     ${summary.encrypted}`,
+    `  inline config keys:  ${summary.inlineConfigApiKeysRemoved} removed`,
+    summary.plaintextRemaining > 0
+      ? `  plaintext remaining: ${c.yellow}${summary.plaintextRemaining}${c.reset}`
+      : `  plaintext remaining: ${c.green}0${c.reset}`,
+  ];
+  if (summary.changed > 0) {
+    lines.push(
+      "",
+      `${c.dim}Encrypted token files are no longer readable with cat; use \`omnesis devices pair\` or \`omnesis tokens create\` from this host when you need a fresh login token.${c.reset}`,
+    );
+  }
+  return lines;
+}
 
 const keyringDecryptArtifactCommand = defineCommand({
   meta: {
@@ -378,8 +432,15 @@ const keyringStorageInitCommand = defineCommand({
         `  ${store.keyName.padEnd(20)} ${store.created ? `${c.green}created${c.reset}` : `${c.green}exists${c.reset}`}`,
       );
     }
-    console.log();
-    console.log(`${c.dim}${restartHint(hosts)}${c.reset}`);
+    const hint = restartHint(
+      hosts,
+      new Set(stores.filter((store) => store.created).map((store) => store.keyName)),
+      dir,
+    );
+    if (hint) {
+      console.log();
+      console.log(`${c.dim}${hint}${c.reset}`);
+    }
   },
 });
 
@@ -450,7 +511,7 @@ const keyringExportRecoveryCommand = defineCommand({
     const rootKey = await readInstallRootKey({ backend, configDir: dir });
     if (!rootKey) {
       throw new CliError(
-        "No install root key found. Run `omnesis keyring init` first.",
+        `No install root key found. Run \`${operatorCommand()} keyring init\` first.`,
         EXIT_USER_ERROR,
       );
     }
@@ -542,6 +603,40 @@ const keyringImportRecoveryCommand = defineCommand({
   },
 });
 
+/**
+ * Internal: remove this config directory's OS keyring entries — its markers,
+ * and the account's root key when no other native install uses it. The
+ * native collector beside a Docker install runs it for `uninstall --purge`,
+ * just before deleting the directory; `omnesis uninstall --purge` has its own.
+ */
+const keyringPurgeCommand = defineCommand({
+  meta: {
+    name: "purge",
+    description: "Remove this config directory's OS keyring entries (used by uninstall --purge)",
+    hidden: true,
+  },
+  args: { yes: { type: "boolean", description: "Confirm the removal" } },
+  async run(ctx) {
+    if (ctx.args.yes !== true) {
+      throw new CliError(
+        "keyring purge deletes keys that open this directory's data; it runs with --yes, from an uninstall.",
+        EXIT_USER_ERROR,
+      );
+    }
+    const result = await purgeConfigDirKeyring(homedir(), configDir());
+    if (result.rootKey === "deleted") {
+      console.log("Deleted this install's keys from the OS keyring.");
+    } else if (result.rootKey === "kept" && result.keptFor.length > 0) {
+      console.log(
+        `The OS keyring's root key stays: ${result.keptFor.join(", ")} still ${result.keptFor.length === 1 ? "uses" : "use"} it.`,
+      );
+    }
+    if (result.notes.length > 0) {
+      throw new CliError(`Could not finish: ${result.notes.join("; ")}`, EXIT_FAILURE);
+    }
+  },
+});
+
 export const keyringCommand = defineCommand({
   meta: {
     name: "keyring",
@@ -556,6 +651,7 @@ export const keyringCommand = defineCommand({
     "decrypt-artifact": keyringDecryptArtifactCommand,
     "export-recovery": keyringExportRecoveryCommand,
     "import-recovery": keyringImportRecoveryCommand,
+    purge: keyringPurgeCommand,
   },
   async run(ctx) {
     if (ctx.rawArgs.filter((a) => !a.startsWith("-")).length === 0) {

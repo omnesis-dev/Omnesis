@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, afterEach } from "vitest";
-import { resolvePatterns, configSourceEntries, buildResultUrl, GATEWAY_URL } from "./utils.js";
+import {
+  resolvePatterns,
+  configSourceEntries,
+  buildResultUrl,
+  defaultGatewayUrl,
+  GATEWAY_URL,
+} from "./utils.js";
 
 const entries = [
   { id: "gmail:alice@example.com", providerId: "google:alice@example.com" },
@@ -128,5 +134,51 @@ describe("buildResultUrl", () => {
   test("template {sourceUrl} substitutes to empty when the result has none", () => {
     process.env.OMNESIS_RESULT_URI = "app://open?u={sourceUrl}";
     expect(buildResultUrl("doc-5", null)).toBe("app://open?u=");
+  });
+});
+
+describe("defaultGatewayUrl", () => {
+  const dir = "/Users/maya/.config/omnesis-collector";
+  const files =
+    (...names: string[]) =>
+    (path: string) =>
+      names.some((name) => path === `${dir}/${name}`);
+  const paired = () => "https://studio.example.ts.net:7600";
+
+  // `omnesis-collector status` once dialled https://localhost:7600 and asked
+  // to trust the Docker gateway's self-signed certificate there.
+  test("a collector-only directory talks to the gateway its collector is paired with", () => {
+    expect(defaultGatewayUrl({}, dir, files("collector-token"), paired)).toBe(
+      "https://studio.example.ts.net:7600",
+    );
+  });
+
+  test("OMNESIS_GATEWAY_URL wins", () => {
+    expect(
+      defaultGatewayUrl(
+        { OMNESIS_GATEWAY_URL: "https://gateway.example.com:7600" },
+        dir,
+        files("collector-token"),
+        paired,
+      ),
+    ).toBe("https://gateway.example.com:7600");
+  });
+
+  test("a gateway host's directory keeps its own gateway", () => {
+    expect(defaultGatewayUrl({}, dir, files("collector-token", "token"), paired)).toBe(
+      "https://localhost:7600",
+    );
+  });
+
+  test("a collector that has not recorded its pairing yet falls back to localhost", () => {
+    expect(defaultGatewayUrl({}, dir, files("collector-token"), () => null)).toBe(
+      "https://localhost:7600",
+    );
+  });
+
+  test("a record naming something other than an http(s) URL is ignored", () => {
+    expect(defaultGatewayUrl({}, dir, files("collector-token"), () => "file:///etc")).toBe(
+      "https://localhost:7600",
+    );
   });
 });

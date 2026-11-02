@@ -26,3 +26,38 @@ export function collectorHostname(
   const override = env[COLLECTOR_HOSTNAME_ENV]?.trim();
   return override ? override : systemHostname();
 }
+
+/**
+ * The stem a device name is built from, out of a raw hostname: the first DNS
+ * label, lowercased, with anything but letters, digits and hyphens turned
+ * into a hyphen, and at most 63 characters. A Mac reports its Bonjour name
+ * (`Maya-MacBook.local`), whose `.local` is an mDNS suffix rather than part of
+ * the machine's name; the Docker installer derives the name of the collector
+ * it runs from `hostname -s` with exactly this rule, so a native collector and
+ * a container on the same machine carry the same stem. Empty when nothing of
+ * the hostname survives.
+ */
+export function hostNameStem(raw: string): string {
+  const label = raw.trim().split(".")[0] ?? "";
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/gu, "-")
+    .replace(/^-+/u, "")
+    .slice(0, 63)
+    .replace(/-+$/u, "");
+}
+
+/**
+ * The machine name a device registers under: the override a container is
+ * given, as given, or the stem of the system hostname — falling back to the
+ * raw hostname when it has no stem at all.
+ */
+export function deviceNameHost(
+  env: NodeJS.ProcessEnv = process.env,
+  systemHostname: () => string = osHostname,
+): string {
+  const override = env[COLLECTOR_HOSTNAME_ENV]?.trim();
+  if (override) return override;
+  const raw = systemHostname();
+  return hostNameStem(raw) || raw;
+}

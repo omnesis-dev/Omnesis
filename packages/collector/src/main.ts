@@ -297,6 +297,55 @@ async function probeTokenStatus(gatewayUrl: string, token: string): Promise<numb
   }
 }
 
+/** What a token probe learned: the status, and the device the gateway says it is. */
+export interface TokenIdentity {
+  status: number | null;
+  /** The gateway's name for the device the token belongs to, when it said. */
+  deviceName?: string;
+  deviceId?: string;
+}
+
+/**
+ * Probe a token by asking the gateway who it is (`/whoami`, readable by any
+ * token). The answer names the device the gateway registered — which a
+ * collector paired with a code does not otherwise know: the code's name, or
+ * the one the redeem suggested, not the `<host>-collector` this process would
+ * derive. A gateway without the route answers 404, and is probed the old way.
+ */
+export async function probeTokenIdentity(
+  gatewayUrl: string,
+  token: string,
+): Promise<TokenIdentity> {
+  let res: Response;
+  try {
+    res = await fetch(`${gatewayUrl}/whoami`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+  } catch {
+    return { status: null };
+  }
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => undefined);
+    return { status: await probeTokenStatus(gatewayUrl, token) };
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
+    return { status: res.status };
+  }
+  const body = (await res.json().catch(() => null)) as {
+    deviceId?: unknown;
+    deviceName?: unknown;
+  } | null;
+  return {
+    status: res.status,
+    ...(typeof body?.deviceName === "string" && body.deviceName.trim()
+      ? { deviceName: body.deviceName }
+      : {}),
+    ...(typeof body?.deviceId === "string" && body.deviceId ? { deviceId: body.deviceId } : {}),
+  };
+}
+
 /** What `resolveCollectorToken` concluded. */
 export type CollectorTokenResolution =
   | { outcome: "token"; token: string }
@@ -346,12 +395,21 @@ export async function resolveCollectorToken(
   const existing = readCollectorTokenFile(configDir);
   let existingWasRefused = false;
   if (existing) {
+    const identity = await probeTokenIdentity(gatewayUrl, existing);
     const verdict = classifyCollectorAuth({
-      status: await probeTokenStatus(gatewayUrl, existing),
+      status: identity.status,
       everAuthenticated: credentialEverAuthenticated(persisted, { token: existing, gatewayUrl }),
     });
     if (verdict === "authenticated") {
-      recordCollectorPaired({ configDir, gatewayUrl, deviceName, token: existing });
+      // The gateway's name for this device is the one every command and the
+      // installer's banner must use; the derived one is only a fallback.
+      recordCollectorPaired({
+        configDir,
+        gatewayUrl,
+        deviceName: identity.deviceName ?? deviceName,
+        deviceId: identity.deviceId ?? persisted?.deviceId,
+        token: existing,
+      });
       return { outcome: "token", token: existing };
     }
     existingWasRefused = verdict === "needs-pairing";
@@ -418,6 +476,7 @@ export async function resolveCollectorToken(
     configDir,
     gatewayUrl,
     deviceName: body.device?.name ?? deviceName,
+    deviceId: body.device?.id,
     token: body.token,
   });
   return { outcome: "token", token: body.token };
@@ -428,11 +487,13 @@ function recordCollectorPaired(input: {
   configDir: string;
   gatewayUrl: string;
   deviceName: string;
+  deviceId?: string | undefined;
   token: string;
 }): void {
   writeCollectorPairingState(input.configDir, {
     state: "paired",
     deviceName: input.deviceName,
+    ...(input.deviceId ? { deviceId: input.deviceId } : {}),
     gatewayUrl: input.gatewayUrl,
     tokenFingerprint: tokenFingerprint(input.token),
     lastAuthenticatedAt: Date.now(),
