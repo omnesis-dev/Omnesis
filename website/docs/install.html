@@ -873,7 +873,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           pairs itself. The config directory is mounted into the containers
           <em>at the same absolute path</em>, so the data, the token, the certificate and the
           compose file are all readable on the host, and a path means the same thing inside and
-          outside the containers.
+          outside the containers. A first install that stops before its containers start (the images
+          will not pull, a pairing code is refused) removes the compose file, install marker and
+          <code>omnesis</code> command it wrote, so the re-run starts clean; the images it pulled
+          stay for that re-run, and a keyring it armed stays with its <code>.env</code>.
         </p>
         <p>
           <code>omnesis</code> on this host is a wrapper that runs the CLI inside the container: the
