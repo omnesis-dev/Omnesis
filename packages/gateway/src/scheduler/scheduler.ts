@@ -57,7 +57,7 @@ import {
   type AdmissionControllerOptions,
   type AdmissionHold,
 } from "./admission.js";
-import type { SchedulerMetricsSnapshot } from "./metrics.js";
+import type { PerTaskStats, SchedulerMetricsSnapshot } from "./metrics.js";
 import type { Priority, PeriodicTask, RunnerKind, Task, WakeableTask } from "./types.js";
 import type { PreemptBuffer } from "./preempt.js";
 import type { TaskRunner } from "./runner.js";
@@ -302,6 +302,11 @@ export class Scheduler {
       }
     }
     return out;
+  }
+
+  /** One task's metrics row for the window, as `snapshot()` would report it; null without samples. */
+  taskStats(name: string, windowSeconds: number): PerTaskStats | null {
+    return this.metrics.taskSnapshot(name, windowSeconds, (task) => this.findTaskDefinition(task));
   }
 
   /** Build a metrics snapshot for the given window. */
