@@ -84,6 +84,22 @@ export const APPLY_CHUNK_SIZE = 25;
  */
 export const DF_APPLY_CHUNK_SIZE = 5_000;
 
+/**
+ * Remove one document's LSH bucket rows; the apply runs it for every document
+ * it touches.
+ *
+ * `INDEXED BY` pins the seek on `doc_id`. The gateway never runs ANALYZE, so
+ * the planner has no `sqlite_stat1` and rates an equality on the primary key's
+ * leading `algo_version` the same as one on `idx_near_dup_lsh_doc` — then
+ * prefers the primary key, because it covers the row. Every live row carries
+ * the active algo version, so that "seek" walks the whole table (one row per
+ * band for every signed document in the corpus) under the write lock, once
+ * per document applied. Through `idx_near_dup_lsh_doc` the delete reads only
+ * the document's own rows. Exported so the plan test EXPLAINs this exact text.
+ */
+export const BUCKET_DELETE_FOR_DOC_SQL = `DELETE FROM near_dup_lsh_buckets INDEXED BY idx_near_dup_lsh_doc
+  WHERE doc_id = ? AND algo_version = ?`;
+
 export function applyNearDupBatch(
   db: Db,
   batch: NearDupApplyBatch,
@@ -113,10 +129,7 @@ export function applyNearDupBatch(
   const sigDelete = db.prepare(
     `DELETE FROM near_dup_signatures WHERE doc_id = ? AND algo_version = ?`,
   );
-  // Known bug: #649 — without planner statistics this delete scans every bucket row.
-  const bucketDeleteForDoc = db.prepare(
-    `DELETE FROM near_dup_lsh_buckets WHERE doc_id = ? AND algo_version = ?`,
-  );
+  const bucketDeleteForDoc = db.prepare(BUCKET_DELETE_FOR_DOC_SQL);
   const edgeDeleteForDoc = db.prepare(
     `DELETE FROM near_dup_edges
       WHERE algo_version = ? AND (doc_a = ? OR doc_b = ?)`,
