@@ -433,6 +433,16 @@ describe("removing one install leaves the other", () => {
     expect(refused.status).toBe(2);
 
     writeFileSync(dockerLog(native.home), "");
+    // Its launchd logs, beside one the Docker install's certificate renewal writes.
+    const logs = join(native.home, "Library", "Logs", "Omnesis");
+    mkdirSync(logs, { recursive: true });
+    for (const name of [
+      "dev.omnesis.collector.log",
+      "dev.omnesis.collector.err.log",
+      "tls-renew.log",
+    ]) {
+      writeFileSync(join(logs, name), "fictional log line\n");
+    }
     const done = host(native, native.shim, ["uninstall", "--yes", "--purge"]);
     expect(done.status, done.stderr).toBe(0);
     const calls = read(join(native.home, "cli-calls.log"));
@@ -451,6 +461,7 @@ describe("removing one install leaves the other", () => {
     expect(existsSync(native.shim)).toBe(false);
     expect(existsSync(native.innerLauncher)).toBe(false);
     expect(existsSync(native.nativeDir)).toBe(false);
+    expect(readdirSync(logs)).toEqual(["tls-renew.log"]);
     // The install in Docker is exactly as it was.
     expect(read(native.launcher)).toBe(launcherBefore);
     expect(read(join(native.dockerDir, "install-method"))).toBe("docker\n");

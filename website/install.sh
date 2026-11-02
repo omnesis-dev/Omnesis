@@ -2291,7 +2291,7 @@ if [ "${1:-}" = uninstall ]; then
       -h|--help)
         printf '%s\n' "Usage: omnesis-collector uninstall [--purge] [--yes] [--dry-run]" \
           "Removes the native collector installed beside the Docker install: its service, checkout and command." \
-          "--purge also deletes its config directory (its token, keys and caches) and its keys in the OS keyring."
+          "--purge also deletes its config directory (its token, keys and caches), its keys in the OS keyring and its service logs."
         exit 0 ;;
       *) printf 'omnesis-collector uninstall: %s is not an option it takes.\n' "$ARG" >&2; exit 2 ;;
     esac
@@ -2317,7 +2317,7 @@ if [ "${1:-}" = uninstall ]; then
   [ -z "$UNIT" ] || printf '  - %s\n' "Stop and remove its collector service"
   [ "$MANAGED" = 0 ] || printf '  - %s\n' "Remove its checkout $ROOT"
   printf '  - %s\n' "Remove $LAUNCHER and the omnesis-collector command"
-  if [ "$PURGE" = 1 ]; then printf '  - %s\n' "Delete its config directory $CONFIG_DIR (token, keys, caches) and its keys in the OS keyring"
+  if [ "$PURGE" = 1 ]; then printf '  - %s\n' "Delete its config directory $CONFIG_DIR (token, keys, caches), its keys in the OS keyring and its service logs"
   else printf '  - %s\n' "Keep its config directory $CONFIG_DIR and its keys in the OS keyring (--purge deletes them too)"; fi
   printf '  %s\n' "The Docker install, its omnesis command and its data are not touched."
   # Whether the device is revoked on this machine's gateway as part of this
@@ -2387,6 +2387,12 @@ if [ "${1:-}" = uninstall ]; then
       /|"$HOME"|"$HOME"/|"$DOCKER_DIR") printf 'omnesis-collector uninstall: refusing to delete %s.\n' "$CONFIG_DIR" >&2; exit 1 ;;
     esac
     rm -rf "$CONFIG_DIR"
+    # Its launchd service's logs (systemd's are in the journal). The directory
+    # is shared with the Docker install's certificate renewal, so it goes only
+    # once it is empty.
+    LOGS_DIR="$HOME/Library/Logs/Omnesis"
+    rm -f "$LOGS_DIR/dev.omnesis.collector.log" "$LOGS_DIR/dev.omnesis.collector.err.log"
+    rmdir "$LOGS_DIR" 2>/dev/null || true
   fi
   rm -f "$0"
   if [ "$REVOKE" = 1 ]; then
