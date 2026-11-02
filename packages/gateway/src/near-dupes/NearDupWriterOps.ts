@@ -113,6 +113,7 @@ export function applyNearDupBatch(
   const sigDelete = db.prepare(
     `DELETE FROM near_dup_signatures WHERE doc_id = ? AND algo_version = ?`,
   );
+  // Known bug: #649 — without planner statistics this delete scans every bucket row.
   const bucketDeleteForDoc = db.prepare(
     `DELETE FROM near_dup_lsh_buckets WHERE doc_id = ? AND algo_version = ?`,
   );
