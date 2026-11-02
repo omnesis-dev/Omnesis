@@ -8043,6 +8043,31 @@ docker_undo_fresh_install() {
   printf '\033[1;33m[omnesis]\033[0m %s\n' "This first install did not finish, so what it wrote is removed again:$DOCKER_UNDONE. Re-run the installer once the problem above is fixed." >&2
 }
 
+# An installer re-run that moves an install to another release — the
+# documented upgrade for a release older than `omnesis update` — leaves the
+# release it came from behind, a gigabyte or more an image. Once the new one is
+# running, exactly this install's release images at that previous tag go, as
+# `omnesis update` removes them after its own move. Docker refuses an image a
+# container still uses, so another install's stays.
+DOCKER_PREVIOUS_TAG=""
+docker_remove_previous_images() {
+  [ -n "$DOCKER_PREVIOUS_TAG" ] && [ "$DOCKER_PREVIOUS_TAG" != "$IMAGE_TAG" ] || return 0
+  PREVIOUS_REMOVED=""
+  PREVIOUS_KEPT=""
+  for PREVIOUS_NAME in omnesis-gateway omnesis-collector omnesis-combined omnesis-updater; do
+    PREVIOUS_IMAGE="$IMAGE_REPO/$PREVIOUS_NAME:$DOCKER_PREVIOUS_TAG"
+    docker image inspect "$PREVIOUS_IMAGE" >/dev/null 2>&1 || continue
+    if docker image rm "$PREVIOUS_IMAGE" >/dev/null 2>&1; then
+      PREVIOUS_REMOVED="$PREVIOUS_REMOVED $PREVIOUS_NAME"
+    else
+      PREVIOUS_KEPT="$PREVIOUS_KEPT $PREVIOUS_IMAGE"
+    fi
+  done
+  [ -z "$PREVIOUS_REMOVED" ] || info "Removed the $DOCKER_PREVIOUS_TAG images this install no longer uses:$PREVIOUS_REMOVED."
+  [ -z "$PREVIOUS_KEPT" ] || warn "Kept$PREVIOUS_KEPT: a container still uses it. Remove it once nothing does: docker image rm$PREVIOUS_KEPT"
+  return 0
+}
+
 docker_install() {
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
@@ -8069,6 +8094,8 @@ docker_install() {
   docker_tls_prepare
   docker_self_signed_names
   docker_prepare_topology_transition
+  DOCKER_PREVIOUS_TAG="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
+  [ -f "$CONFIG_DIR/docker-compose.yml" ] || DOCKER_PREVIOUS_TAG=""
   docker_write_compose
   docker_write_wrapper
   docker_record_method
@@ -8093,6 +8120,7 @@ docker_install() {
     docker_collector_pair
     DOCKER_UNDO=0
     docker_up collector
+    docker_remove_previous_images
     print_docker_banner
     return 0
   fi
@@ -8101,6 +8129,7 @@ docker_install() {
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
     if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
+    docker_remove_previous_images
     install_model
   else
     # Compose holds the collector until the gateway is healthy, so starting it
