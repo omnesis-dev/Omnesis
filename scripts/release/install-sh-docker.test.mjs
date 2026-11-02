@@ -63,6 +63,7 @@ printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
   info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
+  image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -1341,6 +1342,47 @@ describe("install.sh --docker: what it puts on this host", () => {
     });
     expect(roomy.status).toBe(0);
     expect(roomy.docker.some((call) => call.includes("--profile update build"))).toBe(true);
+  });
+
+  test("a pull is refused before anything is written when Docker's storage is short of space", () => {
+    // As for --build, the requirement is stated rather than the disk faked.
+    const short = runInstaller("pull-disk-short", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_TEST_IMAGES_ABSENT: "1",
+      OMNESIS_DOCKER_PULL_DISK_GB: "1000000",
+    });
+    expect(short.status).toBe(1);
+    expect(short.output).toContain(
+      `Pulling the 9.9.0 images needs about 1000000 GB free where Docker stores them (${repoRoot})`,
+    );
+    expect(short.output).toContain("Nothing was changed.");
+    expect(short.docker.some((call) => call.includes("--profile update pull"))).toBe(false);
+    expect(existsSync(join(short.configDir, "docker-compose.yml"))).toBe(false);
+    expect(existsSync(short.wrapper)).toBe(false);
+    // A host that already holds every image pulls nothing, so it is not asked for room.
+    const present = runInstaller("pull-disk-present", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_DOCKER_PULL_DISK_GB: "1000000",
+    });
+    expect(present.status, present.output).toBe(0);
+  });
+
+  test("a pull that runs out of disk says so at once, not the network", () => {
+    const run = runInstaller("pull-enospc", QUIET, {
+      OMNESIS_TEST_DOCKER_ROOT: repoRoot,
+      OMNESIS_TEST_PULL_FAIL: "1",
+      OMNESIS_TEST_PULL_ERROR:
+        "failed to extract layer (application/vnd.docker.image.rootfs.diff.tar.gzip sha256:b6c6) to overlayfs: " +
+        "write /var/lib/containerd/tmpmounts/containerd-mount1/usr/lib/x.pl: no space left on device",
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      `Pulling the 9.9.0 images ran out of disk space where Docker stores them (${repoRoot}`,
+    );
+    expect(run.output).toContain("docker system prune");
+    expect(run.output).not.toContain("network connection");
+    expect(run.output).not.toContain("attempt 1 of");
+    expect(run.docker.filter((call) => call.includes("--profile update pull"))).toHaveLength(1);
   });
 
   test("--dry-run --build names the checkout and performs no Docker work", () => {

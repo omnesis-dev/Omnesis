@@ -842,7 +842,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>omnesis-combined</code> for both in one container, with
           <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin at
           v2.24.0 or later (<code>docker compose version</code> prints it; the installer refuses an
-          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The
+          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. Pulling
+          the images needs about 4 GB free where Docker stores them; the installer checks before
+          writing anything (<code>OMNESIS_DOCKER_PULL_DISK_GB=0</code> skips the check). The
           installer uses release images only, so it refuses <code>--edge</code>;
           <code>--version X.Y.Z</code> selects an exact release. From a checkout,
           <code>sh scripts/install.sh --docker --build</code> builds the images locally, tagged
