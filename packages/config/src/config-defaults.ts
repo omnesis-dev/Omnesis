@@ -292,6 +292,7 @@ export const CONFIG_DEFAULTS = {
       peopleCounts: { interval: "10m" },
       sourceStats: { interval: "30s" },
       catalog: { interval: "5m" },
+      plannerStatistics: { interval: "off" },
       linkStats: { interval: "1h", idleDelay: "6h" },
       interactionScores: { interval: "60s", idleDelay: "5m" },
       mergeRulesEval: { interval: "60s", idleDelay: "5m" },

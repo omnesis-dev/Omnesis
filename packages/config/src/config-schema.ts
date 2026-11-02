@@ -1139,6 +1139,21 @@ const backfillCatalog = z
   })
   .strict();
 
+const backfillPlannerStatistics = z
+  .object({
+    /**
+     * Cadence for refreshing SQLite planner statistics (`sqlite_stat1`), or
+     * `"off"`. Default `"off"`; `"0"` is also off.
+     */
+    interval: z
+      .union([duration, z.literal("off")])
+      .describe(
+        'Cadence for refreshing SQLite planner statistics (sqlite_stat1), or "off". Default off.',
+      )
+      .optional(),
+  })
+  .strict();
+
 const backfillLinkStats = z
   .object({
     /** Active reconcile cadence for `/links/stats` materialization. Default `"1h"`. */
@@ -1215,6 +1230,9 @@ const gatewayBackfill = z
     mergePass: backfillPeopleCounts.describe("Deprecated alias for peopleCounts.").optional(),
     sourceStats: backfillSourceStats.describe("Source-stats refresh.").optional(),
     catalog: backfillCatalog.describe("Catalog-stats refresh.").optional(),
+    plannerStatistics: backfillPlannerStatistics
+      .describe("SQLite planner statistics (ANALYZE) refresh.")
+      .optional(),
     linkStats: backfillLinkStats.describe("Link-stats materialization.").optional(),
     interactionScores: backfillInteractionScores.describe("Interaction-score refresh.").optional(),
     mergeRulesEval: backfillMergeRulesEval.describe("Merge-rules evaluation.").optional(),

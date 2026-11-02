@@ -200,6 +200,8 @@ describe("resolveRuntimeSettings — gateway.backfill defaults", () => {
     expect(r.statsRefreshIntervalMs).toBe(30_000);
     // catalog
     expect(r.catalogRefreshIntervalMs).toBe(5 * 60_000);
+    // planner statistics: off unless the operator turns them on
+    expect(r.plannerStatisticsIntervalMs).toBe(0);
     // linkStats (reconciliation cadence — reads use trigger-maintained counters)
     expect(r.linkStatsRefreshIntervalMs).toBe(3_600_000);
     expect(r.linkStatsIdleDelayMs).toBe(6 * 3_600_000);
@@ -366,6 +368,7 @@ describe("backfillOptsFromRuntime — field-mapping integrity", () => {
           mergePass: { interval: "141m" },
           sourceStats: { interval: "151s" },
           catalog: { interval: "161m" },
+          plannerStatistics: { interval: "165m" },
           linkStats: { interval: "171s", idleDelay: "172m" },
           interactionScores: { interval: "181s", idleDelay: "182m" },
           mergeRulesEval: { interval: "191s", idleDelay: "192m" },
@@ -386,6 +389,7 @@ describe("backfillOptsFromRuntime — field-mapping integrity", () => {
       peopleCountsRefreshIntervalMs: 141 * 60_000,
       statsRefreshIntervalMs: 151_000,
       catalogRefreshIntervalMs: 161 * 60_000,
+      plannerStatisticsIntervalMs: 165 * 60_000,
       linkStatsRefreshIntervalMs: 171_000,
       linkStatsIdleDelayMs: 172 * 60_000,
       interactionScoresRefreshIntervalMs: 181_000,
@@ -396,6 +400,17 @@ describe("backfillOptsFromRuntime — field-mapping integrity", () => {
       mergeCandidatesDetectIntervalMs: 211 * 60_000,
       mergeCandidatesDetectIdleDelayMs: 212 * 60_000,
     });
+  });
+
+  test("planner statistics take a cadence, and off or a zero duration leaves them off", () => {
+    const at = (interval: string) =>
+      resolveRuntimeSettings({ gateway: { backfill: { plannerStatistics: { interval } } } })
+        .plannerStatisticsIntervalMs;
+    expect(at("1h")).toBe(3_600_000);
+    expect(at("6h")).toBe(6 * 3_600_000);
+    expect(at("off")).toBe(0);
+    expect(at("0")).toBe(0);
+    expect(at("0s")).toBe(0);
   });
 
   test("returned shape carries every field BackfillTaskOpts consumes from runtime", () => {
@@ -415,6 +430,7 @@ describe("backfillOptsFromRuntime — field-mapping integrity", () => {
       "peopleCountsRefreshIntervalMs",
       "statsRefreshIntervalMs",
       "catalogRefreshIntervalMs",
+      "plannerStatisticsIntervalMs",
       "linkStatsRefreshIntervalMs",
       "linkStatsIdleDelayMs",
       "interactionScoresRefreshIntervalMs",

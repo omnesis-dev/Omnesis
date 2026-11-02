@@ -557,6 +557,20 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           take longer to show.
         </p>
         <p>
+          <code>gateway.backfill.plannerStatistics.interval</code> keeps SQLite's query-planner
+          statistics (the <code>sqlite_stat1</code> table) current. It is <code>off</code> by
+          default. Set it to a cadence such as <code>1h</code> and restart the gateway to turn it
+          on: the gateway then asks <code>PRAGMA optimize</code> which tables need analysis and
+          analyzes them one index at a time under an analysis limit, in short slices between other
+          writes. Statistics change how queries are planned. To go back, set the interval to
+          <code>off</code>, stop the gateway, delete the statistics with
+          <code
+            >sqlite3 omnesis.db "DROP TABLE sqlite_stat1; DROP TABLE IF EXISTS sqlite_stat4;"</code
+          >
+          (an encrypted database needs a SQLite build that opens it with its key), and start the
+          gateway again.
+        </p>
+        <p>
           The collector reads the operating system's region to interpret phone numbers written
           without a country code. macOS uses your regional setting; Linux prefers
           <code>LC_TELEPHONE</code>. A headless or container collector can set

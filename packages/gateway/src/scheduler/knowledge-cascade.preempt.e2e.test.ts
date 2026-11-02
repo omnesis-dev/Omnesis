@@ -14,7 +14,8 @@
  * behind it. This suite seeds a backlog the size of a large mailbox and drive
  * library, of invented sources, and holds the writer op to what a slice may
  * cost: a short hold, an unrelated write that is served promptly behind it,
- * and a preempt seam that stops a slice after the step it is on.
+ * a preempt seam that stops a slice after the step it is on, and a time slice
+ * that stops a large step budget before it outlasts the hold.
  *
  * Like the link-apply preemption suite, it runs a Scheduler with preemption
  * and a real `WriterTaskRunner` against a temp DB, with no gateway process,
@@ -117,7 +118,7 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     return runWithPriority("background", () => gate["knowledge.advanceCascade"](limit, NOW));
   }
 
-  function unrelatedWrite(): Promise<boolean> {
+  async function unrelatedWrite(): Promise<boolean> {
     return runWithPriority("user", () =>
       gate.setSyncState(`synth-pressure-${pressureSeq++}`, CURSOR, undefined),
     );
@@ -151,8 +152,17 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     expect(await pressure).toBe(true);
     expect(result.pending).toBe(true);
     expect(before - pendingJobs()).toBe(1);
-    const after = pendingJobs();
-    await slice(1000);
-    expect(after - pendingJobs()).toBe(1000);
+  });
+
+  test("an unpreempted large budget stops at its time slice and leaves the rest pending", async () => {
+    const before = pendingJobs();
+    expect((await slice(1000)).pending).toBe(true);
+    const drained = before - pendingJobs();
+    expect(drained).toBeGreaterThan(1);
+    expect(drained).toBeLessThanOrEqual(1000);
+    const stats = scheduler
+      .snapshot(300)
+      .perTask.find((task) => task.name === "knowledge.advanceCascade");
+    expect(stats!.max).toBeLessThan(SLICE_HOLD_BUDGET_MS);
   });
 });

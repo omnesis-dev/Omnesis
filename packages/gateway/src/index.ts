@@ -241,6 +241,7 @@ import { BackgroundJobsRegistry } from "./background-jobs/index.js";
 import { periodicJob } from "./background-jobs/scheduler-job.js";
 import { StatelessTracker } from "./background-jobs/trackers.js";
 import { derivationSlaTasks } from "./scheduler/tasks/derivation-sla.js";
+import { sweepCollapsedCandidates } from "./scheduler/tasks/backfill-helpers.js";
 import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDerivation.js";
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
@@ -2621,7 +2622,7 @@ const app = createServer(db, DB_PATH, {
         if (result.added + result.changed + result.removed > 0) {
           scheduler.kickPeriodic("backfill.interactionScoresRefresh");
           scheduler.kickPeriodic("backfill.peopleCountsRefresh");
-          await writeGate.sweepCollapsedMergeCandidates();
+          await sweepCollapsedCandidates(ioGate, writeGate);
         }
       }),
   },

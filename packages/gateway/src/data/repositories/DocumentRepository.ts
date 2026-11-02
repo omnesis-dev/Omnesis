@@ -1325,11 +1325,9 @@ export function getRecentDocuments(
   limit: number = 10,
   before?: { sourceCreatedAt: string; id: string },
 ): RecentDocument[] {
-  const cursorPredicate = before
-    ? "AND (document.source_created_at < ? OR (document.source_created_at = ? AND document.id < ?))"
-    : "";
+  const cursorPredicate = before ? "AND (document.source_created_at, document.id) < (?, ?)" : "";
   const params: Array<string | number> = [sourceId];
-  if (before) params.push(before.sourceCreatedAt, before.sourceCreatedAt, before.id);
+  if (before) params.push(before.sourceCreatedAt, before.id);
   params.push(limit);
   return db
     .prepare<(string | number)[], RecentDocument>(

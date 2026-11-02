@@ -60,6 +60,26 @@ type Db = Database.Database;
 // at the same priority are not trapped behind the entire rebuild.
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
+// Background batches that loop over many small units give the writer back once
+// this much time is spent, so a write queued at their own priority is served
+// between slices rather than after the whole batch.
+const BACKGROUND_BATCH_SLICE_MS = 100;
+
+// The people backfill's unit is a whole document, and one document can name
+// dozens of people, so it checks against a shorter slice to keep a call's hold
+// (the slice plus the document it is on) inside the same bound.
+const PEOPLE_BACKFILL_SLICE_MS = 50;
+
+// One ANALYZE unit costs a walk of its whole index: this SQLite build enables
+// STAT4, so ANALYZE counts an index's entries exactly whatever the analysis
+// limit. The slice leaves room for one more unit inside the same bound.
+const PLANNER_STATISTICS_SLICE_MS = 50;
+
+function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
+  const deadline = performance.now() + sliceMs;
+  return () => token.requested() || performance.now() >= deadline;
+}
+
 // A compute batch carries up to a hundred docs. Same rule as the DF apply: give
 // the writer back between chunks once the slice is spent, so a background
 // write queued at the same priority does not wait for the whole batch.
@@ -169,6 +189,7 @@ import {
   type ActivityRetentionPhase,
 } from "../activity-retention/store.js";
 import { upsertSqliteTableStats, type SqliteTableStatsRow } from "../sqlite-catalog.js";
+import { refreshPlannerStatistics } from "../data/planner-statistics.js";
 import {
   cleanupExpiredAccessStateBatch,
   createAuthorizationRequest,
@@ -201,7 +222,7 @@ import {
   applyMergeAdjudication,
   autoApproveHighConfidenceCandidates,
   denyMergeCandidate,
-  sweepCollapsedMergeCandidates,
+  acceptCollapsedMergeCandidates,
   pruneSuppressedMergeCandidates,
   reconcilePendingMergeCandidates,
   upsertTokenLabels,
@@ -1007,7 +1028,6 @@ export const writerHandlers = {
     personIds: readonly string[],
     opts?: { reason?: string | null; createdBy?: string | null },
   ) => mergeCluster(db, personIds, opts ?? {}),
-  "people.sweepCollapsedMergeCandidates": (db: Db) => sweepCollapsedMergeCandidates(db),
   "people.pruneSuppressedMergeCandidates": (db: Db) => pruneSuppressedMergeCandidates(db),
   "people.autoApproveHighConfidenceCandidates": (db: Db) => autoApproveHighConfidenceCandidates(db),
   "people.reconcilePendingMergeCandidates": (
@@ -2028,11 +2048,14 @@ import type {
 
 export const writerYieldableHandlers = {
   /**
-   * Bounded by its step limit and by the preempt token between steps; the
-   * frontier is durable per step, so stopping early only leaves it pending.
+   * Bounded by its step limit, by the preempt token and by a time slice
+   * between steps; the frontier is durable per step, so stopping early only
+   * leaves it pending for the caller's next call.
    */
   "knowledge.advanceCascade": (db: Db, token: PreemptToken, limit: number, now: number) =>
-    advanceKnowledgeCascade(db, limit, now, undefined, token),
+    advanceKnowledgeCascade(db, limit, now, undefined, {
+      requested: sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS),
+    }),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
@@ -2117,12 +2140,77 @@ export const writerYieldableHandlers = {
   },
 
   /**
-   * Yieldable people backfill — per-doc transactions, breaks on
-   * higher-priority enqueue. Caller (periodic task on main runner)
-   * sees the partial result and schedules the next tick.
+   * Yieldable people backfill — per-doc transactions. Stops for a
+   * higher-priority enqueue or once the slice is spent, and resumes the rest
+   * of the batch from the back of its lane, carrying the running counts.
    */
-  "people.backfillManyPeople": (db: Db, token: PreemptToken, batchSize?: number) =>
-    backfillManyPeople(db, batchSize, { token }),
+  "people.backfillManyPeople": (
+    db: Db,
+    token: PreemptToken,
+    batchSize = 50,
+    sofar: { processed: number; resolved: number; skipped: number } = {
+      processed: 0,
+      resolved: 0,
+      skipped: 0,
+    },
+  ) => {
+    const r = backfillManyPeople(db, batchSize, {
+      shouldStop: sliceDeadline(token, PEOPLE_BACKFILL_SLICE_MS),
+    });
+    const total = {
+      processed: sofar.processed + r.processed,
+      resolved: sofar.resolved + r.resolved,
+      skipped: sofar.skipped + r.skipped,
+    };
+    if (r.stopped) {
+      return { kind: "yield" as const, resume: [batchSize - r.processed, total] };
+    }
+    return total;
+  },
+
+  /**
+   * Keep `sqlite_stat1` current: the first call asks `PRAGMA optimize` which
+   * tables need analysis, then each call analyzes tables one at a time under
+   * the analysis limit, giving the writer back once the slice is spent.
+   */
+  "db.refreshPlannerStatistics": (
+    db: Db,
+    token: PreemptToken,
+    units?: string[],
+    analyzedSoFar = 0,
+    tablesSoFar: string[] = [],
+  ) => {
+    const result = refreshPlannerStatistics(db, units, {
+      shouldStop: sliceDeadline(token, PLANNER_STATISTICS_SLICE_MS),
+    });
+    const analyzed = analyzedSoFar + result.analyzed.length;
+    const tables = [...new Set([...tablesSoFar, ...result.tables])];
+    if (result.remaining.length > 0) {
+      return { kind: "yield" as const, resume: [result.remaining, analyzed, tables] };
+    }
+    return { analyzed, tables: tables.length };
+  },
+
+  /**
+   * Write half of the collapsed-candidate sweep: re-checks and accepts the
+   * candidates an io reader found collapsed, in chunks, giving the writer back
+   * between them once the slice is spent.
+   */
+  "people.acceptCollapsedMergeCandidates": (
+    db: Db,
+    token: PreemptToken,
+    ids: string[],
+    sweptSoFar = 0,
+  ) => {
+    const result = acceptCollapsedMergeCandidates(db, ids, {
+      shouldStop: sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS),
+    });
+    const swept = sweptSoFar + result.swept;
+    if (result.remaining.length > 0) {
+      return { kind: "yield" as const, resume: [result.remaining, swept] };
+    }
+    return { swept };
+  },
 
   /**
    * Yieldable people rebuild. The `reset` phase clears the people graph +

@@ -532,6 +532,18 @@ read through an index. Where the plan is load-bearing, pin it (`CROSS JOIN`,
 `INDEXED BY`) and assert it in a test: both shapes return the same rows, and
 only the plan says what it cost.
 
+The gateway can keep `sqlite_stat1` current (`data/planner-statistics.ts`, off
+unless `gateway.backfill.plannerStatistics.interval` is set): `PRAGMA optimize`
+names the tables that need analysis, the writer analyzes them one index at a
+time under an analysis limit, and a finished pass moves the schema cookie so
+read connections reload the statistics together. Statistics help, but they do
+not replace a pin: an install without the task has none, and an approximate
+analysis rates every key repeated more than the limit alike. Write a keyset
+cursor as a row value, `(ts, id) < (?, ?)`, never as `ts < ? OR (ts = ? AND
+id < ?)`: with statistics the planner splits that OR into a multi-index OR
+and sorts the whole match. For mixed directions, bound the leading column and
+exclude the cursor's tie: `ts <= ? AND NOT (ts = ? AND id <= ?)`.
+
 **A new source is a new load.** A source that emits an unusual number of links,
 people or documents per item changes the arithmetic every consumer of that data
 assumed. Before enabling one, look at what it costs the writer.

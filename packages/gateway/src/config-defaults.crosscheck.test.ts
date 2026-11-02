@@ -185,6 +185,8 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defMs("/gateway/backfill/peopleCounts/interval")).toBe(rt.peopleCountsRefreshIntervalMs);
     expect(defMs("/gateway/backfill/sourceStats/interval")).toBe(rt.statsRefreshIntervalMs);
     expect(defMs("/gateway/backfill/catalog/interval")).toBe(rt.catalogRefreshIntervalMs);
+    expect(defAt("/gateway/backfill/plannerStatistics/interval")).toBe("off");
+    expect(rt.plannerStatisticsIntervalMs).toBe(0);
     expect(defMs("/gateway/backfill/linkStats/interval")).toBe(rt.linkStatsRefreshIntervalMs);
     expect(defMs("/gateway/backfill/linkStats/idleDelay")).toBe(rt.linkStatsIdleDelayMs);
     expect(defMs("/gateway/backfill/interactionScores/interval")).toBe(

@@ -182,20 +182,15 @@ export function listCognitionCoverage(
   const conditions: string[] = [];
   const params: Array<number | string> = [];
   if (opts.before) {
+    // Newest progress first, then ascending identity: bound the leading
+    // column and exclude the cursor's own tie and what precedes it.
     conditions.push(
-      `(last_progress_at < ?
-        OR (last_progress_at = ? AND source_id > ?)
-        OR (last_progress_at = ? AND source_id = ? AND workflow_id > ?)
-        OR (last_progress_at = ? AND source_id = ? AND workflow_id = ?
-            AND workflow_version > ?))`,
+      `last_progress_at <= ?
+       AND NOT (last_progress_at = ?
+                AND (source_id, workflow_id, workflow_version) <= (?, ?, ?))`,
     );
     params.push(
       opts.before.lastProgressAt,
-      opts.before.lastProgressAt,
-      opts.before.sourceId,
-      opts.before.lastProgressAt,
-      opts.before.sourceId,
-      opts.before.workflowId,
       opts.before.lastProgressAt,
       opts.before.sourceId,
       opts.before.workflowId,

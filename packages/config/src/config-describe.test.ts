@@ -164,6 +164,7 @@ const EXPECTED_INVENTORY = [
   "/gateway/backfill/people/idleDelay [duration]",
   "/gateway/backfill/people/interval [duration]",
   "/gateway/backfill/peopleCounts/interval [duration]",
+  "/gateway/backfill/plannerStatistics/interval [string]",
   "/gateway/backfill/sourceStats/interval [duration]",
   "/gateway/backgroundWorkerNice [number]",
   "/gateway/cors/allowCredentials [boolean]",

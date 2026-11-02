@@ -107,14 +107,8 @@ export function listPrivacyApprovalPage(
         : status === "expired"
           ? ["(a.status = 'expired' OR (a.status = 'pending' AND a.expires_at <= ?))", [now]]
           : ["a.status = ?", [status]];
-  const where = `${statusWhere}${
-    after ? " AND (a.created_at < ? OR (a.created_at = ? AND a.id < ?))" : ""
-  }`;
-  const params = [
-    ...statusParams,
-    ...(after ? [after.createdAt, after.createdAt, after.id] : []),
-    safeLimit + 1,
-  ];
+  const where = `${statusWhere}${after ? " AND (a.created_at, a.id) < (?, ?)" : ""}`;
+  const params = [...statusParams, ...(after ? [after.createdAt, after.id] : []), safeLimit + 1];
   const rows = db
     .prepare<unknown[], ApprovalJoinedRow>(
       `${approvalJoinSql(where)} ORDER BY a.created_at DESC, a.id DESC LIMIT ?`,

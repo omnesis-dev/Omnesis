@@ -641,10 +641,10 @@ export function listLiveAnnotationsForDoc(
   limitOrOptions: number | { limit?: number; before?: { createdAt: number; id: string } } = 20,
 ): DocAnnotationRow[] {
   const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
-  const cursor = options.before ? "AND (created_at < ? OR (created_at = ? AND id < ?))" : "";
+  const cursor = options.before ? "AND (created_at, id) < (?, ?)" : "";
   const params: Array<string | number> = [docId];
   if (options.before) {
-    params.push(options.before.createdAt, options.before.createdAt, options.before.id);
+    params.push(options.before.createdAt, options.before.id);
   }
   params.push(options.limit ?? 20);
   const rows = db

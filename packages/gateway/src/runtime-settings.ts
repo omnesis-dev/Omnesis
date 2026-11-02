@@ -208,6 +208,8 @@ export interface ResolvedRuntimeSettings {
   statsRefreshIntervalMs: number;
   /** Catalog-stats refresh cadence, ms. */
   catalogRefreshIntervalMs: number;
+  /** Planner-statistics refresh cadence, ms; 0 when off (the default). */
+  plannerStatisticsIntervalMs: number;
   /** `/links/stats` materialization active cadence, ms. */
   linkStatsRefreshIntervalMs: number;
   /** `/links/stats` idle backoff, ms. */
@@ -329,6 +331,10 @@ const DEFAULTS = {
   // Catalog stats are purely periodic (no work to backlog), 5 min
   // is fine for the per-source aggregate the portal reads.
   catalogRefreshInterval: "5m",
+  // Planner statistics change query plans, so they stay off until an
+  // operator turns them on; SQLite's own advice for a long-lived connection
+  // is hourly or daily.
+  plannerStatisticsInterval: "off",
   // /links/stats materialization: 30s active poll; when nothing is
   // mutating `document_links` the refresh short-circuits on the
   // `needs_refresh=0` PK lookup so the idle backoff just paces the
@@ -413,6 +419,13 @@ function resolveJournalMode(config: OmnesisConfig | undefined): "WAL" | "TRUNCAT
   const envVal = envString("OMNESIS_JOURNAL_MODE");
   if (envVal === "WAL" || envVal === "TRUNCATE") return envVal;
   return config?.gateway?.journalMode ?? DEFAULTS.journalMode;
+}
+
+/** A cadence that may be switched off: `"off"` or a zero duration is 0. */
+function parseOptionalInterval(raw: string): number {
+  const value = raw.trim();
+  if (value === "off" || /^0+(?:\.0+)?\s*(?:ms|s|m|h|d|M|y)?$/.test(value)) return 0;
+  return parseDuration(value);
 }
 
 function resolveDuration(
@@ -668,6 +681,9 @@ function resolveBackfill(config: OmnesisConfig | undefined) {
     catalogRefreshIntervalMs: parseDuration(
       bf?.catalog?.interval ?? DEFAULTS.catalogRefreshInterval,
     ),
+    plannerStatisticsIntervalMs: parseOptionalInterval(
+      bf?.plannerStatistics?.interval ?? DEFAULTS.plannerStatisticsInterval,
+    ),
     linkStatsRefreshIntervalMs: parseDuration(
       bf?.linkStats?.interval ?? DEFAULTS.linkStatsRefreshInterval,
     ),
@@ -729,6 +745,7 @@ export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
       `peopleCounts={interval=${s.peopleCountsRefreshIntervalMs}ms}, ` +
       `sourceStats={interval=${s.statsRefreshIntervalMs}ms}, ` +
       `catalog={interval=${s.catalogRefreshIntervalMs}ms}, ` +
+      `plannerStatistics={${s.plannerStatisticsIntervalMs > 0 ? `interval=${s.plannerStatisticsIntervalMs}ms` : "off"}}, ` +
       `linkStats={interval=${s.linkStatsRefreshIntervalMs}ms,idle=${s.linkStatsIdleDelayMs}ms}, ` +
       `interactionScores={interval=${s.interactionScoresRefreshIntervalMs}ms,idle=${s.interactionScoresIdleDelayMs}ms}, ` +
       `mergeRulesEval={interval=${s.mergeRulesEvalIntervalMs}ms,idle=${s.mergeRulesEvalIdleDelayMs}ms}, ` +
@@ -759,6 +776,7 @@ const BACKFILL_RUNTIME_KEYS = [
   "peopleCountsRefreshIntervalMs",
   "statsRefreshIntervalMs",
   "catalogRefreshIntervalMs",
+  "plannerStatisticsIntervalMs",
   "linkStatsRefreshIntervalMs",
   "linkStatsIdleDelayMs",
   "interactionScoresRefreshIntervalMs",

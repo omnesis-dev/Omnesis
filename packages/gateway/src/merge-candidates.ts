@@ -1387,62 +1387,106 @@ function sidesCollapsedToOneIdentity(
   return ca.size === 1 && cb.size === 1 && ca.values().next().value === cb.values().next().value;
 }
 
+interface PendingCandidateSides {
+  id: string;
+  side_a_alias_type: string;
+  side_a_alias: string;
+  side_b_alias_type: string;
+  side_b_alias: string;
+}
+
+function candidateSidesCollapsed(db: Db, c: PendingCandidateSides): boolean {
+  return sidesCollapsedToOneIdentity(
+    db,
+    { aliasType: c.side_a_alias_type as MergeRuleAliasType, alias: c.side_a_alias },
+    { aliasType: c.side_b_alias_type as MergeRuleAliasType, alias: c.side_b_alias },
+  );
+}
+
 /**
- * Sweep `pending` candidates whose two sides now belong to one and the
- * same identity (see `sidesCollapsedToOneIdentity`). Marks them
- * `accepted` with `rule_id=NULL` — same semantics as the no-op accept
- * path in `acceptMergeCandidate`.
- *
- * Called from the merge-rules eval task: as a pre-step on every tick,
- * and again right after an apply that moved equivalences (the pre-step
- * runs before the apply, so a merge landing in that tick would
- * otherwise leave its satisfied candidates pending until the next
- * tick — the portal polls for them to clear).
- *
- * Returns the count actually flipped to `accepted`.
+ * Read half of the collapsed-candidate sweep: the ids of `pending` candidates
+ * whose two sides now belong to one and the same identity (see
+ * `sidesCollapsedToOneIdentity`). Resolving every pending candidate's sides is
+ * an alias lookup per side, and a `name` side cannot use the alias index, so
+ * this runs on an io read handle and the writer re-checks only what it returns.
  */
-export function sweepCollapsedMergeCandidates(db: Db): { swept: number } {
+export function findCollapsedMergeCandidates(db: Db): string[] {
   const pending = db
-    .prepare<
-      [],
-      {
-        id: string;
-        side_a_alias_type: string;
-        side_a_alias: string;
-        side_b_alias_type: string;
-        side_b_alias: string;
-      }
-    >(
+    .prepare<[], PendingCandidateSides>(
       `SELECT id, side_a_alias_type, side_a_alias, side_b_alias_type, side_b_alias
        FROM merge_candidates WHERE status = 'pending'`,
     )
     .all();
-  if (pending.length === 0) return { swept: 0 };
+  return pending.filter((c) => candidateSidesCollapsed(db, c)).map((c) => c.id);
+}
 
-  const collapsedIds: string[] = [];
-  for (const c of pending) {
-    const collapsed = sidesCollapsedToOneIdentity(
-      db,
-      { aliasType: c.side_a_alias_type as MergeRuleAliasType, alias: c.side_a_alias },
-      { aliasType: c.side_b_alias_type as MergeRuleAliasType, alias: c.side_b_alias },
-    );
-    if (collapsed) collapsedIds.push(c.id);
-  }
-  if (collapsedIds.length === 0) return { swept: 0 };
+/** Candidates the writer re-checks and accepts per transaction. */
+export const COLLAPSED_ACCEPT_CHUNK = 50;
 
+/**
+ * Write half of the collapsed-candidate sweep. Marks `accepted` with
+ * `rule_id=NULL` — same semantics as the no-op accept path in
+ * `acceptMergeCandidate` — each named candidate that is still `pending` and
+ * whose sides still collapse to one identity on the writer's own snapshot: an
+ * undo landing between the read and this write leaves the candidate pending.
+ *
+ * Commits in chunks of `COLLAPSED_ACCEPT_CHUNK` and stops between chunks when
+ * `shouldStop` says so, returning the ids it did not reach.
+ */
+export function acceptCollapsedMergeCandidates(
+  db: Db,
+  ids: readonly string[],
+  options: { shouldStop?: () => boolean } = {},
+): { swept: number; remaining: string[] } {
+  const read = db.prepare<[string], PendingCandidateSides>(
+    `SELECT id, side_a_alias_type, side_a_alias, side_b_alias_type, side_b_alias
+     FROM merge_candidates WHERE id = ? AND status = 'pending'`,
+  );
+  const accept = db.prepare(
+    `UPDATE merge_candidates
+        SET status='accepted', decided_at=?, rule_id=NULL
+      WHERE id = ? AND status='pending'`,
+  );
   const now = new Date().toISOString();
-  const placeholders = collapsedIds.map(() => "?").join(",");
-  const result = db
-    .prepare(
-      `UPDATE merge_candidates
-         SET status='accepted', decided_at=?, rule_id=NULL
-       WHERE id IN (${placeholders}) AND status='pending'`,
-    )
-    .run(now, ...collapsedIds);
-  if (result.changes > 0) {
-    log.info(`Swept ${result.changes} collapsed candidate(s) (both sides resolved to same person)`);
+  let swept = 0;
+  let next = 0;
+  while (next < ids.length) {
+    if (next > 0 && options.shouldStop?.()) break;
+    const chunk = ids.slice(next, next + COLLAPSED_ACCEPT_CHUNK);
+    swept += db.transaction(() => {
+      let changed = 0;
+      for (const id of chunk) {
+        const candidate = read.get(id);
+        if (candidate && candidateSidesCollapsed(db, candidate))
+          changed += accept.run(now, id).changes;
+      }
+      return changed;
+    })();
+    next += chunk.length;
   }
-  return { swept: result.changes };
+  if (swept > 0) {
+    log.info(`Swept ${swept} collapsed candidate(s) (both sides resolved to same person)`);
+  }
+  return { swept, remaining: ids.slice(next) };
+}
+
+/**
+ * Sweep `pending` candidates whose two sides now belong to one and the same
+ * identity, on one handle. The gateway runs the two halves apart —
+ * `findCollapsedMergeCandidates` on an io reader, `acceptCollapsedMergeCandidates`
+ * on the writer — and this composition is what both together amount to.
+ *
+ * Called after merge-rule evaluation: as a pre-step on every tick, and again
+ * right after an apply that moved equivalences (the pre-step runs before the
+ * apply, so a merge landing in that tick would otherwise leave its satisfied
+ * candidates pending until the next tick — the portal polls for them to clear).
+ *
+ * Returns the count actually flipped to `accepted`.
+ */
+export function sweepCollapsedMergeCandidates(db: Db): { swept: number } {
+  const ids = findCollapsedMergeCandidates(db);
+  if (ids.length === 0) return { swept: 0 };
+  return { swept: acceptCollapsedMergeCandidates(db, ids).swept };
 }
 
 /**
