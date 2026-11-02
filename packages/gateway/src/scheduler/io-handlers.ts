@@ -106,6 +106,11 @@ import {
   listDueKnowledgeReviews,
   type DueKnowledgeReviewOptions,
 } from "../brain/knowledge/review-selection.js";
+import {
+  hasKnowledgeWorkFromExcludedSources,
+  listStaleKnowledgeWork,
+} from "../brain/knowledge/work.js";
+import { readKnowledgeArcs } from "../brain/knowledge/engine-graph.js";
 import { bootstrapCorpusByMonth, countPendingBootstrap } from "../brain/storage/bootstrap.js";
 import { readPeopleDirectory } from "../watch/people-directory.js";
 import {
@@ -166,6 +171,11 @@ export const ioHandlers = {
     readOrganizationCohort(db, options),
   "io.knowledgeDueReviews": (db: Db, options: DueKnowledgeReviewOptions) =>
     listDueKnowledgeReviews(db, options),
+  "io.knowledgeStaleWork": (db: Db, limit: number) => listStaleKnowledgeWork(db, limit),
+  "io.knowledgeHasExcludedWork": (db: Db, excludedSources: string[]) =>
+    hasKnowledgeWorkFromExcludedSources(db, excludedSources),
+  "io.knowledgeArcs": (db: Db, inputs: string[], bound: number) =>
+    readKnowledgeArcs(db, inputs, bound),
   // The Watch ontology's person directory, re-read on every evaluation pass:
   // the whole people table, mapped and hashed. The rows come back only when
   // the hash differs from the caller's.

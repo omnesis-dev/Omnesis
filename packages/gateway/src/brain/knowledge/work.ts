@@ -337,6 +337,28 @@ export function listPendingKnowledgeWorkWindow(
   return { items: rows.slice(0, limit), hasMore: rows.length > limit };
 }
 
+/**
+ * Pending work whose subject has moved past the revision it was admitted at,
+ * gone, or been withdrawn, oldest due first: the planner refreshes these before
+ * it plans. Every pending source is compared with its document's current
+ * revision, and on a document row that revision lies past the content, so on
+ * a large backlog this read is heavy; the engine runs it on a read worker.
+ */
+export function listStaleKnowledgeWork(db: Database.Database, limit: number): string[] {
+  return db
+    .prepare<[number], { id: string }>(
+      `SELECT w.id FROM knowledge_work w
+      LEFT JOIN documents d ON w.subject_kind='source' AND d.id=w.subject_id
+      LEFT JOIN knowledge_nodes n ON w.subject_kind='node' AND n.id=w.subject_id
+      WHERE w.status='pending' AND (
+        (w.subject_kind='source' AND (d.id IS NULL OR ${knowledgeSourceRevisionSql("d")}!=w.input_revision)) OR
+        (w.subject_kind='node' AND (n.id IS NULL OR CAST(n.revision AS TEXT)!=w.input_revision OR json_extract(n.fields_json,'$.withdrawn')=1)))
+      ORDER BY w.due_at,w.id LIMIT ?`,
+    )
+    .all(limit)
+    .map((row) => row.id);
+}
+
 /** Reserve one planning slot for historical work, even during continuous live intake. */
 export function listKnowledgePlanningWork(db: Database.Database, limit: number): KnowledgeWork[] {
   const ordinary = listPendingKnowledgeWork(db, limit);

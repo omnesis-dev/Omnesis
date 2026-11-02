@@ -12,12 +12,9 @@ import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 import { getKnowledgeDependencies, getKnowledgeNode, listKnowledgeChanges } from "./storage.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
-import {
-  hasHistoricalKnowledgeWorkBeyond,
-  hasKnowledgeWorkFromExcludedSources,
-  historicalKnowledgeAdmissions,
-} from "./work.js";
+import { hasHistoricalKnowledgeWorkBeyond, historicalKnowledgeAdmissions } from "./work.js";
 import { historyHorizonFloor } from "./history-horizon.js";
+import { knowledgeSelectionReads } from "./selection-reads.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, listKnowledgeDiscoveryBacklog } from "./discovery.js";
 import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
@@ -303,7 +300,8 @@ export class KnowledgeIntake {
     const cfg = deps.getSettings().knowledge;
     const pending = deps.db
       .prepare<[], { count: number }>(
-        `SELECT COUNT(*) AS count FROM knowledge_work w JOIN source_inventory_documents si ON si.document_id=w.subject_id AND si.input_revision=w.input_revision WHERE w.subject_kind='source' AND w.reason='change' AND w.status IN ('pending','batched')`,
+        // Driven by the bounded pending and batched work, never by every source's history.
+        `SELECT COUNT(*) AS count FROM knowledge_work w CROSS JOIN source_inventory_documents si ON si.document_id=w.subject_id AND si.input_revision=w.input_revision WHERE +w.subject_kind='source' AND w.reason='change' AND w.status IN ('pending','batched')`,
       )
       .get()!.count;
     const room = Math.max(0, cfg.discoveryBatchSize - pending);
@@ -377,7 +375,8 @@ export class KnowledgeIntake {
     for (
       let pass = 0;
       pass < MAX_RETIRE_PASSES &&
-      hasKnowledgeWorkFromExcludedSources(this.context.deps.db, excluded);
+      excluded.length > 0 &&
+      (await knowledgeSelectionReads(this.context.deps).knowledgeHasExcludedWork(excluded));
       pass++
     )
       retired += await this.context.deps.writeGate["knowledge.retireExcludedSources"](excluded);
@@ -423,7 +422,8 @@ export class KnowledgeIntake {
       ...historicalKnowledgeAdmissions(this.context.deps.db, this.context.deps.clock()),
       ...this.context.deps.db
         .prepare<[], { backlog: number }>(
-          "SELECT COUNT(*) AS backlog FROM knowledge_work WHERE subject_kind='source' AND reason IN ('discovery','upgrade') AND status IN ('pending','batched')",
+          // Seeks the status and reason index, never every source's work history.
+          "SELECT COUNT(*) AS backlog FROM knowledge_work WHERE +subject_kind='source' AND reason IN ('discovery','upgrade') AND status IN ('pending','batched')",
         )
         .get()!,
     };
