@@ -3498,6 +3498,26 @@ exit 0
     );
   });
 
+  test("an uninstall re-run after the compose file went still removes the renewal job", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-uninstall-rerun", QUIET);
+    expect(run.status, run.output).toBe(0);
+    // A first uninstall that stopped after deleting the compose file.
+    rmSync(join(run.configDir, "docker-compose.yml"));
+    const dry = runWrapper(run, ["uninstall", "--dry-run"]);
+    expect(dry.stdout).toContain(
+      `Remove the job that renews the Tailscale certificate, and ${renewScript(run)}`,
+    );
+
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(renewScript(run))).toBe(false);
+    expect(existsSync(join(userUnits(run), "omnesis-tls-renew.timer"))).toBe(false);
+    expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain(
+      "systemctl --user disable --now omnesis-tls-renew.timer\n",
+    );
+  });
+
   test("handing over a certificate of the operator's own retires the job", () => {
     installHostTailscale();
     const run = runInstaller("ts-replaced", QUIET);

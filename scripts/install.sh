@@ -7243,8 +7243,20 @@ if [ "${1:-}" = uninstall ]; then
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
   # The host job that renews a Tailscale certificate goes with the install;
   # it lives outside the config directory, so --purge alone would leave it.
+  # The script is named after the compose project; when the compose file is
+  # already gone (an uninstall that stopped part way), it is found by the
+  # config directory it renews into.
   UNINSTALL_RENEW="$HOME/.local/share/omnesis/$(sed -n 's/^name: *//p' "$COMPOSE_FILE" 2>/dev/null | head -n 1)-tls-renew.sh"
-  [ ! -f "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
+  if [ ! -f "$UNINSTALL_RENEW" ]; then
+    UNINSTALL_RENEW=""
+    for UNINSTALL_CANDIDATE in "$HOME"/.local/share/omnesis/*-tls-renew.sh; do
+      [ -f "$UNINSTALL_CANDIDATE" ] || continue
+      [ "$(sed -n "s/^CONFIG_DIR='\(.*\)'\$/\1/p" "$UNINSTALL_CANDIDATE" | head -n 1)" = "$UNINSTALL_DIR" ] || continue
+      UNINSTALL_RENEW="$UNINSTALL_CANDIDATE"
+      break
+    done
+  fi
+  [ -z "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
   # The PATH line the installer added goes too, as it does for a native
   # install, unless other programs share the directory it puts on PATH.
   UNINSTALL_SHARED=0
@@ -7308,6 +7320,8 @@ if [ "${1:-}" = uninstall ]; then
       docker image rm "$UNINSTALL_IMAGE" >/dev/null 2>&1 || true
     done
   done
+  # Before the compose file goes: a re-run after a stop here still finds it.
+  [ -z "$UNINSTALL_RENEW" ] || [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     case "$UNINSTALL_DIR" in
       /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
@@ -7316,7 +7330,6 @@ if [ "${1:-}" = uninstall ]; then
   else
     rm -f "$COMPOSE_FILE" "$UNINSTALL_DIR/install-method"
   fi
-  [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
   rm -f "$UNINSTALL_LAUNCHER"
   # The installer's PATH line goes too, unless other programs share the directory.
   if [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null)" ]; then
