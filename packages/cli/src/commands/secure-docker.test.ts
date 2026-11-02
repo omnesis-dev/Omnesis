@@ -235,8 +235,15 @@ describe("secure under Docker: the launcher restarts the containers", () => {
     process.env.OMNESIS_SECRET_STORE = "passphrase";
     process.env.OMNESIS_KEYRING_PASSPHRASE_FILE = join(configDir, "keyring.pass");
 
-    const again = await runSecure(deps(configDir), { dryRun: false, skipBackup: true });
+    const d = deps(configDir, { gatewayHealthy: async () => true });
+    const again = await runSecure(d, { dryRun: false, skipBackup: false });
 
+    expect(d.onlineBackup).not.toHaveBeenCalled();
+    expect(step(again.steps, "backup")).toMatchObject({
+      status: "skipped",
+      detail: "nothing to change, so nothing to back up",
+    });
+    expect(step(again.steps, "migrate")?.status).toBe("skipped");
     expect(step(again.steps, "passphrase")?.status).toBe("skipped");
     expect(step(again.steps, "restart")).toMatchObject({
       status: "skipped",
