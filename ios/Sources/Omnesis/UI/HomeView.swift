@@ -662,15 +662,7 @@ struct HomeView: View {
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
-        CaptureRequestHandling.handle(
-            isFresh: captureRouter.isFresh(),
-            isPresented: unifiedCapture,
-            reveal: revealCapture,
-            enqueue: {
-                pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
-                requestDeferred(.capture)
-            }
-        )
+        handleCaptureRequest(isFresh: captureRouter.isFresh(), surface: NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app)
     }
 
     /// Offer the oldest waiting privacy decision, if the app coming to the
@@ -751,17 +743,17 @@ struct HomeView: View {
     private func handleCaptureURL(_ url: URL) {
         guard CaptureRequestHandling.accepts(url) else { return }
         invalidateAutomaticForegroundWork()
-        CaptureRequestHandling.handle(
-            isFresh: true,
-            isPresented: unifiedCapture,
-            reveal: revealCapture,
-            enqueue: {
-                let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                    .queryItems?.first(where: { $0.name == "surface" })?.value
-                pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
-                requestDeferred(.capture)
-            }
-        )
+        let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "surface" })?.value
+        handleCaptureRequest(isFresh: true, surface: slug.flatMap(NoteSurface.init(rawValue:)) ?? .control)
+    }
+
+    /// Reveal capture when it is already open; otherwise queue it on `surface`.
+    private func handleCaptureRequest(isFresh: Bool, surface: NoteSurface) {
+        CaptureRequestHandling.handle(isFresh: isFresh, isPresented: unifiedCapture, reveal: revealCapture) {
+            pendingCaptureSurface = surface
+            requestDeferred(.capture)
+        }
     }
 
     private func revealCapture() {
