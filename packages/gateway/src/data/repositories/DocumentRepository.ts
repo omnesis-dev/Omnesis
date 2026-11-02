@@ -1507,9 +1507,33 @@ export function getDocumentUpdatedAtBoundary(db: Db): string | null {
   );
 }
 
-export function listDocumentIds(db: Db): string[] {
-  const rows = db.prepare<[], { id: string }>("SELECT id FROM documents ORDER BY id").all();
-  return rows.map((r) => r.id);
+/** Ids each statement of `listDocumentIds` reads. */
+export const DOCUMENT_ID_PAGE_ROWS = 20_000;
+
+/**
+ * Every document id, in id order. Read by keyset on the primary key,
+ * `pageRows` per statement, rather than in one statement that kept a WAL
+ * snapshot open across the whole corpus (see `docs/conventions.md`, "A long
+ * read holds the WAL open"). Each id is read as of one moment during the
+ * call rather than all of them as of its start, which callers that compare
+ * against the index already tolerate: a document written while they run is
+ * picked up by their next pass either way.
+ */
+export function listDocumentIds(db: Db, pageRows: number = DOCUMENT_ID_PAGE_ROWS): string[] {
+  const limit = Math.max(1, Math.floor(pageRows));
+  const first = db
+    .prepare<[number], string>("SELECT id FROM documents ORDER BY id LIMIT ?")
+    .pluck();
+  const next = db
+    .prepare<[string, number], string>("SELECT id FROM documents WHERE id > ? ORDER BY id LIMIT ?")
+    .pluck();
+  const ids: string[] = [];
+  let rows = first.all(limit);
+  for (;;) {
+    for (const id of rows) ids.push(id);
+    if (rows.length < limit) return ids;
+    rows = next.all(rows[rows.length - 1]!, limit);
+  }
 }
 
 /**

@@ -555,6 +555,17 @@ the WAL from rewinding: the writer can rewind only at an instant when no reader
 is mid-statement, waits about 100 ms for one, then backs off, so back-to-back
 long scans let the WAL grow for as long as they last. Page a full-table read
 by keyset in separate statements rather than iterating it under one snapshot.
+Pages read different snapshots, so say why the combined result is still the
+one a single snapshot would give: an optimistic version the write path bumps
+and the apply path checks (`computeSourceStatsRow`), a value that changes only
+by publishing a new generation, re-read after the last page
+(`readLiveDfTable`), or an argument that the caller tolerates each row being
+read as of its own page (`listDocumentIds`). Where none holds, read in one
+transaction and say so. A `LIMIT` is no bound if no index matches its
+`ORDER BY`: the planner sorts the whole filtered set first, evaluating every
+selected column for every row. Name the index with `INDEXED BY`, as
+`fetchDateExtractionBatch` does, so that losing it is an error rather than a
+silent full sort.
 A backlog left in the WAL by an earlier gateway is likewise one uncapped copy;
 the gateway drains it at boot, when the migration handle closes, before the
 writer starts.

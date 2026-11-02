@@ -64,6 +64,7 @@ import { queueTranscriptEviction } from "../brain/transcript-eviction.js";
 import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
+  createDatesPendingAgeIndex,
   addDateMentions,
   rescanIsoDateTimeMentions,
   rescanSameDaySpansAndRestCompounds,
@@ -4966,6 +4967,11 @@ export const MIGRATIONS: readonly Migration[] = [
         "UPDATE sync_state SET minimum_gateway_version = ? WHERE minimum_gateway_version > ?",
       ).run(178, 178);
     },
+  },
+  {
+    version: 212,
+    description: "index the date pass's pending documents by arrival again",
+    up: createDatesPendingAgeIndex,
   },
 ];
 
