@@ -26,6 +26,7 @@ import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { PlanStore, selectSubagentTools } from "@omnesis/agent";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
+import { getActivePriority, runWithPriority } from "../../priority.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { writeCognitionNotes } from "../storage/notes.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
@@ -44,6 +45,7 @@ import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import {
+  backgroundTemporalStoreReads,
   buildCognitionToolset,
   buildCognitionInteractiveOwnTools,
   createCognitionRuntime,
@@ -1015,5 +1017,29 @@ describe("createCognitionRuntime prompt wiring", () => {
     expect(system).not.toContain("ZZNOTE");
     expect(system).not.toContain("ZZSELF");
     expect(system).toBe(rt.systemPrompt());
+  });
+});
+
+describe("backgroundTemporalStoreReads", () => {
+  test("enqueues the background agent's temporal reads at background priority", async () => {
+    const seen: Array<string | null> = [];
+    const reads = backgroundTemporalStoreReads({
+      temporalStoreWindow: async () => {
+        seen.push(getActivePriority());
+        return { ranked: [], mentions: null };
+      },
+    });
+    const request = {
+      input: { from: "2026-10-12", timeZone: "UTC" },
+      range: { fromMs: 0, toExclusiveMs: 1 },
+      after: null,
+      limit: 1,
+      origins: ["annotation" as const],
+      hideUnworthy: false,
+      anchoredOnly: false,
+    };
+    await reads.temporalStoreWindow(request);
+    await runWithPriority("user", () => reads.temporalStoreWindow(request));
+    expect(seen).toEqual(["background", "background"]);
   });
 });

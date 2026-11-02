@@ -15,7 +15,26 @@ interface CalendarParts {
   millisecond: number;
 }
 
+/**
+ * Formatters by zone. Building one costs tens of microseconds and a single
+ * resolution needs about ten, so a query normalizing thousands of stored
+ * bounds would spend most of its time constructing them. Only zones that
+ * construct are kept, and the cache is cleared rather than grown past a bound
+ * no real set of readers' zones reaches.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const MAX_CACHED_FORMATTERS = 64;
+
 function formatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = formatters.get(timeZone);
+  if (cached) return cached;
+  const created = createFormatter(timeZone);
+  if (formatters.size >= MAX_CACHED_FORMATTERS) formatters.clear();
+  formatters.set(timeZone, created);
+  return created;
+}
+
+function createFormatter(timeZone: string): Intl.DateTimeFormat {
   try {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,

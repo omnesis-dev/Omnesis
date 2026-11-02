@@ -47,6 +47,7 @@ import type { SearchPipeline } from "../search/pipeline.js";
 import type { SyncStatusRegistry } from "../sync-status.js";
 import type Database from "better-sqlite3";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
+import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 
 export const DIRECT_MCP_TOOL_NAMES = [
   "search_many",
@@ -521,6 +522,8 @@ export interface GatewayDirectMcpDeps {
   personLookupGate?: PersonLookupGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
+  /** Read worker for `temporal_query`'s store reads; absent, they run synchronously. */
+  temporalStoreReads?: TemporalStoreReads;
 }
 
 /** Build the fixed façade without consulting any agent/model assignment. */
@@ -566,9 +569,12 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
               deps.db,
               deps.analyticsDb,
               { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
-              deps.mentionWorthGateActive
-                ? { hideUnworthyMentions: deps.mentionWorthGateActive }
-                : {},
+              {
+                ...(deps.mentionWorthGateActive
+                  ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+                  : {}),
+                ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
+              },
             ),
             entityContext: createGatewayEntityContextPort(deps.db),
             loopRead: createGatewayLoopReadPort(deps.db, undefined, {

@@ -71,6 +71,7 @@ import type { SearchPipeline } from "../search/pipeline.js";
 import type { SyncStatusRegistry } from "../sync-status.js";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type { KnowledgeSelectionReads } from "./knowledge/selection-reads.js";
+import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type { ResolvedBrainSettings } from "./config.js";
 import type { InterestLookup } from "./interest/engine.js";
 import type { SweepService } from "./sweeps/service.js";
@@ -244,6 +245,12 @@ export interface BriefsRunQueueBootDeps {
      * run synchronously on the main handle.
      */
     knowledgeSelectionReads?: KnowledgeSelectionReads;
+    /**
+     * Read worker for the store half of the background agent's temporal reads,
+     * which the steward enqueues at background priority. Absent, they run
+     * synchronously on the main handle.
+     */
+    temporalStoreReads?: TemporalStoreReads;
     /**
      * Entailment verifier resolver for the annotation firewall. Optional —
      * absent (or resolving to null) leaves the gate off and annotation
@@ -524,6 +531,9 @@ export async function bootBriefs(deps: {
         ...(rq.cognition.indexDb ? { indexDb: rq.cognition.indexDb } : {}),
         ...(rq.cognition.personLookupGate
           ? { personLookupGate: rq.cognition.personLookupGate }
+          : {}),
+        ...(rq.cognition.temporalStoreReads
+          ? { temporalStoreReads: rq.cognition.temporalStoreReads }
           : {}),
         ...(rq.cognition.validateAnnotationEvidence
           ? { validateAnnotationEvidence: rq.cognition.validateAnnotationEvidence }

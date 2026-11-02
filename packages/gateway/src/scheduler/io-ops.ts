@@ -69,6 +69,7 @@ import type { LinkExtractionDocRow } from "../domain/LinkExtraction-cpu.js";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
+import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type {
   PersonSummary as LookupPersonSummary,
   UrlCanonicalizerSpec,
@@ -206,6 +207,8 @@ export interface IoGate {
    * unindexed leading-wildcard full-table scan. Low-traffic legacy path.
    */
   likeSearchDocuments(args: LikeSearchArgs): Promise<LikeSearchRow[]>;
+  /** A temporal window's `omnesis.db` half; see `readTemporalStoreWindow`. */
+  temporalStoreWindow: TemporalStoreReads["temporalStoreWindow"];
   /**
    * Compute `(personId, docCount, aliasCount)` for every unmerged person in
    * one read. Heavy — a full scan of `document_people` — which is why it
@@ -524,6 +527,9 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.enrichedMergeCandidates", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.mergeCandidateVisibility", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.likeSearchDocuments", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // User by default for search and the interactive agent; background runs
+  // enqueue it under their own priority.
+  { name: "io.temporalStoreWindow", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -659,6 +665,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     enrichedMergeCandidates: (opts) => call("io.enrichedMergeCandidates", [opts]),
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
+    temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
     peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),

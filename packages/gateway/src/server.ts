@@ -184,6 +184,7 @@ import type { IComputeScheduler } from "./http/services/ports.js";
 import type { ConfigStore } from "./config-store.js";
 import type { AppEnv, AuthContext } from "./http/routes/types.js";
 import type { CognitionBudgetSettings } from "./brain/cognition/budget.js";
+import type { TemporalStoreReads } from "./enrichment/temporal/temporal-store-window.js";
 
 const log = createLogger("gateway:http");
 
@@ -311,6 +312,8 @@ export function createServer(
     personLookupGate?: PersonLookupGate;
     /** Whether the mention worth gate is active, so Direct `temporal_query` hides unworthy mentions. */
     mentionWorthGateActive?: () => boolean;
+    /** Read worker for the store half of temporal reads (Direct `temporal_query`, `/temporal/*`). */
+    temporalStoreReads?: TemporalStoreReads;
     /** Test/embedding override for the fixed Direct MCP façade. */
     directMcpService?: import("./agent/direct-mcp.js").DirectMcpService;
     /** Receives the stateless MCP HTTP runtime for graceful shutdown. */
@@ -1580,6 +1583,7 @@ export function createServer(
           ...(opts.mentionWorthGateActive
             ? { mentionWorthGateActive: opts.mentionWorthGateActive }
             : {}),
+          ...(opts.temporalStoreReads ? { temporalStoreReads: opts.temporalStoreReads } : {}),
         })
       : undefined);
   const directMcpBoundary = directMcpService
@@ -1844,6 +1848,7 @@ export function createServer(
     db,
     analyticsDb: opts?.analyticsDb,
     hideUnworthyMentions: opts?.mentionWorthGateActive,
+    storeReads: opts?.temporalStoreReads,
     clock: opts?.briefsClock,
   });
 
