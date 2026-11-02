@@ -4981,7 +4981,11 @@ collector_pair() {
   fi
   set -- "$@" --save "$CONFIG_DIR/collector-token"
   COLLECTOR_PAIR_NAME="$(collector_pair_name)"
-  [ -z "$COLLECTOR_PAIR_NAME" ] || set -- "$@" --name "$COLLECTOR_PAIR_NAME"
+  # This installer is the newest, the CLI it installed may be an older release:
+  # one without `pair --name` pairs under the name it suggests itself.
+  if [ -n "$COLLECTOR_PAIR_NAME" ] && "$OMNESIS_BIN" pair --help 2>/dev/null | grep -q -- '--name'; then
+    set -- "$@" --name "$COLLECTOR_PAIR_NAME"
+  fi
   info "Pairing with $PAIR_GATEWAY_URL..."
   # The redeem may have a question of its own: with no fingerprint to verify
   # against, it shows the certificate it was offered and asks. Under
