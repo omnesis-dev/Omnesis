@@ -123,7 +123,7 @@ describe("IMessageTranscriptCache", () => {
         nextAttemptMs: t0 + 20_000,
         lastError: "transcriber-unavailable",
       });
-      expect(cache.backlog()).toEqual({ awaiting: 3, transcriberUnavailable: 2 });
+      expect(cache.backlog()).toEqual({ awaiting: 3, transcriberUnavailable: 2, unreadable: 0 });
       expect(cache.dueDayKeys(t0 + 19_000)).toEqual([]);
       expect(cache.dueDayKeys(t0 + 20_000)).toEqual([
         "+15550100100:2026-01-30",
@@ -143,16 +143,55 @@ describe("IMessageTranscriptCache", () => {
       // A transcript settles the clip; the day stays due through its sibling.
       cache.set("clip-a", 12, undefined, { transcript: "Invented voice note" });
       expect(cache.pending("clip-a")).toBeUndefined();
-      expect(cache.backlog()).toEqual({ awaiting: 2, transcriberUnavailable: 1 });
+      expect(cache.backlog()).toEqual({ awaiting: 2, transcriberUnavailable: 1, unreadable: 0 });
       expect(cache.dueDayKeys(t0 + 60_000)).toContain("+15550100100:2026-01-30");
 
       // Retaining only the clips a pass saw drops a clip that left the chat.
-      cache.retainPendingForDay("+15550100100:2026-01-30", []);
+      cache.retainForDay("+15550100100:2026-01-30", [], []);
       expect(cache.pending("clip-b")).toBeUndefined();
-      cache.retainPendingForDay("+15550100200:2026-01-31", ["clip-c"]);
+      cache.retainForDay("+15550100200:2026-01-31", ["clip-c"], []);
       expect(cache.pending("clip-c")).toBeDefined();
       cache.forgetDay("+15550100200:2026-01-31");
-      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0 });
+      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0, unreadable: 0 });
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("keeps an unreadable clip out of the pending clips until the file or a resync changes it", () => {
+    const cache = new IMessageTranscriptCache();
+    try {
+      const t0 = Date.parse("2026-02-01T12:00:00Z");
+      const day = "+15550100100:2026-01-30";
+      cache.recordFailure("clip-a", day, "backend down", t0);
+      cache.recordUnreadable("clip-a", day, 12, 1234);
+      expect(cache.pending("clip-a")).toBeUndefined();
+      expect(cache.dueDayKeys(t0 + 60_000)).toEqual([]);
+      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0, unreadable: 1 });
+      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(true);
+      // A file that changed is another clip.
+      expect(cache.isUnreadable("clip-a", 13, 1234)).toBe(false);
+      expect(cache.isUnreadable("clip-a", 12, 1235)).toBe(false);
+
+      // A later outcome for the clip replaces the verdict.
+      cache.recordFailure("clip-a", day, "backend down", t0);
+      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(false);
+      cache.recordUnreadable("clip-a", day, 12, 1234);
+      cache.set("clip-a", 12, 1234, { transcript: "Invented voice note" });
+      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(false);
+
+      // A clip that left the chat stops being reported; a resync forgets them all.
+      cache.recordUnreadable("clip-b", day, 8, 1);
+      cache.recordUnreadable("clip-c", day, 9, 2);
+      cache.retainForDay(day, [], ["clip-c"]);
+      expect(cache.isUnreadable("clip-b", 8, 1)).toBe(false);
+      expect(cache.backlog().unreadable).toBe(1);
+      cache.forgetUnreadable();
+      expect(cache.backlog().unreadable).toBe(0);
+
+      cache.recordUnreadable("clip-d", day, 9, 2);
+      cache.forgetDay(day);
+      expect(cache.backlog().unreadable).toBe(0);
     } finally {
       cache.close();
     }

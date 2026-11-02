@@ -13,13 +13,17 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 import { SCOPE_WRITE_ALL, SCOPE_READ, SCOPE_ADMIN, type Scope } from "@omnesis/types";
+import {
+  TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+  TRANSCRIBE_REPORT_UNREADABLE_HEADER,
+  type ResolvedAssignment,
+} from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
-import { TranscribeService } from "../../transcribe/index.js";
+import { AudioDecodeError, TranscribeService } from "../../transcribe/index.js";
 import type Database from "better-sqlite3";
-import type { ResolvedAssignment } from "@omnesis/core";
 
 type Db = Database.Database;
 
@@ -45,13 +49,19 @@ function mintToken(scopes: readonly Scope[]): string {
 
 function post(
   body: Uint8Array,
-  opts: { token?: string; contentType?: string; query?: string } = {},
+  opts: {
+    token?: string;
+    contentType?: string;
+    query?: string;
+    headers?: Record<string, string>;
+  } = {},
 ) {
   return app.request(`/inference/transcribe${opts.query ?? ""}`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${opts.token ?? WRITE_TOKEN}`,
       "content-type": opts.contentType ?? "audio/ogg",
+      ...opts.headers,
     },
     body: body as unknown as BodyInit,
   });
@@ -137,6 +147,58 @@ describe("POST /inference/transcribe", () => {
       }
     },
   );
+
+  describe("audio that decodes to no audio", () => {
+    const reportUnreadable = { [TRANSCRIBE_REPORT_UNREADABLE_HEADER]: "1" };
+    let service: TranscribeService;
+    let decodeError: AudioDecodeError;
+    beforeEach(() => {
+      resolved = {
+        role: "transcriber",
+        kind: "http",
+        backendKey: "speech",
+        model: "test-speech",
+        url: "http://127.0.0.1:8003",
+        available: true,
+        allowRemoteInference: false,
+      };
+      service = new TranscribeService({
+        resolveAssignment: () => resolved,
+        deps: {
+          decodeAudio: async () => {
+            throw decodeError;
+          },
+          fetchFn: (async () => Response.json({ text: "unused" })) as typeof fetch,
+        },
+      });
+      app = createServer(db, dbPath, { transcribeService: service });
+    });
+    afterEach(() => service.dispose());
+
+    test("is a 422 a client that asked for it can stop retrying on", async () => {
+      decodeError = new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true });
+      const res = await post(enc("not audio"), { headers: reportUnreadable });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({
+        error: "The audio could not be decoded; sending it again will not help.",
+        code: TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+      });
+    });
+
+    test("stays the retryable 503 for a client that did not ask for it", async () => {
+      decodeError = new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true });
+      const res = await post(enc("not audio"));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+    });
+
+    test("a decoder failure that is not the audio's is retryable even when asked", async () => {
+      decodeError = new AudioDecodeError("ffmpeg timed out after 120000ms");
+      const res = await post(enc("synthetic audio"), { headers: reportUnreadable });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+    });
+  });
 
   test("reports available:false when no transcriber is configured", async () => {
     resolved = { role: "transcriber", kind: "disabled" };

@@ -12,6 +12,7 @@ import {
   formatLid,
   WHATSAPP_LID_PLATFORM,
   transcriptionPlaceholderNote,
+  AUDIO_UNREADABLE,
 } from "@omnesis/core";
 import type {
   DocumentInput,
@@ -377,11 +378,16 @@ function renderMessage(
         return `${quoteLine}**${time}** ${sender}: [${label}, ${duration}]: ${transcript}`;
       }
       // Otherwise the placeholder says why there is no spoken text: audio gone
-      // from the CDN/phone is a download fact the store knows; everything else
-      // (queued, no transcriber, no speech) the source's transcription pass
-      // worked out for this render. A bare placeholder means the source has no
-      // transcriber wired at all.
-      const state = msg.mediaState === "unavailable" ? "audio-unavailable" : msg.transcription;
+      // from the CDN/phone, or that could not be decoded, is a fact the store
+      // knows; everything else (queued, no transcriber, no speech) the
+      // source's transcription pass worked out for this render. A bare
+      // placeholder means the source has no transcriber wired at all.
+      const state =
+        msg.mediaState === "unavailable"
+          ? msg.mediaLastError === AUDIO_UNREADABLE
+            ? "audio-unreadable"
+            : "audio-unavailable"
+          : msg.transcription;
       const suffix = state ? ` — ${transcriptionPlaceholderNote(state)}` : "";
       return `${quoteLine}**${time}** ${sender}: [${label}, ${duration}${suffix}]`;
     }

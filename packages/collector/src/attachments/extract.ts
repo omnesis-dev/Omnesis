@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  AudioUnreadableError,
   charsetOfContentType,
   createLogger,
   type OcrFn,
@@ -179,7 +180,15 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
         // types for a document source with `includeAudioTypes`, so we never
         // reach here for a conversation source — those transcribe inline).
         if (transcribe && isAudioMime(base)) {
-          const result = await transcribe(data, base);
+          let result;
+          try {
+            result = await transcribe(data, base);
+          } catch (err) {
+            // Audio that decodes to nothing has no text to extract; a retry
+            // would decode the same bytes the same way.
+            if (err instanceof AudioUnreadableError) return null;
+            throw err;
+          }
           if (!result) return null;
           return transcriptToExtraction(result.text);
         }

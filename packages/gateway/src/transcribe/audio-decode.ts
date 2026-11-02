@@ -38,18 +38,38 @@ export async function resolveFfmpegPath(): Promise<string | null> {
 }
 
 export class AudioDecodeError extends Error {
-  constructor(message: string) {
+  /**
+   * Whether the bytes themselves are not decodable audio, so decoding them
+   * again gives the same answer. False for a failure of the decoder rather
+   * than of its input: ffmpeg missing, failing to start, timing out or being
+   * killed, or exiting with an error that does not name the input as invalid.
+   */
+  readonly unreadable: boolean;
+
+  constructor(message: string, opts: { unreadable?: boolean } = {}) {
     super(message);
     this.name = "AudioDecodeError";
+    this.unreadable = opts.unreadable ?? false;
   }
 }
+
+/**
+ * ffmpeg's messages for an input that holds no decodable audio: the demuxer
+ * rejected the bytes, or found no stream to decode in them. Any other non-zero
+ * exit is read as the decoder's own failure, so it is retried.
+ */
+const UNREADABLE_INPUT_MESSAGES = [
+  "Invalid data found when processing input",
+  "does not contain any stream",
+];
 
 /**
  * Decode `bytes` to a mono 16 kHz float32 PCM buffer via ffmpeg.
  *
  * `ffmpegPath` is injectable for tests; when omitted it resolves the
  * ffmpeg-static binary. Throws `AudioDecodeError` when ffmpeg is missing,
- * exits non-zero, or produces no samples.
+ * exits non-zero, or produces no samples; the error is `unreadable` when the
+ * input is at fault (see {@link AudioDecodeError.unreadable}).
  */
 export async function decodeToPcm16kMono(
   bytes: Uint8Array,
@@ -83,10 +103,19 @@ export async function decodeToPcm16kMono(
     throw new AudioDecodeError(`ffmpeg timed out after ${timeoutMs}ms`);
   if (run.failure)
     throw new AudioDecodeError(`ffmpeg failed to start: ${run.failureMessage ?? run.failure}`);
-  if (run.exitCode !== 0)
-    throw new AudioDecodeError(`ffmpeg exited ${run.exitCode}: ${run.stderr.trim().slice(0, 500)}`);
+  if (run.exitCode !== 0) {
+    // A null code is a signal (the process was killed), whatever it printed.
+    const unreadable =
+      run.exitCode !== null && UNREADABLE_INPUT_MESSAGES.some((m) => run.stderr.includes(m));
+    throw new AudioDecodeError(
+      `ffmpeg exited ${run.exitCode}: ${run.stderr.trim().slice(0, 500)}`,
+      { unreadable },
+    );
+  }
   const buf = run.stdout;
-  if (buf.byteLength < 4) throw new AudioDecodeError("ffmpeg produced no audio samples");
+  if (buf.byteLength < 4) {
+    throw new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true });
+  }
   // ffmpeg's stdout is a stream of little-endian float32 samples. Copy into an
   // aligned ArrayBuffer so the Float32Array view is valid whatever the
   // alignment of the bytes it arrived in.

@@ -21,6 +21,7 @@
 import "./synth-env.js";
 import { createServer, type Server } from "node:http";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { AudioUnreadableError } from "@omnesis/core";
 import { HttpGatewayClient } from "@omnesis/gateway-client";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { AddressInfo } from "node:net";
@@ -139,6 +140,15 @@ describe("speech-to-text through an HTTP transcription backend (E2E)", () => {
     expect(recording!.model).toBe("whisper-test");
     expect(recording!.file?.type).toBe("audio/wav");
     expect(recording!.file?.size).toBe(44 + 2 * 16_000 * 2);
+  });
+
+  test("reports bytes the decoder finds no audio in as unreadable, without reaching the backend", async () => {
+    const before = received.length;
+    const notAudio = new Uint8Array(2048).map((_, i) => (i * 7919) % 251);
+    await expect(client.transcribe(notAudio, "audio/ogg")).rejects.toBeInstanceOf(
+      AudioUnreadableError,
+    );
+    expect(received).toHaveLength(before);
   });
 });
 

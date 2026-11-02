@@ -548,7 +548,7 @@ describe("TelegramArchive media lifecycle", () => {
     }
     expect(read(2)).toMatchObject({ mediaState: "pending", mediaNextAttempt: clock + 43_200 });
     expect(archive.mediaHealthStats(ALL)).toEqual({
-      voiceNotes: { pending: 0, transcriberUnavailable: 0, unavailable: 0 },
+      voiceNotes: { pending: 0, transcriberUnavailable: 0, unavailable: 0, unreadable: 0 },
       attachments: { pending: 1, unavailable: 1 },
     });
   });

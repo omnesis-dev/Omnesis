@@ -24,6 +24,8 @@
  */
 
 import {
+  AUDIO_UNREADABLE,
+  AudioUnreadableError,
   TRANSCRIBER_UNAVAILABLE,
   buildAttachmentDocument,
   computeContentHash,
@@ -147,6 +149,13 @@ export class MediaPass {
       } catch (err) {
         if (day.signal?.aborted) {
           day.budget.halted = true;
+          continue;
+        }
+        // The same bytes decode the same way, so the note is given up on
+        // until a resync.
+        if (err instanceof AudioUnreadableError) {
+          this.record(m, { kind: "terminal", error: AUDIO_UNREADABLE });
+          m.transcription = "audio-unreadable";
           continue;
         }
         log.warn(
@@ -373,6 +382,9 @@ function sizeOf(m: StoredMessage): { size?: number } {
  */
 function placeholderState(m: StoredMessage): StoredMessage["transcription"] {
   if (m.transcript !== undefined) return m.transcript === "" ? "no-speech" : undefined;
+  if (m.mediaState === "unavailable" && m.mediaLastError === AUDIO_UNREADABLE) {
+    return "audio-unreadable";
+  }
   if (m.mediaState === "unavailable" || m.mediaState === undefined) return "audio-unavailable";
   return m.mediaLastError === TRANSCRIBER_UNAVAILABLE ? "transcriber-unavailable" : "awaiting";
 }

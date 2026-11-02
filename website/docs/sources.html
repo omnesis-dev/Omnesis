@@ -273,14 +273,16 @@
                   <a href="/docs/operating#models">when a transcriber model is assigned</a>. Until a
                   note is transcribed its placeholder says why (<code
                     >[Voice note, 0:12 — awaiting transcription]</code
-                  >, <code>no transcriber available</code>, <code>no speech detected</code> or
-                  <code>audio unavailable</code>), and the source's notice on the Sources page
-                  counts the notes still waiting. Message sync continues when media processing is
-                  disabled or unavailable. Pending media stays in the local archive for later
-                  retries, within the source's date range. The add flow shows a QR code; scan it
-                  under WhatsApp <strong>Settings → Linked Devices → Link a Device</strong>, and the
-                  collector starts syncing without a restart. WhatsApp may unlink a device after
-                  roughly two weeks without activity; run
+                  >, <code>no transcriber available</code>, <code>no speech detected</code>,
+                  <code>audio unavailable</code> or <code>audio could not be decoded</code>), and
+                  the source's notice on the Sources page counts the notes still waiting. A note
+                  whose audio cannot be decoded is not sent to the transcriber again until the
+                  source is resynced. Message sync continues when media processing is disabled or
+                  unavailable. Pending media stays in the local archive for later retries, within
+                  the source's date range. The add flow shows a QR code; scan it under WhatsApp
+                  <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
+                  starts syncing without a restart. WhatsApp may unlink a device after roughly two
+                  weeks without activity; run
                   <code>omnesis sources reauth whatsapp:&lt;account&gt;</code> and scan a new QR
                   code to reconnect it.
                 </td>
@@ -309,9 +311,10 @@
                   <a href="/docs/operating#models">when a transcriber model is assigned</a>;
                   participants feed the people graph. A clip without a transcript says why in its
                   placeholder and is retried on a schedule; the source's notice on the Sources page
-                  counts the clips still waiting. Decoding or transcription failures are retried
-                  without reporting a missing model; an unavailable transcriber notice can also mean
-                  the assigned backend is unreachable.
+                  counts the clips still waiting. Transcription failures are retried without
+                  reporting a missing model; an unavailable transcriber notice can also mean the
+                  assigned backend is unreachable. A clip whose audio cannot be decoded is counted
+                  apart and not retried until its file changes or the source is resynced.
                 </td>
               </tr>
               <tr>

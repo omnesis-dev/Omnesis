@@ -38,27 +38,82 @@ describe("decodeToPcm16kMono", () => {
     expect(Array.from(pcm)).toEqual([0.5, -0.25]);
   });
 
-  test("throws AudioDecodeError on a non-zero ffmpeg exit (with stderr)", async () => {
+  test("an exit naming the input as invalid data is unreadable audio", async () => {
+    const ffmpeg = makeStub(
+      "invalid-ffmpeg",
+      `process.stderr.write("Error opening input files: Invalid data found when processing input"); process.exit(183);`,
+    );
+    const err = await decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AudioDecodeError);
+    expect((err as AudioDecodeError).unreadable).toBe(true);
+  });
+
+  test("an input with no stream to decode is unreadable audio", async () => {
+    const ffmpeg = makeStub(
+      "no-stream-ffmpeg",
+      `process.stderr.write("Output file does not contain any stream"); process.exit(234);`,
+    );
+    await expect(
+      decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }),
+    ).rejects.toMatchObject({ unreadable: true });
+  });
+
+  test("any other non-zero exit is the decoder's failure, not the audio's", async () => {
     const ffmpeg = makeStub(
       "fail-ffmpeg",
-      `process.stderr.write("Invalid data found"); process.exit(1);`,
+      `process.stderr.write("Cannot allocate memory"); process.exit(1);`,
     );
-    await expect(decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg })).rejects.toThrow(
-      AudioDecodeError,
+    const err = await decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }).catch(
+      (e: unknown) => e,
     );
+    expect(err).toBeInstanceOf(AudioDecodeError);
+    expect((err as AudioDecodeError).unreadable).toBe(false);
   });
 
-  test("throws AudioDecodeError when ffmpeg produces no samples", async () => {
+  test("a killed decoder is not unreadable audio, whatever it printed", async () => {
+    const ffmpeg = makeStub(
+      "killed-ffmpeg",
+      `process.stderr.write("Invalid data found when processing input", () => process.kill(process.pid, "SIGKILL"));`,
+    );
+    await expect(
+      decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }),
+    ).rejects.toMatchObject({ unreadable: false });
+  });
+
+  test("no samples from a clean exit is unreadable audio", async () => {
     const ffmpeg = makeStub("empty-ffmpeg", `process.exit(0);`);
-    await expect(decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg })).rejects.toThrow(
-      /no audio samples/,
+    const err = await decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }).catch(
+      (e: unknown) => e,
     );
+    expect(err).toBeInstanceOf(AudioDecodeError);
+    expect((err as AudioDecodeError).message).toMatch(/no audio samples/);
+    expect((err as AudioDecodeError).unreadable).toBe(true);
   });
 
-  test("throws AudioDecodeError when the ffmpeg binary is missing", async () => {
+  test("a timed-out decoder is not unreadable audio", async () => {
+    const ffmpeg = makeStub("slow-ffmpeg", `setTimeout(() => process.exit(0), 10_000);`);
+    await expect(
+      decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg, timeoutMs: 100 }),
+    ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
+  });
+
+  test("a missing ffmpeg binary is not unreadable audio", async () => {
     await expect(
       decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: join(dir, "does-not-exist") }),
-    ).rejects.toThrow(AudioDecodeError);
+    ).rejects.toMatchObject({ name: "AudioDecodeError", unreadable: false });
+  });
+});
+
+// Real ffmpeg on bytes that are not audio, so the matched messages track the
+// bundled binary's wording.
+test("real ffmpeg reports random bytes as unreadable audio", async (context) => {
+  const ffmpegPath = await resolveFfmpegPath();
+  if (!ffmpegPath) return context.skip();
+  const bytes = new Uint8Array(2048).map((_, i) => (i * 7919) % 251);
+  await expect(decodeToPcm16kMono(bytes, { ffmpegPath })).rejects.toMatchObject({
+    unreadable: true,
   });
 });
 

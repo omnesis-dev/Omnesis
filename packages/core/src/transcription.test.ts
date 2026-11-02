@@ -2,13 +2,23 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test } from "vitest";
+import { SyncError, isTransientSyncError } from "@omnesis/types";
 import { syncIssuesSchema } from "./sync-issues.js";
-import { transcriptionPlaceholderNote, transcriptionSyncIssues } from "./transcription.js";
+import {
+  AudioUnreadableError,
+  transcriptionPlaceholderNote,
+  transcriptionSyncIssues,
+} from "./transcription.js";
 
 describe("transcriptionSyncIssues", () => {
   test("reports nothing for an empty backlog", () => {
     expect(
-      transcriptionSyncIssues({ awaiting: 0, transcriberUnavailable: 0, unavailable: 0 }),
+      transcriptionSyncIssues({
+        awaiting: 0,
+        transcriberUnavailable: 0,
+        unavailable: 0,
+        unreadable: 0,
+      }),
     ).toEqual([]);
   });
 
@@ -17,6 +27,7 @@ describe("transcriptionSyncIssues", () => {
       awaiting: 12,
       transcriberUnavailable: 0,
       unavailable: 0,
+      unreadable: 0,
     });
     expect(issues).toEqual([
       {
@@ -35,6 +46,7 @@ describe("transcriptionSyncIssues", () => {
       awaiting: 3,
       transcriberUnavailable: 2,
       unavailable: 0,
+      unreadable: 0,
     });
     expect(issue.severity).toBe("warning");
     expect(issue.count).toBe(3);
@@ -46,7 +58,7 @@ describe("transcriptionSyncIssues", () => {
 
   test("every report fits the wire schema, so no field is dropped in transit", () => {
     const issues = transcriptionSyncIssues(
-      { awaiting: 3, transcriberUnavailable: 2, unavailable: 4 },
+      { awaiting: 3, transcriberUnavailable: 2, unavailable: 4, unreadable: 5 },
       "voice clips",
     );
     expect(syncIssuesSchema.safeParse(issues).success).toBe(true);
@@ -54,13 +66,42 @@ describe("transcriptionSyncIssues", () => {
 
   test("audio that is gone is its own warning, singular when one", () => {
     const issues = transcriptionSyncIssues(
-      { awaiting: 0, transcriberUnavailable: 0, unavailable: 1 },
+      { awaiting: 0, transcriberUnavailable: 0, unavailable: 1, unreadable: 0 },
       "audio clips",
     );
     expect(issues).toHaveLength(1);
     expect(issues[0].code).toBe("transcription-audio-unavailable");
     expect(issues[0].severity).toBe("warning");
     expect(issues[0].message).toMatch(/^1 audio clip could not be transcribed/);
+  });
+});
+
+describe("unreadable audio", () => {
+  test("is its own warning, apart from audio that is gone and from the waiting backlog", () => {
+    const issues = transcriptionSyncIssues({
+      awaiting: 0,
+      transcriberUnavailable: 0,
+      unavailable: 0,
+      unreadable: 2,
+    });
+    expect(issues).toEqual([
+      {
+        code: "transcription-audio-unreadable",
+        scope: "item",
+        kind: "unknown",
+        count: 2,
+        severity: "warning",
+        message: "2 voice notes could not be transcribed: the audio could not be decoded",
+      },
+    ]);
+  });
+
+  test("its error concerns one item and is never retried as transient", () => {
+    const err = new AudioUnreadableError();
+    expect(err).toBeInstanceOf(SyncError);
+    expect(err.name).toBe("AudioUnreadableError");
+    expect(err.scope).toBe("item");
+    expect(isTransientSyncError(err)).toBe(false);
   });
 });
 
@@ -75,5 +116,6 @@ describe("transcriptionPlaceholderNote", () => {
     expect(transcriptionPlaceholderNote("audio-missing")).toBe(
       "audio not downloaded on this device",
     );
+    expect(transcriptionPlaceholderNote("audio-unreadable")).toBe("audio could not be decoded");
   });
 });

@@ -4,12 +4,12 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
-import { resolveAttachmentConfig } from "@omnesis/core";
+import { AudioUnreadableError, resolveAttachmentConfig } from "@omnesis/core";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { AppleProvider } from "./provider.js";
 import { AppleIMessageSource } from "./imessage.js";
-import type { AttachmentExtractFn } from "@omnesis/core";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import type { AttachmentExtractFn, AudioTranscribeFn } from "@omnesis/core";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
@@ -820,6 +820,91 @@ describe("AppleIMessageSource", () => {
         expect(again.documents[0].content).toContain(
           "[Audio: Audio Message.caf — awaiting transcription]",
         );
+      } finally {
+        src.dispose();
+      }
+    });
+
+    test("a clip that decodes to no audio is not sent again until its file changes or a resync", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
+        throw new AudioUnreadableError();
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(first.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — audio could not be decoded]",
+        );
+        expect(first.issues).toEqual([
+          expect.objectContaining({
+            code: "transcription-audio-unreadable",
+            count: 1,
+            message: "1 voice clip could not be transcribed: the audio could not be decoded",
+          }),
+        ]);
+
+        // Past every backoff step, and with its day re-rendered by a new
+        // message, the clip is not sent again.
+        vi.setSystemTime(new Date("2026-02-03T12:00:00Z"));
+        insertMessage(testDb, 2, 1, {
+          text: "later that day",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        const later = await src.sync(first.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(later.documents[0].content).toContain("audio could not be decoded");
+        expect(later.issues).toEqual([
+          expect.objectContaining({ code: "transcription-audio-unreadable" }),
+        ]);
+
+        // A changed file is another clip, and is sent.
+        transcribeAudio.mockResolvedValue({ text: "readable now", durationSec: 3 });
+        utimesSync(audioPath, new Date("2026-02-03T12:00:00Z"), new Date("2026-02-03T12:00:00Z"));
+        insertMessage(testDb, 3, 1, {
+          text: "one more",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        const changed = await src.sync(later.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+        expect(changed.documents[0].content).toContain("[Audio, 0:03]: readable now");
+        expect(changed.issues).toEqual([]);
+      } finally {
+        src.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    test("a resync sends a clip found unreadable again", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
+        throw new AudioUnreadableError();
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        await src.sync(null);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        transcribeAudio.mockResolvedValue({ text: "decoder improved", durationSec: 2 });
+        const resynced = await src.sync(null);
+        expect(transcribeAudio).toHaveBeenCalledTimes(2);
+        expect(resynced.documents[0].content).toContain("[Audio, 0:02]: decoder improved");
       } finally {
         src.dispose();
       }
