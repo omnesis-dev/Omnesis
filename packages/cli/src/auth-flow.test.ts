@@ -62,6 +62,7 @@ vi.mock("./utils.js", () => ({
     fn({ message: () => {} }),
 }));
 
+import { EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import { describeWait, runAuthFlowDetailed } from "./auth-flow.js";
 
 /** Hand-driven SSE channel masquerading as the events fetch Response. */
@@ -310,7 +311,7 @@ describe("typed challenge rendering through the live event loop", () => {
     utilsMocks.gatewayFetch.mockImplementation((path: string) =>
       Promise.resolve(path.endsWith("/events") ? sse.response : { ok: true }),
     );
-    const run = runAuthFlowDetailed({ deviceId: "dev-1" }, "fixture", {});
+    const run = runAuthFlowDetailed({ deviceId: "dev-1" }, "fixture", {}, { interactive: true });
     sse.push("auth", { type: "challenge", id: "question-1", challenge, expectsAnswer });
     for (const echo of echoes) sse.push("auth", echo);
     sse.push("auth", { type: "complete", ok: true, accountId: "owner@example.com" });
@@ -394,6 +395,52 @@ describe("typed challenge rendering through the live event loop", () => {
       ),
     ).toHaveLength(1);
     expect(rlHolder.createCount).toBe(0);
+  });
+});
+
+describe("a typed answer with no terminal to type it on", () => {
+  test.each([
+    ["code", { kind: "code", title: "Enter verification code" }],
+    [
+      "fields",
+      { kind: "fields", title: "Server details", fields: [{ name: "host", label: "Host" }] },
+    ],
+  ])("a %s challenge cancels the flow and fails, naming the step", async (_kind, challenge) => {
+    const sse = sseChannel();
+    utilsMocks.gatewayJson.mockResolvedValue({ flowId: "flow-headless" });
+    utilsMocks.gatewayFetch.mockImplementation((path: string) =>
+      Promise.resolve(path.endsWith("/events") ? sse.response : { ok: true }),
+    );
+    const run = runAuthFlowDetailed({ deviceId: "dev-1" }, "fixture", {}, { interactive: false });
+    sse.push("auth", { type: "challenge", id: "question-1", challenge, expectsAnswer: true });
+    await expect(run).rejects.toMatchObject({
+      exitCode: EXIT_USER_ERROR,
+      message: expect.stringContaining(String(challenge.title)),
+    });
+    expect(utilsMocks.gatewayFetch).toHaveBeenCalledWith(
+      "/admin/auth-flows/flow-headless/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(promptMocks.text).not.toHaveBeenCalled();
+    sse.close();
+  });
+
+  test("a code only shown, not asked, still renders without a terminal", async () => {
+    const sse = sseChannel();
+    utilsMocks.gatewayJson.mockResolvedValue({ flowId: "flow-shown" });
+    utilsMocks.gatewayFetch.mockImplementation((path: string) =>
+      Promise.resolve(path.endsWith("/events") ? sse.response : { ok: true }),
+    );
+    const run = runAuthFlowDetailed({ deviceId: "dev-1" }, "fixture", {}, { interactive: false });
+    sse.push("auth", {
+      type: "challenge",
+      id: "question-1",
+      challenge: { kind: "code", title: "Type this code on the other device" },
+      expectsAnswer: false,
+    });
+    sse.push("auth", { type: "complete", ok: true, accountId: "owner@example.com" });
+    sse.close();
+    await expect(run).resolves.toEqual({ accountId: "owner@example.com" });
   });
 });
 

@@ -81,6 +81,9 @@ describe("multi-collector source add", () => {
       join,
       parseSourceKey,
       joinConfirmation: "assume-yes",
+      interactive: true,
+      supplied: {},
+      reconnectWaitMs: 0,
     });
 
     expect(select).toHaveBeenCalledTimes(1);

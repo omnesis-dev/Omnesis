@@ -1271,9 +1271,30 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           <code>omnesis folders share &lt;path&gt;</code> and
           <code>omnesis folders unshare &lt;path&gt;</code>. The list is kept in
           <code>shared-folders</code> in the config directory; re-running the installer and
-          <code>omnesis update</code> keep every share. Without a terminal, the add names the
-          <code>omnesis folders share</code> command to run.
+          <code>omnesis update</code> keep every share.
         </p>
+        <p>
+          Without a terminal there is nobody to offer the share to: the add fails, naming the
+          <code>omnesis folders share</code> command to run. Share the folder first, then add the
+          source with its settings as flags (see
+          <a href="/docs/sources#adding-without-a-terminal">adding a source from a script</a>).
+          Sharing recreates the collector's container; the add waits for the collector to reconnect.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis folders share ~/Documents/Vault</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add obsidian-notes --set vaultPath=~/Documents/Vault</span
+              >
+            </p>
+          </div>
+        </div>
 
         <h3 id="docker-tls">TLS in Docker</h3>
         <p>

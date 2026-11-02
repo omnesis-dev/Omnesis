@@ -1581,6 +1581,73 @@
           The path is checked on that collector, so <code>~</code> and relative paths refer to its
           machine, not the one running the CLI.
         </p>
+
+        <h3 id="adding-without-a-terminal">Adding a source from a script or an agent</h3>
+        <p>
+          Without a terminal (a script, an AI agent, <code>ssh</code> without a tty) the add asks
+          nothing. Give every answer as a flag instead: <code>--set key=value</code> (repeatable)
+          for each setting, or <code>--config</code> with the same keys as one JSON object, inline,
+          as <code>@file</code>, or as <code>-</code> to read it from standard input, which keeps a
+          secret such as an API key off the command line. <code>omnesis sources describe</code>
+          lists the source types the connected collectors offer, and
+          <code>omnesis sources describe &lt;type&gt;</code> lists the keys one takes (with
+          <code>--json</code>, for a program).
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># the keys an add of the source takes</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources describe obsidian-notes</span>
+            </p>
+            <p class="t-dim"># a folder source</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add obsidian-notes --device &lt;collector&gt; --set
+                vaultPath=/Users/maya/Vaults/Work</span
+              >
+            </p>
+            <p class="t-dim">
+              # a source whose collector finds several accounts: name the ones to add
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add apple-notes --device &lt;mac-collector&gt; --account
+                &lt;account&gt;</span
+              >
+            </p>
+            <p class="t-dim"># an API key, read from standard input</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add paperless --config - &lt; paperless.json</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The values are checked against what the source declares before anything is added: a key it
+          does not take, a choice outside its options and a malformed value are refused, and a
+          folder is checked on its collector. An answer the command line does not give is refused
+          with the flag that supplies it. Every refusal, and a prompt cancelled on a terminal, ends
+          with a non-zero exit status, so a script never reads a failed add as a success. One
+          account found is added; several are refused until <code>--account</code> names the ones to
+          add. A join onto a source another device hosts needs <code>--yes</code>, and with more
+          than one collector able to host the source, <code>--device</code> is required.
+        </p>
+        <p>
+          A source that signs in still needs the sign-in: the add prints the URL or code and waits
+          until it is completed in a browser. Its application credential, such as Google's OAuth
+          client, is given the same way the first time (<code
+            >--set client_id=… --set client_secret=…</code
+          >) or set up once on a terminal with <code>omnesis creds set &lt;provider&gt;</code>; once
+          the collector has one, an add does not replace it. A sign-in step that asks for a typed
+          answer cannot be completed without a terminal; add that source on a terminal or from the
+          portal.
+        </p>
         <p>
           Most sources take <strong>several accounts</strong>. Run the add flow again and sign in
           with a different account: two mailboxes, two Notion workspaces, or two phone numbers each

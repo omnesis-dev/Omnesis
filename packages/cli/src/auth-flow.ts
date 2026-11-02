@@ -3,6 +3,7 @@
 
 import { createInterface, type Interface } from "node:readline";
 import { isAuthErrorCode, type AuthErrorCode } from "@omnesis/core";
+import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import { parseAuthCodeInput } from "./auth-code-input.js";
 import { c, gatewayFetch, gatewayJson, buildCliFx, linkify, withSpinner } from "./utils.js";
 
@@ -44,6 +45,24 @@ export interface AuthFlowOptions {
    * under the account it resolves — nothing is written before that succeeds.
    */
   credentials?: Record<string, string>;
+  /**
+   * Whether there is a terminal to type an answer on. Defaults to whether
+   * stdin and stdout are both terminals. Without one, a step that asks for a
+   * typed answer ends the flow with a refusal instead of a prompt nobody sees.
+   */
+  interactive?: boolean;
+}
+
+/**
+ * The refusal for a sign-in step that needs a typed answer, in a run with no
+ * terminal. The step's own title says what it asks for.
+ */
+export function typedAnswerRefusal(title: string): string {
+  const what = title ? `"${title}"` : "an answer typed during sign-in";
+  return (
+    `${c.red}This sign-in asks for ${what}, and this run has no terminal to type it on.${c.reset}\n` +
+    "Run the command on a terminal, or add the source from the portal."
+  );
 }
 
 function assertNever(x: never): never {
@@ -192,6 +211,7 @@ export function describeWait(ms: number): string {
 async function renderChallenge(
   flowId: string,
   payload: Record<string, unknown>,
+  interactive: boolean,
 ): Promise<{ wantsPastedCode: boolean }> {
   const challenge = payload.challenge as Record<string, unknown> | undefined;
   const challengeId = typeof payload.id === "string" ? payload.id : undefined;
@@ -255,6 +275,7 @@ async function renderChallenge(
     }
     case "code": {
       if (!expectsAnswer) return { wantsPastedCode: false };
+      if (!interactive) await refuseTypedAnswer(flowId, title);
       const prompts = await import("@clack/prompts");
       const answer = await prompts.text({ message: title || "Code" });
       if (prompts.isCancel(answer)) return { wantsPastedCode: false };
@@ -263,6 +284,7 @@ async function renderChallenge(
     }
     case "fields": {
       if (!expectsAnswer) return { wantsPastedCode: false };
+      if (!interactive) await refuseTypedAnswer(flowId, title);
       const prompts = await import("@clack/prompts");
       const fields = Array.isArray(challenge.fields) ? challenge.fields : [];
       const answer: Record<string, unknown> = {};
@@ -302,6 +324,21 @@ async function renderChallenge(
       // answer, so silence here is correct rather than a gap.
       return { wantsPastedCode: false };
   }
+}
+
+/**
+ * End a flow whose step nobody can answer here, and fail the command. The
+ * cancel is best-effort: a flow left behind times out on the collector.
+ */
+async function refuseTypedAnswer(flowId: string, title: string): Promise<never> {
+  try {
+    await gatewayFetch(`/admin/auth-flows/${encodeURIComponent(flowId)}/cancel`, {
+      method: "POST",
+    });
+  } catch {
+    // Unreachable gateway: the refusal below is still the answer.
+  }
+  throw new CliError(typedAnswerRefusal(title), EXIT_USER_ERROR);
 }
 
 export async function runAuthFlow(
@@ -532,7 +569,11 @@ export async function runAuthFlowDetailed(
         promptGeneration += 1;
         closePrompt();
         challengeWantsPastedCode = false;
-        const { wantsPastedCode } = await renderChallenge(flowId, payload);
+        const { wantsPastedCode } = await renderChallenge(
+          flowId,
+          payload,
+          options.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY),
+        );
         if (wantsPastedCode) {
           challengeWantsPastedCode = true;
           startPastePrompt();
