@@ -23,6 +23,7 @@ import { TaskExecutionError } from "../types.js";
 import { createDatabase } from "../../db.js";
 import { WriterTaskRunner } from "./writer.js";
 import type { Task, TaskOutcome } from "../types.js";
+import type { WalCheckpointRun } from "../../workers/wal-checkpoint.js";
 
 function testDbPath(): string {
   return `/tmp/omnesis-test-${randomUUID()}.db`;
@@ -175,5 +176,50 @@ describe("writer watchdog description", () => {
     // Oldest first: the op that has been held longest is the one that
     // explains the stall, and it must not be buried behind newer arrivals.
     expect(line).toBe("holding: links.upsertExtractedLinksBatch for 458s, io.recent for 3s");
+  });
+});
+
+describe("writer deferred-rewind streak", () => {
+  type Outcome = WalCheckpointRun["outcome"];
+  function streakAfter(outcomes: Outcome[]) {
+    const runner = new WriterTaskRunner({
+      gatewayDbPath: testDbPath(),
+      journalMode: "WAL",
+      workerUrl: WORKER_URL,
+    });
+    const record = (
+      runner as unknown as { recordCheckpoint(run: WalCheckpointRun): void }
+    ).recordCheckpoint.bind(runner);
+    for (const outcome of outcomes)
+      record({ mode: "RESTART", outcome, log: 0, checkpointed: 0, ms: 1 });
+    const metrics = runner.walCheckpointMetrics(60)!;
+    return { windowed: metrics.maxDeferredStreak, lifetime: metrics.lifetime.maxDeferredStreak };
+  }
+
+  test("is zero when no rewind was deferred", () => {
+    expect(streakAfter(["copied", "rewound", "copied", "rewound"])).toEqual({
+      windowed: 0,
+      lifetime: 0,
+    });
+  });
+
+  test("is the longest run of deferrals a rewind ended, uninterrupted by copies", () => {
+    expect(
+      streakAfter(["deferred", "rewound", "deferred", "copied", "deferred", "deferred", "rewound"]),
+    ).toEqual({ windowed: 3, lifetime: 3 });
+  });
+
+  test("counts a streak no rewind has ended yet", () => {
+    expect(
+      streakAfter([
+        "deferred",
+        "deferred",
+        "rewound",
+        "deferred",
+        "deferred",
+        "deferred",
+        "deferred",
+      ]),
+    ).toEqual({ windowed: 4, lifetime: 4 });
   });
 });

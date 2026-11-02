@@ -127,6 +127,7 @@ export class WriterTaskRunner implements TaskRunner {
     maxMs: 0,
     rewinds: 0,
     deferredRewinds: 0,
+    maxDeferredStreak: 0,
   };
   private readonly checkpointSamples: CheckpointSample[] = [];
   private lastCheckpoint: WalCheckpointRun | null = null;
@@ -289,6 +290,12 @@ export class WriterTaskRunner implements TaskRunner {
       durations.length === 0
         ? 0
         : durations[Math.min(durations.length - 1, Math.floor(q * durations.length))]!;
+    let streak = 0;
+    let maxDeferredStreak = 0;
+    for (const s of recent) {
+      if (s.outcome === "rewound") streak = 0;
+      else if (s.outcome === "deferred") maxDeferredStreak = Math.max(maxDeferredStreak, ++streak);
+    }
     return {
       runs: recent.length,
       p95Ms: at(0.95),
@@ -296,6 +303,7 @@ export class WriterTaskRunner implements TaskRunner {
       totalMs: durations.reduce((sum, ms) => sum + ms, 0),
       rewinds: recent.filter((s) => s.outcome === "rewound").length,
       deferredRewinds: recent.filter((s) => s.outcome === "deferred").length,
+      maxDeferredStreak,
       lastLogFrames: this.lastCheckpoint?.log ?? null,
       lastCheckpointedFrames: this.lastCheckpoint?.checkpointed ?? null,
       lifetime: { ...this.checkpointLifetime },
@@ -326,6 +334,7 @@ export class WriterTaskRunner implements TaskRunner {
     } else if (run.outcome === "deferred") {
       stats.deferredRewinds += 1;
       this.deferredSinceRewind += 1;
+      stats.maxDeferredStreak = Math.max(stats.maxDeferredStreak, this.deferredSinceRewind);
     }
     if (run.ms > SLOW_CHECKPOINT_MS)
       log.info(
