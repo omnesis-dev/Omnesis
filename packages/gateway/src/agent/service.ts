@@ -22,12 +22,13 @@
  */
 
 import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
-import type { NoteConversationOrigin,
+import {
   clipTitle,
   deriveTitle,
   originAnchor,
   latestDailyBrief,
   DAILY_BRIEF_REF_LIMIT,
+  type NoteConversationOrigin,
   type ConversationOrigin,
   type DailyBriefConversationOrigin,
   type TaskConversationOrigin,
@@ -35,7 +36,8 @@ import type { NoteConversationOrigin,
   type WatchFiringConversationOrigin,
   type ConversationRecord,
   type ConversationStore,
-  type ConversationSummary } from "./conversation-store.js";
+  type ConversationSummary,
+} from "./conversation-store.js";
 import {
   createVoiceSession,
   voiceTranscriptModelNote,
