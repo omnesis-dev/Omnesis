@@ -3350,6 +3350,27 @@ describe("install.sh --docker: the socket group the update container joins", () 
     });
   }
 
+  /**
+   * The socket the update container mounts, as the daemon resolves it: on a
+   * Mac the daemon runs in a Linux VM, whose own socket is the one it can
+   * bind-mount; elsewhere it is the path this host's client dials.
+   */
+  const daemonSocket = (socket) =>
+    process.platform === "darwin" ? "/var/run/docker.sock" : socket.path;
+
+  test("the update container mounts the socket the daemon itself can bind-mount", () => {
+    const socket = hostSocket("socket-mount");
+    const run = installWithSocket("socket-mount", socket);
+    expect(run.status, run.output).toBe(0);
+    const updater = parseYaml(composeAt(run)).services.updater;
+    expect(updater.volumes).toContain(`${daemonSocket(socket)}:/var/run/docker.sock`);
+    if (process.platform === "darwin") {
+      // A context of a Mac VM (colima, for one) dials a forwarded socket under the
+      // home directory, which the VM's daemon cannot mount into a container.
+      expect(updater.volumes).not.toContain(`${socket.path}:/var/run/docker.sock`);
+    }
+  });
+
   const probe = (run) =>
     `docker compose -f ${run.configDir}/docker-compose.yml --progress quiet --profile update ` +
     "run --rm --no-deps -T --entrypoint stat updater -c %g /var/run/docker.sock";
@@ -3364,7 +3385,7 @@ describe("install.sh --docker: the socket group the update container joins", () 
     expect(run.status, run.output).toBe(0);
     const updater = parseYaml(composeAt(run)).services.updater;
     expect(updater.group_add).toEqual([inside]);
-    expect(updater.volumes).toContain(`${socket.path}:/var/run/docker.sock`);
+    expect(updater.volumes).toContain(`${daemonSocket(socket)}:/var/run/docker.sock`);
     expect(run.output).toContain(
       `Containers see the Docker socket as group ${inside} (group ${socket.gid} on this host)`,
     );

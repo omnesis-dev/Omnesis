@@ -227,6 +227,7 @@ export {
   DEFAULT_PRE_UPDATE_BACKUP_COUNT,
   backupConfigCopyNames,
   backupManifestSchema,
+  copyPrivate,
   createBackupDir,
   gatewayStoreFiles,
   listBackups,

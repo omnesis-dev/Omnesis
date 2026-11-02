@@ -341,6 +341,7 @@ IMAGE_REPO="${OMNESIS_IMAGE_REPO:-ghcr.io/omnesis-dev}"
 IMAGE_TAG=""
 COMPOSE_FILE=""
 DOCKER_SOCKET=""
+DOCKER_SOCKET_MOUNT=""
 DOCKER_SOCKET_GID=""
 RECOVERY_CODE_SHOWN=0
 # Which container the CLI wrapper runs in — the gateway on a full stack, the
@@ -5548,6 +5549,13 @@ docker_socket_facts() {
   esac
   DOCKER_SOCKET_GID="$(stat -c '%g' "$DOCKER_SOCKET" 2>/dev/null || stat -f '%g' "$DOCKER_SOCKET" 2>/dev/null || true)"
   case "$DOCKER_SOCKET_GID" in ''|*[!0-9]*) DOCKER_SOCKET_GID="" ;; esac
+  # What the update container mounts is resolved by the daemon, on its own
+  # machine. On a Mac that is a Linux VM (Docker Desktop, colima, OrbStack,
+  # Rancher Desktop), whose socket is /var/run/docker.sock there: the Mac-side
+  # path the client dials is a forwarded socket the VM cannot bind-mount.
+  # Elsewhere the daemon shares this filesystem, so its path is the client's,
+  # a rootless daemon's under /run/user included.
+  if [ "$PLATFORM" = darwin ]; then DOCKER_SOCKET_MOUNT="/var/run/docker.sock"; else DOCKER_SOCKET_MOUNT="$DOCKER_SOCKET"; fi
 }
 
 # Every value this role writes into the compose file or into the wrapper,
@@ -6307,7 +6315,7 @@ docker_compose_updater_service() {
     printf '    group_add:\n      - "%s"\n' "$DOCKER_SOCKET_GID"
   fi
   printf '    volumes:\n'
-  printf '      - %s:/var/run/docker.sock\n' "$DOCKER_SOCKET"
+  printf '      - %s:/var/run/docker.sock\n' "$DOCKER_SOCKET_MOUNT"
   printf '      - %s:%s\n' "$CONFIG_DIR" "$CONFIG_DIR"
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
