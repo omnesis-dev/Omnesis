@@ -540,6 +540,53 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).not.toContain("Omnesis is running in Docker.");
   });
 
+  // An installer re-run onto another release is the upgrade for a release
+  // older than `omnesis update`; the release it came from is not left behind.
+  test("a re-run onto another release removes the previous release's images once it runs", () => {
+    expect(runInstaller("rerun-images", QUIET).status).toBe(0);
+    const envPath = join(prepareHome("rerun-images"), ".config", "omnesis", ".env");
+    writeFileSync(
+      envPath,
+      readFileSync(envPath, "utf8").replace("OMNESIS_IMAGE_TAG=9.9.0", "OMNESIS_IMAGE_TAG=9.8.0"),
+    );
+    const run = runInstaller("rerun-images", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const removed = run.docker.filter((call) => call.startsWith("docker image rm "));
+    expect(removed).toEqual(
+      ["gateway", "collector", "combined", "updater"].map(
+        (name) => `docker image rm ghcr.io/omnesis-dev/omnesis-${name}:9.8.0`,
+      ),
+    );
+    // Only after the new release serves.
+    expect(run.docker.findIndex((call) => call.includes("up -d gateway"))).toBeLessThan(
+      run.docker.findIndex((call) => call.startsWith("docker image rm ")),
+    );
+    expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
+    expect(
+      run.docker.some((call) => call.includes(":9.9.0") && call.startsWith("docker image rm")),
+    ).toBe(false);
+  });
+
+  test("a re-run on the same release, or one whose gateway does not come back, removes no image", () => {
+    expect(runInstaller("rerun-same", QUIET).status).toBe(0);
+    const same = runInstaller("rerun-same", QUIET);
+    expect(same.status).toBe(0);
+    expect(same.docker.some((call) => call.startsWith("docker image rm "))).toBe(false);
+
+    expect(runInstaller("rerun-unhealthy", QUIET).status).toBe(0);
+    const envPath = join(prepareHome("rerun-unhealthy"), ".config", "omnesis", ".env");
+    writeFileSync(
+      envPath,
+      readFileSync(envPath, "utf8").replace("OMNESIS_IMAGE_TAG=9.9.0", "OMNESIS_IMAGE_TAG=9.8.0"),
+    );
+    const down = runInstaller("rerun-unhealthy", QUIET, {
+      OMNESIS_TEST_CURL_EXIT: "7",
+      OMNESIS_GATEWAY_WAIT_SECONDS: "1",
+    });
+    expect(down.status).toBe(1);
+    expect(down.docker.some((call) => call.startsWith("docker image rm "))).toBe(false);
+  });
+
   test("writes a compose file, the image tag, a marker and a wrapper", () => {
     const run = runInstaller("stack", QUIET);
     expect(run.status).toBe(0);
