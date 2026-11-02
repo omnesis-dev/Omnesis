@@ -180,7 +180,7 @@ function bodies(path: string): Record<string, unknown>[] {
     .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>);
 }
 
-async function failure(run: Promise<void>): Promise<{ exitCode: number; message: string }> {
+async function failure(run: Promise<unknown>): Promise<{ exitCode: number; message: string }> {
   try {
     await run;
   } catch (err) {
