@@ -192,6 +192,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
         "docker_smoke",
         "install_smoke",
         "installer_coverage",
+        "installer_release_skew",
         "node_macos",
         "topology",
       ],
@@ -204,6 +205,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
         "docker_smoke",
         "install_smoke",
         "installer_coverage",
+        "installer_release_skew",
         "node_macos",
         "topology",
       ],
@@ -217,6 +219,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
         "harness",
         "install_smoke",
         "installer_coverage",
+        "installer_release_skew",
         "node_macos",
         "topology",
       ],
@@ -227,6 +230,9 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     ["scripts/docker/supervisor.mjs", ["docker_image", "docker_smoke"]],
     ["scripts/docker/image-smoke.sh", ["docker_image", "docker_smoke"]],
     ["integrations/openclaw-omnesis-plugin/index.ts", ["harness"]],
+    ["packages/cli/src/commands/devices.ts", ["installer_release_skew"]],
+    ["packages/cli/src/subcommands.ts", ["installer_release_skew"]],
+    ["scripts/install-e2e/release-skew.sh", ["installer_release_skew"]],
   ])("%s selects the lanes that cover it", (file, lanes) => {
     const scope = scopeOf([file]);
     expect(scope.scope).toBe("affected");
@@ -240,6 +246,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
       "docker_smoke",
       "install_smoke",
       "installer_coverage",
+      "installer_release_skew",
       "topology",
       "docker_security",
       "harness",

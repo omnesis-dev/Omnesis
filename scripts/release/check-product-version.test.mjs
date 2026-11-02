@@ -52,6 +52,7 @@ function makeFixture() {
     );
   }
   write("android/app/build.gradle.kts", 'versionCode = 1\nversionName = "0.3.0"\n');
+  writeJson("scripts/release/released-cli-surface.json", { version: "0.3.0", commands: {} });
   return fixture;
 }
 
@@ -100,6 +101,16 @@ test("rejects drift in the private browser extension package or lock entry", () 
   lock.packages.extension.version = "0.2.0";
   writeJson("package-lock.json", lock);
   expect(() => checkProductVersion(fixture, "v0.3.0")).toThrow(/extension\/package\.json/u);
+});
+
+test("fails when the recorded CLI surface is not this release's", () => {
+  // The installer's calls are checked against that file, so a release that
+  // did not rewrite it would check the next installer against the last one.
+  makeFixture();
+  writeJson("scripts/release/released-cli-surface.json", { version: "0.2.0", commands: {} });
+  expect(() => checkProductVersion(fixture, "v0.3.0")).toThrow(
+    /released-cli-surface\.json: 0\.2\.0/u,
+  );
 });
 
 test("fails when a workspace is absent from the lockfile", () => {

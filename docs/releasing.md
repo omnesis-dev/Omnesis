@@ -274,7 +274,10 @@ exists on origin — rather than failing on one at a time.
 **`version <x.y.z>`** runs `changeset version`, synchronizes the plugin,
 extension and contract manifests, refreshes the lockfile with
 `npm install --package-lock-only`, writes the version into the four native
-project files, and reruns the lockstep guard. It refuses when no pending
+project files, records the release's CLI surface in
+`scripts/release/released-cli-surface.json` (see
+[Installer and release skew](#installer-and-release-skew)), and reruns the
+lockstep guard. It refuses when no pending
 changeset could produce the version you asked for, and it refuses when the
 changesets produce a different one — naming the version they do produce. The
 native files are `ios/project.yml` (`MARKETING_VERSION`), both iOS Info plists
@@ -346,6 +349,69 @@ exists, and reads nothing outside the repository.
 
 Cutting the tag stays a human decision.
 
+## Installer and release skew
+
+`website/install.sh` is deployed from `main` on every push, and it installs the
+newest **released** CLI: a checkout of the newest stable tag, the package of
+that version, or that release's images under `--docker`. The installer is
+newer than the CLI it drives, so every command and flag it hands that CLI —
+directly, through the Docker launcher and the beside-Docker collector shim it
+writes, or in a command it prints for the operator — must exist in the newest
+release. A call to something newer must be guarded by a capability probe of
+the installed CLI's own help, the way the collector's pairing asks for
+`--name`:
+
+```sh
+if "$OMNESIS_BIN" pair --help 2>/dev/null | grep -q -- '--name'; then
+  set -- "$@" --name "$COLLECTOR_PAIR_NAME"
+fi
+```
+
+The installer's own test suites cannot see this: their fake CLIs accept any
+flag. Three checks hold it instead.
+
+- **The contract test** (`scripts/release/installer-cli-contract.test.mjs`, a
+  unit test on every change to the installer or the release tooling).
+  `installer-cli-contract.mjs` extracts every CLI call from `install.sh` —
+  expanding `"$@"` from the `set --` lines above it and from the function's
+  call sites — and checks each against
+  `scripts/release/released-cli-surface.json`, the newest release's command
+  tree, and against this tree's CLI, which is the next release. A call is
+  accepted when the CLI accepts it or a probe of that command's help for the
+  missing flag or subcommand sits in the same function, a function it calls,
+  or one that calls it. Run it directly with
+  `node scripts/release/installer-cli-contract.mjs`; `--tree <checkout>`
+  checks against any other tree, such as an older release.
+- **The release-skew lane** (`.github/workflows/installer-release-skew.yml`, in
+  `full-validation` on every push to `main` and on a pull request that touches
+  the installer, the CLI's command definitions or the lane). Its `contract`
+  job checks out the newest `vX.Y.Z` tag, reads that release's surface from
+  its own source and runs the contract against it, and holds
+  `released-cli-surface.json` to it — on a release commit whose tag is not
+  pushed yet, to the tree's own surface instead. Its `native` job runs this
+  revision's `install.sh` for real against the newest release, built from its
+  tag through a fixture remote that keeps the real tags: a gateway host and a
+  collector with no terminal (how automation and agents run it), a collector
+  on a pseudo-terminal that types the pairing code, trusts the certificate and
+  arms the generated passphrase keyring, and the re-run that hands off to the
+  release's own `omnesis update`. A preload (`scripts/install-e2e/cli-trace.cjs`)
+  records every CLI process those runs start, including the ones whose output
+  the installer discards, and each is checked against the installed release's
+  command tree. Its `docker` job installs the newest published images with
+  `--docker`, drives the launcher it wrote, and re-runs the installer on a
+  terminal through the released updater image.
+- **The lockstep guard.** `released-cli-surface.json` carries the version it
+  was read from, and `check-product-version.mjs` refuses a tree whose file
+  names another version than the product's — so the release commit has to
+  record its own surface, which `npm run release -- version` does
+  (`node scripts/release/cli-surface.mjs --write
+scripts/release/released-cli-surface.json`). The tag preflight requires a
+  green `full-validation` run of the release commit, which includes the lane.
+
+Between the release commit landing on `main` and its tag being pushed, the
+file already describes the pending release; the lane still checks the
+installer against the newest tag that exists.
+
 ## Cutting a release
 
 1. Branch off `main`. The release commit lands through a pull request, and
@@ -356,8 +422,8 @@ Cutting the tag stays a human decision.
 3. `npm run release -- plan` — confirm the target version and that nothing is
    blocked.
 4. `npm run release -- version <x.y.z>` — every manifest, the lockfile, the
-   plugin and extension manifests, the native project files, and the lockstep
-   guard.
+   plugin and extension manifests, the native project files, the recorded CLI
+   surface, and the lockstep guard.
 5. `npm run build && npm run typecheck && npm test` — full validation.
 6. Commit, then `npm run release -- pr`. It pushes the branch, then opens the
    pull request or, when one is open, refreshes its title and body.

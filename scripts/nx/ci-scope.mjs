@@ -63,6 +63,7 @@ export const LANES = [
   "docker_smoke",
   "install_smoke",
   "installer_coverage",
+  "installer_release_skew",
   "topology",
   "docker_security",
   "harness",
@@ -131,6 +132,13 @@ const securitySensitive =
   /^packages\/(?:cli|gateway|collector)\/src\/.*(?:keyring|secret|encrypt|backup|restore|recovery|passphrase)/i;
 const harnessPaths =
   /^(?:integrations\/|plugins\/|packages\/cli\/src\/harness-|packages\/cli\/src\/uninstall\/harness-|packages\/collector\/src\/e2e\/harness-plugin-conformance)/;
+// The CLI's command definitions: what a released CLI accepts, which the
+// installer's calls are held to, and what the next release will accept.
+const cliCommands =
+  /^packages\/cli\/src\/(?:commands\/|subcommands\.ts$|unknown-flags\.ts$|index\.ts$)/;
+// The release-skew lane's own scripts and the fixture it builds on.
+const releaseSkewLane =
+  /^scripts\/install-e2e\/(?:release-skew\.|cli-trace\.cjs$|fixture\.mjs$|args\.mjs$|lib\.sh$|redact\.mjs$|probe\.mjs$)/;
 const sourceCode = /\.(?:[cm]?[jt]sx?)$/;
 
 /** The lanes that follow path rules alone, from a pull request's changed files. */
@@ -152,8 +160,11 @@ export function pathLanes(files) {
     install_smoke: deploys,
     installer_coverage:
       deploys ||
-      any(files, /^scripts\/install-e2e\//) ||
+      // Every install-e2e script but the release-skew lane's own, which
+      // runs on Linux and reserves no Mac.
+      any(files, /^scripts\/install-e2e\/(?!release-skew\.|cli-trace\.cjs$)/) ||
       any(files, /^packages\/cli\/src\/commands\/(?:update|service)\./),
+    installer_release_skew: deploys || any(files, cliCommands) || any(files, releaseSkewLane),
     topology: deploys || any(files, /^scripts\/docker-topology\//),
     docker_security:
       deploys || any(files, /^scripts\/docker-e2e\//) || any(files, securitySensitive),

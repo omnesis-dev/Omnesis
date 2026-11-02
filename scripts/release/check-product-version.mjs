@@ -110,6 +110,13 @@ export function checkProductVersion(root = defaultRoot, expectedTag) {
   if (Number(androidCode) < 1 || Number(androidCode) > 2_100_000_000)
     mismatches.push(`invalid Android versionCode ${androidCode}`);
 
+  // The CLI surface the installer's calls are checked against is the newest
+  // release's, so a release records its own (`npm run release -- version`).
+  const surfaceVersion = readJson(root, "scripts/release/released-cli-surface.json").version;
+  if (surfaceVersion !== productVersion) {
+    mismatches.push(`scripts/release/released-cli-surface.json: ${surfaceVersion}`);
+  }
+
   if (expectedTag !== `v${productVersion}`) {
     mismatches.push(`tag=${expectedTag}, product=v${productVersion}`);
   }
