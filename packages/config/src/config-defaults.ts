@@ -237,7 +237,6 @@ export const CONFIG_DEFAULTS = {
     // can't import from gateway); the cross-check test pins the two together.
     searchWorker: {
       concurrency: 3,
-      maxInflightBeforeFallback: 6,
       cacheSizeBytes: 64 * 1024 * 1024,
     },
     minFreeDiskMb: 500,
@@ -455,6 +454,10 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
   // setting it swaps the model's own judgement about how long to think for a
   // fixed budget. That is a trade to measure, not to default someone into.
   "/gateway/watch/compileReasoningTokens",
+  // The search workers' saturation fallback. Unset means there is none: a
+  // burst of searches queues on the workers, because a search run inline would
+  // block the gateway's main event loop for its whole duration.
+  "/gateway/searchWorker/maxInflightBeforeFallback",
   // The former spelling of `/gateway/backfill/peopleCounts`. No default of
   // its own: unset means "whatever `peopleCounts` says", and it is read only
   // so a rename does not quietly drop tuning somebody already wrote.
@@ -537,6 +540,8 @@ const CONFIG_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "/gateway/analyticsThreads": "Chosen automatically from the machine's available CPU cores.",
   "/gateway/backfill/mergePass/interval": "Uses gateway.backfill.peopleCounts.interval.",
   "/gateway/watch/compileReasoningTokens": "The assigned backend chooses its reasoning budget.",
+  "/gateway/searchWorker/maxInflightBeforeFallback":
+    "No ceiling: searches beyond the workers' capacity queue on them and never run on the main thread.",
   "/gateway/publicBaseUrl":
     "MCP OAuth stays loopback-only; source callbacks use the local localhost fallback.",
   "/gateway/pairingSystemTrustOrigins":

@@ -214,6 +214,36 @@ describe("SearchPipeline candidate-gen gate", () => {
     expect(pipeline.getSearchWorkerFallbacks().saturated).toBe(1);
   });
 
+  test("a busy pool with no inflight ceiling queues on the worker, never inline", async () => {
+    let calls = 0;
+    pipeline.setSearchPool(
+      fakePool({
+        isReady: true,
+        inflightCount: 64,
+        maxInflightBeforeFallback: Number.POSITIVE_INFINITY,
+        candidateGen: async () => {
+          calls += 1;
+          return {
+            results: [],
+            contentHashByDoc: {},
+            stageReports: {},
+            timing: {},
+            vectorDegraded: false,
+            notices: [],
+          };
+        },
+      }),
+    );
+    const res = await pipeline.search({ text: "budget" });
+    expect(calls).toBe(1);
+    expect(res.results).toEqual([]);
+    expect(pipeline.getSearchWorkerFallbacks()).toEqual({
+      saturated: 0,
+      error: 0,
+      unconfigured: 0,
+    });
+  });
+
   test("not-ready pool → runs inline (bucketed as saturated)", async () => {
     let calls = 0;
     pipeline.setSearchPool(
