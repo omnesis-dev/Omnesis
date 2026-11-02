@@ -26,7 +26,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   callStartingWith,
@@ -449,8 +449,13 @@ describe("removing one install leaves the other", () => {
     ]) {
       writeFileSync(join(logs, name), "fictional log line\n");
     }
+    // The update lock helper its source install keeps in the shared lib directory.
+    const lockHelper = join(native.home, ".local", "lib", "omnesis", "update-lock.cjs");
+    mkdirSync(dirname(lockHelper), { recursive: true });
+    writeFileSync(lockHelper, "// fictional helper\n");
     const done = host(native, native.shim, ["uninstall", "--yes", "--purge"]);
     expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(dirname(lockHelper))).toBe(false);
     const calls = read(join(native.home, "cli-calls.log"));
     expect(calls).toContain("service uninstall collector");
     // Its keys leave the OS keyring before the directory they open goes.

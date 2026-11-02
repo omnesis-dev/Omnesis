@@ -2396,6 +2396,11 @@ if [ "${1:-}" = uninstall ]; then
     printf '%s\n' "Kept $ROOT: it has local changes."
   fi
   rm -rf "$(dirname "$LAUNCHER")"
+  # The update lock helper its source install keeps in the shared lib
+  # directory. Beside a Docker install there is no native gateway, so nothing
+  # else uses it once this collector is gone.
+  rm -f "$HOME/.local/lib/omnesis/update-lock.cjs"
+  rmdir "$HOME/.local/lib/omnesis" 2>/dev/null || true
   if [ "$PURGE" = 1 ]; then
     case "$CONFIG_DIR" in
       /|"$HOME"|"$HOME"/|"$DOCKER_DIR") printf 'omnesis-collector uninstall: refusing to delete %s.\n' "$CONFIG_DIR" >&2; exit 1 ;;
@@ -6797,6 +6802,7 @@ docker_tls_renewal_script() {
   printf 'JOB_LABEL=%s\n' "$(shell_single_quote "$TS_RENEW_LABEL")"
   printf 'JOB_UNIT=%s\n' "$(shell_single_quote "$TS_RENEW_UNIT")"
   printf 'JOB_FILES=%s\n' "$(shell_single_quote "$TS_RENEW_FILES")"
+  printf 'JOB_LOG=%s\n' "$(shell_single_quote "$([ "$TS_RENEW_KIND" = launchd ] && printf '%s' "$TS_RENEW_LOG_DIR/$TS_RENEW_LABEL.log")")"
   cat <<'RENEW_EOF'
 # A scheduler's PATH is minimal; docker, for the reload, may live in one of these.
 PATH="${PATH:-/usr/bin:/bin}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -6809,6 +6815,8 @@ if [ "${1:-}" = --remove ]; then
     systemd-system) systemctl disable --now "$JOB_UNIT.timer" >/dev/null 2>&1 || true ;;
   esac
   for FILE in $JOB_FILES; do rm -f "$FILE"; done
+  # Its launchd log; the directory goes once nothing else logs there.
+  if [ -n "${JOB_LOG:-}" ]; then rm -f "$JOB_LOG"; rmdir "${JOB_LOG%/*}" 2>/dev/null || true; fi
   case "$JOB_KIND" in
     systemd-user) systemctl --user daemon-reload >/dev/null 2>&1 || true ;;
     systemd-system) systemctl daemon-reload >/dev/null 2>&1 || true ;;
@@ -7351,6 +7359,15 @@ if [ "${1:-}" = uninstall ]; then
   done
   # Before the compose file goes: a re-run after a stop here still finds it.
   [ -z "$UNINSTALL_RENEW" ] || [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
+  # Its launchd log, which a script from before 0.7.5 leaves; the directory
+  # goes once nothing else logs there.
+  if [ -n "$UNINSTALL_RENEW" ] && [ "$(uname -s)" = Darwin ]; then
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW##*/}"
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW_SUFFIX%-tls-renew.sh}"
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW_SUFFIX#omnesis}"
+    rm -f "$HOME/Library/Logs/Omnesis/dev.omnesis.tls-renew${UNINSTALL_RENEW_SUFFIX:+.${UNINSTALL_RENEW_SUFFIX#-}}.log"
+    rmdir "$HOME/Library/Logs/Omnesis" 2>/dev/null || true
+  fi
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     case "$UNINSTALL_DIR" in
       /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
