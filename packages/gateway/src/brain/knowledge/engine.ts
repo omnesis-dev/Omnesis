@@ -55,10 +55,10 @@ import {
 import { KnowledgeUpkeep } from "./engine-upkeep.js";
 import { isolatedKnowledgeRetry } from "./work-retry.js";
 import { KnowledgeStorageError } from "./types.js";
+import { knowledgeSelectionReads, type KnowledgeSelectionReads } from "./selection-reads.js";
 import type { KnowledgeService } from "./service.js";
 import type { KnowledgeWriteGate } from "./writer.js";
 import type { ResolvedBrainSettings } from "../config.js";
-import type { KnowledgeSelectionReads } from "./selection-reads.js";
 import type Database from "better-sqlite3";
 import type { DiscoveryPhase } from "./discovery.js";
 import type { DerivationStage } from "../../domain/DocumentDerivation.js";
@@ -180,7 +180,17 @@ export class KnowledgeEngine {
       initialRoot: () => this.initialRoot(),
       id: (prefix) => this.id(prefix),
       frontier: (id, depth) => this.frontier(id, depth),
-      arcs: (id) => this.graph.arcs(id),
+      adjacency: async (inputs) => {
+        const wanted = [...inputs];
+        return this.graph.adjacency(
+          wanted.length
+            ? await knowledgeSelectionReads(deps).knowledgeArcs(
+                wanted,
+                deps.getSettings().knowledge.maxVisitedPerSeed,
+              )
+            : [],
+        );
+      },
       roots: () => this.roots(),
     });
   }
@@ -549,7 +559,7 @@ export class KnowledgeEngine {
         if (item.nodeId.startsWith("source:")) {
           const seed = this.deps.db
             .prepare<[string, string], { inputChangedAt: number | null }>(
-              "SELECT MIN(input_changed_at) AS inputChangedAt FROM knowledge_work WHERE subject_id=? AND input_revision=?",
+              "SELECT MIN(input_changed_at) AS inputChangedAt FROM knowledge_work WHERE subject_kind='source' AND subject_id=? AND input_revision=?",
             )
             .get(item.nodeId.slice(7), String(item.inputVersions[item.nodeId]));
           if (

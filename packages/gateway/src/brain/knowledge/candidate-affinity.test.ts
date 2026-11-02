@@ -16,6 +16,7 @@ import { pendingCandidateDecisions } from "./candidate-decision.js";
 import { planMaintenanceGroups } from "./planner.js";
 import {
   enqueueKnowledgeWork,
+  listPendingKnowledgeWork,
   createKnowledgeBatch,
   finishKnowledgeBatch,
   settleKnowledgeFrontier,
@@ -238,6 +239,41 @@ it("coordinates different admitted work identities for the same source", () => {
   expect(() => start("competing-second", ["c"], 7)).toThrow("Candidate curation is reserved");
 });
 
+it("gives listed work the same coordination keys as traversing each item", () => {
+  ["a", "b", "c", "d", "e", "f", "g", "h"].forEach(source);
+  candidate("pair", ["a", "b"]);
+  candidate("deferred", ["c"]);
+  db.exec("UPDATE knowledge_candidates SET status='deferred' WHERE id='deferred'");
+  candidate("decided", ["d"]);
+  db.exec("UPDATE knowledge_candidates SET decision_pending=0 WHERE id='decided'");
+  candidate("old-generation", ["e"]);
+  db.exec("UPDATE knowledge_candidates SET decision_generation=2 WHERE id='old-generation'");
+  candidate("unreadable", ["f", "g"]);
+  db.exec("DELETE FROM documents WHERE id='g'");
+  // A second work identity for a bound subject reaches the candidate through it.
+  enqueueKnowledgeWork(
+    db,
+    {
+      id: "alias-a",
+      subjectId: "a",
+      subjectKind: "source",
+      reason: "change",
+      inputRevision: "v1",
+      tier: "routine",
+      dueAt: 1,
+    },
+    1,
+  );
+  const work = listPendingKnowledgeWork(db, 100);
+  expect(work.map((item) => item.id)).toContain("alias-a");
+  const traversed = candidateCoordinationKeys(db);
+  const listed = candidateCoordinationKeys(db, work);
+  for (const item of work) expect(listed(item.id), item.id).toEqual(traversed(item.id));
+  expect(listed("w-a")).toEqual(listed("alias-a"));
+  expect(listed("w-a")).not.toEqual([]);
+  expect(listed("w-h")).toEqual([]);
+});
+
 it("holds an oversized component without preventing independent planning", () => {
   source("a");
   source("b");
@@ -251,14 +287,17 @@ it("holds an oversized component without preventing independent planning", () =>
       bind.run(`c${i}`);
     }
   })();
-  const keys = candidateCoordinationKeys(db);
-  try {
-    keys("w-a");
-    expect.unreachable("oversized affinity must remain pending");
-  } catch (error) {
-    expect(error).toMatchObject({ limit: "region", seedId: "w-a" });
-  }
-  expect(keys("w-b")).toEqual([]);
+  for (const keys of [
+    candidateCoordinationKeys(db),
+    candidateCoordinationKeys(db, listPendingKnowledgeWork(db, 10)),
+  ])
+    try {
+      keys("w-a");
+      expect.unreachable("oversized affinity must remain pending");
+    } catch (error) {
+      expect(error).toMatchObject({ limit: "region", seedId: "w-a" });
+    }
+  expect(candidateCoordinationKeys(db)("w-b")).toEqual([]);
   expect(() => start("too-large", ["a"])).toThrow("bounded scope");
   start("independent", ["b"]);
   expect(db.prepare("SELECT status FROM knowledge_work WHERE id='w-a'").get()).toEqual({

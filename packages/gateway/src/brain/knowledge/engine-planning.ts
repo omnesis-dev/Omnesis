@@ -10,6 +10,7 @@ import {
 } from "./candidate-affinity.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
+import { knowledgeSelectionReads } from "./selection-reads.js";
 
 import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
@@ -22,7 +23,7 @@ import {
   scheduleKnowledgeChange,
   planMaintenanceGroups,
   MaintenancePlanLimitError,
-  type MaintenanceArc,
+  type MaintenanceAdjacency,
   type MaintenanceGroup,
   type MaintenanceSeed,
 } from "./planner.js";
@@ -34,10 +35,14 @@ interface PlanningContext {
   deps: KnowledgeEngineDeps;
   id: (prefix: string) => string;
   frontier: (id: string, depth: number) => KnowledgeFrontierInput | null;
-  arcs: (input: string) => MaintenanceArc[];
+  /** Dependents for one synchronous planning pass, with `inputs` read up front. */
+  adjacency: (inputs: Iterable<string>) => Promise<MaintenanceAdjacency>;
   roots: () => Set<string>;
 }
 const sourceKey = (id: string) => `source:${id}`;
+/** The graph input a work item's subject is. */
+const target = (item: KnowledgeWork) =>
+  item.subjectKind === "source" ? sourceKey(item.subjectId) : item.subjectId;
 
 /** Planning and late admission share the same durable component reservations. */
 export class KnowledgeBatchPlanner {
@@ -51,23 +56,9 @@ export class KnowledgeBatchPlanner {
     if (!work.length) return 0;
     // Refresh only stale/missing subjects. Healthy older work cannot monopolize
     // the reconciliation window when there is a large backlog.
-    const stale = this.context.deps.db
-      .prepare<[], { id: string }>(
-        `
-      SELECT w.id FROM knowledge_work w
-      LEFT JOIN documents d ON w.subject_kind='source' AND d.id=w.subject_id
-      LEFT JOIN knowledge_nodes n ON w.subject_kind='node' AND n.id=w.subject_id
-      WHERE w.status='pending' AND (
-        (w.subject_kind='source' AND (d.id IS NULL OR ${knowledgeSourceRevisionSql("d")}!=w.input_revision)) OR
-        (w.subject_kind='node' AND (n.id IS NULL OR CAST(n.revision AS TEXT)!=w.input_revision OR json_extract(n.fields_json,'$.withdrawn')=1)))
-      ORDER BY w.due_at,w.id LIMIT 512`,
-      )
-      .all();
+    const stale = await knowledgeSelectionReads(this.context.deps).knowledgeStaleWork(512);
     if (stale.length) {
-      await this.context.deps.writeGate["knowledge.refreshWork"](
-        stale.map((item) => item.id),
-        this.context.deps.clock(),
-      );
+      await this.context.deps.writeGate["knowledge.refreshWork"](stale, this.context.deps.clock());
       work = listKnowledgePlanningWork(this.context.deps.db, cfg.maxSeeds * cfg.maxVisitedPerSeed);
     }
     // Classify only settled evidence, before deciding whether its tier is due.
@@ -150,16 +141,16 @@ export class KnowledgeBatchPlanner {
     }
     work = listKnowledgePlanningWork(this.context.deps.db, cfg.maxSeeds * cfg.maxVisitedPerSeed);
     const byId = new Map(work.map((item) => [item.id, item]));
-    const arcs = (id: string) => this.context.arcs(id).map((arc) => arc.dependent);
+    const arcs = await this.context.adjacency(work.map(target));
     const roots = this.context.roots();
-    const affinityKeys = candidateCoordinationKeys(this.context.deps.db);
+    const affinityKeys = candidateCoordinationKeys(this.context.deps.db, work);
     const seed = (item: KnowledgeWork): MaintenanceSeed => ({
       id: item.id,
       revision: item.inputRevision,
       changedAt: item.createdAt,
       dueAt: item.dueAt,
       tier: item.tier,
-      targets: [item.subjectKind === "source" ? sourceKey(item.subjectId) : item.subjectId],
+      targets: [target(item)],
       coordinationKeys: affinityKeys(item.id),
     });
     // Work a failed batch left unfinished is planned alone below, so it can
@@ -191,7 +182,11 @@ export class KnowledgeBatchPlanner {
       if (item.failures === 0 || item.dueAt > this.context.deps.clock()) continue;
       let solo: ReturnType<typeof planMaintenanceGroups>[number] | undefined;
       try {
-        solo = planMaintenanceGroups([seed(item)], arcs, roots, { ...cfg, maxSeeds: 1 })[0];
+        // Admissions above awaited the writer, so this pass reads arcs afresh.
+        solo = planMaintenanceGroups([seed(item)], await this.context.adjacency([]), roots, {
+          ...cfg,
+          maxSeeds: 1,
+        })[0];
       } catch (error) {
         if (!(error instanceof MaintenancePlanLimitError)) throw error;
         continue;
@@ -320,8 +315,8 @@ export class KnowledgeBatchPlanner {
       cfg.maxSeeds * cfg.maxVisitedPerSeed,
     ).filter((item) => item.failures === 0);
     if (!work.length) return;
-    const affinityKeys = candidateCoordinationKeys(this.context.deps.db);
-    const arcs = (id: string) => this.context.arcs(id).map((arc) => arc.dependent),
+    const arcs = await this.context.adjacency([...owned, ...work.map(target)]);
+    const affinityKeys = candidateCoordinationKeys(this.context.deps.db, work),
       roots = this.context.roots();
     let groups;
     try {
@@ -345,7 +340,7 @@ export class KnowledgeBatchPlanner {
             changedAt: item.createdAt,
             dueAt: item.dueAt,
             tier: item.tier,
-            targets: [item.subjectKind === "source" ? sourceKey(item.subjectId) : item.subjectId],
+            targets: [target(item)],
             coordinationKeys: affinityKeys(item.id),
           })),
         ],
