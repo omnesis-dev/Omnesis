@@ -10,7 +10,9 @@
  *   the next transcription without a gateway restart.
  * - Serializes transcriptions: speech recognition is CPU/GPU-heavy, so running
  *   one at a time avoids thrashing the model runner under concurrent voice
- *   notes. A queued transcription whose caller stopped waiting is skipped.
+ *   notes. Interactive transcriptions run before queued background ones, so a
+ *   backlog of source audio never delays what someone is waiting for. A queued
+ *   transcription whose caller stopped waiting is skipped.
  *
  * Callers are the `/inference/transcribe` route (source audio from the
  * collector) and the voice-note queue (Tell Omnesis recordings); each owns its
@@ -50,7 +52,16 @@ export interface TranscribeOptions {
   allowVocabulary?: boolean;
   /** Aborted when the caller stops waiting; queued work it covers is skipped. */
   signal?: AbortSignal;
+  /**
+   * `"background"` for audio no one is waiting on, such as a source's voice
+   * clips; every queued interactive transcription (a note being dictated, a
+   * spoken question) runs before any queued background one. Default
+   * `"interactive"`.
+   */
+  priority?: TranscriptionPriority;
 }
+
+export type TranscriptionPriority = "interactive" | "background";
 
 /**
  * How long a transcription waits for its vocabulary hints. The lookup is a
@@ -178,7 +189,12 @@ export class TranscribeService {
   private readonly deps: LoadTranscriberDeps;
   private current: { signature: string; capability: TranscribeCapability | null } | null = null;
   private loading: Promise<TranscribeCapability | null> | null = null;
-  private tail: Promise<unknown> = Promise.resolve();
+  /** Transcriptions waiting their turn, by priority; one runs at a time. */
+  private readonly queued: Record<TranscriptionPriority, Array<() => Promise<void>>> = {
+    interactive: [],
+    background: [],
+  };
+  private running = false;
   /** Result of probing the local Whisper runtime; null until the probe settles. */
   private localRuntime: boolean | null = null;
   private probing: Promise<void> | null = null;
@@ -283,7 +299,7 @@ export class TranscribeService {
     // capability (kills its worker subprocess); doing that resolution inside the
     // fence guarantees no earlier-queued transcription is still running on the
     // old worker when it's torn down.
-    return this.serialize(async () => {
+    return this.serialize(opts?.priority ?? "interactive", async () => {
       // A caller that gave up while this waited in the queue gets nothing from
       // running it; skipping it keeps the transcriber free for work someone
       // still wants.
@@ -378,14 +394,26 @@ export class TranscribeService {
     }
   }
 
-  /** Run `fn` after all previously-queued transcriptions complete. */
-  private serialize<T>(fn: () => Promise<T>): Promise<T> {
-    const result = this.tail.then(fn, fn);
-    this.tail = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
+  /**
+   * Run `fn` once every transcription started before it has finished and no
+   * queued transcription of a higher priority is waiting.
+   */
+  private serialize<T>(priority: TranscriptionPriority, fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queued[priority].push(() => fn().then(resolve, reject));
+      this.runNext();
+    });
+  }
+
+  private runNext(): void {
+    if (this.running) return;
+    const next = this.queued.interactive.shift() ?? this.queued.background.shift();
+    if (!next) return;
+    this.running = true;
+    void next().finally(() => {
+      this.running = false;
+      this.runNext();
+    });
   }
 
   async dispose(): Promise<void> {
