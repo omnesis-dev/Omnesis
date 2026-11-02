@@ -117,6 +117,7 @@ export interface IoGate {
   knowledgeStaleWork: KnowledgeSelectionReads["knowledgeStaleWork"];
   knowledgeHasExcludedWork: KnowledgeSelectionReads["knowledgeHasExcludedWork"];
   knowledgeArcs: KnowledgeSelectionReads["knowledgeArcs"];
+  knowledgeDiscoveryBacklog: KnowledgeSelectionReads["knowledgeDiscoveryBacklog"];
   watchPeopleDirectory: PeopleDirectoryReader;
   bootstrapCorpusByMonth(
     recencyFloor: string,
@@ -495,6 +496,11 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
   { name: "io.knowledgeArcs", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  {
+    name: "io.knowledgeDiscoveryBacklog",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   // The Watch ontology reads the whole people table on every evaluation pass.
   { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -635,6 +641,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeHasExcludedWork: (excludedSources) =>
       call("io.knowledgeHasExcludedWork", [[...excludedSources]]),
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
+    knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),

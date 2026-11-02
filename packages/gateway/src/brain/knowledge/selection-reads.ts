@@ -20,6 +20,11 @@ import {
 } from "./review-selection.js";
 import { hasKnowledgeWorkFromExcludedSources, listStaleKnowledgeWork } from "./work.js";
 import { readKnowledgeArcs, type KnowledgeArcRead } from "./engine-graph.js";
+import {
+  listKnowledgeDiscoveryBacklog,
+  type DiscoveryDocument,
+  type KnowledgeDiscoveryBacklogOptions,
+} from "./discovery.js";
 import type Database from "better-sqlite3";
 
 /**
@@ -61,6 +66,10 @@ export interface KnowledgeSelectionReads {
   knowledgeHasExcludedWork(excludedSources: readonly string[]): Promise<boolean>;
   /** The planner's graph read for a planning pass; see `readKnowledgeArcs`. */
   knowledgeArcs(inputs: readonly string[], bound: number): Promise<KnowledgeArcRead>;
+  /** Documents admission may read next; see `listKnowledgeDiscoveryBacklog`. */
+  knowledgeDiscoveryBacklog(
+    options: KnowledgeDiscoveryBacklogOptions,
+  ): Promise<DiscoveryDocument[]>;
 }
 
 export function readOrganizationCohort(
@@ -89,6 +98,8 @@ export function directKnowledgeSelectionReads(db: Database.Database): KnowledgeS
     knowledgeHasExcludedWork: (excludedSources) =>
       Promise.resolve(hasKnowledgeWorkFromExcludedSources(db, excludedSources)),
     knowledgeArcs: (inputs, bound) => Promise.resolve(readKnowledgeArcs(db, inputs, bound)),
+    knowledgeDiscoveryBacklog: (options) =>
+      Promise.resolve(listKnowledgeDiscoveryBacklog(db, options)),
   };
 }
 

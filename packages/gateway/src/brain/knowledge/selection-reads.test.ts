@@ -56,6 +56,7 @@ beforeEach(() => {
     knowledgeStaleWork: vi.fn(() => Promise.resolve([])),
     knowledgeHasExcludedWork: vi.fn(() => Promise.resolve(false)),
     knowledgeArcs: vi.fn(() => Promise.resolve([])),
+    knowledgeDiscoveryBacklog: vi.fn(() => Promise.resolve([])),
   };
   const writeGate = directKnowledgeGate(db);
   const base = { db, writeGate, clock: () => now, log, getSettings: () => settings };
