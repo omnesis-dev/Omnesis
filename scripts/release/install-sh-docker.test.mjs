@@ -17,6 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -2756,6 +2757,36 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("local-http/embed-large is already assigned");
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+// Root writes everywhere, so these only mean something run as a login account.
+describe.skipIf(process.getuid?.() === 0)("install.sh --docker: a home it cannot write", () => {
+  test("a config directory it cannot create is named before anything is written", () => {
+    const home = prepareHome("unwritable-config");
+    mkdirSync(join(home, ".config"), { mode: 0o555 });
+    const run = runInstaller("unwritable-config", QUIET);
+    chmodSync(join(home, ".config"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      `This install writes to ${run.configDir}, but ${run.configDir} does not exist, and ${join(home, ".config")}, where it would be created, is not writable by`,
+    );
+    expect(run.output).toContain("sudo chown -R");
+    expect(run.output).toContain("Nothing was changed.");
+    expect(run.output).not.toMatch(/^mkdir: /m);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("a directory for the omnesis command it cannot create stops it before the compose file", () => {
+    const home = prepareHome("unwritable-bin");
+    mkdirSync(join(home, ".local"), { mode: 0o555 });
+    const run = runInstaller("unwritable-bin", QUIET);
+    chmodSync(join(home, ".local"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(`This install writes to ${join(home, ".local", "bin")}`);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 });
 
