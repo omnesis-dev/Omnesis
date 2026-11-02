@@ -78,6 +78,7 @@ describe("Immich wraps-real: owned assets, albums and faces, edits and trash", (
     await harness.start();
     db = new Database(harness.getDbPath(), { readonly: true });
     await harness.triggerSyncAndWait(SOURCE_ID, 60_000);
+    await harness.waitForPeopleResolution(60_000);
   }, 240_000);
 
   afterAll(async () => {

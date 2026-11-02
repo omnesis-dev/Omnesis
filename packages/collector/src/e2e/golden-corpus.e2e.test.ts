@@ -113,7 +113,7 @@ describe("Golden-corpus regression net (e2e-minimal)", () => {
         harness.triggerSyncAndWait(sourceId, 90_000),
       ),
     );
-    await waitForPeopleResolutionBacklog(harness, 90_000);
+    await harness.waitForPeopleResolution(90_000);
 
     // Sync every remaining source so the gateway has documents + people +
     // index chunks to query. People resolution is a background writer-handler;
@@ -130,7 +130,7 @@ describe("Golden-corpus regression net (e2e-minimal)", () => {
       drainedSync.timedOut,
       `collector did not drain (started with ${drainedSync.inflight} syncs in flight)`,
     ).toBe(false);
-    await waitForPeopleResolutionBacklog(harness, 90_000);
+    await harness.waitForPeopleResolution(90_000);
     await harness.refreshSearchSnapshot();
     // Wait for the EXACT people-graph query the snapshot reads to be
     // stable across consecutive polls. Just waiting for Jane Doe to be
@@ -462,30 +462,6 @@ async function waitForPeopleGraphStable(
   }
   throw new Error(
     `waitForPeopleGraphStable: people graph did not stabilize within ${timeoutMs}ms (lastKey=${lastKey.slice(0, 500)})`,
-  );
-}
-
-async function waitForPeopleResolutionBacklog(
-  harness: SyntheticE2EHarness,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let consecutiveEmptyReads = 0;
-  let lastUnresolved = -1;
-  while (Date.now() < deadline) {
-    const result = await harness.gatewayJson<{ rows: unknown[][] }>("/sql", {
-      method: "POST",
-      body: JSON.stringify({
-        sql: "SELECT COUNT(*) FROM documents WHERE people_resolved_at IS NULL",
-      }),
-    });
-    lastUnresolved = Number(result.rows[0]?.[0] ?? -1);
-    consecutiveEmptyReads = lastUnresolved === 0 ? consecutiveEmptyReads + 1 : 0;
-    if (consecutiveEmptyReads >= 2) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(
-    `waitForPeopleResolutionBacklog: ${lastUnresolved} unresolved documents after ${timeoutMs}ms`,
   );
 }
 

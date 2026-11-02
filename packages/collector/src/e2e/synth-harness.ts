@@ -1118,6 +1118,36 @@ export class SyntheticE2EHarness {
   }
 
   /**
+   * Wait until people resolution has processed every stored document.
+   *
+   * Resolution is a background drip that the gateway runs after a page lands,
+   * so a completed sync says nothing about whether the page's mentions are
+   * people, aliases and `document_people` rows yet. Call this after a sync
+   * before asserting on any of them. Two consecutive empty reads are required
+   * so a page committed between polls cannot pass for a drained backlog.
+   */
+  async waitForPeopleResolution(timeoutMs = 90_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let consecutiveEmptyReads = 0;
+    let lastUnresolved = -1;
+    while (Date.now() < deadline) {
+      const result = await this.gatewayJson<{ rows: unknown[][] }>("/sql", {
+        method: "POST",
+        body: JSON.stringify({
+          sql: "SELECT COUNT(*) FROM documents WHERE people_resolved_at IS NULL",
+        }),
+      });
+      lastUnresolved = Number(result.rows[0]?.[0] ?? -1);
+      consecutiveEmptyReads = lastUnresolved === 0 ? consecutiveEmptyReads + 1 : 0;
+      if (consecutiveEmptyReads >= 2) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(
+      `waitForPeopleResolution: ${lastUnresolved} unresolved documents after ${timeoutMs}ms`,
+    );
+  }
+
+  /**
    * Force the gateway's search snapshot to advance to the WAL head. A gateway
    * with search workers disabled reads from a long-running `BEGIN` snapshot on
    * `index.db` that normally refreshes every 10 minutes — without this nudge,
