@@ -169,8 +169,9 @@ export function enqueueNewNotes(db: Db, now: number): number {
  */
 export function skipNoteAtCapture(db: Db, entryId: string, now: number): void {
   db.prepare<[number, number, number, string]>(
-    `INSERT OR IGNORE INTO note_agent_runs (entry_id, input_text, state, run_after, created_at, updated_at,baseline)
-     SELECT id,text,'skipped',?,?,?,1 FROM note_entries WHERE id=?`,
+    `INSERT INTO note_agent_runs (entry_id, input_text, state, run_after, created_at, updated_at,baseline)
+     SELECT id,text,'skipped',?,?,?,1 FROM note_entries WHERE id=?
+     ON CONFLICT(entry_id,revision) DO NOTHING`,
   ).run(now, now, now, entryId);
 }
 
@@ -188,7 +189,7 @@ function scanNewNotes(db: Db, now: number, state: "pending" | "skipped"): number
   return db.transaction(() => {
     if (state === "pending")
       db.prepare<[string]>(
-        "INSERT OR IGNORE INTO note_agent_meta (key, value) VALUES ('scanned', ?)",
+        "INSERT INTO note_agent_meta (key, value) VALUES ('scanned', ?) ON CONFLICT(key) DO NOTHING",
       ).run(new Date(now).toISOString());
     const scanned = db
       .prepare<[], { value: string }>("SELECT value FROM note_agent_meta WHERE key = 'scanned'")
@@ -196,11 +197,12 @@ function scanNewNotes(db: Db, now: number, state: "pending" | "skipped"): number
     if (scanned === undefined) return 0;
     const res = db
       .prepare<[string, number, number, number, string, string]>(
-        `INSERT OR IGNORE INTO note_agent_runs (entry_id, input_text, state, run_after, created_at, updated_at,baseline)
+        `INSERT INTO note_agent_runs (entry_id, input_text, state, run_after, created_at, updated_at,baseline)
          SELECT n.id,n.text, ?, ?, ?, ?, CASE WHEN ?='skipped' THEN 1 ELSE 0 END
            FROM note_entries n
           WHERE n.from_owner = 1 AND n.received_at >= ?
-            AND NOT EXISTS (SELECT 1 FROM note_agent_runs r WHERE r.entry_id = n.id)`,
+            AND NOT EXISTS (SELECT 1 FROM note_agent_runs r WHERE r.entry_id = n.id)
+         ON CONFLICT(entry_id,revision) DO NOTHING`,
       )
       .run(state, now, now, now, state, scanned);
     const latest = db

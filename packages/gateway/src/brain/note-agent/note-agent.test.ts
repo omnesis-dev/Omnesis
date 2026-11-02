@@ -42,6 +42,7 @@ import {
   getNoteRuns,
   hasPendingNotes,
   skipNewNotes,
+  skipNoteAtCapture,
 } from "./storage.js";
 import {
   noteHandoffId,
@@ -103,6 +104,53 @@ function note(id: string, text: string, at: number, extra: Partial<NoteEntry> = 
 }
 
 describe("note agent queue", () => {
+  test.each(["pending", "skipped"] as const)(
+    "queue admission failures preserve the scan cursor when scanning %s notes",
+    (state) => {
+      enqueueNewNotes(db, T0);
+      note("new-constraint-note", "Check the fictional observatory inventory", T0 + 1_000);
+      // A future schema requires a field this binary does not know to supply.
+      db.exec("ALTER TABLE note_agent_runs ADD COLUMN future_required TEXT NOT NULL");
+      const scan = state === "pending" ? enqueueNewNotes : skipNewNotes;
+      expect(() => scan(db, T0 + 2_000)).toThrow(/NOT NULL.*future_required/);
+      expect(db.prepare("SELECT value FROM note_agent_meta WHERE key='scanned'").get()).toEqual({
+        value: new Date(T0).toISOString(),
+      });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_runs").get()).toEqual({ n: 0 });
+    },
+  );
+
+  test("capture-time skip rejects incompatible queue constraints", () => {
+    note("skip-constraint-note", "Save an invented observatory note", T0);
+    db.exec("ALTER TABLE note_agent_runs ADD COLUMN future_required TEXT NOT NULL");
+    expect(() => skipNoteAtCapture(db, "skip-constraint-note", T0)).toThrow(
+      /NOT NULL.*future_required/,
+    );
+    expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_runs").get()).toEqual({ n: 0 });
+  });
+
+  test("scan metadata initialization rejects incompatible constraints", () => {
+    db.exec("ALTER TABLE note_agent_meta ADD COLUMN future_required TEXT NOT NULL");
+    expect(() => enqueueNewNotes(db, T0)).toThrow(/NOT NULL.*future_required/);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_meta").get()).toEqual({ n: 0 });
+  });
+
+  test("capture-time duplicate skips preserve the original row and scan idempotence", () => {
+    enqueueNewNotes(db, T0);
+    note("duplicate-skip", "Save the fictional telescope inventory", T0 + 1_000);
+    skipNoteAtCapture(db, "duplicate-skip", T0 + 2_000);
+    const original = db
+      .prepare("SELECT * FROM note_agent_runs WHERE entry_id='duplicate-skip'")
+      .get();
+    skipNoteAtCapture(db, "duplicate-skip", T0 + 3_000);
+    expect(
+      db.prepare("SELECT * FROM note_agent_runs WHERE entry_id='duplicate-skip'").get(),
+    ).toEqual(original);
+    expect(enqueueNewNotes(db, T0 + 4_000)).toBe(0);
+    expect(enqueueNewNotes(db, T0 + 5_000)).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_runs").get()).toEqual({ n: 1 });
+  });
+
   test("only notes received after the first enqueue are queued", () => {
     note("before", "an old note", T0 - 60_000);
     expect(enqueueNewNotes(db, T0)).toBe(0);
