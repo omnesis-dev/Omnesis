@@ -110,6 +110,19 @@ const STALE_ANCESTOR_CONDITION = `(a.kind='source' AND (doc.id IS NULL OR tombst
           OR (a.kind='node' AND n.id IS NULL)
           OR (a.kind='node' AND ${OWNER_UPDATE_PENDING})`;
 
+/** The node bound as `seed`, with the related loops whose deletion hides it. Binds: node id. */
+function hiddenRecordsCte(db: Database.Database): string {
+  return `seed(id) AS (SELECT ?),
+    records(id) AS (
+      SELECT id FROM seed
+      ${relatedLoopPrivacyEdges(db, "(SELECT id FROM seed)")}
+    )`;
+}
+
+const HIDDEN_RECORDS_EXISTS = `EXISTS(SELECT 1 FROM records a LEFT JOIN knowledge_nodes n ON n.id=a.id
+        LEFT JOIN knowledge_node_tombstones t ON t.id=a.id
+        WHERE ${HIDDEN_RECORD_CONDITION})`;
+
 /**
  * Whether one node is hidden (itself deleted or being erased) and whether it is
  * stale: a current ancestor, scoped to the selected claim or field, changed or
@@ -127,15 +140,9 @@ export function knowledgeNodeFence(
     >(
       `
     WITH RECURSIVE
-    seed(id) AS (SELECT ?),
-    records(id) AS (
-      SELECT id FROM seed
-      ${relatedLoopPrivacyEdges(db, "(SELECT id FROM seed)")}
-    ),
+    ${hiddenRecordsCte(db)},
     ${CURRENT_ANCESTORS_CTE} SELECT
-      EXISTS(SELECT 1 FROM records a LEFT JOIN knowledge_nodes n ON n.id=a.id
-        LEFT JOIN knowledge_node_tombstones t ON t.id=a.id
-        WHERE ${HIDDEN_RECORD_CONDITION}) AS hidden,
+      ${HIDDEN_RECORDS_EXISTS} AS hidden,
       EXISTS(SELECT 1 FROM current_ancestors a ${STALE_ANCESTOR_JOINS}
         WHERE ${STALE_ANCESTOR_CONDITION})
  AS stale
@@ -188,6 +195,14 @@ export function knowledgeNodeStaleAncestors(
     items: rows.map((row) => ({ kind: row.kind, id: row.id, cause: row.cause })),
   };
 }
+/**
+ * Not hidden, by the same rule as {@link knowledgeNodeFence}, without walking
+ * the node's ancestors for staleness, which readability never depends on.
+ */
 export function isKnowledgeNodeReadable(db: Database.Database, id: string): boolean {
-  return !knowledgeNodeFence(db, id).hidden;
+  return !db
+    .prepare<[string], { hidden: number }>(
+      `WITH ${hiddenRecordsCte(db)} SELECT ${HIDDEN_RECORDS_EXISTS} AS hidden`,
+    )
+    .get(id)!.hidden;
 }

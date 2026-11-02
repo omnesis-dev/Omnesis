@@ -58,9 +58,15 @@ export function snapshotKnowledgeRevision(
     JSON.stringify(diff),
     now,
   );
+  // Only targets no earlier revision of this node cited: the table is the set
+  // of everything the node's history ever read (see its schema), and a page
+  // rewritten hundreds of times would otherwise repeat its whole citation list
+  // once per revision for every privacy-closure walk to read again.
   db.prepare(
     `INSERT INTO knowledge_revision_dependencies(node_id,revision,target_kind,target_id)
-    SELECT DISTINCT node_id,?,target_kind,target_id FROM knowledge_dependencies WHERE node_id=?`,
+    SELECT DISTINCT d.node_id,?,d.target_kind,d.target_id FROM knowledge_dependencies d
+    WHERE d.node_id=? AND NOT EXISTS(SELECT 1 FROM knowledge_revision_dependencies r
+      WHERE r.node_id=d.node_id AND r.target_kind=d.target_kind AND r.target_id=d.target_id)`,
   ).run(node.revision, nodeId);
 }
 /** Newest first. History is context about previous beliefs, never current proof. */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { knowledgeNodeFence } from "./storage-fence.js";
+import { isKnowledgeNodeReadable, knowledgeNodeFence } from "./storage-fence.js";
 import type Database from "better-sqlite3";
 import type {
   KnowledgeChange,
@@ -78,8 +78,7 @@ export function listKnowledgeNodes(
   return result;
 }
 export function getKnowledgeClaims(db: Db, nodeId: string): KnowledgeClaim[] {
-  const fence = knowledgeNodeFence(db, nodeId);
-  if (fence.hidden) return [];
+  if (!isKnowledgeNodeReadable(db, nodeId)) return [];
   const rows = db
     .prepare<
       [string],
