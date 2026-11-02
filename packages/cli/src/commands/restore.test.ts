@@ -22,12 +22,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, test } from "vitest";
 import {
-  acquireGatewayLock,
   createRecoveryEnvelope,
   encryptArtifactFileInPlace,
   ensureInstallRootKey,
@@ -740,8 +740,30 @@ describe("what a restore replaces and what it keeps", () => {
     const target = tmp("omnesis-restore-locked-");
     writeFileSync(join(target, "omnesis.db"), "corpus");
     const backupDir = plainBackupInside(target, "b", { "omnesis.db": ["restored"] });
-    const lock = await acquireGatewayLock(target, { waitMs: 0 });
+    // Another process holds the lock, as a running gateway does: a record
+    // naming this very process reads as a stale one from an earlier life.
+    const module = new URL("../../../core/src/gateway-lock.ts", import.meta.url).href;
+    const holder = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `import { acquireGatewayLock } from ${JSON.stringify(module)};
+         await acquireGatewayLock(${JSON.stringify(target)}, { waitMs: 0 });
+         process.stdout.write("held");
+         setInterval(() => {}, 1000);`,
+      ],
+      { cwd: join(import.meta.dirname, "../../../.."), stdio: ["ignore", "pipe", "inherit"] },
+    );
     try {
+      await new Promise<void>((resolve, reject) => {
+        holder.stdout.on("data", (chunk: Buffer) => {
+          if (String(chunk).includes("held")) resolve();
+        });
+        holder.once("exit", (code) => reject(new Error(`the lock holder exited (${code})`)));
+      });
       await expect(
         restore(backupDir, {
           target,
@@ -752,7 +774,11 @@ describe("what a restore replaces and what it keeps", () => {
         }),
       ).rejects.toThrow(/still owns/);
     } finally {
-      lock.release();
+      holder.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        if (holder.exitCode !== null || holder.signalCode !== null) resolve();
+        else holder.once("exit", () => resolve());
+      });
     }
     expect(readFileSync(join(target, "omnesis.db"), "utf8")).toBe("corpus");
   });

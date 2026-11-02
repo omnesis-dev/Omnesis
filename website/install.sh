@@ -7775,7 +7775,7 @@ if [ "${1:-}" = restore ]; then
   fi
   # shellcheck disable=SC2086
   if ! docker compose -f "$COMPOSE_FILE" up -d $RESTORE_SERVICES; then
-    printf 'omnesis restore: the containers did not start. Start them with: docker compose -f %s up -d\n' "$COMPOSE_FILE" >&2
+    printf 'omnesis restore: docker compose could not start the containers. Start them with: docker compose -f %s up -d\n' "$COMPOSE_FILE" >&2
     exit 1
   fi
   [ "$RESTORE_STATUS" = 0 ] || exit "$RESTORE_STATUS"

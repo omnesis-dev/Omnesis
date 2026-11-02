@@ -558,7 +558,7 @@ grep -q "gateway" "$WORK/service-status.out" || { cat "$WORK/service-status.out"
 "${omnesis_env[@]}" "$OMNESIS" service stop collector < /dev/null || die "omnesis service stop collector failed"
 docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx collector && die "the collector is still running"
 "${omnesis_env[@]}" "$OMNESIS" service start collector < /dev/null || die "omnesis service start collector failed"
-docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx collector || die "the collector did not start"
+docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx collector || die "the collector is not running after omnesis service start"
 ok "service status, stop and start map to the compose project"
 
 printf 'Standing instructions at backup time.\n' > "$CONFIG_DIR/OMNESIS.md"

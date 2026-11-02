@@ -23,6 +23,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -4083,11 +4084,13 @@ exit 0
 
   test("a relative path and a backup copied from elsewhere are mounted read-only at the same path", () => {
     const run = installed("restore-elsewhere");
-    const copied = join(run.home, "Downloads", "old-machine-backup");
-    mkdirSync(copied, { recursive: true });
-    writeFileSync(join(copied, "backup-manifest.json"), "{}");
-    const envelope = join(run.home, "Downloads", "recovery-envelope.json");
-    writeFileSync(envelope, "{}");
+    mkdirSync(join(run.home, "Downloads", "old-machine-backup"), { recursive: true });
+    writeFileSync(join(run.home, "Downloads", "old-machine-backup", "backup-manifest.json"), "{}");
+    writeFileSync(join(run.home, "Downloads", "recovery-envelope.json"), "{}");
+    // A relative path is read from the working directory, which the shell
+    // names by its physical path: on macOS the temp dir is under /private.
+    const copied = join(realpathSync(run.home), "Downloads", "old-machine-backup");
+    const envelope = join(realpathSync(run.home), "Downloads", "recovery-envelope.json");
 
     const proc = wrapper(run, [
       "restore",
