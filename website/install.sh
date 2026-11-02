@@ -8033,13 +8033,28 @@ docker_prepare_topology_transition() {
   fi
 }
 
+# A host that only collects and is paired already keeps its device on a
+# re-run. The token its collector holds is this machine's identity on the
+# gateway: redeeming another code would make it a new device and leave the old
+# one, with its sources, behind. A --code given anyway, or a gateway other
+# than the one it is paired with, pairs again.
+docker_collector_paired_here() {
+  [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ] || return 1
+  [ -s "$CONFIG_DIR/collector/collector-token" ] || return 1
+  PAIRED_STATE="$CONFIG_DIR/collector/collector-pairing-state.json"
+  PAIRED_URL="$(sed -n 's/^[[:space:]]*"gatewayUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PAIRED_STATE" 2>/dev/null | head -n 1)"
+  [ -z "$PAIRED_URL" ] || [ "$PAIRED_URL" = "$PAIR_GATEWAY_URL" ] || return 1
+  DOCKER_DEVICE_NAME="$(sed -n 's/^[[:space:]]*"deviceName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PAIRED_STATE" 2>/dev/null | head -n 1)"
+  return 0
+}
+
 # Without a terminal, a Docker run reaches its first question only once every
 # image is pulled. A question with a default takes it, as Enter would; one
 # without (a collector's pairing code) is checked here, before anything is
 # pulled or written, so the refusal names its flag and changes nothing.
 docker_require_unattended_answers() {
   is_promptable && return 0
-  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
+  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ] && ! docker_collector_paired_here; then
     fail "No terminal to ask for this collector's pairing code, so nothing was pulled or changed. Re-run with --code <code>, minted on the gateway host with: omnesis devices pair --kind collector"
   fi
 }
@@ -8135,8 +8150,12 @@ docker_install() {
   docker_propagate_keyring
   if [ "$COLLECTOR" = 1 ]; then
     setup_collector_storage_keys
-    read_pairing_code collector
-    docker_collector_pair
+    if docker_collector_paired_here; then
+      info "This collector is paired already ($CONFIG_DIR/collector/collector-token), so it keeps that device${DOCKER_DEVICE_NAME:+ ($DOCKER_DEVICE_NAME)}. Re-run with --code <code> to pair it again as a new device."
+    else
+      read_pairing_code collector
+      docker_collector_pair
+    fi
     DOCKER_UNDO=0
     docker_up collector
     print_docker_banner

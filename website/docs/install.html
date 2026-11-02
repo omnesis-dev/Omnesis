@@ -1016,6 +1016,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             </p>
           </div>
         </div>
+        <p>
+          It asks for a pairing code minted on the gateway host (<code
+            >omnesis devices pair --kind collector</code
+          >); without a terminal, pass it with <code>--code</code>. Re-running the line on a
+          collector that is paired already keeps its device and needs no code; a new
+          <code>--code</code>, or another <code>--gateway-url</code>, pairs it again as a new
+          device.
+        </p>
 
         <h3 id="docker-topologies">Choose a topology</h3>
         <p>
