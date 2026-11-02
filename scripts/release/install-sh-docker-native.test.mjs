@@ -591,7 +591,8 @@ describe("host folders the collector's container reads", () => {
       `      # shared-folders:begin\n      - '${vault}:${vault}:ro'\n      # shared-folders:end`,
     );
     expect(read(dockerLog(docker.home))).toContain(
-      `compose -f ${compose} up -d --no-deps collector`,
+      // It returns once the recreated container is back, so the next command finds it.
+      `compose -f ${compose} up -d --no-deps --wait --wait-timeout 300 collector`,
     );
 
     // A folder inside one already shared is visible as it is.
@@ -745,7 +746,9 @@ describe("host folders the collector's container reads", () => {
       expect(log).toContain("--env OMNESIS_DOCKER_SHARE_REQUEST=1");
       // The resumed add waits for the recreated collector to reconnect.
       expect(log).toContain("--env OMNESIS_ADD_WAIT_SECONDS=120");
-      expect(log.indexOf("up -d --no-deps collector")).toBeLessThan(log.lastIndexOf("sources add"));
+      expect(log.indexOf("up -d --no-deps --wait --wait-timeout 300 collector")).toBeLessThan(
+        log.lastIndexOf("sources add"),
+      );
     },
   );
 

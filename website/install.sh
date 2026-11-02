@@ -7424,10 +7424,13 @@ folders_render() {
   cat "$COMPOSE_FILE.omnesis-folders" > "$COMPOSE_FILE"
   rm -f "$COMPOSE_FILE.omnesis-folders"
 }
-# Recreate the container that runs the collector, so it mounts the new list.
+# Recreate the container that runs the collector, so it mounts the new list,
+# and return once it is back: running, and healthy when it has a health check.
+# A combined container is the gateway too, and a command run the moment this
+# returns would otherwise find no gateway answering.
 folders_apply() {
-  printf 'Recreating the %s container so it sees the change...\n' "$1"
-  docker compose -f "$COMPOSE_FILE" up -d --no-deps "$1" || {
+  printf 'Recreating the %s container so it sees the change, and waiting for it to come back...\n' "$1"
+  docker compose -f "$COMPOSE_FILE" up -d --no-deps --wait --wait-timeout 300 "$1" || {
     folders_fail "the $1 container did not come back. Check: docker compose -f $COMPOSE_FILE logs $1"
     return 1
   }

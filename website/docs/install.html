@@ -1284,7 +1284,8 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           <code>omnesis folders share</code> command to run. Share the folder first, then add the
           source with its settings as flags (see
           <a href="/docs/sources#adding-without-a-terminal">adding a source from a script</a>).
-          Sharing recreates the collector's container; the add waits for the collector to reconnect.
+          Sharing recreates the collector's container (on <code>--combined</code>, the gateway's
+          too) and returns once it is back; the add waits for the collector to reconnect.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
