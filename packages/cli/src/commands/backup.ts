@@ -190,8 +190,9 @@ export async function runBackup(opts: {
       console.log(
         `${c.green}✔${c.reset} Backup complete: ${last.files.length} files, ${formatSize(last.totalBytes)}`,
       );
+      const width = Math.max(0, ...last.files.map((f) => f.name.length));
       for (const f of last.files) {
-        console.log(`    ${f.name.padEnd(28)} ${formatSize(f.bytes).padStart(10)}`);
+        console.log(`    ${f.name.padEnd(width)} ${formatSize(f.bytes).padStart(10)}`);
       }
       console.log(`  ${c.dim}Saved on the gateway host at${c.reset} ${last.path}`);
     }

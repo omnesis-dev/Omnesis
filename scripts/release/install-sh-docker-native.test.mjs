@@ -128,6 +128,7 @@ shift 2>/dev/null || true
 printf '%s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
 printf 'config-dir %s launcher %s\\n' "\${OMNESIS_CONFIG_DIR:-unset}" "\${OMNESIS_LAUNCHER:-unset}" >> "$OMNESIS_TEST_CALLS.env"
 printf '%s\\n' "\${OMNESIS_CLI_COMMAND:-unset}" >> "$OMNESIS_TEST_CALLS.command"
+printf '%s\\n' "\${OMNESIS_GATEWAY_COMMAND:-unset}" >> "$OMNESIS_TEST_CALLS.gateway-command"
 CONFIG="\${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}"
 case "$1" in
   --version) echo "9.9.0" ;;
@@ -296,6 +297,8 @@ describe("a native collector after a Docker install on the same machine", () => 
     }
     expect(native.output).toContain(`omnesis sources add --device '${NATIVE_DEVICE}'`);
     expect(native.output).toContain("omnesis-collector uninstall");
+    // The launcher is written before the build and after it; it is reported once.
+    expect(native.output.split(`Wrote ${native.shim}`).length - 1).toBe(1);
   });
 
   test("the omnesis-collector command runs the CLI against its own directory", () => {
@@ -310,6 +313,12 @@ describe("a native collector after a Docker install on the same machine", () => 
     expect(status.status, status.stderr).toBe(0);
     const seen = read(join(native.home, "cli-calls.log.env")).trim();
     expect(seen).toBe(`config-dir ${native.nativeDir} launcher ${native.innerLauncher}`);
+    // The gateway is this machine's Docker install, so its command is named for
+    // the commands the collector's token cannot run.
+    const gatewayCommand = read(join(native.home, "cli-calls.log.gateway-command"))
+      .trim()
+      .split("\n");
+    expect(gatewayCommand.at(-1)).toBe("omnesis");
   });
 
   test.skipIf(!HAS_PTY)(

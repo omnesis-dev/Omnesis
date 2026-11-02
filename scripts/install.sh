@@ -292,7 +292,7 @@ PAIR_CODE=""
 PAIR_CODE_FLAG=0
 # How long to wait for the freshly registered collector to be accepted by the
 # gateway. It builds nothing, so this is a network wait, not a boot wait.
-COLLECTOR_WAIT_SECONDS="${OMNESIS_COLLECTOR_WAIT_SECONDS:-90}"
+COLLECTOR_WAIT_SECONDS="${OMNESIS_COLLECTOR_WAIT_SECONDS:-240}"
 # How long to listen for an mDNS advertisement when no --gateway-url was given.
 DISCOVER_MS="${OMNESIS_DISCOVER_MS:-4000}"
 COLLECTOR_DEVICE_NAME=""
@@ -2162,7 +2162,11 @@ try {
 } catch {}
 ' "$SOURCE_WRAPPER_TMP" "$OMNESIS_BIN" "$BIN_DIR" || fail "Could not atomically install the source recovery launcher."
   SOURCE_WRAPPER_TMP=""
-  info "Wrote $OMNESIS_BIN"
+  # The launcher is written once before the build and again after it; the
+  # second is the one to report.
+  WRAPPER_FINAL=0
+  [ "${2:-legacy}" != installed ] || WRAPPER_FINAL=1
+  [ "$WRAPPER_FINAL" = 0 ] || info "Wrote $OMNESIS_BIN"
   if [ "${BESIDE_DOCKER:-0}" = 1 ]; then
     write_beside_docker_shim
     BIN_DIR="$(dirname "$BESIDE_SHIM")"
@@ -2245,7 +2249,6 @@ plan_beside_docker() {
   NATIVE_CMD="omnesis-collector"
   BESIDE_DOCKER=1
   if grep -qx '  gateway:' "$BESIDE_DOCKER_DIR/docker-compose.yml" 2>/dev/null; then BESIDE_DOCKER_GATEWAY=1; fi
-  info "This machine runs Omnesis in Docker ($BESIDE_DOCKER_DIR). The native collector installs beside it: command $NATIVE_CMD, config directory $CONFIG_DIR."
 }
 
 # The front door of a native collector beside a Docker install. It points the
@@ -2404,12 +2407,18 @@ OMNESIS_LAUNCHER="$LAUNCHER"
 # the Docker install's.
 OMNESIS_CLI_COMMAND=omnesis-collector
 export OMNESIS_CONFIG_DIR OMNESIS_LAUNCHER OMNESIS_CLI_COMMAND
+# The gateway's own commands run through omnesis when the Docker install here
+# runs the gateway; this collector holds only its device token.
+if grep -qx '  gateway:' "$DOCKER_DIR/docker-compose.yml" 2>/dev/null; then
+  OMNESIS_GATEWAY_COMMAND=omnesis
+  export OMNESIS_GATEWAY_COMMAND
+fi
 exec "$LAUNCHER" "$@"
 SHIM_EOF
   } > "$BESIDE_TMP" || fail "Could not write $BESIDE_SHIM."
   chmod 755 "$BESIDE_TMP"
   mv -f "$BESIDE_TMP" "$BESIDE_SHIM" || fail "Could not write $BESIDE_SHIM."
-  info "Wrote $BESIDE_SHIM (this collector's command; omnesis stays the Docker install's)"
+  [ "${WRAPPER_FINAL:-1}" = 0 ] || info "Wrote $BESIDE_SHIM (this collector's command; omnesis stays the Docker install's)"
   OMNESIS_BIN="$BESIDE_SHIM"
 }
 
@@ -2813,6 +2822,9 @@ install_source() {
     git -C "$SOURCE_DIR" checkout --detach "$SOURCE_CHECKOUT_REF"
   fi
   info "Installing dependencies (compiles native modules — a few minutes on first run)..."
+  # npm's audit, funding and deprecation notices are about the dependency
+  # tree, not this install; its errors still print.
+  NPM_CI_QUIET="--no-audit --no-fund --loglevel=error"
   BUILD_NODE_OPTIONS="$(build_node_options)"
   # npm's downloads and install scripts fail now and then on their own (a
   # dropped connection, an install-script binary still open for writing), so
@@ -2829,11 +2841,11 @@ install_source() {
   # need to be told.
   DEPS_INSTALLED_CLEAN=0
   prepare_node_gyp_headers "$SOURCE_DIR"
-  if ! ( cd "$SOURCE_DIR" && npm ci ); then
+  if ! ( cd "$SOURCE_DIR" && npm ci $NPM_CI_QUIET ); then
     warn "Installing dependencies failed (npm's error is above); trying once more..."
     rm -rf "$SOURCE_DIR/node_modules"
     prepare_node_gyp_headers "$SOURCE_DIR"
-    ( cd "$SOURCE_DIR" && npm ci ) || \
+    ( cd "$SOURCE_DIR" && npm ci $NPM_CI_QUIET ) || \
       source_step_failed "$?" "Installing dependencies" "Installing dependencies failed twice — npm's error is above; a network problem or a busy file is the usual cause. Nothing is lost: re-run this installer and it continues from the checkout it already made."
     DEPS_INSTALLED_CLEAN=1
   fi
@@ -2850,7 +2862,7 @@ install_source() {
     warn "The build failed. An interrupted earlier run can leave dependencies without the files their tarballs ship, which fails the build this way every time; reinstalling them from scratch and building once more..."
     rm -rf "$SOURCE_DIR/node_modules"
     prepare_node_gyp_headers "$SOURCE_DIR"
-    ( cd "$SOURCE_DIR" && npm ci ) || \
+    ( cd "$SOURCE_DIR" && npm ci $NPM_CI_QUIET ) || \
       source_step_failed "$?" "Installing dependencies" "Reinstalling dependencies after a failed build did not succeed — npm's error is above. Nothing is lost: re-run this installer and it continues from the checkout it already made."
     DEPS_INSTALLED_CLEAN=1
     BUILD_STATUS=0
@@ -5060,7 +5072,7 @@ setup_collector_storage_keys() {
 
 collector_wait_online() {
   [ "$WANT_SERVICE" = 1 ] || return 0
-  info "Waiting for the gateway to accept this collector..."
+  info "Waiting for the gateway to accept this collector (its first start loads every source, which can take a couple of minutes)..."
   i=0
   while [ "$i" -lt "$COLLECTOR_WAIT_SECONDS" ]; do
     COLLECTOR_DEVICE_NAME="$(collector_paired_name)"

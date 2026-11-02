@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_CONFIG_DIR,
   localGatewayRequestUrl,
+  operatorCommand,
   readCollectorPairingState,
   readPackageVersion,
   resolveSourcePatterns,
@@ -179,8 +180,23 @@ const CLI_USER_AGENT = `omnesis/${readPackageVersion(import.meta.url)}`;
 export function missingTokenMessage(
   configDir: string = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
   gatewayUrl: string = GATEWAY_URL,
+  env: NodeJS.ProcessEnv = process.env,
+  args: readonly string[] = rawArgv,
 ): string {
   if (existsSync(pathJoin(configDir, "collector-token"))) {
+    // A collector beside this machine's Docker gateway: the gateway's command is right here.
+    const gatewayCommand = env.OMNESIS_GATEWAY_COMMAND?.trim();
+    if (gatewayCommand && /^omnesis(?:-[a-z0-9]+)*$/u.test(gatewayCommand)) {
+      const command = [
+        gatewayCommand,
+        ...args.map((a) => (/[^\w@%+=:,./-]/u.test(a) ? `'${a}'` : a)),
+      ].join(" ");
+      return (
+        `${operatorCommand(env)} is this machine's native collector, and holds that collector's ` +
+        `token rather than the gateway's admin token. The gateway runs in this machine's ` +
+        `Docker install, whose command is ${gatewayCommand}: run \`${command}\` instead.`
+      );
+    }
     return (
       `This machine is paired with the gateway at ${gatewayUrl} as a collector, and holds ` +
       "that collector's token rather than the gateway's admin token. Run this command on " +

@@ -37,6 +37,21 @@ describe("a command that needs the gateway's admin token, where there is none", 
     expect(message).not.toContain("Start the gateway first");
   });
 
+  it("beside this machine's Docker gateway, names the command that reaches it", () => {
+    writeFileSync(join(configDir, "collector-token"), "fictional-collector-token\n", {
+      mode: 0o600,
+    });
+    const env = { OMNESIS_CLI_COMMAND: "omnesis-collector", OMNESIS_GATEWAY_COMMAND: "omnesis" };
+    const message = missingTokenMessage(configDir, GATEWAY, env, [
+      "folders",
+      "share",
+      "/tmp/example notes",
+    ]);
+    expect(message).toContain("omnesis-collector is this machine's native collector");
+    expect(message).toContain("run `omnesis folders share '/tmp/example notes'` instead");
+    expect(message).not.toContain("on the gateway host");
+  });
+
   it("anywhere else, still says to start the gateway", () => {
     expect(missingTokenMessage(configDir, GATEWAY)).toContain("Start the gateway first");
   });
