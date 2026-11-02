@@ -25,6 +25,13 @@ describe("queued message handoff", () => {
     expect(visibleQueueControls(original, new Set())).toBe(original);
   });
 
+  it("hides receipts already shown in the transcript but retains failed receipts", () => {
+    const failed = { ...queued("shown"), status: "failed" };
+    const controls = { queuedMessages: [queued("shown"), queued("other"), failed] };
+    expect(visibleQueueControls(controls, undefined, undefined, new Set(["shown"])).queuedMessages)
+      .toEqual([queued("other"), failed]);
+  });
+
   it("hides synchronously before the request and never restores on a successful queued response", async () => {
     const order: string[] = [];
     let finish!: () => void;
