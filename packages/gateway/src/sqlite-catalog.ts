@@ -412,10 +412,10 @@ export function getSqliteTableDef(tableName: string): SqliteTableDef | undefined
  * catalog matches reality if migrations haven't run yet.
  *
  * Served from the materialized `catalog_table_stats` table — the scan-heavy
- * row-count + MIN/MAX queries run in the backfill worker (see
- * `refreshSqliteTableStats`). If a table isn't in the stats cache yet
- * (e.g. first boot before the worker's first pass), its numbers come back
- * as zero/null; the worker fills it in within seconds.
+ * row-count + MIN/MAX queries run on a read worker in the periodic catalog
+ * refresh (see `computeSqliteTableStats`), which hands the writer the finished
+ * rows. A table not in the stats cache yet (a fresh store before the first
+ * refresh) is read live instead.
  */
 export function getSqliteCatalog(db: Db): AnalyticsCatalogEntry[] {
   const existing = new Set(
@@ -473,34 +473,59 @@ export function getSqliteCatalog(db: Db): AnalyticsCatalogEntry[] {
   });
 }
 
-/**
- * Recompute row counts + MIN/MAX timestamps for every known catalog table
- * and upsert them into catalog_table_stats. Call from the backfill worker —
- * some of these scans take 10s+.
- */
-export function refreshSqliteTableStats(db: Db): void {
-  const existing = new Set(
-    (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-        .all() as { name: string }[]
-    ).map((r) => r.name),
-  );
+/** One table's materialized catalog statistics, as `catalog_table_stats` holds them. */
+export interface SqliteTableStatsRow {
+  tableName: string;
+  recordCount: number;
+  earliestDate: string | null;
+  latestDate: string | null;
+  /** When the statistics were read (ISO-8601). */
+  computedAt: string;
+}
 
-  const now = new Date().toISOString();
-  for (const def of TABLE_DEFS) {
-    if (!existing.has(def.tableName)) continue;
-    const { recordCount, earliestDate, latestDate } = liveStats(db, def);
-    db.prepare(
-      `INSERT INTO catalog_table_stats (table_name, row_count, earliest_date, latest_date, last_computed_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(table_name) DO UPDATE SET
-         row_count = excluded.row_count,
-         earliest_date = excluded.earliest_date,
-         latest_date = excluded.latest_date,
-         last_computed_at = excluded.last_computed_at`,
-    ).run(def.tableName, recordCount, earliestDate, latestDate, now);
-  }
+/** The catalog tables whose statistics `catalog_table_stats` materializes. */
+export const SQLITE_CATALOG_TABLES: readonly string[] = TABLE_DEFS.map((t) => t.tableName);
+
+/**
+ * Read one catalog table's row count and MIN/MAX timestamps, or null when the
+ * table is not a catalog table or does not exist yet. The count walks the
+ * table's smallest b-tree and a timestamp without an index is a full table
+ * scan, so on a large encrypted store this takes seconds: it runs on a read
+ * worker, never on the writer.
+ */
+export function computeSqliteTableStats(db: Db, tableName: string): SqliteTableStatsRow | null {
+  const def = getSqliteTableDef(tableName);
+  if (!def) return null;
+  const exists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(def.tableName);
+  if (!exists) return null;
+  const computedAt = new Date().toISOString();
+  return { tableName: def.tableName, ...liveStats(db, def), computedAt };
+}
+
+/**
+ * Store statistics read by `computeSqliteTableStats`. One primary-key upsert
+ * per row and no reads of the tables they describe, so the writer's share of
+ * a catalog refresh does not grow with the corpus. A row naming a table
+ * outside the catalog is ignored.
+ */
+export function upsertSqliteTableStats(db: Db, rows: readonly SqliteTableStatsRow[]): void {
+  const upsert = db.prepare(
+    `INSERT INTO catalog_table_stats (table_name, row_count, earliest_date, latest_date, last_computed_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(table_name) DO UPDATE SET
+       row_count = excluded.row_count,
+       earliest_date = excluded.earliest_date,
+       latest_date = excluded.latest_date,
+       last_computed_at = excluded.last_computed_at`,
+  );
+  db.transaction(() => {
+    for (const row of rows) {
+      if (!getSqliteTableDef(row.tableName)) continue;
+      upsert.run(row.tableName, row.recordCount, row.earliestDate, row.latestDate, row.computedAt);
+    }
+  })();
 }
 
 /**

@@ -31,6 +31,7 @@ import {
 import { withResolvedTargets } from "../../domain/LinkExtraction.js";
 import { classifyTokens } from "../../token-identity-classifier.js";
 import { DEFAULT_MERGE_CANDIDATE_MAX_RESULTS } from "../../merge-candidates.js";
+import { SQLITE_CATALOG_TABLES, type SqliteTableStatsRow } from "../../sqlite-catalog.js";
 import {
   occRefreshTask,
   sweepAccumulateTask,
@@ -1041,7 +1042,7 @@ export function tokenIdentityClassifyTask(
 export function catalogRefreshTask(
   opts: BackfillTaskOptsInternal,
 ): PeriodicTask<unknown, IdleResult> {
-  const { writeGate, log, catalogRefreshIntervalMs } = opts;
+  const { writeGate, ioGate, log, catalogRefreshIntervalMs } = opts;
   const taskName = "backfill.catalogRefresh";
   return {
     name: taskName,
@@ -1053,8 +1054,18 @@ export function catalogRefreshTask(
     async run() {
       return runBackfillTick(taskName, log, async () => {
         const startMs = Date.now();
-        await writeGate.refreshSqliteTableStats();
-        log.info(`refreshed sqlite_table_stats in ${Date.now() - startMs}ms`);
+        // One read-worker call per table, so each scan is its own scheduling
+        // unit; the writer then applies the finished rows in one short op.
+        const rows: SqliteTableStatsRow[] = [];
+        for (const tableName of SQLITE_CATALOG_TABLES) {
+          const row = await ioGate.sqliteTableStats(tableName);
+          if (row) rows.push(row);
+        }
+        const readMs = Date.now() - startMs;
+        await writeGate.upsertSqliteTableStats(rows);
+        log.info(
+          `refreshed catalog_table_stats for ${rows.length} table(s) in ${Date.now() - startMs}ms (reads ${readMs}ms)`,
+        );
         return { idle: false };
       });
     },
