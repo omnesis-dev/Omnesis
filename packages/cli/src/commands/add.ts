@@ -325,8 +325,12 @@ export const addCommand = defineCommand({
     }
     const explicitDevice = deviceFlag ? await resolveDeviceFlag(deviceFlag) : null;
     // A collector restarted moments ago (`omnesis folders share` recreates its
-    // container) is paired but not connected yet.
-    if (explicitDevice) await ensureDeviceConnected(explicitDevice, deps.reconnectWaitMs);
+    // container) is paired but not connected yet. After the launcher's wait
+    // above, one look is enough: it either came back or is refused by name.
+    if (explicitDevice) {
+      const alreadyWaited = Number.isFinite(launcherWait) && launcherWait > 0;
+      await ensureDeviceConnected(explicitDevice, alreadyWaited ? 0 : deps.reconnectWaitMs);
+    }
 
     // Descriptor fetch shape depends on whether the user pinned a device:
     // - --device set: scope to that device (the per-device endpoint
