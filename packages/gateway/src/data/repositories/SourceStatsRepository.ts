@@ -85,7 +85,7 @@ export function listDirtyStatsSourceIds(db: Db): string[] {
  * (a) overwriting fresher data and (b) clearing `needs_refresh`.
  *
  * Single aggregation statement; plan-driven by
- * `idx_documents_source_id_created_at` — measured at ~1.15s for
+ * `idx_documents_source_created_revision` — measured at ~1.15s for
  * Gmail's 146k docs against the live gateway DB. That's well under
  * the writer's `busy_timeout = 5000ms`, so concurrent commits on the
  * writer connection queue past it cleanly without `SQLITE_BUSY`.
