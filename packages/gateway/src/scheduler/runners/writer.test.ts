@@ -119,6 +119,28 @@ describe("WriterTaskRunner — end-to-end with Scheduler", () => {
       { rejectedSourceIds: [], ignoredReplicaDocuments: [], suppressedDocuments: [] },
     ]);
   });
+
+  test("a quiet writer checkpoints what it wrote and reports it in the scheduler metrics", async () => {
+    expect(scheduler.snapshot(60).walCheckpoints).toMatchObject({ runs: 0, lastLogFrames: null });
+    const t: Task<unknown[], unknown> = {
+      name: "db.setSyncState",
+      runner: "writer",
+      priority: "realtime",
+      async run(): Promise<TaskOutcome<unknown[], unknown>> {
+        throw new Error("worker tasks don't run on main");
+      },
+    };
+    await scheduler.enqueue(t, ["synth-source", { type: "incremental" }, undefined]);
+    const deadline = Date.now() + 5_000;
+    while ((scheduler.snapshot(60).walCheckpoints?.runs ?? 0) === 0 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 50));
+    const metrics = scheduler.snapshot(60).walCheckpoints!;
+    expect(metrics.runs).toBeGreaterThan(0);
+    expect(metrics.lifetime.runs).toBe(metrics.runs);
+    expect(metrics.lastLogFrames).toBeGreaterThan(0);
+    expect(metrics.lastCheckpointedFrames).toBe(metrics.lastLogFrames);
+    expect(metrics.maxMs).toBeLessThan(1_000);
+  });
 });
 
 /**

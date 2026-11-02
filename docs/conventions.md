@@ -544,6 +544,21 @@ id < ?)`: with statistics the planner splits that OR into a multi-index OR
 and sorts the whole match. For mixed directions, bound the leading column and
 exclude the cursor's tie: `ts <= ? AND NOT (ts = ? AND id <= ?)`.
 
+**A long read holds the WAL open.** The writer checkpoints between ops once
+about 2,000 frames wait and rewinds the WAL once it passes `journal_size_limit`
+(`workers/wal-checkpoint.ts`), but SQLite gives a checkpoint no frame limit, and
+a reader holding an old snapshot pins every frame written after it. A
+statement or open iterator that runs for a minute on an `omnesis.db` read
+handle therefore lets a minute of writes pile up uncopied, and the first
+checkpoint after it ends copies all of them in one writer hold. It also keeps
+the WAL from rewinding: the writer can rewind only at an instant when no reader
+is mid-statement, waits about 100 ms for one, then backs off, so back-to-back
+long scans let the WAL grow for as long as they last. Page a full-table read
+by keyset in separate statements rather than iterating it under one snapshot.
+A backlog left in the WAL by an earlier gateway is likewise one uncapped copy;
+the gateway drains it at boot, when the migration handle closes, before the
+writer starts.
+
 **A new source is a new load.** A source that emits an unusual number of links,
 people or documents per item changes the arithmetic every consumer of that data
 assumed. Before enabling one, look at what it costs the writer.

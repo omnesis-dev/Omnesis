@@ -107,6 +107,34 @@ export interface UserSlaStats {
   budgetMs: number;
 }
 
+/**
+ * The writer's WAL checkpoints, which run between ops rather than as tasks,
+ * so their time shows in no task's row. Windowed except `lifetime`.
+ */
+export interface WalCheckpointMetrics {
+  runs: number;
+  p95Ms: number;
+  /** The longest one checkpoint held the writer. */
+  maxMs: number;
+  totalMs: number;
+  /** Times the WAL was rewound to its start. */
+  rewinds: number;
+  /** Rewind attempts that gave up because readers stayed on the WAL. */
+  deferredRewinds: number;
+  /** WAL frames after the latest checkpoint, null before the first. */
+  lastLogFrames: number | null;
+  /** Of those, frames copied into the database. */
+  lastCheckpointedFrames: number | null;
+  /** Since the writer started. */
+  lifetime: {
+    runs: number;
+    totalMs: number;
+    maxMs: number;
+    rewinds: number;
+    deferredRewinds: number;
+  };
+}
+
 export interface SchedulerMetricsSnapshot {
   windowSeconds: number;
   generatedAt: string;
@@ -125,4 +153,6 @@ export interface SchedulerMetricsSnapshot {
    * snapshot's value when rendering rate.
    */
   preemptRequestCount: number;
+  /** Present when the writer runs in WAL mode. */
+  walCheckpoints?: WalCheckpointMetrics;
 }

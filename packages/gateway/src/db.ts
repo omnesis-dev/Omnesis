@@ -192,6 +192,30 @@ export function openReadOnlyDatabase(path: string, opts: GatewayDatabaseOptions 
   return db;
 }
 
+/**
+ * Close a writable handle that may be the last one on its database, and say
+ * how much WAL the close drained. Closing the last connection copies the whole
+ * WAL into the database in one checkpoint SQLite cannot cap, then deletes it;
+ * at boot that drains any backlog before the writer starts, rather than in one
+ * writer hold. The copy must reach the medium before the WAL goes, as on the
+ * writer's own connection, so the checkpoint uses F_FULLFSYNC where it exists.
+ * `onDrain` hears the frame count before the close.
+ */
+export function closeDrainingWal(
+  db: Db,
+  onDrain: (frames: number) => void,
+): { frames: number; ms: number } {
+  db.exec("PRAGMA checkpoint_fullfsync = ON");
+  const state = (
+    db.pragma("wal_checkpoint(NOOP)") as Array<{ log: number; checkpointed: number }>
+  )[0];
+  const frames = state && state.log > 0 ? state.log - state.checkpointed : 0;
+  if (frames > 0) onDrain(frames);
+  const startedMs = Date.now();
+  db.close();
+  return { frames, ms: Date.now() - startedMs };
+}
+
 export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}): Db {
   const db = opts.encryptionKey
     ? (openEncryptedSqlite(path, { key: opts.encryptionKey }) as unknown as Db)

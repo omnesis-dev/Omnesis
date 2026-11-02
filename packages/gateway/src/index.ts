@@ -37,7 +37,12 @@ import {
   resolveTypeSafeApiKey,
 } from "./model-credentials.js";
 import { DecisionService } from "./inference/decision/decision-service.js";
-import { createDatabase, getDocumentTitlesAndSources, openReadOnlyDatabase } from "./db.js";
+import {
+  closeDrainingWal,
+  createDatabase,
+  getDocumentTitlesAndSources,
+  openReadOnlyDatabase,
+} from "./db.js";
 import { createServer } from "./server.js";
 import { GATEWAY_VERSION } from "./version.js";
 import { ReleaseCheckService } from "./release-check/service.js";
@@ -500,7 +505,10 @@ const indexerStatus = new IndexerStatusReporter();
 // only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
-  bootDb.close();
+  const drained = closeDrainingWal(bootDb, (frames) =>
+    log.info(`draining ${frames}-frame WAL before start`),
+  );
+  if (drained.frames > 0) log.info(`drained ${drained.frames}-frame WAL in ${drained.ms}ms`);
 }
 
 // Scheduler is the single brain for "an IO task that needs to be done"

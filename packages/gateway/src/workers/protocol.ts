@@ -19,6 +19,7 @@
 
 import { sourceSettingKeys } from "@omnesis/config";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
+import type { WalCheckpointRun } from "./wal-checkpoint.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { MemoryBudget } from "../memory-budget.js";
 
@@ -377,6 +378,8 @@ export type WriterToMain =
   | { type: "heartbeat"; ts: number }
   | WorkerLogMessage
   | WriterResult
+  /** A WAL checkpoint the writer ran between ops. */
+  | { type: "checkpoint"; run: WalCheckpointRun }
   | { type: "shutdownComplete" };
 
 // ── Compute worker ────────────────────────────────────────────────────
