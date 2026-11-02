@@ -29,7 +29,7 @@ import { readKnowledgeNodeRow } from "./storage-read.js";
 
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { assertAcyclicKnowledgeClaims } from "./storage-cycles.js";
-import { knowledgeNodeFence } from "./storage-fence.js";
+import { isKnowledgeNodeReadable, knowledgeNodeFence } from "./storage-fence.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -123,7 +123,7 @@ export function resolveKnowledgeReference(
     };
   }
   const node = targetNode(db, ref);
-  if (!node || knowledgeNodeFence(db, node.id).hidden) throw unavailableKnowledgeReference(ref);
+  if (!node || !isKnowledgeNodeReadable(db, node.id)) throw unavailableKnowledgeReference(ref);
   if (JSON.parse(node.fields_json).withdrawn === true) throw unavailableKnowledgeReference(ref);
   if (
     ref.selector?.kind === "claim" &&

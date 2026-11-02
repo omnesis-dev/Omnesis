@@ -132,6 +132,7 @@ import { pruneInvalidEmailAliases } from "./prune-invalid-email-aliases.js";
 import { runSchemaSetup } from "./schema.js";
 import { compactKnowledgeJournal } from "./migration-205-knowledge-journal.js";
 import { addConversationAuthors } from "./migration-206-conversation-authors.js";
+import { compactKnowledgeHistoryTargets } from "./migration-207-knowledge-history-targets.js";
 import {
   createLegacyBriefClaimsTables,
   createLegacyBriefTables,
@@ -4880,6 +4881,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 206,
     description: "preserve structured authorship on pushed conversation turns",
     up: addConversationAuthors,
+  },
+  {
+    version: 207,
+    description: "keep each target a knowledge node's history cites once",
+    up: compactKnowledgeHistoryTargets,
   },
 ];
 

@@ -227,3 +227,58 @@ it("fails safely in small stores without payload tables", () => {
     small.close();
   }
 });
+it("reads a long-edited page's history once per cited target, in the order its revisions first cited them", () => {
+  db.exec(
+    "INSERT INTO documents VALUES('third','fictional','v1'); INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('third','v1',0,1)",
+  );
+  // Revision 1 cites third; revision 2 adds first; revision 3 drops third;
+  // revision 4 re-cites it with second and many edits keep that list; the
+  // current revision cites second alone.
+  const history = [["third"], ["third", "first"], ["first"]];
+  for (let i = 0; i < 40; i++) history.push(["first", "second", "third"]);
+  history.push(["second"]);
+  history.forEach((refs, revision) =>
+    saveKnowledgeNode(
+      db,
+      {
+        id: "page",
+        kind: "wiki",
+        title: "Page",
+        markdown: refs
+          .map((ref, i) => `<claim id="c${i}" refs="source:${ref}">Fact ${ref}.</claim>`)
+          .join("\n"),
+        expectedRevision: revision,
+        inputVersions: Object.fromEntries(refs.map((ref) => [`source:${ref}`, "v1"])),
+      },
+      revision + 1,
+    ),
+  );
+  expect(
+    db
+      .prepare(
+        "SELECT revision,target_id FROM knowledge_revision_dependencies WHERE node_id='page' ORDER BY revision,target_id",
+      )
+      .all(),
+  ).toEqual([
+    { revision: 1, target_id: "third" },
+    { revision: 2, target_id: "first" },
+    { revision: 4, target_id: "second" },
+  ]);
+  const capture = captureDecisionPayloadSubjects(
+    db,
+    { nodeIds: ["page"] },
+    decisionPayloadErasureGeneration(db),
+  )!;
+  // The current citation first, then history in the order revisions first cited it.
+  expect(capture.subjects).toEqual([
+    { kind: "node", id: "page" },
+    { kind: "source", id: "second" },
+    { kind: "source", id: "third" },
+    { kind: "source", id: "first" },
+  ]);
+  recordDecisionPayload(db, "history", capture, payload, 2);
+  expect(readDecisionPayload(db, "history").availability).toBe("available");
+  // A source only old revisions cited still erases the captured payload.
+  db.prepare("DELETE FROM documents WHERE id='third'").run();
+  expect(readDecisionPayload(db, "history").availability).toBe("unavailable");
+});

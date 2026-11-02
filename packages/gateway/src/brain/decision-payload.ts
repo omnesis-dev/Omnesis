@@ -18,13 +18,22 @@ const MAX_SUBJECTS = 256;
 function table(db: Database.Database, name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 }
-function sourceReadable(db: Database.Database, id: string): boolean {
+/** The store's tables, read once per capture instead of once per subject check. */
+function schemaTables(db: Database.Database): ReadonlySet<string> {
+  return new Set(
+    db
+      .prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map((row) => row.name),
+  );
+}
+function sourceReadable(db: Database.Database, tables: ReadonlySet<string>, id: string): boolean {
   return (
-    table(db, "documents") &&
+    tables.has("documents") &&
     !!db.prepare("SELECT 1 FROM documents WHERE id=?").get(id) &&
-    table(db, "knowledge_source_revisions") &&
+    tables.has("knowledge_source_revisions") &&
     isKnowledgeEvidenceReadable(db, id) &&
-    (!table(db, "knowledge_cascade_jobs") ||
+    (!tables.has("knowledge_cascade_jobs") ||
       !db
         .prepare(
           "SELECT 1 FROM knowledge_cascade_jobs WHERE kind='purge' AND target_kind='source' AND target_id=?",
@@ -34,12 +43,13 @@ function sourceReadable(db: Database.Database, id: string): boolean {
 }
 function subjectReadable(
   db: Database.Database,
+  tables: ReadonlySet<string>,
   subject: DecisionPayloadCapture["subjects"][number],
   ancestry = true,
 ): boolean {
-  if (subject.kind === "source") return sourceReadable(db, subject.id);
+  if (subject.kind === "source") return sourceReadable(db, tables, subject.id);
   return (
-    table(db, "knowledge_nodes") &&
+    tables.has("knowledge_nodes") &&
     !!db.prepare("SELECT 1 FROM knowledge_nodes WHERE id=?").get(subject.id) &&
     (ancestry
       ? isKnowledgeNodeReadable(db, subject.id)
@@ -50,6 +60,14 @@ function subjectReadable(
           )
           .get(subject.id))
   );
+}
+function subjectsReadable(
+  db: Database.Database,
+  subjects: DecisionPayloadCapture["subjects"],
+  ancestry = true,
+  tables = schemaTables(db),
+): boolean {
+  return subjects.every((subject) => subjectReadable(db, tables, subject, ancestry));
 }
 /** Capture this generation before reading any content that the request will contain. */
 export function decisionPayloadErasureGeneration(db: Database.Database): number {
@@ -93,21 +111,22 @@ export function captureDecisionPayloadSubjects(
         .get(id);
       if (!current || current.revision !== revision) return null;
     }
+    const tables = schemaTables(db);
     const edges: string[] = [];
     for (const name of ["knowledge_dependencies", "knowledge_revision_dependencies"])
-      if (table(db, name))
+      if (tables.has(name))
         edges.push(
           `UNION SELECT d.target_kind,d.target_id FROM ${name} d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id`,
         );
-    if (table(db, "observation_related_loops") && table(db, "knowledge_nodes"))
+    if (tables.has("observation_related_loops") && tables.has("knowledge_nodes"))
       edges.push(
         "UNION SELECT 'node',o.loop_id FROM observation_related_loops o JOIN ancestors a ON a.kind='node' AND o.observation_id=a.id WHERE EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=o.loop_id) OR EXISTS(SELECT 1 FROM knowledge_node_tombstones t WHERE t.id=o.loop_id)",
       );
-    if (table(db, "knowledge_retired_loop_sources"))
+    if (tables.has("knowledge_retired_loop_sources"))
       edges.push(
         "UNION SELECT 'source',r.document_id FROM knowledge_retired_loop_sources r JOIN ancestors a ON a.kind='node' AND r.loop_id=a.id",
       );
-    if (table(db, "knowledge_nodes")) {
+    if (tables.has("knowledge_nodes")) {
       for (const [name, ownerColumn, sourceColumn] of [
         ["open_loop_docs", "loop_id", "doc_id"],
         ["observation_citations", "observation_id", "doc_id"],
@@ -117,7 +136,7 @@ export function captureDecisionPayloadSubjects(
         ["doc_annotation_evidence", "annotation_id", "evidence_doc_id"],
         ["person_annotation_evidence", "annotation_id", "evidence_doc_id"],
       ] as const)
-        if (table(db, name))
+        if (tables.has(name))
           edges.push(
             `UNION SELECT 'source',d.${sourceColumn} FROM ${name} d JOIN knowledge_nodes n ON d.${ownerColumn}=COALESCE(n.owner_id,n.id) JOIN ancestors a ON a.kind='node' AND n.id=a.id`,
           );
@@ -130,7 +149,7 @@ export function captureDecisionPayloadSubjects(
   ) SELECT kind,id FROM ancestors`,
       )
       .all(JSON.stringify(subjects), MAX_SUBJECTS + 1);
-    if (rows.length > MAX_SUBJECTS || rows.some((s) => !subjectReadable(db, s))) return null;
+    if (rows.length > MAX_SUBJECTS || !subjectsReadable(db, rows, true, tables)) return null;
     return { erasureGeneration, subjects: rows };
   })();
 }
@@ -265,7 +284,7 @@ export function recordDecisionPayload(
       !capture.subjects.length ||
       capture.subjects.length > MAX_SUBJECTS ||
       capture.erasureGeneration !== decisionPayloadErasureGeneration(db) ||
-      capture.subjects.some((s) => !subjectReadable(db, s, false))
+      !subjectsReadable(db, capture.subjects, false)
     )
       return;
     const exact =
@@ -314,7 +333,7 @@ export function readDecisionPayload(db: Database.Database, id: string) {
       !row ||
       !subjects.length ||
       subjects.length > MAX_SUBJECTS ||
-      subjects.some((s) => !subjectReadable(db, s))
+      !subjectsReadable(db, subjects)
     )
       return { availability: "unavailable" as const, request: null, response: null, error: null };
     return {
