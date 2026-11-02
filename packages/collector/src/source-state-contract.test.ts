@@ -361,7 +361,8 @@ describe("a local source that versioned its own cursor before envelopes existed"
       .sync({ e: 1, v: 4, state: {} } as never)
       .catch((e: unknown) => e)) as { remediation?: { steps: string[] } };
     const steps = err.remediation?.steps.join(" ");
-    expect(steps).toContain("take a backup");
+    expect(steps).toContain("Keep the saved state intact during recovery");
+    expect(steps).not.toContain("backup");
     expect(steps).toContain("verified that the source can recover its history");
     expect(steps).not.toContain("omnesis sources resync");
   });
