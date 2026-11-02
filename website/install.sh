@@ -3871,7 +3871,7 @@ setup_keyring_init() {
   if [ "$DOCKER" != 1 ]; then
     info "Checking OS keyring availability..."
     if keyring_available; then
-      if "$OMNESIS_BIN" keyring init; then
+      if cli_for_person "$OMNESIS_BIN" keyring init; then
         KEYRING_READY=1
         info "Keyring root key ready."
         return 0
@@ -4118,13 +4118,14 @@ print_recovery_code() {
 }
 
 # Run a CLI step whose output is for the person running this installer: the
-# command and its arguments are "$@". Natively the CLI writes to this run's
-# own output. Under --docker it runs in a container, which gets a terminal only
-# when the launcher's input is one, and without a terminal the CLI answers in
-# JSON meant for a program. So a Docker run hands it the terminal when there
-# is one, for its output too (this run's own may be a pipe, `| tee log`), and
-# otherwise keeps that JSON out of the output: the line this installer prints
-# next says what the step did. Errors still show.
+# command and its arguments are "$@". The CLI answers in JSON, meant for a
+# program, whenever its output is not a terminal, and that JSON stays out of
+# this run's output: the line this installer prints next says what the step
+# did. Errors still show. Natively the CLI writes to this run's own output
+# when that is a terminal. Under --docker it runs in a container, which gets a
+# terminal only when the launcher's input is one, so a Docker run hands it the
+# terminal when there is one, for its output too (this run's own may be a
+# pipe, `| tee log`).
 cli_for_person() {
   if [ "$DOCKER" = 1 ]; then
     if is_promptable; then
@@ -4134,7 +4135,11 @@ cli_for_person() {
     fi
     return
   fi
-  "$@"
+  if [ -t 1 ]; then
+    "$@"
+  else
+    "$@" >/dev/null
+  fi
 }
 
 setup_keyring_migrate() {
@@ -4149,7 +4154,7 @@ setup_keyring_migrate() {
     fi
     return 0
   fi
-  if "$OMNESIS_BIN" keyring migrate; then
+  if cli_for_person "$OMNESIS_BIN" keyring migrate; then
     info "Secret files are keyring-wrapped from here on."
   else
     warn "Keyring migration failed. Existing files remain owner-only; retry later with: $NATIVE_CMD keyring migrate"
@@ -5141,7 +5146,7 @@ setup_collector_storage_keys() {
          "$OMNESIS_BIN" keyring storage-init --host collector --backend passphrase; then
       STORAGE_KEYS_READY=1
     fi
-  elif "$OMNESIS_BIN" keyring storage-init --host collector; then
+  elif cli_for_person "$OMNESIS_BIN" keyring storage-init --host collector; then
     STORAGE_KEYS_READY=1
   fi
   if [ "$STORAGE_KEYS_READY" = 1 ]; then
