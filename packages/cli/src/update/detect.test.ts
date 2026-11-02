@@ -611,6 +611,7 @@ describe("sourceUpdateSpecs", () => {
         command: "npm",
         args: ["ci"],
         cwd: "/home/dev/omnesis",
+        env: { npm_config_audit: "false", npm_config_fund: "false", npm_config_loglevel: "error" },
         retry: {
           reset: { command: "rm", args: ["-rf", "node_modules"], cwd: "/home/dev/omnesis" },
           why: "installing the dependencies again from an empty node_modules",

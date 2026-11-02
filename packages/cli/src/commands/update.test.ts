@@ -3856,7 +3856,12 @@ describe("rolling back a failed update", () => {
     const ci = runner.calls.find(
       (call) => call.spec.command === "npm" && call.spec.args[0] === "ci",
     );
-    expect(ci?.spec.env).toBeUndefined();
+    // The install keeps to npm's errors and never gets the build's heap.
+    expect(ci?.spec.env).toEqual({
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_loglevel: "error",
+    });
   });
 
   test("failure to record applying stops before checkout mutation", async () => {

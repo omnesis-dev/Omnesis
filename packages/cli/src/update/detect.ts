@@ -439,6 +439,13 @@ export function readImageTag(envFileText: string): string | null {
  * same way every time. A failed install is therefore retried once from an
  * empty `node_modules`, which is what a fresh install runs.
  */
+/** npm settings, as its environment carries them, that keep `npm ci` to its errors. */
+export const NPM_QUIET_ENV: Readonly<Record<string, string>> = {
+  npm_config_audit: "false",
+  npm_config_fund: "false",
+  npm_config_loglevel: "error",
+};
+
 export function sourceUpdateSpecs(
   rootDir: string,
   target = "vX.Y.Z",
@@ -450,6 +457,9 @@ export function sourceUpdateSpecs(
       command: "npm",
       args: ["ci"],
       cwd: rootDir,
+      // npm's audit, funding and deprecation notices are about the dependency
+      // tree, not this update; its errors still print.
+      env: NPM_QUIET_ENV,
       retry: {
         reset: { command: "rm", args: ["-rf", "node_modules"], cwd: rootDir },
         why: "installing the dependencies again from an empty node_modules",
