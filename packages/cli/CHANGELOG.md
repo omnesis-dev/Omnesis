@@ -1,5 +1,36 @@
 # omnesis
 
+## 0.7.4
+
+### Patch Changes
+
+- a9b453b: Clearer `omnesis update` output, and Docker updates that clean up after themselves. When the update takes its own backup, the plan now says so and names the backups folder, instead of telling you to back up first; that advice remains only for an update that takes no backup, such as one run with `--no-backup`. The install step now says what it did ("Pulled the 0.7.4 images", "Installed", "Built"), and "Updated to" appears once, as the last line, after the gateway serves the new release and everything else has restarted; with restarts left to you, the last line says what is installed and that the steps above finish the update. A Docker update pulls its images quietly, with Docker's own errors still shown when a pull fails, and pulls the updater image with the others. Once the gateway answers on the new release and the collector has restarted onto it, it removes the previous release's images of that install, about a gigabyte each, and never any other image; an image a container still uses is removed by the next update, and an image it cannot remove is a warning that names the command, never a failed update. The pre-update backup now says why it leaves out the search index: the gateway rebuilds it from the documents. In `omnesis sources add`, the account picker selects with the same keys as the source picker and shows the same hint. `omnesis devices list` sizes its columns to their contents, so a long name or hostname no longer pushes the rest of its row out of line. A CLI token that has never reported its version, such as the one the installer creates, no longer counts as an "unknown" device in `omnesis status` and `omnesis doctor`, and its STATE shows "—". A gateway with experimental mode off no longer lists the experimental Brain's wiki (`brain-knowledge`) or open-loop sources in `omnesis status`.
+- 2fcd02b: The Docker installer now explains once that a container has no OS keyring, in the encryption question itself, where it used to print the same point on the line just above. `omnesis search` reports "1 result", not "1 results".
+- 9894351: The installer passes `pair --name` only to a CLI that accepts it. The installer at omnesis.dev is always the newest, while the collector it installs is the newest release, so a collector install could fail at pairing with "Unknown option: --name".
+- e9e5782: Docker installs and the native collector beside them behave the way they say they will.
+
+  - The `omnesis` command a Docker install writes finds Docker where Docker Desktop, OrbStack and Colima put it, so it works over a non-login `ssh` session, from cron and from launchd, and Docker Desktop's "What's next" advertisement no longer follows a failed command.
+  - Adding a folder source for a folder the collector's container cannot see shows only the explanation and the offer to share it.
+  - A native collector beside a Docker install names its own command (`omnesis-collector`) in every hint about itself, including the Full Disk Access steps, and `omnesis-collector status` talks to the gateway the collector is paired with instead of asking to trust `localhost`.
+  - Collectors pair under the name the installer prints: `<host>-collector`, where `<host>` is the machine's short name without a Mac's `.local`, and `<host>-mac-collector` for the native collector beside a Docker install on a Mac, so the two collectors on one machine have distinct names. Collectors paired before keep their names, and `omnesis pair` takes `--name`.
+  - A fresh install no longer asks to restart a collector it has not started yet, and arming the keyring with nothing to migrate prints one line instead of a table of zeros.
+  - `omnesis-collector uninstall` names its real device, offers to revoke it on this machine's Docker gateway, and with `--purge` also removes its keys from the OS keyring. `omnesis uninstall` on a Docker install removes the images of earlier releases too.
+  - `install.sh --docker --build` tags the images with the checkout's version (`<version>-local`) rather than the registry's newest release, so a later `omnesis update` moves the install onto the published images.
+
+- 5545f87: `omnesis secure` on an install that is already encrypted no longer takes a backup or restarts anything, and reports an already-encrypted set of secret files as nothing to do. The backup's file list lines up its sizes past long names. A native collector beside a Docker gateway sends `omnesis-collector status` and the other gateway commands to `omnesis`, the gateway's own command on that machine. The installer waits long enough for a collector's first start, keeps npm's audit and funding notices out of a source install, reports each launcher it writes once, and `omnesis-collector uninstall --purge` also deletes that collector's service logs.
+- 9185355: Add unified voice entry from the iPhone Control and Action button shortcut, the native Apple Watch control for Control Center, Smart Stack and the Ultra Action button on watchOS 26 or later (with a shortcut fallback), and Android's Quick Settings tile and launcher shortcut. External phone capture starts listening immediately and uses the shared decision model to choose a chat question or a note. Without an active decision model, it offers explicit Ask and Tell buttons. Existing in-app Ask and Tell flows retain their behavior.
+- b070407: Use the Apple Watch decision-gate setting and capture endpoints for phone controls and shortcuts, including gateways that predate phone-specific capture APIs. Close the iPhone side menu when voice capture is invoked again while its dictation view is already open.
+- @omnesis/agent-integration@0.7.4
+  - @omnesis/cli-shared@0.7.4
+  - @omnesis/collector@0.7.4
+  - @omnesis/config@0.7.4
+  - @omnesis/core@0.7.4
+  - @omnesis/eval@0.7.4
+  - @omnesis/gateway@0.7.4
+  - @omnesis/gateway-client@0.7.4
+  - @omnesis/source-sdk@0.7.4
+  - @omnesis/types@0.7.4
+
 ## 0.7.3
 
 ### Patch Changes
