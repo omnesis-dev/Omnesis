@@ -28,7 +28,12 @@
 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { TRANSCRIBER_UNAVAILABLE, createLogger, normalizePhone } from "@omnesis/core";
+import {
+  AUDIO_UNREADABLE,
+  TRANSCRIBER_UNAVAILABLE,
+  createLogger,
+  normalizePhone,
+} from "@omnesis/core";
 import { openProtectedDatabase, inspectProtectedStore, type Db } from "./protected-store.js";
 import { EXTRACT_REVISION } from "./message-extractor.js";
 import { RENDER_REVISION } from "./normalizer.js";
@@ -206,7 +211,13 @@ export interface MediaScope {
 
 /** Media still to process, or gone for good, voice notes apart from attachments. */
 export interface MediaHealthStats {
-  voiceNotes: { pending: number; transcriberUnavailable: number; unavailable: number };
+  /** `unreadable` voice notes are given up on and not counted under `unavailable`. */
+  voiceNotes: {
+    pending: number;
+    transcriberUnavailable: number;
+    unavailable: number;
+    unreadable: number;
+  };
   attachments: { pending: number; unavailable: number };
 }
 
@@ -1548,31 +1559,42 @@ export class TelegramArchive {
   /**
    * Media still to process and media gone for good, inside `scope`. A pending
    * voice note whose last attempt found no transcriber is also counted under
-   * `transcriberUnavailable`.
+   * `transcriberUnavailable`; a voice note given up on because its audio could
+   * not be decoded is counted under `unreadable` rather than `unavailable`.
    */
   mediaHealthStats(scope: MediaScope): MediaHealthStats {
     const rows = this.db
       .prepare(
         `SELECT media_state AS s, (${MEDIA_KIND_SQL} = 'voice') AS voice,
-                (media_last_error = @noTranscriber) AS noTranscriber, COUNT(*) AS n
+                (media_last_error = @noTranscriber) AS noTranscriber,
+                (media_last_error = @unreadable) AS unreadable, COUNT(*) AS n
          FROM messages
          WHERE media_state IN ('pending', 'unavailable') AND deleted = 0
            AND (@minTs IS NULL OR ts >= @minTs)
            AND ((@voiceNotes = 1 AND ${MEDIA_KIND_SQL} = 'voice')
              OR (@attachments = 1 AND ${MEDIA_KIND_SQL} IN ('photo', 'document')))
-         GROUP BY s, voice, noTranscriber`,
+         GROUP BY s, voice, noTranscriber, unreadable`,
       )
-      .all({ ...scopeParams(scope), noTranscriber: TRANSCRIBER_UNAVAILABLE }) as {
+      .all({
+        ...scopeParams(scope),
+        noTranscriber: TRANSCRIBER_UNAVAILABLE,
+        unreadable: AUDIO_UNREADABLE,
+      }) as {
       s: "pending" | "unavailable";
       voice: 0 | 1;
       noTranscriber: 0 | 1 | null;
+      unreadable: 0 | 1 | null;
       n: number;
     }[];
     const stats: MediaHealthStats = {
-      voiceNotes: { pending: 0, transcriberUnavailable: 0, unavailable: 0 },
+      voiceNotes: { pending: 0, transcriberUnavailable: 0, unavailable: 0, unreadable: 0 },
       attachments: { pending: 0, unavailable: 0 },
     };
     for (const row of rows) {
+      if (row.voice && row.s === "unavailable" && row.unreadable) {
+        stats.voiceNotes.unreadable += row.n;
+        continue;
+      }
       const bucket = row.voice ? stats.voiceNotes : stats.attachments;
       bucket[row.s] += row.n;
       if (row.voice && row.s === "pending" && row.noTranscriber) {

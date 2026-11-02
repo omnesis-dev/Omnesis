@@ -432,8 +432,10 @@ export interface GatewayClient {
    * Transcribe source audio (e.g. a WhatsApp voice note) via the gateway's
    * locally-hosted speech-to-text model. The bytes are sent over the wire and
    * held only for the request — nothing is persisted. Returns null when
-   * transcription is disabled, no transcriber is configured, or it failed —
-   * best-effort, so it never throws and never blocks a sync.
+   * transcription is disabled or no transcriber is configured. Rejects with
+   * a transient `SyncError` when the transcriber or the gateway could not be
+   * reached, and with an `AudioUnreadableError` when the bytes decode to no
+   * audio.
    */
   transcribe(
     audio: Uint8Array,

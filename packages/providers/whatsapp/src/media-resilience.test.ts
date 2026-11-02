@@ -276,19 +276,21 @@ describe("MessageStore media lifecycle", () => {
     expect(store.getMessageById(CHAT, "gone")?.mediaNextAttempt).toBeUndefined();
   });
 
-  test("mediaHealthStats counts pending and unavailable", () => {
+  test("mediaHealthStats counts pending, unavailable and unreadable", () => {
     store.addMessages([
       voiceMsg({ id: "a", timestamp: ts("2026-01-02") }),
       voiceMsg({ id: "b", timestamp: ts("2026-01-02") }),
       voiceMsg({ id: "c", timestamp: ts("2026-01-02") }),
+      voiceMsg({ id: "d", timestamp: ts("2026-01-02") }),
     ]);
     store.recordMediaOutcome(CHAT, "c", { kind: "terminal", error: "gone" });
+    store.recordMediaOutcome(CHAT, "d", { kind: "terminal", error: "audio-unreadable" });
     store.recordMediaOutcome(CHAT, "b", {
       kind: "process-failed",
       error: "transcriber-unavailable",
     });
     expect(store.mediaHealthStats()).toEqual({
-      voiceNotes: { pending: 2, transcriberUnavailable: 1, unavailable: 1 },
+      voiceNotes: { pending: 2, transcriberUnavailable: 1, unavailable: 1, unreadable: 1 },
       attachments: { pending: 0, unavailable: 0 },
     });
   });
@@ -712,6 +714,7 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
       pending: 1,
       transcriberUnavailable: 0,
       unavailable: 0,
+      unreadable: 0,
     });
   });
 

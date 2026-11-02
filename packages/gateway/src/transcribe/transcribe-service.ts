@@ -20,6 +20,7 @@
 
 import { createHash } from "node:crypto";
 import { createLogger, assertNever } from "@omnesis/core";
+import { AudioDecodeError } from "./audio-decode.js";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
 import type {
@@ -36,10 +37,15 @@ const log = createLogger("gateway:transcribe");
 /** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
-/** An unavailable capability is distinct from a failed recording or cancelled caller. */
+/**
+ * An unavailable capability is distinct from a failed recording or cancelled
+ * caller. `unreadable` is a recording whose bytes decode to no audio, which no
+ * retry can change; `failed` is every other failure, which a retry may clear.
+ */
 export type TranscriptionOutcome =
   | { kind: "transcribed"; result: TranscriptionResult }
   | { kind: "unavailable" }
+  | { kind: "unreadable" }
   | { kind: "failed" }
   | { kind: "cancelled" };
 
@@ -329,6 +335,10 @@ export class TranscribeService {
         if (opts?.signal?.aborted) {
           log.info("Stopped a transcription whose caller stopped waiting");
           return { kind: "cancelled" };
+        }
+        if (err instanceof AudioDecodeError && err.unreadable) {
+          log.warn(`Transcription failed: the audio could not be decoded (${err.message})`);
+          return { kind: "unreadable" };
         }
         log.warn(
           `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,

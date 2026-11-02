@@ -833,7 +833,11 @@ export type {
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
 export {
+  AUDIO_UNREADABLE,
+  AudioUnreadableError,
   MAX_TRANSCRIPTION_MS,
+  TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+  TRANSCRIBE_REPORT_UNREADABLE_HEADER,
   TRANSCRIBER_UNAVAILABLE,
   transcriptionPlaceholderNote,
   transcriptionSyncIssues,

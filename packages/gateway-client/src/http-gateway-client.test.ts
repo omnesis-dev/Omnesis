@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 import { ProviderId, SourceId, SyncError } from "@omnesis/types";
 import { isAnalyticsLeaseRejection, type IngestAnalyticsResponse } from "@omnesis/source-sdk";
+import { AudioUnreadableError } from "@omnesis/core";
 import { HttpGatewayClient, chunkDocuments } from "./http-gateway-client.js";
 import { DEFAULT_UPSERT_CHUNK, DEFAULT_UPSERT_CHUNK_BYTES } from "./tunables.js";
 import type { DocumentInput } from "@omnesis/types";
@@ -141,6 +142,13 @@ function createTestGateway(database: Db, apiKey: string) {
           if (text === "TRIGGER_ERROR") return Response.json({ error: "boom" }, { status: 500 });
           if (text === "TRIGGER_UNAVAILABLE")
             return Response.json({ error: "model loading" }, { status: 503 });
+          if (text === "TRIGGER_UNREADABLE") {
+            return req.headers.get("x-omnesis-report-unreadable-audio") === "1"
+              ? Response.json({ error: "undecodable", code: "AUDIO_UNREADABLE" }, { status: 422 })
+              : Response.json({ error: "failed", code: "SERVICE_UNAVAILABLE" }, { status: 503 });
+          }
+          if (text === "TRIGGER_OTHER_422")
+            return Response.json({ error: "other", code: "SOMETHING_ELSE" }, { status: 422 });
           if (text === "TRIGGER_RATELIMIT")
             return Response.json(
               { error: "rate limited" },
@@ -445,6 +453,16 @@ describe("HttpGatewayClient.transcribe", () => {
     // A 4xx is permanent ("the gateway won't transcribe this"): the caller
     // treats it as no transcript and the page advances. No throw.
     expect(await client.transcribe(enc("TRIGGER_DISABLED"), "audio/ogg")).toBeNull();
+  });
+
+  test("throws AudioUnreadableError, not a transient error, for audio that decodes to nothing", async () => {
+    const err = await client.transcribe(enc("TRIGGER_UNREADABLE"), "audio/ogg").catch((e) => e);
+    expect(err).toBeInstanceOf(AudioUnreadableError);
+    expect(err).toMatchObject({ kind: "unknown", scope: "item" });
+  });
+
+  test("a 422 without the unreadable-audio code stays a plain no-transcript", async () => {
+    expect(await client.transcribe(enc("TRIGGER_OTHER_422"), "audio/ogg")).toBeNull();
   });
 
   test("throws transient SyncError on a 5xx so the page retries", async () => {

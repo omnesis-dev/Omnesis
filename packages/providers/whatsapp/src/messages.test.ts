@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { resolveAttachmentConfig } from "@omnesis/core";
-import { SourceId, ProviderId } from "@omnesis/types";
+import { AudioUnreadableError, resolveAttachmentConfig } from "@omnesis/core";
+import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { WhatsAppMessagesSource } from "./messages.js";
 import { MessageStore } from "./message-store.js";
 import type { MediaDownloadFn, WhatsAppMessagesSourceOptions } from "./messages.js";
@@ -914,6 +914,69 @@ describe("WhatsAppMessagesSource", () => {
       expect(transcribeAudio).toHaveBeenCalledTimes(1);
       const doc = r2.documents.find((d) => d.metadata.documentType === "conversation")!;
       expect(doc.content).toContain("[Voice note, 0:07 — no transcriber available]");
+    });
+
+    test("audio that decodes to nothing is given up on, reported apart, and retried by a resync", async () => {
+      const downloadMedia = vi.fn(async () => ({
+        kind: "ok" as const,
+        data: new Uint8Array([1, 2, 3]),
+      })) as MediaDownloadFn;
+      const transcribeAudio = vi.fn<NonNullable<WhatsAppMessagesSourceOptions["transcribeAudio"]>>(
+        async () => {
+          throw new AudioUnreadableError();
+        },
+      );
+      const src = makeSource({ downloadMedia, transcribeAudio });
+      store.setHistorySyncState("complete");
+      store.addMessages([makeVoiceMsg({ timestamp: 1709900000 })]);
+
+      const r1 = await src.sync(null);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(r1.documents[0].content).toContain("[Voice note, 0:07 — audio could not be decoded]");
+      expect(r1.issues).toEqual([
+        expect.objectContaining({
+          code: "transcription-audio-unreadable",
+          count: 1,
+          message: "1 voice note could not be transcribed: the audio could not be decoded",
+        }),
+      ]);
+      expect(store.mediaHealthStats().voiceNotes).toEqual({
+        pending: 0,
+        transcriberUnavailable: 0,
+        unavailable: 0,
+        unreadable: 1,
+      });
+
+      // A re-render of the day does not send the note again.
+      store.addMessages([makeMsg({ id: "txt", timestamp: 1709900100, text: "ok" })]);
+      const r2 = await src.sync(r1.cursor);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      const doc = r2.documents.find((d) => d.metadata.documentType === "conversation")!;
+      expect(doc.content).toContain("[Voice note, 0:07 — audio could not be decoded]");
+
+      // A resync gives it another try.
+      transcribeAudio.mockResolvedValue({ text: "decoded after all" });
+      src.onResync();
+      const r3 = await src.sync(r2.cursor);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(r3.documents[0].content).toContain("decoded after all");
+    });
+
+    test("a transient transcription failure keeps the note pending for a retry", async () => {
+      const downloadMedia = vi.fn(async () => ({
+        kind: "ok" as const,
+        data: new Uint8Array([1, 2, 3]),
+      })) as MediaDownloadFn;
+      const transcribeAudio = vi.fn(async () => {
+        throw new SyncError("transient", "transcribe backend error 503");
+      });
+      const src = makeSource({ downloadMedia, transcribeAudio });
+      store.setHistorySyncState("complete");
+      store.addMessages([makeVoiceMsg()]);
+
+      const result = await src.sync(null);
+      expect(result.documents[0].content).toContain("[Voice note, 0:07 — awaiting transcription]");
+      expect(store.mediaHealthStats().voiceNotes).toMatchObject({ pending: 1, unreadable: 0 });
     });
 
     test("a transcribed backlog reports nothing and a working transcriber's backlog is information", async () => {

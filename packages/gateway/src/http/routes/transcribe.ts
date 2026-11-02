@@ -10,11 +10,21 @@
  * held only for the duration of the request — nothing is persisted. Without a
  * runnable transcriber the route answers `{ available: false }`.
  *
+ * A failed transcription answers a retryable 503. A client that sends
+ * `TRANSCRIBE_REPORT_UNREADABLE_HEADER` is instead answered 422
+ * `TRANSCRIBE_AUDIO_UNREADABLE_CODE` when the bytes decode to no audio, so it
+ * can stop sending them; a client without the header keeps the 503 it knows.
+ *
  * Scope: `writeAny` — the same scope the collector uses to ingest documents.
  * Transcription is part of producing a document's content, not an admin op.
  */
 
-import { assertNever, createLogger } from "@omnesis/core";
+import {
+  TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+  TRANSCRIBE_REPORT_UNREADABLE_HEADER,
+  assertNever,
+  createLogger,
+} from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { scope } from "../scope.js";
@@ -111,6 +121,15 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
       switch (outcome.kind) {
         case "unavailable":
           return c.json({ available: false as const }, 200);
+        case "unreadable":
+          if (c.req.header(TRANSCRIBE_REPORT_UNREADABLE_HEADER) === "1") {
+            throw new HttpError(
+              422,
+              TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+              "The audio could not be decoded; sending it again will not help.",
+            );
+          }
+          throw new ServiceUnavailableError("Transcription failed; the audio will be retried.");
         case "failed":
         case "cancelled":
           // Keep decoder/backend diagnostics in server logs, not source documents.

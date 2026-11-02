@@ -395,6 +395,7 @@ export class TelegramMessagesSource {
             awaiting: media.voiceNotes.pending,
             transcriberUnavailable: media.voiceNotes.transcriberUnavailable,
             unavailable: media.voiceNotes.unavailable,
+            unreadable: media.voiceNotes.unreadable,
           }),
         );
       }
