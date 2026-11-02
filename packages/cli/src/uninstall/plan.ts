@@ -452,6 +452,22 @@ export function planUninstall(inv: Inventory, request: UninstallRequest): Plan {
             title: `Stop and remove the Docker containers and images of ${inv.docker.composeFile}`,
             action: { type: "docker-down", composeFile: inv.docker.composeFile },
           });
+          if (inv.docker.imageRepos.length > 0) {
+            steps.push({
+              component,
+              title: `Remove every local image of ${inv.docker.imageRepos.join(", ")}, older releases included`,
+              action: { type: "docker-images", repos: inv.docker.imageRepos },
+              requires: ["docker-down"],
+            });
+          }
+          if (inv.docker.renewalScript) {
+            // It lives outside the config directory, so --purge alone leaves it.
+            steps.push({
+              component,
+              title: `Remove the job that renews the Tailscale certificate, and ${inv.docker.renewalScript}`,
+              action: { type: "exec", command: "sh", args: [inv.docker.renewalScript, "--remove"] },
+            });
+          }
           if (!request.purge) {
             for (const name of ["docker-compose.yml", "install-method"]) {
               steps.push({
