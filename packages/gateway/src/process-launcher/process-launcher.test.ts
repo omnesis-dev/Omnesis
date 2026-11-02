@@ -137,16 +137,14 @@ describe("hosted launcher", () => {
   it("runs programs concurrently", async () => {
     const host = hosted();
     await host.start();
-    // Each program records when it started and when it finished, in ms.
-    const runs = await Promise.all(
-      [1, 2, 3].map(() =>
-        host.run("sh", ["-c", "date +%s%3N; sleep 1; date +%s%3N"], { timeoutMs: 10_000 }),
-      ),
+    // Timed here rather than inside the programs, whose clocks differ by
+    // platform (BSD date on macOS has no %N) and by what the host inherits.
+    const started = Date.now();
+    await Promise.all(
+      [1, 2, 3].map(() => host.run("sh", ["-c", "sleep 2"], { timeoutMs: 10_000 })),
     );
-    const spans = runs.map((run) => text(run.stdout).split("\n").map(Number));
-    const lastStart = Math.max(...spans.map(([start]) => start!));
-    const firstEnd = Math.min(...spans.map(([, end]) => end!));
-    expect(lastStart).toBeLessThan(firstEnd);
+    // One after another, the three would take six seconds.
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it("kills a program in flight when its host dies, and starts a host for the next run", async () => {
