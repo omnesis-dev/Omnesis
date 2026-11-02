@@ -16,10 +16,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  backupConfigCopyNames,
   backupManifestSchema,
+  backupScopeEntries,
+  backupScopeEntryFor,
   gatewayStoreFiles,
   listBackups,
   prunePreUpdateBackups,
+  restoredDotEnv,
   writeOfflineBackup,
 } from "./backup-layout.js";
 
@@ -205,5 +209,117 @@ describe("prunePreUpdateBackups", () => {
     expect(existsSync(operator)).toBe(true);
     expect(existsSync(middle)).toBe(true);
     expect(existsSync(newest)).toBe(true);
+  });
+});
+
+describe("what a backup owns", () => {
+  test("names each store, its companions, the config material and the derived index", () => {
+    for (const name of [
+      "omnesis.db",
+      "omnesis.db-wal",
+      "index.db-shm",
+      "watch.db",
+      "analytics.db.wal",
+    ]) {
+      expect(backupScopeEntryFor(name)).toEqual({ name, kind: "store" });
+    }
+    for (const name of [
+      "index.usearch",
+      "index.usearch.enc",
+      "index-3.usearch",
+      "index.usearch.corrupt-1",
+    ]) {
+      expect(backupScopeEntryFor(name)).toEqual({ name, kind: "derived" });
+    }
+    expect(backupScopeEntryFor("omnesis.json")).toEqual({ name: "omnesis.json", kind: "config" });
+    expect(backupScopeEntryFor(".env")).toEqual({ name: ".env", kind: "config" });
+    expect(backupScopeEntryFor("tls/cert.pem")).toEqual({ name: "tls", kind: "config" });
+    expect(backupScopeEntryFor("sweeps/weekly/review.md")).toEqual({
+      name: "sweeps",
+      kind: "config",
+    });
+    expect(backupScopeEntryFor("keyring/storage-keys/main-db.json")).toEqual({
+      name: "keyring/storage-keys",
+      kind: "config",
+    });
+    expect(backupScopeEntryFor("keyring/recovery-envelope.json")?.kind).toBe("config");
+    expect(backupScopeEntryFor("plaid-credentials.json")?.kind).toBe("config");
+    expect(backupScopeEntryFor("provider-example/account-one/credentials.json")?.kind).toBe(
+      "config",
+    );
+  });
+
+  test("leaves everything the machine owns out", () => {
+    for (const rel of [
+      "backups/2026-01-02T03-04-05/omnesis.db",
+      "models/embedder.gguf",
+      "exports/export.jsonl",
+      "logs/gateway.log",
+      "keyring.pass",
+      "keyring/passphrase/aW5zdGFsbC1yb290LWtleS12MQ.json",
+      "keyring/omnesis/aW5zdGFsbC1yb290LWtleS12MQ.secret",
+      "gateway.lock",
+      "docker-compose.yml",
+      "install-method",
+      "shared-folders",
+      "update-state.json",
+      "collector/collector-token",
+      "provider-example/account-one/cursor.json",
+      "omnesis.db.bak",
+      "index.db.backup",
+    ]) {
+      expect(backupScopeEntryFor(rel), rel).toBeNull();
+    }
+  });
+
+  test("lists what a config dir holds of it, the same names a backup copies", () => {
+    const configDir = stoppedGateway();
+    writeFileSync(join(configDir, "index.usearch"), "graph");
+    writeFileSync(join(configDir, "keyring.pass"), "machine passphrase");
+    const entries = backupScopeEntries(configDir);
+    expect(entries.filter((e) => e.kind === "config").map((e) => e.name)).toEqual(
+      backupConfigCopyNames(configDir),
+    );
+    expect(entries.filter((e) => e.kind === "derived").map((e) => e.name)).toEqual([
+      "index.usearch",
+    ]);
+    expect(
+      entries
+        .filter((e) => e.kind === "store")
+        .map((e) => e.name)
+        .sort(),
+    ).toEqual(
+      [
+        "analytics.db",
+        "analytics.db.wal",
+        "index.db",
+        "omnesis.db",
+        "omnesis.db-shm",
+        "omnesis.db-wal",
+        "watch.db",
+      ].sort(),
+    );
+    for (const entry of entries) expect(backupScopeEntryFor(entry.name), entry.name).toEqual(entry);
+    expect(entries.some((e) => e.name.startsWith("models") || e.name === "keyring.pass")).toBe(
+      false,
+    );
+  });
+
+  test("a restored .env takes the machine's lines from the target and the rest from the backup", () => {
+    const merged = restoredDotEnv(
+      "# from the backup\nOMNESIS_IMAGE_TAG=0.1.0\nexport OMNESIS_EXPERIMENTAL=1\nOMNESIS_SECRET_STORE=file\n",
+      "OMNESIS_IMAGE_TAG=0.2.0\nOMNESIS_LOG_LEVEL=debug\nOMNESIS_KEYRING_PASSPHRASE_FILE=/srv/example/keyring.pass\n",
+    );
+    expect(merged).toBe(
+      "# from the backup\nexport OMNESIS_EXPERIMENTAL=1\nOMNESIS_IMAGE_TAG=0.2.0\nOMNESIS_KEYRING_PASSPHRASE_FILE=/srv/example/keyring.pass\n",
+    );
+    // No .env in the backup: only the machine's own lines survive.
+    expect(restoredDotEnv(null, "OMNESIS_IMAGE_TAG=0.2.0\nOMNESIS_LOG_LEVEL=debug\n")).toBe(
+      "OMNESIS_IMAGE_TAG=0.2.0\n",
+    );
+    expect(restoredDotEnv(null, "OMNESIS_LOG_LEVEL=debug\n")).toBeNull();
+    expect(restoredDotEnv(null, null)).toBeNull();
+    // A machine key only the backup has does not come back.
+    expect(restoredDotEnv("OMNESIS_SECRET_STORE=passphrase\n", null)).toBeNull();
   });
 });

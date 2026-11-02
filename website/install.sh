@@ -7559,6 +7559,258 @@ if [ "${1:-}" = folders ]; then
   esac
 fi
 
+# The daemons of this install are its containers, so `omnesis service` is
+# compose, run here: a command inside a container cannot stop, start or read
+# the logs of the container it runs in. Every verb maps to its compose
+# equivalent; installing and removing services is the installer's.
+compose_has() { grep -qx "  $1:" "$COMPOSE_FILE"; }
+# The services `omnesis service` and `omnesis restore` act on: the daemons the
+# compose file declares, never the one-shot updater.
+daemon_services() {
+  DAEMONS=""
+  if compose_has gateway; then DAEMONS="gateway"; fi
+  if compose_has collector; then DAEMONS="${DAEMONS:+$DAEMONS }collector"; fi
+  printf '%s' "$DAEMONS"
+}
+service_fail() { printf 'omnesis service: %s\n' "$*" >&2; exit 2; }
+if [ "${1:-}" = service ]; then
+  shift
+  SVC_VERB="${1:-status}"
+  [ "$#" = 0 ] || shift
+  SVC_COMPONENT=""
+  SVC_JSON=0
+  SVC_FOLLOW=0
+  SVC_LINES=100
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      gateway|collector|all)
+        [ -z "$SVC_COMPONENT" ] || service_fail "name one component: gateway, collector or all."
+        SVC_COMPONENT="$1" ;;
+      --json) SVC_JSON=1 ;;
+      -f|--follow) SVC_FOLLOW=1 ;;
+      -n|--lines) [ "$#" -ge 2 ] || service_fail "$1 needs a number."; SVC_LINES="$2"; shift ;;
+      --lines=*) SVC_LINES="${1#--lines=}" ;;
+      -h|--help) SVC_VERB=help ;;
+      *) service_fail "$1 does not apply to a Docker install, whose services are the containers of $COMPOSE_FILE." ;;
+    esac
+    shift
+  done
+  case "$SVC_LINES" in ''|*[!0-9]*) service_fail "--lines takes a whole number." ;; esac
+  case "$SVC_VERB" in
+    help|-h|--help)
+      printf '%s\n' "Usage: omnesis service <start|stop|restart|status|logs> [gateway|collector|all]" \
+        "This Docker install's services are the containers of $COMPOSE_FILE; each command runs its docker compose equivalent." \
+        "logs takes --follow and --lines <n>; status takes --json."
+      exit 0 ;;
+    install|uninstall)
+      service_fail "a Docker install's services are its containers, which the installer creates: re-run the installer with the options you installed with to change them, and remove the install with: omnesis uninstall" ;;
+    start|stop|restart|status|logs) ;;
+    *) service_fail "unknown command $SVC_VERB. Usage: omnesis service <start|stop|restart|status|logs> [gateway|collector|all]" ;;
+  esac
+  SVC_NAMES=""
+  case "${SVC_COMPONENT:-all}" in
+    all) SVC_NAMES="$(daemon_services)" ;;
+    gateway)
+      compose_has gateway || service_fail "this host runs no gateway: its install only collects. The gateway's own host manages it."
+      SVC_NAMES=gateway ;;
+    collector)
+      if compose_has collector; then
+        SVC_NAMES=collector
+      elif grep -q 'omnesis-combined' "$COMPOSE_FILE"; then
+        # One container runs both daemons: it can be read, not stopped alone.
+        case "$SVC_VERB" in
+          status|logs)
+            printf '%s\n' "The collector runs in the gateway's container in this install; showing that container." >&2
+            SVC_NAMES=gateway ;;
+          *) service_fail "the collector runs in the gateway's container in this install, so it stops and starts with it: omnesis service $SVC_VERB" ;;
+        esac
+      else
+        service_fail "this install runs no collector."
+      fi ;;
+  esac
+  [ -n "$SVC_NAMES" ] || service_fail "$COMPOSE_FILE declares no gateway or collector."
+  # shellcheck disable=SC2086
+  case "$SVC_VERB" in
+    start) docker compose -f "$COMPOSE_FILE" up -d --no-deps $SVC_NAMES ;;
+    stop) docker compose -f "$COMPOSE_FILE" stop $SVC_NAMES ;;
+    restart) docker compose -f "$COMPOSE_FILE" restart $SVC_NAMES ;;
+    status)
+      if [ "$SVC_JSON" = 1 ]; then exec docker compose -f "$COMPOSE_FILE" ps --all --format json $SVC_NAMES; fi
+      exec docker compose -f "$COMPOSE_FILE" ps --all $SVC_NAMES ;;
+    logs)
+      if [ "$SVC_FOLLOW" = 1 ]; then exec docker compose -f "$COMPOSE_FILE" logs --follow --tail "$SVC_LINES" $SVC_NAMES; fi
+      exec docker compose -f "$COMPOSE_FILE" logs --tail "$SVC_LINES" $SVC_NAMES ;;
+  esac || {
+    printf 'omnesis service: docker compose -f %s %s %s failed (see above).\n' "$COMPOSE_FILE" "$SVC_VERB" "$SVC_NAMES" >&2
+    exit 1
+  }
+  case "$SVC_VERB" in
+    start) printf 'Started %s\n' "$SVC_NAMES" ;;
+    stop) printf 'Stopped %s\n' "$SVC_NAMES" ;;
+    restart) printf 'Restarted %s\n' "$SVC_NAMES" ;;
+  esac
+  exit 0
+fi
+
+# `restore` replaces the corpus the gateway holds open, so the containers stop
+# first — which no container can do to itself. The launcher stops them, runs
+# the CLI's restore in a one-off container of the gateway service (its image,
+# its mounts and its environment, so the keyring passphrase the install
+# records resolves as it does for the gateway), starts them again and waits
+# for the gateway to report healthy. A restore that fails leaves the config
+# directory as it was, and the services are started again all the same.
+# Progress goes to stderr, so the CLI's --json result is stdout's only output.
+restore_fail() { printf 'omnesis restore: %s\n' "$*" >&2; exit 2; }
+if [ "${1:-}" = restore ]; then
+  shift
+  RESTORE_BACKUP=""
+  RESTORE_FORCE=0
+  RESTORE_ENVELOPE=""
+  set_restore_backup() {
+    [ -z "$RESTORE_BACKUP" ] || restore_fail "name one backup directory."
+    folders_path "$1"
+    RESTORE_BACKUP="$FOLDER"
+  }
+  # The CLI's own arguments, rebuilt with the paths made absolute: a relative
+  # path means this directory, which the container does not share.
+  RESTORE_ARG_COUNT=$#
+  while [ "$RESTORE_ARG_COUNT" -gt 0 ]; do
+    ARG="$1"; shift; RESTORE_ARG_COUNT=$((RESTORE_ARG_COUNT - 1))
+    case "$ARG" in
+      -h|--help)
+        printf '%s\n' "Usage: omnesis restore <backup-dir> [--force] [--code <recovery code>] [--envelope <file>] [--json]" \
+          "Stops this Docker install's containers, restores the backup into $FOLDERS_DIR, starts them again and waits for the gateway." \
+          "--force replaces the corpus there without asking; without a terminal it is required. A backup outside $FOLDERS_DIR is mounted read-only for the restore."
+        exit 0 ;;
+      --force) RESTORE_FORCE=1 ;;
+      --json) set -- "$@" --json ;;
+      --code|--backend)
+        [ "$RESTORE_ARG_COUNT" -gt 0 ] || restore_fail "$ARG needs a value."
+        set -- "$@" "$ARG" "$1"; shift; RESTORE_ARG_COUNT=$((RESTORE_ARG_COUNT - 1)) ;;
+      --code=*|--backend=*) set -- "$@" "$ARG" ;;
+      --envelope)
+        [ "$RESTORE_ARG_COUNT" -gt 0 ] || restore_fail "--envelope needs a file."
+        folders_path "$1"; RESTORE_ENVELOPE="$FOLDER"; shift; RESTORE_ARG_COUNT=$((RESTORE_ARG_COUNT - 1)) ;;
+      --envelope=*) folders_path "${ARG#--envelope=}"; RESTORE_ENVELOPE="$FOLDER" ;;
+      --target|--target=*)
+        restore_fail "a Docker install restores into its own config directory, $FOLDERS_DIR; --target does not apply." ;;
+      -*) restore_fail "unknown option $ARG. Usage: omnesis restore <backup-dir> [--force] [--code <recovery code>] [--envelope <file>] [--json]" ;;
+      *) set_restore_backup "$ARG" ;;
+    esac
+  done
+  [ -n "$RESTORE_BACKUP" ] || restore_fail "name the backup directory to restore. omnesis backup --list shows this install's."
+  compose_has gateway || restore_fail "this host runs no gateway: its install only collects. A backup is restored on the gateway's host."
+  [ -f "$RESTORE_BACKUP/backup-manifest.json" ] || restore_fail "$RESTORE_BACKUP is not an Omnesis backup (it has no backup-manifest.json)."
+  # The containers see the config directory and nothing else of this machine,
+  # so a backup copied in from elsewhere is mounted for the one-off container,
+  # read-only and at the same path.
+  RESTORE_MOUNTS=0
+  restore_mount() {
+    case "$1" in
+      "$FOLDERS_DIR"|"$FOLDERS_DIR"/*) return 0 ;;
+      *:*|*"'"*|*'
+'*) restore_fail "$1 contains a character a container mount cannot name (a colon, a quote or a newline). Copy it into $FOLDERS_DIR/backups/ and restore from there." ;;
+    esac
+    RESTORE_MOUNTS=$((RESTORE_MOUNTS + 1))
+    eval "RESTORE_MOUNT_$RESTORE_MOUNTS=\$1"
+  }
+  restore_mount "$RESTORE_BACKUP"
+  if [ -n "$RESTORE_ENVELOPE" ]; then
+    [ -f "$RESTORE_ENVELOPE" ] || restore_fail "$RESTORE_ENVELOPE does not exist on this machine."
+    restore_mount "$RESTORE_ENVELOPE"
+    set -- "$@" --envelope "$RESTORE_ENVELOPE"
+  fi
+  if [ "$RESTORE_FORCE" = 0 ] && [ -f "$FOLDERS_DIR/omnesis.db" ]; then
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+      printf '%s\n' "omnesis restore will:" \
+        "  - stop the containers of $COMPOSE_FILE" \
+        "  - replace the corpus and settings in $FOLDERS_DIR with the backup $RESTORE_BACKUP" \
+        "    (other backups, models, exports, logs and this install's own files stay)" \
+        "  - start the containers again and wait for the gateway" >/dev/tty
+      printf '%s' "Replace the corpus? [y/N] " >/dev/tty
+      IFS= read -r RESTORE_REPLY </dev/tty || RESTORE_REPLY=""
+      case "$RESTORE_REPLY" in
+        y|Y|yes|YES|Yes) ;;
+        *) printf '%s\n' "Cancelled; nothing was changed." >&2; exit 130 ;;
+      esac
+    else
+      restore_fail "$FOLDERS_DIR already holds a corpus, and there is no terminal to confirm replacing it. Re-run with --force."
+    fi
+  fi
+  set -- "$@" --force
+  # The one-off container's options go before the service name, the CLI's
+  # arguments after `omnesis restore <backup>`: rotate them into place.
+  RESTORE_CLI_COUNT=$#
+  set -- "$@" --progress quiet run --rm --no-deps
+  # A terminal only when there is one, as for every other command.
+  [ -t 0 ] || set -- "$@" -T
+  set -- "$@" --env OMNESIS_DOCKER_HOST_RESTART=1
+  RESTORE_N=1
+  while [ "$RESTORE_N" -le "$RESTORE_MOUNTS" ]; do
+    eval "RESTORE_MOUNT=\$RESTORE_MOUNT_$RESTORE_N"
+    set -- "$@" --volume "$RESTORE_MOUNT:$RESTORE_MOUNT:ro"
+    RESTORE_N=$((RESTORE_N + 1))
+  done
+  set -- "$@" gateway omnesis restore "$RESTORE_BACKUP"
+  while [ "$RESTORE_CLI_COUNT" -gt 0 ]; do
+    ARG="$1"; shift; set -- "$@" "$ARG"
+    RESTORE_CLI_COUNT=$((RESTORE_CLI_COUNT - 1))
+  done
+  RESTORE_SERVICES="$(daemon_services)"
+  printf 'Stopping %s...\n' "$RESTORE_SERVICES" >&2
+  # shellcheck disable=SC2086
+  if ! docker compose -f "$COMPOSE_FILE" stop $RESTORE_SERVICES; then
+    printf '%s\n' "omnesis restore: the containers did not stop, so nothing was restored. Starting them again." >&2
+    # shellcheck disable=SC2086
+    docker compose -f "$COMPOSE_FILE" up -d $RESTORE_SERVICES >&2 || true
+    exit 1
+  fi
+  printf 'Restoring %s...\n' "$RESTORE_BACKUP" >&2
+  RESTORE_STATUS=0
+  docker compose -f "$COMPOSE_FILE" "$@" || RESTORE_STATUS=$?
+  if [ "$RESTORE_STATUS" = 0 ]; then
+    printf 'Starting %s...\n' "$RESTORE_SERVICES" >&2
+  else
+    printf 'The restore failed (see above); %s is as it was. Starting %s again...\n' "$FOLDERS_DIR" "$RESTORE_SERVICES" >&2
+  fi
+  # shellcheck disable=SC2086
+  if ! docker compose -f "$COMPOSE_FILE" up -d $RESTORE_SERVICES; then
+    printf 'omnesis restore: the containers did not start. Start them with: docker compose -f %s up -d\n' "$COMPOSE_FILE" >&2
+    exit 1
+  fi
+  [ "$RESTORE_STATUS" = 0 ] || exit "$RESTORE_STATUS"
+  # A first boot after a restore re-encrypts the stores and rebuilds what the
+  # backup left out, so the wait is generous; OMNESIS_RESTORE_HEALTH_TIMEOUT
+  # (seconds) changes it.
+  RESTORE_TIMEOUT="${OMNESIS_RESTORE_HEALTH_TIMEOUT:-600}"
+  case "$RESTORE_TIMEOUT" in ''|*[!0-9]*) RESTORE_TIMEOUT=600 ;; esac
+  RESTORE_POLL="${OMNESIS_RESTORE_HEALTH_POLL:-3}"
+  case "$RESTORE_POLL" in ''|*[!0-9]*) RESTORE_POLL=3 ;; esac
+  printf 'Waiting for the gateway to report healthy...\n' >&2
+  RESTORE_WAITED=0
+  RESTORE_HEALTH=""
+  while :; do
+    RESTORE_ID="$(docker compose -f "$COMPOSE_FILE" ps -q gateway 2>/dev/null | head -n 1)"
+    RESTORE_HEALTH=""
+    [ -z "$RESTORE_ID" ] || RESTORE_HEALTH="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$RESTORE_ID" 2>/dev/null || true)"
+    case "$RESTORE_HEALTH" in
+      # `running` is a container without a health check: up is all it says.
+      healthy|running) break ;;
+      unhealthy|exited|dead) break ;;
+    esac
+    [ "$RESTORE_WAITED" -lt "$RESTORE_TIMEOUT" ] || break
+    sleep "$RESTORE_POLL"
+    RESTORE_WAITED=$((RESTORE_WAITED + RESTORE_POLL))
+  done
+  if [ "$RESTORE_HEALTH" = healthy ] || [ "$RESTORE_HEALTH" = running ]; then
+    printf 'Restored %s into %s; the gateway is up and healthy.\n' "$RESTORE_BACKUP" "$FOLDERS_DIR" >&2
+    exit 0
+  fi
+  printf 'omnesis restore: the backup was restored into %s, but the gateway %s. Check its log: omnesis service logs gateway\n' \
+    "$FOLDERS_DIR" "$(if [ -n "$RESTORE_HEALTH" ] && [ "$RESTORE_HEALTH" != starting ]; then printf 'is %s' "$RESTORE_HEALTH"; else printf 'did not report healthy within %ss' "$RESTORE_TIMEOUT"; fi)" >&2
+  exit 1
+fi
+
 # `update` moves the containers themselves, which no container can do to
 # itself, so it runs in the one-shot updater container that holds this host's
 # Docker socket for that invocation alone.

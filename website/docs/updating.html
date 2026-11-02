@@ -137,6 +137,8 @@
               <ul class="side-sub">
                 <li><a href="#backup">Backup</a></li>
                 <li><a href="#restore">Restore and export</a></li>
+                <li><a href="#docker-restore">Restoring on Docker</a></li>
+                <li><a href="#restore-new-machine">Restoring on a new machine</a></li>
                 <li><a href="#updating">Updating</a></li>
                 <li><a href="#fleet-update">Updating every machine</a></li>
                 <li><a href="#docker-update">Docker installs</a></li>
@@ -218,11 +220,23 @@
 
         <h2 id="restore">Restore and export</h2>
         <p>
-          <code>omnesis restore &lt;backup-dir&gt;</code> rebuilds a configuration directory from a
-          backup. Run it with the gateway stopped. It writes to <code>~/.config/omnesis/</code>, or
-          to <code>--target</code>, and swaps the result in only once every file is in place, so a
-          failed restore leaves nothing half-written. Restoring over an existing corpus needs
-          <code>--force</code>, which replaces the whole directory.
+          <code>omnesis restore &lt;backup-dir&gt;</code> puts a backup back into a configuration
+          directory, <code>~/.config/omnesis/</code> or the one <code>--target</code> names. It
+          replaces what a backup holds: the databases, <code>omnesis.json</code>,
+          <code>OMNESIS.md</code>, tokens, config secrets, pasted API keys, sweeps, TLS certificates
+          and the recovery envelope. An item of that kind the backup does not hold is removed, so an
+          index the backup was taken without does not survive beside the restored documents; the
+          gateway rebuilds it, and the search graph, at its next start. Everything else in the
+          directory stays as it was: other backups, models, exports, logs, the keyring passphrase
+          file and the keyring's own entries, and a Docker install's Compose file. In
+          <code>.env</code>, the image tag, the keyring settings and the gateway port stay this
+          machine's.
+        </p>
+        <p>
+          Restoring over an existing corpus needs <code>--force</code>. The restore unpacks the
+          backup inside the directory first and moves it into place only once every file is there,
+          so a failed restore leaves the directory as it was. It refuses to start while a gateway
+          holds the directory.
         </p>
         <p>
           An encrypted backup needs its root key. On the same machine, restore uses the key already
@@ -230,17 +244,17 @@
           standard input) and restore rebuilds the key from it. The databases come back plaintext
           and the gateway encrypts them again at its next start.
         </p>
+        <p>On a source or package install, stop the services around the restore:</p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
-            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis backup --list</span></p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis service stop collector</span>
+              <span class="t-cmd">omnesis backup --list</span>
             </p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis service stop gateway</span>
+              <span class="t-cmd">omnesis service stop</span>
             </p>
             <p>
               <span class="t-prompt">❯</span>
@@ -248,14 +262,79 @@
             </p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis service start gateway</span>
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis service start collector</span>
+              <span class="t-cmd">omnesis service start</span>
             </p>
           </div>
         </div>
+
+        <h3 id="docker-restore">On a Docker install</h3>
+        <p>
+          On a Docker install, run the same command on the host. The <code>omnesis</code> command
+          there stops the containers, runs the restore in a one-off container of the gateway's image
+          with the gateway's mounts and environment, starts the containers again and waits for the
+          gateway to report healthy. A restore that fails leaves the directory as it was, and the
+          containers are started again all the same.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backup --list</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis restore &lt;backup-dir&gt;</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          At a terminal it lists what it will do and asks before replacing a corpus. Without one, as
+          under a script or an agent, it asks nothing and refuses unless <code>--force</code> is
+          given; its progress goes to standard error, so <code>--json</code> leaves standard output
+          with the restore's result alone. It exits non-zero if the gateway does not report healthy
+          within ten minutes; <code>OMNESIS_RESTORE_HEALTH_TIMEOUT</code> sets another limit in
+          seconds. A backup outside the configuration directory is mounted read-only for the
+          restore. <code>--target</code> does not apply: a Docker install restores into its own
+          directory. A host that only collects has no corpus to restore.
+        </p>
+        <p>
+          <code>omnesis service start</code>, <code>stop</code>, <code>restart</code>,
+          <code>status</code> and <code>logs</code> run their
+          <code>docker compose</code> equivalents on a Docker install. The
+          <code>omnesis</code> command from an older release sends <code>restore</code> and
+          <code>service</code> into the container instead, which refuses them and names the host
+          command; <code>omnesis update</code> replaces it.
+        </p>
+
+        <h3 id="restore-new-machine">On a new machine</h3>
+        <p>
+          Install Omnesis on the new machine the way the old one was installed, with encryption at
+          rest if the backup is encrypted, and keep the configuration directory at the same path.
+          Copy the backup directory into <code>~/.config/omnesis/backups/</code>, then restore it
+          with the recovery code. On a Docker install, the <code>omnesis</code> command on the host
+          stops and starts the containers itself; on another install, stop the services first and
+          start them after, as above.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis restore ~/.config/omnesis/backups/2026-03-14T09-12-05 --force --code
+                &lt;recovery code&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The new machine keeps its own keyring passphrase and seals the restored root key with it;
+          the recovery code keeps working. Devices and tokens come back with the backup, so
+          collectors and phones reconnect once the gateway's address reaches the new machine. The
+          backup's certificates come back too: a certificate that names the old machine does not
+          cover a new name, and a device that reaches the gateway by a new name pairs again.
+        </p>
 
         <h3 id="export">Export</h3>
         <p>

@@ -36,7 +36,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { isIP } from "node:net";
-import { hostname as osHostname, userInfo } from "node:os";
+import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 
 import { defineCommand } from "citty";
@@ -57,6 +57,7 @@ import {
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
 import { isFetchConnectionError } from "@omnesis/cli-shared";
+import { currentUsername } from "../service/username.js";
 import { c, EXIT_USER_ERROR, EXIT_FAILURE, GATEWAY_REQUEST_URL, gatewayJson } from "../utils.js";
 import {
   defaultTlsLifecycleDeps,
@@ -578,7 +579,7 @@ export function defaultTlsProvisionEnv(
       // A hardened gateway runs as its own account, which is the one that needs
       // the permission; it is not this account's to take.
       if (existsSync(HARDENED_UNIT_PATH)) return false;
-      const operator = userInfo().username;
+      const operator = currentUsername();
       const root = process.getuid?.() === 0;
       const sudo = root ? "" : ["sudo", "doas"].find(commandExists);
       if (sudo === undefined) return false;

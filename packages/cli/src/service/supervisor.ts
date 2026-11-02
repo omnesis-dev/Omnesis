@@ -15,7 +15,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { CliError, EXIT_FAILURE, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import {
@@ -24,6 +24,7 @@ import {
   liveGatewayHolder,
   type GatewayLockHolder,
 } from "@omnesis/core";
+import { currentUsername } from "./username.js";
 import {
   systemdWritablePaths,
   darwinLogsDir,
@@ -161,7 +162,7 @@ export function createSupervisor(platform: NodeJS.Platform = process.platform): 
       exec: defaultExecRunner,
       stream: defaultStreamRunner,
       home: homedir(),
-      username: userInfo().username,
+      username: currentUsername(),
     });
   }
   throw new CliError(

@@ -163,12 +163,13 @@
 
         <h2 id="services">Services</h2>
         <p>
-          For a Docker install, manage the containers with
-          <code>docker compose -f ~/.config/omnesis/docker-compose.yml</code> followed by
-          <code>ps</code>, <code>logs -f</code>, <code>stop</code>, <code>start</code> or
-          <code>restart</code>. Substitute your config directory if you chose another path.
-          <code>omnesis service</code> manages native OS services, not containers; see
-          <a href="/docs/install#docker">Docker installation</a> for its host CLI wrapper.
+          On a Docker install the services are the containers, and <code>omnesis service</code> on
+          the host runs the <code>docker compose</code> equivalent of <code>start</code>,
+          <code>stop</code>, <code>restart</code>, <code>status</code> and
+          <code>logs</code> (<code>--follow</code>, <code>--lines</code>).
+          <code>docker compose -f ~/.config/omnesis/docker-compose.yml</code> works as well;
+          substitute your config directory if you chose another path. Installing and removing them
+          is the installer's; see <a href="/docs/install#docker">Docker installation</a>.
         </p>
         <p>
           For a native install, the <a href="/docs/install">installer</a> registers the gateway and

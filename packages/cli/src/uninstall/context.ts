@@ -10,13 +10,14 @@
 
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   liveGatewayHolder,
   type CreateSecretStoreOptions,
   type GatewayLockHolder,
 } from "@omnesis/core";
+import { currentUsername } from "../service/username.js";
 import {
   defaultExecRunner,
   defaultStreamRunner,
@@ -115,7 +116,7 @@ export function defaultUninstallContext(): UninstallContext {
               exec: defaultExecRunner,
               stream: defaultStreamRunner,
               home,
-              username: userInfo().username,
+              username: currentUsername(),
             });
       return supervisor;
     },
