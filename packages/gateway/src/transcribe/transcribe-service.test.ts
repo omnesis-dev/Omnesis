@@ -541,3 +541,41 @@ describe("TranscribeService vocabulary lookup", () => {
     }
   });
 });
+
+describe("transcription order", () => {
+  test("runs one at a time, and a queued interactive transcription before queued background ones", async () => {
+    const order: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    const svc = new TranscribeService({ resolveAssignment: () => replay });
+    // Each transcription records its label and holds the transcriber until released.
+    vi.spyOn(svc as never, "ensureCapability").mockResolvedValue({
+      transcribe: async (audio: Uint8Array) => {
+        const label = new TextDecoder().decode(audio);
+        order.push(label);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        active--;
+        return { text: label, language: "en", durationSeconds: 1 };
+      },
+    } as never);
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const runs = [
+      svc.transcribe(enc("source-1"), "audio/ogg", { priority: "background" }),
+      svc.transcribe(enc("source-2"), "audio/ogg", { priority: "background" }),
+      svc.transcribe(enc("source-3"), "audio/ogg", { priority: "background" }),
+    ];
+    await flush();
+    runs.push(svc.transcribe(enc("dictation"), "audio/ogg"));
+    for (let i = 0; i < 4; i++) {
+      while (releases.length === 0) await flush();
+      releases.shift()!();
+      await flush();
+    }
+    await Promise.all(runs);
+    expect(order).toEqual(["source-1", "dictation", "source-2", "source-3"]);
+    expect(maxActive).toBe(1);
+  });
+});

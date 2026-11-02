@@ -107,6 +107,9 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
         // A collector that stopped waiting retries the note on a later sync, so
         // work it no longer waits for is skipped or stopped.
         signal: c.req.raw.signal,
+        // A collector's source audio waits behind anything someone is dictating
+        // right now; a capture from the apps or a watch is that dictation.
+        priority: path === "/inference/transcribe" ? "background" : "interactive",
       });
       switch (outcome.kind) {
         case "unavailable":
