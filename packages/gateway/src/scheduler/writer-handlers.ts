@@ -60,6 +60,11 @@ type Db = Database.Database;
 // at the same priority are not trapped behind the entire rebuild.
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
+// A compute batch carries up to a hundred docs. Same rule as the DF apply: give
+// the writer back between chunks once the slice is spent, so a background
+// write queued at the same priority does not wait for the whole batch.
+const NEAR_DUP_APPLY_SLICE_MS = 100;
+
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
@@ -2291,14 +2296,14 @@ export const writerYieldableHandlers = {
   },
 
   /**
-   * Yieldable apply of a NearDupApplyBatch. Per-doc sub-transactions
-   * with a token poll between docs. When the token requests yield we
-   * pack the un-applied tail into `remaining` and re-enqueue at the
-   * same priority — the higher-priority op slots in between, and the
-   * next call resumes where we left off.
+   * Yieldable apply of a NearDupApplyBatch. Bounded chunk transactions
+   * with a token poll between them. When the token requests yield or the
+   * time slice is spent we pack the un-applied tail into `remaining` and
+   * re-enqueue at the same priority — the waiting op slots in between,
+   * and the next call resumes where we left off.
    */
   "nearDup.applyBatch": (db: Db, token: PreemptToken, batch: NearDupApplyBatch) => {
-    const result = applyNearDupBatch(db, batch, { token });
+    const result = applyNearDupBatch(db, batch, { token, maxSliceMs: NEAR_DUP_APPLY_SLICE_MS });
     if (result.remaining !== null) {
       return { kind: "yield" as const, resume: [result.remaining] };
     }
