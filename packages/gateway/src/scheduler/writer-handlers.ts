@@ -121,6 +121,7 @@ import {
 import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
 import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
 import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
+import { advanceKnowledgeCascade } from "../brain/knowledge/storage.js";
 import { withdrawKnowledgeOwner } from "../brain/knowledge/owner-withdrawal.js";
 
 // Handlers import from canonical homes, not the
@@ -2021,6 +2022,12 @@ import type {
 } from "../transcribe/vocabulary/types.js";
 
 export const writerYieldableHandlers = {
+  /**
+   * Bounded by its step limit and by the preempt token between steps; the
+   * frontier is durable per step, so stopping early only leaves it pending.
+   */
+  "knowledge.advanceCascade": (db: Db, token: PreemptToken, limit: number, now: number) =>
+    advanceKnowledgeCascade(db, limit, now, undefined, token),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
