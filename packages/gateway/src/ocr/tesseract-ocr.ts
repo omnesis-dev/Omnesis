@@ -15,8 +15,8 @@
  * injectable so unit tests run without it.
  */
 
-import { spawn } from "node:child_process";
 import { createLogger } from "@omnesis/core";
+import { processLauncher } from "../process-launcher/index.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:tesseract");
@@ -35,22 +35,12 @@ const defaultTesseractLoader: TesseractModuleLoader = () =>
   import(TESSERACT_SPECIFIER) as Promise<TesseractModule>;
 
 /** Whether the `tesseract` binary is on PATH (resolves quickly via `--version`). */
-function tesseractBinaryPresent(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn("tesseract", ["--version"], { stdio: "ignore" });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve(false);
-    }, 5_000);
-    proc.on("error", () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      resolve(code === 0);
-    });
+async function tesseractBinaryPresent(): Promise<boolean> {
+  const run = await processLauncher().run("tesseract", ["--version"], {
+    timeoutMs: 5_000,
+    captureStdout: false,
   });
+  return !run.failure && run.exitCode === 0;
 }
 
 /**

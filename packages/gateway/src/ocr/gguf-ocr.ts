@@ -13,13 +13,13 @@
  * without llama.cpp or a model on disk.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@omnesis/core";
+import { processLauncher } from "../process-launcher/index.js";
 import { OCR_PROMPT, layoutReplyText } from "./http-vlm-ocr.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
@@ -47,21 +47,9 @@ function binaryResolvable(binPath: string): Promise<boolean> {
   if (binPath !== DEFAULT_BIN && binPath.includes("/")) {
     return Promise.resolve(existsSync(binPath));
   }
-  return new Promise((resolve) => {
-    const proc = spawn(binPath, ["--version"], { stdio: "ignore" });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve(false);
-    }, 5_000);
-    proc.on("error", () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    proc.on("close", () => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
+  return processLauncher()
+    .run(binPath, ["--version"], { timeoutMs: 5_000, captureStdout: false })
+    .then((run) => run.failure === undefined);
 }
 
 /**
@@ -78,63 +66,36 @@ export async function mtmdAvailable(
   return binaryResolvable(cfg.binPath ?? DEFAULT_BIN);
 }
 
-const defaultMtmdRunner: MtmdRunner = (args) =>
-  new Promise<string>((resolve, reject) => {
-    const proc = spawn(
-      args.binPath,
-      [
-        "-m",
-        args.modelPath,
-        "--mmproj",
-        args.mmprojPath,
-        "--image",
-        args.imagePath,
-        "-p",
-        args.prompt,
-        "--temp",
-        "0",
-        "-n",
-        "4096",
-        "-ngl",
-        "99",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"], signal: args.signal, killSignal: "SIGKILL" },
-    );
-    const out: Buffer[] = [];
-    let err = "";
-    let settled = false;
-    const fail = (e: Error): void => {
-      if (settled) return;
-      settled = true;
-      reject(e);
-    };
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      fail(new Error(`llama-mtmd-cli timed out after ${args.timeoutMs}ms`));
-    }, args.timeoutMs);
-    proc.stdout.on("data", (c: Buffer) => out.push(c));
-    proc.stderr.on("data", (c: Buffer) => {
-      err += c.toString();
-    });
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      fail(
-        args.signal?.aborted
-          ? new Error("llama-mtmd-cli stopped: the caller stopped waiting")
-          : new Error(`llama-mtmd-cli failed to start: ${e.message}`),
-      );
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (settled) return;
-      settled = true;
-      if (code !== 0) {
-        reject(new Error(`llama-mtmd-cli exited ${code}: ${err.trim().slice(0, 500)}`));
-        return;
-      }
-      resolve(Buffer.concat(out).toString("utf-8"));
-    });
-  });
+const defaultMtmdRunner: MtmdRunner = async (args) => {
+  const run = await processLauncher().run(
+    args.binPath,
+    [
+      "-m",
+      args.modelPath,
+      "--mmproj",
+      args.mmprojPath,
+      "--image",
+      args.imagePath,
+      "-p",
+      args.prompt,
+      "--temp",
+      "0",
+      "-n",
+      "4096",
+      "-ngl",
+      "99",
+    ],
+    { timeoutMs: args.timeoutMs, ...(args.signal ? { signal: args.signal } : {}) },
+  );
+  if (run.failure === "timeout")
+    throw new Error(`llama-mtmd-cli timed out after ${args.timeoutMs}ms`);
+  if (run.failure === "aborted")
+    throw new Error("llama-mtmd-cli stopped: the caller stopped waiting");
+  if (run.failure) throw new Error(`llama-mtmd-cli failed to start: ${run.failureMessage}`);
+  if (run.exitCode !== 0)
+    throw new Error(`llama-mtmd-cli exited ${run.exitCode}: ${run.stderr.trim().slice(0, 500)}`);
+  return Buffer.from(run.stdout).toString("utf-8");
+};
 
 export interface GgufOcrOptions {
   modelPath: string;
