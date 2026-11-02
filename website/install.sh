@@ -6022,6 +6022,23 @@ docker_runtime_identity() {
   fi
 }
 
+# Where this run writes, checked before anything is written: the config
+# directory and the directory the omnesis command goes in. An account whose home
+# it cannot write, or a config directory an earlier `sudo` run left to root,
+# would otherwise stop the install halfway on a bare shell error. Root writes
+# everywhere, so this only ever stops a login account.
+docker_require_writable_dirs() {
+  for WRITE_TARGET in "$CONFIG_DIR" "$CONFIG_DIR/tls" "$CONFIG_DIR/collector" "$HOME/.local/bin"; do
+    WRITE_PROBE="$WRITE_TARGET"
+    while [ ! -e "$WRITE_PROBE" ] && [ "$WRITE_PROBE" != / ]; do WRITE_PROBE="$(dirname "$WRITE_PROBE")"; done
+    [ -d "$WRITE_PROBE" ] && [ -w "$WRITE_PROBE" ] && [ -x "$WRITE_PROBE" ] && continue
+    WRITE_ACCOUNT="$(id -un 2>/dev/null || echo "this account")"
+    if [ "$WRITE_PROBE" = "$WRITE_TARGET" ]; then WRITE_WHAT="$WRITE_TARGET is"
+    else WRITE_WHAT="$WRITE_TARGET does not exist, and $WRITE_PROBE, where it would be created, is"; fi
+    fail "This install writes to $WRITE_TARGET, but $WRITE_WHAT not writable by $WRITE_ACCOUNT. Give it back to this account (sudo chown -R $WRITE_ACCOUNT '$WRITE_PROBE'), or run the installer as an account whose home it can write, then re-run. Nothing was changed."
+  done
+}
+
 docker_prepare_dirs() {
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
@@ -7977,6 +7994,7 @@ docker_install() {
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_require_writable_dirs
   docker_recorded_passphrase_file
   docker_require_unattended_answers
   docker_runtime_identity
