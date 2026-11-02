@@ -1853,8 +1853,10 @@ export class AgentService {
   }
 
   async listConversationPage(options: ConversationListOptions = {}): Promise<ConversationListPage> {
+    // A cursor pages through the snapshot its first page took, so only a
+    // first page needs the current list.
     return paginateConversations(
-      await this.mergedConversationSummaries(),
+      options.cursor ? [] : await this.mergedConversationSummaries(),
       options,
       this.conversationListSnapshots,
       this.conversationDeletionTombstones,
