@@ -11,7 +11,7 @@
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { parseSourceKey } from "@omnesis/core";
-import type { SerializedDescriptor } from "../utils.js";
+import { EXIT_USER_ERROR, type SerializedDescriptor } from "../utils.js";
 import type { JoinConfirmation } from "./add.js";
 import type { UnionDescriptor } from "../device-picker.js";
 import type { AdminDeviceEntry, AdminSourceEntry } from "./members.js";
@@ -135,6 +135,9 @@ async function runAdd(
       join,
       parseSourceKey,
       joinConfirmation,
+      interactive: joinConfirmation !== "no-terminal",
+      supplied: {},
+      reconnectWaitMs: 0,
     },
   );
 }
@@ -266,7 +269,7 @@ describe("sources add against a configured account", () => {
       throw new Error(`unexpected path ${path}`);
     });
 
-    // Refused, and the exit status says so for a script or an agent.
+    // The run fails with the collector's own reason: nothing was added.
     await expect(
       runAdd(
         [localDescriptor],
@@ -277,7 +280,10 @@ describe("sources add against a configured account", () => {
         devices,
         "~/missing-on-target",
       ),
-    ).rejects.toMatchObject({ name: "CliError", exitCode: 2 });
+    ).rejects.toMatchObject({
+      exitCode: EXIT_USER_ERROR,
+      message: expect.stringContaining("Directory does not exist"),
+    });
 
     expect(mocks.gatewayFetch).not.toHaveBeenCalled();
   });

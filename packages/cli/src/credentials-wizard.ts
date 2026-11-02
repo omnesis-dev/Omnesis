@@ -341,12 +341,24 @@ export async function runCredentialsWizard(
   }
   const fields = await collectCredentialFields(entry, ctx);
   if (!fields) return false;
+  return saveProviderCredentials(entry, ctx.deviceId, fields);
+}
 
+/**
+ * Save a provider-wide credential on the collector — what the wizard does
+ * with the fields it collected, and what `sources add --set` does with fields
+ * given on the command line. Returns `false`, having said why, on failure.
+ */
+export async function saveProviderCredentials(
+  entry: Pick<CredentialsEntry, "fileKey" | "providerName">,
+  deviceId: string,
+  fields: Record<string, string>,
+): Promise<boolean> {
   try {
     await withSpinner(`Saving ${entry.providerName} credentials`, () =>
       gatewayJson(`/admin/credentials/${encodeURIComponent(entry.fileKey)}`, {
         method: "POST",
-        body: JSON.stringify({ deviceId: ctx.deviceId, fields }),
+        body: JSON.stringify({ deviceId, fields }),
       }),
     );
   } catch (err) {

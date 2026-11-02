@@ -4,6 +4,7 @@
 import { defineCommand } from "citty";
 import { sourcesListCommand } from "./sources.js";
 import { addCommand } from "./add.js";
+import { describeSourceCommand } from "./describe.js";
 import { removeCommand } from "./remove.js";
 import { moveSourceCommand } from "./move.js";
 import { membersCommand } from "./members.js";
@@ -29,6 +30,7 @@ export const sourcesCommand = defineCommand({
   subCommands: {
     list: sourcesListCommand,
     add: addCommand,
+    describe: describeSourceCommand,
     remove: removeCommand,
     move: moveSourceCommand,
     members: membersCommand,
