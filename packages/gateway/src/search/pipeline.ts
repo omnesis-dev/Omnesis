@@ -745,6 +745,7 @@ export class SearchPipeline {
           if (name === "vector") {
             return `vector=${r.durationMs}ms[embed=${r.embedMs ?? "?"}ms,sql=${r.sqlMs ?? "?"}ms]`;
           }
+          if (name === "bm25" && r.engine) return `bm25=${r.durationMs ?? "?"}ms[${r.engine}]`;
           return `${name}=${r.durationMs ?? "?"}ms`;
         })
         .join(" ");

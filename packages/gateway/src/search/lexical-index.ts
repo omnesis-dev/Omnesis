@@ -20,14 +20,23 @@
  * The built arrays never change. Each {@link LexicalIndex} — one per thread —
  * follows the `chunks_fts_changes` log to stay current: a chunk inserted,
  * deleted or rewritten since the build is masked out of the arrays and, when it
- * still exists, re-tokenized into a small per-ranker delta. A ranker reads the
- * log at most once a second, so it trails the writer by up to a second.
+ * still exists, re-tokenized into a small per-ranker delta. A query reads the
+ * log at most once a second, so a ranker trails the writer by up to a second.
  * Document frequencies count the arrays plus the delta, so a chunk changed
  * since the build still counts toward its old terms, and the length average
- * keeps its build-time value; both refresh at the next build. When a ranker
- * cannot keep up — too many changes for its time budget, a delta past its cap,
- * or a log pruned past its position — it declines and the caller ranks with
- * FTS5.
+ * keeps its build-time value; both refresh at the next build. A chunk rewritten
+ * again retires its earlier delta copy, and the delta is compacted once retired
+ * postings outnumber live ones, so a few chunks rewritten over and over hold
+ * only their latest text.
+ *
+ * Catching up costs a chunk read and a tokenization per change, so a query
+ * spends at most a time budget on it. A ranker that is still behind after its
+ * budget either declines, and the caller ranks with FTS5, or — when a
+ * background loop keeps it current between queries ({@link LexicalIndex.follow},
+ * see lexical-index-follower.ts) — ranks with the changes it has applied so
+ * far, which that loop brings current within moments. A ranker past its delta
+ * cap, or whose log was pruned past its position, always declines until the
+ * next build.
  *
  * Everything in {@link LexicalIndexData} is a typed array or a number, so the
  * arrays can live on `SharedArrayBuffer`s and serve several search workers
@@ -55,10 +64,15 @@ const PREFIX_EXPANSIONS = 32;
 const CHANGES_REFRESH_MS = 1_000;
 /** Change-log entries applied per read; small enough that one read stays a few milliseconds. */
 const CHANGES_BATCH = 250;
-/** Time one query may spend catching up on changes before it declines instead. */
+/** Time one query may spend catching up on changes before it declines, or ranks with what it has applied. */
 const CHANGES_BUDGET_MS = 25;
-/** Past this many delta postings a ranker declines until the next build — a memory bound. */
+/** Past this many live delta postings a ranker declines until the next build — a memory bound. */
 const DELTA_MAX_POSTINGS = 2_000_000;
+/**
+ * Retired delta postings tolerated before a compaction, whatever the live
+ * count, so a small delta is not rewritten on every change.
+ */
+const DELTA_COMPACT_MIN_RETIRED = 100_000;
 /** One thread's ranker over shared {@link LexicalIndexData}, kept current from the change log. */
 export class LexicalIndex implements LexicalRanker {
   private readonly termCount: number;
@@ -78,6 +92,8 @@ export class LexicalIndex implements LexicalRanker {
       changesBatch: limits.changesBatch ?? CHANGES_BATCH,
       changesBudgetMs: limits.changesBudgetMs ?? CHANGES_BUDGET_MS,
       maxDeltaPostings: limits.maxDeltaPostings ?? DELTA_MAX_POSTINGS,
+      rankWhileBehind: limits.rankWhileBehind ?? false,
+      deltaCompactMinRetired: limits.deltaCompactMinRetired ?? DELTA_COMPACT_MIN_RETIRED,
     };
     this.termCount = data.termStart.length - 1;
     this.accumulator = new Float64Array(data.docCount);
@@ -93,9 +109,11 @@ export class LexicalIndex implements LexicalRanker {
         rowids: [],
         norms: [],
         dead: [],
+        sizes: [],
         byRowid: new Map(),
         live: 0,
         postingCount: 0,
+        livePostings: 0,
         postings: new Map(),
       },
     };
@@ -121,6 +139,21 @@ export class LexicalIndex implements LexicalRanker {
       return base + (extra ? extra.docs.filter((d) => !this.live.delta.dead[d]).length : 0);
     },
   };
+
+  /** The ranker can no longer follow the log; it declines every query until a new build. */
+  get declined(): boolean {
+    return this.live.declined;
+  }
+
+  /**
+   * Apply change-log entries for up to `budgetMs` (at least one batch), for a
+   * loop that keeps the ranker current between queries. Returns true while
+   * entries remain to apply.
+   */
+  follow(db: Db, budgetMs: number): boolean {
+    if (this.live.declined) return false;
+    return this.applyChanges(db, budgetMs) === "behind";
+  }
 
   /** Build in-process; see {@link buildLexicalIndexData}. */
   static build(db: Db, opts: { shared?: boolean } = {}): LexicalIndex {
@@ -241,47 +274,70 @@ export class LexicalIndex implements LexicalRanker {
   }
 
   /**
-   * Apply change-log entries past this ranker's position: mask the changed
-   * chunks out of the built arrays and re-tokenize those that still exist into
-   * the delta. Reads the log at most every {@link CHANGES_REFRESH_MS}. Returns
-   * false — the query should go to FTS5 — when the ranker is behind after its
-   * time budget, its delta is full, or the log was pruned past its position.
+   * Bring the ranker up to date for a query: read the change log at most every
+   * {@link CHANGES_REFRESH_MS} and apply what it holds within the query's time
+   * budget. Returns false — the query should go to FTS5 — when the ranker has
+   * declined, or is still behind after its budget and does not rank while
+   * behind.
    */
   private syncChanges(db: Db): boolean {
     const live = this.live;
     if (live.declined) return false;
-    const now = Date.now();
-    if (now - live.checkedAt < CHANGES_REFRESH_MS) return true;
-    live.checkedAt = now;
+    if (Date.now() - live.checkedAt < CHANGES_REFRESH_MS) return true;
+    const state = this.applyChanges(db, this.limits.changesBudgetMs);
+    return state === "current" || (state === "behind" && this.limits.rankWhileBehind);
+  }
+
+  /**
+   * Apply change-log entries past this ranker's position for up to `budgetMs`:
+   * mask the changed chunks out of the built arrays and re-tokenize those that
+   * still exist into the delta. "behind" when entries remain after the budget;
+   * "declined" — until the next build — when the delta is full or the log was
+   * pruned past this ranker's position.
+   */
+  private applyChanges(db: Db, budgetMs: number): "current" | "behind" | "declined" {
+    const live = this.live;
+    const started = Date.now();
     const read = db.prepare<[number, number], { seq: number; chunk_rowid: number }>(
       "SELECT seq, chunk_rowid FROM chunks_fts_changes WHERE seq > ? ORDER BY seq LIMIT ?",
     );
     const fetch = db.prepare<[string], { rowid: number; content: string; title: string }>(
       "SELECT rowid, content, title FROM chunks WHERE rowid IN (SELECT value FROM json_each(?))",
     );
-    const { changesBatch, changesBudgetMs, maxDeltaPostings } = this.limits;
+    const { changesBatch, maxDeltaPostings, deltaCompactMinRetired } = this.limits;
     for (let batches = 0; ; batches++) {
-      if (batches > 0 && Date.now() - now > changesBudgetMs) {
-        // Still behind: let FTS5 answer, and continue on the next query.
-        live.checkedAt = 0;
-        return false;
+      if (batches > 0 && Date.now() - started > budgetMs) {
+        // Still behind. A ranker that ranks while behind leaves the rest to its
+        // background loop, and its queries read the log again a second later;
+        // one that declines tries again on the next query.
+        live.checkedAt = this.limits.rankWhileBehind ? started : 0;
+        return "behind";
       }
       const changes = read.all(live.lastSeq, changesBatch);
-      if (changes.length === 0) return true;
+      if (changes.length === 0) {
+        live.checkedAt = started;
+        return "current";
+      }
       if (changes[0].seq > live.lastSeq + 1 && this.prunedPast(db, live.lastSeq)) {
         live.declined = true;
-        return false;
+        return "declined";
       }
       const rowids = [...new Set(changes.map((c) => c.chunk_rowid))];
       for (const rowid of rowids) this.forget(rowid);
       const rows = fetch.all(JSON.stringify(rowids));
       for (const chunk of fts5Tokenizer(db).chunks(rows)) this.addToDelta(chunk);
       live.lastSeq = changes[changes.length - 1].seq;
-      if (live.delta.postingCount > maxDeltaPostings) {
+      const delta = live.delta;
+      if (delta.livePostings > maxDeltaPostings) {
         live.declined = true;
-        return false;
+        return "declined";
       }
-      if (changes.length < changesBatch) return true;
+      const retired = delta.postingCount - delta.livePostings;
+      if (retired > Math.max(deltaCompactMinRetired, delta.livePostings)) this.compactDelta();
+      if (changes.length < changesBatch) {
+        live.checkedAt = started;
+        return "current";
+      }
     }
   }
 
@@ -304,6 +360,7 @@ export class LexicalIndex implements LexicalRanker {
     if (prior !== undefined) {
       live.delta.dead[prior] = true;
       live.delta.live--;
+      live.delta.livePostings -= live.delta.sizes[prior];
       live.delta.byRowid.delete(rowid);
     }
   }
@@ -314,6 +371,7 @@ export class LexicalIndex implements LexicalRanker {
     delta.rowids.push(chunk.rowid);
     delta.norms.push(K1 * (1 - B + (B * chunk.length) / this.data.avgLength));
     delta.dead.push(false);
+    delta.sizes.push(chunk.freqs.size);
     delta.byRowid.set(chunk.rowid, d);
     delta.live++;
     for (const [term, f] of chunk.freqs) {
@@ -323,6 +381,43 @@ export class LexicalIndex implements LexicalRanker {
       list.freqs.push(f);
     }
     delta.postingCount += chunk.freqs.size;
+    delta.livePostings += chunk.freqs.size;
+  }
+
+  /**
+   * Drop retired delta docs and their postings, renumbering the live docs in
+   * their original order, so the delta holds only chunks' latest text.
+   */
+  private compactDelta(): void {
+    const delta = this.live.delta;
+    const renumbered = new Int32Array(delta.rowids.length).fill(-1);
+    const rowids: number[] = [];
+    const norms: number[] = [];
+    const sizes: number[] = [];
+    for (let d = 0; d < delta.rowids.length; d++) {
+      if (delta.dead[d]) continue;
+      renumbered[d] = rowids.length;
+      delta.byRowid.set(delta.rowids[d], rowids.length);
+      rowids.push(delta.rowids[d]);
+      norms.push(delta.norms[d]);
+      sizes.push(delta.sizes[d]);
+    }
+    for (const [term, list] of delta.postings) {
+      const docs: number[] = [];
+      const freqs: number[] = [];
+      list.docs.forEach((d, i) => {
+        if (renumbered[d] < 0) return;
+        docs.push(renumbered[d]);
+        freqs.push(list.freqs[i]);
+      });
+      if (docs.length === 0) delta.postings.delete(term);
+      else delta.postings.set(term, { docs, freqs });
+    }
+    delta.rowids = rowids;
+    delta.norms = norms;
+    delta.sizes = sizes;
+    delta.dead = new Array<boolean>(rowids.length).fill(false);
+    delta.postingCount = delta.livePostings;
   }
 
   /** Term ids sharing `prefix`, most frequent first, at most {@link PREFIX_EXPANSIONS}. */
@@ -391,10 +486,18 @@ export class LexicalIndex implements LexicalRanker {
 export interface LexicalIndexLimits {
   /** Change-log entries applied per read. */
   changesBatch?: number;
-  /** Time one query may spend catching up before it declines. */
+  /** Time one query may spend catching up before it declines, or ranks while behind. */
   changesBudgetMs?: number;
-  /** Delta postings past which the ranker declines until the next build. */
+  /** Live delta postings past which the ranker declines until the next build. */
   maxDeltaPostings?: number;
+  /** Retired delta postings tolerated before a compaction, however few are live. */
+  deltaCompactMinRetired?: number;
+  /**
+   * Rank with the changes applied so far when a query's budget runs out before
+   * the ranker has caught up, instead of declining. Only for a ranker that a
+   * background loop keeps current between queries.
+   */
+  rankWhileBehind?: boolean;
 }
 
 /** A ranker's view of changes since its arrays were built. */
@@ -417,12 +520,16 @@ interface Delta {
   norms: number[];
   /** A delta doc superseded by a later change to the same chunk. */
   dead: boolean[];
+  /** Postings each delta doc holds. */
+  sizes: number[];
   /** chunk rowid → its current delta doc. */
   byRowid: Map<number, number>;
   /** Delta docs not dead. */
   live: number;
   /** Postings held, dead docs' included. */
   postingCount: number;
+  /** Postings held by docs not dead. */
+  livePostings: number;
   postings: Map<string, DeltaPostings>;
 }
 

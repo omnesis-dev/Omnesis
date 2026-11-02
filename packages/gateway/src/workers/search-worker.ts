@@ -7,10 +7,12 @@
  * Owns a READ-ONLY `better-sqlite3` handle on `index.db` plus its own
  * {@link UsearchReadRegistry}, and runs the synchronous candidate-generation
  * core (`runCandidateGen`) off the main event loop (Slice 3B). The heavy,
- * blocking part of a search — BM25 over FTS5, native usearch over the HNSW
- * index, the candidate fetch, the pure-JS fusion/boost/diversity, and the
- * full-pool chunk-text + content-hash hydration — executes here so the main
- * thread stays free.
+ * blocking part of a search — BM25 over the in-memory lexical index (or FTS5),
+ * native usearch over the HNSW index, the candidate fetch, the pure-JS
+ * fusion/boost/diversity, and the full-pool chunk-text + content-hash
+ * hydration — executes here so the main thread stays free. Between calls a
+ * {@link LexicalIndexFollower} keeps the lexical index current with the
+ * chunk change log.
  *
  * Read profile — CRITICAL divergence from io-worker: it opens read-only but
  * MUST NOT set `PRAGMA query_only`. The candidate SQL's >10k-allowed-id path
@@ -38,7 +40,7 @@ import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
 import { runCandidateGen } from "../search/candidate-gen.js";
-import { LexicalIndex } from "../search/lexical-index.js";
+import { LexicalIndexFollower } from "../search/lexical-index-follower.js";
 import { openIndexDb } from "../indexer/db.js";
 import { UsearchReadRegistry } from "../indexer/usearch-read-registry.js";
 import { deprioritizeBackgroundWorker } from "./worker-priority.js";
@@ -94,7 +96,8 @@ let pendingLexical: LexicalIndexData | undefined;
 let state: {
   indexDb: Db;
   usearchRead: UsearchReadRegistry;
-  lexical?: LexicalIndex;
+  /** The in-memory lexical ranker, kept current between calls. */
+  lexical: LexicalIndexFollower;
   heartbeatInterval: ReturnType<typeof setInterval>;
   shuttingDown: boolean;
 } | null = null;
@@ -115,7 +118,15 @@ async function handleInit(init: SearchInit): Promise<void> {
       post({ type: "heartbeat", ts: Date.now() });
     }, init.heartbeatIntervalMs);
 
-    state = { indexDb, usearchRead, heartbeatInterval, shuttingDown: false };
+    const lexical = new LexicalIndexFollower(indexDb, {
+      onError: (err) =>
+        log(
+          "warn",
+          "search-worker",
+          `lexical index catch-up failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+    });
+    state = { indexDb, usearchRead, lexical, heartbeatInterval, shuttingDown: false };
     if (pendingLexical) attachLexicalIndex(pendingLexical);
 
     // Yield CPU to real-time work under contention. Search candidate-gen is
@@ -174,7 +185,11 @@ function handleCall(id: number, request: CandidateGenRequest, enqueueMs: number)
   const cpuBefore = process.cpuUsage();
   try {
     const value = runCandidateGen(
-      { indexDb: state.indexDb, usearchRead: state.usearchRead, lexicalRanker: state.lexical },
+      {
+        indexDb: state.indexDb,
+        usearchRead: state.usearchRead,
+        lexicalRanker: state.lexical.ranker,
+      },
       request,
     );
     const execMs = Date.now() - dequeueMs;
@@ -212,7 +227,7 @@ function attachLexicalIndex(data: LexicalIndexData): void {
     return;
   }
   pendingLexical = undefined;
-  state.lexical = new LexicalIndex(data);
+  state.lexical.attach(data);
   log("info", "search-worker", `lexical index attached (${data.docCount} chunks)`);
 }
 
@@ -225,6 +240,7 @@ async function handleShutdown(): Promise<void> {
   state.shuttingDown = true;
 
   clearInterval(state.heartbeatInterval);
+  state.lexical.stop();
   try {
     state.usearchRead.close();
   } catch {
