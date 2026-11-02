@@ -388,20 +388,30 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   const envelopeExists = existsSync(recoveryEnvelopePath(configDir));
   const candidates = collectSecretFileCandidates(configDir);
   const plaintext = plaintextSecretFiles(configDir);
-  // Every step below would find its work done, so there is nothing to back up for.
-  const alreadySecure =
+  // Every step below that touches the data would find its work done. Only the
+  // recovery escrow may still be missing — an install armed with a passphrase
+  // file the operator supplied has none — and writing it changes no store.
+  const encryptedInPlace =
     !passphrasePending &&
     keyringRecorded &&
     root.valid &&
-    envelopeExists &&
     allKeysPresent &&
     storageEncryptionRequired(configDir) &&
     plaintext.length === 0 &&
     mainDbPlain !== true;
+  // Every step below would find its work done, so there is nothing to back up for.
+  const alreadySecure = encryptedInPlace && envelopeExists;
 
   // ── 2. backup ───────────────────────────────────────────────────────
   if (alreadySecure) {
     plan("backup", "Pre-migration backup", "skipped", "nothing to change, so nothing to back up");
+  } else if (encryptedInPlace) {
+    plan(
+      "backup",
+      "Pre-migration backup",
+      "skipped",
+      "already encrypted; only a recovery escrow is added, which changes no data",
+    );
   } else if (!hasGateway) {
     plan(
       "backup",
@@ -511,7 +521,8 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
     dockerRestartStep(docker, opts, { changed, hasGateway, mainDbPlain }, plan);
     return summary;
   }
-  if (alreadySecure) {
+  // A recovery escrow written now is read by nothing that runs: no restart.
+  if (encryptedInPlace) {
     plan("restart", "Service restart", "skipped", "encryption at rest is already in effect");
     return summary;
   }

@@ -17,6 +17,7 @@ import {
   inspectInstallRootKey,
   inspectStorageKey,
   readSecretTextFile,
+  recoveryEnvelopePath,
   storageEncryptionRequired,
 } from "@omnesis/core";
 import { runRollback, runSecure, type SecureDeps } from "./secure.js";
@@ -187,6 +188,35 @@ describe("runSecure — online flow (gateway running)", () => {
     expect(
       ["backup", "root-key", "escrow", "migrate", "storage-keys", "restart"].map(status),
     ).toEqual(Array(6).fill("skipped"));
+  });
+
+  // An install armed with a passphrase file the operator supplied has no
+  // recovery escrow: secure adds one, which changes no data, so no backup.
+  test("an encrypted install missing only its recovery escrow gets one without a backup", async () => {
+    const configDir = tmp();
+    writeFileSync(join(configDir, "omnesis.db"), Buffer.from("not-a-plaintext-sqlite-header!"));
+    await runSecure(makeDeps(configDir, { gatewayHealthy: async () => true }), {
+      dryRun: false,
+      skipBackup: false,
+    });
+    rmSync(recoveryEnvelopePath(configDir));
+    const onlineBackup = vi.fn(async () => {});
+    const restartService = vi.fn(async () => "restarted" as const);
+
+    const again = await runSecure(
+      makeDeps(configDir, { gatewayHealthy: async () => true, onlineBackup, restartService }),
+      { dryRun: false, skipBackup: false },
+    );
+
+    expect(onlineBackup).not.toHaveBeenCalled();
+    expect(restartService).not.toHaveBeenCalled();
+    expect(existsSync(join(configDir, "backups"))).toBe(false);
+    const step = (id: string) => again.steps.find((s) => s.id === id);
+    expect(step("backup")?.status).toBe("skipped");
+    expect(step("backup")?.detail).toContain("only a recovery escrow");
+    expect(step("escrow")?.status).toBe("done");
+    expect(again.recoveryCode).toBeTruthy();
+    expect(existsSync(recoveryEnvelopePath(configDir))).toBe(true);
   });
 
   test("a secured install whose gateway has not encrypted its database yet still backs up", async () => {
