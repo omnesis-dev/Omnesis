@@ -53,6 +53,12 @@ const PAIR_NAME = "field-station-collector";
  */
 const CLI_SHIM = `#!/bin/sh
 shift 2>/dev/null || true
+# pair --help answers before anything is logged, as the real CLI's does; a
+# test can drop --name to stand in for a release from before it.
+if [ "$1" = pair ] && [ "$2" = --help ]; then
+  [ -n "$OMNESIS_TEST_PAIR_NO_NAME" ] || echo "  --name  Name this device"
+  exit 0
+fi
 printf '%s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
 case "$1" in
   --version) echo "0.10.0" ;;
@@ -150,6 +156,23 @@ describe("install.sh --collector: the happy path", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.calls).not.toContain("pair stdin is a tty");
     expect(callStartingWith(run.calls, "pair ")).toContain(`pair ${PAIRING_CODE}`);
+  });
+
+  test("with a CLI release from before `pair --name`, pairs without it", () => {
+    // The installer is always the newest; the CLI it installs is the newest
+    // release, which can predate a flag the installer knows.
+    const run = runInstaller(
+      "older-cli",
+      [...CODED, "--gateway-url", GATEWAY_URL, "--trust-fingerprint", `sha256:${GATEWAY_FP}`],
+      { OMNESIS_TEST_PAIR_NO_NAME: "1" },
+    );
+
+    expect(run.status, run.output).toBe(0);
+    expect(callStartingWith(run.calls, "pair ")).toBe(
+      `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
+        `--trust-fingerprint sha256:${GATEWAY_FP} ` +
+        `--save ${join(run.configDir, "collector-token")}`,
+    );
   });
 
   test("pairs, registers the collector unit, and reports the device online", () => {
