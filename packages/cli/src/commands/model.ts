@@ -138,6 +138,15 @@ export function redrawProgressLine(line: string, previous: string): string {
   return `\r${line}${" ".repeat(Math.max(0, previous.length - line.length))}`;
 }
 
+/**
+ * What a progress tick writes: the redrawn line on a terminal, nothing
+ * elsewhere. A log or a program reading the output gets the start and the
+ * result lines, not a stream of carriage-return redraws joined into one line.
+ */
+export function progressTick(line: string, previous: string, terminal: boolean): string {
+  return terminal && line !== previous ? redrawProgressLine(line, previous) : "";
+}
+
 function pctBar(d: ActiveDownload): string {
   const total = d.progress.totalBytes || 1;
   const pct = Math.min(100, Math.floor((d.progress.downloadedBytes / total) * 100));
@@ -546,7 +555,7 @@ const modelInstallCommand = defineCommand({
         const m = ov.installed.find((x) => x.id === entry.id);
         if (m) {
           console.log(
-            `\n${c.green}✔${c.reset} Installed ${entry.id} (${formatSize(m.sizeBytes)}, sha256=${m.sha256.slice(0, 12)}…)`,
+            `${lastLine ? "\n" : ""}${c.green}✔${c.reset} Installed ${entry.id} (${formatSize(m.sizeBytes)}, sha256=${m.sha256.slice(0, 12)}…)`,
           );
           console.log(modelReadyHint(entry, ov.inference.assignments));
         } else {
@@ -558,8 +567,9 @@ const modelInstallCommand = defineCommand({
         break;
       }
       const line = pctBar(dl);
-      if (line !== lastLine) {
-        process.stdout.write(redrawProgressLine(line, lastLine));
+      const tick = progressTick(line, lastLine, process.stdout.isTTY === true);
+      if (tick) {
+        process.stdout.write(tick);
         lastLine = line;
       }
       await sleep(500);
