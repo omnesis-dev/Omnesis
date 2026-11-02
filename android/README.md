@@ -21,3 +21,22 @@ Build the Android app from this checkout with JDK 17, the Android SDK, and the c
 The app uses the shared `omnesis://` URI scheme for some links. When two Omnesis builds coexist, Android may ask which app should open such a link; open the intended app directly if needed.
 
 See the [Notifications guide](https://omnesis.dev/docs/notifications#setup) for FCM setup, status and repair.
+
+## Task widgets
+
+Add **Omnesis → Tasks** from the launcher's widget picker, then resize it to fit.
+The widget adapts from compact to wide layouts and offers day, week and month
+browsing, task pages and completion buttons. Each widget has independent
+navigation. Tap a task title to open its details in the app.
+
+`app/.../widgets/` owns the native RemoteViews renderer, private action receiver,
+WorkManager refreshes, date projection and compact encrypted snapshot cache.
+Widgets read the app's existing pairing through `PairingService` and use the same
+HTTPS trust policy and Tasks client. Rendered actions carry an opaque pairing
+authority digest, so a checkbox from a previous pairing cannot act on the new
+one. The cache is sealed with the Android Keystore and invalidated when the
+pairing changes; credentials are never copied into widget metadata or worker
+inputs. A failed completion leaves the task open.
+
+`TaskWidgetScreenshotTest` renders the actual RemoteViews in compact, medium,
+large and tablet sizes, including light/dark and offline/empty/error states.

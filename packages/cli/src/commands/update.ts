@@ -83,6 +83,7 @@ import {
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
 import { dockerReleaseImages, newestCommonDockerTag } from "../update/docker-registry.js";
+import { IMAGE_CLEANUP_FILE, removePreviousDockerImages } from "../update/docker-images.js";
 import {
   explainDeniedSocket,
   probeDockerSocket,
@@ -123,6 +124,7 @@ import {
   assessDockerApplyEvidence,
   assessSourceApplyEvidence,
   assessUpdate,
+  migrationBackupNote,
   channelToDistTag,
   CLI_PACKAGE,
   completedDockerApplyState,
@@ -489,6 +491,17 @@ export interface UpdateFlowDeps {
   /** Take an online pre-update backup through the gateway's API. */
   backup(note: string, purpose: "pre-update"): Promise<void>;
   /**
+   * Where this host's gateway writes its backups, for the plan to name. Absent
+   * where that is not this config directory, as for a dedicated gateway.
+   */
+  backupsDir?: string;
+  /**
+   * Remove a container install's images from `previous` that `target` does
+   * not use, once the containers run `target`. Never fails the update: what
+   * it could not remove, it says. Absent where no images are pulled.
+   */
+  removePreviousImages?(previous: string, target: string): Promise<void>;
+  /**
    * Save this host's gateway config beside it for the newer release that
    * restores it (`saveNewerSettings`), before a build that may be older takes
    * it over and drops the settings it does not know. `releases` are those
@@ -748,6 +761,20 @@ interface RollbackMemory {
 
 // ── The per-host plan ───────────────────────────────────────────────────
 
+/** What a successful apply says it did; the update itself is not finished yet. */
+function appliedLine(installs: ApplyPlan["installs"], targetLabel: string): string {
+  switch (installs) {
+    case "images":
+      return `Pulled the ${targetLabel} images.`;
+    case "package":
+      return `Installed ${targetLabel}.`;
+    case "build":
+      return `Built ${targetLabel}.`;
+    default:
+      return assertNever(installs);
+  }
+}
+
 /** One line of the plan, as the operator reads it before confirming. */
 function describeStep(step: UpdateStep, targetLabel: string): string {
   switch (step.kind) {
@@ -781,6 +808,8 @@ function describeStep(step: UpdateStep, targetLabel: string): string {
       return `offer to restart ${step.harness}`;
     case "harness-restart-hint":
       return `report that ${step.harness} needs restarting to load the new plugin`;
+    case "remove-previous-images":
+      return `remove the ${step.previous} images once ${targetLabel} is running`;
     default:
       return assertNever(step);
   }
@@ -1198,6 +1227,8 @@ async function executeHostPlan(
   const unrefreshed = new Set<Harness>();
   // Daemons whose unit this run rewrote: their restart has to load it.
   const rewritten = new Set<ServiceComponent>();
+  // Daemons whose restart failed and that may still run the previous build.
+  const notRestarted = new Set<ServiceComponent>();
   const applyState = applyPlan.apply.length > 0 || phase.applied ? applyPlan.applyState : undefined;
   const applyIndex = steps.findIndex((step) => step.kind === "apply");
   const daemons = new StoppedForBuild(deps);
@@ -1425,10 +1456,12 @@ async function executeHostPlan(
               );
             }
           }
+          // What is on disk, not the update finished: restarts and the health
+          // wait still follow, here or in the build this hands over to.
           console.log(
             applyPlan.apply.length === 0
               ? `${c.green}✔${c.reset} Already on ${targetLabel}.`
-              : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
+              : `${c.green}✔${c.reset} ${appliedLine(applyPlan.installs, targetLabel)}`,
           );
           // A daemon no later step restarts comes back once the build is in
           // place; one that a later step restarts waits for that step.
@@ -1503,6 +1536,7 @@ async function executeHostPlan(
             // A collector that will not restart leaves the gateway serving the
             // new build, which is the half worth keeping. Say so rather than
             // undoing an upgrade that succeeded.
+            notRestarted.add(step.component);
             console.log(
               `${c.yellow}! The ${step.component} did not restart: ${detail}. ` +
                 `Run ${c.bold}${manualRestartCommand(step.component)}${c.reset}${c.yellow}.${c.reset}`,
@@ -1588,10 +1622,40 @@ async function executeHostPlan(
           }
           break;
         }
+        case "remove-previous-images": {
+          // Past the point of no return, so nothing here fails the update: the
+          // images are only disk space, and what could not be removed is said.
+          if (notRestarted.size > 0) {
+            console.log(
+              `${c.dim}Kept the ${step.previous} images: the ${[...notRestarted].join(" and ")} ` +
+                `may still run from them.${c.reset}`,
+            );
+            break;
+          }
+          try {
+            await deps.removePreviousImages?.(step.previous, applyPlan.target);
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            console.log(
+              `${c.yellow}! Could not remove the ${step.previous} images: ${detail}${c.reset}`,
+            );
+          }
+          break;
+        }
         default:
           assertNever(step);
       }
     }
+    // The one line that says the update is done, after every step that could
+    // still have undone it or left something on the previous build.
+    const owed =
+      notRestarted.size > 0 ||
+      steps.some((step) => step.kind === "restart-hint" || step.kind === "harness-restart-hint");
+    console.log(
+      owed
+        ? `${c.green}✔${c.reset} Installed ${targetLabel}. Finish the update with the steps above.`
+        : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
+    );
   } finally {
     release?.();
     await daemons.startAll();
@@ -1642,11 +1706,15 @@ export async function runUpdateContinuation(
   deps: UpdateFlowDeps,
 ): Promise<void> {
   const { label, expectVersion } = continuationTarget(offer.subject);
+  const { subject } = offer;
   const steps = orderForHandoff(
     planHostUpdate(deps.roles, {
       backup: offer.deferredBackup !== null,
       restart: deps.restart,
       serviceDefinitions: deps.serviceDefinitions !== undefined,
+      ...(subject.method === "docker" && subject.previous !== subject.target
+        ? { previousImages: subject.previous }
+        : {}),
     }),
     offer.deferredBackup,
   );
@@ -1678,6 +1746,13 @@ function printPlan(steps: readonly UpdateStep[], targetLabel: string): void {
   console.log("This host will:");
   for (const step of steps) {
     console.log(`  ${c.cyan}-${c.reset} ${describeStep(step, targetLabel)}`);
+  }
+}
+
+/** The warnings under a plan: the assessment's, then what its migrations mean for it. */
+function printUpdateNotes(notes: readonly string[], migration: string | null): void {
+  for (const note of [...notes, ...(migration ? [migration] : [])]) {
+    console.log(`${c.yellow}! ${note}${c.reset}`);
   }
 }
 
@@ -1928,9 +2003,10 @@ export async function updateNpmGlobal(
   );
   const steps = orderForHandoff(planned, offer?.deferredBackup ?? null);
   printPlan(steps, target);
-  for (const note of assessment.notes) {
-    console.log(`${c.yellow}! ${note}${c.reset}`);
-  }
+  printUpdateNotes(
+    assessment.notes,
+    migrationBackupNote(assessment.direction, steps, deps.backupsDir),
+  );
   if (opts.dryRun) {
     if (assessment.requiresForce && !opts.force) {
       console.log(
@@ -2197,23 +2273,24 @@ export async function updateSourceCheckout(
     });
     // A preview fetches nothing, so an edge target's manifest version is not
     // known here and its preview shows the order without a hand-over.
-    printPlan(
-      orderForHandoff(
+    const previewed = orderForHandoff(
+      planned,
+      handoffBackup(
+        deps,
+        "source",
+        opts.edge || opts.targetCommit ? null : versionFromStableTag(target),
         planned,
-        handoffBackup(
-          deps,
-          "source",
-          opts.edge || opts.targetCommit ? null : versionFromStableTag(target),
-          planned,
-        ),
       ),
-      targetLabel,
     );
+    printPlan(previewed, targetLabel);
+    printUpdateNotes(
+      assessment?.notes ?? [],
+      migrationBackupNote(assessment?.direction ?? "unreleased", previewed, deps.backupsDir),
+    );
+  } else {
+    // A real run prints what its migrations mean under its plan, once that is known.
+    printUpdateNotes(assessment?.notes ?? [], null);
   }
-  const notes = assessment?.notes ?? [
-    "Edge can contain unreleased changes. Back up before running it: omnesis backup --note pre-upgrade",
-  ];
-  for (const note of notes) console.log(`${c.yellow}! ${note}${c.reset}`);
   if (opts.dryRun) {
     if (assessment?.requiresForce && !opts.force) {
       console.log(
@@ -2412,6 +2489,10 @@ export async function updateSourceCheckout(
     );
   }
   printPlan(steps, targetLabel);
+  printUpdateNotes(
+    [],
+    migrationBackupNote(assessment?.direction ?? "unreleased", steps, deps.backupsDir),
+  );
 
   await deps.confirm(`Update the checkout at ${opts.rootDir} to ${target}?`);
   try {
@@ -2682,6 +2763,7 @@ export async function updateDocker(
   const planned = planHostUpdate(roles, {
     backup: opts.backup !== false,
     restart: flowDeps.restart,
+    ...(baseline !== target ? { previousImages: baseline } : {}),
   });
   const offer = continuationOffer(
     flowDeps,
@@ -2697,7 +2779,10 @@ export async function updateDocker(
   );
   const steps = orderForHandoff(planned, offer?.deferredBackup ?? null);
   printPlan(steps, target);
-  for (const note of assessment.notes) console.log(`${c.yellow}! ${note}${c.reset}`);
+  printUpdateNotes(
+    assessment.notes,
+    migrationBackupNote(assessment.direction, steps, flowDeps.backupsDir),
+  );
   if (opts.dryRun) {
     if (assessment.requiresForce && !opts.force) {
       console.log(
@@ -3254,6 +3339,27 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
       // an operator leaves it on.
       await runBackup({ includeIndex: false, note, purpose });
     },
+    // Online or copied offline, a gateway that keeps its state in this config
+    // directory backs up into it; a dedicated gateway's is root's.
+    ...(roles.gateway.present && !roles.gateway.hardened
+      ? { backupsDir: join(configDir, "backups") }
+      : {}),
+    removePreviousImages:
+      plan.kind === "docker"
+        ? (previous, target) =>
+            removePreviousDockerImages(
+              {
+                composeFile: plan.composeFile,
+                previous,
+                target,
+                pendingFile: join(plan.projectDir, IMAGE_CLEANUP_FILE),
+              },
+              {
+                run: (spec) => spawnRunner(spec, "capture"),
+                log: (line) => console.log(line),
+              },
+            )
+        : undefined,
     offlineBackup:
       plan.kind === "docker"
         ? undefined

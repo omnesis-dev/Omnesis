@@ -39,6 +39,12 @@ const SYSTEMD_HOST = LINUX && existsSync("/run/systemd/system");
  */
 const CLI_SHIM = `#!/bin/sh
 shift 2>/dev/null || true
+# pair --help answers before anything is logged, as the real CLI's does; a
+# test can drop --name to stand in for a release from before it.
+if [ "$1" = pair ] && [ "$2" = --help ]; then
+  [ -n "$OMNESIS_TEST_PAIR_NO_NAME" ] || echo "  --name  Name this device"
+  exit 0
+fi
 printf '%s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
 case "$1" in
   --version) echo "0.10.0" ;;
@@ -152,8 +158,13 @@ describe("install.sh --hardened", () => {
         },
       );
       expect(collector.status, collector.output).toBe(0);
-      expect(collector.calls).toContain(
-        `pair K7QX2M9ZB4 --gateway-url https://localhost:7600 --trust-fingerprint ${fingerprint} --save ${join(collector.configDir, "collector-token")}`,
+      // The pairing asks for this machine's <host>-collector name, from its hostname.
+      const pair = collector.calls.find((call) => call.startsWith("pair "));
+      expect(pair).toMatch(
+        new RegExp(
+          `^${`pair K7QX2M9ZB4 --gateway-url https://localhost:7600 --trust-fingerprint ${fingerprint} --save ${join(collector.configDir, "collector-token")}`.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")} --name [a-z0-9-]+-collector$`,
+          "u",
+        ),
       );
       expect(collector.calls.some((call) => call.startsWith("service install collector"))).toBe(
         true,

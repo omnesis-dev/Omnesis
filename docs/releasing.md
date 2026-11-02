@@ -292,7 +292,9 @@ section for this version as its body, or refreshes the body of the PR that
 already exists for the branch.
 
 **`tag`** runs the existing preflight — fetch origin, require a clean tree at
-exactly `origin/main`, rerun the version guard, refuse an existing local or
+a commit on `origin/main` (main may have moved past the release commit while
+its CI ran; the later commits are not in the release, and the preflight says
+how many there are), rerun the version guard, refuse an existing local or
 remote tag, refuse a commit with no green `full-validation` run from a push to
 `main` or a manual dispatch (the local enforcement of step 7 below: an
 unvalidated commit would fail release verification and burn the version
@@ -360,7 +362,8 @@ Cutting the tag stays a human decision.
 6. Commit, then `npm run release -- pr`. It pushes the branch, then opens the
    pull request or, when one is open, refreshes its title and body.
 7. Merge the release commit to `main` and wait for its main-branch CI verdict.
-8. On that exact checkout, `npm run release -- tag` — preflight, then the
+8. On a clean checkout of the release commit (`git checkout --detach <sha>`
+   when main has moved on since), `npm run release -- tag` — preflight, then the
    annotated tag on the verified commit.
 9. `git push origin v<version>` — this is the act that publishes.
 

@@ -133,6 +133,12 @@ describe("pairing state file", () => {
     expect(readCollectorPairingState(dir)).toEqual(state);
   });
 
+  test("round-trips the gateway's id for the device", () => {
+    const state = paired({ deviceId: "dev_0123456789" });
+    writeCollectorPairingState(dir, state);
+    expect(readCollectorPairingState(dir)?.deviceId).toBe("dev_0123456789");
+  });
+
   test("never stores the token itself", () => {
     writeCollectorPairingState(dir, paired());
     const raw = readCollectorPairingState(dir);

@@ -49,6 +49,15 @@ final class TaskFanController {
         }
     }
 
+    /// A viewport change must not move targets under a resting finger.
+    /// Close without acting if the old layout no longer fits on screen.
+    func updateBounds(_ updated: CGRect) {
+        bounds = updated
+        if let session, session.targets.contains(where: { !updated.contains($0.frame) }) {
+            dismiss()
+        }
+    }
+
     /// Opens the fan for `task` at `point`, where the finger pressed.
     /// `tracking` is false when no finger drives it (VoiceOver): it opens
     /// ready for taps.

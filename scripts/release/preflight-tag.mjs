@@ -45,8 +45,19 @@ export function preflightTag(
   if (status.code !== 0 || status.stdout.trim()) throw new Error("Release checkout is not clean");
   const head = git(root, ["rev-parse", "HEAD"]);
   const main = git(root, ["rev-parse", "origin/main"]);
-  if (head.code !== 0 || main.code !== 0 || head.stdout.trim() !== main.stdout.trim()) {
-    throw new Error("HEAD is not the exact fetched origin/main commit");
+  if (head.code !== 0 || main.code !== 0) throw new Error("Could not resolve HEAD and origin/main");
+  // The release commit must be on main, but main may move on while its CI
+  // runs: a pull request merged after it is not part of this release and must
+  // not force a second release commit. The version guard above has already
+  // checked that HEAD carries this tag's version and no pending changeset.
+  const behind = [];
+  if (head.stdout.trim() !== main.stdout.trim()) {
+    const onMain = git(root, ["merge-base", "--is-ancestor", "HEAD", "origin/main"]);
+    if (onMain.code !== 0) throw new Error("HEAD is not a commit on the fetched origin/main");
+    const count = git(root, ["rev-list", "--count", "HEAD..origin/main"]);
+    behind.push(
+      `ℹ Tagging ${head.stdout.trim().slice(0, 9)}, ${count.stdout.trim() || "some"} commit(s) behind origin/main; those commits are not in this release.`,
+    );
   }
   if (git(root, ["show-ref", "--verify", "--quiet", `refs/tags/${tag}`]).code === 0) {
     throw new Error(`Local tag ${tag} already exists`);
@@ -72,6 +83,7 @@ export function preflightTag(
   const verdict = fullCiVerdict(runs, sha);
   if (!verdict.ok) throw new Error(releaseVerdictBlocker(tag, sha, verdict));
   const notes = [
+    ...behind,
     formatVerdict(verdict),
     ...checkInstallE2eGate(root, { allowFailed: allowFailedInstallE2e, gh }),
   ];

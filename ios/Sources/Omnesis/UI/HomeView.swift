@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import Foundation
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 import UIKit
@@ -40,9 +39,14 @@ extension HomeView {
     /// the type checker.
     private func tracksDeferredPresentations(_ content: some View) -> some View {
         content
+            .onChange(of: router.navigationRevision) { _, _ in
+                // A mounted destination can consume the target before home
+                // observes it. The revision still closes the menu in that case.
+                menuOpen = false
+                invalidateAutomaticForegroundWork()
+            }
             .onChange(of: router.pendingTarget) { _, target in
                 guard target != nil else { return }
-                invalidateAutomaticForegroundWork()
                 requestDeferred(.pushTarget)
             }
             .onChange(of: store.relayPushConsentRequest) { _, request in
@@ -75,7 +79,7 @@ extension HomeView {
             accessAuthorization: accessAuthorizationPresentation != nil,
             privacyApproval: privacyApprovalPresentation != nil,
             privacyLookup: privacyApprovalLookupInFlight,
-            capture: showCapture,
+            capture: showCapture || unifiedCapture,
             relayConsent: store.relayPushConsentRequest != nil
         )
     }
@@ -156,6 +160,13 @@ extension HomeView {
     /// presentation has already gone ends first, so it cannot hold the queue,
     /// and a presenter that leaves nothing on screen hands the turn straight on.
     private func presentDeferred() {
+        // A system voice entry opens over an in-app note without taking its draft.
+        if pendingCaptureSurface != nil, showCapture, !unifiedCapture,
+           !screen.hasSheet, !store.phoneSetup.isGateActive {
+            store.phoneSetup.withdrawDeferredPresentation(.capture)
+            _ = presentPendingCapture()
+            return
+        }
         store.phoneSetup.settleDeferredPresentations(on: screen)
         while let presenter = store.phoneSetup.nextDeferredPresentation(screenIsFree: isScreenFree) {
             guard !present(presenter) else { return }
@@ -192,6 +203,7 @@ extension HomeView {
     /// Send a pending push target to its destination.
     private func routePendingTarget() -> Bool {
         guard let target = router.pendingTarget else { return false }
+        menuOpen = false
         if case .accessAuthorization = target {
             _ = router.consume()
             accessAuthorizationPresentation = AccessAuthorizationPresentation(initialCode: nil)
@@ -214,7 +226,8 @@ extension HomeView {
         guard let surface = pendingCaptureSurface else { return false }
         pendingCaptureSurface = nil
         captureSurface = surface
-        showCapture = true
+        revealCapture()
+        unifiedCapture = true
         return true
     }
 
@@ -278,6 +291,7 @@ struct HomeView: View {
     /// system alert, Control Center or an incoming-call banner.
     @State private var sceneWasBackgrounded = false
     @State private var captureSurface: NoteSurface = .app
+    @State private var unifiedCapture = false
     /// `CaptureRouter.requestCount` values already turned into a
     /// presentation, so re-renders don't re-present.
     @State private var consumedCaptureRequests: Int = 0
@@ -310,6 +324,7 @@ struct HomeView: View {
     }
 
     private func closeCapture() {
+        unifiedCapture = false
         showCapture = false
     }
 
@@ -349,12 +364,32 @@ struct HomeView: View {
                 // the Cancel button. Inside the container it is a surface like
                 // any other.
                 if showCapture {
-                    CaptureView(surface: captureSurface, onClose: closeCapture)
+                    CaptureView(surface: .app, onClose: { showCapture = false }, suspended: unifiedCapture)
                         .environment(store)
+                        .opacity(unifiedCapture ? 0 : 1)
+                        .allowsHitTesting(!unifiedCapture)
+                        .accessibilityHidden(unifiedCapture)
                         .transition(.move(edge: .bottom))
+                }
+                if unifiedCapture {
+                    CaptureView(
+                        surface: captureSurface,
+                        onClose: { unifiedCapture = false },
+                        unified: true,
+                        onAsk: { text in
+                            store.agent.newConversation()
+                            store.agent.composerDraft = text
+                            selection = .agent
+                            closeCapture()
+                            Task { await store.agent.sendComposerDraft(text) }
+                        }
+                    )
+                    .environment(store)
+                    .transition(.move(edge: .bottom))
                 }
             }
             .animation(.easeInOut(duration: 0.28), value: showCapture)
+            .animation(.easeInOut(duration: 0.28), value: unifiedCapture)
         }
         // Lets a gateway-error placeholder deep within any section (e.g.
         // the agent's "no model assigned" first-run state) jump straight
@@ -436,6 +471,7 @@ struct HomeView: View {
         .environment(\.openCapture) {
             invalidateAutomaticForegroundWork()
             captureSurface = .app
+            unifiedCapture = false
             showCapture = true
         }
 
@@ -595,8 +631,8 @@ struct HomeView: View {
         consumedForegroundRequest = request.id
         guard let action = ForegroundNavigationArbiter.automaticAction(
             request.action,
-            pushPending: router.pendingTarget != nil,
-            capturePending: showCapture || captureRouter.isFresh()
+            pushPending: !router.allowsAutomaticNavigation(since: request.navigationRevision),
+            capturePending: showCapture || unifiedCapture || captureRouter.isFresh()
         ) else { return }
 
         switch action {
@@ -608,8 +644,8 @@ struct HomeView: View {
             automaticForegroundTask = Task { @MainActor in
                 await Task.yield()
                 guard !Task.isCancelled,
-                      router.pendingTarget == nil,
-                      !showCapture,
+                      router.allowsAutomaticNavigation(since: request.navigationRevision),
+                      !showCapture, !unifiedCapture,
                       !captureRouter.isFresh() else { return }
                 await store.agent.resumeConversation(id: id)
             }
@@ -621,17 +657,12 @@ struct HomeView: View {
         }
     }
 
-    /// Queue pending `CaptureRouter` requests for the capture surface. A
-    /// request's freshness is judged when home first sees it, so one made
-    /// while phone setup holds the screen still opens once setup closes, while
-    /// a control tap that sat unconsumed (e.g. filed before pairing, seen only
-    /// when this view first appears minutes later) never pops up.
+    /// Judge freshness when Home first sees a request. Fresh requests wait through setup;
+    /// pre-pairing requests first seen minutes later are ignored.
     private func consumeCaptureRequests() {
         guard captureRouter.requestCount > consumedCaptureRequests else { return }
         consumedCaptureRequests = captureRouter.requestCount
-        guard captureRouter.isFresh() else { return }
-        pendingCaptureSurface = NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app
-        requestDeferred(.capture)
+        handleCaptureRequest(isFresh: captureRouter.isFresh(), surface: NoteSurface(rawValue: captureRouter.lastSurfaceSlug) ?? .app)
     }
 
     /// Offer the oldest waiting privacy decision, if the app coming to the
@@ -703,21 +734,31 @@ struct HomeView: View {
                     || store.phoneSetup.isGateActive,
                 pushPending: router.pendingTarget != nil,
                 pushRoutedMeanwhile: router.consumedSince(lookupStartedAt),
-                capturePending: showCapture || captureRouter.isFresh()
+                capturePending: showCapture || unifiedCapture || captureRouter.isFresh()
             )
         )
     }
 
-    /// `omnesis://capture[?surface=<slug>]` — the deep link the Lock
-    /// Screen / Control Center control's `OpenURLIntent` uses. Other
-    /// URLs fall through untouched.
+    /// Reveal capture for its control URL; ignore unrelated deep links.
     private func handleCaptureURL(_ url: URL) {
-        guard url.host == "capture" || url.path == "/capture" else { return }
+        guard CaptureRequestHandling.accepts(url) else { return }
         invalidateAutomaticForegroundWork()
         let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "surface" })?.value
-        pendingCaptureSurface = slug.flatMap(NoteSurface.init(rawValue:)) ?? .control
-        requestDeferred(.capture)
+        handleCaptureRequest(isFresh: true, surface: slug.flatMap(NoteSurface.init(rawValue:)) ?? .control)
+    }
+
+    /// Reveal capture when it is already open; otherwise queue it on `surface`.
+    private func handleCaptureRequest(isFresh: Bool, surface: NoteSurface) {
+        CaptureRequestHandling.handle(isFresh: isFresh, isPresented: unifiedCapture, reveal: revealCapture) {
+            pendingCaptureSurface = surface
+            requestDeferred(.capture)
+        }
+    }
+
+    private func revealCapture() {
+        menuOpen = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func invalidateAutomaticForegroundWork() {

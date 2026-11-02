@@ -27,6 +27,7 @@ import { createInteractiveMemoryProfile } from "../interactive-memory.js";
 import { resolveBrainSettings } from "../config.js";
 import { resolveSelfMemory } from "../self-memory.js";
 import { listLivePersonAnnotationsForPerson } from "../storage/person-annotations.js";
+import { renderNoteConversationContext } from "../../agent/note-context.js";
 import {
   NOTE_AGENT_MAX_ATTEMPTS,
   NOTE_RUN_STALE_MS,
@@ -49,7 +50,6 @@ import {
   cancelNoteHandoff,
 } from "./handoffs.js";
 import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
-import { renderNoteConversationContext } from "../../agent/note-context.js";
 import {
   noteTextChange,
   NOTE_AGENT_SYSTEM_PROMPT,
@@ -1730,6 +1730,49 @@ describe("note agent turn", () => {
       text: "Saved the note; no task was marked done.",
       changes: [],
     });
+  });
+
+  test("explicit knowledge-read off keeps captured task references without reading a current snapshot", async () => {
+    const taskId = "loop_exhibit_settings";
+    expect(
+      applyTaskCommand(
+        db,
+        {
+          kind: "create",
+          surface: "tasks",
+          runId: "user:fixture",
+          id: taskId,
+          origin: "user",
+          title: "Canonical exhibit maintenance",
+          scheduledFor: "2026-05-18",
+        },
+        T0,
+      ).ok,
+    ).toBe(true);
+    enqueueNewNotes(db, T0);
+    note("settings-note", "About my captured exhibit label: keep this reference.", T0 + 1000, {
+      taskId,
+    });
+    enqueueNewNotes(db, T0 + 1000);
+    const knowledgeReads = vi.fn(() => false);
+    const { runner } = agent(
+      toolCallingBackend((input) => {
+        expect(input.userMessage).toContain(taskId);
+        expect(input.userMessage).toContain("captured exhibit label");
+        expect(input.userMessage).toContain("Current task reads are disabled");
+        expect(input.userMessage).not.toContain("Canonical exhibit maintenance");
+        expect(input.userMessage).not.toContain('"scheduledFor":"2026-05-18"');
+        expect(input.userMessage).not.toContain("that task is no longer available");
+        return [];
+      }, "Saved the captured reference."),
+      {
+        knowledgeReads,
+        buildTools: () => ({ tools: [], dispose: async () => undefined }),
+      },
+    );
+    expect(await runner.drain()).toBe(1);
+    expect(knowledgeReads).toHaveBeenCalledTimes(1);
+    expect(getOpenLoop(db, taskId)?.scheduledFor).toBe("2026-05-18");
   });
 
   test.each([false, true])(

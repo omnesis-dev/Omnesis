@@ -21,6 +21,7 @@ import {
   HARDENED_REPO_URL,
   SECRET_STORE_BACKENDS,
   inspectInstallRootKey,
+  operatorCommand,
   parseSecretStoreBackend,
   readCollectorPairingState,
   readPackageVersion,
@@ -381,7 +382,12 @@ export function collectorFdaNote(
 ): string | null {
   if (component !== "collector" || platform !== "darwin") return null;
   const remediation = fullDiskAccessRemediation(nodePath);
-  const steps = [...remediation.steps, "Restart the collector: omnesis service restart collector"];
+  // The command that reaches this collector: `omnesis-collector` for one
+  // installed beside a Docker install, whose `omnesis` is the Docker one's.
+  const steps = [
+    ...remediation.steps,
+    `Restart the collector: ${operatorCommand()} service restart collector`,
+  ];
   return [
     `${remediation.summary} for the collector to read the databases macOS protects.`,
     "macOS never prompts for it; grant it by hand:",
@@ -1112,8 +1118,8 @@ export function needsPairingNotice(
   return [
     `${c.red}collector "${state.deviceName}" is no longer paired with ${state.gatewayUrl}.${c.reset}`,
     `${c.dim}On the gateway host: ${c.reset}${state.repairCommand ?? `omnesis devices repair ${state.deviceName}`}`,
-    `${c.dim}Then here: ${c.reset}omnesis pair <code> --gateway-url ${state.gatewayUrl} --save <config-dir>/collector-token`,
-    `${c.dim}Then: ${c.reset}omnesis service start collector`,
+    `${c.dim}Then here: ${c.reset}${operatorCommand()} pair <code> --gateway-url ${state.gatewayUrl} --save <config-dir>/collector-token`,
+    `${c.dim}Then: ${c.reset}${operatorCommand()} service start collector`,
   ];
 }
 

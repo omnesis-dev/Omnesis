@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 #if os(watchOS)
+import AppIntents
 import Observation
 import SwiftUI
 import WatchKit
@@ -18,12 +19,15 @@ struct OmnesisWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        OmnesisWatchAppShortcuts.updateAppShortcutParameters()
         WatchLink.shared.activate()
     }
 
     var body: some Scene {
         WindowGroup {
             WatchRootView()
+                .onAppear { openPendingControl() }
+                .onChange(of: WatchControlRouter.shared.requestCount) { _, _ in openPendingControl() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
                         WatchDictation.appDidEnterBackground()
@@ -38,6 +42,12 @@ struct OmnesisWatchApp: App {
                 .watchDemoAutoPilot()
             #endif
         }
+    }
+
+    @MainActor
+    private func openPendingControl() {
+        guard WatchControlRouter.shared.consume() else { return }
+        Task { await WatchComplicationCapture.shared.start(fromComplication: true) }
     }
 }
 

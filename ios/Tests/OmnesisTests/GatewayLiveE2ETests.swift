@@ -145,6 +145,41 @@ final class GatewayLiveE2ETests: XCTestCase {
         )
     }
 
+    /// The widget reads the gateway's real task DTO and completes the same
+    /// task through its compact transport, without invoking a model.
+    func testWidgetFetchAndCompleteTask() async throws {
+        let day = TaskWidgetSchedule.dayString(Date())
+        var create = URLRequest(url: baseURL.appendingPathComponent("tasks"))
+        create.httpMethod = "POST"
+        create.setValue("Bearer \(apiKey!)", forHTTPHeaderField: "Authorization")
+        create.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        create.httpBody = try JSONSerialization.data(withJSONObject: [
+            "title": "Outline a community workshop",
+            "scheduledFor": day,
+        ])
+        let (body, response) = try await session.data(for: create)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 201)
+        struct Created: Decodable { let task: TaskWidgetTask }
+        let task = try JSONDecoder().decode(Created.self, from: body).task
+        let credential = TaskWidgetCredential(
+            url: baseURL,
+            token: apiKey,
+            deviceId: "widget-test-device",
+            tlsMode: "system"
+        )
+        let testSession = try XCTUnwrap(session)
+        let widget = TaskWidgetClient(credential: credential, request: { try await testSession.data(for: $0) })
+        let before = try await widget.fetch()
+        XCTAssertTrue(before.tasks.contains { $0.id == task.id })
+        try await widget.complete(id: task.id)
+        let after = try await widget.fetch()
+        XCTAssertFalse(after.tasks.contains { $0.id == task.id })
+        let tasks = TasksClient(baseURL: baseURL, token: apiKey, session: testSession)
+        let detail = try await tasks.detail(id: task.id)
+        XCTAssertEqual(detail.task.state, .done)
+        _ = try await tasks.perform(.delete, on: task.id)
+    }
+
     // MARK: - AdminClient (admin-scope paths)
 
     /// Lists registered devices — should at least return a parseable

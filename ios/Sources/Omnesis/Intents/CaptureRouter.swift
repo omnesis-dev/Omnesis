@@ -6,9 +6,8 @@ import Foundation
 import Observation
 #endif
 
-/// Process-wide funnel for the Lock Screen / Control Center "Tell the
-/// Brain" control. `HomeView` observes `requestCount` and presents
-/// `CaptureView`.
+/// Process-wide funnel for system voice controls and shortcuts.
+/// `HomeView` observes `requestCount` and presents unified dictation.
 ///
 /// A monotonically increasing counter (not a Bool) so back-to-back
 /// requests each produce an observable change, and so a request that
@@ -56,5 +55,28 @@ public final class CaptureRouter {
     public func isFresh(asOf now: Date = Date()) -> Bool {
         guard let lastRequestAt else { return false }
         return now.timeIntervalSince(lastRequestAt) < Self.freshnessWindow
+    }
+}
+
+/// A fresh external invocation reveals the current capture without replacing it.
+/// The same policy covers process-local shortcuts and URL handoffs.
+enum CaptureRequestHandling {
+    static func handle(
+        isFresh: Bool,
+        isPresented: Bool,
+        reveal: () -> Void,
+        enqueue: () -> Void
+    ) {
+        guard isFresh else { return }
+        reveal()
+        guard !isPresented else { return }
+        enqueue()
+    }
+
+    static func accepts(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "omnesis",
+              url.user == nil, url.password == nil, url.port == nil, url.fragment == nil else { return false }
+        return (url.host == "capture" && url.path.isEmpty)
+            || (url.host == nil && url.path == "/capture")
     }
 }

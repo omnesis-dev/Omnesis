@@ -13,6 +13,11 @@ import { LoopListReceipts } from "./loop-list-receipts.js";
 import { systemClock, type Clock, type OpenLoopRow } from "./storage/types.js";
 import { readKnowledgeNodeDocumentContext } from "./knowledge/document-context.js";
 import {
+  knowledgeAnswerGuidance,
+  knowledgeAnswerPolicy,
+  type KnowledgeAnswerOptions,
+} from "./knowledge/answer-policy.js";
+import {
   getOpenLoop,
   listOpenLoops,
   listOpenLoopLedger,
@@ -78,17 +83,26 @@ function loopToSummary(loop: OpenLoopRow): LoopSummary {
   };
 }
 
-function loopToDetail(db: Db, loop: OpenLoopRow, now: number): LoopDetail {
+function loopToDetail(
+  db: Db,
+  loop: OpenLoopRow,
+  now: number,
+  options: KnowledgeAnswerOptions,
+): LoopDetail {
   const relatedLoops = listRelatedLoops(db, loop.id).map((l) => ({
     loopId: l.id,
     title: l.title,
     state: l.state,
     ...(l.importance !== undefined ? { importance: l.importance } : {}),
   }));
-  const knowledgeContext = readKnowledgeNodeDocumentContext(db, loop.id);
+  const knowledgeContext = readKnowledgeNodeDocumentContext(db, loop.id, options) ?? {
+    answerPolicy: knowledgeAnswerPolicy([], options),
+    verifiedSupport: [],
+    guidance: knowledgeAnswerGuidance([], options),
+  };
   return {
     ...loopToSummary(loop),
-    ...(knowledgeContext ? { knowledgeContext } : {}),
+    knowledgeContext,
     actors: resolveNames(db, loop.actors),
     involved: resolveNames(db, loop.involved),
     docIds: [...loop.docs],
@@ -99,7 +113,11 @@ function loopToDetail(db: Db, loop: OpenLoopRow, now: number): LoopDetail {
   };
 }
 
-export function createGatewayLoopReadPort(db: Db, clock: Clock = systemClock): LoopReadPort {
+export function createGatewayLoopReadPort(
+  db: Db,
+  clock: Clock = systemClock,
+  options: KnowledgeAnswerOptions = {},
+): LoopReadPort {
   const receipts = new LoopListReceipts(db);
   return {
     async search(input: LoopSearchPortInput): Promise<LoopSearchPortResult> {
@@ -114,7 +132,7 @@ export function createGatewayLoopReadPort(db: Db, clock: Clock = systemClock): L
       return db.transaction(() => {
         const loop = getOpenLoop(db, loopId);
         if (!loop) return null;
-        return loopToDetail(db, loop, Date.now());
+        return loopToDetail(db, loop, Date.now(), options);
       })();
     },
     async list(limit, signal, read): Promise<LoopListPortResult> {

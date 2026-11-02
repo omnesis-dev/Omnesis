@@ -14,6 +14,30 @@ import {
   type OmnesisConfig,
 } from "./config-schema.js";
 
+describe("validateConfig — external voice capture", () => {
+  test("accepts independent phone and Watch decision settings", () => {
+    const result = validateConfig({
+      inference: {
+        dictation: {
+          useDecisionGateForCapture: false,
+          useDecisionGateForWatch: true,
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.config.inference?.dictation).toMatchObject({
+        useDecisionGateForCapture: false,
+        useDecisionGateForWatch: true,
+      });
+  });
+  test("rejects non-boolean phone decision settings", () => {
+    expect(
+      validateConfig({ inference: { dictation: { useDecisionGateForCapture: "false" } } }).ok,
+    ).toBe(false);
+  });
+});
+
 describe("validateConfig — compact person profiles", () => {
   test("accepts a bounded profile budget independently of annotation automation", () => {
     const result = validateConfig({
@@ -1194,6 +1218,15 @@ describe("resolveSourceSettings", () => {
 });
 
 describe("validateConfig — agent", () => {
+  test("accepts the three maintained knowledge modes and rejects other values", () => {
+    for (const useBrainKnowledgeMode of ["off", "check_all_sources", "check_stale_claims"]) {
+      expect(validateConfig({ agent: { useBrainKnowledgeMode } }).ok).toBe(true);
+    }
+    for (const useBrainKnowledgeMode of [true, false, "current", "false", ""]) {
+      expect(validateConfig({ agent: { useBrainKnowledgeMode } }).ok).toBe(false);
+    }
+    expect(validateConfig({ agent: { knowledgeReads: true } }).ok).toBe(false);
+  });
   test("accepts every documented tunable", () => {
     const res = validateConfig({
       agent: {

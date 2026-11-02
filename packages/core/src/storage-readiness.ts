@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { inspectInstallRootKey, readInstallRootKey } from "./secret-store.js";
 import { GATEWAY_STORE_FILE } from "./utils.js";
+import { operatorCommand } from "./operator-command.js";
 import {
   readMarkerKeyringState,
   setMarkerKeyringState,
@@ -96,7 +97,7 @@ export async function resolveStorageEncryptionReadiness(
       throw new Error(
         "An Omnesis install root key exists but cannot be read — the configured keyring " +
           "passphrase does not open it, or the entry is corrupt. Fix the secret-store " +
-          "configuration (see `omnesis keyring status`) instead of running plaintext.",
+          `configuration (see \`${operatorCommand()} keyring status\`) instead of running plaintext.`,
       );
     }
     if (required || hasAnyStorageKey) {
@@ -172,7 +173,9 @@ export async function enforceMarkerIntegrity(
       // `storage-init`, secret files by `migrate`. Both converge the marker to
       // the current root key, so they repair a corrupted-but-recoverable marker.
       const repairCmd =
-        kind === "storage-encryption" ? "omnesis keyring storage-init" : "omnesis keyring migrate";
+        kind === "storage-encryption"
+          ? `${operatorCommand()} keyring storage-init`
+          : `${operatorCommand()} keyring migrate`;
       throw new Error(
         `The keyring/${markerFile} marker failed integrity verification — it was tampered with, ` +
           "corrupted, or belongs to a different install's root key. If the root key is intact and " +

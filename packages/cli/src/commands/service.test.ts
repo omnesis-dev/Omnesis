@@ -9,7 +9,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
 import {
   collectEnvFlags,
@@ -238,6 +238,21 @@ describe("collectorFdaNote", () => {
     expect(note).toMatch(/full disk access is required/i);
     expect(note).toMatch(/1\. open system settings › privacy & security › full disk access\./i);
     expect(note).toContain("3. Restart the collector: omnesis service restart collector");
+  });
+
+  // Beside a Docker install, `omnesis` is the Docker launcher: the restart
+  // step names the command that reaches this collector.
+  it("names omnesis-collector for a collector beside a Docker install", () => {
+    vi.stubEnv("OMNESIS_CLI_COMMAND", "omnesis-collector");
+    try {
+      const note = collectorFdaNote("collector", "darwin", NODE);
+      expect(note).toContain(
+        "3. Restart the collector: omnesis-collector service restart collector",
+      );
+      expect(note).not.toContain(" omnesis service restart");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("puts the grant within a drag: reveal the binary, open the pane", () => {
@@ -831,6 +846,23 @@ describe("needsPairingNotice", () => {
     expect(out).toContain("omnesis devices repair workstation-collector");
     expect(out).toContain("omnesis pair <code>");
     expect(out).toContain("omnesis service start collector");
+  });
+
+  it("names this collector's own command beside a Docker install, the gateway's for the repair", () => {
+    vi.stubEnv("OMNESIS_CLI_COMMAND", "omnesis-collector");
+    try {
+      const out = needsPairingNotice({
+        state: "needs-pairing",
+        deviceName: "workstation-mac-collector",
+        gatewayUrl: "https://gateway.example.com:7600",
+        repairCommand: "omnesis devices repair workstation-mac-collector",
+      }).join("\n");
+      expect(out).toContain("omnesis devices repair workstation-mac-collector");
+      expect(out).toContain("omnesis-collector pair <code>");
+      expect(out).toContain("omnesis-collector service start collector");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("falls back to a derived repair command when the record has none", () => {

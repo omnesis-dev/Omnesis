@@ -10,9 +10,6 @@
  * owner's chat tools and acts only on the note's explicit requests.
  */
 
-import { captureNoteTaskSnapshot, renderNoteTaskContext } from "./task-context.js";
-import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
-import { pendingNoteHandoff, type NoteHandoff } from "./handoffs.js";
 import { AgentSession, classifyAgentTurn, selectNonCitationTools } from "@omnesis/agent";
 import {
   experimentalVisible,
@@ -29,6 +26,9 @@ import { buildConversationMemoryEvidenceTool } from "../../agent/conversation-me
 import { getNoteEntry, type NoteEntry } from "../../sources/omnesis-notes/storage.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { buildTaskTools } from "../tasks/tools.js";
+import { pendingNoteHandoff, type NoteHandoff } from "./handoffs.js";
+import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
+import { captureNoteTaskSnapshot, renderNoteTaskContext } from "./task-context.js";
 import type { NoteAgentReceipt, NoteAgentRow } from "./storage.js";
 import type { ChatBackend, ToolHandle } from "@omnesis/agent";
 import type { TaskService } from "../tasks/service.js";
@@ -57,6 +57,8 @@ export interface NoteAgentDeps {
   resolveBackend: () => ChatBackend | null;
   /** The owner's `agent.noteAgent` setting, read live; undefined while unset. */
   getSetting: () => boolean | undefined;
+  /** Explicit maintained-knowledge read preference; unset preserves ordinary owner tools. */
+  knowledgeReads?: () => boolean;
   /** The shared owner tool runtime, isolated to this note and its child agents. */
   buildTools?: (
     runId: string,
@@ -439,7 +441,9 @@ export class NoteAgent {
       }
     >();
     let session: AgentSession | null = null;
-    const taskSnapshot = entry.taskId ? captureNoteTaskSnapshot(this.deps.db, entry.taskId) : null;
+    const knowledgeReads = this.deps.knowledgeReads?.() ?? true;
+    const taskSnapshot =
+      entry.taskId && knowledgeReads ? captureNoteTaskSnapshot(this.deps.db, entry.taskId) : null;
     let handedOff = false;
     const findings: string[] = [];
     const confirmed: string[] = [];
@@ -678,7 +682,11 @@ export class NoteAgent {
           entry,
           today,
           this.deps.dayDocumentId?.(entry.day) ?? null,
-          entry.taskId ? renderNoteTaskContext(entry.taskId, taskSnapshot) : "",
+          entry.taskId
+            ? knowledgeReads
+              ? renderNoteTaskContext(entry.taskId, taskSnapshot)
+              : `The user captured this note about task ${JSON.stringify(entry.taskId)}. Current task reads are disabled by the owner's settings; no current task snapshot was read. Do not claim the task is missing.`
+            : "",
         ),
         { signal: AbortSignal.timeout(NOTE_AGENT_TURN_TIMEOUT_MS) },
       );

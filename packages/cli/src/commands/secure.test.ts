@@ -164,6 +164,45 @@ describe("runSecure — online flow (gateway running)", () => {
     expect(existsSync(join(configDir, "backups"))).toBe(false);
   });
 
+  test("a re-run over a secured install neither backs up nor restarts", async () => {
+    const configDir = tmp();
+    writeFileSync(join(configDir, "omnesis.db"), Buffer.from("not-a-plaintext-sqlite-header!"));
+    await runSecure(makeDeps(configDir, { gatewayHealthy: async () => true }), {
+      dryRun: false,
+      skipBackup: false,
+    });
+    const onlineBackup = vi.fn(async () => {});
+    const restartService = vi.fn(async () => "restarted" as const);
+    const deps = makeDeps(configDir, {
+      gatewayHealthy: async () => true,
+      onlineBackup,
+      restartService,
+    });
+
+    const again = await runSecure(deps, { dryRun: false, skipBackup: false });
+
+    expect(onlineBackup).not.toHaveBeenCalled();
+    expect(restartService).not.toHaveBeenCalled();
+    const status = (id: string) => again.steps.find((s) => s.id === id)?.status;
+    expect(
+      ["backup", "root-key", "escrow", "migrate", "storage-keys", "restart"].map(status),
+    ).toEqual(Array(6).fill("skipped"));
+  });
+
+  test("a secured install whose gateway has not encrypted its database yet still backs up", async () => {
+    const configDir = tmp();
+    makeSqliteDb(join(configDir, "omnesis.db"), ["alpha"]);
+    await runSecure(makeDeps(configDir), { dryRun: false, skipBackup: true });
+    const onlineBackup = vi.fn(async () => {});
+
+    await runSecure(makeDeps(configDir, { gatewayHealthy: async () => true, onlineBackup }), {
+      dryRun: false,
+      skipBackup: false,
+    });
+
+    expect(onlineBackup).toHaveBeenCalledWith("pre-secure");
+  });
+
   test("reports action-required when no managed service exists", async () => {
     const configDir = tmp();
     const deps = makeDeps(configDir, {

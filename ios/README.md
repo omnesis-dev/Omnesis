@@ -60,6 +60,22 @@ WebRTC-backed code is compiled under `#if OMNESIS_REALTIME_VOICE` rather than
 target too. The tests that drive WebRTC live in the demo-hosted
 `OmnesisDemoTests` target (`-scheme OmnesisDemo test`).
 
+## Task widgets
+
+The production app embeds Home Screen and Lock Screen Tasks widgets (iOS 17+).
+The shared implementation lives in `Sources/Omnesis/Tasks/Widgets/`; only
+`TaskWidgetAppBridge.swift` belongs exclusively to the app. Widget previews and
+`TaskWidgetSnapshotTests` cover the supported families and error states.
+
+The app publishes its current gateway credential and TLS policy into a dedicated
+`.task-widgets` Keychain access group. Both bundles must have that entitlement in
+their provisioning profiles. The credential retains the paired device's authority
+(the gateway's Tasks API requires admin scope); the extension cannot read the app's
+primary pairing or notification Keychain groups. Credentials and compact task
+snapshots are device-only, and changing or removing the pairing invalidates cached
+content. Requests preserve HTTPS system trust or the pairing's certificate pin.
+The demo app does not publish credentials to the production widgets.
+
 ## WebRTC microphone initialization
 
 The pinned WebRTC vendor deliberately disables microphone input until
@@ -95,7 +111,7 @@ cd ios && xcodegen generate && open Omnesis.xcodeproj
 
 Cloning the source does not grant signing rights to the official `dev.omnesis.ios` App ID. If your Apple team is not authorized for it, register your own base identifier under your team and use the ignored local override. An authorized official-team developer can keep the default identity and set only their team. A simulator build does not need your Apple team or a provisioning profile; a physical phone build does.
 
-1. Join the Apple Developer Program for physical-device capabilities. In Certificates, Identifiers & Profiles, create an explicit App ID for your base identifier (for example, `com.example.myomnesis`). Prepare matching identifiers for the app's embedded notification service (`.notification-service`), widgets (`.widgets`), Watch app (`.watchkitapp`) and Watch complications (`.watchkitapp.widgets`). The optional demo app uses `.demo` and needs its own App ID if you build it. Enable the capabilities each target requests in Xcode: the phone app needs HealthKit, Push Notifications and Time Sensitive Notifications; the demo needs HealthKit and Push Notifications. The notification service must share the app's Keychain access group. The widgets, Watch and Watch complications targets do not hold pairing credentials. Apple may require capability or provisioning changes in the Developer portal before Xcode can sign these targets.
+1. Join the Apple Developer Program for physical-device capabilities. In Certificates, Identifiers & Profiles, create an explicit App ID for your base identifier (for example, `com.example.myomnesis`). Prepare matching identifiers for the app's embedded notification service (`.notification-service`), widgets (`.widgets`), Watch app (`.watchkitapp`) and Watch complications (`.watchkitapp.widgets`). The optional demo app uses `.demo` and needs its own App ID if you build it. Enable the capabilities each target requests in Xcode: the phone app needs HealthKit, Push Notifications and Time Sensitive Notifications; the demo needs HealthKit and Push Notifications. The notification service must share the app's Keychain access group. The task widget extension shares a dedicated device-only Keychain group (`.task-widgets`) with the phone app for its gateway credential and task snapshots; enable that group on both identifiers. The Watch and Watch complications targets do not hold pairing credentials. Apple may require capability or provisioning changes in the Developer portal before Xcode can sign these targets.
 2. Copy `Local.xcconfig.example` to `Local.xcconfig` and set `OMNESIS_BUNDLE_ID` to the base identifier and `DEVELOPMENT_TEAM` to your 10-character Team ID (shown in Apple Developer account membership details). `Local.xcconfig` is ignored by Git. The tracked `Config.xcconfig` supplies the official default, then includes your local file so your override wins. The generated app, demo, embedded extensions, Watch companion reference and Keychain groups derive from the same base. Do not edit tracked identifiers to personalize a build.
 3. Run `xcodegen generate` from `ios/` and open `Omnesis.xcodeproj`. Select the `Omnesis` scheme and your connected iPhone. In Signing & Capabilities, confirm every target uses your team and the expected identifier. For a local Debug build, use automatic signing and let Xcode create development provisioning profiles; sign in to your Apple account in Xcode if prompted. If you just enabled a capability, refresh or regenerate the affected profile and build again. Run with ⌘R to install. The Release configuration carries official distribution profile names, so an independent distribution archive requires your own profiles and export configuration.
 4. Pair the installed app with your gateway using `omnesis devices pair --kind ios`. Grant notification permission when prompted. The app obtains and registers its APNs device token automatically; do not copy a carrier token by hand.

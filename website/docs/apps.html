@@ -486,9 +486,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
               <tr>
                 <td>Today</td>
                 <td>
-                  Tasks carried over from an earlier day or month first, marked as carried; then
-                  tasks planned for today, and unplanned tasks whose deadline is today or past; then
-                  tasks you completed or struck today.
+                  Open tasks newest first by when they were created: tasks planned for today, tasks
+                  carried from an earlier day or month, and tasks whose deadline is today or past.
+                  Carried tasks keep their marker. Tasks completed or struck today appear below.
                 </td>
               </tr>
               <tr>
@@ -570,6 +570,53 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           task can also change from a conversation with <a href="/docs/agent#tasks">the agent</a> or
           from a <a href="#voice-and-quick-capture">Tell Omnesis note</a>; its history records
           which.
+        </p>
+
+        <h3 id="ios-task-widgets">iOS task widgets</h3>
+        <p>
+          Add <strong>Omnesis → Tasks</strong> from the Home Screen widget gallery. Choose small,
+          medium, large, or the extra-large iPad layout. Lock Screen widgets are available in
+          inline, circular and rectangular sizes. Open the paired app once after installing to make
+          its tasks available to the widgets.
+        </p>
+        <p>
+          In <strong>Edit Widget</strong>, choose a day, week or month. A start offset of
+          <strong>1</strong> starts tomorrow, next week or next month respectively. Use the arrows
+          on a Home Screen widget to browse earlier or later periods, tap the date between them to
+          return to the current period, and use the page counter to see more tasks. If two widgets
+          have the same date settings, give them different <strong>Panel</strong> values to browse
+          them independently.
+        </p>
+        <p>
+          Tap a task's circle to complete it from a Home Screen or rectangular Lock Screen widget;
+          the device may ask you to unlock first. Tap its title to open the task in Omnesis. Future
+          periods show their planned tasks and deadlines; today's outstanding tasks are carried into
+          the current period. The Today view shows tasks newest first. Unscheduled tasks without a
+          deadline stay in the app's Anytime view. Widgets refresh when iOS allows and after task
+          actions; if the gateway is unreachable, a Home Screen widget labels its saved list as
+          offline. Completion requires a connection and a failed action leaves the task open.
+        </p>
+
+        <h3 id="android-task-widgets">Android task widgets</h3>
+        <p>
+          Add <strong>Omnesis → Tasks</strong> from your launcher's Home Screen widget picker.
+          Resize it horizontally and vertically for a compact list, a larger task list, or a wide
+          tablet layout. Each widget keeps its own date range and page.
+        </p>
+        <p>
+          Use <strong>Day</strong>, <strong>Week</strong> and <strong>Month</strong> to choose the
+          date range, the arrows to browse earlier or later periods, and the date to return to the
+          current period. The page control shows more tasks. Tap a circle to complete a task, or its
+          title to open it in the app. Future periods show their plans and deadlines; only the
+          current period includes today's outstanding tasks. The Today view shows tasks newest
+          first. Month-only plans appear in the month view. Tasks without a plan or deadline stay in
+          Anytime in the app.
+        </p>
+        <p>
+          Widgets follow the device's light or dark theme. A saved list remains available while the
+          gateway is unreachable, labelled offline; completing a task requires a connection. Android
+          schedules background refreshes, and opening the app or changing a task requests a refresh.
+          Removing or changing the pairing clears the widget's saved list.
         </p>
 
         <h2 id="phone-only-sources">Phone-only sources</h2>
@@ -852,9 +899,26 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           know. Say <strong>“Hey Siri, Omnesis note”</strong> or
           <strong>“Hey Siri, Omnesis capture”</strong> and Siri asks what to remember. Siri requires
           that follow-up because App Shortcut phrases cannot insert unrestricted dictated text into
-          the opening phrase. On iOS 18 or later, add the <strong>Tell Omnesis</strong> control from
-          the Control Center controls gallery; tapping it opens the capture screen and starts
-          listening.
+          the opening phrase.
+        </p>
+        <p>
+          On iOS 18 or later, add the <strong>Omnesis</strong> logo control from the Control Center
+          controls gallery or the Lock Screen controls picker. Tapping it opens voice capture and
+          starts listening immediately, with the same microphone animation as Tell Omnesis. With a
+          decision model available, tap <strong>Send</strong> and the gateway chooses whether to
+          open an agent conversation or save a note. Without an available decision model, or with
+          <code>inference.dictation.useDecisionGateForWatch</code> set to <code>false</code>, choose
+          <strong>Ask</strong> or <strong>Tell</strong> yourself. This applies only to the control
+          and voice shortcut; the app's chat and Tell Omnesis screens keep their separate flows.
+          Phone controls and the Watch complication use the same gateway routing capability and
+          setting, including gateways that already support Watch capture.
+        </p>
+        <p>
+          For the iPhone Action button, choose
+          <strong>Settings → Action Button → Controls</strong> and select <strong>Omnesis</strong>.
+          Alternatively, choose <strong>Shortcut</strong> and select
+          <strong>Speak to Omnesis</strong>. The action opens listening directly, without a Siri
+          question first. The system may require you to unlock before opening the app.
         </p>
         <p>
           The same Ask Omnesis and Omnesis note Siri shortcuts are available on the Apple Watch and
@@ -885,8 +949,22 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           restore Ask and Tell. The corresponding gateway setting is
           <code>inference.dictation.useDecisionGateForWatch</code>; it defaults on when a decision
           model is available. Older gateways and disabled or unavailable decision models show Ask
-          and Tell. If routing fails after Send, the recording is treated as Ask. Existing Siri
-          shortcuts and phone capture controls keep their separate flows.
+          and Tell. If routing fails after Send, the recording is treated as Ask. Existing Ask and
+          note Siri shortcuts keep their separate flows.
+        </p>
+        <p>
+          On watchOS 26 or later, add the <strong>Omnesis</strong> logo control to the watch's
+          Control Center or Smart Stack. On Apple Watch Ultra, choose
+          <strong>Settings → Action Button → Control</strong> and select <strong>Omnesis</strong>.
+          This control runs on the watch and opens the same recorder as the complication; it does
+          not open the iPhone app. Recording starts immediately, with Send or Ask and Tell following
+          the same decision setting as the complication.
+        </p>
+        <p>
+          The <strong>Speak to Omnesis</strong> shortcut also opens that recorder, including on
+          older watchOS versions. In Shortcuts on iPhone, create a shortcut containing that action
+          and enable <strong>Show on Apple Watch</strong> in its details. On Apple Watch Ultra,
+          choose <strong>Settings → Action Button → Shortcut</strong> and select it.
         </p>
         <p>
           Gateway transcription applies to both Ask and Tell from the complication. When it is
@@ -902,9 +980,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           On Android, Gemini or Google Assistant can invoke the installed App Actions for
           <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong>. The custom one-utterance
           phrases are English (United States) only. Long-press the Omnesis launcher icon for
-          matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts. For
-          one-tap capture from anywhere, open the expanded Quick Settings shade, choose Edit, and
-          add the <strong>Tell Omnesis</strong> tile.
+          matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts, or
+          choose <strong>Omnesis</strong> for unified voice capture. Drag that shortcut to the home
+          screen for one-tap access. In the expanded Quick Settings shade, choose Edit and add the
+          <strong>Omnesis</strong> tile for the same flow. Both start listening immediately and use
+          Send with a decision model, or Ask and Tell when routing is disabled or unavailable. They
+          share <code>inference.dictation.useDecisionGateForWatch</code> with the iPhone control. A
+          phone's configurable hardware button or gesture can use the shortcut if its manufacturer
+          supports app shortcuts; the available buttons and setup vary by device.
         </p>
         <div class="callout warn">
           <p>
@@ -928,14 +1011,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
           recognizer. With gateway dictation on, they also send the recording with the note, and
           your gateway's <strong>Transcriber</strong> — the same model that transcribes voice notes
-          from your sources — transcribes it again and replaces the phone's text with its own. For
-          phone capture, it applies to Tell Omnesis:
+          from your sources — transcribes it again and replaces the phone's text with its own. This
+          applies to:
         </p>
         <ul>
-          <li>
-            Tell Omnesis in the app, including its Control Center control, Quick Settings tile and
-            app shortcut;
-          </li>
+          <li>Tell Omnesis in the app and the explicit Tell app shortcut;</li>
           <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
           <li>
             legacy Watch note capture. The unified Omnesis complication uses gateway transcription
@@ -943,8 +1023,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </li>
         </ul>
         <p>
-          Agent conversations, Ask Omnesis, Siri, Shortcuts and assistant requests that already
-          carry their words keep the phone's or the system's recognition.
+          The unified phone control and voice shortcut use gateway transcription before routing or
+          opening chat when gateway dictation is active. Choosing Tell saves a voice note
+          immediately, including to the offline queue, as Tell Omnesis does in the app. With gateway
+          dictation off, these entry points use the phone's recognition. Existing agent
+          conversations, explicit Ask Omnesis, Siri and assistant requests that already carry their
+          words keep the phone's or the system's recognition.
         </p>
 
         <h3 id="gateway-dictation-turning-on">Turning it on and off</h3>

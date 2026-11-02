@@ -19,7 +19,7 @@ import {
   EXIT_GATEWAY_ERROR,
   EXIT_FAILURE,
 } from "../utils.js";
-import { requestSearch, renderAgentSearch } from "./search-agent-context.js";
+import { requestSearch, renderAgentSearch, resultCount } from "./search-agent-context.js";
 
 export const searchCommand = defineCommand({
   meta: {
@@ -179,7 +179,7 @@ export const searchCommand = defineCommand({
       const parts: string[] = [`${t.totalMs}ms`];
       if (t.bm25Ms != null) parts.push(`bm25:${t.bm25Ms}ms`);
       if (t.vectorMs != null) parts.push(`vec:${t.vectorMs}ms`);
-      console.log(`\n${c.dim}${data.results.length} results in ${parts.join(", ")}${c.reset}`);
+      console.log(`\n${c.dim}${resultCount(data.results.length)} in ${parts.join(", ")}${c.reset}`);
     }
   },
 });

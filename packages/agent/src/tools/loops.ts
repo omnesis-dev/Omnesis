@@ -132,7 +132,13 @@ export function createFetchLoopTool(deps: LoopToolDeps): ToolHandle {
       "also return retained done or dismissed loops with their terminal state. Open status " +
       "is not proof the action is still needed. Reconcile related records and " +
       "follow the exact supporting document when their evidence disagrees; " +
-      "history timestamps record notes, not necessarily source event dates. READ-ONLY — you can " +
+      "history timestamps record notes, not necessarily source event dates. Follow returned " +
+      "knowledgeContext.answerPolicy: mode=verified_support permits only exact returned " +
+      "verifiedSupport statements without reopening originals, preserving interpretation context, " +
+      "attribution, modality, conditions and valid times. Missing policy or source_checks requires " +
+      "source checks even when verifiedSupport is nonempty; current-status questions and conflicts still need later-evidence checks. " +
+      "For citation, fetch knowledgeContext.documentId with fetch_many first; loop: is not a document alias. " +
+      "Cite that fetched maintained document, never unread original sources; missing pointers require source retrieval. READ-ONLY — you can " +
       "read what is in a loop, never change it. Copy the exact loopId from " +
       "list_loops or search_loops; an unavailable ID returns loop_not_found.",
     schema: fetchLoopArgsSchema,

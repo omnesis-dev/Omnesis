@@ -28,6 +28,7 @@ import {
   installer,
   runInstaller as runInstallerRaw,
   runInstallerOnTty as runInstallerOnTtyRaw,
+  writeExecutable,
 } from "./installer-harness.mjs";
 
 /** A gateway on some other machine, and the certificate it serves. */
@@ -36,6 +37,11 @@ const GATEWAY_FP = "a".repeat(64);
 const PAIRING_CODE = "K7QX2M9ZB4";
 /** What the fake collector daemon reports its device is called. */
 const DEVICE_NAME = "field-station";
+/**
+ * The name the installer asks to pair as, from the machine's name — a Mac's,
+ * as `hostname` reports it, with the Bonjour `.local` the device name drops.
+ */
+const PAIR_NAME = "field-station-collector";
 
 /**
  * The recording CLI shim. Invoked as `<shim> <entry.ts> <cli args...>` through
@@ -47,6 +53,12 @@ const DEVICE_NAME = "field-station";
  */
 const CLI_SHIM = `#!/bin/sh
 shift 2>/dev/null || true
+# pair --help answers before anything is logged, as the real CLI's does; a
+# test can drop --name to stand in for a release from before it.
+if [ "$1" = pair ] && [ "$2" = --help ]; then
+  [ -n "$OMNESIS_TEST_PAIR_NO_NAME" ] || echo "  --name  Name this device"
+  exit 0
+fi
 printf '%s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
 case "$1" in
   --version) echo "0.10.0" ;;
@@ -116,6 +128,10 @@ function discoveryAnswer(name, body) {
 
 beforeEach(() => {
   createFixture({ name: "collector", versions: ["0.10.0"], cliShim: CLI_SHIM });
+  writeExecutable(
+    fixturePath("fake-bin", "hostname"),
+    '#!/bin/sh\ncase "${1:-}" in -s) echo Field-Station ;; *) echo Field-Station.local ;; esac\n',
+  );
 });
 
 afterEach(destroyFixture);
@@ -142,6 +158,23 @@ describe("install.sh --collector: the happy path", () => {
     expect(callStartingWith(run.calls, "pair ")).toContain(`pair ${PAIRING_CODE}`);
   });
 
+  test("with a CLI release from before `pair --name`, pairs without it", () => {
+    // The installer is always the newest; the CLI it installs is the newest
+    // release, which can predate a flag the installer knows.
+    const run = runInstaller(
+      "older-cli",
+      [...CODED, "--gateway-url", GATEWAY_URL, "--trust-fingerprint", `sha256:${GATEWAY_FP}`],
+      { OMNESIS_TEST_PAIR_NO_NAME: "1" },
+    );
+
+    expect(run.status, run.output).toBe(0);
+    expect(callStartingWith(run.calls, "pair ")).toBe(
+      `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
+        `--trust-fingerprint sha256:${GATEWAY_FP} ` +
+        `--save ${join(run.configDir, "collector-token")}`,
+    );
+  });
+
   test("pairs, registers the collector unit, and reports the device online", () => {
     const run = runInstaller("happy", [
       ...CODED,
@@ -157,7 +190,7 @@ describe("install.sh --collector: the happy path", () => {
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
         `--trust-fingerprint sha256:${GATEWAY_FP} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
     // The unit carries the gateway URL, because a daemon starts with a minimal
     // environment and would otherwise browse for a gateway on every start.
@@ -179,7 +212,7 @@ describe("install.sh --collector: the happy path", () => {
     expect(run.status).toBe(0);
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 
@@ -265,7 +298,7 @@ describe("install.sh --collector: finding the gateway", () => {
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
         `--trust-fingerprint sha256:${GATEWAY_FP} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 
@@ -326,7 +359,7 @@ describe("install.sh --collector: finding the gateway", () => {
     expect(run.output).toContain("(none advertised)");
     expect(callStartingWith(run.calls, "pair ")).toBe(
       `pair ${PAIRING_CODE} --gateway-url ${GATEWAY_URL} ` +
-        `--save ${join(run.configDir, "collector-token")}`,
+        `--save ${join(run.configDir, "collector-token")} --name ${PAIR_NAME}`,
     );
   });
 

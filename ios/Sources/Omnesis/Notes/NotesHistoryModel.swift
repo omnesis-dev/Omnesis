@@ -84,6 +84,7 @@ final class NotesHistoryModel {
         guard let client else { return note }
         let request = generation
         let updated = try await client.dayEntries(day: note.day).first { $0.id == note.id }
+        try Task.checkCancellation()
         guard request == generation else { return entries.first { $0.id == note.id } }
         if let updated, let index = entries.firstIndex(where: { $0.id == note.id }) { entries[index] = updated }
         if updated == nil { entries.removeAll { $0.id == note.id } }

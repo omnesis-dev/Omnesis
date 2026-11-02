@@ -122,11 +122,12 @@ final class ForegroundConversationStore {
 struct ForegroundConversationRequest: Equatable {
     let id: Int
     let action: ForegroundConversationAction
+    let navigationRevision: UInt64
 }
 
 /// Automatic foreground navigation yields to any explicit destination that is
-/// already pending. Later push/deep-link changes still win through their own
-/// existing `onChange` handlers and AgentCoordinator session generations.
+/// pending or has already been consumed in the foreground episode. Delayed
+/// consumers check the request revision before changing the active section.
 enum ForegroundNavigationArbiter {
     static func automaticAction(
         _ action: ForegroundConversationAction,
@@ -223,7 +224,7 @@ func homeTab(for target: PushTarget) -> HomeTab {
     case .accessAuthorization: .agent
     case .agentAnswer: .agent
     case .watchFiring, .watch: .watches
-    case .task: .tasks
+    case .task, .taskJournal: .tasks
     case .sourcePermission: .sources
     }
 }

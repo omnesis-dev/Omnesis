@@ -53,16 +53,22 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
   const { transcribeService } = deps;
   const captureLimiter = notesRateLimiter();
 
-  app.post("/watch/capture/transcribe", scope.admin(), async (c, next) => {
-    if (!deps.getDictationStatus?.().active) {
-      throw new HttpError(409, "DICTATION_DISABLED", "Gateway dictation is unavailable.");
-    }
-    if (captureLimiter.consume(clientIp(c))) {
-      return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
-    }
-    return next();
-  });
-  for (const path of ["/inference/transcribe", "/watch/capture/transcribe"]) {
+  for (const path of ["/capture/transcribe", "/watch/capture/transcribe"]) {
+    app.post(path, scope.admin(), async (c, next) => {
+      if (!deps.getDictationStatus?.().active) {
+        throw new HttpError(409, "DICTATION_DISABLED", "Gateway dictation is unavailable.");
+      }
+      if (captureLimiter.consume(clientIp(c))) {
+        return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
+      }
+      return next();
+    });
+  }
+  for (const path of [
+    "/inference/transcribe",
+    "/watch/capture/transcribe",
+    "/capture/transcribe",
+  ]) {
     app.post(path, scope.writeAny(), transcribeBodyLimit, async (c) => {
       const body = new Uint8Array(await c.req.arrayBuffer());
       if (body.byteLength === 0) {

@@ -15,6 +15,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { parseArgs } from "citty";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeEmail, normalizePhone } from "@omnesis/core";
@@ -49,11 +50,14 @@ import {
   deviceStatusLabel,
   deviceVersionLabel,
   deviceVersionStateCell,
+  alignColumns,
   pairingTlsFailure,
   revokedCollectorReRegisters,
   getOrCreateInstallId,
   pairCommand,
   parsePairingScopes,
+  recordRedeemedCollector,
+  redeemSuggestedName,
   parseRedeemedAgentIntegrationPairing,
   parseRedeemedPairing,
   parseSelfInfoField,
@@ -104,6 +108,14 @@ describe("device list version cells", () => {
 
   it("reads an absent state as unknown, so an older gateway degrades cleanly", () => {
     expect(deviceVersionStateCell({}).text).toBe("unknown");
+  });
+
+  it("reports no state for a CLI token that never reported a build, rather than unknown", () => {
+    expect(deviceVersionStateCell({ kind: "cli", versionState: "unknown" }).text).toBe("—");
+    expect(deviceVersionStateCell({ kind: "cli", versionState: "current" }).text).toBe("current");
+    expect(deviceVersionStateCell({ kind: "collector", versionState: "unknown" }).text).toBe(
+      "unknown",
+    );
   });
 
   it("reports no state for a revoked device, whose last reading means nothing", () => {
@@ -1767,6 +1779,26 @@ describe("device access levels in the list", () => {
   });
 });
 
+describe("alignColumns", () => {
+  it("pads each column to its widest cell, counting only visible characters", () => {
+    expect(
+      alignColumns([
+        ["NAME", "STATE", "LAST"],
+        [
+          "a-very-long-device-name",
+          { text: "current", colored: "\u001b[32mcurrent\u001b[0m" },
+          "now",
+        ],
+        ["b", "—", "never"],
+      ]).map((line) => stripVTControlCharacters(line)),
+    ).toEqual([
+      "NAME                    STATE   LAST",
+      "a-very-long-device-name current now",
+      "b                       —       never",
+    ]);
+  });
+});
+
 describe("devices list", () => {
   const device = (accessLevelId: string | null) => ({
     id: "device-voice",
@@ -1866,6 +1898,44 @@ describe("devices list", () => {
     );
   });
 
+  it("sizes every column to its longest cell, so a long name or hostname shifts nothing", async () => {
+    const long = {
+      ...device(null),
+      id: "device-long",
+      name: "studio-northstar-air-collector",
+      kind: "collector",
+      capabilities: { hostname: "studio-northstar-air.local" },
+      version: "0.7.3",
+      versionState: "current",
+    };
+    const short = {
+      ...device(null),
+      id: "device-short",
+      name: "cli",
+      kind: "cli",
+      capabilities: { hostname: "box" },
+    };
+    const { output } = await runList([Response.json({ items: [long, short] })]);
+    const rows = stripVTControlCharacters(output)
+      .split("\n")
+      .filter((line) => /^(NAME|studio-northstar|cli )/u.test(line));
+    expect(rows).toHaveLength(3);
+    // Every column starts where its header does, on every row.
+    for (const [header, cells] of [
+      ["KIND", ["collector", "cli"]],
+      ["HOSTNAME", ["studio-northstar-air.local", "box"]],
+      ["STATE", ["current", "—"]],
+      ["ID", ["device-long", "device-short"]],
+      ["LIVE", ["no", "no"]],
+    ] as const) {
+      const column = rows[0]!.indexOf(header);
+      expect(rows[1]!.indexOf(cells[0], column - 1)).toBe(column);
+      expect(rows[2]!.indexOf(cells[1], column - 1)).toBe(column);
+    }
+    // The bootstrap-style CLI token reports no build, and its row says so plainly.
+    expect(rows[2]).not.toContain("unknown");
+  });
+
   it("still lists every device when the access levels cannot be read", async () => {
     const { output } = await runList([
       Response.json({ items: [device("level-voice")] }),
@@ -1874,5 +1944,61 @@ describe("devices list", () => {
     expect(output).toContain("Studio voice");
     expect(output).toContain("on access level level-voice");
     expect(output).not.toContain("questions refused");
+  });
+});
+
+describe("redeemSuggestedName: the name a redeem asks the gateway for", () => {
+  it("drops a Mac's mDNS suffix and capitals, the Docker installer's rule", () => {
+    expect(redeemSuggestedName(undefined, "Maya-MacBook-Air.local")).toBe("maya-macbook-air");
+  });
+
+  it("is the name asked for with --name, as given", () => {
+    expect(redeemSuggestedName(" field-station-mac-collector ", "Maya-MacBook-Air.local")).toBe(
+      "field-station-mac-collector",
+    );
+  });
+
+  it("falls back to the raw hostname when nothing of it survives", () => {
+    expect(redeemSuggestedName("", "...")).toBe("...");
+  });
+
+  it("is a flag of pair and devices redeem", () => {
+    expect(Object.keys(pairCommand.args ?? {})).toContain("name");
+  });
+});
+
+describe("recordRedeemedCollector: a collector's pairing, recorded as it is saved", () => {
+  const device = { id: "dev-42", name: "field-station-mac-collector", kind: "collector" };
+  const record = (savedPath: string, kind = "collector") => {
+    const writes: Array<{ dir: string; state: Record<string, unknown> }> = [];
+    const done = recordRedeemedCollector(
+      savedPath,
+      "https://studio.example.ts.net:7600",
+      { device: { ...device, kind } as never, token: "omn_token" },
+      (dir, state) => {
+        writes.push({ dir, state: state as unknown as Record<string, unknown> });
+        return true;
+      },
+    );
+    return { done, writes };
+  };
+
+  it("records the gateway's name, id and URL in the token's directory, claiming no login yet", () => {
+    const { done, writes } = record("/Users/maya/.config/omnesis-collector/collector-token");
+    expect(done).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.dir).toBe("/Users/maya/.config/omnesis-collector");
+    expect(writes[0]!.state).toMatchObject({
+      state: "paired",
+      deviceName: "field-station-mac-collector",
+      deviceId: "dev-42",
+      gatewayUrl: "https://studio.example.ts.net:7600",
+      lastAuthenticatedAt: null,
+    });
+  });
+
+  it("records nothing for another kind, or a token saved under another name", () => {
+    expect(record("/tmp/collector-token", "cli").done).toBe(false);
+    expect(record("/tmp/token.txt").done).toBe(false);
   });
 });

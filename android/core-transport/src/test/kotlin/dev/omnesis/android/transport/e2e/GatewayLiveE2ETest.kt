@@ -8,17 +8,26 @@ import dev.omnesis.android.transport.client.AdminClient
 import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.client.SearchClient
+import dev.omnesis.android.transport.client.TaskAction
+import dev.omnesis.android.transport.client.TaskView
+import dev.omnesis.android.transport.client.TasksClient
 import dev.omnesis.android.transport.dto.OmnesisJson
+import dev.omnesis.android.transport.dto.TaskMutationDto
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.transport.http.postJson
 import dev.omnesis.android.transport.tls.PinnedOkHttp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.time.LocalDate
 
 /**
  * Live-gateway E2E — the Android port of `GatewayLiveE2ETests.swift`. Runs the REAL
@@ -37,6 +46,7 @@ class GatewayLiveE2ETest {
         val tlsFingerprint: String? = null,
     )
 
+    private lateinit var http: GatewayHttp
     private lateinit var gateway: GatewayClient
     private lateinit var search: SearchClient
     private lateinit var admin: AdminClient
@@ -54,11 +64,33 @@ class GatewayLiveE2ETest {
         val file = File(CONFIG_PATH)
         assumeTrue("no live-gateway config at $CONFIG_PATH", file.exists())
         val cfg = OmnesisJson.decodeFromString<Config>(file.readText())
-        val http = GatewayHttp(PinnedOkHttp.build(cfg.tlsFingerprint), cfg.gatewayURL, cfg.apiToken)
+        http = GatewayHttp(PinnedOkHttp.build(cfg.tlsFingerprint), cfg.gatewayURL, cfg.apiToken)
         gateway = GatewayClient(http)
         search = SearchClient(http)
         admin = AdminClient(http)
         agent = AgentClient(http)
+    }
+
+    /** Widgets use these same journal reads and completion command, without model inference. */
+    @Test
+    fun widget_task_reads_and_completion_round_trip() = runBlocking {
+        val day = LocalDate.now().toString()
+        val created = http.postJson<JsonObject, TaskMutationDto>("tasks", buildJsonObject {
+            put("title", "Sketch a new trail map")
+            put("scheduledFor", day)
+        })
+        val id = requireNotNull(created.task).id
+        val tasks = TasksClient(http)
+        try {
+            val owned = listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME)
+                .flatMap { tasks.view(it, day).tasks }
+            assertTrue(owned.any { it.id == id && !it.isResolved })
+            tasks.act(id, TaskAction.Complete())
+            assertTrue(tasks.detail(id).task.isDone)
+            assertTrue(tasks.view(TaskView.TODAY, day).tasks.none { it.id == id && !it.isResolved })
+        } finally {
+            tasks.act(id, TaskAction.Delete)
+        }
     }
 
     @Test

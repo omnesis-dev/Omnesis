@@ -84,6 +84,7 @@ import {
   type SecretStoreBackend,
   type SecretStoreStatus,
   type StorageKeyHost,
+  operatorCommand,
 } from "@omnesis/core";
 import {
   c,
@@ -97,6 +98,7 @@ import {
 import { collectSecretFileCandidates } from "./keyring.js";
 import { restore } from "./restore.js";
 import {
+  dockerBackendRecorded,
   dockerRestartCommand,
   prepareDockerPassphrase,
   recordDockerPassphrase,
@@ -286,9 +288,11 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   // that would generate it has no store to inspect yet: everything after it is
   // planned against an empty keyring.
   let passphrasePending = false;
+  let keyringRecorded = true;
   let recordKeyring: (() => void) | null = null;
   if (docker && backend === "passphrase") {
     const pass = planDockerPassphrase(docker, configDir);
+    keyringRecorded = pass.kind === "configured";
     const envFile = join(configDir, ".env");
     if (opts.dryRun && pass.kind === "generate") {
       passphrasePending = true;
@@ -323,6 +327,7 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
       }
     };
   } else if (docker && !opts.dryRun) {
+    keyringRecorded = dockerBackendRecorded(backend, configDir);
     recordKeyring = () => {
       if (!recordDockerBackend(backend, docker, configDir)) return;
       changed = true;
@@ -382,9 +387,22 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
   const allKeysPresent = storeStates.every((s) => s.present && s.valid);
   const envelopeExists = existsSync(recoveryEnvelopePath(configDir));
   const candidates = collectSecretFileCandidates(configDir);
+  const plaintext = plaintextSecretFiles(configDir);
+  // Every step below would find its work done, so there is nothing to back up for.
+  const alreadySecure =
+    !passphrasePending &&
+    keyringRecorded &&
+    root.valid &&
+    envelopeExists &&
+    allKeysPresent &&
+    storageEncryptionRequired(configDir) &&
+    plaintext.length === 0 &&
+    mainDbPlain !== true;
 
   // ── 2. backup ───────────────────────────────────────────────────────
-  if (!hasGateway) {
+  if (alreadySecure) {
+    plan("backup", "Pre-migration backup", "skipped", "nothing to change, so nothing to back up");
+  } else if (!hasGateway) {
     plan(
       "backup",
       "Pre-migration backup",
@@ -463,7 +481,11 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
       if (result.changed) migrated += 1;
     }
     if (migrated > 0) changed = true;
-    plan("migrate", "Encrypt secret files", "done", `${migrated} file(s) newly encrypted`);
+    if (migrated === 0 && plaintext.length === 0) {
+      plan("migrate", "Encrypt secret files", "skipped", "every secret file is already encrypted");
+    } else {
+      plan("migrate", "Encrypt secret files", "done", `${migrated} file(s) newly encrypted`);
+    }
   }
 
   // ── 6. wrapped live-storage keys ────────────────────────────────────
@@ -489,9 +511,20 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
     dockerRestartStep(docker, opts, { changed, hasGateway, mainDbPlain }, plan);
     return summary;
   }
+  if (alreadySecure) {
+    plan("restart", "Service restart", "skipped", "encryption at rest is already in effect");
+    return summary;
+  }
   if (hasGateway) await restartGatewayStep(deps, opts, { healthy, mainDbPlain }, plan);
   if (hasCollector) await restartCollectorStep(deps, opts, plan);
   return summary;
+}
+
+/** The secret files on disk that are not encrypted yet. */
+function plaintextSecretFiles(configDir: string): string[] {
+  return collectSecretFileCandidates(configDir).filter(
+    (path) => existsSync(path) && !isEncryptedSecretFile(readFileSync(path, "utf8")),
+  );
 }
 
 /**
@@ -588,20 +621,18 @@ export async function runVerify(
     fail(
       "root-key",
       "Install root key",
-      status.available ? "missing — run `omnesis secure`" : status.detail,
+      status.available ? `missing — run \`${operatorCommand()} secure\`` : status.detail,
     );
   }
 
-  const plaintext = collectSecretFileCandidates(configDir).filter(
-    (path) => existsSync(path) && !isEncryptedSecretFile(readFileSync(path, "utf8")),
-  );
+  const plaintext = plaintextSecretFiles(configDir);
   if (plaintext.length === 0) {
     plan("migrate", "Secret files", "done", "every secret file is encrypted");
   } else {
     fail(
       "migrate",
       "Secret files",
-      `${plaintext.length} still plaintext (${plaintext.join(", ")}) — run \`omnesis secure\``,
+      `${plaintext.length} still plaintext (${plaintext.join(", ")}) — run \`${operatorCommand()} secure\``,
     );
   }
 
@@ -613,7 +644,7 @@ export async function runVerify(
     if (states.every((s) => s.present && s.valid) && storageEncryptionRequired(configDir)) {
       plan("storage-keys", "Live-storage keys", "done", `ready for ${names.join(", ")}`);
     } else {
-      fail("storage-keys", "Live-storage keys", "missing — run `omnesis secure`");
+      fail("storage-keys", "Live-storage keys", `missing — run \`${operatorCommand()} secure\``);
     }
   }
 
@@ -754,14 +785,14 @@ async function restartCollectorStep(
       "collector-restart",
       "Collector restart",
       "action-required",
-      "no managed collector service found — restart the collector yourself (`omnesis collector run`, or your usual command); its sources encrypt their stores as they open them",
+      `no managed collector service found — restart the collector yourself (\`${operatorCommand()} collector run\`, or your usual command); its sources encrypt their stores as they open them`,
     );
   } else {
     plan(
       "collector-restart",
       "Collector restart",
       "action-required",
-      "the collector service did not restart — run `omnesis service restart collector` and check `omnesis service logs collector`",
+      `the collector service did not restart — run \`${operatorCommand()} service restart collector\` and check \`${operatorCommand()} service logs collector\``,
     );
   }
 }

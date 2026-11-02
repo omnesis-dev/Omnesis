@@ -714,7 +714,13 @@ describe("evaluateDoctor — fleet versions", () => {
   test("a device that never reported a version is counted, never faulted", () => {
     const data = healthyData();
     data.devices = [
-      { id: "d1", name: "workstation-cli", kind: "cli", online: false, versionState: "unknown" },
+      {
+        id: "d1",
+        name: "Studio collector",
+        kind: "collector",
+        online: false,
+        versionState: "unknown",
+      },
       // A gateway that predates the ledger serves no state at all; an absent
       // reading must land in the same neutral bucket as an explicit unknown.
       { id: "d2", name: "Legacy host", kind: "collector", online: false },
@@ -724,6 +730,22 @@ describe("evaluateDoctor — fleet versions", () => {
     expect(check?.status).toBe("pass");
     expect(check?.message).toContain("2 unknown");
     expect(report.summary.errors).toBe(0);
+  });
+
+  test("a CLI token that never reported a build is not part of the version count", () => {
+    const data = healthyData();
+    data.devices = [
+      { id: "d1", name: "bootstrap", kind: "cli", online: false, versionState: "unknown" },
+      {
+        id: "d2",
+        name: "Studio collector",
+        kind: "collector",
+        online: true,
+        versionState: "current",
+      },
+    ];
+    const check = findCheck(evaluateDoctor(data).checks, "fleet.versions");
+    expect(check?.message).toBe("1 current (of 1 paired device)");
   });
 
   test("a revoked device's stale reading is left out of the count", () => {

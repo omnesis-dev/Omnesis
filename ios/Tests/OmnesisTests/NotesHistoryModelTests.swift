@@ -65,7 +65,9 @@ final class NotesHistoryModelTests: XCTestCase {
         XCTAssertNil(saved.agent?.receipt)
         XCTAssertTrue(saved.shouldRefreshReceipt())
         XCTAssertEqual(model.entries.first?.agent?.state, "pending")
-        await model.refreshPending()
+        XCTAssertNotEqual(saved.updatedAt, note.updatedAt, "the detail polling identity must advance after editing")
+        let refreshed = try await model.refresh(saved)
+        XCTAssertEqual(refreshed?.agent?.receipt?.text, "Moved the workshop.")
         XCTAssertEqual(model.entries.first?.agent?.receipt?.text, "Moved the workshop.")
         let settled = try XCTUnwrap(model.entries.first)
         XCTAssertFalse(settled.shouldRefreshReceipt())
@@ -111,6 +113,38 @@ final class NotesHistoryModelTests: XCTestCase {
         _ = try await model.edit(note, text: "Edited workshop")
         resumeRead?.resume()
         await read.value
+        XCTAssertEqual(model.entries.first?.text, "Edited workshop")
+        XCTAssertEqual(model.entries.first?.agent?.state, "pending")
+        XCTAssertNil(model.entries.first?.agent?.receipt)
+    }
+
+    func testCancelledDetailPollCannotRestoreReceiptAfterEditing() async throws {
+        let session = Session()
+        let note = try JSONDecoder().decode(NoteEntry.self, from: Data(noteJSON.utf8))
+        var resumeRead: CheckedContinuation<Void, Never>?
+        session.respond = { request in
+            if request.httpMethod == "PATCH" {
+                return self.response(request, body: """
+                {"id":"n1","day":"2026-06-12","capturedAt":"2026-06-12T10:00:00Z",
+                 "updatedAt":"2026-06-12T10:01:00Z","text":"Edited workshop",
+                 "agent":{"state":"pending","receipt":null}}
+                """)
+            }
+            await withCheckedContinuation { resumeRead = $0 }
+            return self.response(request, body: "{\"entries\":[\(self.noteJSON)]}")
+        }
+        let client = try NotesClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test", session: session)
+        let model = NotesHistoryModel(client: client, entries: [note])
+        let poll = Task { try await model.refresh(note) }
+        while resumeRead == nil { await Task.yield() }
+        let edited = try await model.edit(note, text: "Edited workshop")
+        poll.cancel()
+        resumeRead?.resume()
+        do {
+            _ = try await poll.value
+            XCTFail("a superseded detail poll must honor cancellation")
+        } catch is CancellationError { /* The new revision owns the displayed note. */ }
+        XCTAssertEqual(model.entries.first?.updatedAt, edited.updatedAt)
         XCTAssertEqual(model.entries.first?.text, "Edited workshop")
         XCTAssertEqual(model.entries.first?.agent?.state, "pending")
         XCTAssertNil(model.entries.first?.agent?.receipt)

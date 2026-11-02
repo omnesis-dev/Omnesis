@@ -151,9 +151,11 @@ export interface UpdateAssessment {
  * Classify an update before it runs. Omnesis has no down-migrations: an
  * upgrade migrates the DB forward (effectively irreversible without a
  * backup), and a downgrade is absorbed by the gateway's per-source cursor
- * reset rather than a schema rollback. This turns those facts into the
- * warnings the update flow prints — and the block it puts in front of a
- * downgrade. Pure: target/current are the only inputs.
+ * reset rather than a schema rollback. This turns the downgrade into the
+ * warning the update flow prints — and the block it puts in front of it. What
+ * an upgrade's migrations mean depends on whether its plan backs up first, so
+ * that warning is `migrationBackupNote`'s. Pure: target/current are the only
+ * inputs.
  */
 export function assessUpdate(currentVersion: string, targetVersion: string): UpdateAssessment {
   const current = normalizeVersion(currentVersion);
@@ -163,12 +165,7 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
 
   const notes: string[] = [];
   let requiresForce = false;
-  if (direction === "upgrade") {
-    notes.push(
-      "This upgrade runs forward-only schema migrations on the gateway's next boot. " +
-        "There are no down-migrations — back up first: omnesis backup --note pre-upgrade",
-    );
-  } else if (direction === "downgrade") {
+  if (direction === "downgrade") {
     requiresForce = true;
     notes.push(
       `Downgrade ${current} → ${target}: the older binary cannot read a newer schema. ` +
@@ -177,6 +174,60 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
     );
   }
   return { direction, current, target, notes, requiresForce };
+}
+
+/** The command an operator backs up with before an update that takes no backup of its own. */
+export const MANUAL_BACKUP_COMMAND = "omnesis backup --note pre-upgrade";
+
+/**
+ * The warning an update prints about the gateway's forward-only migrations,
+ * read off the plan it is about to run: a plan with its own backup says that
+ * the backup runs before them, and where it goes; only a plan without one —
+ * `--no-backup`, or a host whose gateway is another machine's — tells the
+ * operator to back up first. `unreleased` is an edge build or an exact commit,
+ * which can carry migrations no release has. Null for a change that migrates
+ * nothing forward.
+ */
+/** Whether a plan step acts on, or waits for, a gateway on this host. */
+function involvesGateway(step: UpdateStep): boolean {
+  switch (step.kind) {
+    case "backup":
+    case "pause-gateway":
+    case "await-health":
+    case "gateway-stopped":
+      return true;
+    case "service-definition":
+    case "restart":
+    case "restart-hint":
+      return step.component === "gateway";
+    default:
+      return false;
+  }
+}
+
+export function migrationBackupNote(
+  change: UpdateDirection | "unreleased",
+  steps: readonly UpdateStep[],
+  backupsDir?: string,
+): string | null {
+  if (change !== "upgrade" && change !== "unreleased") return null;
+  // The migrations are the gateway's: a plan with no gateway on this host (a
+  // collector-only host) has none to back up for.
+  if (!steps.some(involvesGateway)) return null;
+  const backedUp = steps.some((step) => step.kind === "backup");
+  const lead =
+    change === "upgrade"
+      ? "This upgrade runs forward-only schema migrations on the gateway's next boot, and there are no down-migrations."
+      : "Edge can contain unreleased changes, including migrations no release has.";
+  if (!backedUp) {
+    return change === "upgrade"
+      ? `${lead} Back up first: ${MANUAL_BACKUP_COMMAND}`
+      : `${lead} Back up before running it: ${MANUAL_BACKUP_COMMAND}`;
+  }
+  return (
+    `${lead} The update backs up the gateway's databases before they run, into ` +
+    `${backupsDir ?? "the gateway's backups folder"}.`
+  );
 }
 
 // ── Update command lines ────────────────────────────────────────────────
@@ -265,6 +316,24 @@ function envValue(raw: string): string {
 /** `docker compose -f <composeFile> <args…>` — every compose call goes through this. */
 export function dockerComposeSpec(composeFile: string, args: readonly string[]): CommandSpec {
   return { command: "docker", args: ["compose", "-f", composeFile, ...args] };
+}
+
+/**
+ * The pull that moves a container install, and the one its rollback runs.
+ *
+ * Every image the recorded tag controls, the updater's included, as the
+ * installer pulls them: the hand-over runs the target's updater next, and a
+ * pull that fails fails here, before anything restarts. Quiet, because
+ * Compose's progress written anywhere but a terminal is a line per layer per
+ * state change, hundreds of them; its errors still reach the terminal. A pull
+ * opens a hundred or so registry connections and fails the image when one is
+ * refused; the layers that landed stay, so a second pull is cheap.
+ */
+export function dockerPullSpec(composeFile: string): CommandSpec {
+  return {
+    ...dockerComposeSpec(composeFile, ["--profile", "update", "pull", "--quiet"]),
+    retry: { why: "pulling again, keeping the layers already downloaded" },
+  };
 }
 
 /** The listing `runningImageTag` reads: every container of the project, as JSON. */
@@ -370,6 +439,13 @@ export function readImageTag(envFileText: string): string | null {
  * same way every time. A failed install is therefore retried once from an
  * empty `node_modules`, which is what a fresh install runs.
  */
+/** npm settings, as its environment carries them, that keep `npm ci` to its errors. */
+export const NPM_QUIET_ENV: Readonly<Record<string, string>> = {
+  npm_config_audit: "false",
+  npm_config_fund: "false",
+  npm_config_loglevel: "error",
+};
+
 export function sourceUpdateSpecs(
   rootDir: string,
   target = "vX.Y.Z",
@@ -381,6 +457,9 @@ export function sourceUpdateSpecs(
       command: "npm",
       args: ["ci"],
       cwd: rootDir,
+      // npm's audit, funding and deprecation notices are about the dependency
+      // tree, not this update; its errors still print.
+      env: NPM_QUIET_ENV,
       retry: {
         reset: { command: "rm", args: ["-rf", "node_modules"], cwd: rootDir },
         why: "installing the dependencies again from an empty node_modules",
@@ -1366,7 +1445,13 @@ export type UpdateStep =
   | { kind: "harness-authorize"; harness: Harness }
   | { kind: "harness-restart"; harness: Harness }
   /** Refreshed, but the restart that loads it belongs to someone else. */
-  | { kind: "harness-restart-hint"; harness: Harness; command: string };
+  | { kind: "harness-restart-hint"; harness: Harness; command: string }
+  /**
+   * A container install's images from the tag it moved away from, removed
+   * once everything it restarted runs the target: they hold a gigabyte or so
+   * each, and only a rollback, which is past by then, still needs them.
+   */
+  | { kind: "remove-previous-images"; previous: string };
 
 export interface HostPlanOptions {
   /** False for `--no-backup`, which the operator takes responsibility for. */
@@ -1407,6 +1492,12 @@ export interface HostPlanOptions {
    * anyway, so the update could never finish there.
    */
   pauseDaemonsForBuild?: boolean;
+  /**
+   * A container install's previous image tag, when it differs from the
+   * target: its images are removed at the end of a run that restarts the
+   * containers onto the target.
+   */
+  previousImages?: string;
 }
 
 /**
@@ -1534,6 +1625,11 @@ export function planHostUpdate(roles: HostRoles, opts: HostPlanOptions): UpdateS
           },
     );
   }
+  // Last: every container this run restarts is on the target by then, and a
+  // run that restarts nothing has not shown the target works.
+  if (opts.previousImages && restarting && (roles.gateway.present || roles.collector.present)) {
+    steps.push({ kind: "remove-previous-images", previous: opts.previousImages });
+  }
   return steps;
 }
 
@@ -1554,6 +1650,12 @@ export interface ApplyPlan {
   readonly target: string;
   /** What the rollback restores, for the operator to read. */
   readonly previous: string;
+  /**
+   * What the apply leaves on the host, which is what its success line says:
+   * images pulled, a package installed, a checkout built. None of them is the
+   * update finished — the restarts and the health wait still follow.
+   */
+  readonly installs: "images" | "package" | "build";
   /**
    * The apply only records the target and fetches it: until a later step
    * restarts something, the host still runs `previous`. A failed apply has
@@ -1598,6 +1700,7 @@ export function sourceApplyPlan(
     rollback: sourceUpdateSpecs(rootDir, previousRef, buildEnv),
     target,
     previous: previousRef,
+    installs: "build",
     applyState: {
       applying: activeSourceApplyState(rootDir, "applying", targetCommit, previousRef),
       complete: completedSourceApplyState(rootDir, targetCommit),
@@ -1619,6 +1722,7 @@ export function npmGlobalApplyPlan(
     rollback: [npmGlobalInstallSpec(previousVersion, registry)],
     target,
     previous: previousVersion,
+    installs: "package",
   };
 }
 
@@ -1642,17 +1746,12 @@ export function dockerApplyPlan(
   target: string,
   previous: string,
 ): ApplyPlan {
-  // A pull opens a hundred or so registry connections and fails the image
-  // when one is refused; the layers that landed stay, so a second pull is cheap.
-  const pull = (): CommandSpec => ({
-    ...dockerComposeSpec(composeFile, ["pull"]),
-    retry: { why: "pulling again, keeping the layers already downloaded" },
-  });
   return {
-    apply: [pull()],
-    rollback: [pull()],
+    apply: [dockerPullSpec(composeFile)],
+    rollback: [dockerPullSpec(composeFile)],
     target,
     previous,
+    installs: "images",
     // A pull fetches images; no container moves to them before its restart.
     applyChangesNothingRunning: true,
     applyState: {

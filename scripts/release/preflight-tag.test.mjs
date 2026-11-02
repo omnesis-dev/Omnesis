@@ -81,9 +81,29 @@ test("passes only the exact clean origin/main commit with an unused tag", () => 
   ]);
 });
 
-test("refuses a checkout that is not exact origin/main", () => {
-  const git = fakeGit({ "rev-parse HEAD": { code: 0, stdout: "different\n", stderr: "" } });
-  expect(() => preflight(ghWith([run()]), { git })).toThrow(/exact fetched origin\/main/u);
+test("refuses a checkout that is not on origin/main", () => {
+  const git = fakeGit({
+    "rev-parse HEAD": { code: 0, stdout: "different\n", stderr: "" },
+    "merge-base --is-ancestor HEAD origin/main": { code: 1, stdout: "", stderr: "" },
+  });
+  expect(() => preflight(ghWith([run()]), { git })).toThrow(
+    /not a commit on the fetched origin\/main/u,
+  );
+});
+
+// Main moves on while the release commit's CI runs; a pull request merged
+// after it must not force a second release commit.
+test("tags a release commit that main has since moved past, and says so", () => {
+  const git = fakeGit({
+    "rev-parse HEAD": { code: 0, stdout: "abc123\n", stderr: "" },
+    "rev-parse origin/main": { code: 0, stdout: "def456\n", stderr: "" },
+    "rev-list --count HEAD..origin/main": { code: 0, stdout: "2\n", stderr: "" },
+  });
+  const { sha, notes } = preflight(ghWith([run()]), { git });
+  expect(sha).toBe("abc123");
+  expect(notes[0]).toBe(
+    "ℹ Tagging abc123, 2 commit(s) behind origin/main; those commits are not in this release.",
+  );
 });
 
 test("refuses a commit with no full-validation run, naming how to start one", () => {

@@ -15,7 +15,6 @@
  * eagerly.
  */
 
-import { renderNoteConversationContext } from "./note-context.js";
 import { join } from "node:path";
 import {
   AnthropicBackend,
@@ -36,7 +35,7 @@ import {
   type ResolvedAssignment,
   type Logger,
 } from "@omnesis/core";
-import { CONFIG_DEFAULTS } from "@omnesis/config";
+import { CONFIG_DEFAULTS, type AgentKnowledgeMode } from "@omnesis/config";
 import { SCOPE_ADMIN } from "@omnesis/types";
 
 import { resolveAnthropicApiKey } from "../model-credentials.js";
@@ -54,6 +53,7 @@ import { toCognitionRunUsage } from "../brain/run-driver.js";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
 import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
 import { namedPagesNote, renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
+import { renderNoteConversationContext } from "./note-context.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
   ConversationReadStateService,
@@ -150,6 +150,8 @@ export interface AgentServiceDeps {
    */
   getOperatorInstructions?: () => string;
   getKnowledgeRootMaxChars?: () => number;
+  /** Snapshot at service construction; restart after changing the config. */
+  useBrainKnowledgeMode?: AgentKnowledgeMode;
 }
 
 /**
@@ -392,6 +394,9 @@ export function createAgentService(
   const { db, searchPipeline, syncStatus, analyticsDb, writeGate, wsServer, conversationStore } =
     deps;
   const omnesisChatRuntime = deps.getOmnesisChatRuntime();
+  const useBrainKnowledgeMode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+  const knowledgeReads = useBrainKnowledgeMode !== "off";
+  const allowVerifiedAnswers = useBrainKnowledgeMode === "check_stale_claims";
   /** The configured source types a run may reach; every type when unscoped. */
   const permittedSourceTypes = (authorization?: CorpusAuthorization): string[] => [
     ...new Set(
@@ -421,9 +426,10 @@ export function createAgentService(
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
-    const root = restricted
-      ? { text: "", support: [] }
-      : captureKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.());
+    const root =
+      restricted || !knowledgeReads
+        ? { text: "", support: [] }
+        : captureKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.());
     const prompt = buildSystemPrompt({
       audience: options.audience,
       now: new Date(),
@@ -433,7 +439,9 @@ export function createAgentService(
       experimental,
       selfMemory,
       selfPersonId,
-      knowledgeRootContext: restricted ? root.text : root.text + renderKnowledgePageDirectory(db),
+      knowledgeRootContext:
+        restricted || !knowledgeReads ? root.text : root.text + renderKnowledgePageDirectory(db),
+      knowledgeReads,
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
       messageCounts: !restricted,
@@ -447,7 +455,8 @@ export function createAgentService(
   };
   return new AgentService({
     backendFactory,
-    namedPagesNote: (message) => namedPagesNote(db, message),
+    useBrainKnowledgeMode,
+    namedPagesNote: knowledgeReads ? (message) => namedPagesNote(db, message) : undefined,
     ports: createGatewayAgentPorts(deps),
     // Function form so today's date, the live analytics catalog, and the
     // configured-source list are all fresh on every session-create.
@@ -474,14 +483,30 @@ export function createAgentService(
         "annotate_many",
       ]);
       const citationReads = new CitationReads();
-      const document = createGatewayDocumentPort(db, syncStatus, undefined, authorization);
+      const document = createGatewayDocumentPort(
+        db,
+        syncStatus,
+        { knowledgeReads, allowVerifiedAnswers },
+        authorization,
+      );
       const tools = buildBuiltinTools({
         citationReads,
         experimental: false,
         ports: {
-          search: createGatewaySearchPort(searchPipeline, syncStatus, db, authorization),
+          search: createGatewaySearchPort(
+            searchPipeline,
+            syncStatus,
+            db,
+            authorization,
+            knowledgeReads,
+          ),
           document,
-          documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, authorization),
+          documentByUrl: createGatewayDocumentByUrlPort(
+            db,
+            syncStatus,
+            authorization,
+            knowledgeReads,
+          ),
         },
       }).filter((tool) => safeNames.has(tool.name));
       const base = await buildLiveSystemPrompt(
@@ -924,6 +949,8 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
+        useBrainKnowledgeMode:
+          this.deps.configStore.get().agent?.useBrainKnowledgeMode ?? "check_stale_claims",
         getKnowledgeRootMaxChars: () =>
           this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,

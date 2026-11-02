@@ -22,6 +22,7 @@ import type { AgentServiceDeps } from "./agent-lifecycle.js";
 export type GatewayAgentPortsDeps = Pick<
   AgentServiceDeps,
   | "db"
+  | "useBrainKnowledgeMode"
   | "searchPipeline"
   | "syncStatus"
   | "analyticsDb"
@@ -38,26 +39,32 @@ export type GatewayAgentPortsDeps = Pick<
 /** Gateway tools share the same data access and gates across agent model roles. */
 export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts {
   const { db, searchPipeline, syncStatus, analyticsDb } = deps;
+  const mode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+  const knowledgeReads = mode !== "off";
+  const allowVerifiedAnswers = mode === "check_stale_claims";
   return {
     // `db` is passed so the agent search port can attach the 1-hop
     // breadcrumb to top hits when graph context is off.
-    search: createGatewaySearchPort(searchPipeline, syncStatus, db),
+    search: createGatewaySearchPort(searchPipeline, syncStatus, db, undefined, knowledgeReads),
     document: createGatewayDocumentPort(db, syncStatus, {
       graphContext: searchPipeline.agentSearchV2Enabled,
+      knowledgeReads,
+      allowVerifiedAnswers,
     }),
-    documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus),
+    documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, undefined, knowledgeReads),
     // `trace_connections` surfaces `same-entity` bound rows as point-in-time
     // records, so it needs the same analytics DB `cite_record` uses
     // (for the bound-row resolver + the record-display contract).
     trail: createGatewayTrailPort(db, analyticsDb, {
       graphContext: searchPipeline.agentSearchV2Enabled,
+      knowledgeReads,
     }),
     sql: createGatewaySqlPort(analyticsDb),
     // `cite_record` persists a single analytics row as a record citation.
     // Wired with the same analytics DB as `run_sql` (for the table
     // contract) and the document store (to resolve a bound document id).
     record: createGatewayRecordPort(db, analyticsDb),
-    person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
+    person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate, knowledgeReads }),
     // Unscoped, like `temporal`; source-restricted answers build separate ports.
     messageCounts: createGatewayMessageCountPort(db, {
       ...(deps.messageCountGate ? { gate: deps.messageCountGate } : {}),
@@ -74,7 +81,10 @@ export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts 
     // Read-only loop port (experimental): lets the interactive agent find and
     // read the background Cognition Steward's tracked obligations — no mutation, no
     // briefs. The registry also gates these tools on experimental mode.
-    loopRead: experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
+    loopRead:
+      knowledgeReads && experimentalVisible()
+        ? createGatewayLoopReadPort(db, undefined, { allowVerifiedAnswers })
+        : undefined,
     // Read-only temporal port: lets the interactive agent answer "what's
     // coming up?" in one call — source-owned dated facts and date mentions,
     // both produced on the ingest path whether or not the background agent
@@ -87,6 +97,7 @@ export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts 
     // Read-only cognitive-context (reap) port (experimental): lets the
     // interactive agent pull the whole neighbourhood the background agent
     // linked around one entity in a single call — no write surface.
-    entityContext: experimentalVisible() ? createGatewayEntityContextPort(db) : undefined,
+    entityContext:
+      knowledgeReads && experimentalVisible() ? createGatewayEntityContextPort(db) : undefined,
   };
 }

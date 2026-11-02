@@ -611,10 +611,15 @@ omnesis.example.com {
         <p>
           The role checks the gateway's certificate against the fingerprint, pairs, registers the
           collector service with the gateway URL, waits for the gateway to accept the device, and
-          prints its name. The fingerprint is checked before the pairing code is spent, and a
-          mismatch stops the install. Without <code>--trust-fingerprint</code>, a self-signed
-          certificate is shown to you for confirmation and a publicly trusted one is accepted
-          silently, so pass it whenever you have it.
+          prints the name the gateway registered, which is what <code>--device</code> takes. A code
+          minted without a name pairs the collector as <code>&lt;host&gt;-collector</code>, where
+          <code>&lt;host&gt;</code> is the machine's short name, lowercased, without the
+          <code>.local</code> a Mac adds (<code>Maya-MacBook.local</code> becomes
+          <code>maya-macbook-collector</code>); a collector paired before keeps its name. The
+          fingerprint is checked before the pairing code is spent, and a mismatch stops the install.
+          Without <code>--trust-fingerprint</code>, a self-signed certificate is shown to you for
+          confirmation and a publicly trusted one is accepted silently, so pass it whenever you have
+          it.
         </p>
         <p>
           Leave out <code>--gateway-url</code> and the role searches the local network instead (the
@@ -648,7 +653,7 @@ omnesis.example.com {
               <span class="t-cmd"
                 >omnesis pair &lt;code&gt; --gateway-url https://gateway.example.io:7600
                 --trust-fingerprint sha256:&lt;fingerprint&gt; --save
-                ~/.config/omnesis/collector-token</span
+                ~/.config/omnesis/collector-token --name studio-collector</span
               >
             </p>
             <p>
@@ -666,6 +671,13 @@ omnesis.example.com {
           which it prefers on later runs. If <code>OMNESIS_GATEWAY_URL</code> is unset, the
           collector searches the local network over mDNS, then falls back to
           <code>https://localhost:7600</code>.
+        </p>
+        <p>
+          <code>--name</code> asks for a device name when the code was minted without one; by
+          default the redeem suggests the machine's short name. Redeeming a collector token with
+          <code>--save &lt;dir&gt;/collector-token</code> also records which gateway the collector
+          in that directory belongs to, so <code>omnesis status</code> and the other commands on a
+          machine that only collects talk to that gateway rather than to <code>localhost</code>.
         </p>
         <p>
           Several collectors can serve one gateway, each hosting the sources on its own machine.

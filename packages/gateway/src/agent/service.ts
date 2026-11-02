@@ -22,7 +22,20 @@
  */
 
 import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
-import type { NoteConversationOrigin } from "./conversation-store.js";
+import type { NoteConversationOrigin,
+  clipTitle,
+  deriveTitle,
+  originAnchor,
+  latestDailyBrief,
+  DAILY_BRIEF_REF_LIMIT,
+  type ConversationOrigin,
+  type DailyBriefConversationOrigin,
+  type TaskConversationOrigin,
+  type TaskConversationOriginSnapshot,
+  type WatchFiringConversationOrigin,
+  type ConversationRecord,
+  type ConversationStore,
+  type ConversationSummary } from "./conversation-store.js";
 import {
   createVoiceSession,
   voiceTranscriptModelNote,
@@ -76,6 +89,7 @@ import {
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
 import { withTodaysTasks } from "./temporal-with-tasks.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
@@ -113,25 +127,11 @@ import {
   submissionInputSchema,
 } from "./conversation-controls.js";
 import {
-  clipTitle,
-  deriveTitle,
-  originAnchor,
-  latestDailyBrief,
-  DAILY_BRIEF_REF_LIMIT,
-  type ConversationOrigin,
-  type DailyBriefConversationOrigin,
-  type TaskConversationOrigin,
-  type TaskConversationOriginSnapshot,
-  type WatchFiringConversationOrigin,
-  type ConversationRecord,
-  type ConversationStore,
-  type ConversationSummary,
-} from "./conversation-store.js";
-import {
   buildWatchFiringBriefing,
   watchFiringThreadTitle,
   type OpenWatchFiringThreadInput,
 } from "./watch-firing-thread.js";
+import type { AgentKnowledgeMode } from "@omnesis/config";
 import type { ConversationReadStatePort } from "./conversation-read-state-service.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
@@ -219,6 +219,8 @@ export interface AgentServiceDeps {
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
+  /** Fixed for this service; changing the config requires a restart. */
+  useBrainKnowledgeMode?: AgentKnowledgeMode;
   /**
    * A model-only note for a conversation turn whose message names maintained
    * pages, telling the agent to open them first; empty when none is named.
@@ -905,6 +907,8 @@ export class AgentService {
   private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  readonly useBrainKnowledgeMode: AgentKnowledgeMode;
+  private readonly knowledgeReads: boolean;
   private readonly citationReads = new CitationReads();
   private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
   private readonly documentPort: DocumentPort;
@@ -1151,12 +1155,15 @@ export class AgentService {
       });
     }
     this.namedPagesNote = deps.namedPagesNote;
-    this.tools = buildBuiltinTools({
+    this.useBrainKnowledgeMode = deps.useBrainKnowledgeMode ?? "check_stale_claims";
+    this.knowledgeReads = this.useBrainKnowledgeMode !== "off";
+    const tools = buildBuiltinTools({
       citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
       planStore: this.planStore,
       experimental: experimentalVisible(),
     });
+    this.tools = this.knowledgeReads ? tools : withoutKnowledgeReadTools(tools);
     this.documentPort = deps.ports.document;
     this.searchRecordPort = deps.ports.record;
     this.systemPrompt = deps.systemPrompt;
@@ -1570,7 +1577,7 @@ export class AgentService {
           this.noteContext?.(origin) ??
           "The current note context is unavailable. Treat earlier note instructions as historical; confirm the owner's current intent before acting.";
         let task = "";
-        if (origin.taskId && this.taskContext) {
+        if (this.knowledgeReads && origin.taskId && this.taskContext) {
           try {
             task = this.taskContext({ kind: "task", runId: origin.runId, taskId: origin.taskId });
           } catch {
@@ -1586,7 +1593,7 @@ export class AgentService {
         return "The current note context is unavailable. Do not replay earlier instructions; confirm the owner's current intent before acting.";
       }
     }
-    if (origin?.kind !== "task" || !this.taskContext) return "";
+    if (!this.knowledgeReads || origin?.kind !== "task" || !this.taskContext) return "";
     try {
       return this.taskContext(origin);
     } catch (err) {
@@ -1659,13 +1666,16 @@ export class AgentService {
         : [];
     // The broader profile tracks annotation consumption alongside its writes.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    return withTodaysTasks([
+    const base = [
       ...this.tools,
       ...evidenceTools,
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
       ...taskTools,
-    ]);
+    ];
+    // Filter before the temporal adapter captures task_list: the journal is
+    // loop-backed, so its today overlay follows the same read boundary.
+    return withTodaysTasks(this.knowledgeReads ? base : withoutKnowledgeReadTools(base));
   }
 
   /** Settle this standalone owner's delegated work before releasing its runtime. */
@@ -1707,6 +1717,7 @@ export class AgentService {
       ...this.buildOwnerTools(`interactive_${sessionId}`, taskTools, evidenceTools),
       ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
     ];
+
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that

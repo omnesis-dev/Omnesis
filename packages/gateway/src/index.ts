@@ -2439,6 +2439,14 @@ const app = createServer(db, DB_PATH, {
   searchSnapshot,
   agentRouteDeps: agentLifecycle.routeDeps,
   getDecision: () => decisionService.get(),
+  recordCaptureDecisionSpend: (modelId, inputTokens) =>
+    recordDecisionSpend(
+      writeGate,
+      cognitionSpendDay(Date.now()),
+      "capture-decision",
+      modelId,
+      inputTokens,
+    ),
   recordWatchDecisionSpend: (modelId, inputTokens) =>
     recordDecisionSpend(
       writeGate,
@@ -2704,6 +2712,7 @@ const noteAgent = new NoteAgent({
   writeGate,
   resolveBackend: resolveOwnerAgentBackend,
   getSetting: () => configStore.get().agent?.noteAgent,
+  knowledgeReads: () => configStore.get().agent?.useBrainKnowledgeMode !== "off",
   buildTools: (runId, taskTools, evidenceTools) =>
     agentLifecycle.buildNoteTools(
       () => {

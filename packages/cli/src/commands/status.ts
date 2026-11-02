@@ -8,9 +8,11 @@ import {
   readPackageVersion,
   resolveToken,
   parseSourceKey,
+  hasVersionState,
   summarizeFleetVersions,
   websocketAuthProtocol,
   type ClientVersionState,
+  type FleetVersionSummary,
 } from "@omnesis/core";
 import {
   c,
@@ -52,6 +54,26 @@ function parseDuration(s: string | undefined): number | undefined {
       return n * 86_400_000;
   }
   return undefined;
+}
+
+/**
+ * The fleet line's counts. Revoked rows keep their history but run nothing,
+ * and a CLI token that never reported a build (the installer's own, on a
+ * fresh install) has nothing to say about versions: neither is part of the
+ * fleet this line reports on.
+ */
+export function statusFleetVersions(
+  items: ReadonlyArray<{
+    kind: string;
+    revokedAt?: number | null;
+    versionState?: ClientVersionState;
+  }>,
+): FleetVersionSummary {
+  return summarizeFleetVersions(
+    items
+      .filter((d) => !d.revokedAt && hasVersionState(d))
+      .map((d) => d.versionState ?? ("unknown" as ClientVersionState)),
+  );
 }
 
 async function fetchStatus(): Promise<StatusData> {
@@ -121,7 +143,7 @@ async function fetchStatus(): Promise<StatusData> {
     // devices talking to it agree.
     gatewayJson<{ version?: string }>("/health").catch(() => null),
     gatewayJson<{
-      items: Array<{ revokedAt?: number | null; versionState?: ClientVersionState }>;
+      items: Array<{ kind: string; revokedAt?: number | null; versionState?: ClientVersionState }>;
     }>("/admin/devices").catch(() => null),
   ]);
 
@@ -234,15 +256,7 @@ async function fetchStatus(): Promise<StatusData> {
     processVitals: processVitals ?? null,
     configHealth: overall.configHealth ?? null,
     gatewayVersion: health?.version ?? null,
-    // Revoked rows keep their history but run nothing, so they are not part
-    // of the fleet this line reports on.
-    fleetVersions: devices
-      ? summarizeFleetVersions(
-          devices.items
-            .filter((d) => !d.revokedAt)
-            .map((d) => d.versionState ?? ("unknown" as ClientVersionState)),
-        )
-      : null,
+    fleetVersions: devices ? statusFleetVersions(devices.items) : null,
     timestamp: new Date().toISOString(),
   };
 }

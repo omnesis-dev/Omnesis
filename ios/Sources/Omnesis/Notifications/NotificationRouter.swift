@@ -20,7 +20,20 @@ public final class NotificationRouter {
     /// the active section for it; the destination view (Watches,
     /// Privacy, Agent) consumes it on appear or on change. Nil
     /// when nothing is queued.
-    public var pendingTarget: PushTarget?
+    public var pendingTarget: PushTarget? {
+        didSet {
+            if pendingTarget != nil { navigationRevision &+= 1 }
+        }
+    }
+
+    /// Explicit navigation remains authoritative after its destination consumes
+    /// the target. A foreground request captures the revision at backgrounding,
+    /// so neither a late decision nor a delayed consumer can restore over it.
+    public private(set) var navigationRevision: UInt64 = 0
+
+    public func allowsAutomaticNavigation(since revision: UInt64) -> Bool {
+        pendingTarget == nil && navigationRevision == revision
+    }
 
     /// When a target was last consumed. A destination view can take a target
     /// while something else is waiting on a network read — the ledger lookup
@@ -83,6 +96,8 @@ public enum PushTarget: Equatable, Sendable {
     /// One task, shown in Tasks with its details open: what a task chip under
     /// a morning brief opens. In-app only; no push carries it.
     case task(taskId: String)
+    /// The journal date and optional task selected in a Home Screen widget.
+    case taskJournal(TaskWidgetDeepLink)
     /// A durable mobile permission alert. The affected device determines
     /// whether this phone may show its trusted local remediation snapshot.
     case sourcePermission(
@@ -105,6 +120,7 @@ extension PushTarget {
         case .watchFiring: "watch-firing"
         case .watch: "watch"
         case .task: "task"
+        case .taskJournal: "task-journal"
         case .sourcePermission: "source-permission"
         }
     }
@@ -113,7 +129,7 @@ extension PushTarget {
     /// client embeds. Returns nil for any malformed shape — taps on
     /// unrecognised payloads silently fall through to the app's
     /// normal launch flow.
-    // One parser intentionally owns compatibility for canonical and legacy payloads.
+    /// One parser intentionally owns compatibility for canonical and legacy payloads.
     // swiftlint:disable:next cyclomatic_complexity
     public static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }

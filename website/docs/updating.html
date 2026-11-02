@@ -727,11 +727,17 @@
         <p>
           A machine installed with <code>install.sh --docker</code> updates with the same
           <code>omnesis update</code> and the same steps. Installing means bumping the image tag
-          recorded beside the Compose file and pulling the new images; the backup runs after the
-          pull, while the gateway still serves the previous image. Rolling back is quick: the
-          previous tag is written back, and its image is still on the machine.
-          <code>--target-version</code> pins a release tag. A Docker install follows releases only,
-          so it refuses <code>--edge</code> before anything changes.
+          recorded beside the Compose file and pulling the new images, the updater's included,
+          quietly: one line for the pull, and Docker's own errors if it fails. The backup runs after
+          the pull, while the gateway still serves the previous image. Rolling back is quick: the
+          previous tag is written back, and its image is still on the machine. Once the gateway
+          answers on the new release and the collector has restarted onto it, the update removes the
+          previous release's images of this install, about a gigabyte each; it never removes another
+          image. One that a container still uses, such as the updater image the update itself
+          started from, is kept and removed by the next update. An image it cannot remove is
+          reported with the <code>docker image rm</code> command that does, and never fails the
+          update. <code>--target-version</code> pins a release tag. A Docker install follows
+          releases only, so it refuses <code>--edge</code> before anything changes.
         </p>
         <p>
           To run an exact commit in Docker, a maintainer publishes its gateway, collector and
@@ -948,6 +954,13 @@
             </tbody>
           </table>
         </div>
+        <p>
+          A command-line token, such as the one the installer creates, reports a version only while
+          it holds a connection open, as <code>omnesis status --watch</code> does. Until it has
+          reported one it has no state: <code>omnesis devices list</code> shows <code>—</code>, and
+          the device counts in <code>omnesis status</code> and <code>omnesis doctor</code> leave it
+          out.
+        </p>
         <p>
           A fleet update leaves <em>unknown</em> and <em>unsupported</em> devices to you, because
           the gateway will not tell a build it cannot identify, or one below its floor, to replace

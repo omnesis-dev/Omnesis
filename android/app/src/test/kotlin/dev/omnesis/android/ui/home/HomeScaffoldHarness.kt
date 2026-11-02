@@ -138,6 +138,7 @@ object HomeScaffoldTestModule {
 @InstallIn(SingletonComponent::class)
 interface HomeScaffoldHarnessEntryPoint {
     fun pairingService(): PairingService
+    fun captureLaunchBus(): dev.omnesis.android.ui.capture.CaptureLaunchBus
     fun notificationLaunchBus(): NotificationLaunchBus
     fun sessionManager(): SessionManager
 }
@@ -167,6 +168,10 @@ class MockGateway : AutoCloseable {
     /** Whether the access overview answers with a server error instead of its listing. */
     @Volatile
     var accessOverviewFails: Boolean = false
+
+    /** Status capabilities returned by this gateway version. */
+    @Volatile
+    var statusJson: String = """{"documents":{"total":0,"bySource":{}},"experimental":false}"""
 
     /** Every request path the gateway received, in arrival order. */
     val requestPaths = CopyOnWriteArrayList<String>()
@@ -201,7 +206,7 @@ class MockGateway : AutoCloseable {
                         """{"device":{"id":"device-test","name":"Test phone","kind":"android"},""" +
                             """"tokenId":"token-row-test","token":"token-test","scopes":["admin"]}""",
                     )
-                    route == "/status" -> json("""{"documents":{"total":0,"bySource":{}},"experimental":false}""")
+                    route == "/status" -> json(statusJson)
                     route == "/admin/privacy/approvals" -> approvalsPage()
                     route.startsWith("/admin/privacy/approvals/") -> json(
                         """{"approval":{"id":"${route.substringAfterLast('/')}","status":"pending",""" +
@@ -291,6 +296,7 @@ class HomeScaffoldHarness(
         )
 
     val launchBus: NotificationLaunchBus get() = entryPoint.notificationLaunchBus()
+    val captureLaunchBus get() = entryPoint.captureLaunchBus()
     val session: SessionManager get() = entryPoint.sessionManager()
 
     /** Pairs the graph's in-memory store to the mock gateway through the real exchange. */

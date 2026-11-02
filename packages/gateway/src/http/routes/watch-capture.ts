@@ -5,16 +5,27 @@ import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
 import { notesRateLimiter } from "../../rate-limit.js";
-import { BadRequestError, ValidationError } from "../errors.js";
+import { BadRequestError, ServiceUnavailableError, ValidationError } from "../errors.js";
+import {
+  CaptureRoutingUnavailableError,
+  type CaptureRoutingService,
+} from "../../dictation/capture-routing.js";
 import { clientIp } from "./admin/internals.js";
-import type { WatchRoutingService } from "../../dictation/watch-routing.js";
 import type { RouteApp } from "./types.js";
 
 const capture = z.object({ text: z.string().trim().min(1).max(16_000) }).strict();
 
-export function mountWatchCaptureRoutes(app: RouteApp, service: WatchRoutingService): void {
+export function mountWatchCaptureRoutes(app: RouteApp, service: CaptureRoutingService): void {
+  mountCaptureRoutes(app, service, "/watch/capture/route");
+}
+
+export function mountCaptureRoutes(
+  app: RouteApp,
+  service: CaptureRoutingService,
+  path = "/capture/route",
+): void {
   const limiter = notesRateLimiter();
-  app.post("/watch/capture/route", scope.admin(), bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
+  app.post(path, scope.admin(), bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
     if (limiter.consume(clientIp(c)))
       return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
     let body: unknown;
@@ -24,7 +35,16 @@ export function mountWatchCaptureRoutes(app: RouteApp, service: WatchRoutingServ
       throw new BadRequestError("Expected a JSON capture");
     }
     const parsed = capture.safeParse(body);
-    if (!parsed.success) throw new ValidationError("Invalid watch capture", parsed.error.issues);
-    return c.json({ route: await service.route(parsed.data.text, c.req.raw.signal) });
+    if (!parsed.success) throw new ValidationError("Invalid capture", parsed.error.issues);
+    try {
+      return c.json({ route: await service.route(parsed.data.text, c.req.raw.signal) });
+    } catch (error) {
+      if (error instanceof CaptureRoutingUnavailableError) {
+        throw new ServiceUnavailableError(
+          "Automatic routing is unavailable. Choose an action manually.",
+        );
+      }
+      throw error;
+    }
   });
 }

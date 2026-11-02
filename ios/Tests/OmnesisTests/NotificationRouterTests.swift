@@ -33,6 +33,64 @@ final class NotificationRouterTests: XCTestCase {
         XCTAssertFalse(router.consumedSince(before))
     }
 
+    func testConsumedWidgetTaskSuppressesForegroundRestoration() throws {
+        let router = NotificationRouter()
+        let foregroundRevision = router.navigationRevision
+        let url = try XCTUnwrap(URL(string: "omnesis://tasks?view=today&date=2026-11-01&task=task-demo"))
+        let link = try XCTUnwrap(TaskWidgetDeepLink(url: url))
+        router.pendingTarget = .taskJournal(link)
+        XCTAssertEqual(router.consume(), .taskJournal(link))
+        XCTAssertNil(router.pendingTarget)
+
+        for action in [ForegroundConversationAction.resume("conv-last"), .fresh] {
+            XCTAssertNil(ForegroundNavigationArbiter.automaticAction(
+                action,
+                pushPending: !router.allowsAutomaticNavigation(since: foregroundRevision),
+                capturePending: false
+            ))
+        }
+
+        // A later foreground episode can restore normally after backgrounding.
+        let nextForegroundRevision = router.navigationRevision
+        XCTAssertTrue(router.allowsAutomaticNavigation(since: nextForegroundRevision))
+    }
+
+    func testWidgetTaskInvalidatesAnAlreadyCreatedForegroundRequest() {
+        let router = NotificationRouter()
+        let request = ForegroundConversationRequest(
+            id: 1,
+            action: .resume("conv-last"),
+            navigationRevision: router.navigationRevision
+        )
+        XCTAssertTrue(router.allowsAutomaticNavigation(since: request.navigationRevision))
+        router.pendingTarget = .task(taskId: "task-demo")
+        router.consume()
+
+        // HomeView may receive the request, or resume after yielding, only
+        // after the destination has already consumed the explicit target.
+        XCTAssertFalse(router.allowsAutomaticNavigation(since: request.navigationRevision))
+        XCTAssertNil(ForegroundNavigationArbiter.automaticAction(
+            request.action,
+            pushPending: !router.allowsAutomaticNavigation(since: request.navigationRevision),
+            capturePending: false
+        ))
+    }
+
+    func testPendingTargetAndRepeatedTaskRoutesKeepNavigationExplicit() {
+        let router = NotificationRouter()
+        router.pendingTarget = .task(taskId: "task-demo")
+        let revision = router.navigationRevision
+        XCTAssertFalse(router.allowsAutomaticNavigation(since: revision))
+        router.consume()
+        XCTAssertTrue(router.allowsAutomaticNavigation(since: revision))
+        router.pendingTarget = .task(taskId: "task-demo")
+        router.consume()
+        XCTAssertFalse(router.allowsAutomaticNavigation(since: revision))
+        let latest = router.navigationRevision
+        router.consume()
+        XCTAssertEqual(router.navigationRevision, latest)
+    }
+
     func testForegroundPolicyResumesExactConversationInsideOneHour() {
         let record = ForegroundConversationRecord(
             state: .conversation("conv-exact"),

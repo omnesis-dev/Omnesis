@@ -102,13 +102,6 @@
   text-transform: uppercase;
 }
 
-.tasks-group-hint {
-  color: var(--text-muted);
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
 .tasks-empty {
   padding: 12px 0;
   color: var(--text-muted);

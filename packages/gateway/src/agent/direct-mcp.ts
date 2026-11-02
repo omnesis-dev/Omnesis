@@ -554,6 +554,7 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
             document: createGatewayDocumentPort(deps.db, deps.syncStatus, {
               maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES,
               graphContext: deps.searchPipeline.agentSearchV2Enabled,
+              allowVerifiedAnswers: false,
             }),
             documentByUrl: createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
             person: createGatewayPersonPort(deps.db, { lookupGate: deps.personLookupGate }),
@@ -570,7 +571,9 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
                 : {},
             ),
             entityContext: createGatewayEntityContextPort(deps.db),
-            loopRead: createGatewayLoopReadPort(deps.db),
+            loopRead: createGatewayLoopReadPort(deps.db, undefined, {
+              allowVerifiedAnswers: false,
+            }),
           },
     });
   return new DirectMcpService(

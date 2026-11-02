@@ -80,10 +80,11 @@ function makeProfile(): { profile: InteractiveWriteProfile; seenRunIds: string[]
   return { profile, seenRunIds };
 }
 
-function makeService(ports: Partial<ToolPorts> = {}) {
+function makeService(ports: Partial<ToolPorts> = {}, knowledgeReads = true) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
   const service = new AgentService({
+    useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: (_role: CapabilityRole) => backend,
     ports: { search: stubSearch, document: stubDocument, ...ports },
     systemPrompt: "test",
@@ -107,6 +108,32 @@ describe("interactive-agent substrate write access", () => {
   afterEach(() => {
     if (prevExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = prevExperimental;
+  });
+
+  it("withholds profile wiki reads when maintained knowledge reads are disabled", async () => {
+    const { service, backend } = makeService({}, false);
+    service.setInteractiveWriteProfile({
+      buildOwnTools: () =>
+        ["knowledge_list", "knowledge_fetch", "open_loop_search", "open_loop_fetch"].map(
+          (name) => ({
+            name,
+            description: name,
+            mutates: false,
+            schema: undefined as never,
+            invoke: async () => ({ kind: "structured" as const, resultType: "noop", data: {} }),
+          }),
+        ),
+    });
+    const { sessionId } = await service.createSession("device:A");
+    service.sendMessage("device:A", sessionId, "what does the project page say?");
+    await settle();
+    expect(backend.sawTools).toContain("fetch_many");
+    expect(backend.sawTools).toContain("search_many");
+    expect(backend.sawTools).not.toContain("knowledge_list");
+    expect(backend.sawTools).not.toContain("knowledge_fetch");
+    expect(backend.sawTools).not.toContain("open_loop_search");
+    expect(backend.sawTools).not.toContain("open_loop_fetch");
+    expect(service.listTools().map((tool) => tool.name)).not.toContain("fetch_loop");
   });
 
   it("appends the profile's write tools to a top-level session, stamped interactive_<sessionId>", async () => {
@@ -266,6 +293,39 @@ describe("shared owner-directed tools", () => {
       }),
     };
   }
+
+  it.each([false, true])(
+    "honors the explicit knowledge-read boundary for chat and Note tools (experimental=%s)",
+    async (experimental) => {
+      process.env.OMNESIS_EXPERIMENTAL = experimental ? "1" : "0";
+      const { service, backend } = makeService({}, false);
+      service.setInteractiveMemoryProfile({
+        buildOwnTools: (runId) => [profileTool("annotate_durable", runId, "memory")],
+      });
+      service.setInteractiveWriteProfile({
+        buildOwnTools: (runId) => [profileTool("knowledge_list", runId, "cognition", false)],
+      });
+      const taskTools = ["task_list", "task_create", "task_update", "task_undo"].map((name) =>
+        profileTool(name, "note:boundary", "tasks", name !== "task_list"),
+      );
+      service.setTaskToolsProvider(() => taskTools);
+      const temporal = profileTool("temporal_query", "note:boundary", "read", false);
+      try {
+        const ownerTools = service.buildOwnerTools("note:boundary", taskTools, [temporal]);
+        // A filtered task_list must never be captured by the temporal overlay.
+        expect(ownerTools.find((tool) => tool.name === "temporal_query")).toBe(temporal);
+        const { sessionId } = await service.createSession("device:A");
+        service.sendMessage("device:A", sessionId, "Remember the display label.");
+        await settle();
+        for (const names of [ownerTools.map((tool) => tool.name), backend.sawTools]) {
+          expect(names).toContain("annotate_durable");
+          expect(names.some((name) => /^(task_|knowledge_|open_loop_)/.test(name))).toBe(false);
+        }
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
 
   it.each([false, true])(
     "offers the same owner capabilities to chat and standalone notes (experimental=%s)",

@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Authenticated transport used by the phone's durable complication inbox.
+/// Shared voice routing and transcription for phone controls and Watch captures.
 struct WatchCaptureClient: Sendable {
     let baseURL: URL
     let token: String
@@ -11,7 +11,11 @@ struct WatchCaptureClient: Sendable {
 
     func route(_ text: String) async throws -> WatchCaptureRoute {
         struct Response: Decodable { let route: WatchCaptureRoute }
-        let data = try await post(path: "/watch/capture/route", body: JSONEncoder().encode(["text": text]), contentType: "application/json")
+        let data = try await post(
+            path: "/watch/capture/route",
+            body: JSONEncoder().encode(["text": text]),
+            contentType: "application/json"
+        )
         let route = try JSONDecoder().decode(Response.self, from: data).route
         guard route != .automatic else { throw GatewayClient.Error.invalidResponse }
         return route
@@ -44,7 +48,7 @@ struct WatchCaptureClient: Sendable {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw GatewayClient.Error.invalidResponse }
         guard (200 ... 299).contains(http.statusCode) else {
-            throw GatewayClient.Error.serverError(status: http.statusCode, body: "Watch capture request failed")
+            throw GatewayClient.Error.serverError(status: http.statusCode, body: "Voice capture request failed")
         }
         return data
     }

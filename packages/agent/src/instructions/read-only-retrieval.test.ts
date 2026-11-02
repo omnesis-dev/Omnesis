@@ -12,10 +12,14 @@ import {
 } from "./read-only-retrieval.js";
 
 describe("maintained knowledge retrieval", () => {
-  it("treats summaries as directions to the page and its sources, never as the answer", () => {
+  it("opens maintained pages before applying their returned answer policy", () => {
     const guidance = renderCognitionRetrievalGuidance();
-    expect(guidance).toContain("Look things up; summaries only tell you where.");
-    expect(guidance).toContain("never as the answer itself");
+    expect(guidance).toContain(
+      "Open relevant maintained pages, then follow their returned answer policy.",
+    );
+    expect(guidance).toContain(
+      "Root context, page directories, titles and snippets are orientation",
+    );
     expect(guidance).toContain(
       "When a question touches something they name — a person, project, place, plan or product — read the maintained page before answering",
     );
@@ -29,7 +33,7 @@ describe("maintained knowledge retrieval", () => {
     expect(guidance).toContain("If no relevant page exists, use ordinary retrieval");
   });
 
-  it("follows a page to the sources behind the claims an answer uses", () => {
+  it("checks original sources outside exact returned qualified support", () => {
     const guidance = renderCognitionRetrievalGuidance();
     expect(guidance).toContain("`knowledgeContext.provenance`");
     expect(guidance).toContain("`items[]` with that `claimId` and a `documentId`");
@@ -42,6 +46,26 @@ describe("maintained knowledge retrieval", () => {
     expect(guidance).toContain("Call it open only when something still needs doing");
     expect(guidance).toContain("Don't invent open work to fill a list");
     expect(guidance).toContain("author, date and draft or sent status");
+  });
+
+  it("limits the fast path to returned support and cites the read synthesis", () => {
+    const guidance = renderCognitionRetrievalGuidance();
+    expect(guidance).toContain('`knowledgeContext.answerPolicy.mode: "verified_support"`');
+    expect(guidance).toContain("exact statements actually returned");
+    expect(guidance).toContain(
+      '`answerPolicy.mode: "source_checks"` overrides a nonempty `verifiedSupport` list',
+    );
+    expect(guidance).toContain("without fetching their original sources again");
+    expect(guidance).toContain(
+      "interpretation context, attribution, modality, conditions and valid times",
+    );
+    expect(guidance).toContain("never its unread original sources");
+    expect(guidance).toContain('`answerPolicy.mode: "source_checks"`, a missing policy');
+    expect(guidance).toContain("absence of a warning alone do not grant this permission");
+    expect(guidance).toContain("not omitted facts or completeness claims");
+    expect(guidance).toContain("even when qualified support is returned");
+    expect(guidance).toContain("Missing document pointers require ordinary source retrieval");
+    expect(guidance).toContain("`loop:` is not a document alias");
   });
 
   it("keeps maintained-page reads inside the surface's permissions", () => {

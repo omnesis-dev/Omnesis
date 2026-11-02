@@ -1083,6 +1083,14 @@ enum PreviewMocks {
         )
     }
 
+    static let voiceEntryText = "Where did I leave the spare bicycle key?"
+    static let voiceEntryLongText = String(repeating: "Remember to check the greenhouse after the weekend. ", count: 12)
+    static let voiceEntryAutomaticStatus = StatusSnapshot(
+        documents: .init(total: 0, bySource: [:], unitCountBySource: nil),
+        dbSizeBytes: nil, latestActivityBySource: nil,
+        watchCapture: .init(supported: true, enabled: true, active: true)
+    )
+
     static let statusSnapshot = StatusSnapshot(
         documents: StatusSnapshot.Documents(
             total: 165_135,
@@ -1351,6 +1359,13 @@ enum PreviewMocks {
 
     /// Counts with a single suggestion waiting, for the singular review line.
     static let tasksOneSuggestionCounts = TaskCounts(today: 5, month: 10, suggested: 1)
+
+    /// A future month opened from a task widget.
+    static let tasksWidgetMonth: [TaskRecord] = [
+        TaskRecord(id: "widget_month_1", title: "Plan the winter reading list", scheduledFor: "2026-11-04"),
+        TaskRecord(id: "widget_month_2", title: "Review the workshop outline", scheduledFor: "2026-11-12"),
+        TaskRecord(id: "widget_month_3", title: "Organize the sketchbook collection", scheduledFor: "2026-11"),
+    ]
 
     /// The rest of the month: enough rows that the last one sits at the foot
     /// of a phone screen, where its actions open below the fold.

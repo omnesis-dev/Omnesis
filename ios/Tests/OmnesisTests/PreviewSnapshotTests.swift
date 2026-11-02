@@ -1090,7 +1090,8 @@ final class PreviewSnapshotTests: XCTestCase {
         scheme: ColorScheme = .dark,
         capturePresentedChrome: Bool = false,
         settle: TimeInterval = 0.6,
-        size: CGSize? = nil
+        size: CGSize? = nil,
+        primeLayout: Bool = false
     ) {
         let isDark = scheme == .dark
         let screen = CGRect(origin: .zero, size: size ?? UIScreen.main.bounds.size)
@@ -1106,11 +1107,17 @@ final class PreviewSnapshotTests: XCTestCase {
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
 
-        // Pump the run loop so geometry preferences (composer top edge)
-        // propagate and SwiftUI re-renders the mask before capture.
+        // Navigation and paged containers can finish their geometry only on
+        // a drawing pass. Prime that pass before waiting for geometry-driven
+        // state (such as a preview fan) to settle, rather than at capture time.
+        let renderer = UIGraphicsImageRenderer(size: screen.size)
+        if primeLayout {
+            _ = renderer.image { _ in
+                host.view.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+        }
         RunLoop.current.run(until: Date().addingTimeInterval(settle))
 
-        let renderer = UIGraphicsImageRenderer(size: screen.size)
         let image = renderer.image { context in
             if capturePresentedChrome {
                 // The alert lives above the hosting view. The XCTest unit-test
@@ -7486,6 +7493,62 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Quick capture ("Tell Omnesis")
 
+    func testUnifiedCaptureStates() {
+        let automatic = AppStore.preview(statusSnapshot: PreviewMocks.voiceEntryAutomaticStatus)
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .listening), previewText: PreviewMocks.voiceEntryText)
+                .environment(automatic),
+            name: "unified-capture-automatic",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .listening)).environment(AppStore.preview()),
+            name: "unified-capture-manual",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .unavailable)).environment(AppStore.preview()),
+            name: "unified-capture-unavailable",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .idle),
+                previewText: PreviewMocks.voiceEntryText,
+                previewSaveError: "Couldn’t choose Ask or Tell. Choose how to send, or try again later.",
+                previewRoutingFailed: true
+            ).environment(automatic),
+            name: "unified-capture-route-failed",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .idle),
+                previewText: PreviewMocks.voiceEntryText,
+                previewPhase: .saving
+            ).environment(automatic),
+            name: "unified-capture-sending",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(
+                unified: true,
+                speech: .preview(state: .listening),
+                previewVoiceNote: .previewRecording(seconds: 12)
+            ).environment(automatic),
+            name: "unified-capture-recording",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            CaptureView(unified: true, speech: .preview(state: .idle), previewText: PreviewMocks.voiceEntryLongText)
+                .environment(AppStore.preview()).dynamicTypeSize(.accessibility3),
+            name: "unified-capture-long-large",
+            ignoresSafeArea: true
+        )
+    }
+
     func testCaptureListeningEmpty() {
         let view = CaptureView(speech: .preview(state: .listening))
             .environment(AppStore.preview())
@@ -8783,9 +8846,22 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "310-tasks-today", size: CGSize(width: 393, height: 1500))
     }
 
-    /// Today on an experimental gateway: the Suggested segment with its
-    /// count, one task carrying the Brain's "thinks this is done" proposal
-    /// with Confirm / Keep, and the review banner at the foot of the page.
+    /// A widget opens its selected future month with a route back to today.
+    func testTasksWidgetDateContext() {
+        let view = NavigationStack {
+            TasksContent(model: .fixture(
+                selected: .month,
+                tasks: PreviewMocks.tasksWidgetMonth,
+                now: PreviewMocks.tasksNow,
+                referenceDay: "2026-11-01"
+            ))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        snapshot(view.environment(AppStore.preview()), name: "tasks-widget-date-context")
+    }
+
+    /// Today on an experimental gateway: suggestions and proposed changes.
     func testTasksTodayExperimental() {
         let view = NavigationStack {
             TasksContent(
@@ -8859,6 +8935,9 @@ final class PreviewSnapshotTests: XCTestCase {
         offersChat: Bool = false,
         dynamicType: DynamicTypeSize = .large
     ) {
+        var latestLayout: (TaskFanSession?, CGRect)?
+        var preview = fan
+        preview.onLayout = { latestLayout = ($0, $1) }
         let view = NavigationStack {
             TasksContent(
                 model: .fixture(
@@ -8870,7 +8949,7 @@ final class PreviewSnapshotTests: XCTestCase {
                 experimental: experimental,
                 offersTell: true,
                 onChat: offersChat ? { _ in } : nil,
-                initialFan: fan
+                initialFan: preview
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
@@ -8879,8 +8958,20 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         .environment(AppStore.preview())
         .environment(\.dynamicTypeSize, dynamicType)
-        renderInWindow(view, name: name, settle: 1.2)
-        renderInWindow(view, name: "\(name)-light", scheme: .light, settle: 1.2)
+        for scheme in [ColorScheme.dark, .light] {
+            latestLayout = nil
+            renderInWindow(
+                view, name: scheme == .dark ? name : "\(name)-light", scheme: scheme,
+                settle: 1.2, primeLayout: true
+            )
+            guard let (session, viewport) = latestLayout, let session else {
+                XCTFail("The preview fan did not reopen after its viewport settled")
+                continue
+            }
+            for target in session.targets {
+                XCTAssertTrue(viewport.contains(target.frame), "\(target.label) is clipped by the visible viewport")
+            }
+        }
     }
 
     /// A long press on a title towards the right, slid onto Tomorrow: the

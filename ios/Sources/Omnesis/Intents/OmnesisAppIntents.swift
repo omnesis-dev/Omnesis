@@ -62,6 +62,21 @@ public struct CaptureNoteIntent: AppIntent {
     }
 }
 
+/// A parameter-free foreground action for Shortcuts and the Action button.
+public struct SpeakToOmnesisIntent: AppIntent {
+    public static let title: LocalizedStringResource = "Speak to Omnesis"
+    public static let description = IntentDescription("Open dictation to ask a question or save a note.")
+    public static let openAppWhenRun = true
+
+    public init() {}
+
+    @MainActor
+    public func perform() async throws -> some IntentResult {
+        CaptureRouter.shared.requestCapture(surfaceSlug: "ios-control")
+        return .result()
+    }
+}
+
 /// System-registered Siri phrases. Installed automatically (no app
 /// launch required — App Shortcuts are extracted at install time).
 ///
@@ -83,6 +98,12 @@ public struct CaptureNoteIntent: AppIntent {
 /// hands-free end to end.
 public struct OmnesisAppShortcuts: AppShortcutsProvider {
     public static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: SpeakToOmnesisIntent(),
+            phrases: ["Speak to \(.applicationName)"],
+            shortTitle: "Speak to Omnesis",
+            systemImageName: "mic"
+        )
         AppShortcut(
             intent: CaptureNoteIntent(),
             phrases: [

@@ -153,8 +153,13 @@ export async function waitForDeviceOnline(
 export type ContainerFolderOutcome =
   /** Not a folder hidden by the container boundary: print the collector's error. */
   | { kind: "none" }
-  /** The launcher offers the share once this command exits. */
-  | { kind: "requested"; message: string }
+  /**
+   * The launcher offers the share once this command exits, and it says what
+   * the operator needs to know: the folder is on their machine and the
+   * collector's container does not see it. Nothing is printed here, so the
+   * explanation and the question are all they read.
+   */
+  | { kind: "requested" }
   /** No launcher to offer it: the error, and the command that shares the folder. */
   | { kind: "explain"; message: string };
 
@@ -178,12 +183,7 @@ export function containerFolderOutcome(input: {
   if (!input.collectorIsLocal || !folders || !isAbsolute(value)) return { kind: "none" };
   if (visibleInContainer(value, folders)) return { kind: "none" };
   const write = input.writeRequest ?? writeShareRequest;
-  if (folders.canRequest && write(folders, value, input.resume)) {
-    return {
-      kind: "requested",
-      message: `${c.red}${error}${c.reset}\n${value} is not among the folders this install's collector can see.`,
-    };
-  }
+  if (folders.canRequest && write(folders, value, input.resume)) return { kind: "requested" };
   const command = shareFolderCommand(value);
   const hint = error.includes(command)
     ? ""
@@ -363,9 +363,33 @@ async function pickSourcesInteractively(
   choices: { value: string; label: string; hint?: string }[],
   prompts: typeof import("@clack/prompts"),
 ): Promise<string[]> {
-  const selected = await prompts.autocompleteMultiselect({
+  return pickMany(prompts, {
     message: "Which sources would you like to add?",
     options: choices,
+  });
+}
+
+/**
+ * Every multiple choice an add flow asks — the sources, then each source's
+ * accounts — on one widget. The prompts follow one another, and an operator
+ * who has just selected with the key one hint named presses it again at the
+ * next: two widgets taking different keys, each truthfully hinting its own,
+ * made the second one ignore it. This one selects with Tab, and with Space
+ * once the arrows have moved the cursor (before that Space types into the
+ * search), and its hint says exactly that at every step.
+ */
+export async function pickMany(
+  prompts: Pick<typeof import("@clack/prompts"), "autocompleteMultiselect" | "isCancel" | "cancel">,
+  opts: {
+    message: string;
+    options: { value: string; label: string; hint?: string }[];
+    initialValues?: string[];
+  },
+): Promise<string[]> {
+  const selected = await prompts.autocompleteMultiselect({
+    message: opts.message,
+    options: opts.options,
+    ...(opts.initialValues ? { initialValues: opts.initialValues } : {}),
     required: true,
     placeholder: "type to filter...",
     filter: (search, option) => {
@@ -1093,7 +1117,8 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
                 ? ["sources", "add", descriptor!.id, path, "--device", ctx.deviceId]
                 : process.argv.slice(2).filter((arg) => arg !== "--"),
           });
-    if (outcome.kind === "requested") throw new CliError(outcome.message, EXIT_USER_ERROR);
+    // Silent: the launcher explains and asks once this command exits.
+    if (outcome.kind === "requested") throw new CliError("", EXIT_USER_ERROR);
     console.error(outcome.kind === "explain" ? outcome.message : `${c.red}${error}${c.reset}`);
   };
 
@@ -1242,17 +1267,11 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
           console.log(`\n${c.dim}Found existing credentials for ${fresh[0]}${c.reset}`);
           accountIds = fresh;
         } else if (fresh.length > 1) {
-          const selected = await prompts.multiselect({
+          accountIds = await pickMany(prompts, {
             message: `Found ${fresh.length} accounts. Which would you like to add?`,
             options: fresh.map((a) => ({ value: a, label: a })),
             initialValues: fresh,
-            required: true,
           });
-          if (prompts.isCancel(selected)) {
-            prompts.cancel("Cancelled.");
-            throw new CliError("", EXIT_CANCELLED);
-          }
-          accountIds = selected as string[];
         } else if (settledAnything(settled)) {
           // Discovery turned up nothing the gateway does not already list, and
           // at least one listed account was joined, declined or refused. That
@@ -1342,20 +1361,14 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
         reportSettled(settled, 0);
         return;
       }
-      const selected = await prompts.multiselect({
+      accountIds = await pickMany(prompts, {
         message:
           fresh.length === 1
             ? `Found 1 account. Add it?`
             : `Found ${fresh.length} accounts. Which would you like to add?`,
         options: fresh.map((a) => ({ value: a, label: a })),
         initialValues: fresh.length === 1 ? fresh : [],
-        required: true,
       });
-      if (prompts.isCancel(selected)) {
-        prompts.cancel("Cancelled.");
-        throw new CliError("", EXIT_CANCELLED);
-      }
-      accountIds = selected as string[];
     } else {
       accountIds = ["local"];
     }

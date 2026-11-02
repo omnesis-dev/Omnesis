@@ -8,11 +8,18 @@ import SwiftUI
 /// is distinct, so asking for the same task twice opens it twice.
 @available(iOS 17.0, *)
 struct TaskFocusRequest: Equatable {
-    let taskId: String
+    let taskId: String?
+    let journal: TaskWidgetDeepLink?
     private let token = UUID()
 
     init(taskId: String) {
         self.taskId = taskId
+        self.journal = nil
+    }
+
+    init(journal: TaskWidgetDeepLink) {
+        self.taskId = journal.taskId
+        self.journal = journal
     }
 }
 
@@ -42,9 +49,13 @@ private struct TaskTargetConsumer: ViewModifier {
     }
 
     private func consume(_ target: PushTarget?) {
-        guard let router, case .task(let taskId) = target else { return }
+        guard let router else { return }
+        switch target {
+        case .task(let taskId): request = TaskFocusRequest(taskId: taskId)
+        case .taskJournal(let journal): request = TaskFocusRequest(journal: journal)
+        default: return
+        }
         router.consume()
-        request = TaskFocusRequest(taskId: taskId)
     }
 }
 #endif

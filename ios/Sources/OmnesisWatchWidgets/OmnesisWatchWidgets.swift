@@ -10,6 +10,9 @@ import WidgetKit
 struct OmnesisWatchWidgetsBundle: WidgetBundle {
     var body: some Widget {
         OmnesisComplication()
+        if #available(watchOSApplicationExtension 26.0, *) {
+            OmnesisVoiceControl()
+        }
     }
 }
 
@@ -28,6 +31,21 @@ struct OmnesisComplication: Widget {
         .configurationDisplayName("Omnesis")
         .description("Speak, then ask or tell Omnesis.")
         .supportedFamilies([.accessoryCircular, .accessoryCorner, .accessoryRectangular])
+    }
+}
+
+/// A watch-local control for Control Center, Smart Stack and the Ultra Action button.
+@available(watchOSApplicationExtension 26.0, *)
+struct OmnesisVoiceControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "dev.omnesis.watch.widgets.voice-control") {
+            ControlWidgetButton(action: OpenWatchCaptureControlIntent()) {
+                Label("Omnesis", image: "omnesis.mark")
+                    .labelStyle(.iconOnly)
+            }
+        }
+        .displayName("Omnesis")
+        .description("Speak to Omnesis to ask a question or save a note.")
     }
 }
 

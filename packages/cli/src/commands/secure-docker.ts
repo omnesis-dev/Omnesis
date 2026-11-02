@@ -191,13 +191,18 @@ export function recordDockerPassphrase(
 }
 
 /** Record a non-passphrase backend the operator chose, so the daemons use it too. */
+/** Whether the containers already read `backend` from the config directory's .env. */
+export function dockerBackendRecorded(backend: SecretStoreBackend, configDir: string): boolean {
+  return backend === "auto" || readDotEnv(configDir)[SECRET_STORE_ENV] === backend;
+}
+
 export function recordDockerBackend(
   backend: SecretStoreBackend,
   docker: DockerContext,
   configDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (backend === "auto" || readDotEnv(configDir)[SECRET_STORE_ENV] === backend) return false;
+  if (dockerBackendRecorded(backend, configDir)) return false;
   upsertDotEnv(configDir, { [SECRET_STORE_ENV]: backend });
   if (docker.collectorOnly) upsertDotEnv(docker.projectDir, { [SECRET_STORE_ENV]: backend });
   env[SECRET_STORE_ENV] = backend;

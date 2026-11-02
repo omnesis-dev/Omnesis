@@ -2294,8 +2294,16 @@ const agentReplay = z
   })
   .strict();
 
+export const agentKnowledgeModeSchema = z.enum(["off", "check_all_sources", "check_stale_claims"]);
+export type AgentKnowledgeMode = z.infer<typeof agentKnowledgeModeSchema>;
+
 const agent = z
   .object({
+    useBrainKnowledgeMode: agentKnowledgeModeSchema
+      .describe(
+        "How the interactive agent and its workers use maintained knowledge. check_stale_claims (default) allows exact current verified claims without reopening their sources; other claims and current-status questions still require evidence checks. check_all_sources uses maintained knowledge but always checks supporting sources. off removes maintained knowledge and loop-backed Task journal reads. The Brain keeps running and stored knowledge is retained. Restart the gateway and use fresh conversations after changing this setting.",
+      )
+      .optional(),
     maxToolIterations: z
       .number()
       .int()
@@ -3372,6 +3380,12 @@ const entailmentSettings = z
 // `dictation` on `GET /status`.
 const dictationSettings = z
   .object({
+    useDecisionGateForCapture: z
+      .boolean()
+      .describe(
+        "Use the decision model for phone controls and shortcuts: show Send and choose Ask or Tell. Enabled by default when a decision model is available; set false to show Ask and Tell buttons.",
+      )
+      .optional(),
     useDecisionGateForWatch: z
       .boolean()
       .describe(

@@ -15,7 +15,7 @@ vi.mock("../utils.js", async (importOriginal) => ({
   isJSON: false,
 }));
 
-import { formatBackupProgress, runBackup } from "./backup.js";
+import { backupStartedLine, formatBackupProgress, runBackup } from "./backup.js";
 
 beforeEach(() => {
   mocks.gatewayFetch.mockReset();
@@ -24,6 +24,19 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("backupStartedLine", () => {
+  test("a backup without the search index says why nothing is lost", () => {
+    const line = backupStartedLine(false);
+    expect(line).toContain("without the search index (index.db)");
+    expect(line).toContain("rebuilds it from the documents");
+    expect(line).not.toContain("skipped");
+  });
+
+  test("a full backup just starts", () => {
+    expect(backupStartedLine(true)).toBe("Backup started…");
+  });
+});
 
 describe("runBackup", () => {
   test("sends the structured purpose and accepts an estimated size", async () => {
@@ -60,6 +73,40 @@ describe("runBackup", () => {
         purpose: "pre-update",
       }),
     });
+  });
+
+  test("the file list lines its sizes up past the longest name", async () => {
+    mocks.gatewayFetch.mockResolvedValue(
+      new Response(JSON.stringify({ backupId: "backup-3" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const files = [
+      { name: "omnesis.db.enc", bytes: 3_300_000 },
+      { name: "keyring/storage-encryption-required.enc", bytes: 403 },
+    ];
+    mocks.gatewayJson.mockResolvedValue({
+      running: false,
+      lastResult: {
+        backupId: "backup-3",
+        ok: true,
+        startedAt: "2030-01-01T00:00:00.000Z",
+        finishedAt: "2030-01-01T00:00:01.000Z",
+        path: "/tmp/example-backup",
+        totalBytes: 3_300_403,
+        files,
+      },
+    });
+
+    await runBackup({ includeIndex: true });
+
+    const lines = vi
+      .mocked(console.log)
+      .mock.calls.map(([line]) => String(line))
+      .filter((line) => files.some((f) => line.includes(f.name)));
+    expect(lines).toHaveLength(2);
+    expect(new Set(lines.map((line) => line.length)).size).toBe(1);
   });
 
   test("leaves purpose absent for an ordinary operator backup", async () => {

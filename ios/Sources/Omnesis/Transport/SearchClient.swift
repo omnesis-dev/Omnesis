@@ -1356,6 +1356,7 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let watchCapture: WatchCaptureStatus?
+    public let capture: WatchCaptureStatus?
     public let dictation: DictationStatus?
     /// Gateway personal vocabulary opt-in; absent on older gateways.
     public let transcriptionVocabulary: Bool
@@ -1373,6 +1374,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         noteAgent: NoteAgentStatus? = nil,
         dictation: DictationStatus? = nil,
         watchCapture: WatchCaptureStatus? = nil,
+        capture: WatchCaptureStatus? = nil,
         transcriptionVocabulary: Bool = false,
         capabilities: GatewayCapabilities = GatewayCapabilities(),
         modelHealth: ModelHealth? = nil
@@ -1386,6 +1388,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.tasks = tasks
         self.noteAgent = noteAgent
         self.watchCapture = watchCapture
+        self.capture = capture
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
         self.capabilities = capabilities
@@ -1404,6 +1407,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case noteAgent
         case dictation
         case watchCapture
+        case capture
         case transcriptionVocabulary
         case capabilities
     }
@@ -1426,6 +1430,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
         watchCapture = try? c.decodeIfPresent(WatchCaptureStatus.self, forKey: .watchCapture)
+        capture = try? c.decodeIfPresent(WatchCaptureStatus.self, forKey: .capture)
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
         transcriptionVocabulary = try c.decodeIfPresent(Bool.self, forKey: .transcriptionVocabulary) ?? false
         // An unreadable map offers no features rather than failing the snapshot.

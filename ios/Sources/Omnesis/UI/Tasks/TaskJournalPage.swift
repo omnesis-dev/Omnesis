@@ -74,7 +74,7 @@ struct TaskJournalPage: View {
                     // lazy stack of rows that measure themselves can keep
                     // re-placing its rows without end once scrolled to its foot.
                     VStack(alignment: .leading, spacing: 0) {
-                        TaskPageHeading(view: view, today: model.today, tasks: page.tasks)
+                        TaskPageHeading(view: view, today: model.readDay, tasks: page.tasks)
                         rows
                     }
                     .padding(.bottom, Theme.Spacing.xl)
@@ -85,33 +85,37 @@ struct TaskJournalPage: View {
             }
             .background(TaskFanSpaceProbe(bridge: press))
             .onAppear { configureFan(size: viewport.size) }
-            // An open fan keeps the bounds it opened with: the toast coming
-            // or going must not pull it out from under a finger.
+            // Keep targets still under the finger while they fit. A smaller
+            // viewport dismisses a fan that would otherwise be clipped.
             .onChange(of: viewport.size) { _, size in configureFan(size: size) }
             // `/status` can report the chat capability after the page appeared.
             .onChange(of: onChat != nil) { _, _ in configureFan(size: viewport.size) }
             .onChange(of: offersTell) { _, _ in configureFan(size: viewport.size) }
+            .task(id: viewport.size) {
+                #if DEBUG
+                if let initialFan, let task = page.tasks.first(where: { $0.id == initialFan.taskId }) {
+                    do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                    fan.previewOpen(
+                        task,
+                        pressedAt: initialFan.pressedAt,
+                        today: model.today,
+                        mode: initialFan.mode,
+                        highlighting: initialFan.highlight
+                    )
+                    initialFan.onLayout?(fan.session, CGRect(origin: .zero, size: viewport.size))
+                }
+                #endif
+            }
         }
         .coordinateSpace(.named(TaskFanOverlay.space))
         .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
-        .task {
-            #if DEBUG
-            if let initialFan, let task = page.tasks.first(where: { $0.id == initialFan.taskId }) {
-                try? await Task.sleep(for: .milliseconds(400))
-                fan.previewOpen(
-                    task,
-                    pressedAt: initialFan.pressedAt,
-                    today: model.today,
-                    mode: initialFan.mode,
-                    highlighting: initialFan.highlight
-                )
-            }
-            #endif
-        }
     }
 
     private func configureFan(size: CGSize) {
-        fan.bounds = CGRect(origin: .zero, size: size)
+        fan.updateBounds(CGRect(origin: .zero, size: size))
+        #if DEBUG
+        initialFan?.onLayout?(fan.session, CGRect(origin: .zero, size: size))
+        #endif
         var metrics = TaskFanSession.Metrics()
         metrics.targetHeight = max(44, fanTargetHeight)
         metrics.targetWidth = min(fanTargetWidth, max(140, size.width - metrics.lead - 2 * TaskRowView.textInset))

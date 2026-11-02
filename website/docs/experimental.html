@@ -372,9 +372,10 @@
         <p>
           The Brain never checks or rewrites what the agent says to you. Conversations in the portal
           and apps, and answers given to external agents, are exactly what the agent wrote; its
-          instructions tell it to read the relevant wiki page and follow the claims it uses back to
-          their source documents before answering. Answers to external agents still pass your
-          privacy review.
+          instructions tell it to read the relevant wiki page and use the engine's answer policy.
+          Individually verified claims whose supporting evidence is still current can answer the
+          question without reopening that evidence. Other claims require source checks. Answers to
+          external agents still pass your privacy review.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -594,45 +595,47 @@
         </p>
         <p>
           In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
-          <strong>Suggested</strong> view in the portal and the apps. Loops Brain finds appear there
-          and nowhere else, and become yours only when you accept them. Enabling Brain preserves
-          existing tasks and their document links; new supporting sources are added without
-          replacing links on tasks you already own. On the apps a suggestion looks like any task:
-          tapping its circle marks it <strong>already done</strong>, and a long press offers
-          <strong>Accept</strong>, <strong>Accept with note</strong>, <strong>Accept for…</strong> a
-          planned day, month or someday, <strong>Mark as done</strong> and <strong>Ignore</strong>;
-          the portal offers the same actions on the suggestion's line. A note written while
-          accepting is saved as a Tell Omnesis note about that task, and the note agent applies it
-          to the task. You can also ask Tell Omnesis or an interactive conversation to accept or
-          ignore a suggestion. The agent finds the suggested task and records the requested action
-          with an undoable receipt; it does not accept other suggestions on its own.
-          <strong>Ignore</strong> only takes the suggestion out of Tasks: Brain keeps tracking the
-          loop behind it and does not suggest it again. Each of these can be undone from its
-          receipt. Accepting a suggestion is where you decide whether a task is worth tracking;
-          after that, Brain keeps it current on its own. It retitles a task or rewrites its
-          description when you did not write that text, adds to a description you did write, and
-          marks a task done or sets its deadline when a source states the fact explicitly and the
-          entailment verifier confirms the quoted text establishes it. Striking a task, changing
-          anything else you wrote or edited yourself, and a completion or deadline that cannot be
-          verified are proposed instead: the task shows the proposed change and its reason, with
-          <strong>Confirm</strong> to apply it or <strong>Keep</strong> to leave the task as it is.
-          A change Brain applied reads <strong>Marked done by Omnesis</strong> or
-          <strong>Updated by Omnesis</strong> in the task's history, with its reason and an
-          <strong>Undo</strong>; undoing it also keeps Brain from making that change on its own
-          again, and the next morning brief mentions such changes in one line. When a decision model
-          is assigned, a new title applies on its own only after it is checked to still name the
-          same task, and a note that only repeats a task's history is left out of it. Proposals
-          still waiting when Brain starts are checked again: one that no longer changes anything is
-          dropped, and one Brain would now apply on its own is applied. Set
-          <code>brain.tasks.autoApply</code> to <code>false</code> to have every change proposed.
-          Your own tasks never decay. Without experimental mode, neither the Suggested view nor
-          proposed changes appear.
+          <strong>Suggested</strong> view in the portal and the apps. By default, loops Brain finds
+          appear only in Suggested and become yours when you accept them. With the suggestion gate
+          set to <code>enforce</code>, the interest-based policy described below can instead adopt
+          or withhold them. Enabling Brain preserves existing tasks and their document links; new
+          supporting sources are added without replacing links on tasks you already own. On the apps
+          a suggestion looks like any task: tapping its circle marks it
+          <strong>already done</strong>, and a long press offers <strong>Accept</strong>,
+          <strong>Accept with note</strong>, <strong>Accept for…</strong> a planned day, month or
+          someday, <strong>Mark as done</strong> and <strong>Ignore</strong>; the portal offers the
+          same actions on the suggestion's line. A note written while accepting is saved as a Tell
+          Omnesis note about that task, and the note agent applies it to the task. You can also ask
+          Tell Omnesis or an interactive conversation to accept or ignore a suggestion. The agent
+          finds the suggested task and records the requested action with an undoable receipt; it
+          does not accept other suggestions on its own. <strong>Ignore</strong> only takes the
+          suggestion out of Tasks: Brain keeps tracking the loop behind it and does not suggest it
+          again. Each of these can be undone from its receipt. Accepting a suggestion is where you
+          decide whether a task is worth tracking; after that, Brain keeps it current on its own. It
+          retitles a task or rewrites its description when you did not write that text, adds to a
+          description you did write, and marks a task done or sets its deadline when a source states
+          the fact explicitly and the entailment verifier confirms the quoted text establishes it.
+          Striking a task, changing anything else you wrote or edited yourself, and a completion or
+          deadline that cannot be verified are proposed instead: the task shows the proposed change
+          and its reason, with <strong>Confirm</strong> to apply it or <strong>Keep</strong> to
+          leave the task as it is. A change Brain applied reads
+          <strong>Marked done by Omnesis</strong> or <strong>Updated by Omnesis</strong> in the
+          task's history, with its reason and an <strong>Undo</strong>; undoing it also keeps Brain
+          from making that change on its own again, and the next morning brief mentions such changes
+          in one line. When a decision model is assigned, a new title applies on its own only after
+          it is checked to still name the same task, and a note that only repeats a task's history
+          is left out of it. Proposals still waiting when Brain starts are checked again: one that
+          no longer changes anything is dropped, and one Brain would now apply on its own is
+          applied. Set <code>brain.tasks.autoApply</code> to <code>false</code> to have every change
+          proposed. Your own tasks never decay. Without experimental mode, neither the Suggested
+          view nor proposed changes appear.
         </p>
         <p>
-          With a decision model assigned, a new suggestion that resembles something you reacted to
-          is judged against what you did then: clearly like suggestions you ignored, it is withheld;
-          clearly like tasks you accepted or created, it is adopted as your task at once; otherwise
-          it is suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
+          With a decision model assigned and <code>brain.tasks.proposeGate</code> set to
+          <code>enforce</code>, a new suggestion that resembles something you reacted to is judged
+          against what you did then: clearly like suggestions you ignored, it is withheld; clearly
+          like tasks you accepted or created, it is adopted as your task at once; otherwise it is
+          suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
           <code>shadow</code>, the default, only records it, so
           <strong>Debug → Cognition → Interest</strong> shows what would have happened.
           <code>enforce</code> acts on it: a withheld suggestion stays tracked and comes back when
@@ -939,7 +942,29 @@
           separate claim evidence pointers from navigation links and mark truncated lists. Root
           edits explicitly acknowledge removal of readable wiki navigation; this prevents silent
           loss during factual repair without requiring every page to appear in the root. Synthesis
-          helps orient an answer; decisive claims still require supporting source evidence.
+          helps orient an answer. A page or loop read identifies the exact verified claims that can
+          be used without reopening their sources, preserving their attribution, conditions and time
+          scope. The agent cites the page it read; a page's links do not authorize citations of
+          unread original documents. Other prose, unsupported claims and changed evidence require
+          source checks. The page's current status alone is insufficient: it means linked evidence
+          has not changed, rather than certifying every sentence or ruling out newer contradictory
+          records. Questions about the latest state still require checking for newer evidence.
+        </p>
+        <p>
+          <code>agent.useBrainKnowledgeMode</code> controls how the built-in answering agent and its
+          delegated workers use maintained knowledge. The default, <code>check_stale_claims</code>,
+          permits answers from the exact current verified claims returned by a page or loop read;
+          other claims and current-status questions still need evidence checks.
+          <code>check_all_sources</code> uses maintained knowledge for navigation but always checks
+          supporting sources. <code>off</code> removes wiki/root context and tracked-outcome read
+          tools; document, search and graph tools then exclude those pages and outcomes. The
+          loop-backed Task journal tools, automatic Tasks overlay on today's time queries, and
+          injected task-conversation context are also unavailable in <code>off</code>
+          mode. Original documents, analytics and grounded memory remain available in every mode.
+          The Brain continues maintaining its knowledge, and stored pages and outcomes are retained.
+          Restart the gateway and start fresh conversations after changing the mode. Independent
+          Direct connections are unaffected; old conversations may still contain information read
+          before the change.
         </p>
         <p>
           Debug groups the library, agent runs, maintenance batches, discovery controls, and

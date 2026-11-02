@@ -119,6 +119,7 @@ fun HomeScaffold(
     val pendingApprovalToPresent by vm.pendingApprovalToPresent.collectAsStateWithLifecycle()
     val captureRequest by vm.captureRequest.collectAsStateWithLifecycle()
     val searchRequest by vm.searchRequest.collectAsStateWithLifecycle()
+    val taskWidgetRequest by vm.taskWidgetRequest.collectAsStateWithLifecycle()
     val privacyApprovalRequest by vm.privacyApprovalRequest.collectAsStateWithLifecycle()
     val accessAuthorizationRequest by vm.accessAuthorizationRequest.collectAsStateWithLifecycle()
     val agentConversationRequest by vm.agentConversationRequest.collectAsStateWithLifecycle()
@@ -262,7 +263,10 @@ fun HomeScaffold(
 
     fun openCapture(surface: String) {
         closeDrawer()
-        nav.navigate("capture?surface=$surface") { launchSingleTop = true }
+        nav.navigate("capture?surface=$surface") {
+            // External launches own a fresh listening session; keep an existing draft underneath.
+            launchSingleTop = !CaptureSurface.unified(surface)
+        }
     }
 
     // Central app lifecycle policy. This lives above the nav graph rather than in AgentScreen:
@@ -279,7 +283,7 @@ fun HomeScaffold(
         }
     }
     val latestHasExplicitLaunch by rememberUpdatedState(
-        captureRequest != null || searchRequest != null || privacyApprovalRequest != null ||
+        captureRequest != null || searchRequest != null || taskWidgetRequest != null || privacyApprovalRequest != null ||
             accessAuthorizationRequest != null ||
             agentConversationRequest != null || watchFiringRequest != null ||
             sourcePermissionRequest != null || remoteSourcePermissionRequest != null,
@@ -344,6 +348,15 @@ fun HomeScaffold(
             openCapture(request.surface)
             vm.consumeCaptureRequest()
         }
+    }
+
+    LaunchedEffect(taskWidgetRequest, setupPresenting) {
+        if (vm.setupPresenting.value) return@LaunchedEffect
+        val request = taskWidgetRequest ?: return@LaunchedEffect
+        vm.recordExplicitLaunch()
+        closeDrawer()
+        vm.openTaskWidget(request)
+        nav.navigate("tasks") { launchSingleTop = true }
     }
 
     LaunchedEffect(searchRequest, setupPresenting) {
@@ -928,6 +941,11 @@ fun HomeScaffold(
                         vm.resumeConversation(id)
                         vm.refreshConversations()
                         bringAgentForward()
+                    },
+                    onAsk = { text ->
+                        vm.askFromCapture(text)
+                        nav.popBackStack()
+                        nav.navigate("agent") { launchSingleTop = true }
                     },
                     onOpenSettings = openSettings,
                     onOpenTask = { taskId -> vm.focusTask(taskId); nav.navigate("tasks") { launchSingleTop = true } },

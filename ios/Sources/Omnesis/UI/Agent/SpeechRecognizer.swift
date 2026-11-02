@@ -1,6 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Foundation
+
+/// A pending permission prompt cannot start recording after its capture was
+/// cancelled or another request replaced it. All accesses use the main thread.
+struct SpeechPermissionRequest {
+    private var generation: UUID?
+
+    mutating func begin() -> UUID {
+        let generation = UUID()
+        self.generation = generation
+        return generation
+    }
+
+    func owns(_ generation: UUID) -> Bool {
+        self.generation == generation
+    }
+
+    mutating func cancel() {
+        generation = nil
+    }
+}
+
 #if canImport(Speech) && canImport(UIKit)
 import AVFoundation
 import Speech
@@ -46,6 +68,7 @@ final class SpeechRecognizer {
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
     private var audioSessionLease = AudioSessionLease()
+    @ObservationIgnored private var permissionRequest = SpeechPermissionRequest()
 
     // MARK: - Lifecycle
 
@@ -72,17 +95,20 @@ final class SpeechRecognizer {
             return
         }
         #endif
+        let permissionGeneration = permissionRequest.begin()
         SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
             DispatchQueue.main.async {
+                guard let self, self.permissionRequest.owns(permissionGeneration) else { return }
                 if authStatus != .authorized {
-                    self?.state = .unavailable
+                    self.state = .unavailable
                 }
             }
         }
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
+                guard let self, self.permissionRequest.owns(permissionGeneration) else { return }
                 if !granted {
-                    self?.state = .unavailable
+                    self.state = .unavailable
                 }
             }
         }
@@ -104,15 +130,17 @@ final class SpeechRecognizer {
             return
         }
         #endif
+        let permissionGeneration = permissionRequest.begin()
         SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.permissionRequest.owns(permissionGeneration) else { return }
                 guard authStatus == .authorized else {
                     self.state = .unavailable
                     return
                 }
-                AVAudioApplication.requestRecordPermission { granted in
+                AVAudioApplication.requestRecordPermission { [weak self] granted in
                     DispatchQueue.main.async {
+                        guard let self, self.permissionRequest.owns(permissionGeneration) else { return }
                         if granted {
                             self.startListening()
                         } else {
@@ -138,6 +166,7 @@ final class SpeechRecognizer {
 
     /// Begin streaming speech recognition.
     func startListening() {
+        permissionRequest.cancel()
         #if DEBUG
         if previewOnly { state = .listening
             return
@@ -242,6 +271,7 @@ final class SpeechRecognizer {
 
     /// Hard cancel — discard everything without committing.
     func cancel() {
+        permissionRequest.cancel()
         recognitionTask?.cancel()
         finishSession()
         transcript = ""

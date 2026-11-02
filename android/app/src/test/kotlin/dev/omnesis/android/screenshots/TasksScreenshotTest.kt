@@ -61,6 +61,27 @@ class TasksScreenshotTest {
         }
     }
 
+    @Test fun widget_date_context_light() = widgetDateContext(false)
+    @Test fun widget_date_context_dark() = widgetDateContext(true)
+
+    private fun widgetDateContext(dark: Boolean) = capture("tasks_widget_date_context_${if (dark) "dark" else "light"}", dark) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
+            TasksContent(
+                state = TasksUiState(
+                    segment = TaskSegment.MONTH,
+                    day = "2026-11-01",
+                    referenceDay = "2026-11-01",
+                    tasks = listOf(
+                        TaskDto(id = "widget-book", title = "Choose a winter reading list", scheduledFor = "2026-11-04"),
+                        TaskDto(id = "widget-sketch", title = "Organise the sketchbook collection", scheduledFor = "2026-11"),
+                    ),
+                    loading = false,
+                ),
+                today = LocalDate.of(2026, 10, 12),
+            )
+        }
+    }
+
     private val today = LocalDate.of(2026, 10, 12)
 
     private val carried = TaskDto(

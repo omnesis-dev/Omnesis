@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="32dp" android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:orientation="horizontal" android:layout_weight="1" android:gravity="center_vertical">
+        <FrameLayout android:id="@+id/tasks_widget_complete" android:layout_width="30dp" android:layout_height="match_parent" android:contentDescription="Complete task">
+            <ImageView android:id="@+id/tasks_widget_checkbox" android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/widget_task_circle" android:tint="@color/tasks_widget_secondary" android:padding="0dp" android:scaleType="fitCenter" android:layout_gravity="center" android:importantForAccessibility="no" />
+        </FrameLayout>
+        <TextView android:layout_width="0dp" android:layout_height="match_parent" android:textSize="13sp" android:textColor="@color/tasks_widget_ink" android:fontFamily="sans-serif-medium" android:maxLines="1" android:ellipsize="end" android:id="@+id/tasks_widget_task_title" android:layout_weight="1" android:gravity="center_vertical" />
+        <TextView android:layout_width="wrap_content" android:layout_height="match_parent" android:textSize="10sp" android:textColor="@color/tasks_widget_secondary" android:fontFamily="sans-serif-medium" android:maxLines="1" android:ellipsize="end" android:id="@+id/tasks_widget_task_date" android:maxWidth="68dp" android:paddingStart="5dp" android:gravity="center_vertical|end" android:visibility="gone" />
+    </LinearLayout>
+    <ImageView android:importantForAccessibility="no" android:layout_width="match_parent" android:layout_height="0.5dp" android:layout_marginStart="30dp" android:background="@color/tasks_widget_divider" />
+</LinearLayout>

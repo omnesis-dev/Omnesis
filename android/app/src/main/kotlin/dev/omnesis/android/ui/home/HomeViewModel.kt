@@ -270,6 +270,13 @@ class HomeViewModel @Inject constructor(
     /** Pending App Actions GET_THING request; SearchViewModel consumes the payload. */
     val searchRequest: StateFlow<SearchLaunchBus.Request?> = searchLaunchBus.request
 
+    val taskWidgetRequest: StateFlow<TaskFocusBus.Launch?> = taskFocus.launch
+
+    fun openTaskWidget(request: TaskFocusBus.Launch) {
+        taskFocus.postJournal(request.journal)
+        taskFocus.consumeLaunch(request)
+    }
+
     val privacyApprovalRequest: StateFlow<NotificationLaunchBus.PrivacyApproval?> =
         notificationLaunchBus.privacyApproval
     val accessAuthorizationRequest: StateFlow<NotificationLaunchBus.AccessAuthorization?> =
@@ -338,6 +345,11 @@ class HomeViewModel @Inject constructor(
     fun consumeRemoteSourcePermissionRequest() = notificationLaunchBus.consumeRemoteSourcePermission()
 
     fun newConversation() = coordinator.newConversation()
+
+    fun askFromCapture(text: String) {
+        coordinator.newConversation()
+        coordinator.send(text)
+    }
 
     fun resumeConversation(id: String) = coordinator.resumeConversation(id)
 
