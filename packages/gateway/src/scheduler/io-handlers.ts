@@ -107,6 +107,7 @@ import {
   type DueKnowledgeReviewOptions,
 } from "../brain/knowledge/review-selection.js";
 import { bootstrapCorpusByMonth, countPendingBootstrap } from "../brain/storage/bootstrap.js";
+import { readPeopleDirectory } from "../watch/people-directory.js";
 import {
   planSourceUrlRecanonicalization,
   type SourceUrlRecanonicalizationCursor,
@@ -165,6 +166,11 @@ export const ioHandlers = {
     readOrganizationCohort(db, options),
   "io.knowledgeDueReviews": (db: Db, options: DueKnowledgeReviewOptions) =>
     listDueKnowledgeReviews(db, options),
+  // The Watch ontology's person directory, re-read on every evaluation pass:
+  // the whole people table, mapped and hashed. The rows come back only when
+  // the hash differs from the caller's.
+  "io.watchPeopleDirectory": (db: Db, knownHash: string | null) =>
+    readPeopleDirectory(db, knownHash),
   "io.bootstrapCorpusByMonth": (db: Db, recencyFloor: string, todayIso: string) =>
     bootstrapCorpusByMonth(db, recencyFloor, todayIso),
   "io.bootstrapBacklog": (db: Db, recencyFloor: string) => ({

@@ -22,9 +22,11 @@ import { runSchemaSetup } from "../data/schema.js";
 import {
   buildOntologySnapshot,
   coverageAlarm,
+  distinctDocumentSources,
   LiveOntology,
   promptPeopleDirectory,
 } from "./ontology.js";
+import { readPeopleDirectory, type PeopleDirectoryRead } from "./people-directory.js";
 import type { Db } from "../data/types.js";
 
 let db: Db;
@@ -705,5 +707,105 @@ describe("the people a compiler is shown", () => {
 
     const ids = promptPeopleDirectory(db, 3).map((p) => p.id);
     expect(ids).toEqual([uuid(1), uuid(2), uuid(3)]);
+  });
+});
+
+describe("which provider owns which source", () => {
+  /** Every statement the read prepares, so its plans can be inspected. */
+  function preparedDuring(read: () => void): string[] {
+    const original = db.prepare.bind(db);
+    const seen: string[] = [];
+    db.prepare = ((sql: string) => {
+      seen.push(sql);
+      return original(sql);
+    }) as typeof db.prepare;
+    try {
+      read();
+    } finally {
+      db.prepare = original;
+    }
+    return seen;
+  }
+
+  it("finds exactly the pairs a DISTINCT over the corpus finds, in index order", () => {
+    let n = 0;
+    const add = (provider: string, source: string, count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        n += 1;
+        addDocument(`11111111-2222-4333-8444-${String(n).padStart(12, "0")}`, provider, source);
+      }
+    };
+    add("google", "gmail:maya@example.com", 5);
+    add("google", "gmail:jamie@example.com", 3);
+    add("google", "calendar:maya@example.com", 2);
+    add("apple", "notes", 4);
+    add("fictional", "fictional-ledger", 1);
+    // Two providers holding one source type: the first pair in index order is
+    // the one the ontology names.
+    add("zeta-mail", "gmail:david@example.org", 2);
+
+    const expected = db
+      .prepare(
+        "SELECT DISTINCT provider_id, source_id FROM documents ORDER BY provider_id, source_id",
+      )
+      .all();
+    expect(distinctDocumentSources(db)).toEqual(expected);
+    expect(distinctDocumentSources(db)).toHaveLength(6);
+  });
+
+  it("finds nothing in an empty corpus", () => {
+    expect(distinctDocumentSources(db)).toEqual([]);
+  });
+
+  it("seeks the index rather than walking one entry per document", () => {
+    addDocument("11111111-2222-4333-8444-555555555551", "google", "gmail");
+    const statements = preparedDuring(() => distinctDocumentSources(db));
+    expect(statements.length, "the read changed shape").toBe(3);
+    for (const sql of statements) {
+      const params = (sql.match(/\?/g) ?? []).map(() => "x");
+      const plan = db
+        .prepare<string[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...params)
+        .map((row) => row.detail)
+        .join(" | ");
+      expect(plan, `sorted outside the index: ${sql}`).not.toMatch(/TEMP B-TREE/);
+      if (sql.includes("WHERE")) {
+        expect(plan, `walked the index: ${sql}`).toMatch(
+          /SEARCH documents USING (COVERING )?INDEX/,
+        );
+      }
+    }
+  });
+});
+
+describe("the person directory reader", () => {
+  it("reuses the directory it holds when the reader answers with the hash alone", async () => {
+    addPerson("b3f2a9d4-0000-4000-8000-000000000002", "Jamie Lopez");
+    const asked: (string | null)[] = [];
+    const live = new LiveOntology({
+      ...DEPS(),
+      peopleDirectory: (knownHash) => {
+        asked.push(knownHash);
+        return Promise.resolve(readPeopleDirectory(db, knownHash));
+      },
+    });
+
+    const first = await live.current();
+    const again = await live.current();
+    expect(again, "an unchanged directory was described again").toBe(first);
+    expect(again.people).toHaveLength(1);
+    expect(asked[0], "the first read claimed to hold a directory").toBeNull();
+    expect(asked[1], "the second read did not name the directory it holds").toBe(
+      readPeopleDirectory(db, null).hash,
+    );
+  });
+
+  it("refuses a hash-only answer about a directory it does not hold", async () => {
+    const live = new LiveOntology({
+      ...DEPS(),
+      peopleDirectory: (): Promise<PeopleDirectoryRead> =>
+        Promise.resolve({ hash: "0123456789abcdef0123456789abcdef", people: null }),
+    });
+    await expect(live.current()).rejects.toThrow(/does not hold/);
   });
 });

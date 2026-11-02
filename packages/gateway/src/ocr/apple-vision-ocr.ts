@@ -16,13 +16,13 @@
  * The subprocess runner is injectable so unit tests run without macOS.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@omnesis/core";
+import { processLauncher } from "../process-launcher/index.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:apple-vision");
@@ -53,6 +53,8 @@ do {
 
 const CACHE_DIR = join(tmpdir(), "omnesis-ocr");
 const HELPER_BIN = join(CACHE_DIR, "apple-vision-ocr");
+/** A first compile of the helper takes tens of seconds; a hung compiler is killed. */
+const COMPILE_TIMEOUT_MS = 5 * 60_000;
 
 /** Run the helper on `imagePath` and return its stdout (recognized text). */
 export type VisionHelperRunner = (
@@ -60,22 +62,9 @@ export type VisionHelperRunner = (
   opts: { language?: string; timeoutMs: number; signal?: AbortSignal },
 ) => Promise<string>;
 
-function commandPresent(cmd: string, args: string[]): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn(cmd, args, { stdio: "ignore" });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve(false);
-    }, 5_000);
-    proc.on("error", () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      resolve(code === 0);
-    });
-  });
+async function commandPresent(cmd: string, args: string[]): Promise<boolean> {
+  const run = await processLauncher().run(cmd, args, { timeoutMs: 5_000, captureStdout: false });
+  return !run.failure && run.exitCode === 0;
 }
 
 /** Whether Apple Vision is usable: macOS with swiftc. Injected runner ⇒ true. */
@@ -95,21 +84,16 @@ function ensureHelperCompiled(): Promise<string> {
     await mkdir(CACHE_DIR, { recursive: true });
     const src = join(CACHE_DIR, "apple-vision-ocr.swift");
     await writeFile(src, HELPER_SWIFT_SOURCE);
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn("swiftc", ["-O", "-o", HELPER_BIN, src], {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      let err = "";
-      proc.stderr.on("data", (c: Buffer) => {
-        err += c.toString();
-      });
-      proc.on("error", (e) => reject(new Error(`swiftc failed to start: ${e.message}`)));
-      proc.on("close", (code) =>
-        code === 0
-          ? resolve()
-          : reject(new Error(`swiftc exited ${code}: ${err.trim().slice(0, 500)}`)),
-      );
+    const build = await processLauncher().run("swiftc", ["-O", "-o", HELPER_BIN, src], {
+      timeoutMs: COMPILE_TIMEOUT_MS,
+      captureStdout: false,
     });
+    if (build.failure === "spawn")
+      throw new Error(`swiftc failed to start: ${build.failureMessage}`);
+    if (build.failure === "timeout")
+      throw new Error(`swiftc timed out after ${COMPILE_TIMEOUT_MS}ms`);
+    if (build.exitCode !== 0)
+      throw new Error(`swiftc exited ${build.exitCode}: ${build.stderr.trim().slice(0, 500)}`);
     log.info("Compiled the Apple Vision OCR helper");
     return HELPER_BIN;
   })().catch((e) => {
@@ -122,50 +106,22 @@ function ensureHelperCompiled(): Promise<string> {
 
 const defaultRunner: VisionHelperRunner = async (imagePath, opts) => {
   const bin = await ensureHelperCompiled();
-  return new Promise<string>((resolve, reject) => {
-    const args = [imagePath];
-    if (opts.language) args.push(opts.language);
-    const proc = spawn(bin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      signal: opts.signal,
-      killSignal: "SIGKILL",
-    });
-    const out: Buffer[] = [];
-    let err = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      if (!settled) {
-        settled = true;
-        reject(new Error(`apple-vision helper timed out after ${opts.timeoutMs}ms`));
-      }
-    }, opts.timeoutMs);
-    proc.stdout.on("data", (c: Buffer) => out.push(c));
-    proc.stderr.on("data", (c: Buffer) => {
-      err += c.toString();
-    });
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      if (!settled) {
-        settled = true;
-        reject(
-          opts.signal?.aborted
-            ? new Error("apple-vision helper stopped: the caller stopped waiting")
-            : new Error(`apple-vision helper failed to start: ${e.message}`),
-        );
-      }
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (settled) return;
-      settled = true;
-      if (code !== 0) {
-        reject(new Error(`apple-vision helper exited ${code}: ${err.trim().slice(0, 300)}`));
-        return;
-      }
-      resolve(Buffer.concat(out).toString("utf-8"));
-    });
+  const args = [imagePath];
+  if (opts.language) args.push(opts.language);
+  const run = await processLauncher().run(bin, args, {
+    timeoutMs: opts.timeoutMs,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
+  if (run.failure === "timeout")
+    throw new Error(`apple-vision helper timed out after ${opts.timeoutMs}ms`);
+  if (run.failure === "aborted")
+    throw new Error("apple-vision helper stopped: the caller stopped waiting");
+  if (run.failure) throw new Error(`apple-vision helper failed to start: ${run.failureMessage}`);
+  if (run.exitCode !== 0)
+    throw new Error(
+      `apple-vision helper exited ${run.exitCode}: ${run.stderr.trim().slice(0, 300)}`,
+    );
+  return Buffer.from(run.stdout).toString("utf-8");
 };
 
 export interface AppleVisionOcrOptions {

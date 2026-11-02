@@ -15,7 +15,7 @@
  * and runs (transcription just reports unavailable). See `whisper-transcriber.ts`.
  */
 
-import { spawn } from "node:child_process";
+import { processLauncher } from "../process-launcher/index.js";
 import { streamableCaf } from "./caf-stream.js";
 
 const FFMPEG_STATIC_SPECIFIER = "ffmpeg-static";
@@ -81,80 +81,45 @@ export async function decodeToPcm16kMono(
   }
   const timeoutMs = opts.timeoutMs ?? 120_000;
 
-  return new Promise<Float32Array>((resolve, reject) => {
-    const ff = spawn(
-      ffmpegPath,
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        "pipe:0",
-        "-f",
-        "f32le",
-        "-ac",
-        "1",
-        "-ar",
-        String(PCM_SAMPLE_RATE),
-        "pipe:1",
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+  const run = await processLauncher().run(
+    ffmpegPath,
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      "pipe:0",
+      "-f",
+      "f32le",
+      "-ac",
+      "1",
+      "-ar",
+      String(PCM_SAMPLE_RATE),
+      "pipe:1",
+    ],
+    { input: streamableCaf(bytes), timeoutMs },
+  );
+  if (run.failure === "timeout")
+    throw new AudioDecodeError(`ffmpeg timed out after ${timeoutMs}ms`);
+  if (run.failure)
+    throw new AudioDecodeError(`ffmpeg failed to start: ${run.failureMessage ?? run.failure}`);
+  if (run.exitCode !== 0) {
+    // A null code is a signal (the process was killed), whatever it printed.
+    const unreadable =
+      run.exitCode !== null && UNREADABLE_INPUT_MESSAGES.some((m) => run.stderr.includes(m));
+    throw new AudioDecodeError(
+      `ffmpeg exited ${run.exitCode}: ${run.stderr.trim().slice(0, 500)}`,
+      { unreadable },
     );
-
-    const out: Buffer[] = [];
-    let errText = "";
-    let settled = false;
-    const fail = (err: Error): void => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    };
-
-    const timer = setTimeout(() => {
-      ff.kill("SIGKILL");
-      fail(new AudioDecodeError(`ffmpeg timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    ff.stdout.on("data", (c: Buffer) => out.push(c));
-    ff.stderr.on("data", (c: Buffer) => {
-      errText += c.toString();
-    });
-    ff.on("error", (err) => {
-      clearTimeout(timer);
-      fail(new AudioDecodeError(`ffmpeg failed to start: ${err.message}`));
-    });
-    ff.on("close", (code) => {
-      clearTimeout(timer);
-      if (settled) return;
-      if (code !== 0) {
-        // A null code is a signal (the process was killed), whatever it printed.
-        const unreadable =
-          code !== null && UNREADABLE_INPUT_MESSAGES.some((m) => errText.includes(m));
-        fail(
-          new AudioDecodeError(`ffmpeg exited ${code}: ${errText.trim().slice(0, 500)}`, {
-            unreadable,
-          }),
-        );
-        return;
-      }
-      const buf = Buffer.concat(out);
-      if (buf.byteLength < 4) {
-        fail(new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true }));
-        return;
-      }
-      // ffmpeg's stdout is a stream of little-endian float32 samples. Copy into
-      // an aligned ArrayBuffer so the Float32Array view is valid regardless of
-      // how Buffer.concat aligned the underlying bytes.
-      const aligned = new ArrayBuffer(buf.byteLength - (buf.byteLength % 4));
-      Buffer.from(buf.buffer, buf.byteOffset, aligned.byteLength).copy(Buffer.from(aligned));
-      settled = true;
-      resolve(new Float32Array(aligned));
-    });
-
-    ff.stdin.on("error", () => {
-      /* EPIPE if ffmpeg rejects the input before we finish writing — the
-         non-zero exit is reported by the close handler. */
-    });
-    ff.stdin.end(streamableCaf(bytes));
-  });
+  }
+  const buf = run.stdout;
+  if (buf.byteLength < 4) {
+    throw new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true });
+  }
+  // ffmpeg's stdout is a stream of little-endian float32 samples. Copy into an
+  // aligned ArrayBuffer so the Float32Array view is valid whatever the
+  // alignment of the bytes it arrived in.
+  const aligned = new ArrayBuffer(buf.byteLength - (buf.byteLength % 4));
+  new Uint8Array(aligned).set(buf.subarray(0, aligned.byteLength));
+  return new Float32Array(aligned);
 }

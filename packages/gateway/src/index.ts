@@ -286,6 +286,7 @@ import {
   COGNITION_BOOTSTRAP_STARTED_AT_KEY,
   getCognitionEngineState,
 } from "./brain/storage/engine-state.js";
+import { HostedProcessLauncher, setProcessLauncher } from "./process-launcher/index.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
 import type { SourceDocCount } from "./search/source-isf-prior.js";
@@ -294,6 +295,13 @@ import type { AddressInfo } from "node:net";
 
 const log = createLogger("gateway");
 const GATEWAY_STARTED_AT = Date.now();
+
+// Programs the gateway runs per request (pdftoppm, ffmpeg, OCR helpers) start
+// from a small launcher process forked here, before any store or model is
+// loaded: forking the gateway itself once it is large stalls its event loop.
+const processLauncherHost = new HostedProcessLauncher();
+await processLauncherHost.start();
+setProcessLauncher(processLauncherHost);
 
 function parseJsonStringArrayEnv(name: string): string[] | null {
   const raw = process.env[name];
@@ -2041,6 +2049,7 @@ if (watchV2 && watchStores?.ok) {
     analyticsDb,
     indexDb,
     ontologyDb: db,
+    peopleDirectory: (knownHash) => ioGate.watchPeopleDirectory(knownHash),
     tunables: watchTunables,
     getEmbedder: () => getSemanticEmbedder(),
     getCompleter: () => {
@@ -3825,6 +3834,7 @@ const doShutdown = async (): Promise<void> => {
     log.error(`db.close threw: ${err instanceof Error ? err.message : String(err)}`);
   }
   await inferenceRegistry.health.flush();
+  processLauncherHost.dispose();
   // Last: every store is closed, so a replacement gateway may take the dir.
   gatewayLock.release();
 };

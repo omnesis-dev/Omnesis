@@ -43,6 +43,12 @@ import {
   ontologySnapshotSchema,
 } from "@omnesis/watch";
 import { listSourceDocumentProfiles } from "../data/repositories/SourceDocumentProfileRepository.js";
+import {
+  peopleDirectory,
+  readPeopleDirectory,
+  type PeopleDirectoryEntry,
+  type PeopleDirectoryReader,
+} from "./people-directory.js";
 import type { PersonDirectoryEntry } from "@omnesis/watch";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { AnalyticsDb } from "../analytics-db.js";
@@ -83,6 +89,12 @@ export interface OntologyDeps {
    * validator refuses it rather than accepting a watch that is dead on arrival.
    */
   readonly semanticallyIndexed: (sourceType: string) => boolean;
+  /**
+   * Where {@link LiveOntology} reads the person directory each pass. The
+   * gateway passes its io read worker; without one the directory is read on
+   * `db`, as storage-only tests do.
+   */
+  readonly peopleDirectory?: PeopleDirectoryReader;
 }
 
 /**
@@ -94,7 +106,7 @@ export interface OntologyDeps {
  */
 export async function buildOntologySnapshot(deps: OntologyDeps): Promise<LiveOntologySnapshot> {
   const declared = await declaredSurface(deps);
-  return describable(withPeople(declared, readPeople(deps.db)), declared.connectedTypes);
+  return describable(withPeople(declared, peopleDirectory(deps.db)), declared.connectedTypes);
 }
 
 /**
@@ -139,10 +151,9 @@ function unwatchable(
 /**
  * The half of the ontology that comes from what sources and tables declare.
  *
- * Split out because it is the expensive half — a scan of the corpus for
- * provider ownership and one catalog round trip per analytics table — and the
- * half that only moves when a provider ships a new schema. The person directory
- * is neither, so it is read separately and far more often.
+ * Split out because it is the half that only moves when a provider ships a new
+ * schema, and it costs one catalog round trip per analytics table. The person
+ * directory moves on any sync, so it is read separately and far more often.
  */
 async function declaredSurface(deps: OntologyDeps): Promise<DeclaredSurface> {
   const providers = providerBySourceType(deps.db);
@@ -220,23 +231,6 @@ function connectedSourceTypes(db: Db, fromCorpus: Map<string, string>): readonly
     if (type !== null) types.add(type);
   }
   return [...types].sort();
-}
-
-/** The person directory, as the validator reads it. */
-function readPeople(db: Db): readonly unknown[] {
-  return db
-    .prepare<
-      [],
-      { id: string; canonical_name: string; is_self: number; merged_into: string | null }
-    >("SELECT id, canonical_name, is_self, merged_into FROM people ORDER BY id")
-    .all()
-    .map((row) => ({
-      id: row.id,
-      canonicalName: row.canonical_name,
-      aliases: [],
-      isSelf: row.is_self === 1,
-      ...(row.merged_into === null ? {} : { mergedInto: row.merged_into }),
-    }));
 }
 
 /**
@@ -358,13 +352,13 @@ export function coverageAlarm(coverage: OntologyCoverage): string | null {
  * different clocks.
  *
  * The **declared** half (source profiles, analytics table schemas, provider
- * ownership) is the expensive one and the slow-moving one, so it is rebuilt on
- * an interval. The **person directory** is neither, and it is re-read every
- * time: a watch naming someone who joined since the last rebuild would
- * otherwise be accepted by the admin route — which builds its own snapshot from
- * scratch — and then paused by the very next evaluation with `PERSON_UNKNOWN`.
- * Person-scoped watches are the flagship case and cannot be the ones that
- * break.
+ * ownership) is the slow-moving one, so it is rebuilt on an interval. The
+ * **person directory** is re-read every time: a watch naming someone who joined
+ * since the last rebuild would otherwise be accepted by the admin route — which
+ * builds its own snapshot from scratch — and then paused by the very next
+ * evaluation with `PERSON_UNKNOWN`. Person-scoped watches are the flagship case
+ * and cannot be the ones that break. The read is the directory reader's, which
+ * returns the rows only when their hash differs from the last one this holds.
  *
  * Indexing is skipped when neither half has moved, since the same inputs
  * produce the same `Ontology`.
@@ -377,6 +371,8 @@ export class LiveOntology {
   /** The last alarm said out loud, so a steady problem is stated once. */
   private warned: string | null = null;
   private declared: (DeclaredSurface & { atMs: number }) | null = null;
+  /** The last directory read, which a hash-only answer refers back to. */
+  private directory: { hash: string; people: readonly PeopleDirectoryEntry[] } | null = null;
   private indexed: { key: string; snapshot: LiveOntologySnapshot } | null = null;
   private readonly refreshMs: number;
   private readonly now: () => number;
@@ -394,15 +390,13 @@ export class LiveOntology {
     if (!this.declared || at - this.declared.atMs >= this.refreshMs) {
       this.declared = { ...(await declaredSurface(this.deps)), atMs: at };
     }
-    const people = readPeople(this.deps.db);
+    const directory = await this.readDirectory();
+    const people = directory.people;
 
     // Keyed on the inputs rather than the result: same declared surface, same
     // directory, same ontology — so there is nothing to gain from describing
     // and indexing it again.
-    const key = `${this.declared.fingerprint}:${createHash("sha256")
-      .update(JSON.stringify(people))
-      .digest("hex")
-      .slice(0, 32)}`;
+    const key = `${this.declared.fingerprint}:${directory.hash}`;
     if (this.indexed?.key === key) return this.indexed.snapshot;
 
     const snapshot = describable(withPeople(this.declared, people), this.declared.connectedTypes);
@@ -437,6 +431,28 @@ export class LiveOntology {
     this.warned = alarm;
     this.indexed = { key, snapshot };
     return snapshot;
+  }
+
+  /**
+   * The person directory as it stands now.
+   *
+   * A hash-only answer means the directory still has the hash of the rows held
+   * from the last read, so those rows are the current directory.
+   */
+  private async readDirectory(): Promise<{
+    hash: string;
+    people: readonly PeopleDirectoryEntry[];
+  }> {
+    const known = this.directory?.hash ?? null;
+    const read = this.deps.peopleDirectory
+      ? await this.deps.peopleDirectory(known)
+      : readPeopleDirectory(this.deps.db, known);
+    if (read.people !== null) {
+      this.directory = { hash: read.hash, people: read.people };
+    } else if (this.directory === null || this.directory.hash !== read.hash) {
+      throw new Error("the person directory answered with a hash this ontology does not hold");
+    }
+    return this.directory;
   }
 
   /**
@@ -560,20 +576,49 @@ function without<T>(values: readonly T[], indices: Set<number> | undefined): rea
  * nothing is simply absent.
  */
 function providerBySourceType(db: Db): Map<string, string> {
-  const rows = db
-    .prepare<[], { provider_id: string; source_id: string }>(
-      "SELECT DISTINCT provider_id, source_id FROM documents",
-    )
-    .all();
-
   const byType = new Map<string, string>();
-  for (const row of rows) {
+  for (const pair of distinctDocumentSources(db)) {
     // Source ids are `<type>` or `<type>:<account>`; the profile is declared
     // per type, and every account of a type shares its provider.
-    const type = sourceTypeOf(row.source_id);
-    if (!byType.has(type)) byType.set(type, row.provider_id);
+    const type = sourceTypeOf(pair.source_id);
+    if (!byType.has(type)) byType.set(type, pair.provider_id);
   }
   return byType;
+}
+
+/**
+ * Every distinct `(provider_id, source_id)` pair in `documents`, in index order.
+ *
+ * A skip scan over `idx_documents_source`: each step seeks to the first entry
+ * past the previous pair, so the cost is a few index seeks per pair rather
+ * than a walk of one index entry per document. `SELECT DISTINCT` walks every
+ * entry, because SQLite skips ahead in an index only with `ANALYZE` statistics,
+ * which the gateway does not keep. Two statements rather than one row-value
+ * comparison, because SQLite seeks a row-value comparison on its leading
+ * column and filters the rest, which walks every document of the provider.
+ */
+export function distinctDocumentSources(db: Db): { provider_id: string; source_id: string }[] {
+  type Pair = { provider_id: string; source_id: string };
+  const first = db.prepare<[], Pair>(
+    "SELECT provider_id, source_id FROM documents ORDER BY provider_id, source_id LIMIT 1",
+  );
+  const nextSource = db.prepare<[string, string], Pair>(
+    `SELECT provider_id, source_id FROM documents
+      WHERE provider_id = ? AND source_id > ?
+      ORDER BY provider_id, source_id LIMIT 1`,
+  );
+  const nextProvider = db.prepare<[string], Pair>(
+    `SELECT provider_id, source_id FROM documents
+      WHERE provider_id > ?
+      ORDER BY provider_id, source_id LIMIT 1`,
+  );
+  const pairs: Pair[] = [];
+  let pair = first.get();
+  while (pair !== undefined) {
+    pairs.push(pair);
+    pair = nextSource.get(pair.provider_id, pair.source_id) ?? nextProvider.get(pair.provider_id);
+  }
+  return pairs;
 }
 
 /**

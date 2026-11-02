@@ -17,6 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -1440,13 +1441,15 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).not.toContain("omnesis tls provision");
     // The extension's pairing steps come after the caveat, not as if they work.
     expect(run.output).toContain(
-      "Connect your browser (optional)\u001b[0m — not yet: it needs a trusted certificate first.",
+      "Connect your browser (optional) — not yet: it needs a trusted certificate first.",
     );
     expect(
       run.output.indexOf("cannot connect to this gateway while it serves a self-signed"),
     ).toBeLessThan(run.output.indexOf("omnesis devices pair --kind browser"));
     // The CLI is the host's own command, not something to run in a container.
-    expect(run.output).toContain("Add your first source\u001b[0m — in this terminal, as usual:");
+    expect(run.output).toContain("Add your first source — in this terminal, as usual:");
+    // Not a terminal, so plain text: a log or an agent reads no escape codes.
+    expect(run.output).not.toContain("\u001b[");
     expect(run.output).toContain("there is no container to open or enter");
     expect(run.output).not.toContain("The CLI runs in the containers");
     // No terminal: no login code is minted, and the hint says where to run it.
@@ -1744,7 +1747,7 @@ describe("install.sh --docker --collector", () => {
     ]);
     expect(run.status).not.toBe(0);
     // Refused before the pull, with the flag that supplies one.
-    expect(run.output).toContain("No terminal to ask what this install needs to know");
+    expect(run.output).toContain("No terminal to ask for this collector's pairing code");
     expect(run.output).toContain("--code <code>");
     expect(run.calls.some((call) => call.startsWith("pair"))).toBe(false);
     expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
@@ -2654,7 +2657,7 @@ function pathWithoutDocker() {
 }
 
 describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
-  test("a CLI in ~/.docker/bin is used, and the operator told to open a new terminal", () => {
+  test("a CLI in ~/.docker/bin is used, and only docker typed by hand needs PATH", () => {
     const home = prepareHome("docker-off-path");
     const dockerDir = join(home, ".docker", "bin");
     mkdirSync(dockerDir, { recursive: true });
@@ -2662,8 +2665,10 @@ describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
     const tools = pathWithoutDocker();
     const run = runInstaller("docker-off-path", QUIET, { PATH: tools });
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain(`Docker is installed at ${join(dockerDir, "docker")}`);
-    expect(run.output).toContain("Open a new terminal");
+    expect(run.output).toContain(`CLI at ${join(dockerDir, "docker")}, which this shell`);
+    // The omnesis command finds it on its own, so it is not told to wait for a new terminal.
+    expect(run.output).toContain("The omnesis command finds it there");
+    expect(run.output).not.toContain("before running omnesis commands");
     expect(run.docker.some((call) => call.includes("--profile update pull"))).toBe(true);
   });
 
@@ -2677,16 +2682,27 @@ describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
 });
 
 describe("install.sh --docker: without a terminal", () => {
-  test("every unanswered question is named before anything is pulled", () => {
-    const run = runInstaller("unattended-missing", ["--docker", "--version", "9.9.0"]);
-    expect(run.status).toBe(1);
-    expect(run.output).toContain("No terminal to ask what this install needs to know");
-    expect(run.output).toContain("--embedder <id>");
-    expect(run.output).toContain("--no-model");
-    expect(run.output).toContain(`--keyring-passphrase-file ${run.configDir}/keyring.pass`);
-    expect(run.output).toContain("--no-keyring");
-    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
-    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  test("every question with a default takes it, as Enter would, and says so", () => {
+    const run = runInstaller("unattended-defaults", ["--docker", "--version", "9.9.0"]);
+    expect(run.status, run.output).toBe(0);
+    // The model: the catalog's default, with the flags that choose otherwise.
+    expect(run.output).toMatch(/Embedding model: \S+, the default \(no terminal to ask/u);
+    expect(run.output).toContain("--embedder <id> names another, --no-model installs none");
+    // Encryption at rest, the answer the question recommends, from a generated file.
+    expect(run.output).toContain(
+      "Encrypting at rest with a generated passphrase file (no terminal to ask",
+    );
+    expect(run.output).toContain("--no-keyring installs without");
+    expect(existsSync(join(run.configDir, "keyring.pass"))).toBe(true);
+    expect(readFileSync(join(run.configDir, ".env"), "utf8")).toContain(
+      "OMNESIS_SECRET_STORE=passphrase",
+    );
+    expect(run.output).not.toContain("No terminal to ask what this install needs to know");
+    // The recovery code is said in words, as on a terminal, not as the CLI's JSON.
+    expect(run.output).toContain("Omnesis recovery code");
+    expect(run.output).toContain("    RCVR-FIXT-CODE-0001");
+    expect(run.output).toContain("it is shown only once");
+    expect(run.output).not.toContain('"recoveryCode"');
   });
 
   test("a collector-only host is also asked for its pairing code up front", () => {
@@ -2699,10 +2715,9 @@ describe("install.sh --docker: without a terminal", () => {
       "9.9.0",
     ]);
     expect(run.status).toBe(1);
+    // The pairing code is the one answer with no default.
+    expect(run.output).toContain("No terminal to ask for this collector's pairing code");
     expect(run.output).toContain("--code <code>");
-    expect(run.output).toContain("--no-keyring");
-    // A collector installs no model, so there is nothing to choose there.
-    expect(run.output).not.toContain("--embedder <id>");
     expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 
@@ -2742,6 +2757,36 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("local-http/embed-large is already assigned");
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+// Root writes everywhere, so these only mean something run as a login account.
+describe.skipIf(process.getuid?.() === 0)("install.sh --docker: a home it cannot write", () => {
+  test("a config directory it cannot create is named before anything is written", () => {
+    const home = prepareHome("unwritable-config");
+    mkdirSync(join(home, ".config"), { mode: 0o555 });
+    const run = runInstaller("unwritable-config", QUIET);
+    chmodSync(join(home, ".config"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(
+      `This install writes to ${run.configDir}, but ${run.configDir} does not exist, and ${join(home, ".config")}, where it would be created, is not writable by`,
+    );
+    expect(run.output).toContain("sudo chown -R");
+    expect(run.output).toContain("Nothing was changed.");
+    expect(run.output).not.toMatch(/^mkdir: /m);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
+    expect(existsSync(run.wrapper)).toBe(false);
+  });
+
+  test("a directory for the omnesis command it cannot create stops it before the compose file", () => {
+    const home = prepareHome("unwritable-bin");
+    mkdirSync(join(home, ".local"), { mode: 0o555 });
+    const run = runInstaller("unwritable-bin", QUIET);
+    chmodSync(join(home, ".local"), 0o755);
+    expect(run.status).toBe(1);
+    expect(run.output).toContain(`This install writes to ${join(home, ".local", "bin")}`);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    expect(run.docker.some((call) => call.includes(" pull"))).toBe(false);
   });
 });
 

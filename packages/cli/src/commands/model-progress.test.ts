@@ -75,10 +75,12 @@ describe("model install: the in-place progress line", () => {
     },
   });
   let writes: string[];
+  const wasTTY = process.stdout.isTTY;
 
   beforeEach(() => {
     vi.useFakeTimers();
     writes = [];
+    process.stdout.isTTY = true;
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
       writes.push(String(chunk));
       return true;
@@ -90,6 +92,34 @@ describe("model install: the in-place progress line", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    process.stdout.isTTY = wasTTY;
+  });
+
+  const install = async (polls: unknown[]) => {
+    (gatewayJson as Mock).mockImplementation(() => Promise.resolve(polls.shift()));
+    const commands = modelCommand.subCommands as Record<
+      string,
+      { run: (context: { args: Record<string, unknown> }) => Promise<void> }
+    >;
+    const done = commands.install!.run({ args: { id: entry.id } });
+    await vi.runAllTimersAsync();
+    await done;
+  };
+
+  it("draws nothing in place when the output is not a terminal", async () => {
+    process.stdout.isTTY = false;
+    await install([
+      overview([]),
+      overview([download(100_000_000, 12_500_000, 156_000)]),
+      overview([download(500_000_000, 9_000_000, 57_000)]),
+      overview(
+        [],
+        [{ id: entry.id, sizeBytes: 1_000_000_000, sha256: "a".repeat(64), filename: "x" }],
+      ),
+    ]);
+    expect(writes.filter((w) => w.includes("\r"))).toEqual([]);
+    const logged = vi.mocked(console.log).mock.calls.map(([line]) => String(line));
+    expect(logged.some((line) => line.includes(`Installed ${entry.id}`))).toBe(true);
   });
 
   it("leaves no stale characters when the ETA and speed get shorter", async () => {

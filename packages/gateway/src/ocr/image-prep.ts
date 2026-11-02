@@ -13,11 +13,11 @@
  * The binary path is overridable for tests via `OMNESIS_PDFTOPPM_BIN`.
  */
 
-import { spawn } from "node:child_process";
 import { readdir, readFile, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "@omnesis/core";
+import { processLauncher } from "../process-launcher/index.js";
 
 const log = createLogger("gateway:ocr:pdf");
 
@@ -179,71 +179,28 @@ export function isDecodableRasterImage(bytes: Uint8Array): boolean {
 }
 
 /**
- * Spawn a binary with args, capturing stderr; resolve `{ ok, stderr }` (ok =
+ * Run a binary with args, capturing stderr; resolve `{ ok, stderr }` (ok =
  * exit 0). Used where the failure reason matters for diagnosis (HEIC transcode).
  */
-function runProcessCapturing(
+async function runProcessCapturing(
   bin: string,
   args: string[],
 ): Promise<{ ok: boolean; stderr: string }> {
-  return new Promise((resolve) => {
-    let stderr = "";
-    let proc;
-    try {
-      proc = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
-    } catch (err) {
-      resolve({ ok: false, stderr: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-    let settled = false;
-    const done = (ok: boolean): void => {
-      if (settled) return;
-      settled = true;
-      resolve({ ok, stderr });
-    };
-    proc.stderr?.on("data", (d: Buffer) => {
-      if (stderr.length < 2000) stderr += d.toString();
-    });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      done(false);
-    }, TIMEOUT_MS);
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      stderr += err instanceof Error ? err.message : String(err);
-      done(false);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      done(code === 0);
-    });
+  const run = await processLauncher().run(bin, args, {
+    timeoutMs: TIMEOUT_MS,
+    captureStdout: false,
   });
+  return {
+    ok: !run.failure && run.exitCode === 0,
+    stderr: (run.stderr + (run.failureMessage ?? "")).slice(0, 2000),
+  };
 }
 
-function runPdftoppm(inputPath: string, outPrefix: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn(
-      pdftoppmBin(),
-      ["-png", "-r", String(RENDER_DPI), "-l", String(MAX_PAGES), inputPath, outPrefix],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
-    let settled = false;
-    const done = (ok: boolean): void => {
-      if (settled) return;
-      settled = true;
-      resolve(ok);
-    };
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      done(false);
-    }, TIMEOUT_MS);
-    proc.on("error", () => {
-      clearTimeout(timer);
-      done(false);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      done(code === 0);
-    });
-  });
+async function runPdftoppm(inputPath: string, outPrefix: string): Promise<boolean> {
+  const run = await processLauncher().run(
+    pdftoppmBin(),
+    ["-png", "-r", String(RENDER_DPI), "-l", String(MAX_PAGES), inputPath, outPrefix],
+    { timeoutMs: TIMEOUT_MS, captureStdout: false },
+  );
+  return !run.failure && run.exitCode === 0;
 }
