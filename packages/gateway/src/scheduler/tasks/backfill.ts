@@ -352,7 +352,7 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
       scheduler,
       displayName: "SQLite catalog refresh",
       description:
-        "Rebuilds sqlite_table_stats so the query planner has fresh row-count estimates.",
+        "Refreshes the row counts and date ranges the Data view shows for the gateway's SQLite tables.",
       category: "infra",
       tracker: trackers.catalogRefresh,
     }),

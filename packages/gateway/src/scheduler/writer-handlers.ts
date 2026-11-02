@@ -153,7 +153,7 @@ import {
   reclaimActivityRetentionPages,
   type ActivityRetentionPhase,
 } from "../activity-retention/store.js";
-import { refreshSqliteTableStats } from "../sqlite-catalog.js";
+import { upsertSqliteTableStats, type SqliteTableStatsRow } from "../sqlite-catalog.js";
 import {
   cleanupExpiredAccessStateBatch,
   createAuthorizationRequest,
@@ -1033,8 +1033,9 @@ export const writerHandlers = {
   "links.reconcileLinkStatsCounters": (db: Db) => reconcileLinkStatsCounters(db),
 
   // ── sqlite-catalog.ts ─────────────────────────────────────────────
-  "catalog.refreshSqliteTableStats": (db: Db): void => {
-    refreshSqliteTableStats(db);
+  // Finished rows from the read worker: one primary-key upsert per catalog table.
+  "catalog.upsertSqliteTableStats": (db: Db, rows: SqliteTableStatsRow[]): void => {
+    upsertSqliteTableStats(db, rows);
   },
 
   // ── access / MCP OAuth ────────────────────────────────────────────

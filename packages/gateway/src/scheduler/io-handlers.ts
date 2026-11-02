@@ -18,6 +18,7 @@
 import type Database from "better-sqlite3";
 import { readOccMeta } from "../data/occ-materialized.js";
 import { collectorRosterSnapshot } from "../collector-declaration-roster.js";
+import { computeSqliteTableStats } from "../sqlite-catalog.js";
 type Db = Database.Database;
 
 // Handlers import from canonical homes, not the
@@ -181,6 +182,11 @@ export const ioHandlers = {
   // the hash differs from the caller's.
   "io.watchPeopleDirectory": (db: Db, knownHash: string | null) =>
     readPeopleDirectory(db, knownHash),
+  // One catalog table's row count and MIN/MAX timestamps for the periodic
+  // catalog refresh: a b-tree walk, and a full table scan where the timestamp
+  // has no index, so seconds on a large encrypted store. The writer receives
+  // only the finished rows.
+  "io.sqliteTableStats": (db: Db, tableName: string) => computeSqliteTableStats(db, tableName),
   "io.bootstrapCorpusByMonth": (db: Db, recencyFloor: string, todayIso: string) =>
     bootstrapCorpusByMonth(db, recencyFloor, todayIso),
   "io.bootstrapBacklog": (db: Db, recencyFloor: string) => ({
