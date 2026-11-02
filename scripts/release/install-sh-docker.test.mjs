@@ -62,7 +62,9 @@ const PAIRING_CODE = "R4TN8W2QJ6";
 const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
-  info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
+  info)
+    if [ -n "\${OMNESIS_TEST_DOCKER_INFO_ERROR:-}" ]; then printf '%s\\n' "$OMNESIS_TEST_DOCKER_INFO_ERROR" >&2; exit 1; fi
+    [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
   image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
   manifest)
@@ -2851,6 +2853,35 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("local-http/embed-large is already assigned");
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+describe("install.sh --docker: a daemon it cannot use", () => {
+  // An account outside the docker group reaches a running daemon and is
+  // refused on the socket: the fix is the group, not starting Docker.
+  test("a socket that refuses this account names the docker group", () => {
+    const run = runInstaller("daemon-denied", QUIET, {
+      OMNESIS_TEST_DOCKER_INFO_ERROR:
+        "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: " +
+        'Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/info": dial unix /var/run/docker.sock: connect: permission denied',
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("may not use the Docker daemon");
+    expect(run.output).toContain("sudo usermod -aG docker");
+    expect(run.output).toContain("newgrp docker");
+    expect(run.output).not.toMatch(/start docker and re-run/i);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  });
+
+  test("a daemon that is not running is told to start", () => {
+    const run = runInstaller("daemon-down", QUIET, {
+      OMNESIS_TEST_DOCKER_INFO_ERROR:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toMatch(/docker daemon is not reachable\. start docker and re-run\./i);
+    expect(run.output).not.toContain("docker group");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
   });
 });
 
