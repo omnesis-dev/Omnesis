@@ -53,6 +53,11 @@ export class AudioDecodeError extends Error {
   }
 }
 
+/** Whether `error` says the recording's bytes, not the decoder, are at fault. */
+export function isUnreadableAudio(error: unknown): boolean {
+  return error instanceof AudioDecodeError && error.unreadable;
+}
+
 /**
  * ffmpeg's messages for an input that holds no decodable audio: the demuxer
  * rejected the bytes, or found no stream to decode in them. Any other non-zero
