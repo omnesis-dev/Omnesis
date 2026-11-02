@@ -2980,6 +2980,13 @@ json_node() {
 # catalog that still cannot be read is announced rather than defaulted past.
 # Either way the question comes before the download, and before anything is
 # registered or started.
+# Whether the model store in this install's config directory holds this
+# catalog model already, by the manifest the gateway writes after a download.
+embedder_downloaded() {
+  [ -n "${1:-}" ] && [ -f "$CONFIG_DIR/models/manifest.json" ] || return 1
+  sed -n 's/^ *"id": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/models/manifest.json" 2>/dev/null | grep -qxF -- "$1"
+}
+
 choose_embedder() {
   if [ "$EMBEDDER_CHOSEN" = 1 ]; then return 0; fi
   # --no-model and --client-only both clear WANT_MODEL: no model, no question.
@@ -3015,6 +3022,23 @@ choose_embedder() {
     EMBEDDER_KEPT=1
     WANT_MODEL=0
     return 0
+  fi
+
+  # A catalog model this machine already downloaded is the one it runs: a
+  # re-run keeps it rather than asking again or fetching it twice. --embedder
+  # names another; --reconfigure asks.
+  if [ "${RECONFIGURE_FLAG:-0}" != 1 ]; then
+    EMBEDDER_PRESENT=""
+    for OPT_ID in $EMBEDDER_ASSIGNED $(printf '%s\n' "$EMBEDDER_OPTIONS" | cut -d'|' -f1); do
+      if embedder_downloaded "$OPT_ID"; then EMBEDDER_PRESENT="$OPT_ID"; break; fi
+    done
+    if [ -n "$EMBEDDER_PRESENT" ]; then
+      EMBEDDER_ID="$EMBEDDER_PRESENT"
+      EMBEDDER_CHOSEN=1
+      EMBEDDER_KEPT=1
+      info "Embedding model: $EMBEDDER_ID, already installed here (--embedder <id> switches to another)."
+      return 0
+    fi
   fi
 
   # Without a terminal the answer is the one Enter gives: the default.
@@ -4343,6 +4367,10 @@ process.stdin.on("end", () => {
 install_model() {
   [ "$EMBEDDER_KEPT" = 0 ] || return 0
   [ "$WANT_MODEL" = 1 ] || { warn "Skipping embedding model (--no-model) — search runs keyword-only until you install one."; return 0; }
+  if embedder_downloaded "$EMBEDDER_ID"; then
+    info "Embedding model $EMBEDDER_ID is already installed."
+    return 0
+  fi
   info "Downloading the embedding model ($EMBEDDER_ID)..."
   if "$OMNESIS_BIN" model install "$EMBEDDER_ID"; then
     info "Embedding model installed — semantic search is live."
@@ -8144,21 +8172,35 @@ docker_undo_fresh_install() {
 # `omnesis update` removes them after its own move. Docker refuses an image a
 # container still uses, so another install's stays.
 DOCKER_PREVIOUS_TAG=""
-docker_remove_previous_images() {
-  [ -n "$DOCKER_PREVIOUS_TAG" ] && [ "$DOCKER_PREVIOUS_TAG" != "$IMAGE_TAG" ] || return 0
-  PREVIOUS_REMOVED=""
-  PREVIOUS_KEPT=""
-  for PREVIOUS_NAME in omnesis-gateway omnesis-collector omnesis-combined omnesis-updater; do
-    PREVIOUS_IMAGE="$IMAGE_REPO/$PREVIOUS_NAME:$DOCKER_PREVIOUS_TAG"
-    docker image inspect "$PREVIOUS_IMAGE" >/dev/null 2>&1 || continue
-    if docker image rm "$PREVIOUS_IMAGE" >/dev/null 2>&1; then
-      PREVIOUS_REMOVED="$PREVIOUS_REMOVED $PREVIOUS_NAME"
-    else
-      PREVIOUS_KEPT="$PREVIOUS_KEPT $PREVIOUS_IMAGE"
-    fi
+# The previous tag is the one the .env file records and the one this install's
+# containers still run: a run stopped after writing the new .env (before its
+# containers moved) leaves those two different, and the next run removes both.
+docker_previous_tags() {
+  [ -f "$CONFIG_DIR/docker-compose.yml" ] || return 0
+  PREVIOUS_RECORDED="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
+  [ -z "$PREVIOUS_RECORDED" ] || printf '%s\n' "$PREVIOUS_RECORDED"
+  docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT:-$(docker_project_name)}" \
+    --format '{{.Image}}' 2>/dev/null | while IFS= read -r PREVIOUS_RUNNING; do
+    case "$PREVIOUS_RUNNING" in "$IMAGE_REPO"/omnesis-*:*) printf '%s\n' "${PREVIOUS_RUNNING##*:}" ;; esac
   done
-  [ -z "$PREVIOUS_REMOVED" ] || info "Removed the $DOCKER_PREVIOUS_TAG images this install no longer uses:$PREVIOUS_REMOVED."
-  [ -z "$PREVIOUS_KEPT" ] || warn "Kept$PREVIOUS_KEPT: a container still uses it. Remove it once nothing does: docker image rm$PREVIOUS_KEPT"
+}
+docker_remove_previous_images() {
+  for PREVIOUS_TAG in $(printf '%s\n' $DOCKER_PREVIOUS_TAG | sort -u); do
+    [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ] || continue
+    PREVIOUS_REMOVED=""
+    PREVIOUS_KEPT=""
+    for PREVIOUS_NAME in omnesis-gateway omnesis-collector omnesis-combined omnesis-updater; do
+      PREVIOUS_IMAGE="$IMAGE_REPO/$PREVIOUS_NAME:$PREVIOUS_TAG"
+      docker image inspect "$PREVIOUS_IMAGE" >/dev/null 2>&1 || continue
+      if docker image rm "$PREVIOUS_IMAGE" >/dev/null 2>&1; then
+        PREVIOUS_REMOVED="$PREVIOUS_REMOVED $PREVIOUS_NAME"
+      else
+        PREVIOUS_KEPT="$PREVIOUS_KEPT $PREVIOUS_IMAGE"
+      fi
+    done
+    [ -z "$PREVIOUS_REMOVED" ] || info "Removed the $PREVIOUS_TAG images this install no longer uses:$PREVIOUS_REMOVED."
+    [ -z "$PREVIOUS_KEPT" ] || warn "Kept$PREVIOUS_KEPT: a container still uses it. Remove it once nothing does: docker image rm$PREVIOUS_KEPT"
+  done
   return 0
 }
 
@@ -8189,8 +8231,7 @@ docker_install() {
   docker_tls_prepare
   docker_self_signed_names
   docker_prepare_topology_transition
-  DOCKER_PREVIOUS_TAG="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
-  [ -f "$CONFIG_DIR/docker-compose.yml" ] || DOCKER_PREVIOUS_TAG=""
+  DOCKER_PREVIOUS_TAG="$(docker_previous_tags)"
   docker_write_compose
   docker_write_wrapper
   docker_record_method

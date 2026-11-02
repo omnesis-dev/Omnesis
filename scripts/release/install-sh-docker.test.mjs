@@ -67,6 +67,8 @@ case "$1" in
     [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
   image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
+  # The images this install's containers run, one per line.
+  ps) [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -565,6 +567,24 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(
       run.docker.some((call) => call.includes(":9.9.0") && call.startsWith("docker image rm")),
     ).toBe(false);
+  });
+
+  // A run stopped after writing the new release's .env, before its containers
+  // moved, leaves them on the old release; the next run removes that one.
+  test("a re-run after one that stopped part way removes the release the containers still ran", () => {
+    expect(runInstaller("rerun-stopped", QUIET).status).toBe(0);
+    const run = runInstaller("rerun-stopped", QUIET, {
+      OMNESIS_TEST_DOCKER_PS_IMAGES:
+        "ghcr.io/omnesis-dev/omnesis-combined:9.8.0 ghcr.io/omnesis-dev/omnesis-updater:9.8.0",
+    });
+    expect(run.status, run.output).toBe(0);
+    const removed = run.docker.filter((call) => call.startsWith("docker image rm "));
+    expect(removed).toEqual(
+      ["gateway", "collector", "combined", "updater"].map(
+        (name) => `docker image rm ghcr.io/omnesis-dev/omnesis-${name}:9.8.0`,
+      ),
+    );
+    expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
   });
 
   test("a re-run on the same release, or one whose gateway does not come back, removes no image", () => {
@@ -2927,6 +2947,55 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(callStartingWith(run.calls, "keyring init")).toBe("keyring init --backend passphrase");
     expect(callStartingWith(run.calls, "model install")).toBe("model install wide-embed");
+  });
+
+  test("a re-run keeps the catalog model this machine already downloaded", () => {
+    expect(runInstaller("unattended-kept-model", QUIET).status).toBe(0);
+    const models = join(prepareHome("unattended-kept-model"), ".config", "omnesis", "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(
+      join(models, "manifest.json"),
+      JSON.stringify(
+        { version: 1, models: [{ id: "wide-embed", filename: "wide.gguf" }] },
+        null,
+        2,
+      ),
+    );
+    const run = runInstaller("unattended-kept-model", [
+      "--docker",
+      "--no-keyring",
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Embedding model: wide-embed, already installed here");
+    expect(run.output).not.toContain("Model download failed");
+    expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+
+  test("an --embedder already downloaded is not fetched again", () => {
+    expect(runInstaller("unattended-named-model", QUIET).status).toBe(0);
+    const models = join(prepareHome("unattended-named-model"), ".config", "omnesis", "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(
+      join(models, "manifest.json"),
+      JSON.stringify(
+        { version: 1, models: [{ id: "wide-embed", filename: "wide.gguf" }] },
+        null,
+        2,
+      ),
+    );
+    const run = runInstaller("unattended-named-model", [
+      "--docker",
+      "--no-keyring",
+      "--embedder",
+      "wide-embed",
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Embedding model wide-embed is already installed.");
+    expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
   });
 
   test("a re-run whose model is served from elsewhere has nothing to ask", () => {
