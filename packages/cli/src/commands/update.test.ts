@@ -2787,6 +2787,55 @@ describe("updateDocker", () => {
       expect(output()).toContain("the collector container is not running it");
       expect(output()).toContain("Dry run");
     });
+
+    // No gateway comes back on the target here: the collector restarted onto
+    // its image is what finishes the update, so that is when it is recorded,
+    // and the same update run again is a no-op rather than a reapply.
+    test("records the update complete once its collector restarts, so a rerun is a no-op", async () => {
+      const state = fakeApplyState();
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      let running: string | null = null;
+      const deps = dockerDeps(events, runner, {
+        applyState: state.store,
+        latestDockerVersion: () => Promise.resolve("0.4.2"),
+        runningImageTag: () => Promise.resolve(running),
+        restartService: vi.fn((component: ServiceComponent) => {
+          events.push(`restart ${component}`);
+          running = "0.4.2";
+          return Promise.resolve();
+        }),
+      });
+      const landed = await updateDocker(opts(), deps);
+      expect(landed).toBe("0.4.2");
+      expect(events).toContain("restart collector");
+      expect(events).not.toContain("awaitHealth 0.4.2");
+      expect(state.writes.map((value) => value.phase)).toEqual(["applying", "complete"]);
+      expect(state.writes.at(-1)).toEqual(completedDockerApplyState(projectDir, "0.4.2"));
+
+      events.length = 0;
+      await updateDocker(opts(), deps);
+      expect(output()).toContain("Already up to date (0.4.2): the collector runs it.");
+      expect(output()).not.toContain("did not finish");
+      expect(events).not.toContain("restart collector");
+    });
+
+    test("a collector that would not restart leaves the update unrecorded", async () => {
+      const state = fakeApplyState();
+      const events: string[] = [];
+      const runner = dockerRunner(events);
+      await updateDocker(
+        opts(),
+        dockerDeps(events, runner, {
+          applyState: state.store,
+          latestDockerVersion: () => Promise.resolve("0.4.2"),
+          runningImageTag: () => Promise.resolve("0.4.1"),
+          restartService: vi.fn(() => Promise.reject(new Error("exit 1"))),
+        }),
+      );
+      expect(state.writes.map((value) => value.phase)).toEqual(["applying"]);
+      expect(output()).toContain("The collector did not restart");
+    });
   });
 
   describe("handing the rest to the updater the pull brought", () => {

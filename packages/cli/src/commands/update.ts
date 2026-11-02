@@ -1283,6 +1283,27 @@ async function executeHostPlan(
     if (!interrupted || committed) return;
     await rollBack(`Update interrupted by ${interrupted}.`, booted, signalExitCode(interrupted));
   };
+  // A host that only collects has no gateway to come back on the target: its
+  // collector, restarted onto the new image, is what finishes the update.
+  const collectorFinishes =
+    applyState?.completeAt === "end" &&
+    !steps.some(
+      (step) =>
+        step.kind === "await-health" || (step.kind === "restart" && step.component === "gateway"),
+    ) &&
+    steps.some((step) => step.kind === "restart" && step.component === "collector");
+  const recordComplete = (): void => {
+    if (!applyState) return;
+    try {
+      deps.applyState.write(applyState.complete);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.log(
+        `${c.yellow}! Updated to ${targetLabel}, but its completion could not be recorded: ` +
+          `${detail}. The next update will verify what is served before trusting the recorded tag.${c.reset}`,
+      );
+    }
+  };
   const commit = (): void => {
     committed = true;
     // Only a plan whose gateway was restarted sees it on the new image; one
@@ -1292,15 +1313,7 @@ async function executeHostPlan(
     if (applyState?.completeAt === "end" && (point === "await-health" || point === "restart")) {
       // The gateway answered on the new image: only now does the recorded
       // tag mean an update that finished.
-      try {
-        deps.applyState.write(applyState.complete);
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        console.log(
-          `${c.yellow}! Updated to ${targetLabel}, but its completion could not be recorded: ` +
-            `${detail}. The next update will verify what is served before trusting the recorded tag.${c.reset}`,
-        );
-      }
+      recordComplete();
     }
     release?.();
     release = null;
@@ -1545,6 +1558,13 @@ async function executeHostPlan(
           daemons.forget(step.component);
           await rollBackIfInterrupted(true);
           if (index === commitIndex) commit();
+          if (
+            collectorFinishes &&
+            step.component === "collector" &&
+            !notRestarted.has("collector")
+          ) {
+            recordComplete();
+          }
           break;
         }
         case "await-health": {
