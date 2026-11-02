@@ -5976,6 +5976,26 @@ docker_diagnostic_is_missing() {
   grep -Eiq 'manifest unknown|no such manifest|manifest[^:]*: not found' "$1"
 }
 
+# A pull that ran out of room says so in Docker's own words; retrying cannot
+# help, and the network is not what to check.
+docker_diagnostic_is_disk() {
+  grep -Eiq 'no space left on device|disk quota exceeded' "$1"
+}
+
+docker_disk_free_gb() {
+  DISK_FREE_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [ -n "$DISK_FREE_ROOT" ] && [ -d "$DISK_FREE_ROOT" ] || return 1
+  DISK_FREE_KB="$(df -Pk "$DISK_FREE_ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  case "$DISK_FREE_KB" in ''|*[!0-9]*) return 1 ;; esac
+  DISK_FREE_GB=$((DISK_FREE_KB / 1048576))
+}
+
+docker_disk_failure() {
+  DISK_WHERE="where Docker stores them"
+  if docker_disk_free_gb; then DISK_WHERE="$DISK_WHERE ($DISK_FREE_ROOT, ${DISK_FREE_GB} GB free now)"; fi
+  fail "Pulling the $IMAGE_TAG images ran out of disk space $DISK_WHERE. They need about $DOCKER_PULL_DISK_GB GB. Free space (docker system prune removes unused images and build cache) or grow that disk, then re-run. Nothing was started."
+}
+
 docker_image_missing_failure() {
   REGISTRY_MISSING_TARGET="${1:-$IMAGE_REPO/$REGISTRY_IMAGE:$IMAGE_TAG}"
   fail "Could not find $REGISTRY_MISSING_TARGET. Check that the tag exists for every required image."
@@ -7648,6 +7668,30 @@ docker_require_build_disk() {
   fail "Building the images needs about ${DOCKER_BUILD_DISK_GB} GB free where Docker stores them ($BUILD_DISK_ROOT), and it has ${BUILD_DISK_FREE_GB} GB. Free space (\`docker builder prune\` removes build cache) or grow the disk, then re-run. Nothing was built. OMNESIS_DOCKER_BUILD_DISK_GB=0 skips this check."
 }
 
+# Pulling a release's images needs about this much free where Docker keeps
+# them: the images take about 2 GB unpacked, and the downloads and the
+# databases the gateway then creates need room beside them. Measured: a host
+# with 400 MB free failed extracting the first layer, with a containerd mount
+# error. OMNESIS_DOCKER_PULL_DISK_GB states another requirement, 0 to skip it.
+DOCKER_PULL_DISK_GB="${OMNESIS_DOCKER_PULL_DISK_GB:-4}"
+
+# Refuse a pull Docker's storage cannot hold, before anything is written. A
+# host that already has every image at this tag pulls nothing, and a daemon
+# whose storage this shell cannot see (Docker Desktop's VM, a remote context)
+# is not checked.
+docker_require_pull_disk() {
+  [ "$DOCKER_BUILD_FLAG" = 0 ] || return 0
+  case "$DOCKER_PULL_DISK_GB" in ''|*[!0-9]*|0) return 0 ;; esac
+  PULL_DISK_MISSING=0
+  for PULL_DISK_SERVICE in $(docker_pull_services); do
+    docker image inspect "$IMAGE_REPO/$(docker_service_image "$PULL_DISK_SERVICE"):$IMAGE_TAG" >/dev/null 2>&1 || PULL_DISK_MISSING=1
+  done
+  [ "$PULL_DISK_MISSING" = 1 ] || return 0
+  docker_disk_free_gb || return 0
+  [ "$DISK_FREE_GB" -lt "$DOCKER_PULL_DISK_GB" ] || return 0
+  fail "Pulling the $IMAGE_TAG images needs about ${DOCKER_PULL_DISK_GB} GB free where Docker stores them ($DISK_FREE_ROOT), and it has ${DISK_FREE_GB} GB. Free space (docker system prune removes unused images and build cache) or grow that disk, then re-run. Nothing was changed. OMNESIS_DOCKER_PULL_DISK_GB=0 skips this check."
+}
+
 # Bring the images onto this host. Pulling is the normal path — they are built
 # and published per release, so nothing here compiles anything. A pull the
 # registry refuses stops the install and names `--build`, rather than silently
@@ -7671,6 +7715,7 @@ docker_fetch_images() {
     docker_pull_images_once && return 0
     docker_diagnostic_is_auth "$REGISTRY_DIAGNOSTIC" && docker_registry_auth_failure resolved "the required $IMAGE_REPO images at tag $IMAGE_TAG"
     docker_diagnostic_is_missing "$REGISTRY_DIAGNOSTIC" && docker_image_missing_failure "the required $IMAGE_REPO images at tag $IMAGE_TAG"
+    docker_diagnostic_is_disk "$REGISTRY_DIAGNOSTIC" && docker_disk_failure
     [ "$REGISTRY_PULL_ATTEMPT" -lt "$DOCKER_PULL_ATTEMPTS" ] || break
     REGISTRY_PULL_WAIT=$((REGISTRY_PULL_ATTEMPT * DOCKER_PULL_RETRY_SECONDS))
     warn "Pulling the images failed (attempt $REGISTRY_PULL_ATTEMPT of $DOCKER_PULL_ATTEMPTS); retrying in ${REGISTRY_PULL_WAIT}s with the layers already downloaded."
@@ -8057,6 +8102,7 @@ docker_install() {
   docker_resolve_build_context
   docker_resolve_tag
   docker_require_build_disk
+  docker_require_pull_disk
   docker_preflight_images
   docker_validate_topology_transition
   docker_arm_undo
