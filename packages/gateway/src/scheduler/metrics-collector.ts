@@ -118,6 +118,23 @@ export class MetricsCollector {
    * façade's lookup callback (consults periodics + wakeables) so the
    * collector doesn't have to know about the registries.
    */
+  /**
+   * One task's row of `snapshot()`, computed from that task's samples alone:
+   * the same numbers, without building every other task's row.
+   */
+  taskSnapshot(
+    name: string,
+    windowSeconds: number,
+    findTaskDefinition: (name: string) => Task<unknown, unknown> | null,
+  ): PerTaskStats | null {
+    const buf = this.taskSamples.get(name);
+    if (!buf) return null;
+    return (
+      taskStatsInWindow(name, buf, Date.now() - windowSeconds * 1000, findTaskDefinition)?.stats ??
+      null
+    );
+  }
+
   snapshot(
     windowSeconds: number,
     runnerInputs: RunnerSnapshotInput[],
@@ -138,50 +155,9 @@ export class MetricsCollector {
     // Per-task stats.
     const perTask: PerTaskStats[] = [];
     for (const [name, buf] of this.taskSamples) {
-      const inWindow: TaskExecSample[] = [];
-      for (let i = 0; i < buf.length; i++) {
-        const s = buf[i];
-        if (s && s.ts >= cutoff) inWindow.push(s);
-      }
-      if (inWindow.length === 0) continue;
-
-      // We need to know the task definition to report runner/budget.
-      // Look it up via the façade's callback (it walks periodics +
-      // wakeables). For runner/budget, default to "main"/200 if the
-      // task isn't in our registries (one-shot enqueue from outside).
-      // Acceptable: the snapshot is for ops observability, not correctness.
-      const taskDef = findTaskDefinition(name);
-      const sample0 = inWindow[0];
-      const execs = inWindow.map((s) => s.execMs).sort((a, b) => a - b);
-      const total = execs.reduce((a, b) => a + b, 0);
-      const budget = taskDef?.latencyBudgetMs ?? DEFAULT_LATENCY_BUDGET_MS;
-      // Priority is resolved per execution, so a task can run at more than
-      // one inside the window; count each rather than sampling one.
-      const countByPriority: Record<Priority, number> = { user: 0, realtime: 0, background: 0 };
-      for (const s of inWindow) countByPriority[s.priority] += 1;
-      const stats: PerTaskStats = {
-        name,
-        countByPriority,
-        runner: sample0.runner ?? taskDef?.runner ?? "main",
-        count: inWindow.length,
-        p50: pct(execs, 0.5),
-        p95: pct(execs, 0.95),
-        p99: pct(execs, 0.99),
-        max: execs[execs.length - 1] ?? 0,
-        slowOpCount: inWindow.filter((s) => s.execMs > budget).length,
-        yieldCount: inWindow.filter((s) => s.outcome === "yield").length,
-        errorCount: inWindow.filter((s) => s.outcome === "error").length,
-        totalExecMs: total,
-      };
-
-      const cpuSamples = inWindow.filter((s) => s.cpuUserUs != null);
-      if (cpuSamples.length > 0) {
-        const totalCpuUs = cpuSamples.reduce((a, s) => a + s.cpuUserUs! + s.cpuSystemUs!, 0);
-        const cpuExecMs = cpuSamples.reduce((a, s) => a + s.execMs, 0);
-        stats.totalCpuMs = totalCpuUs / 1_000;
-        stats.cpuUtilization = cpuExecMs > 0 ? stats.totalCpuMs / cpuExecMs : 0;
-      }
-
+      const computed = taskStatsInWindow(name, buf, cutoff, findTaskDefinition);
+      if (!computed) continue;
+      const { stats, inWindow } = computed;
       perTask.push(stats);
 
       let ages = queueAgeMaxByRunner.get(stats.runner);
@@ -271,4 +247,60 @@ export class MetricsCollector {
     }
     return bestTs > 0 ? { ts: bestTs, execMs: bestExecMs } : undefined;
   }
+}
+
+/**
+ * One task's row of a metrics snapshot, from its samples inside the window,
+ * with the samples it was built from; null when it has none there.
+ */
+function taskStatsInWindow(
+  name: string,
+  buf: readonly (TaskExecSample | undefined)[],
+  cutoff: number,
+  findTaskDefinition: (name: string) => Task<unknown, unknown> | null,
+): { stats: PerTaskStats; inWindow: TaskExecSample[] } | null {
+  const inWindow: TaskExecSample[] = [];
+  for (let i = 0; i < buf.length; i++) {
+    const s = buf[i];
+    if (s && s.ts >= cutoff) inWindow.push(s);
+  }
+  if (inWindow.length === 0) return null;
+
+  // We need to know the task definition to report runner/budget.
+  // Look it up via the façade's callback (it walks periodics +
+  // wakeables). For runner/budget, default to "main"/200 if the
+  // task isn't in our registries (one-shot enqueue from outside).
+  // Acceptable: the snapshot is for ops observability, not correctness.
+  const taskDef = findTaskDefinition(name);
+  const sample0 = inWindow[0];
+  const execs = inWindow.map((s) => s.execMs).sort((a, b) => a - b);
+  const total = execs.reduce((a, b) => a + b, 0);
+  const budget = taskDef?.latencyBudgetMs ?? DEFAULT_LATENCY_BUDGET_MS;
+  // Priority is resolved per execution, so a task can run at more than
+  // one inside the window; count each rather than sampling one.
+  const countByPriority: Record<Priority, number> = { user: 0, realtime: 0, background: 0 };
+  for (const s of inWindow) countByPriority[s.priority] += 1;
+  const stats: PerTaskStats = {
+    name,
+    countByPriority,
+    runner: sample0.runner ?? taskDef?.runner ?? "main",
+    count: inWindow.length,
+    p50: pct(execs, 0.5),
+    p95: pct(execs, 0.95),
+    p99: pct(execs, 0.99),
+    max: execs[execs.length - 1] ?? 0,
+    slowOpCount: inWindow.filter((s) => s.execMs > budget).length,
+    yieldCount: inWindow.filter((s) => s.outcome === "yield").length,
+    errorCount: inWindow.filter((s) => s.outcome === "error").length,
+    totalExecMs: total,
+  };
+
+  const cpuSamples = inWindow.filter((s) => s.cpuUserUs != null);
+  if (cpuSamples.length > 0) {
+    const totalCpuUs = cpuSamples.reduce((a, s) => a + s.cpuUserUs! + s.cpuSystemUs!, 0);
+    const cpuExecMs = cpuSamples.reduce((a, s) => a + s.execMs, 0);
+    stats.totalCpuMs = totalCpuUs / 1_000;
+    stats.cpuUtilization = cpuExecMs > 0 ? stats.totalCpuMs / cpuExecMs : 0;
+  }
+  return { stats, inWindow };
 }
