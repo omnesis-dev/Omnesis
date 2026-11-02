@@ -18,11 +18,12 @@
  * writer worker's concurrent commits.
  */
 
-import { cpSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 type Db = Database.Database;
+import { copyPrivate } from "@omnesis/core";
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import type { BackupWorkerInput, BackupWorkerMessage } from "./backup-protocol.js";
@@ -90,7 +91,7 @@ try {
     // Owner-only: these can hold copies of per-account credential files, which
     // are 0600 in the config tree.
     mkdirSync(dirname(copy.to), { recursive: true, mode: 0o700 });
-    cpSync(copy.from, copy.to, { recursive: true });
+    copyPrivate(copy.from, copy.to);
     post({
       type: "file",
       file: copy.name,
