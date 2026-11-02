@@ -521,11 +521,14 @@ describe("install.sh unattended runs", () => {
 
   test.skipIf(!HAS_PTY)("--no-prompt takes headless safety branches even on a terminal", () => {
     const run = runInstallerOnTty("no-prompt", ["--no-prompt", "--no-tls"], []);
+    // The model has a default, so it is taken; the keyring of a machine with
+    // none has no safe one, so that question is refused with its flags.
     expect(run.status).toBe(1);
-    expect(run.output).toContain("No terminal to ask which embedding model");
-    expect(run.output).toContain("--embedder <id>");
-    expect(run.calls).toEqual([]);
-    expect(existsSync(fixturePath("checkout-no-prompt"))).toBe(false);
+    expect(run.output).toContain("the default (no terminal to ask");
+    expect(run.output).toContain("no usable OS keyring, and no terminal to ask");
+    expect(run.output).toContain("--keyring-passphrase-file <abs-path>");
+    expect(run.output).toContain("--no-keyring");
+    expect(run.calls.some((c) => c.startsWith("service install"))).toBe(false);
   });
 
   test.skipIf(!HAS_PTY)("--no-prompt takes safe optional defaults on a terminal", () => {
@@ -2460,14 +2463,14 @@ describe("install.sh embedding model question", () => {
     expect(run.calls.some((c) => c.startsWith("service install"))).toBe(false);
   });
 
-  test("a run with no terminal refuses instead of picking a model for you", () => {
+  test("a run with no terminal takes the default model, as Enter would, and says so", () => {
     const run = runInstaller("embed-notty", ["--no-tls"], { OMNESIS_TEST_KEYRING: "ready" });
-    expect(run.status).toBe(1);
-    expect(run.output).toContain("No terminal to ask which embedding model");
-    expect(run.output).toContain("--embedder <id>");
-    expect(run.output).toContain("--no-model");
-    // It refused before spending minutes on the clone and build.
-    expect(run.calls).toEqual([]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain(
+      `Embedding model: ${EMBED_IDS[0]}, the default (no terminal to ask`,
+    );
+    expect(run.output).toContain("--embedder <id> names another, --no-model installs none");
+    expect(run.calls).toContain(`model install ${EMBED_IDS[0]}`);
   });
 
   test.skipIf(!HAS_PTY)("an empty answer takes the catalog's default", () => {
