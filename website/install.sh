@@ -8079,7 +8079,13 @@ docker_refuse_native_install() {
     fail "$CONFIG_DIR holds a native collector's device token (collector-token) and no gateway. The Docker install's collector would authenticate as that device, so nothing was changed. Move it aside first — omnesis uninstall --purge, or point this Docker install at another directory with OMNESIS_CONFIG_DIR — then re-run this line."
   fi
   if [ "$DOCKER_MARKED" = 0 ] && [ -f "$CONFIG_DIR/omnesis.db" ]; then
-    warn "$CONFIG_DIR already holds a native gateway's corpus, with no native service registered: the Docker gateway takes it over."
+    # `omnesis uninstall` of a Docker install keeps its data and its .env,
+    # which records the image tag; a native install never writes that.
+    if grep -q '^OMNESIS_IMAGE_TAG=' "$CONFIG_DIR/.env" 2>/dev/null; then
+      info "Using the data an earlier Docker install left in $CONFIG_DIR."
+    else
+      warn "$CONFIG_DIR already holds a native gateway's corpus, with no native service registered: the Docker gateway takes it over."
+    fi
   fi
   if [ "$NATIVE_LAUNCHER_HERE" = 1 ] && [ "$DOCKER_MARKED" = 0 ]; then
     warn "$HOME/.local/bin/omnesis is replaced by the Docker install's launcher."

@@ -2793,6 +2793,18 @@ describe("the wrapper's uninstall, on the host", () => {
     expect(readFileSync(profile, "utf8")).toBe("export EDITOR=vim");
   });
 
+  test("a reinstall after an uninstall that kept the data says whose data it is", () => {
+    const run = runInstaller("reinstall-kept", QUIET);
+    expect(runWrapper(run, ["uninstall", "--yes"]).status).toBe(0);
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const again = runInstaller("reinstall-kept", QUIET);
+    expect(again.status, again.output).toBe(0);
+    expect(again.output).toContain(
+      `Using the data an earlier Docker install left in ${run.configDir}.`,
+    );
+    expect(again.output).not.toContain("native gateway's corpus");
+  });
+
   test("uninstalls after the compose file is already gone", () => {
     const run = runInstaller("uninstall-orphan", QUIET);
     rmSync(join(run.configDir, "docker-compose.yml"));
