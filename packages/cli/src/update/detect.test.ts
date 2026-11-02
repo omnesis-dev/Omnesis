@@ -1972,7 +1972,12 @@ describe("assessUpdate", () => {
 
 describe("migrationBackupNote", () => {
   const withBackup: UpdateStep[] = [{ kind: "backup" }, { kind: "apply" }];
-  const withoutBackup: UpdateStep[] = [{ kind: "apply" }];
+  // A gateway host updated with --no-backup.
+  const withoutBackup: UpdateStep[] = [
+    { kind: "apply" },
+    { kind: "restart", component: "gateway" },
+    { kind: "await-health" },
+  ];
 
   test("a plan that backs up says it does, and where, instead of telling the operator to", () => {
     const note = migrationBackupNote("upgrade", withBackup, "/home/maya/.config/omnesis/backups");
@@ -2008,6 +2013,21 @@ describe("migrationBackupNote", () => {
     const planned = migrationBackupNote("unreleased", withBackup, "/srv/omnesis/backups");
     expect(planned).toContain("into /srv/omnesis/backups.");
     expect(planned).not.toContain("omnesis backup");
+  });
+
+  test("a host with no gateway has no gateway migrations to back up for", () => {
+    const collectorOnly: UpdateStep[] = [
+      { kind: "apply" },
+      { kind: "service-definition", component: "collector" },
+      { kind: "restart", component: "collector" },
+    ];
+    expect(migrationBackupNote("upgrade", collectorOnly)).toBeNull();
+    expect(migrationBackupNote("unreleased", collectorOnly)).toBeNull();
+    const hinted: UpdateStep[] = [
+      { kind: "apply" },
+      { kind: "restart-hint", component: "gateway", command: null },
+    ];
+    expect(migrationBackupNote("upgrade", hinted)).toContain("Back up first");
   });
 
   test("nothing migrates forward on a downgrade or a same-version run", () => {

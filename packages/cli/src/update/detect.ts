@@ -188,12 +188,32 @@ export const MANUAL_BACKUP_COMMAND = "omnesis backup --note pre-upgrade";
  * which can carry migrations no release has. Null for a change that migrates
  * nothing forward.
  */
+/** Whether a plan step acts on, or waits for, a gateway on this host. */
+function involvesGateway(step: UpdateStep): boolean {
+  switch (step.kind) {
+    case "backup":
+    case "pause-gateway":
+    case "await-health":
+    case "gateway-stopped":
+      return true;
+    case "service-definition":
+    case "restart":
+    case "restart-hint":
+      return step.component === "gateway";
+    default:
+      return false;
+  }
+}
+
 export function migrationBackupNote(
   change: UpdateDirection | "unreleased",
   steps: readonly UpdateStep[],
   backupsDir?: string,
 ): string | null {
   if (change !== "upgrade" && change !== "unreleased") return null;
+  // The migrations are the gateway's: a plan with no gateway on this host (a
+  // collector-only host) has none to back up for.
+  if (!steps.some(involvesGateway)) return null;
   const backedUp = steps.some((step) => step.kind === "backup");
   const lead =
     change === "upgrade"
