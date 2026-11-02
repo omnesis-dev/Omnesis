@@ -15,7 +15,7 @@
     "@hono/node-server": "^2.1.5",
     "@omnesis/core": "*",
     "better-sqlite3": "^13.0.3",
-    "hono": "^4.13.13",
+    "hono": "^4.13.14",
     "tsx": "^4.19.0",
     "zod": "^4.6.7"
   },
