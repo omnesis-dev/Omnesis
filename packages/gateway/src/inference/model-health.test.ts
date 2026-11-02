@@ -273,3 +273,37 @@ describe("InferenceHealth", () => {
     expect(health.snapshot().warnings).toEqual([]);
   });
 });
+
+describe("InferenceHealth input faults", () => {
+  it("ignores input faults without clearing a warning real failures raised", async () => {
+    const health = new InferenceHealth(() => selection);
+    let error: unknown = new Error("bad input");
+    const provider = health.observe(
+      resolved,
+      {
+        async decide() {
+          if (error) throw error;
+          return "result";
+        },
+      },
+      ["decide"],
+      undefined,
+      (e) => e instanceof Error && e.message === "bad input",
+    );
+    await failures(provider, 5);
+    expect(health.snapshot().warnings).toEqual([]);
+    error = new Error("HTTP 429: quota exhausted");
+    await failures(provider, 3);
+    expect(health.snapshot().warnings).toEqual([
+      expect.objectContaining({ consecutiveFailures: 3 }),
+    ]);
+    error = new Error("bad input");
+    await failures(provider, 2);
+    expect(health.snapshot().warnings).toEqual([
+      expect.objectContaining({ consecutiveFailures: 3 }),
+    ]);
+    error = null;
+    await expect(provider.decide()).resolves.toBe("result");
+    expect(health.snapshot().warnings).toEqual([]);
+  });
+});
