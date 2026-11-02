@@ -45,6 +45,7 @@ import type {
 } from "../data/repositories/AbsenceRepository.js";
 import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
+import type { SqliteTableStatsRow } from "../sqlite-catalog.js";
 import type { Scheduler } from "./scheduler.js";
 import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type { PeopleDirectoryReader } from "../watch/people-directory.js";
@@ -117,7 +118,10 @@ export interface IoGate {
   knowledgeStaleWork: KnowledgeSelectionReads["knowledgeStaleWork"];
   knowledgeHasExcludedWork: KnowledgeSelectionReads["knowledgeHasExcludedWork"];
   knowledgeArcs: KnowledgeSelectionReads["knowledgeArcs"];
+  knowledgeDiscoveryBacklog: KnowledgeSelectionReads["knowledgeDiscoveryBacklog"];
   watchPeopleDirectory: PeopleDirectoryReader;
+  /** One catalog table's statistics, or null when it does not exist; see `computeSqliteTableStats`. */
+  sqliteTableStats(tableName: string): Promise<SqliteTableStatsRow | null>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,
@@ -495,8 +499,15 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
   { name: "io.knowledgeArcs", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  {
+    name: "io.knowledgeDiscoveryBacklog",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   // The Watch ontology reads the whole people table on every evaluation pass.
   { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // A catalog table's row count and MIN/MAX: one table walk per call.
+  { name: "io.sqliteTableStats", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.bootstrapCorpusByMonth",
@@ -635,7 +646,9 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeHasExcludedWork: (excludedSources) =>
       call("io.knowledgeHasExcludedWork", [[...excludedSources]]),
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
+    knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
+    sqliteTableStats: (tableName) => call("io.sqliteTableStats", [tableName]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>

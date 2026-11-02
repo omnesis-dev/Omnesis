@@ -143,6 +143,7 @@ export function buildReleasePlan(state) {
             staleNative.length > 0
               ? `native project files → ${staleNative.join(", ")}`
               : "native project files already current",
+            "cli-surface → scripts/release/released-cli-surface.json, the CLI surface the installer is held to",
             "release:check-version → the lockstep guard",
           ].join("; "),
     ),

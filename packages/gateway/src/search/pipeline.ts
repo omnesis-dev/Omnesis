@@ -176,9 +176,10 @@ export class SearchPipeline {
    */
   private readonly refCountStage = new RefCountStage();
   /**
-   * Optional dedicated search-worker pool. When wired, ready, and not
-   * saturated, candidate generation runs OFF the main event loop on a worker
-   * thread; on any worker problem the pipeline degrades to the identical
+   * Optional dedicated search-worker pool. When wired and ready, candidate
+   * generation runs OFF the main event loop on a worker thread, queueing there
+   * when every worker is busy (unless the pool sets an inflight ceiling); on
+   * any worker problem the pipeline degrades to the identical
    * `runCandidateGen` inline on main (byte-identical result). `undefined` (the
    * test path and `gateway.searchWorker.concurrency: 0`) means pure main-thread
    * candidate-gen — the pre-Slice-3B behaviour.
@@ -336,7 +337,8 @@ export class SearchPipeline {
   /**
    * Delegate-or-fallback gate for candidate generation (mirrors the io-pool
    * posture). Delegates to the worker while the pool is wired, ready, not
-   * disposed, and below its inflight ceiling; otherwise — or on any worker
+   * disposed, and below its inflight ceiling (none unless an operator set one,
+   * so a burst queues on the workers); otherwise — or on any worker
    * rejection — runs the IDENTICAL `runCandidateGen` inline on the main thread.
    * The fallback is byte-identical because it is the same function over the same
    * `index.db` + usearch read handle; the only observable difference is that
@@ -745,6 +747,7 @@ export class SearchPipeline {
           if (name === "vector") {
             return `vector=${r.durationMs}ms[embed=${r.embedMs ?? "?"}ms,sql=${r.sqlMs ?? "?"}ms]`;
           }
+          if (name === "bm25" && r.engine) return `bm25=${r.durationMs ?? "?"}ms[${r.engine}]`;
           return `${name}=${r.durationMs ?? "?"}ms`;
         })
         .join(" ");

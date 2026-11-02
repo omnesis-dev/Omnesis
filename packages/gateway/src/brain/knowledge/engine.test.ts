@@ -48,6 +48,7 @@ import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import { KnowledgeService } from "./service.js";
 import { buildKnowledgeTools } from "./tools.js";
 import { KnowledgeEngine, type KnowledgeEngineDeps } from "./engine.js";
+import { directKnowledgeSelectionReads, type KnowledgeSelectionReads } from "./selection-reads.js";
 import { EXHAUSTED_SOURCE_REST_MS } from "./engine-intake.js";
 import { fitKnowledgeFrontierItem, knowledgeFrontierPreflight } from "./engine-frontier.js";
 import {
@@ -463,6 +464,58 @@ describe("knowledge coordinator", () => {
       { subject_id: "prolific-2" },
       { subject_id: "quiet" },
     ]);
+  });
+
+  it("reads a source's backlog once per pass and passes over a document covered meanwhile", async () => {
+    settings = resolveBrainSettings({
+      bootstrap: { enabled: true, batchSize: 4, maxRuns: 50, maxRunsPerDay: 50, backlogTarget: 20 },
+      knowledge: { bootstrapBatchSize: 4 },
+    });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    for (let index = 0; index < 4; index++) {
+      source(`archive-${index}`, "v1", "Archived workshop record.", now - (40 + index) * 86400000);
+      db.prepare("UPDATE documents SET source_id='alpha' WHERE id=?").run(`archive-${index}`);
+    }
+    db.exec("DELETE FROM knowledge_changes");
+    const direct = directKnowledgeSelectionReads(db);
+    const backlogReads: number[] = [];
+    const reads: KnowledgeSelectionReads = {
+      ...direct,
+      async knowledgeDiscoveryBacklog(options) {
+        const docs = await direct.knowledgeDiscoveryBacklog(options);
+        backlogReads.push(docs.length);
+        // Another writer covers the second document after it was read.
+        if (backlogReads.length === 1)
+          recordKnowledgeCoverage(
+            db,
+            {
+              subjectId: "archive-1",
+              inputRevision: "v1",
+              phase: "organization",
+              policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+              status: "considered",
+            },
+            now,
+          );
+        return docs;
+      },
+    };
+    await new KnowledgeEngine({ ...engine.deps, selectionReads: reads }).tick();
+    expect(
+      db
+        .prepare(
+          "SELECT subject_id FROM knowledge_work WHERE reason='discovery' ORDER BY subject_id",
+        )
+        .all(),
+    ).toEqual([
+      { subject_id: "archive-0" },
+      { subject_id: "archive-2" },
+      { subject_id: "archive-3" },
+    ]);
+    // One read for the pass, and one that finds the source has nothing left.
+    expect(backlogReads).toEqual([4, 0]);
   });
 
   it.each(["maxRuns", "maxRunsPerDay", "batchSize"] as const)(

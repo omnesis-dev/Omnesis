@@ -157,6 +157,7 @@ import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js"
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
+import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4889,12 +4890,20 @@ export const MIGRATIONS: readonly Migration[] = [
     up: compactKnowledgeHistoryTargets,
   },
   {
+    // Schema setup builds the index before migrations run, so this step is a
+    // no-op on every path that reaches it; it records the schema change in
+    // the version chain.
     version: 208,
+    description: "index documents by source and date with their id and revision",
+    up: indexDocumentsBySourceCreatedRevision,
+  },
+  {
+    version: 209,
     description: "process owner note edits as fenced revisions",
     up: createNoteAgentTables,
   },
   {
-    version: 209,
+    version: 210,
     description: "durable Note clarification handoffs",
     up(db) {
       // An earlier Note schema used the history-compaction version. Repair

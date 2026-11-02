@@ -66,7 +66,14 @@ let state: {
 
 // Explicit PASSIVE checkpoint cadence. Only fires in WAL mode — a
 // no-op under TRUNCATE since there's no WAL to checkpoint.
-const CHECKPOINT_INTERVAL_MS = 60_000;
+//
+// The checkpoint runs on this thread, so every write waits while it copies
+// the frames written since the previous one; its cost follows that backlog.
+// A short interval keeps each pause to a few seconds' worth of writes for the
+// same total work, and a checkpoint that copies every frame allows the
+// next write to restart the WAL from its start instead of growing the file. One
+// with nothing to copy returns at once.
+const CHECKPOINT_INTERVAL_MS = 10_000;
 
 function runPassiveCheckpoint(db: Db): void {
   try {

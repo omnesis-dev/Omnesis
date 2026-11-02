@@ -2,13 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  reserveNoteHandoff,
-  claimNoteHandoff,
-  completeNoteHandoff,
-  cancelNoteHandoff,
-  type NoteHandoff,
-} from "../brain/note-agent/handoffs.js";
-import {
   type SyncIssue,
   type SyncIssueAssessment,
   DeviceId,
@@ -28,6 +21,13 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import {
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  completeNoteHandoff,
+  cancelNoteHandoff,
+  type NoteHandoff,
+} from "../brain/note-agent/handoffs.js";
 import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
@@ -162,7 +162,7 @@ import {
   reclaimActivityRetentionPages,
   type ActivityRetentionPhase,
 } from "../activity-retention/store.js";
-import { refreshSqliteTableStats } from "../sqlite-catalog.js";
+import { upsertSqliteTableStats, type SqliteTableStatsRow } from "../sqlite-catalog.js";
 import {
   cleanupExpiredAccessStateBatch,
   createAuthorizationRequest,
@@ -597,6 +597,8 @@ import {
   withPairingGenerationFence,
   type PairingGenerationFence,
 } from "../data/pairing-generation-fence.js";
+import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
@@ -1042,8 +1044,9 @@ export const writerHandlers = {
   "links.reconcileLinkStatsCounters": (db: Db) => reconcileLinkStatsCounters(db),
 
   // ── sqlite-catalog.ts ─────────────────────────────────────────────
-  "catalog.refreshSqliteTableStats": (db: Db): void => {
-    refreshSqliteTableStats(db);
+  // Finished rows from the read worker: one primary-key upsert per catalog table.
+  "catalog.upsertSqliteTableStats": (db: Db, rows: SqliteTableStatsRow[]): void => {
+    upsertSqliteTableStats(db, rows);
   },
 
   // ── access / MCP OAuth ────────────────────────────────────────────
@@ -1999,8 +2002,6 @@ export const writerHandlers = {
  * non-yieldable fallback only applies when a name appears in
  * `writerHandlers` and not here.
  */
-import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
-import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import type Database from "better-sqlite3";
 import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 import type {

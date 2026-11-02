@@ -316,11 +316,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "links.reconcileLinkStatsCounters", priority: "background", latencyBudgetMs: 30_000 },
 
   // ── catalog ────────────────────────────────────────────────────────
-  {
-    name: "catalog.refreshSqliteTableStats",
-    priority: "background",
-    latencyBudgetMs: HEAVY_BUDGET_MS,
-  },
+  { name: "catalog.upsertSqliteTableStats", priority: "background" },
 
   // ── access / MCP OAuth ─────────────────────────────────────────────
   { name: "access.oauthClientRegister", priority: "user" },

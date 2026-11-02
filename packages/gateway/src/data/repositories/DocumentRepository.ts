@@ -421,6 +421,9 @@ export function upsertDocuments(
         -- a document that exists because it moved.
         OR excluded.partition_key IS NOT documents.partition_key
       )
+    -- The stored row's id: the generated one for an insert, the existing one
+    -- for an update, and no row when the conflict left the document as it was.
+    RETURNING id
   `);
   const exactReplicaStmt = db.prepare<
     [string, string, string, string, string, string, string, string | null, string, string | null],
@@ -434,6 +437,64 @@ export function upsertDocuments(
 
   const documentTemporalProjection = options.documentTemporalProjection;
 
+  /**
+   * Per-source stats maintenance for the documents one transaction stored,
+   * keyed by source with the number of rows it inserted. It runs inside that
+   * transaction, so the counts commit with the rows they count and a chunk
+   * costs one commit. Readers (`/portal/*`, `cli status`) see fresh counts
+   * without the `SUM(LENGTH(content+title+metadata))` scan on the HTTP thread:
+   *
+   *   1. `doc_count` grows by the rows the transaction inserted, the same
+   *      accounting `recordSourceDocumentsDeleted` applies to deletions. A
+   *      recount would visit every index entry of the source in each chunk:
+   *      work proportional to the source, not to the page.
+   *   2. `needs_refresh = 1` asks the backfill worker to recompute the row —
+   *      the exact count, data_size_bytes, total_units and the date range —
+   *      off the writer.
+   *   3. A source without a stats row gets a placeholder counted once, so
+   *      the row exists before any reader arrives.
+   *
+   * A re-sent, unchanged document stores nothing, so it neither moves the
+   * count nor marks the row dirty.
+   */
+  const updateSourceStats = (insertedBySource: ReadonlyMap<string, number>) => {
+    for (const [sid, inserted] of insertedBySource) {
+      const exists = db.prepare("SELECT 1 FROM source_stats WHERE source_id = ?").get(sid);
+      if (!exists) {
+        // The backfill worker fills in the heavy SUM(LENGTH) + MIN/MAX scan
+        // off the writer; until its first tick the row shows
+        // `data_size_bytes=0`.
+        const newCount =
+          db
+            .prepare<[string], { count: number }>(
+              "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
+            )
+            .get(sid)?.count ?? 0;
+        db.prepare(
+          `INSERT INTO source_stats (source_id, doc_count, needs_refresh, dirty_version)
+           VALUES (?, ?, 1, 0)
+           ON CONFLICT(source_id) DO UPDATE SET
+             doc_count = excluded.doc_count,
+             needs_refresh = 1,
+             dirty_version = source_stats.dirty_version + 1`,
+        ).run(sid, newCount);
+      } else {
+        // Bump dirty_version so a parallel split-path compute that started
+        // before this upsert lands knows to discard its now-stale snapshot.
+        db.prepare(
+          "UPDATE source_stats SET doc_count = doc_count + ?, needs_refresh = 1, dirty_version = dirty_version + 1 WHERE source_id = ?",
+        ).run(inserted, sid);
+      }
+      // Re-query the freshest surviving doc and write the latest_*
+      // columns. Necessary because we need the ACTUAL ingested_at from
+      // the documents row (which the upsert preserves on UPDATE — only
+      // updated_at advances), not the input doc's would-be ingested_at.
+      // Two index seeks whatever the source's size; see
+      // `refreshLatestActivity`.
+      refreshLatestActivity(db, sid);
+    }
+  };
+
   let absencePlanScope = options.absencePlanScope;
   let absencePlanInvalidated = false;
   const ignoredReplicaDocuments: Array<{ sourceId: string; externalId: string }> = [];
@@ -443,10 +504,9 @@ export function upsertDocuments(
     // separately so its later chunks cannot land behind an indexer checkpoint
     // carrying the first chunk's older timestamp.
     const now = new Date().toISOString();
-    // Documents whose row this transaction inserted or modified. A re-sent,
-    // unchanged document leaves the source's count and freshest row as they
-    // were, so only these feed the per-source stats maintenance below.
-    const changedDocuments: PreparedDocumentInput[] = [];
+    // Sources whose rows this transaction inserted or modified, with the
+    // number it inserted; they feed the per-source stats maintenance.
+    const insertedBySource = new Map<string, number>();
     const inventorySources = new Set<string>();
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
@@ -474,7 +534,7 @@ export function upsertDocuments(
           Date.now(),
         );
       }
-      const stored = stmt.run({
+      const stored = stmt.get({
         id: insertedId,
         provider_id: doc.providerId,
         source_id: doc.sourceId,
@@ -493,10 +553,11 @@ export function upsertDocuments(
         source_url: sourceUrl,
         replica_version_policy:
           options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" ? 1 : 0,
-      });
+      }) as { id: string } | undefined;
+      const inserted = stored?.id === insertedId;
       if (
         options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" &&
-        stored.changes === 0
+        stored === undefined
       ) {
         const exact = exactReplicaStmt.get(
           doc.providerId,
@@ -515,10 +576,7 @@ export function upsertDocuments(
           continue;
         }
       }
-      if (
-        options.initialInventory &&
-        db.prepare("SELECT 1 FROM documents WHERE id=?").get(insertedId)
-      )
+      if (options.initialInventory && inserted)
         recordSourceInventoryDocument(db, {
           documentId: insertedId,
           inventoryId: options.initialInventory.id,
@@ -526,7 +584,11 @@ export function upsertDocuments(
           now: Date.now(),
         });
       acceptedDocumentCount += 1;
-      if (stored.changes > 0) changedDocuments.push(doc);
+      if (stored !== undefined)
+        insertedBySource.set(
+          doc.sourceId,
+          (insertedBySource.get(doc.sourceId) ?? 0) + (inserted ? 1 : 0),
+        );
       if (documentTemporalProjection) {
         // The document is what this transaction exists to store; its temporal
         // projections are metadata derived from it. Anything that goes wrong
@@ -586,75 +648,14 @@ export function upsertDocuments(
     } else {
       absencePlanScope = recovery.expectedScope;
     }
-    return changedDocuments;
+    updateSourceStats(insertedBySource);
   });
 
-  // Per-source stats maintenance. We want readers (`/portal/*`, `cli
-  // status`) to see fresh doc counts without doing the full
-  // `SUM(LENGTH(content+title+metadata))` scan on the HTTP thread each
-  // time ingestion marks a row dirty. Strategy:
-  //
-  //   1. Update `doc_count` inline via a cheap indexed `COUNT(*) WHERE
-  //      source_id = ?` over the covering `idx_documents_source_id`.
-  //      Only sources a chunk actually changed are recounted: a page of
-  //      re-sent, unchanged documents cannot move the count.
-  //   2. Mark `needs_refresh = 1` so the backfill worker reconciles the
-  //      heavier fields (data_size_bytes, total_units, date range) off
-  //      the main thread.
-  //   3. Brand-new sources get a one-shot full refresh so the row
-  //      exists with real numbers before any reader arrives.
-  const countStmt = db.prepare<[string], { count: number }>(
-    "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
-  );
-  /** Run the per-source stats updates for the documents a chunk changed. */
-  const updateStatsForChunk = (chunk: DocumentInput[]) => {
-    const touched = new Set<string>();
-    for (const doc of chunk) touched.add(doc.sourceId);
-    for (const sid of touched) {
-      const exists = db.prepare("SELECT 1 FROM source_stats WHERE source_id = ?").get(sid);
-      if (!exists) {
-        // First time we see this source: insert a lightweight placeholder
-        // (doc_count from the cheap COUNT(*), needs_refresh=1, everything
-        // else default) and let the backfill worker pick it up off-thread
-        // for the heavy SUM(LENGTH) + MIN/MAX scan. The brand-new-source
-        // UX shows `data_size_bytes=0` until the first backfill tick (a
-        // few seconds), which is acceptable. Pre-fix this aggregation
-        // ran inline inside the writer transaction, blocking ingest on
-        // sources that arrive with a backlog already in `documents`.
-        const newCount = countStmt.get(sid)?.count ?? 0;
-        db.prepare(
-          `INSERT INTO source_stats (source_id, doc_count, needs_refresh, dirty_version)
-           VALUES (?, ?, 1, 0)
-           ON CONFLICT(source_id) DO UPDATE SET
-             doc_count = excluded.doc_count,
-             needs_refresh = 1,
-             dirty_version = source_stats.dirty_version + 1`,
-        ).run(sid, newCount);
-      } else {
-        const newCount = countStmt.get(sid)?.count ?? 0;
-        // Bump dirty_version so a parallel split-path compute that started
-        // before this upsert lands knows to discard its now-stale snapshot.
-        db.prepare(
-          "UPDATE source_stats SET doc_count = ?, needs_refresh = 1, dirty_version = dirty_version + 1 WHERE source_id = ?",
-        ).run(newCount, sid);
-      }
-      // Re-query the freshest surviving doc and write the latest_*
-      // columns. Necessary because we need the ACTUAL ingested_at from
-      // the documents row (which the upsert preserves on UPDATE — only
-      // updated_at advances), not the input doc's would-be ingested_at.
-      // Two index seeks whatever the source's size; see
-      // `refreshLatestActivity`.
-      refreshLatestActivity(db, sid);
-    }
-  };
-
-  // Without a token: fast path identical to pre-Phase-3 behavior — one
-  // big transaction over all docs, then stats updates. Backward
-  // compatible with `directWriteGate` test callers + every existing
-  // unit test.
+  // Without a token: one transaction over all docs. Used by
+  // `directWriteGate` callers and by `upsertWithCursor`'s final chunk.
   const token = options.token;
   if (!token) {
-    updateStatsForChunk(insertMany(documents));
+    insertMany(documents);
     return {
       remaining: [],
       rejectedSourceIds: [],
@@ -670,18 +671,18 @@ export function upsertDocuments(
   // the preempt token. If a higher-priority op is waiting, return the
   // unprocessed tail as `remaining` — the Scheduler re-enqueues this
   // task at the same priority and the higher-priority op runs first.
-  // Per-chunk stats updates run after each chunk's commit, so a yield
+  // Each chunk's stats updates commit with its documents, so a yield
   // mid-batch leaves source_stats consistent with what's actually in
   // the documents table at that point.
   //
   // Default chunkSize=5 so a 20-document batch hits four yield checks per
-  // call; this was 25, which exceeded a typical batch.
+  // call.
   const chunkSize = options.chunkSize ?? 5;
   let processed = 0;
   while (processed < documents.length) {
     const end = nextChunkEnd(documents, processed, chunkSize);
     const chunk = documents.slice(processed, end);
-    updateStatsForChunk(insertMany(chunk));
+    insertMany(chunk);
     processed = end;
     if (processed < documents.length && token.requested()) {
       return {
@@ -713,8 +714,8 @@ export function upsertDocuments(
  * secondary-index updates is already heavy enough that bundling it with
  * siblings pushes the chunk's wall time past the per-yield budget. Its
  * ordinary siblings keep batching up to `chunkSize`, so one fat row in a page
- * cannot multiply the per-chunk stats maintenance (a COUNT(*) over the source
- * and a latest-activity refresh, plus an fsync'd commit) across the whole page.
+ * cannot multiply the per-chunk overhead (the stats update, a latest-activity
+ * refresh and an fsync'd commit) across the whole page.
  */
 function nextChunkEnd(
   documents: readonly PreparedDocumentInput[],

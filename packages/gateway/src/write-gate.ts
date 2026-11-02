@@ -453,7 +453,7 @@ import {
   zeroPeopleCountsForLosers,
   recomputeNamePrimaries,
 } from "./data/repositories/PersonRepository.js";
-import { refreshSqliteTableStats } from "./sqlite-catalog.js";
+import { upsertSqliteTableStats, type SqliteTableStatsRow } from "./sqlite-catalog.js";
 import { reconcileSelfFromConfig } from "./domain/SelfIdentity.js";
 import type { SelfIdentitySource } from "./self-identity-sources.js";
 import {
@@ -1237,7 +1237,11 @@ export interface WriteGate extends KnowledgeWriteGate {
   reconcileLinkStatsCounters(): Promise<{ corrected: number }>;
 
   // ── sqlite-catalog.ts ─────────────────────────────────────────────
-  refreshSqliteTableStats(): Promise<void>;
+  /**
+   * Persist catalog statistics read by `IoGate.sqliteTableStats`; the
+   * row-count and MIN/MAX scans stay on the read worker.
+   */
+  upsertSqliteTableStats(rows: readonly SqliteTableStatsRow[]): Promise<void>;
 
   // ── access / MCP OAuth ────────────────────────────────────────────
   registerOAuthClient(input: OAuthClientRegistrationInput): Promise<OAuthClientRegistration>;
@@ -2532,7 +2536,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     upsertLinkStats: (agg) => call("links.upsertLinkStats", [agg]),
     reconcileLinkStatsCounters: () => call("links.reconcileLinkStatsCounters", []),
 
-    refreshSqliteTableStats: () => call("catalog.refreshSqliteTableStats", []),
+    upsertSqliteTableStats: (rows) => call("catalog.upsertSqliteTableStats", [[...rows]]),
 
     registerOAuthClient: (input) => call("access.oauthClientRegister", [input]),
     upsertOAuthMetadataClient: (input) => call("access.oauthMetadataClientUpsert", [input]),
@@ -3137,8 +3141,8 @@ export function directWriteGate(db: Db): WriteGate {
     upsertLinkStats: async (agg) => upsertLinkStats(db, agg),
     reconcileLinkStatsCounters: async () => reconcileLinkStatsCounters(db),
 
-    refreshSqliteTableStats: async () => {
-      refreshSqliteTableStats(db);
+    upsertSqliteTableStats: async (rows) => {
+      upsertSqliteTableStats(db, rows);
     },
 
     registerOAuthClient: async (input) => registerOAuthClient(db, input),

@@ -28,8 +28,10 @@ import {
   setExpectedLinkDeclarationKeys,
 } from "../../link-declaration-readiness.js";
 import { DEFAULT_NEAR_DUP_CONFIG } from "../../near-dupes/config.js";
+import { SQLITE_CATALOG_TABLES, type SqliteTableStatsRow } from "../../sqlite-catalog.js";
 import {
   autoDetectTask,
+  catalogRefreshTask,
   linkBackfillTask,
   nearDupAlgoSweepTask,
   linkReconcileTask,
@@ -1010,5 +1012,47 @@ describe("link reconcile — URL ownership waits for complete fallback-represent
     if (outcome.kind === "done") expect(outcome.value.idle).toBe(true);
     expect(linkResolutions).not.toHaveBeenCalled();
     expect(opts.writeGate.upsertLinkResolutions).not.toHaveBeenCalled();
+  });
+});
+
+describe("catalogRefreshTask — the writer receives finished statistics", () => {
+  test("reads each catalog table on the io worker and writes the rows in one op", async () => {
+    const calls: string[] = [];
+    const row = (tableName: string): SqliteTableStatsRow => ({
+      tableName,
+      recordCount: tableName.length,
+      earliestDate: null,
+      latestDate: null,
+      computedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const upsertSqliteTableStats = vi.fn(async (rows: SqliteTableStatsRow[]) => {
+      calls.push(`write(${rows.length})`);
+    });
+    // The write gate carries only the upsert: a tick that asked the writer
+    // for anything else would fail here.
+    const opts = {
+      log,
+      catalogRefreshIntervalMs: 300_000,
+      ioGate: {
+        // A table the store does not have yet comes back null and is skipped.
+        sqliteTableStats: vi.fn(async (tableName: string) => {
+          calls.push(`read(${tableName})`);
+          return tableName === "sessions" ? null : row(tableName);
+        }),
+      },
+      writeGate: { upsertSqliteTableStats },
+    } as unknown as BackfillTaskOptsInternal;
+
+    const task = catalogRefreshTask(opts);
+    expect(task.runner).toBe("main");
+    await task.run(undefined, ctx);
+
+    expect(calls).toEqual([
+      ...SQLITE_CATALOG_TABLES.map((name) => `read(${name})`),
+      `write(${SQLITE_CATALOG_TABLES.length - 1})`,
+    ]);
+    expect(upsertSqliteTableStats).toHaveBeenCalledWith(
+      SQLITE_CATALOG_TABLES.filter((name) => name !== "sessions").map(row),
+    );
   });
 });

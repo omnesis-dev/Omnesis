@@ -1680,9 +1680,10 @@ const gateway = z
     /**
      * Dedicated search-worker pool (Slice 3B). Relocates the heavy
      * candidate-generation block (BM25 + usearch + fusion) off the main event
-     * loop onto a worker thread with its own read-only index.db handle. On any
-     * worker fault or saturation the search falls back to running the identical
-     * code inline on main, so it is never failed by a worker problem.
+     * loop onto a worker thread with its own read-only index.db handle. Calls
+     * beyond the workers' capacity queue on them. On a worker fault the search
+     * falls back to running the identical code inline on main, so it is never
+     * failed by a worker problem.
      * `concurrency: 0` fully disables the pool (pure main-thread candidate-gen).
      */
     searchWorker: z
@@ -1692,7 +1693,7 @@ const gateway = z
           .int()
           .nonnegative()
           .describe(
-            "Search-worker threads for off-main candidate generation. Default 1; 0 disables the pool (candidate-gen runs inline on main).",
+            "Search-worker threads for off-main candidate generation. Default 3; 0 disables the pool (candidate-gen runs inline on main).",
           )
           .optional(),
         maxInflightBeforeFallback: z
@@ -1700,7 +1701,7 @@ const gateway = z
           .int()
           .positive()
           .describe(
-            "Concurrent candidate-gen calls above which search runs inline on main instead of queueing behind the worker FIFO. Default 2.",
+            "Concurrent candidate-gen calls above which search runs inline on the main thread instead of queueing on the search workers. Unset by default: calls always queue, since an inline query blocks the gateway's event loop.",
           )
           .optional(),
         cacheSizeBytes: z

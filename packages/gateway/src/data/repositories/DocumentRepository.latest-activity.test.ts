@@ -5,8 +5,8 @@
  * The per-source stats a page write maintains on the writer: `doc_count` and
  * the materialized `latest_*` columns. Their cost must follow the page, not
  * the source — a mailbox of any size pays the same for one new message — so
- * the latest-activity lookup's plan is pinned here, and a page of unchanged
- * documents must not touch the row at all.
+ * the latest-activity lookup's plan is pinned here, a page never recounts its
+ * source, and a page of unchanged documents must not touch the row at all.
  */
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
@@ -212,5 +212,87 @@ describe("per-source stats maintenance on a page write", () => {
 
     expect(stats()).toMatchObject({ doc_count: 1, latest_doc_id: idOf("c") });
     expect(stats(OTHER)).toMatchObject({ doc_count: 1, latest_doc_id: idOf("y") });
+  });
+});
+
+describe("source_stats cost and atomicity on a page write", () => {
+  const RECOUNT = "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?";
+
+  /** The SQL texts a callback prepares on the handle. */
+  function preparedDuring(run: () => void): string[] {
+    const prepared: string[] = [];
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      prepared.push(sql);
+      return prepare(sql);
+    }) as typeof db.prepare);
+    try {
+      run();
+    } finally {
+      spy.mockRestore();
+    }
+    return prepared;
+  }
+
+  function storedCount(sourceId: string): number {
+    return db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM documents NOT INDEXED WHERE source_id = ?",
+      )
+      .get(sourceId)!.n;
+  }
+
+  test("a page adds the rows it inserted without recounting the source", () => {
+    upsertDocuments(db, [doc("a"), doc("b"), doc("c")]);
+    upsertDocuments(db, [doc("x", { sourceId: OTHER as DocumentInput["sourceId"] })]);
+
+    // New, edited and unchanged documents across both sources, committed in
+    // several chunks so each chunk's own inserts are what it adds.
+    const prepared = preparedDuring(() =>
+      upsertDocuments(
+        db,
+        [
+          doc("a"),
+          doc("b", { contentHash: "ch-b-2", content: "Edited" }),
+          doc("d"),
+          doc("y", { sourceId: OTHER as DocumentInput["sourceId"] }),
+          doc("e"),
+          doc("x", { sourceId: OTHER as DocumentInput["sourceId"], title: "Renamed" }),
+          doc("f"),
+        ],
+        { token: { requested: () => false }, chunkSize: 2 },
+      ),
+    );
+
+    expect(prepared).not.toContain(RECOUNT);
+    expect(stats()!.doc_count).toBe(storedCount(SOURCE));
+    expect(stats()!.doc_count).toBe(6);
+    expect(stats(OTHER)!.doc_count).toBe(storedCount(OTHER));
+    expect(stats(OTHER)!.doc_count).toBe(2);
+  });
+
+  test("a source without a stats row is counted once when its row is created", () => {
+    upsertDocuments(db, [doc("a"), doc("b")]);
+    db.prepare("DELETE FROM source_stats WHERE source_id = ?").run(SOURCE);
+
+    const prepared = preparedDuring(() => upsertDocuments(db, [doc("c")]));
+
+    expect(prepared.filter((sql) => sql === RECOUNT)).toHaveLength(1);
+    expect(stats()).toMatchObject({ doc_count: 3, needs_refresh: 1, latest_doc_id: idOf("c") });
+  });
+
+  test("the stats update commits with the chunk's documents", () => {
+    upsertDocuments(db, [doc("a")]);
+    db.exec(
+      "CREATE TEMP TRIGGER refuse_stats BEFORE UPDATE ON source_stats BEGIN SELECT RAISE(ABORT, 'stats refused'); END",
+    );
+
+    for (const options of [{}, { token: { requested: () => false }, chunkSize: 1 }]) {
+      expect(() => upsertDocuments(db, [doc("b"), doc("c")], options)).toThrow("stats refused");
+      // The refused stats write took the documents of its chunk with it.
+      expect(storedCount(SOURCE)).toBe(1);
+    }
+    db.exec("DROP TRIGGER refuse_stats");
+    expect(stats()!.doc_count).toBe(1);
   });
 });
