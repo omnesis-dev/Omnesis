@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createKnowledgeTables, getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import {
+  isInKnowledgeDiscoveryBacklog,
   listKnowledgeDiscoveryBacklog,
   recordKnowledgeCoverage,
   proposeKnowledgeCandidate,
@@ -17,6 +18,8 @@ import {
 } from "./discovery.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
+import { enqueueKnowledgeWork } from "./work.js";
+import { KNOWLEDGE_WORK_PARKED } from "./work-retry.js";
 let db: Database.Database;
 beforeEach(() => {
   db = new Database(":memory:");
@@ -210,6 +213,55 @@ describe("progressive knowledge discovery", () => {
         3,
       ),
     ).toThrow("changed");
+  });
+  it("rechecks a document read earlier exactly as a fresh backlog read would", () => {
+    for (const id of ["kept", "covered", "lapsed", "queued", "parked", "edited", "removed"])
+      source(id, "2026-01-01T00:00:00Z");
+    const options = { phase: "organization" as const, limit: 20, now: 20 };
+    const earlier = listKnowledgeDiscoveryBacklog(db, options);
+    expect(earlier).toHaveLength(7);
+    const cover = (subjectId: string, reconsiderAt?: number) =>
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "deferred",
+          ...(reconsiderAt === undefined ? {} : { reconsiderAt }),
+        },
+        2,
+      );
+    cover("covered");
+    cover("lapsed", 10);
+    for (const id of ["queued", "parked"])
+      enqueueKnowledgeWork(
+        db,
+        {
+          id: `work-${id}`,
+          subjectId: id,
+          subjectKind: "source",
+          reason: "discovery",
+          inputRevision: "v1",
+          tier: "routine",
+          dueAt: 2,
+        },
+        2,
+      );
+    db.prepare(
+      "UPDATE knowledge_work SET status='deferred',last_error=? WHERE id='work-parked'",
+    ).run(KNOWLEDGE_WORK_PARKED);
+    db.prepare("UPDATE documents SET content_hash='v2' WHERE id='edited'").run();
+    db.prepare("DELETE FROM documents WHERE id='removed'").run();
+    const fresh = new Set(
+      listKnowledgeDiscoveryBacklog(db, options).map((doc) => `${doc.id}@${doc.sourceRevision}`),
+    );
+    expect([...fresh].sort()).toEqual(["edited@v2", "kept@v1", "lapsed@v1"]);
+    for (const doc of earlier)
+      expect(isInKnowledgeDiscoveryBacklog(db, doc, options), doc.id).toBe(
+        fresh.has(`${doc.id}@${doc.sourceRevision}`),
+      );
   });
   it("admits late historical sources while excluding derived mirrors", () => {
     source("recent", "2026-01-01T00:00:00Z");

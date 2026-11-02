@@ -6,7 +6,8 @@
  * so every read they make on the main handle must be a bounded index seek. On a
  * real corpus the knowledge ledgers hold hundreds of thousands of rows and the
  * store is encrypted, so a statement that scans one of them stalls the loop
- * for a second or more. This drives a tick and a maintenance turn against the
+ * for a second or more, and so does one that walks document rows, whose
+ * revision lies past their content. This drives a tick and a maintenance turn against the
  * full gateway schema, with writes and worker selections on their own handles
  * as in the gateway, and checks the plan of every statement the main handle ran.
  */
@@ -60,12 +61,21 @@ function aliases(sql: string): Map<string, string> {
   return names;
 }
 
+/**
+ * A document row holds its content before its revision, so a seek that reads
+ * document rows other than one by id walks content overflow pages per row. An
+ * index that covers the read never touches the rows.
+ */
+const DOCUMENT_ROW_RANGE = / USING INDEX (?!sqlite_autoindex_documents_1 \(id=\?\))/;
+
 /** Whether a plan step reads a ledger by a scan or by a seek that is one in practice. */
 function scansLedger(db: Database.Database, detail: string, names: Map<string, string>): boolean {
   const step = /^(SCAN|SEARCH) (\w+)/.exec(detail);
-  if (!step || !LEDGERS.includes(names.get(step[2]!) ?? step[2]!)) return false;
+  const table = step && (names.get(step[2]!) ?? step[2]!);
+  if (!step || !LEDGERS.includes(table!)) return false;
   // A step that names no index reads every row, whichever word the plan uses.
   if (step[1] === "SCAN" || !/ USING /.test(detail)) return true;
+  if (table === "documents" && DOCUMENT_ROW_RANGE.test(detail)) return true;
   const index = BROAD_SEEK.exec(detail)?.[1];
   if (!index) return false;
   const definition = db

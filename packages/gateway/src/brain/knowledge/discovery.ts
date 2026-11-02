@@ -86,30 +86,52 @@ export interface DiscoveryDocument {
   sourceCreatedAt: string;
   sourceUpdatedAt: string;
 }
+export interface KnowledgeDiscoveryBacklogOptions {
+  phase: DiscoveryPhase;
+  limit: number;
+  now: number;
+  policyVersion?: string;
+  direction?: "recent-first" | "oldest-first";
+  sourceId?: string;
+  /** Explicit initial inventory only; cutoff is fixed to the inventory start. */
+  recentInventoryWindowMs?: number;
+  /** Recent inventory belongs to the live allowance, not historical admission caps. */
+  excludeRecentInventoryWindowMs?: number;
+  /**
+   * Oldest `source_created_at` admitted (ISO instant); older documents are
+   * beyond the history horizon. See `history-horizon.ts`.
+   */
+  notBefore?: string;
+}
+
+/**
+ * The backlog's conditions on the knowledge ledgers for one document at one
+ * revision: not covered for the phase and policy, not already pending or
+ * batched, and not parked. Binds the phase, the policy version and now.
+ */
+function backlogLedgerSql(id: string, revision: string): string {
+  return `NOT EXISTS(SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=${id}
+        AND c.input_revision=${revision} AND c.phase=? AND c.policy_version=?
+        AND (c.reconsider_at IS NULL OR c.reconsider_at>? OR (c.status='considered' AND c.retrieval_reconsidered=1)))
+      AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=${id}
+        AND w.input_revision=${revision} AND w.status IN ('pending','batched'))
+      AND NOT ${knowledgeWorkParkedSql("'source'", id, revision)}`;
+}
+
 /**
  * Recent-first admission, not a recency cutoff on understanding. Durable coverage
  * makes a restart or a newly connected source naturally eligible. A document's
  * occurrence date is independent of the time it first becomes available here.
+ *
+ * The read walks a source's documents in date order past every one already
+ * covered or queued, and each one's revision lies past its content on the
+ * document row, so on a large, mostly covered source it is heavy and costs
+ * about the same for one match as for many. The engine runs it on a read
+ * worker and asks for as many as it may admit.
  */
 export function listKnowledgeDiscoveryBacklog(
   db: Database.Database,
-  options: {
-    phase: DiscoveryPhase;
-    limit: number;
-    now: number;
-    policyVersion?: string;
-    direction?: "recent-first" | "oldest-first";
-    sourceId?: string;
-    /** Explicit initial inventory only; cutoff is fixed to the inventory start. */
-    recentInventoryWindowMs?: number;
-    /** Recent inventory belongs to the live allowance, not historical admission caps. */
-    excludeRecentInventoryWindowMs?: number;
-    /**
-     * Oldest `source_created_at` admitted (ISO instant); older documents are
-     * beyond the history horizon. See `history-horizon.ts`.
-     */
-    notBefore?: string;
-  },
+  options: KnowledgeDiscoveryBacklogOptions,
 ): DiscoveryDocument[] {
   const exclusion = cognitionAuthoredSqlExclusion("d.source_id");
   const removalFence = db
@@ -127,12 +149,7 @@ export function listKnowledgeDiscoveryBacklog(
       ${options.notBefore === undefined ? "" : "AND d.source_created_at>=?"}
       ${options.recentInventoryWindowMs === undefined ? "" : `AND EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
       ${options.excludeRecentInventoryWindowMs === undefined ? "" : `AND NOT EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
-      AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id
-        AND c.input_revision=${knowledgeSourceRevisionSql()} AND c.phase=? AND c.policy_version=?
-        AND (c.reconsider_at IS NULL OR c.reconsider_at>? OR (c.status='considered' AND c.retrieval_reconsidered=1)))
-      AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id
-        AND w.input_revision=${knowledgeSourceRevisionSql()} AND w.status IN ('pending','batched'))
-      AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}
+      AND ${backlogLedgerSql("d.id", knowledgeSourceRevisionSql())}
     ORDER BY d.source_created_at ${options.direction === "oldest-first" ? "ASC" : "DESC"},d.id LIMIT ?`,
     )
     .all(
@@ -149,6 +166,31 @@ export function listKnowledgeDiscoveryBacklog(
       options.policyVersion ?? KNOWLEDGE_DISCOVERY_POLICY,
       options.now,
       Math.max(1, Math.min(500, options.limit)),
+    );
+}
+
+/**
+ * Whether a document the backlog returned is still current at the revision it
+ * was returned at and still meets the backlog's ledger conditions: one
+ * document's revision and an index seek per ledger. A caller admitting from an
+ * earlier read checks each document with this first.
+ */
+export function isInKnowledgeDiscoveryBacklog(
+  db: Database.Database,
+  document: Pick<DiscoveryDocument, "id" | "sourceRevision">,
+  options: Pick<KnowledgeDiscoveryBacklogOptions, "phase" | "now" | "policyVersion">,
+): boolean {
+  if (readKnowledgeSourceRevision(db, document.id) !== document.sourceRevision) return false;
+  return !!db
+    .prepare<[string, string, string, string, number], { one: number }>(
+      `SELECT 1 AS one FROM (SELECT ? AS id,? AS revision) x WHERE ${backlogLedgerSql("x.id", "x.revision")}`,
+    )
+    .get(
+      document.id,
+      document.sourceRevision,
+      options.phase,
+      options.policyVersion ?? KNOWLEDGE_DISCOVERY_POLICY,
+      options.now,
     );
 }
 

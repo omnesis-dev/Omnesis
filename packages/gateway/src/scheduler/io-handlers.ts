@@ -112,6 +112,10 @@ import {
   listStaleKnowledgeWork,
 } from "../brain/knowledge/work.js";
 import { readKnowledgeArcs } from "../brain/knowledge/engine-graph.js";
+import {
+  listKnowledgeDiscoveryBacklog,
+  type KnowledgeDiscoveryBacklogOptions,
+} from "../brain/knowledge/discovery.js";
 import { bootstrapCorpusByMonth, countPendingBootstrap } from "../brain/storage/bootstrap.js";
 import { readPeopleDirectory } from "../watch/people-directory.js";
 import {
@@ -177,6 +181,8 @@ export const ioHandlers = {
     hasKnowledgeWorkFromExcludedSources(db, excludedSources),
   "io.knowledgeArcs": (db: Db, inputs: string[], bound: number) =>
     readKnowledgeArcs(db, inputs, bound),
+  "io.knowledgeDiscoveryBacklog": (db: Db, options: KnowledgeDiscoveryBacklogOptions) =>
+    listKnowledgeDiscoveryBacklog(db, options),
   // The Watch ontology's person directory, re-read on every evaluation pass:
   // the whole people table, mapped and hashed. The rows come back only when
   // the hash differs from the caller's.

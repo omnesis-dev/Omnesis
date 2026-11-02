@@ -15,18 +15,28 @@ import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import { hasHistoricalKnowledgeWorkBeyond, historicalKnowledgeAdmissions } from "./work.js";
 import { historyHorizonFloor } from "./history-horizon.js";
 import { knowledgeSelectionReads } from "./selection-reads.js";
-import { KNOWLEDGE_DISCOVERY_POLICY, listKnowledgeDiscoveryBacklog } from "./discovery.js";
+import {
+  KNOWLEDGE_DISCOVERY_POLICY,
+  isInKnowledgeDiscoveryBacklog,
+  type DiscoveryDocument,
+} from "./discovery.js";
 import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 /** Bounded writer ops one tick spends withdrawing excluded work; the rest waits a tick. */
 const MAX_RETIRE_PASSES = 8;
 /**
+ * Backlog reads for one source in one admission round. Each read follows one
+ * whose documents all changed or were covered or queued meanwhile; past this
+ * bound the source is passed over for the pass without being marked exhausted.
+ */
+const MAX_BACKLOG_READS = 4;
+/**
  * How long a source whose admission scan found nothing is left unscanned.
  * When every document of a source within the horizon is covered or queued,
- * its backlog query reads every one of them before returning empty, on the
- * main thread. An idle engine ticks every few seconds, so rescanning on each
- * tick would block the event loop over and over to learn nothing new. Arrivals
+ * its backlog query reads every one of them before returning empty. An idle
+ * engine ticks every few seconds, so rescanning on each tick would occupy a
+ * read worker over and over to learn nothing new. Arrivals
  * and edits are admitted by intake, not by these scans; a later page of the
  * source's initial inventory and a changed horizon, recent window or exclusion
  * list end the rest at once. What remains — coverage that expires, work
@@ -323,7 +333,7 @@ export class KnowledgeIntake {
     for (const { sourceId } of sources) {
       const mark = this.inventoryMark(sourceId, true);
       if (this.exhausted.isResting("inventory", sourceId, mark, deps.clock())) continue;
-      const docs = listKnowledgeDiscoveryBacklog(deps.db, {
+      const docs = await knowledgeSelectionReads(deps).knowledgeDiscoveryBacklog({
         phase: "organization",
         sourceId,
         direction: "recent-first",
@@ -465,9 +475,44 @@ export class KnowledgeIntake {
     let admitted = 0;
     let lastSourceId: string | undefined;
     const hasInventory = hasSourceInventoryTables(this.context.deps.db);
+    // Each source's backlog is read once for as many documents as this pass
+    // may still admit, then taken one per round. Before it is admitted, a
+    // document read earlier is checked again, so one that changed, or was
+    // covered or queued meanwhile, is passed over as a fresh read would.
+    // Null when the source has nothing left to admit; undefined when it is
+    // passed over for the rest of this pass.
+    const read = new Map<string, DiscoveryDocument[]>();
+    const nextDocument = async (
+      sourceId: string,
+    ): Promise<DiscoveryDocument | null | undefined> => {
+      for (let reads = 0; reads < MAX_BACKLOG_READS; reads++) {
+        let docs = read.get(sourceId);
+        if (!docs?.length) {
+          docs = await knowledgeSelectionReads(this.context.deps).knowledgeDiscoveryBacklog({
+            phase: "organization",
+            sourceId,
+            direction: backfill.direction,
+            notBefore,
+            ...(hasInventory ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs } : {}),
+            limit: limit - admitted,
+            now: this.context.deps.clock(),
+          });
+          read.set(sourceId, docs);
+          if (!docs.length) return null;
+        }
+        for (let doc = docs.shift(); doc; doc = docs.shift())
+          if (
+            isInKnowledgeDiscoveryBacklog(this.context.deps.db, doc, {
+              phase: "organization",
+              now: this.context.deps.clock(),
+            })
+          )
+            return doc;
+      }
+      return undefined;
+    };
     // One document per source per round gives every selected source a turn,
-    // then reuses spare capacity from exhausted sources. Pending writes exclude
-    // the previous round's inputs, so reads stay bounded by admissions + sources.
+    // then reuses spare capacity from exhausted sources.
     while (remaining.length && admitted < limit) {
       const nextRound: typeof sources = [];
       for (const source of remaining) {
@@ -476,17 +521,10 @@ export class KnowledgeIntake {
         const mark = this.inventoryMark(source.source_id, hasInventory);
         if (this.exhausted.isResting("history", source.source_id, mark, this.context.deps.clock()))
           continue;
-        const [doc] = listKnowledgeDiscoveryBacklog(this.context.deps.db, {
-          phase: "organization",
-          sourceId: source.source_id,
-          direction: backfill.direction,
-          notBefore,
-          ...(hasInventory ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs } : {}),
-          limit: 1,
-          now: this.context.deps.clock(),
-        });
+        const doc = await nextDocument(source.source_id);
         if (!doc) {
-          this.exhausted.rest("history", source.source_id, mark, this.context.deps.clock());
+          if (doc === null)
+            this.exhausted.rest("history", source.source_id, mark, this.context.deps.clock());
           continue;
         }
         const now = this.context.deps.clock();

@@ -241,3 +241,21 @@ it("reads the same planning arcs on the worker as on the handle", async () => {
   expect(await worker.knowledgeArcs(inputs, cfg.maxVisitedPerSeed)).toEqual(expected);
   expect(await worker.knowledgeArcs(inputs, 0)).toEqual(await direct.knowledgeArcs(inputs, 0));
 });
+
+it("reads the same discovery backlog on the worker as on the handle", async () => {
+  pendingSourceWork("roster");
+  for (const options of [
+    { phase: "organization" as const, limit: 10, now: 10 },
+    { phase: "organization" as const, limit: 10, now: 10, sourceId: "fixture-notes" },
+    { phase: "interpretation" as const, limit: 1, now: 10, direction: "oldest-first" as const },
+    { phase: "organization" as const, limit: 10, now: 10, notBefore: "2026-03-01" },
+  ]) {
+    const expected = await direct.knowledgeDiscoveryBacklog(options);
+    expect(await worker.knowledgeDiscoveryBacklog(options)).toEqual(expected);
+  }
+  expect(
+    (await worker.knowledgeDiscoveryBacklog({ phase: "organization", limit: 10, now: 10 })).map(
+      (doc) => doc.id,
+    ),
+  ).toEqual(["agenda"]);
+});
