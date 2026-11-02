@@ -33,6 +33,7 @@ import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/st
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
+import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -166,10 +167,10 @@ function runSchemaSetupInTxn(db: Db): void {
   // source_created_at DESC LIMIT N`. Without this, the single-column
   // source_id index loads every matching row and then a temp B-tree sorts
   // them — 146k rows for Gmail = 6-9s per call. With the compound index
-  // SQLite walks it in reverse and stops at LIMIT — <1ms.
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_source_id_created_at ON documents(source_id, source_created_at)",
-  );
+  // SQLite walks it in reverse and stops at LIMIT — <1ms. It carries each
+  // document's id and revision so a date-ordered read that filters by
+  // revision never reads the rows it passes over.
+  indexDocumentsBySourceCreatedRevision(db);
   // Sibling compound index keyed on gateway-side updated_at, used by the
   // "Last activity" popover on the Sources view to fetch the most recently
   // ingested-or-modified doc per source. Without it the lookup falls back

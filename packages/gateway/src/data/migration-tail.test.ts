@@ -64,7 +64,7 @@ const WOUND_BACK = [
   // 205 indexes and compacts knowledge_changes, which undoKnowledge drops.
   205, 206,
   // 207 compacts knowledge_revision_dependencies, which undoKnowledge drops.
-  207,
+  207, 208,
 ];
 
 let dir: string;
@@ -356,6 +356,11 @@ function windBack(db: Db): void {
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_thread");
   db.exec("DROP TABLE IF EXISTS date_mention_judgements");
   db.exec("DROP INDEX IF EXISTS idx_documents_source_external_id");
+  // An install before 208 orders a source's documents by date without their revision.
+  db.exec("DROP INDEX IF EXISTS idx_documents_source_created_revision");
+  db.exec(
+    "CREATE INDEX idx_documents_source_id_created_at ON documents(source_id, source_created_at)",
+  );
   const dateColumns = db
     .prepare<[], { name: string }>(
       "SELECT name FROM pragma_table_xinfo('document_extracted_dates')",
@@ -611,6 +616,11 @@ describe("an install several versions behind, upgrading", () => {
       expect(
         old.prepare("SELECT name FROM pragma_table_info('voice_note_transcriptions')").all(),
       ).not.toEqual(expect.arrayContaining([{ name: "allow_vocabulary" }]));
+      expect(
+        old
+          .prepare("SELECT 1 FROM sqlite_master WHERE name='idx_documents_source_created_revision'")
+          .get(),
+      ).toBeUndefined();
     });
     const db = upgrade();
     try {
@@ -737,6 +747,20 @@ describe("an install several versions behind, upgrading", () => {
           )
           .get(),
       ).toBeDefined();
+      // The date index gains the revision, and the narrower one it replaces is gone.
+      expect(
+        db
+          .prepare<[], { name: string }>(
+            "SELECT name FROM pragma_index_info('idx_documents_source_created_revision') ORDER BY seqno",
+          )
+          .all()
+          .map((row) => row.name),
+      ).toEqual(["source_id", "source_created_at", "id", "content_hash"]);
+      expect(
+        db
+          .prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_documents_source_id_created_at'")
+          .get(),
+      ).toBeUndefined();
     } finally {
       (db as unknown as Database.Database).close();
     }
