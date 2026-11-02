@@ -188,12 +188,32 @@ export const MANUAL_BACKUP_COMMAND = "omnesis backup --note pre-upgrade";
  * which can carry migrations no release has. Null for a change that migrates
  * nothing forward.
  */
+/** Whether a plan step acts on, or waits for, a gateway on this host. */
+function involvesGateway(step: UpdateStep): boolean {
+  switch (step.kind) {
+    case "backup":
+    case "pause-gateway":
+    case "await-health":
+    case "gateway-stopped":
+      return true;
+    case "service-definition":
+    case "restart":
+    case "restart-hint":
+      return step.component === "gateway";
+    default:
+      return false;
+  }
+}
+
 export function migrationBackupNote(
   change: UpdateDirection | "unreleased",
   steps: readonly UpdateStep[],
   backupsDir?: string,
 ): string | null {
   if (change !== "upgrade" && change !== "unreleased") return null;
+  // The migrations are the gateway's: a plan with no gateway on this host (a
+  // collector-only host) has none to back up for.
+  if (!steps.some(involvesGateway)) return null;
   const backedUp = steps.some((step) => step.kind === "backup");
   const lead =
     change === "upgrade"
@@ -419,6 +439,13 @@ export function readImageTag(envFileText: string): string | null {
  * same way every time. A failed install is therefore retried once from an
  * empty `node_modules`, which is what a fresh install runs.
  */
+/** npm settings, as its environment carries them, that keep `npm ci` to its errors. */
+export const NPM_QUIET_ENV: Readonly<Record<string, string>> = {
+  npm_config_audit: "false",
+  npm_config_fund: "false",
+  npm_config_loglevel: "error",
+};
+
 export function sourceUpdateSpecs(
   rootDir: string,
   target = "vX.Y.Z",
@@ -430,6 +457,9 @@ export function sourceUpdateSpecs(
       command: "npm",
       args: ["ci"],
       cwd: rootDir,
+      // npm's audit, funding and deprecation notices are about the dependency
+      // tree, not this update; its errors still print.
+      env: NPM_QUIET_ENV,
       retry: {
         reset: { command: "rm", args: ["-rf", "node_modules"], cwd: rootDir },
         why: "installing the dependencies again from an empty node_modules",

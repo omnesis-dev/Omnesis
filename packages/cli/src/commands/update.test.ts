@@ -486,14 +486,15 @@ describe("updateNpmGlobal", () => {
     ).rejects.toMatchObject({ exitCode: EXIT_FAILURE });
   });
 
-  test("upgrade prints the forward-migration backup reminder", async () => {
+  test("an upgrade with no gateway on this host asks for no backup", async () => {
     const runner = fakeRunner([
       { code: 0, stdout: "0.3.0\n" },
       { code: 0, stdout: "" },
     ]);
     await updateNpmGlobal({ channel: "stable", dryRun: false }, makeDeps(runner));
-    // No gateway on this host, so the plan takes no backup of its own.
-    expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
+    // The migrations are the gateway's, and it runs on another machine.
+    expect(output()).not.toContain("forward-only schema migrations");
+    expect(output()).not.toContain("omnesis backup");
   });
 
   test("downgrade is blocked without --force (no install, before confirm)", async () => {
@@ -662,11 +663,12 @@ describe("updateSourceCheckout", () => {
     expect(output()).not.toContain("Back up first");
   });
 
-  test("prints the forward-migration backup reminder", async () => {
+  test("asks for no backup with no gateway on this host", async () => {
     const runner = fakeRunner([managed, clean, tags]);
     await updateSourceCheckout({ rootDir, edge: false, dryRun: true }, makeDeps(runner));
-    // No gateway on this host, so the plan takes no backup of its own.
-    expect(output()).toContain("Back up first: omnesis backup --note pre-upgrade");
+    // The migrations are the gateway's, and it runs on another machine.
+    expect(output()).not.toContain("forward-only schema migrations");
+    expect(output()).not.toContain("omnesis backup");
   });
 
   test("fetches, checks out the newest stable tag, installs, and builds", async () => {
@@ -3854,7 +3856,12 @@ describe("rolling back a failed update", () => {
     const ci = runner.calls.find(
       (call) => call.spec.command === "npm" && call.spec.args[0] === "ci",
     );
-    expect(ci?.spec.env).toBeUndefined();
+    // The install keeps to npm's errors and never gets the build's heap.
+    expect(ci?.spec.env).toEqual({
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_loglevel: "error",
+    });
   });
 
   test("failure to record applying stops before checkout mutation", async () => {
