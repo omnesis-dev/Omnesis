@@ -47,6 +47,7 @@ import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { Scheduler } from "./scheduler.js";
 import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
+import type { PeopleDirectoryReader } from "../watch/people-directory.js";
 import type { MessageCountsQuery } from "../domain/message-counts.js";
 import type { MessageCountsBody } from "@omnesis/agent";
 import type { Priority, Task } from "./types.js";
@@ -113,6 +114,7 @@ export interface IoGate {
   knowledgeOrganizationAdmissions: KnowledgeSelectionReads["knowledgeOrganizationAdmissions"];
   knowledgeOrganizationCohort: KnowledgeSelectionReads["knowledgeOrganizationCohort"];
   knowledgeDueReviews: KnowledgeSelectionReads["knowledgeDueReviews"];
+  watchPeopleDirectory: PeopleDirectoryReader;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,
@@ -483,6 +485,8 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
   { name: "io.knowledgeDueReviews", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // The Watch ontology reads the whole people table on every evaluation pass.
+  { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.bootstrapCorpusByMonth",
@@ -617,6 +621,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.knowledgeOrganizationAdmissions", [options]),
     knowledgeOrganizationCohort: (options) => call("io.knowledgeOrganizationCohort", [options]),
     knowledgeDueReviews: (options) => call("io.knowledgeDueReviews", [options]),
+    watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>
