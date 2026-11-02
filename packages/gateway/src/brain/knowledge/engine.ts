@@ -58,6 +58,7 @@ import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeService } from "./service.js";
 import type { KnowledgeWriteGate } from "./writer.js";
 import type { ResolvedBrainSettings } from "../config.js";
+import type { KnowledgeSelectionReads } from "./selection-reads.js";
 import type Database from "better-sqlite3";
 import type { DiscoveryPhase } from "./discovery.js";
 import type { DerivationStage } from "../../domain/DocumentDerivation.js";
@@ -80,6 +81,11 @@ export interface KnowledgeEngineDeps {
   publishedRetrievalBoundary?: () => string | null;
   /** Whether a run is executing in this process now; omitted, only claim age tells. */
   isRunActive?: (runId: string) => boolean;
+  /**
+   * Where the tick's ledger-scanning selections run. The gateway passes its read
+   * worker; omitted, they run synchronously on `db`.
+   */
+  selectionReads?: KnowledgeSelectionReads;
 }
 interface SourceInput {
   id: string;

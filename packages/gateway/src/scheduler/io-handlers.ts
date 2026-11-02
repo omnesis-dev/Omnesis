@@ -94,6 +94,18 @@ import {
 import { readNearDupDfBuiltAt, readNearDupDfMeta } from "../near-dupes/meta.js";
 import { readConversationRetentionCandidates } from "../agent/conversation-retention.js";
 import { knowledgeDiscoveryByMonth } from "../brain/knowledge/discovery-timeline.js";
+import {
+  listOrganizationAdmissions,
+  type OrganizationAdmissionOptions,
+} from "../brain/knowledge/organization.js";
+import {
+  readOrganizationCohort,
+  type OrganizationCohortReadOptions,
+} from "../brain/knowledge/selection-reads.js";
+import {
+  listDueKnowledgeReviews,
+  type DueKnowledgeReviewOptions,
+} from "../brain/knowledge/review-selection.js";
 import { bootstrapCorpusByMonth, countPendingBootstrap } from "../brain/storage/bootstrap.js";
 import {
   planSourceUrlRecanonicalization,
@@ -143,6 +155,16 @@ export const ioHandlers = {
   // seconds are the event loop.
   "io.knowledgeDiscoveryByMonth": (db: Db, notBefore: string, excludedSources: string[] = []) =>
     knowledgeDiscoveryByMonth(db, notBefore, excludedSources),
+  // The knowledge engine's per-tick selections. Each scans the knowledge
+  // ledgers and, on an encrypted store, decrypts every page it reads; on a real
+  // corpus that takes seconds, and on the main handle those seconds would be
+  // the event loop on every tick.
+  "io.knowledgeOrganizationAdmissions": (db: Db, options: OrganizationAdmissionOptions) =>
+    listOrganizationAdmissions(db, options),
+  "io.knowledgeOrganizationCohort": (db: Db, options: OrganizationCohortReadOptions) =>
+    readOrganizationCohort(db, options),
+  "io.knowledgeDueReviews": (db: Db, options: DueKnowledgeReviewOptions) =>
+    listDueKnowledgeReviews(db, options),
   "io.bootstrapCorpusByMonth": (db: Db, recencyFloor: string, todayIso: string) =>
     bootstrapCorpusByMonth(db, recencyFloor, todayIso),
   "io.bootstrapBacklog": (db: Db, recencyFloor: string) => ({

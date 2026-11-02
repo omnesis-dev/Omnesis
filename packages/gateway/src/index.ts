@@ -2881,6 +2881,8 @@ await bootBriefs({
       // Read-worker gate for `lookup_people`; the steward wraps its calls at
       // background priority so background runs never jump ahead of interactive.
       personLookupGate: ioGate,
+      // The knowledge engine's per-tick ledger scans, off the main event loop.
+      knowledgeSelectionReads: ioGate,
       getEntailmentVerifier: (signal) => entailmentService.get(signal),
       validateAnnotationEvidence,
       policyStore: subscriptionsPolicyStore,
