@@ -9,6 +9,13 @@ import Foundation
 /// each live partial as `base + " " + partial`. Kept UIKit-free so the
 /// SwiftPM logic lane can pin the rule.
 public enum DictationTranscript {
+    /// Task context is a prompt, not an instruction already entered by the user.
+    /// Existing instructions stay quiet when the capture reappears.
+    public static func canStartAutomatically(text: String, taskContext: TaskNoteContext?) -> Bool {
+        if let taskContext { return !taskContext.hasInstruction(text) }
+        return text.isEmpty
+    }
+
     /// Join the committed base text with the current recognizer
     /// partial. Empty sides pass through untouched; both non-empty are
     /// joined with a single space (whitespace-normalized at the seam).
