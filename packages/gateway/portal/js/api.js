@@ -674,8 +674,8 @@ export const getProcessVitals = (windowSeconds = 300) =>
 /**
  * Pull the BackgroundJobs snapshot — every long-running loop in the
  * gateway with its current state, progress, and last-tick stats. The
- * registry caches the snapshot on a 2s tick so calling this every 2s
- * from the portal is free.
+ * gateway observes the jobs at most once per 2s however often this is
+ * called.
  */
 export const getBackgroundJobs = () => request("GET", "/admin/background-jobs");
 

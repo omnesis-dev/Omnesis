@@ -192,7 +192,7 @@ export interface BackgroundJob {
 export interface ProgressTracker {
   /**
    * Read-only snapshot of the tracker's state. Cheap; does not mutate.
-   * Multiple readers may call concurrently from the registry refresh.
+   * Called from the registry's `snapshot()` on the main thread.
    */
   observe(): JobProgress;
 }

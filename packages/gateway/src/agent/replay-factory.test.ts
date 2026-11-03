@@ -358,7 +358,7 @@ describe("makeReplayBackendFactory — parsed fixtures are reused", () => {
     expect(JSON.stringify(fixtureOf(next, "beta"))).toContain("beta greeting, edited");
   });
 
-  it("logs the load only when files were parsed", () => {
+  it("logs a role's scenario set once, not per resolution", () => {
     const log = createLogger("test");
     const info = vi.spyOn(log, "info");
     makeReplayBackendFactory({ fixturePath: h.dir, db: h.db, log });

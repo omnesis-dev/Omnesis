@@ -103,7 +103,9 @@ export function formatStallLine(
   // A snapshot taken in another activity than the one the stall is named
   // for says where it was sampled, so the code is not read as that activity's.
   const sampledIn =
-    r.codeActivity !== r.activity ? ` (sampled in ${r.codeActivity ?? "no marked activity"})` : "";
+    r.codeActivity !== r.activity
+      ? ` (sampled ${r.codeActivity ? `in ${r.codeActivity}` : "outside any marked activity"})`
+      : "";
   const at = r.code ? ` at ${formatFrame(r.code)}${sampledIn}` : "";
   let where: string;
   if (r.attribution === "running") {

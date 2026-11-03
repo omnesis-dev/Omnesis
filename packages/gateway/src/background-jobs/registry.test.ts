@@ -142,13 +142,28 @@ describe("BackgroundJobsRegistry", () => {
     expect(Date.parse(second.generatedAt) - Date.parse(first.generatedAt)).toBe(100);
   });
 
-  it("a job registered after a snapshot appears once the snapshot ages out", () => {
+  it("a job registered after a snapshot appears in the next one", () => {
     const r = new BackgroundJobsRegistry({ log: createLogger("test"), maxAgeMs: 100 });
     r.register(makeJob("a", () => goodObservation));
     expect(r.snapshot().jobs.map((j) => j.id)).toEqual(["a"]);
     r.register(makeJob("b", () => goodObservation));
-    vi.advanceTimersByTime(100);
     expect(r.snapshot().jobs.map((j) => j.id)).toEqual(["a", "b"]);
+  });
+
+  it("observes again when the clock steps back", () => {
+    let now = 1_000_000;
+    const r = new BackgroundJobsRegistry({ log: createLogger("test"), now: () => now });
+    let calls = 0;
+    r.register(
+      makeJob("x", () => {
+        calls += 1;
+        return goodObservation;
+      }),
+    );
+    r.snapshot();
+    now -= 60_000;
+    r.snapshot();
+    expect(calls).toBe(2);
   });
 
   it("get(id) returns the registered job; unknown id is undefined", () => {

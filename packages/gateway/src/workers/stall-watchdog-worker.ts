@@ -132,6 +132,7 @@ async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
       SNAPSHOT_SAMPLE_MS,
       SNAPSHOT_SAMPLING_INTERVAL_US,
       (answerWaitMs) => {
+        // Also the moment sampling starts: note the activity it starts in.
         activity = sampleActivity(slots).inner;
         return (
           answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat
@@ -142,8 +143,12 @@ async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
     // One gap can hold several callbacks back to back, so the activity the
     // stall is named for need not be the one sampled here. The snapshot says
     // which one it sampled, and is abandoned if the main thread moved to
-    // another activity while it sampled: its code would belong to neither.
-    if (sampleActivity(slots).inner !== activity) return null;
+    // another activity within the same gap while it sampled: its code would
+    // belong to neither. A stall that ended while it sampled keeps it; the
+    // idle tail adds no long run to the summary.
+    if (Number(Atomics.load(beat, 0)) === forBeat && sampleActivity(slots).inner !== activity) {
+      return null;
+    }
     const body = summarizeProfile(profile, {
       minRunMs: SNAPSHOT_SAMPLE_MS / 4,
       codeRoot: init.codeRoot,

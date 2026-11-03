@@ -210,6 +210,10 @@ test("the last tick is the newest sample, including after the ring wraps", () =>
       collector.record("ticker", undefined, "main", 0, i, "background", "done");
     }
     expect(collector.getLastTickInfo("ticker")).toEqual({ ts: t0 + 1_233_000, execMs: 1_233 });
+    // A clock stepped back: the last tick is the one recorded last, not the latest timestamp.
+    vi.setSystemTime(t0);
+    collector.record("ticker", undefined, "main", 0, 7, "background", "done");
+    expect(collector.getLastTickInfo("ticker")).toEqual({ ts: t0, execMs: 7 });
   } finally {
     vi.useRealTimers();
   }

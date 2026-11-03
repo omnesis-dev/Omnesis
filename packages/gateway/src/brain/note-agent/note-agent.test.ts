@@ -2134,6 +2134,13 @@ describe("note agent turn", () => {
     expect(built).toBe(1);
   });
 
+  test("a backend that cannot be built although readiness said it could leaves notes waiting", async () => {
+    const id = queueNote("Buy stamps");
+    const { runner } = agent(null, { isBackendRunnable: () => true });
+    expect(await runner.drain()).toBe(0);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 0 });
+  });
+
   test("start marks where reading begins, so a note captured before the first drain is read", async () => {
     const { runner } = agent(toolCallingBackend(() => [], "unused"));
     await runner.start();

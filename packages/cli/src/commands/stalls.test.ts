@@ -72,6 +72,7 @@ const report: StallsResponse = {
       attribution: "code",
       culprit: "runQuery (packages/gateway/src/sql.ts:42)",
       code: { functionName: "runQuery", file: "packages/gateway/src/sql.ts", line: 42 },
+      codeActivity: "ws.message",
     },
   ],
   capturing: null,
@@ -106,7 +107,9 @@ describe("omnesis stalls", () => {
       "backgroundJobs.refresh at listSources (packages/gateway/src/s.ts:15) (sampled in statusCache.refreshDb)",
     );
     expect(text).toContain("not attributed; in flight: a, b");
-    expect(text).toContain("runQuery (packages/gateway/src/sql.ts:42) (in flight: a, b)");
+    expect(text).toContain(
+      "runQuery (packages/gateway/src/sql.ts:42) (sampled in ws.message) (in flight: a, b)",
+    );
     expect(text).toContain("hottest code: scanAll (packages/gateway/src/scan.ts:12)");
     expect(text).toContain("at all\n");
   });

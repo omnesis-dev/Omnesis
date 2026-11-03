@@ -74,6 +74,7 @@ export class BackgroundJobsRegistry {
       );
     }
     this.jobs.set(job.id, job);
+    this.cached = null;
     return job;
   }
 
@@ -98,7 +99,10 @@ export class BackgroundJobsRegistry {
    */
   snapshot(): BackgroundJobsSnapshot {
     const now = this.now();
-    if (this.cached && now - this.cached.at < this.maxAgeMs) return this.cached.snapshot;
+    // A clock stepped back makes the age negative: observe again rather than
+    // serve the old snapshot until the clock catches up.
+    const age = this.cached ? now - this.cached.at : Number.POSITIVE_INFINITY;
+    if (this.cached && age >= 0 && age < this.maxAgeMs) return this.cached.snapshot;
     const snapshot = withActivity("backgroundJobs.refresh", () => this.observeAll());
     this.cached = { at: now, snapshot };
     return snapshot;

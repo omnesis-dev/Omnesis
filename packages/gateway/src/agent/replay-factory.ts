@@ -32,8 +32,7 @@
  * parse is kept with the file's inode, size, and modification and change
  * times, and reused until one of them moves. Resolving a replay backend —
  * once per conversation, note turn, privacy review or Brain run — therefore
- * costs a directory listing and a `stat` per file, not a parse of every
- * cassette.
+ * costs directory listings and `stat` calls, not a parse of every cassette.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -208,12 +207,13 @@ function makeDirectoryFactory(
   // Boot-time load doubles as an early validation pass — a malformed
   // fixture (bad JSON, missing meta, …) surfaces as a clean startup
   // error instead of a cryptic session-create failure later.
-  const loaded = loadScenariosFromDirectory(dirPath, role);
-  let cachedScenarios = loaded.scenarios;
+  let cachedScenarios = loadScenariosFromDirectory(dirPath, role);
   let cachedNames = cachedScenarios.map((s) => s.name).join(", ");
-  // Logged when the files were read, not each time a backend is resolved
-  // from scenarios already parsed.
-  if (loaded.parsedFiles > 0) {
+  // Logged the first time a role is served this set of scenarios, not each
+  // time a backend is resolved from them.
+  const loadKey = `${dirPath}\0${role}\0${cachedNames}`;
+  if (!loggedLoads.has(loadKey)) {
+    loggedLoads.add(loadKey);
     log.info(
       `loaded ${cachedScenarios.length} replay scenario(s) for role ${role} from ${dirPath}: ${cachedNames}`,
     );
@@ -230,7 +230,7 @@ function makeDirectoryFactory(
     // last known-good set so an active demo isn't disrupted. The
     // warning surfaces the underlying error for the author.
     try {
-      const fresh = loadScenariosFromDirectory(dirPath, role).scenarios;
+      const fresh = loadScenariosFromDirectory(dirPath, role);
       const freshNames = fresh.map((s) => s.name).join(", ");
       if (freshNames !== cachedNames) {
         log.info(`reloaded replay scenarios from ${dirPath} (${fresh.length}): ${freshNames}`);
@@ -257,22 +257,12 @@ function makeDirectoryFactory(
   };
 }
 
-/**
- * The role-filtered scenarios of a fixture directory, and how many of its
- * files had to be parsed (0 when every one was unchanged since last read).
- */
-function loadScenariosFromDirectory(
-  dirPath: string,
-  role: string,
-): { scenarios: LoadedScenario[]; parsedFiles: number } {
+/** The (directory, role, scenario names) loads already logged. */
+const loggedLoads = new Set<string>();
+
+/** The scenarios of a fixture directory that answer for `role`. */
+function loadScenariosFromDirectory(dirPath: string, role: string): LoadedScenario[] {
   const scenarios: LoadedScenario[] = [];
-  let parsedFiles = 0;
-  const countParse =
-    <T>(parse: (text: string) => T) =>
-    (text: string): T => {
-      parsedFiles += 1;
-      return parse(text);
-    };
   const fixtureFiles = readdirSync(dirPath)
     .filter((f) => f.endsWith(".jsonl"))
     .sort();
@@ -285,22 +275,16 @@ function loadScenariosFromDirectory(
         `fixture ${fixtureFile} has no sibling ${name}.meta.json — every scenario in a fixture directory needs one with at least { triggers: [...] }`,
       );
     }
-    const fixture = readParsed(
-      fixtureFile,
-      countParse((text) => parseFixture(fixtureFile, text)),
-    );
-    const meta = readParsed(
-      metaFile,
-      countParse((text) => {
-        const parsed = scenarioMetaSchema.safeParse(JSON.parse(text) as unknown);
-        if (!parsed.success) {
-          throw new Error(
-            `${metaFile}: invalid shape — ${parsed.error.issues[0]?.message ?? "unknown"}`,
-          );
-        }
-        return parsed.data;
-      }),
-    );
+    const fixture = readParsed(fixtureFile, (text) => parseFixture(fixtureFile, text));
+    const meta = readParsed(metaFile, (text) => {
+      const parsed = scenarioMetaSchema.safeParse(JSON.parse(text) as unknown);
+      if (!parsed.success) {
+        throw new Error(
+          `${metaFile}: invalid shape — ${parsed.error.issues[0]?.message ?? "unknown"}`,
+        );
+      }
+      return parsed.data;
+    });
     if ((meta.role ?? DEFAULT_SCENARIO_ROLE) !== role) continue;
     scenarios.push({
       name,
@@ -314,7 +298,7 @@ function loadScenariosFromDirectory(
   if (scenarios.length === 0) {
     throw new Error(`fixture directory ${dirPath} declares no scenario for role '${role}'`);
   }
-  return { scenarios, parsedFiles };
+  return scenarios;
 }
 
 /** Each file's last successful parse, keyed by path, with the stamp it was read at. */

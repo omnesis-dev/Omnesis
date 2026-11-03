@@ -178,7 +178,8 @@ export interface StallEvent {
   code: ProfileFrame | null;
   /**
    * The innermost marked activity the main thread was in while the snapshot
-   * behind `code` sampled it; null without a snapshot or when none was marked.
+   * behind `code` sampled it; null when no snapshot named code, or when no
+   * activity was marked.
    * Callbacks that fall due together run back to back within one gap, so this
    * can differ from `activity`, which is the one seen for most of the stall.
    */

@@ -99,7 +99,7 @@ export function renderStalls(r: StallsResponse): string {
       let what: string;
       const sampledIn =
         s.codeActivity !== undefined && s.codeActivity !== s.activity
-          ? ` ${c.dim}(sampled in ${s.codeActivity ?? "no marked activity"})${c.reset}`
+          ? ` ${c.dim}(sampled ${s.codeActivity ? `in ${s.codeActivity}` : "outside any marked activity"})${c.reset}`
           : "";
       const at = s.code ? ` ${c.dim}at${c.reset} ${where(s.code)}${sampledIn}` : "";
       if (s.attribution === "running") {
@@ -107,7 +107,7 @@ export function renderStalls(r: StallsResponse): string {
       } else if (s.attribution === "in-flight") {
         what = `${s.culprit} ${c.dim}(in flight)${c.reset}${at}`;
       } else if (s.attribution === "code") {
-        what = `${where(s.code!)}${s.inFlight.length > 0 ? ` ${c.dim}(in flight: ${s.inFlight.join(", ")})${c.reset}` : ""}`;
+        what = `${where(s.code!)}${sampledIn}${s.inFlight.length > 0 ? ` ${c.dim}(in flight: ${s.inFlight.join(", ")})${c.reset}` : ""}`;
       } else {
         what = `${c.dim}not attributed${s.inFlight.length > 0 ? `; in flight: ${s.inFlight.join(", ")}` : ""}${c.reset}`;
       }

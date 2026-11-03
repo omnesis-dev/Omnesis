@@ -149,8 +149,8 @@ describe("StallMonitor", () => {
     const { monitor } = await startMonitor();
     // One gap, two activities back to back, as timers that fall due together
     // run: the snapshot lands in the first, the second holds most of the gap.
-    withActivity("test.first", () => firstOfTwoForStallTest(2_000));
-    withActivity("test.second", () => spin(5_000));
+    withActivity("test.first", () => firstOfTwoForStallTest(3_000));
+    withActivity("test.second", () => spin(6_000));
 
     const stall = await eventually(async () =>
       (await read(monitor)).recent.find((s) => s.durationMs >= 3_000),

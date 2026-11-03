@@ -29,7 +29,7 @@ import { buildTaskTools } from "../tasks/tools.js";
 import { pendingNoteHandoff, type NoteHandoff } from "./handoffs.js";
 import { buildContinueInChatTool } from "./continue-in-chat-tool.js";
 import { captureNoteTaskSnapshot, renderNoteTaskContext } from "./task-context.js";
-import type { NoteAgentReceipt, NoteAgentRow } from "./storage.js";
+import { hasPendingNotes, type NoteAgentReceipt, type NoteAgentRow } from "./storage.js";
 import type { ChatBackend, ToolHandle } from "@omnesis/agent";
 import type { TaskService } from "../tasks/service.js";
 import type { WriteGate } from "../../write-gate.js";
@@ -58,7 +58,7 @@ export interface NoteAgentDeps {
   /**
    * Whether an Agent model is runnable, answered without building one. The
    * status, idle and drain checks ask every few seconds, and building a
-   * backend can mean reading credentials or loading replay fixtures.
+   * replay backend reads its fixture directory.
    */
   isBackendRunnable: () => boolean;
   /** The owner's `agent.noteAgent` setting, read live; undefined while unset. */
@@ -321,11 +321,17 @@ export class NoteAgent {
       await this.flushHandoffs();
       await this.deps.writeGate.enqueueNewNotes(this.now());
       let processed = 0;
-      // Switching the note agent off stops a drain between notes.
-      while (processed < maxNotes && this.enabled()) {
+      // Switching the note agent off stops a drain between notes. Each note's
+      // backend is built before the note is claimed, and only while notes
+      // wait: one that cannot be built although readiness said it could (a
+      // replay fixture that does not load) leaves the notes pending with
+      // their attempts untouched.
+      while (processed < maxNotes && this.enabled() && hasPendingNotes(this.deps.db)) {
+        const backend = this.deps.resolveBackend();
+        if (!backend) break;
         const row = await this.deps.writeGate.claimDueNote(this.now());
         if (!row) break;
-        await this.process(row);
+        await this.process(row, backend);
         processed += 1;
       }
       return processed;
@@ -351,7 +357,7 @@ export class NoteAgent {
     }
   }
 
-  private async process(row: NoteAgentRow): Promise<void> {
+  private async process(row: NoteAgentRow, backend: ChatBackend): Promise<void> {
     const entry = getNoteEntry(this.deps.db, row.entryId);
     if (!entry) {
       await this.deps.writeGate.finishNoteRun(
@@ -369,20 +375,6 @@ export class NoteAgent {
         {
           state: "skipped",
           receipt: { text: "A newer note revision superseded this turn.", changes: [] },
-        },
-        this.now(),
-      );
-      return;
-    }
-    const backend = this.deps.resolveBackend();
-    if (!backend) {
-      await this.deps.writeGate.finishNoteRun(
-        row.entryId,
-        row.attempts,
-        {
-          state: "failed",
-          error: "no Agent model",
-          retryAt: this.now() + RETRY_DELAY_MS,
         },
         this.now(),
       );

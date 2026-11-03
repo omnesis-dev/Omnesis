@@ -168,7 +168,7 @@ describe("formatStallLine", () => {
         mem,
       ),
     ).toContain(
-      "in a at listSources (packages/gateway/src/s.ts:15) (sampled in no marked activity);",
+      "in a at listSources (packages/gateway/src/s.ts:15) (sampled outside any marked activity);",
     );
     expect(
       formatStallLine(
