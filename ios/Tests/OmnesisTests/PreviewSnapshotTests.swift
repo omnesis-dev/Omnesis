@@ -36,7 +36,7 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testTaskTellAndNoteHandoff() {
         let task = TaskNoteContext(id: "task_example", title: "Repair the telescope")
-        let capture = CaptureView(speech: .preview(state: .idle), taskContext: task)
+        let capture = CaptureView(speech: .preview(state: .listening), taskContext: task)
             .environment(AppStore.preview())
         snapshot(capture, name: "capture-task-tell")
         let note = NoteEntry(

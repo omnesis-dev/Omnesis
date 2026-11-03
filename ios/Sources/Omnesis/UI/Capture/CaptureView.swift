@@ -225,7 +225,9 @@ struct CaptureView: View {
         .onAppear {
             if voiceNoteLimit == nil, completion == nil, taskContext == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
             // Listen immediately, requesting permission on the first capture.
-            if !suspended, phase == .capturing, speech.state == .idle, text.isEmpty, !voiceNote.hasRecording {
+            if !suspended, phase == .capturing, speech.state == .idle, !voiceNote.hasRecording,
+               DictationTranscript.canStartAutomatically(text: text, taskContext: taskContext) {
+                dictationBase = text
                 prepareRecording()
                 speech.requestPermissionsAndStart()
             }
