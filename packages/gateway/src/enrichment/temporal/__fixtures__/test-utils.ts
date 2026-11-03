@@ -13,12 +13,12 @@
  * an item is anchored.
  */
 
-import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
-import { applyExtractedDates } from "../dates/storage.js";
-import { mentionDays } from "../dates/mention-bounds.js";
-import { expandCanonical, insertTemporalAnnotation } from "../temporal-annotations/storage.js";
-import { replaceDocumentTemporalProjections } from "../temporal-projections/document-storage.js";
-import type { Db } from "../../data/types.js";
+import { upsertDocuments } from "../../../data/repositories/DocumentRepository.js";
+import { applyExtractedDates } from "../../dates/storage.js";
+import { mentionDays } from "../../dates/mention-bounds.js";
+import { expandCanonical, insertTemporalAnnotation } from "../../temporal-annotations/storage.js";
+import { replaceDocumentTemporalProjections } from "../../temporal-projections/document-storage.js";
+import type { Db } from "../../../data/types.js";
 import type { DocumentInput, ExtractedDate } from "@omnesis/types";
 import type { TemporalPrecision, TemporalQueryInput } from "@omnesis/core";
 
