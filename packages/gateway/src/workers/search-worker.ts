@@ -33,10 +33,10 @@
  *
  * Temporal intent: the pipeline also sends each query here to read the time it
  * names (`parseTemporalIntent`), so the date recognizer's models are built and
- * run on this thread rather than on the main one. After reporting ready the worker
+ * run on this thread rather than on the main one. When the pool asks, the worker
  * warms them one culture per turn of its event loop, so a call that arrives
- * meanwhile waits for at most one culture, and builds whichever model it needs
- * that is not warm yet.
+ * meanwhile waits for at most one culture; a call before then builds whichever
+ * model it needs that is not warm yet.
  *
  * Protocol: see `search-protocol.ts`. Transport is structured-clone
  * `postMessage`, never JSON — the request's `queryVector` (Float32Array) and
@@ -156,7 +156,6 @@ async function handleInit(init: SearchInit): Promise<void> {
         (nice !== null ? ` (background nice ${nice})` : ""),
     );
     post({ type: "ready" });
-    if (init.warmTemporalIntent) void warmTemporalModels();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log("error", "search-worker", `init failed: ${msg}`);
@@ -164,9 +163,13 @@ async function handleInit(init: SearchInit): Promise<void> {
   }
 }
 
+/** The warm-up, once the pool has asked for it; the pool asks each worker once. */
+let temporalWarmUp: Promise<void> | null = null;
+
 /**
  * Build the date recognizer's models one culture per event-loop turn, so a
- * search arriving meanwhile runs between two cultures rather than after all.
+ * search arriving meanwhile runs between two cultures rather than after all,
+ * then tell the pool, which warms its workers one at a time.
  */
 async function warmTemporalModels(): Promise<void> {
   const started = Date.now();
@@ -183,6 +186,9 @@ async function warmTemporalModels(): Promise<void> {
       "search-worker",
       `date recognizer warm-up failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    // Every way out ends this worker's turn, so the pool moves on to the next.
+    post({ type: "temporalIntentWarm" });
   }
 }
 
@@ -305,6 +311,9 @@ parentPort.on("message", (msg: MainToSearch) => {
     }
     case "lexicalIndex":
       attachLexicalIndex(msg.data);
+      break;
+    case "warmTemporalIntent":
+      temporalWarmUp ??= warmTemporalModels();
       break;
     case "shutdown":
       void handleShutdown();

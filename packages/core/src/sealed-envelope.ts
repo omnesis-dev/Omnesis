@@ -12,9 +12,14 @@
  * associated-data scope ride as GCM AAD, so envelopes cannot be swapped across
  * protocols (a recovery escrow is not a store entry) or across scopes (one
  * store entry cannot be renamed into another).
+ *
+ * Deriving the KEK costs on the order of a hundred milliseconds of CPU on a fast
+ * host. Each operation therefore has an asynchronous twin that runs scrypt on
+ * the libuv thread pool; code on an event loop that serves anything else uses
+ * the twin, and the synchronous form is for callers that cannot await.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scrypt, scryptSync } from "node:crypto";
 
 const ENVELOPE_VERSION = 1;
 const ALG = "aes-256-gcm";
@@ -73,8 +78,27 @@ export function sealStringEnvelope(
   scope: SealedEnvelopeScope,
 ): SealedEnvelopeV1 {
   const salt = randomBytes(SALT_BYTES);
+  return sealWithKek(value, salt, deriveKek(passphrase, salt), scope);
+}
+
+/** {@link sealStringEnvelope}, with the KEK derived off the event loop. */
+export async function sealStringEnvelopeAsync(
+  value: string,
+  passphrase: string,
+  scope: SealedEnvelopeScope,
+): Promise<SealedEnvelopeV1> {
+  const salt = randomBytes(SALT_BYTES);
+  return sealWithKek(value, salt, await deriveKekAsync(passphrase, salt), scope);
+}
+
+/** Seal under a derived KEK, and wipe it. */
+function sealWithKek(
+  value: string,
+  salt: Buffer,
+  kek: Buffer,
+  scope: SealedEnvelopeScope,
+): SealedEnvelopeV1 {
   const iv = randomBytes(IV_BYTES);
-  const kek = deriveKek(passphrase, salt);
   try {
     const cipher = createCipheriv(ALG, kek, iv);
     cipher.setAAD(aadBytes(scope));
@@ -148,7 +172,23 @@ export function openStringEnvelope(
 ): string {
   const parsed = parseSealedEnvelope(envelope, scope.marker);
   if (!parsed) throw new SealedEnvelopeInvalidError();
-  const kek = deriveKek(passphrase, Buffer.from(parsed.salt, "base64url"));
+  return openWithKek(parsed, deriveKek(passphrase, Buffer.from(parsed.salt, "base64url")), scope);
+}
+
+/** {@link openStringEnvelope}, with the KEK derived off the event loop. */
+export async function openStringEnvelopeAsync(
+  envelope: unknown,
+  passphrase: string,
+  scope: SealedEnvelopeScope,
+): Promise<string> {
+  const parsed = parseSealedEnvelope(envelope, scope.marker);
+  if (!parsed) throw new SealedEnvelopeInvalidError();
+  const kek = await deriveKekAsync(passphrase, Buffer.from(parsed.salt, "base64url"));
+  return openWithKek(parsed, kek, scope);
+}
+
+/** Open under a derived KEK, and wipe it. */
+function openWithKek(parsed: SealedEnvelopeV1, kek: Buffer, scope: SealedEnvelopeScope): string {
   try {
     const decipher = createDecipheriv(ALG, kek, Buffer.from(parsed.iv, "base64url"), {
       authTagLength: TAG_BYTES,
@@ -166,13 +206,23 @@ export function openStringEnvelope(
   }
 }
 
+const SCRYPT_OPTIONS = {
+  N: SCRYPT_N,
+  r: SCRYPT_R,
+  p: SCRYPT_P,
+  // maxmem must exceed 128 * N * r; give generous headroom.
+  maxmem: 256 * 1024 * 1024,
+};
+
 function deriveKek(passphrase: string, salt: Buffer): Buffer {
-  return scryptSync(passphrase, salt, KEK_BYTES, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    // maxmem must exceed 128 * N * r; give generous headroom.
-    maxmem: 256 * 1024 * 1024,
+  return scryptSync(passphrase, salt, KEK_BYTES, SCRYPT_OPTIONS);
+}
+
+function deriveKekAsync(passphrase: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(passphrase, salt, KEK_BYTES, SCRYPT_OPTIONS, (err, kek) =>
+      err ? reject(err) : resolve(kek),
+    );
   });
 }
 

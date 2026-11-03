@@ -131,6 +131,9 @@ beforeAll(() => {
   });
   // Not awaited: a reading asked for while the pool starts waits for a worker.
   void pool.start();
+  // Readings interleave with the workers' warm-ups, as on a gateway that has
+  // just started serving.
+  pool.warmDateRecognizers();
 });
 
 afterAll(async () => {

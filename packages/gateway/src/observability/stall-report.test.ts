@@ -16,6 +16,7 @@ function stall(overrides: Partial<StallEvent>): StallEvent {
     inFlight: [],
     code: null,
     codeActivity: null,
+    codeSampledAfterMs: null,
     stack: [],
     profileId: null,
     ...overrides,
@@ -178,5 +179,31 @@ describe("formatStallLine", () => {
     ).toContain(
       "at listSources (packages/gateway/src/s.ts:15) (sampled in ws.message) outside any marked activity",
     );
+  });
+
+  test("says when the snapshot began late in the stall", () => {
+    const code = { functionName: "buildTools", file: "packages/agent/src/tools.ts", line: 7 };
+    const late = formatStallLine(
+      attributeStall(stall({ durationMs: 30_000, code, codeSampledAfterMs: 21_300 }), null),
+      mem,
+    );
+    expect(late).toContain(
+      "stalled 30000ms at buildTools (packages/agent/src/tools.ts:7) (sampled 21.3s in) outside any marked activity;",
+    );
+    const early = formatStallLine(
+      attributeStall(stall({ durationMs: 30_000, code, codeSampledAfterMs: 500 }), null),
+      mem,
+    );
+    expect(early).toContain("at buildTools (packages/agent/src/tools.ts:7) outside");
+    // Late and in another activity: one note says both.
+    expect(
+      formatStallLine(
+        attributeStall(
+          stall({ activity: "a", code, codeActivity: "b", codeSampledAfterMs: 2_000 }),
+          null,
+        ),
+        mem,
+      ),
+    ).toContain("in a at buildTools (packages/agent/src/tools.ts:7) (sampled in b, 2.0s in);");
   });
 });

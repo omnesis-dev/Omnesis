@@ -91,6 +91,12 @@ export interface StallReportQuery {
   limit: number;
 }
 
+/**
+ * A snapshot that began this far into its stall says so on the stall line: what
+ * it names ran late in the stall, and the time before it is unexplained.
+ */
+const LATE_SNAPSHOT_MS = 1_000;
+
 function formatGiB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)}GiB`;
 }
@@ -100,13 +106,22 @@ export function formatStallLine(
   r: StallRecord,
   mem: { heapUsed: number; rss: number } = process.memoryUsage(),
 ): string {
-  // A snapshot taken in another activity than the one the stall is named
-  // for says where it was sampled, so the code is not read as that activity's.
-  const sampledIn =
+  // Where the snapshot behind `code` was sampled, when that is not simply
+  // early in the stall's own activity: in another activity of the same gap
+  // (callbacks that fall due together run back to back), or late.
+  const sampled = [
     r.codeActivity !== r.activity
-      ? ` (sampled ${r.codeActivity ? `in ${r.codeActivity}` : "outside any marked activity"})`
-      : "";
-  const at = r.code ? ` at ${formatFrame(r.code)}${sampledIn}` : "";
+      ? r.codeActivity
+        ? `in ${r.codeActivity}`
+        : "outside any marked activity"
+      : null,
+    r.codeSampledAfterMs != null && r.codeSampledAfterMs >= LATE_SNAPSHOT_MS
+      ? `${(r.codeSampledAfterMs / 1000).toFixed(1)}s in`
+      : null,
+  ].filter((part) => part !== null);
+  const at = r.code
+    ? ` at ${formatFrame(r.code)}${sampled.length > 0 ? ` (sampled ${sampled.join(", ")})` : ""}`
+    : "";
   let where: string;
   if (r.attribution === "running") {
     where = ` in ${r.activity}${r.outer && r.outer !== r.activity ? ` (outer: ${r.outer})` : ""}${at}`;

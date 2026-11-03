@@ -42,7 +42,7 @@ export interface HostMinterDeps {
   mkcertCandidates?: string[];
   /** How long each `tailscale status --json` may take. */
   tailscaleStatusTimeoutMs?: number;
-  selfSigned?: () => TlsPem;
+  selfSigned?: (signal: AbortSignal) => Promise<TlsPem>;
 }
 
 async function runBinary(
@@ -168,7 +168,7 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
       }
       switch (ownership) {
         case "self-signed":
-          return selfSigned();
+          return selfSigned(signal);
         case "tailscale": {
           // A Tailscale certificate covers exactly one MagicDNS name.
           const dnsName = names.find((name) => name.includes(".") && !/^[\d.:]+$/u.test(name));

@@ -184,6 +184,14 @@ export interface StallEvent {
    * can differ from `activity`, which is the one seen for most of the stall.
    */
   codeActivity: string | null;
+  /**
+   * How far into the stall the snapshot behind `code` began, in ms; null
+   * without one. A main thread stuck in native code, such as a synchronous
+   * spawn or query, cannot be sampled until it returns, so a stall that began
+   * there is sampled only later, and a late figure means `code` names what ran
+   * late in the stall, not the whole stall.
+   */
+  codeSampledAfterMs: number | null;
   /** The snapshot's hottest stack, innermost frame first; empty without one. */
   stack: ProfileFrame[];
   /** The flight-recorder capture this stall fell inside, if one was running. */

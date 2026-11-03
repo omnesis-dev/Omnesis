@@ -38,8 +38,8 @@ function servedFingerprint(port: number): Promise<string> {
 }
 
 test("a certificate activated by the lifecycle is the one the next handshake presents", async () => {
-  const first = generateSelfSigned();
-  const second = generateSelfSigned();
+  const first = await generateSelfSigned();
+  const second = await generateSelfSigned();
   mkdirSync(join(configDir, "tls"), { recursive: true });
   writeFileSync(join(configDir, "tls", "cert.pem"), first.cert);
   writeFileSync(join(configDir, "tls", "key.pem"), first.key);
@@ -66,7 +66,7 @@ test("a certificate activated by the lifecycle is the one the next handshake pre
     expect(await servedFingerprint(port)).toBe(second.fingerprintSha256);
 
     // Replaced on disk by another tool, then picked up by a tick.
-    const third = generateSelfSigned();
+    const third = await generateSelfSigned();
     writeFileSync(join(configDir, "tls", "cert.pem"), third.cert);
     writeFileSync(join(configDir, "tls", "key.pem"), third.key);
     await service.refresh(new AbortController().signal);

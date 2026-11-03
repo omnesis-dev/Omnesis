@@ -9,7 +9,14 @@ import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 
 import {
+  directProcessLauncher,
+  processLauncher,
+  setProcessLauncher,
+  type ProcessLauncher,
+} from "./process-launcher/index.js";
+import {
   fingerprintFromCertPem,
+  generateSelfSigned,
   parseTlsExtraNames,
   resolveTlsBundle,
   tlsExtraHostNames,
@@ -26,31 +33,31 @@ afterEach(() => {
 });
 
 describe("resolveTlsBundle", () => {
-  test("a self-signed pair that does not belong together is minted again; a user-provided one is refused", () => {
-    const a = resolveTlsBundle({ configDir });
+  test("a self-signed pair that does not belong together is minted again; a user-provided one is refused", async () => {
+    const a = await resolveTlsBundle({ configDir });
     const otherDir = mkdtempSync(join(tmpdir(), "omnesis-tls-other-"));
     try {
-      const b = resolveTlsBundle({ configDir: otherDir });
+      const b = await resolveTlsBundle({ configDir: otherDir });
       writeFileSync(join(configDir, "tls", "key.pem"), b.key);
-      const again = resolveTlsBundle({ configDir });
+      const again = await resolveTlsBundle({ configDir });
       expect(again.fingerprintSha256).not.toBe(a.fingerprintSha256);
       expect(again.source).toBe("auto-generated");
       expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(again.cert);
 
-      expect(() =>
+      await expect(
         resolveTlsBundle({
           configDir,
           envCertPath: join(configDir, "tls", "cert.pem"),
           envKeyPath: join(otherDir, "tls", "key.pem"),
         }),
-      ).toThrow(/does not belong together/u);
+      ).rejects.toThrow(/does not belong together/u);
     } finally {
       rmSync(otherDir, { recursive: true, force: true });
     }
   });
 
-  test("generates and persists a fresh bundle when files don't exist", () => {
-    const b = resolveTlsBundle({ configDir });
+  test("generates and persists a fresh bundle when files don't exist", async () => {
+    const b = await resolveTlsBundle({ configDir });
 
     expect(b.source).toBe("auto-generated");
     expect(b.cert).toContain("BEGIN CERTIFICATE");
@@ -71,26 +78,26 @@ describe("resolveTlsBundle", () => {
     expect(years).toBeGreaterThanOrEqual(9.9);
   });
 
-  test("reuses the existing bundle on subsequent calls (idempotent)", () => {
-    const a = resolveTlsBundle({ configDir });
-    const b = resolveTlsBundle({ configDir });
+  test("reuses the existing bundle on subsequent calls (idempotent)", async () => {
+    const a = await resolveTlsBundle({ configDir });
+    const b = await resolveTlsBundle({ configDir });
     expect(a.fingerprintSha256).toBe(b.fingerprintSha256);
     expect(a.cert).toBe(b.cert);
     expect(a.key).toBe(b.key);
     expect(b.source).toBe("auto-generated");
   });
 
-  test("env-path overrides load exactly that cert (source=user-provided)", () => {
+  test("env-path overrides load exactly that cert (source=user-provided)", async () => {
     // Generate a stable bundle in a *different* config dir, then point the
     // env paths at those files and prove resolveTlsBundle picks them up
     // without touching configDir.
     const otherDir = mkdtempSync(join(tmpdir(), "omnesis-tls-other-"));
     try {
-      const seed = resolveTlsBundle({ configDir: otherDir });
+      const seed = await resolveTlsBundle({ configDir: otherDir });
       const certPath = join(otherDir, "tls", "cert.pem");
       const keyPath = join(otherDir, "tls", "key.pem");
 
-      const b = resolveTlsBundle({
+      const b = await resolveTlsBundle({
         configDir,
         envCertPath: certPath,
         envKeyPath: keyPath,
@@ -104,8 +111,8 @@ describe("resolveTlsBundle", () => {
     }
   });
 
-  test("fingerprint matches `openssl x509 -fingerprint -sha256`", () => {
-    const b = resolveTlsBundle({ configDir });
+  test("fingerprint matches `openssl x509 -fingerprint -sha256`", async () => {
+    const b = await resolveTlsBundle({ configDir });
     const certPath = join(configDir, "tls", "cert.pem");
     const out = execFileSync("openssl", [
       "x509",
@@ -120,9 +127,9 @@ describe("resolveTlsBundle", () => {
     expect(stripped).toBe(b.fingerprintSha256);
   });
 
-  test("persisted files are mode 0600 (POSIX hosts)", () => {
+  test("persisted files are mode 0600 (POSIX hosts)", async () => {
     if (process.platform === "win32") return; // mode bits are nominal on Windows
-    resolveTlsBundle({ configDir });
+    await resolveTlsBundle({ configDir });
     const certMode = statSync(join(configDir, "tls", "cert.pem")).mode & 0o777;
     const keyMode = statSync(join(configDir, "tls", "key.pem")).mode & 0o777;
     expect(certMode).toBe(0o600);
@@ -155,8 +162,8 @@ describe("OMNESIS_TLS_EXTRA_NAMES", () => {
     expect(tlsExtraHostNames(undefined)).toEqual([]);
   });
 
-  test("a newly minted certificate covers the valid names", () => {
-    const b = resolveTlsBundle({
+  test("a newly minted certificate covers the valid names", async () => {
+    const b = await resolveTlsBundle({
       configDir,
       envExtraNames: "studio-northstar,studio-northstar.local,192.0.2.47,2001:db8::7,not valid",
     });
@@ -171,9 +178,9 @@ describe("OMNESIS_TLS_EXTRA_NAMES", () => {
     expect(san).not.toContain("not valid");
   });
 
-  test("an existing certificate is not re-minted for names it does not cover", () => {
-    const first = resolveTlsBundle({ configDir });
-    const again = resolveTlsBundle({ configDir, envExtraNames: "studio-northstar.local" });
+  test("an existing certificate is not re-minted for names it does not cover", async () => {
+    const first = await resolveTlsBundle({ configDir });
+    const again = await resolveTlsBundle({ configDir, envExtraNames: "studio-northstar.local" });
     expect(again.fingerprintSha256).toBe(first.fingerprintSha256);
     expect(new X509Certificate(again.cert).subjectAltName).not.toContain(
       "DNS:studio-northstar.local",
@@ -186,14 +193,14 @@ describe("self-signed nudge signal", () => {
   // it is serving its own self-signed cert (source "auto-generated"). It must
   // stay silent for an operator-provisioned (user-provided) cert, so the nudge
   // predicate is exactly `source === "auto-generated"`.
-  test("auto-generated bundle is the only one that triggers the nudge", () => {
-    const generated = resolveTlsBundle({ configDir });
+  test("auto-generated bundle is the only one that triggers the nudge", async () => {
+    const generated = await resolveTlsBundle({ configDir });
     expect(generated.source).toBe("auto-generated");
 
     const otherDir = mkdtempSync(join(tmpdir(), "omnesis-tls-nudge-"));
     try {
-      const seed = resolveTlsBundle({ configDir: otherDir });
-      const provisioned = resolveTlsBundle({
+      const seed = await resolveTlsBundle({ configDir: otherDir });
+      const provisioned = await resolveTlsBundle({
         configDir,
         envCertPath: join(otherDir, "tls", "cert.pem"),
         envKeyPath: join(otherDir, "tls", "key.pem"),
@@ -210,9 +217,58 @@ describe("self-signed nudge signal", () => {
   });
 });
 
+describe("generateSelfSigned off the event loop", () => {
+  test("runs openssl through the process launcher and lets the loop turn while it does", async () => {
+    const before = processLauncher();
+    const programs: string[] = [];
+    const recording: ProcessLauncher = {
+      run: (command, args, opts) => {
+        programs.push(command);
+        return directProcessLauncher.run(command, args, opts);
+      },
+    };
+    setProcessLauncher(recording);
+    let turns = 0;
+    const ticker = setInterval(() => turns++, 1);
+    try {
+      const generated = await generateSelfSigned();
+      expect(new X509Certificate(generated.cert).subject).toContain("Omnesis Gateway");
+      expect(fingerprintFromCertPem(generated.cert)).toBe(generated.fingerprintSha256);
+    } finally {
+      clearInterval(ticker);
+      setProcessLauncher(before);
+    }
+    expect(programs).toEqual(["openssl"]);
+    // Key generation outlasts a millisecond timer, so an awaited program lets
+    // it fire; a synchronous spawn would hold every turn until it returned.
+    expect(turns).toBeGreaterThan(0);
+  });
+
+  test("a launcher failure surfaces as an error naming openssl", async () => {
+    const before = processLauncher();
+    setProcessLauncher({
+      run: () =>
+        Promise.resolve({
+          exitCode: 1,
+          signal: null,
+          stdout: new Uint8Array(),
+          stderr: "unknown option -x509",
+        }),
+    });
+    try {
+      await expect(resolveTlsBundle({ configDir })).rejects.toThrow(
+        /openssl could not generate the self-signed certificate: it exited with code 1: unknown option -x509/u,
+      );
+      expect(existsSync(join(configDir, "tls", "cert.pem"))).toBe(false);
+    } finally {
+      setProcessLauncher(before);
+    }
+  });
+});
+
 describe("fingerprintFromCertPem", () => {
-  test("recomputes the same hex digest as direct DER hashing", () => {
-    const b = resolveTlsBundle({ configDir });
+  test("recomputes the same hex digest as direct DER hashing", async () => {
+    const b = await resolveTlsBundle({ configDir });
     const cert = new X509Certificate(b.cert);
     const direct = createHash("sha256").update(cert.raw).digest("hex");
     expect(fingerprintFromCertPem(b.cert)).toBe(direct);
@@ -223,8 +279,8 @@ describe("fingerprintFromCertPem", () => {
     expect(() => fingerprintFromCertPem("not-a-pem")).toThrow();
   });
 
-  test("hand-fed PEM round-trips", () => {
-    const b = resolveTlsBundle({ configDir });
+  test("hand-fed PEM round-trips", async () => {
+    const b = await resolveTlsBundle({ configDir });
     const certCopyPath = join(configDir, "copy.pem");
     writeFileSync(certCopyPath, b.cert);
     const copy = readFileSync(certCopyPath, "utf8");
