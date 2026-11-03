@@ -21,7 +21,6 @@
  * unit-testable without the server.
  */
 
-import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
 import {
   clipTitle,
   deriveTitle,
@@ -45,6 +44,29 @@ import {
   type VoiceAgentSession,
   type ConversationTurnReceipt,
 } from "./voice-session.js";
+import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
+import { withTodaysTasks } from "./temporal-with-tasks.js";
+import { normalizeAnswerProse } from "./answer-prose.js";
+import { CITATION_GROUNDING } from "./citation-grounding.js";
+import {
+  buildConversationMemoryEvidenceTool,
+  type ConversationMemoryEvidence,
+} from "./conversation-memory-tool.js";
+import {
+  SubagentService,
+  DepthExceededError,
+  TreeBudgetExceededError,
+  type ResolvedSpecialist,
+  type SubagentHost,
+} from "./subagent-service.js";
+import {
+  DEEP_RESEARCH_NO_EVIDENCE_MESSAGES,
+  DeepResearchService,
+  buildEvidencePacket,
+  type DeepResearchResult,
+} from "./deep-research.js";
+import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
 export type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -90,29 +112,7 @@ import {
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
-import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
-import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
-import { withTodaysTasks } from "./temporal-with-tasks.js";
-import { normalizeAnswerProse } from "./answer-prose.js";
-import { CITATION_GROUNDING } from "./citation-grounding.js";
-import {
-  buildConversationMemoryEvidenceTool,
-  type ConversationMemoryEvidence,
-} from "./conversation-memory-tool.js";
 
-import {
-  SubagentService,
-  DepthExceededError,
-  TreeBudgetExceededError,
-  type ResolvedSpecialist,
-  type SubagentHost,
-} from "./subagent-service.js";
-import {
-  DEEP_RESEARCH_NO_EVIDENCE_MESSAGES,
-  DeepResearchService,
-  buildEvidencePacket,
-  type DeepResearchResult,
-} from "./deep-research.js";
 import {
   INTERACTIVE_SPEND_MECHANISM,
   BROWSER_FIND_SPEND_MECHANISM,
@@ -139,6 +139,7 @@ import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
 import type { AnswerCitation } from "@omnesis/types/privacy";
+import { withActivity } from "../observability/main-activity.js";
 
 /**
  * Caller identifier for a session — a stable string the gateway derives
@@ -4214,7 +4215,18 @@ export class AgentService {
     }
   }
 
-  private async persistConversation(
+  /**
+   * Write a conversation's transcript and summary. Marked as its own activity:
+   * slimming and serializing a long transcript is a stretch of main-thread
+   * work that can follow any turn.
+   */
+  private persistConversation(
+    ...args: Parameters<AgentService["writeConversation"]>
+  ): Promise<void> {
+    return withActivity("agent.persistConversation", () => this.writeConversation(...args));
+  }
+
+  private async writeConversation(
     sessionId: string,
     callerId: CallerId,
     meta: {

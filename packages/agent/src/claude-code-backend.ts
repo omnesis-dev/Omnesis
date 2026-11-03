@@ -58,6 +58,7 @@ import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import { markActivity } from "./activity.js";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("agent:claude-code");
@@ -1114,7 +1115,9 @@ class ClaudeCodeProcess {
     });
     this.proc = proc;
     this.exited = new Promise((resolve) => proc.once("exit", () => resolve()));
-    createInterface({ input: proc.stdout }).on("line", (line) => this.handleLine(line));
+    createInterface({ input: proc.stdout }).on("line", (line) =>
+      markActivity("agent.claudeCode.message", () => this.handleLine(line)),
+    );
     createInterface({ input: proc.stderr }).on("line", (line) => {
       // The CLI's stderr can quote prompt or corpus text; log its size only.
       const trimmed = line.trim();

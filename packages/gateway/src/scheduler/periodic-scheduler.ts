@@ -12,6 +12,7 @@
 
 import { createLogger } from "@omnesis/core";
 import { runOutsidePriority } from "../priority.js";
+import { withActivity } from "../observability/main-activity.js";
 import type { PeriodicTask, Priority, Task } from "./types.js";
 import type { PeriodicState } from "./internals.js";
 
@@ -183,8 +184,12 @@ export class PeriodicScheduler {
       (result) => {
         if (state.stopped) return;
         this.completeGeneration(state, { ok: true, result });
-        const isIdle = state.task.isIdle?.(result) ?? false;
-        const asked = state.task.nextDelayMs?.(result);
+        // Under the task's name: some tasks answer `isIdle` with a read of
+        // their own, and this runs outside the task's own run.
+        const { isIdle, asked } = withActivity(state.task.name, () => ({
+          isIdle: state.task.isIdle?.(result) ?? false,
+          asked: state.task.nextDelayMs?.(result),
+        }));
         rearm(
           asked ??
             (isIdle ? (state.task.idlePeriodMs ?? state.task.periodMs) : state.task.periodMs),

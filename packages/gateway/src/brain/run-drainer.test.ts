@@ -20,6 +20,7 @@ import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
 import { upsertDocuments } from "../data/repositories/DocumentRepository.js";
 import { applyExtractedDates } from "../enrichment/dates/storage.js";
+import { captureActivity, nameStall } from "../observability/stall-test-utils.js";
 import { CognitionRunActivity } from "./run-activity.js";
 import { createCognitionDrainerTasks, cognitionRunBackoffMs } from "./run-drainer.js";
 import {
@@ -209,6 +210,24 @@ describe("steward run drainer", () => {
     const [drain] = bundle.tasks;
     return { writeGate, drain: drain!, prompts };
   }
+
+  test("a run executes under its kind's activity, so a stall in it is named by the kind", async () => {
+    const seen: ReturnType<typeof captureActivity>[] = [];
+    const { writeGate, drain } = makeBundle({
+      preflight: () => {
+        seen.push(captureActivity());
+        return Promise.resolve("continue");
+      },
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_daily_mark", kind: "daily", payload: { digest: true, date: "2026-07-02" } },
+      now,
+    );
+    await drain.run(undefined, taskCtx);
+
+    expect(seen).toHaveLength(1);
+    expect(nameStall(seen[0]!).inner).toBe("brain.run daily");
+  });
 
   test("a settled sweep run folds into its sweep's tally; other kinds do not", async () => {
     // The drainer is the only writer of every number the Sweeps tab shows, and

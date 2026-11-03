@@ -29,6 +29,7 @@ import {
 } from "@omnesis/core";
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
+import { setActivityMarker } from "@omnesis/agent";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -277,6 +278,7 @@ import { getSelfPersonId } from "./data/repositories/DocumentPeopleRepository.js
 import { getInboundRefCounts } from "./data/repositories/DocumentLinksRepository.js";
 import { ProcessVitalsCollector } from "./process-vitals.js";
 import { StallMonitor } from "./observability/stall-monitor.js";
+import { withActivity } from "./observability/main-activity.js";
 import { resolveStallSettings } from "./observability/stall-settings.js";
 import {
   UsearchReadRegistry,
@@ -555,6 +557,12 @@ scheduler.registerRunner(
     concurrency: runtime.ioConcurrency,
     backgroundWorkerNice: runtime.backgroundWorkerNice,
     cacheSizeBytes: runtime.ioReadCacheSizeBytes,
+    // The canonical path: the workers start before boot settles the journal,
+    // and open it only when the Watch engine first asks.
+    watchJournal: {
+      path: watchJournalPath(configDir),
+      ...(storageEncryption.watchDbKeyHex ? { keyHex: storageEncryption.watchDbKeyHex } : {}),
+    },
     workerUrl: ioWorker.url,
     workerExecArgv: ioWorker.execArgv,
   }),
@@ -1161,6 +1169,9 @@ const stallMonitor = new StallMonitor({
   gcBetween: (startMs, endMs) => processVitals.gcBetween(startMs, endMs),
 });
 stallMonitor.start();
+// Agent sessions mark their own entry points — child-process output, tool
+// calls, event fan-out — through this, so their stalls are named too.
+setActivityMarker(withActivity);
 const analyticsDbPath = process.env.OMNESIS_ANALYTICS_DB_PATH ?? join(configDir, "analytics.db");
 const backupsDir = join(configDir, "backups");
 const exportsDir = join(configDir, "exports");
@@ -2084,6 +2095,7 @@ if (watchV2 && watchStores?.ok) {
   const watchV2Engine = startWatchV2Engine({
     stores: watchStores.stores,
     journal: watchV2.store,
+    journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
     // Shared with the materializer: both write the journal from the main
     // runner, and a synchronous driver makes the loser block the event loop
     // rather than wait.
@@ -2329,6 +2341,7 @@ if (watchV2 && watchStores?.ok) {
       preflight(
         {
           journal: watchV2.store,
+          journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
           now: () => Date.now(),
           ontology: async () =>
             Ontology.parse(
@@ -2806,7 +2819,7 @@ const noteAgentDrainTask: PeriodicTask<undefined, undefined> = {
   isIdle: () => !noteAgent.active() || !hasPendingNotes(db),
   async run() {
     // A note turn takes seconds to minutes: run it off the scheduler's runner.
-    void noteAgent.drain().catch((err: unknown) => {
+    void withActivity("noteAgent.drain", () => noteAgent.drain()).catch((err: unknown) => {
       log
         .child("note-agent")
         .warn(`note agent drain failed: ${err instanceof Error ? err.message : String(err)}`);

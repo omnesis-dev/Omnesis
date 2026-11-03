@@ -51,6 +51,7 @@ import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { SqliteTableStatsRow } from "../sqlite-catalog.js";
 import type { Scheduler } from "./scheduler.js";
 import type { PeopleDirectoryReader } from "../watch/people-directory.js";
+import type { JournalHistoryReader } from "../watch/journal-document.js";
 import type { MessageCountsQuery } from "../domain/message-counts.js";
 import type { MessageCountsBody } from "@omnesis/agent";
 import type { Priority, Task } from "./types.js";
@@ -117,6 +118,8 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
     excludedSources?: readonly string[],
   ): Promise<import("../brain/knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   watchPeopleDirectory: PeopleDirectoryReader;
+  /** Recent revisions of documents in the watch journal, on the worker's journal handle. */
+  watchDocumentHistories: JournalHistoryReader;
   /** One catalog table's statistics, or null when it does not exist; see `computeSqliteTableStats`. */
   sqliteTableStats(tableName: string): Promise<SqliteTableStatsRow | null>;
   bootstrapCorpusByMonth(
@@ -515,6 +518,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   },
   // The Watch ontology reads the whole people table on every evaluation pass.
   { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.watchDocumentHistories", priority: "background" },
   // A catalog table's row count and MIN/MAX: one table walk per call.
   { name: "io.sqliteTableStats", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -662,6 +666,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
     knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
+    watchDocumentHistories: (requests) => call("io.watchDocumentHistories", [[...requests]]),
     sqliteTableStats: (tableName) => call("io.sqliteTableStats", [tableName]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),

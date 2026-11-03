@@ -137,6 +137,7 @@ import {
 } from "../transcribe/vocabulary/storage.js";
 import { ioReadHandlers } from "./read-port.js";
 import { IO_READS } from "./io-read-ports.js";
+import type { IoJournalHandlers } from "./io-journal-handlers.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
@@ -440,7 +441,7 @@ export const ioHandlers = {
     nearDupFileLikeDocsSince(db, builtAtSec, fileLikeDocTypes),
 } as const;
 
-export type IoHandlers = typeof ioHandlers;
+export type IoHandlers = typeof ioHandlers & IoJournalHandlers;
 export type IoOpName = keyof IoHandlers;
 
 export type IoArgs<K extends IoOpName> = IoHandlers[K] extends (db: Db, ...rest: infer A) => unknown

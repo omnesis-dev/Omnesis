@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { scope } from "../http/scope.js";
+import { withActivity } from "../observability/main-activity.js";
 import { RealtimeAdmissionError, transportCallError } from "./call-error.js";
 import { mountLiveVoiceRoutes } from "./live-route.js";
 import type { RouteApp } from "../http/routes/types.js";
@@ -87,7 +88,8 @@ export function mountRealtimeRoutes(
             connection?.fail("invalid_client_event");
             return;
           }
-          connection?.receive(event.data);
+          const data = event.data;
+          withActivity("realtime.client", () => connection?.receive(data));
         },
         onClose() {
           connection?.close();

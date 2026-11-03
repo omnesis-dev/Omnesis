@@ -19,7 +19,11 @@ import {
   getReferenceOnlyUrlSources,
   urlGraphRolesReady,
 } from "../../url-graph-roles.js";
-import { assembleVerifyPairs, assembleFinalBatch } from "../../near-dupes/NearDupAssembler.js";
+import {
+  assembleVerifyPairs,
+  assembleFinalBatch,
+  preparePersistedCandidates,
+} from "../../near-dupes/NearDupAssembler.js";
 import { NearDupDfStagingWorker } from "../../near-dupes/NearDupDfStagingWorker.js";
 import {
   DECAY_HALF_LIFE_DAYS,
@@ -1179,19 +1183,24 @@ export function nearDupComputeTask(
             : { candidates: {}, candidateIdsByDoc: {}, existingEdges: {} };
         const candMs = Date.now() - startMs;
 
-        // Phase 2c: Assemble verify pairs (main thread)
+        // Phase 2c: Prepare the persisted candidates (CPU pool), then pair
+        // them with the signed docs (main thread). Normalizing and shingling
+        // a candidate costs time proportional to its length, and a batch can
+        // fetch thousands, so only the bookkeeping is left on the main thread.
+        const prepared = await preparePersistedCandidates(candidateResult.candidates, (chunk) =>
+          cpuGate.nearDupPrepareCandidates(chunk, config.algorithm, eligibleDocTypes),
+        );
+        const prepMs = Date.now() - startMs;
         const pairs = assembleVerifyPairs(
           signedDocs,
           candidateResult,
-          config.algorithm,
-          eligibleDocTypes,
+          prepared,
           config.scheduler.maxCandidatesPerDoc,
         );
         const pairsMs = Date.now() - startMs;
 
-        // Phase 2d: Verify pairs (CPU pool). Same rule as signing — one call
-        // for all pairs so the DF table is transferred + the lookup built
-        // once, not once per pair.
+        // Phase 2d: Verify pairs (CPU pool), in chunks like signing; the DF
+        // table is a shared buffer, so each chunk reads it by reference.
         const gateOpts = {
           recordThreshold: config.gate.recordThreshold,
           maxIdfWeight: config.algorithm.maxIdfWeight ?? 8.0,
@@ -1240,7 +1249,7 @@ export function nearDupComputeTask(
         if (applied.edgesUpserted > 0 || tookMs > 1000) {
           log.info(
             `near-dup compute: ${applied.inboxConsumed} inbox, ${applied.signaturesUpserted} sigs, ${applied.edgesUpserted} edges (+), ${applied.edgesDeleted} edges (-) in ${tookMs}ms ` +
-              `(sign=${signedMs} cand=${candMs - signedMs} pairs=${pairsMs - candMs}[${pairs.length}p] verify=${verifyMs - pairsMs} apply=${tookMs - verifyMs}ms)`,
+              `(sign=${signedMs} cand=${candMs - signedMs} prep=${prepMs - candMs} pairs=${pairsMs - prepMs}[${pairs.length}p] verify=${verifyMs - pairsMs} apply=${tookMs - verifyMs}ms)`,
           );
         }
         return { idle: false };
