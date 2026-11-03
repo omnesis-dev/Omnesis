@@ -25,6 +25,8 @@ import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
 import SqliteDatabase from "better-sqlite3";
 import { createDatabase } from "../db.js";
+import { CURSOR_COMPAT_SCHEMA_VERSION } from "./migrations.js";
+import { setSyncState } from "./repositories/SyncStateRepository.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 
 type Row = Record<string, unknown>;
@@ -123,6 +125,16 @@ function expectedRows(table: string): Row[] {
       return rows.map(({ briefs_created, briefs_held: _held, ...row }) => ({
         ...row,
         observations_noted: briefs_created,
+      }));
+    case "sync_state":
+      // 209 lowers each cursor's stamp from the head that wrote it to the
+      // oldest schema that can read it; the cursor itself is unchanged.
+      return rows.map((row) => ({
+        ...row,
+        minimum_gateway_version: Math.min(
+          Number(row.minimum_gateway_version),
+          CURSOR_COMPAT_SCHEMA_VERSION,
+        ),
       }));
     default:
       return rows;
@@ -423,7 +435,43 @@ function rollbackBreaks(db: SqliteDatabase.Database): string[] {
   return breaks;
 }
 
+/**
+ * The sources v0.6.0's own downgrade check resets when it opens a database a
+ * newer build wrote: its query, verbatim, against its head.
+ */
+function resetByReleaseDowngradeCheck(db: SqliteDatabase.Database): string[] {
+  return db
+    .prepare<[number], { source_id: string }>(
+      `SELECT source_id, MAX(minimum_gateway_version) AS minimum_gateway_version
+       FROM sync_state WHERE minimum_gateway_version > ? GROUP BY source_id`,
+    )
+    .all(manifest.schema)
+    .map((row) => row.source_id);
+}
+
 describe("rolling a head database back to the v0.6.0 release", () => {
+  test("keeps every source's sync position, including cursors head wrote", () => {
+    const db = createDatabase(installedDatabase());
+    try {
+      // Upgrading wrote no epochs: no source was sent back to a bootstrap.
+      expect(db.prepare("SELECT * FROM source_wipe_epoch").all()).toEqual([]);
+      setSyncState(db, "gmail:fixture", { fixtureBookmark: "gmail", page: 4 });
+      setSyncState(
+        db,
+        "local-files:fixture",
+        { page: 5 },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        "fixture-member",
+      );
+      expect(resetByReleaseDowngradeCheck(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("the snapshot is the release's own schema", () => {
     expect(releaseShape).toMatchObject({ release: "v0.6.0", schema: 188 });
     const old = new SqliteDatabase(installedDatabase(), { readonly: true });

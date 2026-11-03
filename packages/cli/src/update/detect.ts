@@ -142,7 +142,7 @@ export interface UpdateAssessment {
   /**
    * True when the transition is unsafe-by-default and the command must refuse
    * without `--force` — currently a downgrade, which an older binary handles
-   * only by resetting sources whose cursors a newer schema wrote.
+   * by resetting any source whose cursor needs a newer schema to read.
    */
   readonly requiresForce: boolean;
 }
@@ -168,9 +168,10 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
   if (direction === "downgrade") {
     requiresForce = true;
     notes.push(
-      `Downgrade ${current} → ${target}: the older binary cannot read a newer schema. ` +
-        "It resets any source whose cursor a newer build wrote (they resync automatically); " +
-        "restore a pre-upgrade backup if you need the exact prior state.",
+      `Downgrade ${current} → ${target}: there are no down-migrations. ` +
+        "Sources keep their sync positions unless the older build predates a change in how " +
+        "the gateway reads them; those sources resync automatically. " +
+        "Restore a pre-upgrade backup if you need the exact prior state.",
     );
   }
   return { direction, current, target, notes, requiresForce };
