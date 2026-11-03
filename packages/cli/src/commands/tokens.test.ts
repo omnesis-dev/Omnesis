@@ -7,9 +7,23 @@
  * the `args` declaration citty drops the flags on the floor and the
  * command falls through to its interactive prompts regardless.
  */
-import { parseArgs } from "citty";
-import { describe, expect, it } from "vitest";
+import { parseArgs, runCommand } from "citty";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CliError, EXIT_AUTH, gatewayFetch, gatewayJson } from "../utils.js";
 import { tokensCommand } from "./tokens.js";
+
+vi.mock("../utils.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils.js")>()),
+  gatewayJson: vi.fn(),
+  gatewayFetch: vi.fn(),
+  withSpinner: async (_label: string, fn: () => Promise<unknown>) => fn(),
+}));
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.resetAllMocks();
+});
 
 async function createArgsDef() {
   const sub = await tokensCommand.subCommands!;
@@ -49,5 +63,67 @@ describe("gatewayRefusal", () => {
     expect(await gatewayRefusal(new Response("upstream down", { status: 502 }))).toBe(
       "gateway 502: upstream down",
     );
+  });
+});
+
+describe("tokens create — connection recovery", () => {
+  const devices = { items: [{ id: "fixture-device", name: "Fixture", kind: "gateway" }] };
+  const args = ["create", "--device=fixture-device", "--scopes=read", "--name=fixture"];
+
+  it("retries failed device reads, then issues exactly one token", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(gatewayJson)
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(devices);
+    vi.mocked(gatewayFetch).mockResolvedValue(
+      Response.json({
+        id: "fixture-token",
+        token: "fixture-value",
+        expiresAt: null,
+      }),
+    );
+
+    const run = runCommand(tokensCommand, { rawArgs: args });
+    await vi.waitFor(() => expect(gatewayJson).toHaveBeenCalledTimes(1));
+    await vi.runAllTimersAsync();
+    await run;
+    expect(gatewayJson).toHaveBeenCalledTimes(3);
+    expect(gatewayJson).toHaveBeenCalledWith("/admin/devices");
+    expect(gatewayFetch).toHaveBeenCalledTimes(1);
+    expect(gatewayFetch).toHaveBeenCalledWith(
+      "/admin/tokens",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("bounds unavailable gateway retries and never starts token issuance", async () => {
+    vi.useFakeTimers();
+    const failure = new TypeError("fetch failed");
+    vi.mocked(gatewayJson).mockRejectedValue(failure);
+    const rejected = expect(runCommand(tokensCommand, { rawArgs: args })).rejects.toBe(failure);
+    await vi.waitFor(() => expect(gatewayJson).toHaveBeenCalledTimes(1));
+    await vi.runAllTimersAsync();
+    await rejected;
+    expect(gatewayJson).toHaveBeenCalledTimes(4);
+    expect(gatewayFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails authentication immediately without retrying", async () => {
+    const failure = new CliError("Gateway 401", EXIT_AUTH);
+    vi.mocked(gatewayJson).mockRejectedValue(failure);
+    await expect(runCommand(tokensCommand, { rawArgs: args })).rejects.toBe(failure);
+    expect(gatewayJson).toHaveBeenCalledTimes(1);
+    expect(gatewayFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat token issuance after an ambiguous connection failure", async () => {
+    vi.mocked(gatewayJson).mockResolvedValue(devices);
+    const failure = new TypeError("fetch failed");
+    vi.mocked(gatewayFetch).mockRejectedValue(failure);
+    await expect(runCommand(tokensCommand, { rawArgs: args })).rejects.toBe(failure);
+    expect(gatewayJson).toHaveBeenCalledTimes(1);
+    expect(gatewayFetch).toHaveBeenCalledTimes(1);
   });
 });

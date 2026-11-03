@@ -587,19 +587,25 @@ describe("choosing what to remove", () => {
     await expect(uninstall(m, { yes: false })).rejects.toThrow(/--yes/);
   });
 
-  test("--dry-run lists every step and changes nothing", async () => {
-    const m = new Machine("linux").config().services().sourceInstall();
-    m.profile();
-    m.openclaw();
-    const before = m.tree();
-    const { code, text } = await uninstall(m, { dryRun: true, purge: true, yes: false });
-    expect(code).toBe(0);
-    expect(m.tree()).toEqual(before);
-    expect(text()).toContain("Stop and remove the gateway service omnesis-gateway.service");
-    expect(text()).toContain("Delete the data, tokens and keys in");
-    expect(text()).toContain("Dry run: nothing was changed.");
-    expect(m.ran("systemctl")).toHaveLength(0);
-  });
+  test.each(["linux", "darwin"] as const)(
+    "%s --dry-run lists every step and changes nothing",
+    async (platform) => {
+      const m = new Machine(platform).config().services().sourceInstall();
+      m.profile();
+      m.openclaw();
+      const before = m.tree();
+      const { code, text } = await uninstall(m, { dryRun: true, purge: true, yes: false });
+      expect(code).toBe(0);
+      expect(m.tree()).toEqual(before);
+      expect(text()).toContain(
+        `Stop and remove the gateway service ${platform === "darwin" ? "dev.omnesis.gateway" : "omnesis-gateway.service"}`,
+      );
+      expect(text()).toContain("Delete the data, tokens and keys in");
+      expect(text()).toContain("Dry run: nothing was changed.");
+      expect(m.ran("systemctl")).toHaveLength(0);
+      expect(m.ran("launchctl")).toHaveLength(0);
+    },
+  );
 
   test("--json reports each step and its outcome", async () => {
     const m = new Machine("linux").config().services().sourceInstall();

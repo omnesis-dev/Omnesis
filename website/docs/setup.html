@@ -1067,12 +1067,13 @@ omnesis.example.com {
         </div>
         <p>
           Without flags, <code>omnesis tokens create</code> asks for the device, the scopes and a
-          label. It never asks for an expiry: without <code>--ttl</code> the token never expires.
-          The token and its id are printed once; keep the id, since
-          <code>omnesis tokens revoke</code> takes it. <code>omnesis tokens list</code> shows each
-          token's label, device, scopes and when it was last used, and revoking the device revokes
-          all its tokens. An integration's tokens can carry only <code>answer</code>,
-          <code>push:claim</code> and write scopes.
+          label. It never asks for an expiry: without <code>--ttl</code> the token never expires. If
+          the gateway temporarily cannot be reached while loading devices, the command tries that
+          read up to four times. Token creation itself is submitted once. The token and its id are
+          printed once; keep the id, since <code>omnesis tokens revoke</code> takes it.
+          <code>omnesis tokens list</code> shows each token's label, device, scopes and when it was
+          last used, and revoking the device revokes all its tokens. An integration's tokens can
+          carry only <code>answer</code>, <code>push:claim</code> and write scopes.
         </p>
 
         <h3 id="device-access-level">Integrations</h3>

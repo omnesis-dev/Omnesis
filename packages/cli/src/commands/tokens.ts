@@ -3,7 +3,8 @@
 
 import { defineCommand } from "citty";
 import { tryScope, type Scope } from "@omnesis/types";
-import { parseDuration } from "@omnesis/core";
+import { parseDuration, retry } from "@omnesis/core";
+import { isFetchConnectionError } from "@omnesis/cli-shared";
 import {
   c,
   formatTimeAgoMs,
@@ -78,7 +79,13 @@ const tokensCreateCommand = defineCommand({
     // non-interactively when fully specified.
     const prompts = await import("@clack/prompts");
     const { items: devices } = await withSpinner("Loading devices", () =>
-      gatewayJson<{ items: { id: string; name: string; kind: string }[] }>("/admin/devices"),
+      // Device discovery is a read, so a stalled startup connection can be retried
+      // safely. Token issuance below stays single-shot: its outcome may be ambiguous.
+      retry(
+        () =>
+          gatewayJson<{ items: { id: string; name: string; kind: string }[] }>("/admin/devices"),
+        { shouldRetry: isFetchConnectionError, baseBackoffMs: 1000 },
+      ),
     );
     if (devices.length === 0) {
       throw new CliError(
